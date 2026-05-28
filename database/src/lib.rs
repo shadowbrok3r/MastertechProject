@@ -53,6 +53,31 @@ pub fn websocket_url_with_room(base_url: &str, room_id: &str, role: &str) -> Str
 
 pub const ODOO_API_KEY: &str = env!("ODOO_API_KEY");
 
+/// Build the version-with-build-hash display string for UI and logs.
+///
+/// Expands at the **caller's** crate boundary, so each consumer's own
+/// `CARGO_PKG_VERSION` and `BUILD_HASH` are baked in (the latter is
+/// emitted by each crate's `build.rs` via the shared `build_hash.rs`).
+///
+/// Example output: `"v4.7.8 (1a3f2b9d.e8a3c1)"` — the suffix changes
+/// every iterative dev build so two compiles at the same version
+/// number are still distinguishable in screenshots and log scrapes.
+///
+/// Returns a `&'static str` (via `concat!`) so it works in every API
+/// that wants a static string (CLI `--version`, window titles, etc.).
+#[macro_export]
+macro_rules! version_with_build {
+    () => {
+        concat!(
+            "v",
+            env!("CARGO_PKG_VERSION"),
+            " (",
+            env!("BUILD_HASH"),
+            ")"
+        )
+    };
+}
+
 /// SurrealDB `guest` record access password (rotate server-side when exposed).
 pub const SURREAL_GUEST_PASSWORD: &str = env!("SURREAL_GUEST_PASSWORD");
 

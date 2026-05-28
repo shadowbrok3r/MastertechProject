@@ -302,7 +302,7 @@ async fn main() -> eframe::Result<()> {
         //     std::fs::File::create("output.log").unwrap()
         // ).unwrap();
         let eframe_app = eframe::run_native(
-            format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),
+            format!("Mastertech-{}", database::version_with_build!()).as_str(),
             eframe::NativeOptions {
                 viewport: eframe::egui::ViewportBuilder::default()
                     .with_inner_size([1000.0, 750.0])

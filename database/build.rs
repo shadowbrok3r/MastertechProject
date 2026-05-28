@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
 
+include!("../build_hash.rs");
+
 /// Keys that must be present (non-empty) after loading `.env` / host env. No defaults.
 const REQUIRED_NO_DEFAULT: &[&str] = &[
     "USER_SCOPE",
@@ -133,6 +135,8 @@ fn apply_wasm_compile_placeholders(map: &mut HashMap<String, String>) {
 }
 
 fn main() {
+    emit_build_hash();
+
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let env_path = PathBuf::from(&manifest_dir).join("..").join(".env");
 

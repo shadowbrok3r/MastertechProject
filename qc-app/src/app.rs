@@ -467,7 +467,7 @@ impl eframe::App for QcApp {
                     ui.selectable_value(&mut self.selected_tab, 3u8, "Settings");
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(format!(" Mastertech QC - v{}", env!("CARGO_PKG_VERSION")));
+                        ui.label(format!(" Mastertech QC - {}", database::version_with_build!()));
                     });
                 });
             });

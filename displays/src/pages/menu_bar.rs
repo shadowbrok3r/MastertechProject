@@ -85,7 +85,7 @@ impl SharedContext {
                     ui.add_space(ui.available_width() / 3.);
                     let txt = RichText::new(format!(
                         "Mastertech Server {}",
-                        env!("CARGO_PKG_VERSION")
+                        database::version_with_build!()
                     )).heading().color(Color32::WHITE);
 
                     if ui.add(Button::new(txt)).clicked()

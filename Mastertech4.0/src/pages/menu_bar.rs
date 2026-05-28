@@ -383,7 +383,7 @@ impl MasterTechApp {
                         ui.add_space(ui.available_width() / 5.);
                         let txt = RichText::new(format!(
                             "Mastertech Server {}",
-                            env!("CARGO_PKG_VERSION")
+                            database::version_with_build!()
                         )).underline().heading().color(Color32::WHITE);
 
                         if ui

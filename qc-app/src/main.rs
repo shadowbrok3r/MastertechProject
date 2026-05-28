@@ -72,7 +72,7 @@ async fn main() -> eframe::Result<()> {
 
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_title(format!("Mastertech QC - v{}", env!("CARGO_PKG_VERSION")))
+            .with_title(format!("Mastertech QC - {}", database::version_with_build!()))
             .with_inner_size([500.0, 768.0])
             .with_icon(load_icon())
             .with_drag_and_drop(true),
