@@ -193,247 +193,247 @@ impl AdminConsole {
             Layout::top_down(Align::Min),
             |ui| {
                 Frame::default()
-                    .fill(theme::bg_surface(ui))
-                    .inner_margin(Margin::same(4))
-                    .outer_margin(Margin::ZERO)
-                    .corner_radius(eframe::egui::CornerRadius::same(5))
-                    .shadow(Shadow::NONE)
-                    .stroke(style.visuals.window_stroke)
-                    .show(ui, |ui| {
-                ui.set_width(CLIENT_ROW_CONTENT_W);
-                ui.set_max_width(CLIENT_ROW_CONTENT_W);
-                let is_focused = focused_client == Some(client.connection_string.as_str());
-                let focus_color = if is_focused {
-                    Color32::from_rgb(51, 255, 189)
-                } else {
-                    Color32::GRAY
-                };
-                let (indicator_color, indicator_text) =
-                    connection_indicator(is_ws_connected, client);
-                let arrow = if collapse.is_open() {
-                    icons::CHEV_OPEN
-                } else {
-                    icons::CHEV_CLOSED
-                };
+                .fill(theme::bg_surface(ui))
+                .inner_margin(Margin::same(4))
+                .outer_margin(Margin::ZERO)
+                .corner_radius(eframe::egui::CornerRadius::same(5))
+                .shadow(Shadow::NONE)
+                .stroke(style.visuals.window_stroke)
+                .show(ui, |ui| {
+                    ui.set_width(CLIENT_ROW_CONTENT_W);
+                    ui.set_max_width(CLIENT_ROW_CONTENT_W);
+                    let is_focused = focused_client == Some(client.connection_string.as_str());
+                    let focus_color = if is_focused {
+                        Color32::from_rgb(51, 255, 189)
+                    } else {
+                        Color32::GRAY
+                    };
+                    let (indicator_color, indicator_text) =
+                        connection_indicator(is_ws_connected, client);
+                    let arrow = if collapse.is_open() {
+                        icons::CHEV_OPEN
+                    } else {
+                        icons::CHEV_CLOSED
+                    };
 
-                ui.allocate_ui_with_layout(
-                    Vec2::new(CLIENT_ROW_CONTENT_W, ROW_BTN_H),
-                    Layout::left_to_right(Align::Center),
-                    |ui| {
-                        ui.spacing_mut().item_spacing.x = ROW_ITEM_GAP;
-                        let chevron = ui
-                            .add_sized(
-                                Vec2::new(ROW_BTN_W, ROW_BTN_H),
-                                Button::new(RichText::new(arrow).strong())
-                                    .fill(ui.style().visuals.window_fill),
-                            )
-                            .on_hover_text(if collapse.is_open() {
-                                "Collapse client details"
-                            } else {
-                                "Expand client details & secondary actions"
-                            });
-                        if chevron.clicked() {
-                            collapse.toggle(ui);
-                        }
-
-                        ui.add_sized(
-                            Vec2::new(ROW_STATUS_W, ROW_BTN_H),
-                            eframe::egui::Label::new(
-                                RichText::new(indicator_text).color(indicator_color),
-                            ),
-                        );
-
-                        let name_btn = ui
-                            .add_sized(
-                                Vec2::new(CLIENT_NAME_BTN_W, ROW_BTN_H),
-                                Button::new(client_name_text(client))
-                                    .fill(ui.style().visuals.window_fill),
-                            )
-                            .on_hover_text(
-                                "Click to expand client details and secondary actions",
-                            );
-                        if name_btn.clicked() {
-                            collapse.toggle(ui);
-                        }
-
-                        let focus_btn = ui
-                            .add_sized(
-                                Vec2::new(ROW_BTN_W, ROW_BTN_H),
-                                Button::new(RichText::new(icons::FOCUS).strong().color(focus_color))
-                                    .fill(ui.style().visuals.window_fill),
-                            )
-                            .on_hover_text(if is_focused {
-                                "Focused (receives commands)"
-                            } else {
-                                "Set as focused client"
-                            });
-                        if focus_btn.clicked() {
-                            let _ = tx.try_send(ClientUiAction::FocusClient(
-                                client.connection_string.clone(),
-                            ));
-                        }
-
-                        let connect_btn = ui
-                            .add_sized(
-                                Vec2::new(ROW_BTN_W, ROW_BTN_H),
-                                Button::new(
-                                    RichText::new(icons::OPEN)
-                                        .strong()
-                                        .color(ui.style().visuals.warn_fg_color),
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(CLIENT_ROW_CONTENT_W, ROW_BTN_H),
+                        Layout::left_to_right(Align::Center),
+                        |ui| {
+                            ui.spacing_mut().item_spacing.x = ROW_ITEM_GAP;
+                            let chevron = ui
+                                .add_sized(
+                                    Vec2::new(ROW_BTN_W, ROW_BTN_H),
+                                    Button::new(RichText::new(arrow).strong())
+                                        .fill(ui.style().visuals.window_fill),
                                 )
-                                .fill(ui.style().visuals.window_fill),
-                            )
-                            .on_hover_text("Open / focus this machine");
-                        if connect_btn.clicked() {
-                            info!("Sent Connection Command");
-                            let _ = tx.try_send(ClientUiAction::ConnectClient(client.clone()));
-                        }
-                    },
-                );
+                                .on_hover_text(if collapse.is_open() {
+                                    "Collapse client details"
+                                } else {
+                                    "Expand client details & secondary actions"
+                                });
+                            if chevron.clicked() {
+                                collapse.toggle(ui);
+                            }
 
-                // ── Expanded body ─────────────────────────────────────────────
-                if collapse.is_open() {
-                    ui.add_space(6.);
-                    ui.separator();
-                    ui.add_space(4.);
-
-                    client_details_grid(
-                        ui,
-                        &tx,
-                        client,
-                        &formatted_date,
-                        &assigned_user_text,
-                        is_ws_connected,
-                        reachability,
-                        fk_health,
-                    );
-
-                    if let Some(products) = security_inventory {
-                        if !products.is_empty() {
-                            ui.add_space(8.);
-                            ui.separator();
-                            ui.add_space(4.);
-                            ui.label(
-                                RichText::new("Security inventory")
-                                    .small()
-                                    .color(Color32::GRAY),
+                            ui.add_sized(
+                                Vec2::new(ROW_STATUS_W, ROW_BTN_H),
+                                eframe::egui::Label::new(
+                                    RichText::new(indicator_text).color(indicator_color),
+                                ),
                             );
-                            ui.add_space(2.);
-                            render_security_inventory(ui, products);
-                        }
-                    }
 
-                    ui.add_space(8.);
-                    ui.separator();
-                    ui.add_space(4.);
+                            let name_btn = ui
+                                .add_sized(
+                                    Vec2::new(CLIENT_NAME_BTN_W, ROW_BTN_H),
+                                    Button::new(client_name_text(client))
+                                        .fill(ui.style().visuals.window_fill),
+                                )
+                                .on_hover_text(
+                                    "Click to expand client details and secondary actions",
+                                );
+                            if name_btn.clicked() {
+                                collapse.toggle(ui);
+                            }
 
-                    ui.label(
-                        RichText::new("Actions")
-                            .small()
-                            .color(Color32::GRAY),
+                            let focus_btn = ui
+                                .add_sized(
+                                    Vec2::new(ROW_BTN_W, ROW_BTN_H),
+                                    Button::new(RichText::new(icons::FOCUS).strong().color(focus_color))
+                                        .fill(ui.style().visuals.window_fill),
+                                )
+                                .on_hover_text(if is_focused {
+                                    "Focused (receives commands)"
+                                } else {
+                                    "Set as focused client"
+                                });
+                            if focus_btn.clicked() {
+                                let _ = tx.try_send(ClientUiAction::FocusClient(
+                                    client.connection_string.clone(),
+                                ));
+                            }
+
+                            let connect_btn = ui
+                                .add_sized(
+                                    Vec2::new(ROW_BTN_W, ROW_BTN_H),
+                                    Button::new(
+                                        RichText::new(icons::OPEN)
+                                            .strong()
+                                            .color(ui.style().visuals.warn_fg_color),
+                                    )
+                                    .fill(ui.style().visuals.window_fill),
+                                )
+                                .on_hover_text("Open / focus this machine");
+                            if connect_btn.clicked() {
+                                info!("Sent Connection Command");
+                                let _ = tx.try_send(ClientUiAction::ConnectClient(client.clone()));
+                            }
+                        },
                     );
-                    ui.add_space(2.);
 
-                    let layout = session_layout
-                        .get(client.connection_string.as_str())
-                        .copied()
-                        .unwrap_or_default();
-                    let (float_label, float_tip) = match layout {
-                        SessionLayout::Floating => {
-                            ("Dock", "Floating (unlocked) — click to dock")
-                        }
-                        SessionLayout::Docked => {
-                            ("Float", "Docked (locked) — click to float")
-                        }
-                    };
-                    let relink_color = if client.customer_locked {
-                        theme::info(ui)
-                    } else {
-                        theme::weak_text(ui)
-                    };
-                    let (relink_label, relink_tip) = if client.customer_locked {
-                        (
-                            "Re-link",
-                            "Customer is locked (manually re-linked).\nClick to change linkage.",
-                        )
-                    } else {
-                        (
-                            "Re-link",
-                            "Re-link to a different customer\n(used-machine-was-our-customer fix)",
-                        )
-                    };
+                    // ── Expanded body ─────────────────────────────────────────────
+                    if collapse.is_open() {
+                        ui.add_space(6.);
+                        ui.separator();
+                        ui.add_space(4.);
 
-                    ui.scope(|ui| {
-                        ui.set_max_width(CLIENT_ROW_CONTENT_W);
-                        ui.horizontal_wrapped(|ui| {
-                        let disconnect = Button::new(
-                            RichText::new("Disconnect")
-                                .strong()
-                                .color(ui.style().visuals.error_fg_color),
-                        )
-                        .fill(ui.style().visuals.window_fill)
-                        .min_size(Vec2::new(130., ROW_BTN_H))
-                        .ui(ui)
-                        .on_hover_text(
-                            "Disconnect this client\n\
-                             (closes the local session and removes it from the list;\n\
-                             the connected_client record stays in the database)",
+                        client_details_grid(
+                            ui,
+                            &tx,
+                            client,
+                            &formatted_date,
+                            &assigned_user_text,
+                            is_ws_connected,
+                            reachability,
+                            fk_health,
                         );
-                        if disconnect.clicked() {
-                            let _ = tx.try_send(ClientUiAction::DisconnectClient(client.clone()));
+
+                        if let Some(products) = security_inventory {
+                            if !products.is_empty() {
+                                ui.add_space(8.);
+                                ui.separator();
+                                ui.add_space(4.);
+                                ui.label(
+                                    RichText::new("Security inventory")
+                                        .small()
+                                        .color(Color32::GRAY),
+                                );
+                                ui.add_space(2.);
+                                render_security_inventory(ui, products);
+                            }
                         }
 
+                        ui.add_space(8.);
+                        ui.separator();
+                        ui.add_space(4.);
 
-                        let float_btn = Button::new(
-                            RichText::new(float_label).strong().color(Color32::LIGHT_RED),
-                        )
-                        .fill(ui.style().visuals.window_fill)
-                        .min_size(Vec2::new(110., ROW_BTN_H))
-                        .ui(ui)
-                        .on_hover_text(float_tip);
-                        if float_btn.clicked() {
-                            let _ = tx.try_send(ClientUiAction::ToggleClientFloat(
-                                client.connection_string.clone(),
-                            ));
-                        }
-                        let relink = Button::new(
-                            RichText::new(relink_label).strong().color(relink_color),
-                        )
-                        .fill(ui.style().visuals.window_fill)
-                        .min_size(Vec2::new(130., ROW_BTN_H))
-                        .ui(ui)
-                        .on_hover_text(relink_tip);
-                        if relink.clicked() {
-                            let _ = tx.try_send(ClientUiAction::RelinkCustomer(client.clone()));
-                        }
-                        let link_comp = Button::new(
-                            RichText::new("Link computer").strong(),
-                        )
-                        .fill(ui.style().visuals.window_fill)
-                        .min_size(Vec2::new(130., ROW_BTN_H))
-                        .ui(ui)
-                        .on_hover_text("Create or repair the computer record for this client");
-                        if link_comp.clicked() {
-                            let _ = tx.try_send(ClientUiAction::LinkComputer(client.clone()));
-                        }
-
-                        let repair = Button::new(
-                            RichText::new("Repair links").strong(),
-                        )
-                        .fill(ui.style().visuals.window_fill)
-                        .min_size(Vec2::new(130., ROW_BTN_H))
-                        .ui(ui)
-                        .on_hover_text(
-                            "Cascade-repoint FKs to canonical computer id and fix diagnostic sessions",
+                        ui.label(
+                            RichText::new("Actions")
+                                .small()
+                                .color(Color32::GRAY),
                         );
-                        if repair.clicked() {
-                            let _ =
-                                tx.try_send(ClientUiAction::RepairAssociations(client.clone()));
-                        }
-                    });
-                    });
-                }
-                    });
+                        ui.add_space(2.);
+
+                        let layout = session_layout
+                            .get(client.connection_string.as_str())
+                            .copied()
+                            .unwrap_or_default();
+                        let (float_label, float_tip) = match layout {
+                            SessionLayout::Floating => {
+                                ("Dock", "Floating (unlocked) — click to dock")
+                            }
+                            SessionLayout::Docked => {
+                                ("Float", "Docked (locked) — click to float")
+                            }
+                        };
+                        let relink_color = if client.customer_locked {
+                            theme::info(ui)
+                        } else {
+                            theme::weak_text(ui)
+                        };
+                        let (relink_label, relink_tip) = if client.customer_locked {
+                            (
+                                "Re-link",
+                                "Customer is locked (manually re-linked).\nClick to change linkage.",
+                            )
+                        } else {
+                            (
+                                "Re-link",
+                                "Re-link to a different customer\n(used-machine-was-our-customer fix)",
+                            )
+                        };
+
+                        ui.scope(|ui| {
+                            ui.set_max_width(CLIENT_ROW_CONTENT_W);
+                            ui.horizontal_wrapped(|ui| {
+                                let disconnect = Button::new(
+                                    RichText::new("Disconnect")
+                                        .strong()
+                                        .color(ui.style().visuals.error_fg_color),
+                                )
+                                .fill(ui.style().visuals.window_fill)
+                                .min_size(Vec2::new(100., ROW_BTN_H))
+                                .ui(ui)
+                                .on_hover_text(
+                                    "Disconnect this client\n\
+                                    (closes the local session and removes it from the list;\n\
+                                    the connected_client record stays in the database)",
+                                );
+                                if disconnect.clicked() {
+                                    let _ = tx.try_send(ClientUiAction::DisconnectClient(client.clone()));
+                                }
+
+
+                                let float_btn = Button::new(
+                                    RichText::new(float_label).strong().color(ui.style().visuals.error_fg_color),
+                                )
+                                .fill(ui.style().visuals.window_fill)
+                                .min_size(Vec2::new(70., ROW_BTN_H))
+                                .ui(ui)
+                                .on_hover_text(float_tip);
+                                if float_btn.clicked() {
+                                    let _ = tx.try_send(ClientUiAction::ToggleClientFloat(
+                                        client.connection_string.clone(),
+                                    ));
+                                }
+                                let relink = Button::new(
+                                    RichText::new(relink_label).strong().color(relink_color),
+                                )
+                                .fill(ui.style().visuals.window_fill)
+                                .min_size(Vec2::new(100., ROW_BTN_H))
+                                .ui(ui)
+                                .on_hover_text(relink_tip);
+                                if relink.clicked() {
+                                    let _ = tx.try_send(ClientUiAction::RelinkCustomer(client.clone()));
+                                }
+                                let link_comp = Button::new(
+                                    RichText::new("Link computer").strong(),
+                                )
+                                .fill(ui.style().visuals.window_fill)
+                                .min_size(Vec2::new(110., ROW_BTN_H))
+                                .ui(ui)
+                                .on_hover_text("Create or repair the computer record for this client");
+                                if link_comp.clicked() {
+                                    let _ = tx.try_send(ClientUiAction::LinkComputer(client.clone()));
+                                }
+
+                                let repair = Button::new(
+                                    RichText::new("Repair links").strong(),
+                                )
+                                .fill(ui.style().visuals.window_fill)
+                                .min_size(Vec2::new(110., ROW_BTN_H))
+                                .ui(ui)
+                                .on_hover_text(
+                                    "Cascade-repoint FKs to canonical computer id and fix diagnostic sessions",
+                                );
+                                if repair.clicked() {
+                                    let _ =
+                                        tx.try_send(ClientUiAction::RepairAssociations(client.clone()));
+                                }
+                            });
+                        });
+                    }
+                });
             },
         );
 

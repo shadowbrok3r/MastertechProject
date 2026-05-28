@@ -1,0 +1,98 @@
+id = "20260527140000__slice11_duration_secs_strict_types"
+name = "slice11_duration_secs_strict_types"
+# Required by `database/scripts/migrate-local.{ps1,sh}` — the apply script
+# greps for `state = "planned"` to find the latest pending manifest.
+state = "planned"
+# Source: slice10's target hash (most recent completed rollout on this
+# repo's chain). If a different rollout has applied in between, surrealkit
+# will report the actual current hash in the lint error — paste it back here.
+source_schema_hash = "de371240dc5fcaebab286030e703183b43eb5d5ea822eb9ff1149804ccf9ef4f"
+# Target: SHA-256 of the post-tightening schema set. Recompute via
+# `surrealkit rollout lint database/rollouts/20260527140000__slice11_duration_secs_strict_types.toml`
+# — the correct hash will appear in the lint error if this placeholder
+# disagrees with the on-disk schema files. Paste the reported value back.
+target_schema_hash = "74c81804c5de8c913a696698e31b53d9bd408a4cfc7724cc7b257e2dde740e9e"
+# Modifies existing managed fields with a stricter subtype + back-fills
+# pre-migration rows. Same shape as slice6_relax_run_objects (a non-additive
+# field-type change) so the compatibility tier matches: "none".
+compatibility = "none"
+renames = []
+
+# ── Background ──────────────────────────────────────────────────────────
+#
+# The previous schema typed both `duration_*_secs` fields as `none | number`,
+# which let SurrealDB persist them as either int or float depending on the
+# write path. `StressTestRun::finalize` derives the value from
+# `duration::secs(($ended_at ?? time::now()) - started_at)`, and
+# `duration::secs(...)` returns an **integer** whenever the elapsed window
+# happens to be a whole number of seconds (every test that rounds to a
+# full second — most of them).
+#
+# The Rust struct, by contrast, types these strictly:
+#   `duration_planned_secs: Option<u64>`
+#   `duration_actual_secs:  Option<f64>`
+#
+# When `Vec<StressTestRun>` deserializes a row whose `duration_actual_secs`
+# happened to land as an int, the SurrealValue derive refuses with
+# `"Failed to convert to none | float: Expected float, got number"` and the
+# whole stress_lab list fetch errors out. Symptom seen in field logs:
+#   13:34:47 [WARN ] displays::tabs::stress_lab
+#       stress_lab runs fetch: Failed to deserialize field
+#       'duration_actual_secs' on type 'StressTestRun': …
+#
+# ── Fix ─────────────────────────────────────────────────────────────────
+#
+# Three layers landed simultaneously — only #2 is a schema change, hence
+# this rollout. The other two are Rust-side fixes that ship in the same
+# release:
+#
+#   1. Write site (`StressTestRun::finalize`) now writes
+#        `duration_actual_secs = <float> duration::secs(...)`
+#      so new rows are always float regardless of the elapsed value.
+#
+#   2. Schema (this rollout) tightens both columns to the exact subtype the
+#      Rust struct uses, so future writes that forget the `<float>` cast
+#      get rejected at the SurrealDB layer instead of silently corrupting
+#      reads.
+#
+#   3. Read sites (`StressTestRun::list_for_{computer,component,session}`
+#      and `fetch_recent_runs`) project `<float> duration_actual_secs AS
+#      duration_actual_secs` so any row written before this rollout still
+#      loads cleanly — the cast at the read-side coerces stale ints up to
+#      float on the way back to Rust.
+#
+# ── Apply ──────────────────────────────────────────────────────────────
+# Everything goes in [complete]. `[start]` is empty because there's no
+# "expand the schema first, then later contract it" phase here — the
+# Rust-side read projection makes the new schema safe to flip in one shot.
+#
+# Order matters within the [complete] DDL:
+#   a. Backfill existing rows under the still-permissive `none | number`
+#      type, so the explicit `<float>` / `<int>` casts succeed without
+#      tripping any forthcoming field validation.
+#   b. THEN re-DEFINE the fields with the strict subtypes so all future
+#      writes are enforced.
+[start]
+ddl = ""
+
+[complete]
+ddl = """
+-- (a) Coerce existing rows to the new subtypes while the field still
+--     accepts `number`. Each UPDATE is idempotent: rows already stored
+--     as the target subtype are a no-op cast.
+UPDATE stress_test_run SET duration_actual_secs  = <float> duration_actual_secs  WHERE duration_actual_secs  IS NOT NONE;
+UPDATE stress_test_run SET duration_planned_secs = <int>   duration_planned_secs WHERE duration_planned_secs IS NOT NONE;
+
+-- (b) Tighten the column types to match the Rust struct exactly.
+--     duration_planned_secs is Option<u64> → SurrealDB `int`.
+--     duration_actual_secs  is Option<f64> → SurrealDB `float`.
+DEFINE FIELD OVERWRITE duration_planned_secs ON stress_test_run TYPE none | int   PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE duration_actual_secs  ON stress_test_run TYPE none | float PERMISSIONS FULL;
+"""
+
+# Rollback intentionally omitted, matching slice6/slice7 precedent. If a
+# rollback ever becomes necessary, run by hand against Surrealist:
+#   DEFINE FIELD OVERWRITE duration_planned_secs ON stress_test_run TYPE none | number PERMISSIONS FULL;
+#   DEFINE FIELD OVERWRITE duration_actual_secs  ON stress_test_run TYPE none | number PERMISSIONS FULL;
+# Existing data is preserved across the loosening because `number` is a
+# superset of both `int` and `float`.

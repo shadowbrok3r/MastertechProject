@@ -373,6 +373,18 @@ pub enum Cmd {
     DriveList(Vec<String>),
     /// Request to download a file from remote machine
     DownloadRemoteFile(String),
+    /// Zip and download a directory from the remote machine
+    DownloadRemoteDirectory(String),
+    /// Walk a directory tree and return total size
+    ScanDirectorySize(String),
+    /// Directory size scan result
+    DirectorySizeResult {
+        path: String,
+        total_bytes: u64,
+        file_count: u64,
+        dir_count: u64,
+        error: Option<String>,
+    },
     /// File data chunk response (data, is_last_chunk)
     FileChunk(Vec<u8>, bool),
     /// Execute/open a file on the remote machine

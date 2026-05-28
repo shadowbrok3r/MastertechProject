@@ -11,6 +11,97 @@ use super::{data::LocalTermEvent, TerminalApp};
 
 pub mod command;
 
+const FILE_CHUNK_SIZE: usize = 4 * 1024 * 1024;
+
+fn send_file_chunks(data: Vec<u8>, sender: &mut ClientTransport) {
+    let chunks: Vec<&[u8]> = if data.len() > FILE_CHUNK_SIZE {
+        data.chunks(FILE_CHUNK_SIZE).collect()
+    } else {
+        vec![data.as_slice()]
+    };
+    let total_chunks = chunks.len();
+    for (i, chunk) in chunks.into_iter().enumerate() {
+        let is_last = i + 1 == total_chunks;
+        let response = Cmd::FileChunk(chunk.to_vec(), is_last);
+        match encode_to_vec(&response, standard()) {
+            Ok(payload) => {
+                log::info!(
+                    "Sending chunk {}/{} ({} bytes)",
+                    i + 1,
+                    total_chunks,
+                    payload.len()
+                );
+                sender.send(WsMessage::Binary(payload));
+            }
+            Err(e) => {
+                log::error!("Failed to serialize file chunk {i}: {e}");
+                sender.send(WsMessage::Text(format!(
+                    "Error: Failed to serialize chunk {i} - {e}"
+                )));
+                return;
+            }
+        }
+    }
+    if total_chunks > 1 {
+        log::info!("All {total_chunks} chunks sent successfully");
+    } else {
+        log::info!("File chunk sent successfully");
+    }
+}
+
+fn scan_directory_size(root: &Path) -> Result<(u64, u64, u64), String> {
+    use walkdir::WalkDir;
+
+    if !root.is_dir() {
+        return Err("Path is not a directory".to_string());
+    }
+    let mut total_bytes = 0u64;
+    let mut file_count = 0u64;
+    let mut dir_count = 0u64;
+    for entry in WalkDir::new(root).into_iter() {
+        let entry = entry.map_err(|e| e.to_string())?;
+        if entry.file_type().is_dir() {
+            dir_count += 1;
+        } else if let Ok(m) = entry.metadata() {
+            file_count += 1;
+            total_bytes = total_bytes.saturating_add(m.len());
+        }
+    }
+    Ok((total_bytes, file_count, dir_count))
+}
+
+fn zip_directory(dir_path: &Path) -> Result<Vec<u8>, String> {
+    use std::io::Write;
+    use walkdir::WalkDir;
+    use zip::write::SimpleFileOptions;
+    use zip::ZipWriter;
+
+    if !dir_path.is_dir() {
+        return Err("Path is not a directory".to_string());
+    }
+    let mut buffer = Vec::new();
+    {
+        let mut zip = ZipWriter::new(std::io::Cursor::new(&mut buffer));
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        for entry in WalkDir::new(dir_path).into_iter() {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let path = entry.path();
+            if path.is_dir() {
+                continue;
+            }
+            let name = path.strip_prefix(dir_path).map_err(|e| e.to_string())?;
+            let name_str = name.to_string_lossy().replace('\\', "/");
+            zip.start_file(name_str, options)
+                .map_err(|e| e.to_string())?;
+            let data = std::fs::read(path).map_err(|e| e.to_string())?;
+            zip.write_all(&data).map_err(|e| e.to_string())?;
+        }
+        zip.finish().map_err(|e| e.to_string())?;
+    }
+    Ok(buffer)
+}
+
 /// Resolve special folder paths using Windows API or fallback to environment variables
 #[cfg(target_os = "windows")]
 fn resolve_special_path(path: &str) -> String {
@@ -753,59 +844,13 @@ impl TerminalWebsocketClient {
                     };
                     
                     let file_size = metadata.len();
-                    const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024; // 100 MB limit
-                    
-                    if file_size > MAX_FILE_SIZE {
-                        log::warn!("File too large for download: {} bytes", file_size);
-                        sender.send(WsMessage::Text(format!("Error: File too large ({} MB). Maximum is 100 MB.", file_size / 1024 / 1024)));
-                        return;
-                    }
                     
                     log::info!("Reading file: {} ({} bytes)", path_str, file_size);
                     
                     match std::fs::read(path) {
                         Ok(data) => {
                             log::info!("File read successfully, {} bytes", data.len());
-                            
-                            // For large files, send in chunks to avoid memory issues
-                            const CHUNK_SIZE: usize = 4 * 1024 * 1024; // 4 MB chunks
-                            
-                            if data.len() > CHUNK_SIZE {
-                                // Send in multiple chunks
-                                let chunks: Vec<&[u8]> = data.chunks(CHUNK_SIZE).collect();
-                                let total_chunks = chunks.len();
-                                
-                                for (i, chunk) in chunks.into_iter().enumerate() {
-                                    let is_last = i == total_chunks - 1;
-                                    let response = Cmd::FileChunk(chunk.to_vec(), is_last);
-                                    match encode_to_vec(&response, standard()) {
-                                        Ok(payload) => {
-                                            log::info!("Sending chunk {}/{} ({} bytes)", i + 1, total_chunks, payload.len());
-                                            sender.send(WsMessage::Binary(payload));
-                                        }
-                                        Err(e) => {
-                                            log::error!("Failed to serialize file chunk {}: {}", i, e);
-                                            sender.send(WsMessage::Text(format!("Error: Failed to serialize chunk {} - {}", i, e)));
-                                            return;
-                                        }
-                                    }
-                                }
-                                log::info!("All {} chunks sent successfully", total_chunks);
-                            } else {
-                                // Small file - send in one chunk
-                                let response = Cmd::FileChunk(data, true);
-                                match encode_to_vec(&response, standard()) {
-                                    Ok(payload) => {
-                                        log::info!("Serialized payload size: {} bytes", payload.len());
-                                        sender.send(WsMessage::Binary(payload));
-                                        log::info!("File chunk sent successfully");
-                                    }
-                                    Err(e) => {
-                                        log::error!("Failed to serialize file chunk: {}", e);
-                                        sender.send(WsMessage::Text(format!("Error: Failed to serialize file - {}", e)));
-                                    }
-                                }
-                            }
+                            send_file_chunks(data, sender);
                         }
                         Err(e) => {
                             log::error!("Error reading file for download: {}", e);
@@ -815,6 +860,48 @@ impl TerminalWebsocketClient {
                 } else {
                     log::warn!("Path is not a file: {}", path_str);
                     sender.send(WsMessage::Text("Error: Path is not a file".to_string()));
+                }
+            }
+            Cmd::DownloadRemoteDirectory(path_str) => {
+                log::info!("websockets -> Download directory request for: {}", path_str);
+                let path = Path::new(&path_str);
+                match zip_directory(path) {
+                    Ok(data) => {
+                        log::info!(
+                            "Zipped directory {} ({} bytes), sending chunks",
+                            path_str,
+                            data.len()
+                        );
+                        send_file_chunks(data, sender);
+                    }
+                    Err(e) => {
+                        log::error!("Error zipping directory {}: {}", path_str, e);
+                        sender.send(WsMessage::Text(format!("Error: {e}")));
+                    }
+                }
+            }
+            Cmd::ScanDirectorySize(path_str) => {
+                log::info!("websockets -> Scan directory size for: {}", path_str);
+                let path = Path::new(&path_str);
+                let response = match scan_directory_size(path) {
+                    Ok((total_bytes, file_count, dir_count)) => Cmd::DirectorySizeResult {
+                        path: path_str,
+                        total_bytes,
+                        file_count,
+                        dir_count,
+                        error: None,
+                    },
+                    Err(e) => Cmd::DirectorySizeResult {
+                        path: path_str,
+                        total_bytes: 0,
+                        file_count: 0,
+                        dir_count: 0,
+                        error: Some(e),
+                    },
+                };
+                match encode_to_vec(&response, standard()) {
+                    Ok(payload) => sender.send(WsMessage::Binary(payload)),
+                    Err(e) => sender.send(WsMessage::Text(format!("Error: {e}"))),
                 }
             }
             Cmd::ExecuteRemoteFile(path_str) => {
@@ -853,7 +940,7 @@ impl TerminalWebsocketClient {
                 
                 if path.is_file() {
                     // Check file size - don't preview huge files
-                    let max_preview_size: u64 = 5 * 1024 * 1024; // 5 MB
+                    let max_preview_size: u64 = 100 * 1024 * 1024;
                     
                     if let Ok(metadata) = std::fs::metadata(path) {
                         if metadata.len() > max_preview_size {
@@ -2986,7 +3073,20 @@ pub fn hbitmap_to_png_bytes(
 }
 
 pub async fn live_computer_stats(tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>, mut stop_rx: tokio::sync::watch::Receiver<bool>) -> anyhow::Result<(), anyhow::Error> {
+    // Cadence: 400 ms when idle so the admin's charts stay responsive,
+    // 2 s when a stress run is in flight so we don't oversaturate the
+    // TCP connection — chatty live telemetry will starve WASM plugin
+    // RPC, Cmd::CallRemotePluginTool responses, etc. The check is
+    // cheap (single atomic load) and re-evaluated every tick.
+    const IDLE_INTERVAL: Duration = Duration::from_millis(400);
+    const STRESS_INTERVAL: Duration = Duration::from_millis(2000);
+
     loop {
+        let interval = if stress_runner::is_stress_active() {
+            STRESS_INTERVAL
+        } else {
+            IDLE_INTERVAL
+        };
         tokio::select! {
             _ = stop_rx.changed() => {
                 if *stop_rx.borrow() {
@@ -2994,10 +3094,63 @@ pub async fn live_computer_stats(tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>
                     break;
                 }
             }
-            _ = tokio::time::sleep(Duration::from_secs_f32(0.4)) => {
-                match get_sysinfo_no_gpu().await {
-                    Ok(systeminfo) => {
-                        // log::info!("websockets -> {systeminfo:?}");
+            _ = tokio::time::sleep(interval) => {
+                match crate::filesystem::system_info::get_sysinfo_no_gpu().await {
+                    Ok(mut systeminfo) => {
+                        // Enrich the bare sysinfo with the data the
+                        // shared `stress-kit` telemetry agent already
+                        // collects in its own thread:
+                        //   - GPU info via NVML (sysinfo Components
+                        //     misses GPUs on Windows without vendor
+                        //     drivers, so `get_sysinfo_no_gpu` is
+                        //     pessimistic by default).
+                        //   - WHEA / TDR counters (Windows error and
+                        //     GPU-timeout running totals that don't
+                        //     surface anywhere else in `SystemInformation`).
+                        let snapshot = crate::filesystem::system_info::current_telemetry_snapshot();
+
+                        if systeminfo.gpu_info.card.is_empty() && !snapshot.gpus.is_empty() {
+                            use database::schema::GraphicsCard;
+                            systeminfo.gpu_info.card = snapshot
+                                .gpus
+                                .iter()
+                                .enumerate()
+                                .map(|(i, g)| GraphicsCard {
+                                    id: i.to_string(),
+                                    name: g.name.clone(),
+                                    brand: g.vendor.clone(),
+                                    memory: g.memory_total_mb.unwrap_or(0).saturating_mul(1024 * 1024),
+                                    temperature: g.temp_c.unwrap_or(0.0) as u32,
+                                    ..Default::default()
+                                })
+                                .collect();
+                        }
+                        if let Some(w) = snapshot.whea {
+                            systeminfo.whea = Some(database::schema::WheaCounters {
+                                delta_since_program_start: w.delta_since_program_start,
+                                absolute_since_boot: w.absolute_since_boot,
+                            });
+                        }
+                        if let Some(t) = snapshot.tdr {
+                            systeminfo.tdr = Some(database::schema::TdrCounters {
+                                delta_since_program_start: t.delta_since_program_start,
+                                absolute_since_boot: t.absolute_since_boot,
+                            });
+                        }
+                        // ACPI thermal zones from the WMI fallback —
+                        // sysinfo's Component temperature surface goes
+                        // empty on modern Windows so `component_temps`
+                        // arrives blank by default. Merge in the
+                        // telemetry-agent readings; live entries win
+                        // (in case any platform-specific path on the
+                        // sysinfo side did populate something).
+                        for reading in &snapshot.thermals {
+                            systeminfo
+                                .component_temps
+                                .entry(reading.label.clone())
+                                .or_insert(reading.temp_c);
+                        }
+
                         tx.send(serialize_system_info(&systeminfo))?
                     }
                     Err(e) => log::error!("Error with live data {e:?}"),

@@ -7,7 +7,7 @@
 //! - Left sidebar with drives and shortcuts
 //! - Right sidebar with "My Tools" from SurrealDB bucket
 //! - Preview pane for text files and image thumbnails
-//! - Double-click to execute files
+//! - Single-click to open/run files when enabled (off by default)
 //! - Context menu with download, copy to tools, delete options
 
 use eframe::egui::{
@@ -142,6 +142,8 @@ impl PreviewState {
 pub enum ExplorerAction {
     Navigate(String),
     Download(String),
+    DownloadDirectory(String),
+    ScanDirectorySize(String),
     Execute(String),
     PreviewText(String),
     PreviewImage(String),
@@ -162,6 +164,8 @@ pub struct RemoteFileRowViewer {
     hotkeys: Vec<(KeyboardShortcut, UiAction)>,
     #[serde(skip)]
     pub action_tx: Option<Sender<ExplorerAction>>,
+    #[serde(skip)]
+    pub click_to_execute: bool,
 }
 
 impl Default for RemoteFileRowViewer {
@@ -170,6 +174,7 @@ impl Default for RemoteFileRowViewer {
             filter: String::new(),
             hotkeys: Vec::new(),
             action_tx: None,
+            click_to_execute: false,
         }
     }
 }
@@ -247,6 +252,8 @@ pub struct RemoteExplorer {
     pub sidebar_visible: bool,
     /// Filename of pending download (set when download is requested, cleared when complete)
     pub pending_download: Option<String>,
+    /// Directory path being size-scanned on the remote machine
+    pub scanning_directory: Option<String>,
     /// Whether right sidebar (My Tools) is visible
     pub tools_sidebar_visible: bool,
     /// My Tools entries from SurrealDB bucket
@@ -259,6 +266,8 @@ pub struct RemoteExplorer {
     pub preview: PreviewState,
     /// Whether preview pane is visible
     pub preview_visible: bool,
+    /// Single-click opens/runs files on the remote machine.
+    pub click_to_execute: bool,
     /// Username for SurrealDB bucket
     pub bucket_name: String,
     /// Pending upload to My Tools (filename, data)
@@ -319,12 +328,14 @@ impl RemoteExplorer {
             shortcuts,
             sidebar_visible: true,
             pending_download: None,
+            scanning_directory: None,
             tools_sidebar_visible: true,
             my_tools: Vec::new(),
             tools_loading: false,
             selected_tool_idx: None,
             preview: PreviewState::default(),
             preview_visible: true,
+            click_to_execute: false,
             bucket_name: String::new(),
             pending_tool_upload: None,
             #[cfg(not(target_arch = "wasm32"))]
@@ -463,6 +474,28 @@ impl RemoteExplorer {
         Err("File download not supported in web browser".to_string())
     }
     
+    /// Handle directory size scan result from the remote client.
+    pub fn handle_directory_size_result(
+        &mut self,
+        path: String,
+        total_bytes: u64,
+        file_count: u64,
+        dir_count: u64,
+        error: Option<String>,
+    ) -> String {
+        self.scanning_directory = None;
+        if let Some(err) = error {
+            return format!("Directory size scan failed for {path}: {err}");
+        }
+        format!(
+            "Directory size — {}: {} ({} files, {} folders)",
+            path,
+            format_file_size(total_bytes),
+            file_count,
+            dir_count,
+        )
+    }
+
     /// Handle file preview content response
     pub fn handle_preview_content(&mut self, path: String, content: String) {
         self.preview.path = path;
@@ -785,11 +818,10 @@ impl RemoteExplorer {
 
                     // Path input — fills the remaining space between the
                     // nav group on the left and the View menu pinned to
-                    // the right edge. We reserve ~90 px for the View
-                    // button at the right so the TextEdit doesn't shove
-                    // it off-screen on narrow windows.
-                    const VIEW_BTN_RESERVED: f32 = 90.0;
-                    let path_width = (ui.available_width() - VIEW_BTN_RESERVED).max(120.0);
+                    // the right edge. Reserve space for the click-to-run
+                    // checkbox and View button.
+                    const TOOLBAR_RIGHT_RESERVED: f32 = 200.0;
+                    let path_width = (ui.available_width() - TOOLBAR_RIGHT_RESERVED).max(120.0);
                     let pre_modified_path = self.path_input.clone();
                     let response = ui.add(
                         TextEdit::singleline(&mut self.path_input)
@@ -802,7 +834,7 @@ impl RemoteExplorer {
                         }
                     }
 
-                    // View menu — pane toggles, right-aligned.
+                    // View menu and click-to-run toggle, right-aligned.
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.menu_button(RichText::new(menu_label("View")), |ui| {
                             if ui
@@ -836,6 +868,11 @@ impl RemoteExplorer {
                                 ui.close();
                             }
                         });
+                        ui.checkbox(&mut self.click_to_execute, "Click to run")
+                            .on_hover_text(
+                                "When enabled, single-click opens or runs a file on the remote machine.\n\
+                                Context menu Execute / Open is always available.",
+                            );
                     });
                 });
             });
@@ -1128,6 +1165,14 @@ impl RemoteExplorer {
             });
             return;
         }
+
+        if let Some(path) = &self.scanning_directory {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(format!("Scanning size of {}…", path));
+            });
+            ui.add_space(4.);
+        }
         
         if self.file_table.is_empty() {
             ui.vertical_centered(|ui| {
@@ -1154,6 +1199,18 @@ impl RemoteExplorer {
                         .unwrap_or_else(|| "download".to_string());
                     self.pending_download = Some(filename);
                     let _ = cmd_tx.try_send(Cmd::DownloadRemoteFile(path));
+                }
+                ExplorerAction::DownloadDirectory(path) => {
+                    let dirname = std::path::Path::new(&path)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "directory".to_string());
+                    self.pending_download = Some(format!("{dirname}.zip"));
+                    let _ = cmd_tx.try_send(Cmd::DownloadRemoteDirectory(path));
+                }
+                ExplorerAction::ScanDirectorySize(path) => {
+                    self.scanning_directory = Some(path.clone());
+                    let _ = cmd_tx.try_send(Cmd::ScanDirectorySize(path));
                 }
                 ExplorerAction::Execute(path) => {
                     let _ = cmd_tx.try_send(Cmd::ExecuteRemoteFile(path));
@@ -1191,6 +1248,8 @@ impl RemoteExplorer {
                 .show(ui);
         });
         ui.add_space(2.);
+
+        self.file_viewer.click_to_execute = self.click_to_execute;
 
         ScrollArea::horizontal()
             .auto_shrink(false)
@@ -1430,7 +1489,7 @@ impl RowViewer<RemoteDirEntry> for RemoteFileRowViewer {
                     let _ = tx.try_send(ExplorerAction::Navigate(row.path.clone()));
                 } else if is_image_file(&row.name) {
                     let _ = tx.try_send(ExplorerAction::PreviewImage(row.path.clone()));
-                } else {
+                } else if self.click_to_execute {
                     let _ = tx.try_send(ExplorerAction::Execute(row.path.clone()));
                 }
             }
@@ -1511,6 +1570,8 @@ impl RowViewer<RemoteDirEntry> for RemoteFileRowViewer {
 
         if first_is_dir {
             items.push(CustomMenuItem::new("open_dir", "Open").icon(icons::FOLDER_OPEN).enabled(has_selection));
+            items.push(CustomMenuItem::new("scan_dir_size", "Scan directory size").icon(icons::SEARCH).enabled(has_selection));
+            items.push(CustomMenuItem::new("download_dir", "Download as ZIP").icon(icons::DOWNLOAD).enabled(has_selection));
         } else {
             items.push(CustomMenuItem::new("execute", "Execute / Open").icon(icons::PLAY).enabled(has_selection));
             items.push(CustomMenuItem::new("download", "Download").icon(icons::DOWNLOAD).enabled(has_selection));
@@ -1540,6 +1601,16 @@ impl RowViewer<RemoteDirEntry> for RemoteFileRowViewer {
             "open_dir" => {
                 if let Some(row) = first {
                     let _ = tx.try_send(ExplorerAction::Navigate(row.path.clone()));
+                }
+            }
+            "scan_dir_size" => {
+                if let Some(row) = first {
+                    let _ = tx.try_send(ExplorerAction::ScanDirectorySize(row.path.clone()));
+                }
+            }
+            "download_dir" => {
+                if let Some(row) = first {
+                    let _ = tx.try_send(ExplorerAction::DownloadDirectory(row.path.clone()));
                 }
             }
             "execute" => {

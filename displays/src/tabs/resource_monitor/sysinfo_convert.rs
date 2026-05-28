@@ -86,5 +86,110 @@ pub fn sysinfo_to_telemetry(info: &SystemInformation) -> TelemetrySnapshot {
         });
     }
 
+    // Pass WHEA / TDR counters through from the wire-level payload to
+    // the local TelemetrySnapshot the hw_tables panels render from.
+    // Both arrive on the client via the same shared `stress-kit`
+    // telemetry agent, but the Cmd::LiveData payload doesn't carry
+    // stress-kit types directly — `SystemInformation` mirrors the
+    // counter pair so the schema stays stress-kit-free.
+    if let Some(w) = info.whea.as_ref() {
+        snap.whea = Some(stress_kit::telemetry::WheaCounters {
+            delta_since_program_start: w.delta_since_program_start,
+            absolute_since_boot: w.absolute_since_boot,
+        });
+    }
+    if let Some(t) = info.tdr.as_ref() {
+        snap.tdr = Some(stress_kit::telemetry::TdrCounters {
+            delta_since_program_start: t.delta_since_program_start,
+            absolute_since_boot: t.absolute_since_boot,
+        });
+    }
+
     snap
+}
+
+/// Build the small static-fact `MachineInfo` panel from the live
+/// `SystemInformation`. `set_machine_info` on the resource monitor was
+/// previously never called, so the Home page's "Machine" collapsing
+/// section always said "Machine info not available yet."
+pub fn sysinfo_to_machine_info(info: &SystemInformation) -> crate::tabs::resource_monitor::MachineInfo {
+    use crate::tabs::resource_monitor::{MachineDriveRow, MachineInfo};
+
+    // RAM total comes through as MiB; round to GiB with one decimal so
+    // 16384 MiB shows as "16.0 GB" instead of the noisy raw number.
+    let ram_gb = if info.total_memory > 0.0 {
+        format!("{:.1} GB", (info.total_memory as f64) / 1024.0)
+    } else {
+        "?".to_string()
+    };
+
+    let gpu_label = if info.gpu_info.card.is_empty() {
+        String::new()
+    } else {
+        info.gpu_info
+            .card
+            .iter()
+            .map(|c| {
+                let name = c.name.trim();
+                let brand = c.brand.trim();
+                if !brand.is_empty() && !name.starts_with(brand) {
+                    format!("{brand} {name}")
+                } else {
+                    name.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    let drives = info
+        .disks
+        .iter()
+        .enumerate()
+        .map(|(idx, d)| MachineDriveRow {
+            index: idx + 1,
+            letter: if d.mount_point.is_empty() {
+                d.device_name.clone()
+            } else {
+                d.mount_point.clone()
+            },
+            drive_type: d.file_system.clone(),
+            space_label: format!(
+                "{} / {}",
+                fmt_bytes(d.available_space),
+                fmt_bytes(d.total_space)
+            ),
+        })
+        .collect();
+
+    MachineInfo {
+        hostname: if info.hostname.is_empty() {
+            info.name.clone()
+        } else {
+            info.hostname.clone()
+        },
+        cpu: info.cpu.clone(),
+        ram_gb,
+        gpu: gpu_label,
+        drives,
+    }
+}
+
+fn fmt_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    const GIB: f64 = MIB * 1024.0;
+    const TIB: f64 = GIB * 1024.0;
+    let b = bytes as f64;
+    if b >= TIB {
+        format!("{:.1} TiB", b / TIB)
+    } else if b >= GIB {
+        format!("{:.1} GiB", b / GIB)
+    } else if b >= MIB {
+        format!("{:.1} MiB", b / MIB)
+    } else if b >= KIB {
+        format!("{:.1} KiB", b / KIB)
+    } else {
+        format!("{bytes} B")
+    }
 }

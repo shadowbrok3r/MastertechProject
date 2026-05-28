@@ -44,9 +44,14 @@ pub async fn fetch_runs_for_component(component_id: &str) -> anyhow::Result<Vec<
 }
 
 pub async fn fetch_recent_runs(limit: u64) -> anyhow::Result<Vec<RunRow>> {
+    // Cast `duration_actual_secs` to float at read time so rows written
+    // before the write-side `<float>` cast (where `duration::secs` could
+    // land as an integer) deserialize into the Rust `Option<f64>` field
+    // without "Expected float, got number" errors.
     let mut response = DATABASE
         .query(
-            "SELECT * FROM stress_test_run ORDER BY started_at DESC LIMIT $limit",
+            "SELECT *, <float> duration_actual_secs AS duration_actual_secs \
+             FROM stress_test_run ORDER BY started_at DESC LIMIT $limit",
         )
         .bind(("limit", limit))
         .await?;

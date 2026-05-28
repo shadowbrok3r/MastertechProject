@@ -600,6 +600,11 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
         product_sku: Product::stock_keeping_unit().unwrap_or_default(),
         product_serial: Product::serial_number().unwrap_or_default(),
         product_vendor: Product::vendor_name().unwrap_or_default(),
+        // Enriched by `live_computer_stats` from the shared telemetry
+        // agent's snapshot before the payload is sent. Default `None`
+        // here so the synchronous builders stay cheap.
+        whea: None,
+        tdr: None,
     })
 }
 
@@ -771,5 +776,7 @@ pub async fn get_sysinfo_no_gpu() -> anyhow::Result<SystemInformation, anyhow::E
         product_sku: Product::stock_keeping_unit().unwrap_or_default(),
         product_serial: Product::serial_number().unwrap_or_default(),
         product_vendor: Product::vendor_name().unwrap_or_default(),
+        whea: None,
+        tdr: None,
     })
 }
