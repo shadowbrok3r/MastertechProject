@@ -1,5 +1,3 @@
-#[cfg(feature = "rand")]
-use rand::Rng as _;
 
 /// State to be used for Throbber render.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -48,21 +46,14 @@ impl ThrobberState {
     /// ```
     pub fn calc_step(&mut self, step: i8) {
         self.index = if step == 0 {
-            #[cfg(feature = "rand")]
-            {
-                let mut rng = rand::rng();
-                rng.random()
-            }
-            #[cfg(not(feature = "rand"))]
-            {
-                let duration = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default();
-                // If the resolution is low, it might become zero, so I add multiple values.
-                (duration.as_nanos() % 0x100
-                    + duration.as_micros() % 0x100
-                    + duration.as_millis() % 0x100) as i8
-            }
+            let duration = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default();
+            // If the resolution is low, it might become zero, so I add multiple values.
+            (duration.as_nanos() % 0x100
+                + duration.as_micros() % 0x100
+                + duration.as_millis() % 0x100) as i8
+            
         } else {
             self.index.checked_add(step).unwrap_or(0)
         }

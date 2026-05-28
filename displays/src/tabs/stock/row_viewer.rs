@@ -2,11 +2,12 @@ use egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, U
 use eframe::egui::{Button, Color32, Hyperlink, KeyboardShortcut, OpenUrl, Response, RichText, Ui, Widget};
 use egui_extras::Column as TableColumnConfig;
 use serde::{Deserialize, Serialize};
-use database::schema::ComputerData;
+use database::schema::{ComputerData, RecordId};
 use crossbeam::channel::Sender;
 use database::SurrealValue;
 use database::{xidax_order_url, xidax_product_url};
 use regex::Regex;
+use std::collections::HashMap;
 
 /// Extract only relevant RAM info: DDR type (DDR4/DDR5), speed (MHz), and capacity (GB)
 fn format_ram_display(ram: &str) -> String {
@@ -78,8 +79,24 @@ pub struct LotID(pub i32, pub String);
 pub struct ProductID(pub i32, pub String);
 
 // Don't need to implement any trait on row data itself.
+//
+// Columns: 0 Item Code | 1 Std Price | 2 List Price | 3 Qty (rollup)
+//        | 4 Serial Number | 5 Order | 6 Location | 7 Found / Attached.
+//
+// In Live mode column 7 indicates "attached to an order"; in audit mode it
+// indicates "found in scan walkthrough" and is editable + persisted via
+// the viewer's `found_toggle_tx`.
 #[derive(Default, Serialize, Clone)]
-pub struct SerialsData(pub String, pub String, pub String, pub String, pub bool);
+pub struct SerialsData(
+    pub String, // 0 Item Code
+    pub f64,    // 1 Std Price
+    pub f64,    // 2 List Price
+    pub u32,    // 3 Qty (rollup of current view, filled at receive() time)
+    pub String, // 4 Serial Number
+    pub String, // 5 Order
+    pub String, // 6 Location
+    pub bool,   // 7 Found / Attached
+);
 
 /// Every logic is defined in `Viewer`
 #[derive(Default, Serialize)]
@@ -91,20 +108,59 @@ pub struct SerialsViewer {
     #[serde(skip)]
     pub stock_tx: Option<Sender<SerialData>>,
     pub show_hotkeys: bool,
+    /// Rollup cache: item_code → count of rows sharing that code. Filled
+    /// by the consumer (see `StockTable::recompute_qty_rollup`) whenever
+    /// the underlying `DataTable` is replaced.
+    #[serde(skip)]
+    pub qty_by_item: HashMap<String, u32>,
+    /// Clicking the Serial Number cell sends the serial here. The
+    /// receiver opens an `egui::Window` with a history table.
+    #[serde(skip)]
+    pub serial_click_tx: Option<Sender<String>>,
+    /// When `Some`, the viewer is rendering a saved audit and column-7
+    /// toggles persist back to SurrealDB via `found_toggle_tx`.
+    #[serde(skip)]
+    pub audit_id: Option<RecordId>,
+    /// `(audit_id, serial, new_found_state)` — drained by the main
+    /// `StockTable::receive` loop, which spawns a `mark_found(...)`.
+    #[serde(skip)]
+    pub found_toggle_tx: Option<Sender<(RecordId, String, bool)>>,
 }
 
 // There are several methods that MUST be implemented to make the viewer work correctly.
+//
+// Column index → field index dispatch:
+//   col 0 → row.0  Item Code
+//   col 1 → row.1  Std Price
+//   col 2 → row.2  List Price
+//   col 3 → row.4  Serial Number
+//   col 4 → row.5  Order
+//   col 5 → row.6  Location
+//   col 6 → row.3  Qty (rollup from `qty_by_item`)
+//   col 7 → row.7  Found / Attached
+//
+// Struct fields stay in original positions so existing SerialsData(...)
+// constructors don't need to change.
 impl RowViewer<SerialsData> for SerialsViewer {
     fn try_create_codec(&mut self, _: bool) -> Option<impl RowCodec<SerialsData>> { Some(Codec) }
 
-    fn num_columns(&mut self) -> usize { 5 }
+    fn num_columns(&mut self) -> usize { 8 }
 
     fn column_name(&mut self, column: usize) -> std::borrow::Cow<'static, str> {
-        ["Item Code", "Serial Number", "Order", "Location", "     "][column].into()
+        [
+            "Item Code",
+            "Std Price",
+            "List Price",
+            "Serial Number",
+            "Order",
+            "Location",
+            "Qty",
+            "     ",
+        ][column].into()
     }
 
     fn is_sortable_column(&mut self, column: usize) -> bool {
-        [true, true, true, true, true][column]
+        [true, true, true, true, true, true, true, true][column]
     }
 
     fn row_filter_hash(&mut self) -> &impl std::hash::Hash { &self.filter }
@@ -113,9 +169,8 @@ impl RowViewer<SerialsData> for SerialsViewer {
         let filter = &self.filter.to_uppercase();
 
         row.0.contains(&format!("[{}]", filter))
-            // || row.0.contains(filter.to_string() + "]")
             || row.0.contains(filter)
-            || row.1.contains(filter)
+            || row.4.contains(filter)
     }
 
     fn hotkeys(&mut self, context: &UiActionContext) -> Vec<(KeyboardShortcut, UiAction)> {
@@ -175,33 +230,70 @@ impl RowViewer<SerialsData> for SerialsViewer {
                 })
                 .inner
             }
-            1 => {
+            1 => ui.label(format!(" $ {}", round_to_two_decimal_places(row.1))),
+            2 => ui.label(format!(" $ {}", round_to_two_decimal_places(row.2))),
+            3 => {
                 ui.horizontal_centered(|ui| {
                     ui.add_space(5.);
-                    ui.colored_label(Color32::from_rgb(42, 195, 222), &row.1)
-                })
-                .inner
-            }
-            3 => ui.vertical_centered(|ui| ui.label(&row.3)).inner,
-            2 => {
-                ui.vertical_centered_justified(|ui| {
-                    let is_clickable = &row.2 != "Not Attached" && &row.2 != "S/N Info ⮫";
-                    let color = if !is_clickable {
-                        Color32::from_rgb(191, 33, 101)
-                    } else {
-                        Color32::from_rgb(51, 255, 189)
-                    };
-                    let res = Button::new(RichText::new(&row.2).color(color)).ui(ui);
-                    if is_clickable && res.clicked() {
-                        ui.ctx().open_url(OpenUrl::new_tab(xidax_order_url(last_n(&row.2, 7))));
+                    let label = RichText::new(&row.4).color(Color32::from_rgb(42, 195, 222));
+                    let res = Button::new(label)
+                        .frame(false)
+                        .ui(ui)
+                        .on_hover_text("Click to open Odoo movement history");
+                    if res.clicked() {
+                        if let Some(tx) = self.serial_click_tx.as_ref() {
+                            let _ = tx.try_send(row.4.clone());
+                        }
                     }
                     res
                 })
                 .inner
             }
-            4 => ui.vertical_centered_justified(|ui| 
-                    ui.checkbox(&mut { row.4 }, "")
-                ).inner,
+            4 => {
+                ui.vertical_centered_justified(|ui| {
+                    let is_clickable = &row.5 != "Not Attached" && &row.5 != "S/N Info ⮫";
+                    let color = if !is_clickable {
+                        Color32::from_rgb(191, 33, 101)
+                    } else {
+                        Color32::from_rgb(51, 255, 189)
+                    };
+                    let res = Button::new(RichText::new(&row.5).color(color)).ui(ui);
+                    if is_clickable && res.clicked() {
+                        ui.ctx().open_url(OpenUrl::new_tab(xidax_order_url(last_n(&row.5, 7))));
+                    }
+                    res
+                })
+                .inner
+            }
+            5 => ui.vertical_centered(|ui| ui.label(&row.6)).inner,
+            6 => {
+                // Rollup lookup; falls back to the row's own qty if the
+                // cache hasn't been refreshed yet.
+                let qty = self.qty_by_item.get(&row.0).copied().unwrap_or(row.3);
+                ui.vertical_centered(|ui| ui.label(format!("{qty}")))
+                    .inner
+            }
+            7 => ui
+                .vertical_centered_justified(|ui| {
+                    // In audit mode the checkbox is interactive and the
+                    // toggle persists. In live mode it's a read-only
+                    // attached-to-order indicator.
+                    if self.audit_id.is_some() {
+                        let mut found = row.7;
+                        let res = ui.checkbox(&mut found, "");
+                        if res.changed() {
+                            if let (Some(id), Some(tx)) =
+                                (self.audit_id.clone(), self.found_toggle_tx.as_ref())
+                            {
+                                let _ = tx.try_send((id, row.4.clone(), found));
+                            }
+                        }
+                        res
+                    } else {
+                        ui.checkbox(&mut { row.7 }, "")
+                    }
+                })
+                .inner,
             _ => unreachable!(),
         };
     }
@@ -213,24 +305,35 @@ impl RowViewer<SerialsData> for SerialsViewer {
         column: usize,
     ) -> Option<Response> {
         match column {
-            2 => {
-                if &row.2 == "Not Attached" || &row.2 == "S/N Info ⮫" {
+            4 => {
+                if &row.5 == "Not Attached" || &row.5 == "S/N Info ⮫" {
                     None
                 } else {
-                    let url = row.2.clone();
+                    let url = row.5.clone();
                     let res = Hyperlink::from_label_and_url(
-                        format!(" {}", row.2.clone()), 
+                        format!(" {}", row.5.clone()),
                         xidax_order_url(last_n(&url, 7))
                     )
                     .open_in_new_tab(true)
                     .ui(ui);
                     Some(res)
                 }
-            },
+            }
+            7 if self.audit_id.is_some() => {
+                let res = ui.checkbox(&mut row.7, "");
+                if res.changed() {
+                    if let (Some(id), Some(tx)) =
+                        (self.audit_id.clone(), self.found_toggle_tx.as_ref())
+                    {
+                        let _ = tx.try_send((id, row.4.clone(), row.7));
+                    }
+                }
+                Some(res)
+            }
             _ => None
         }
     }
-    
+
     fn on_cell_view_response(
         &mut self,
         row: &SerialsData,
@@ -238,10 +341,10 @@ impl RowViewer<SerialsData> for SerialsViewer {
         resp: &eframe::egui::Response,
     ) -> Option<Box<SerialsData>> {
         match column {
-            2 => {
-                if resp.clicked() && &row.2 != "Not Attached" && &row.2 != "S/N Info ⮫" {
-                    log::info!("Clicked on order: {}", row.2);
-                    resp.ctx.open_url(OpenUrl::new_tab(xidax_order_url(last_n(&row.2, 7))));
+            4 => {
+                if resp.clicked() && &row.5 != "Not Attached" && &row.5 != "S/N Info ⮫" {
+                    log::info!("Clicked on order: {}", row.5);
+                    resp.ctx.open_url(OpenUrl::new_tab(xidax_order_url(last_n(&row.5, 7))));
                 }
                 None
             },
@@ -252,13 +355,15 @@ impl RowViewer<SerialsData> for SerialsViewer {
     }
 
     fn set_cell_value(&mut self, src: &SerialsData, dst: &mut SerialsData, column: usize) {
-        // info!("Source: {:?}\nDest: {:?}\nCol: {:?}", src.2, dst.2, column);
         match column {
             0 => dst.0 = src.0.clone(),
-            1 => dst.1 = src.1.clone(),
-            2 => dst.2 = src.2.clone(),
-            3 => dst.3 = src.3.clone(),
-            4 => dst.4 = src.4,
+            1 => dst.1 = src.1,
+            2 => dst.2 = src.2,
+            3 => dst.4 = src.4.clone(),
+            4 => dst.5 = src.5.clone(),
+            5 => dst.6 = src.6.clone(),
+            6 => dst.3 = src.3,
+            7 => dst.7 = src.7,
             _ => unreachable!(),
         }
     }
@@ -271,47 +376,64 @@ impl RowViewer<SerialsData> for SerialsViewer {
     ) -> std::cmp::Ordering {
         match column {
             0 => row_l.0.cmp(&row_r.0),
-            1 => row_l.1.cmp(&row_r.1),
-            2 => {
-                let l_contains_not_attached = row_l.2.contains("Not Attached");
-                let r_contains_not_attached = row_r.2.contains("Not Attached");
+            1 => row_l.1.partial_cmp(&row_r.1).unwrap_or(std::cmp::Ordering::Equal),
+            2 => row_l.2.partial_cmp(&row_r.2).unwrap_or(std::cmp::Ordering::Equal),
+            3 => row_l.4.cmp(&row_r.4),
+            4 => {
+                let l_contains_not_attached = row_l.5.contains("Not Attached");
+                let r_contains_not_attached = row_r.5.contains("Not Attached");
 
                 match (l_contains_not_attached, r_contains_not_attached) {
-                    // If both contain "Not Attached", treat them as equal
                     (true, true) => std::cmp::Ordering::Equal,
-                    // If row_l contains "Not Attached" but row_r doesn't, consider row_r "greater"
                     (true, false) => std::cmp::Ordering::Less,
-                    // If row_r contains "Not Attached" but row_l doesn't, consider row_l "greater"
                     (false, true) => std::cmp::Ordering::Greater,
-                    // Otherwise, compare the actual values
-                    (false, false) => row_l.2.cmp(&row_r.2),
+                    (false, false) => row_l.5.cmp(&row_r.5),
                 }
             }
-            3 => row_l.3.cmp(&row_r.3),
-            4 => row_l.4.cmp(&row_r.4),
+            5 => row_l.6.cmp(&row_r.6),
+            6 => {
+                // Sort the rollup, not the stored row.3 (which is always
+                // 0 — the displayed qty comes from `qty_by_item`).
+                let ql = self.qty_by_item.get(&row_l.0).copied().unwrap_or(0);
+                let qr = self.qty_by_item.get(&row_r.0).copied().unwrap_or(0);
+                ql.cmp(&qr)
+            }
+            7 => row_l.7.cmp(&row_r.7),
             _ => unreachable!(),
         }
     }
 
     fn new_empty_row(&mut self) -> SerialsData {
-        // Instead of requiring `Default` trait for row data types, the viewer is
-        // responsible of providing default creation method.
         SerialsData::default()
     }
 
     fn column_render_config(&mut self, column: usize, _: bool) -> TableColumnConfig {
         let col_config = TableColumnConfig::auto();
         match column {
-            0 => col_config.resizable(true).at_least(400.).at_most(550.),
-            1 => col_config.resizable(true).at_least(200.).at_most(250.),
-            3 => col_config.resizable(false).at_least(60.).at_most(60.),
-            2 => col_config.resizable(false).at_least(150.).at_most(150.),
-            4 => col_config.resizable(false).at_most(50.),
+            0 => col_config.resizable(true).at_least(360.).at_most(540.),
+            1 => col_config.resizable(true).at_least(80.).at_most(110.),
+            2 => col_config.resizable(true).at_least(80.).at_most(110.),
+            3 => col_config.resizable(true).at_least(200.).at_most(250.),
+            4 => col_config.resizable(false).at_least(150.).at_most(150.),
+            5 => col_config.resizable(false).at_least(60.).at_most(60.),
+            6 => col_config.resizable(false).at_least(55.).at_most(70.),
+            7 => col_config.resizable(false).at_most(50.),
             _ => col_config,
         }
     }
 
-    fn is_editable_cell(&mut self, _: usize, _row: usize, _row_value: &SerialsData) -> bool { false }
+    fn is_editable_cell(&mut self, column: usize, _row: usize, _row_value: &SerialsData) -> bool {
+        // Only the Found cell is editable, and only when an audit is loaded.
+        column == 7 && self.audit_id.is_some()
+    }
+}
+
+fn round_to_two_decimal_places(value: f64) -> f64 {
+    if value > 0.0 {
+        (value * 100.0).round() / 100.0
+    } else {
+        value
+    }
 }
 
 fn last_n(s: &str, n: usize) -> &str {
@@ -329,6 +451,9 @@ struct Codec;
 impl RowCodec<SerialsData> for Codec {
     type DeserializeError = &'static str;
 
+    // Codec follows the same column → field mapping as the RowViewer
+    // (see comment above the impl): col 3 = Serial, col 4 = Order,
+    // col 5 = Location, col 6 = Qty (rollup), col 7 = Found.
     fn encode_column(&mut self, src_row: &SerialsData, column: usize, dst: &mut String) {
         match column {
             0 => {
@@ -336,17 +461,18 @@ impl RowCodec<SerialsData> for Codec {
 
                 if let Some(caps) = re.captures(&src_row.0) {
                     let inner_text = &caps[1];
-                    log::info!("Text inside brackets: {}", inner_text);
                     dst.push_str(&inner_text);
                 } else {
-                    log::info!("No brackets found");
                     dst.push_str(&src_row.0);
                 }
             },
-            1 => dst.push_str(&src_row.1),
-            2 => dst.push_str(&src_row.2),
-            3 => dst.push_str(&src_row.3),
-            4 => dst.push_str(&format!("{}", src_row.4)),
+            1 => dst.push_str(&format!("{}", src_row.1)),
+            2 => dst.push_str(&format!("{}", src_row.2)),
+            3 => dst.push_str(&src_row.4),
+            4 => dst.push_str(&src_row.5),
+            5 => dst.push_str(&src_row.6),
+            6 => dst.push_str(&format!("{}", src_row.3)),
+            7 => dst.push_str(&format!("{}", src_row.7)),
             _ => unreachable!(),
         }
     }
@@ -362,12 +488,17 @@ impl RowCodec<SerialsData> for Codec {
                 let re = Regex::new(r"\[([^\]]+)\]").unwrap();
                 if let Some(caps) = re.captures(src_data) {
                     dst_row.0 = caps[1].to_string();
+                } else {
+                    dst_row.0 = src_data.to_string();
                 }
             },
             1 => dst_row.1 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
             2 => dst_row.2 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            3 => dst_row.3 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            4 => dst_row.4 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            3 => dst_row.4 = src_data.to_string(),
+            4 => dst_row.5 = src_data.to_string(),
+            5 => dst_row.6 = src_data.to_string(),
+            6 => dst_row.3 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            7 => dst_row.7 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
             _ => unreachable!(),
         }
 

@@ -14,10 +14,10 @@ use ratatui::{
 };
 use crossterm::event::{KeyCode, KeyEvent, MouseEvent, MouseEventKind, MouseButton};
 use database::schema::{
-    ComputerData, CustomerData, DuplicateCheckResult, DuplicateResolution, 
-    FieldDisplay, FieldSelections, LiveTaskPayload, MergeResolution, 
-    RecordId, RecordIdExt, TicketData, merge_task, merge_ticket, 
-    merge_customer, merge_computer,
+    DuplicateCheckResult, DuplicateResolution, 
+    FieldDisplay, FieldSelections, MergeResolution, 
+    RecordId, RecordIdExt
+    // TicketData, merge_task, merge_ticket, merge_customer, merge_computer,ComputerData, CustomerData, LiveTaskPayload
 };
 
 use crate::terminal_mode::styling::CATPPUCCIN;
@@ -73,7 +73,7 @@ pub struct DuplicateMergeModal {
     /// Whether the user cancelled
     pub cancelled: bool,
     /// Cache of user RecordId -> username for display
-    pub user_cache: HashMap<String, String>,
+    pub _user_cache: HashMap<String, String>,
     /// Current field index for navigation within a page
     pub field_index: RefCell<usize>,
     /// List state for field selection
@@ -93,7 +93,7 @@ impl Default for DuplicateMergeModal {
             is_open: false,
             confirmed: false,
             cancelled: false,
-            user_cache: HashMap::new(),
+            _user_cache: HashMap::new(),
             field_index: RefCell::new(0),
             list_state: RefCell::new(ListState::default()),
             modal_area: RefCell::new(Rect::default()),
@@ -113,7 +113,7 @@ impl DuplicateMergeModal {
             is_open: true,
             confirmed: false,
             cancelled: false,
-            user_cache: HashMap::new(),
+            _user_cache: HashMap::new(),
             field_index: RefCell::new(0),
             list_state: RefCell::new(ListState::default()),
             modal_area: RefCell::new(Rect::default()),
@@ -123,21 +123,21 @@ impl DuplicateMergeModal {
     }
     
     /// Add a user to the cache for display purposes
-    pub fn cache_user(&mut self, id: &RecordId, username: &str) {
-        self.user_cache.insert(id.key_string(), username.to_string());
+    pub fn _cache_user(&mut self, id: &RecordId, username: &str) {
+        self._user_cache.insert(id.key_string(), username.to_string());
     }
     
     /// Get a formatted string for an assignee
-    pub fn format_assignee(&self, id: &RecordId) -> String {
+    pub fn _format_assignee(&self, id: &RecordId) -> String {
         let id_str = id.key_string();
-        if let Some(username) = self.user_cache.get(&id_str) {
+        if let Some(username) = self._user_cache.get(&id_str) {
             format!("{} ({})", username, id_str)
         } else {
             id_str
         }
     }
 
-    pub fn open(&mut self) {
+    pub fn _open(&mut self) {
         self.is_open = true;
         self.confirmed = false;
         self.cancelled = false;

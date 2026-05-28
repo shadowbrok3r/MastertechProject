@@ -11,7 +11,7 @@ source_schema_hash = "de371240dc5fcaebab286030e703183b43eb5d5ea822eb9ff1149804cc
 # `surrealkit rollout lint database/rollouts/20260527140000__slice11_duration_secs_strict_types.toml`
 # — the correct hash will appear in the lint error if this placeholder
 # disagrees with the on-disk schema files. Paste the reported value back.
-target_schema_hash = "74c81804c5de8c913a696698e31b53d9bd408a4cfc7724cc7b257e2dde740e9e"
+target_schema_hash = "ade219575a5bd32a35f7ab4b67498239bc5cbb715b032604fc46c00d08030473"
 # Modifies existing managed fields with a stricter subtype + back-fills
 # pre-migration rows. Same shape as slice6_relax_run_objects (a non-additive
 # field-type change) so the compatibility tier matches: "none".

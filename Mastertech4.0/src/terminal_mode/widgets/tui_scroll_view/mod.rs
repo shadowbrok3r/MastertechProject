@@ -1,3 +1,4 @@
+#![allow(unused)]
 //! # Tui-scrollview
 //!
 //! [![Crates.io Badge]][Crate] [![License Badge]](#license) [![Docs.rs Badge]][API Docs]<br>

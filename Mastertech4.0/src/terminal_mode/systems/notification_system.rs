@@ -123,7 +123,7 @@ impl Notification {
             // .block(
             //     Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(Style::default().fg(border_color))
             // )
-            .line_set(DOUBLE)
+            .filled_symbol(DOUBLE.horizontal)
             .style(Style::default().fg(CATPPUCCIN.sapphire))
             .filled_style(Style::default().fg(CATPPUCCIN.pink))
             .ratio(self.elapsed_ratio());
