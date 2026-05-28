@@ -34,6 +34,50 @@ mod mapping;
 mod runtime;
 mod script_catalog;
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Process-wide count of active stress runs. Incremented at the top of
+/// `RunController::worker` and decremented when the worker thread
+/// returns (via the RAII `StressActiveGuard`, so panics still
+/// decrement). Read by `is_stress_active()` from any thread.
+///
+/// Consumers (e.g. Mastertech4.0's LiveData loop) use this to throttle
+/// chatty TCP traffic while a stress test is hogging the connection —
+/// telemetry samples drop from 400 ms to a coarser cadence so WASM
+/// plugin RPC and other Cmd traffic stay responsive.
+pub(crate) static STRESS_ACTIVE: AtomicUsize = AtomicUsize::new(0);
+
+/// `true` while at least one stress run is in flight in this process.
+pub fn is_stress_active() -> bool {
+    STRESS_ACTIVE.load(Ordering::Relaxed) > 0
+}
+
+/// How many stress runs are currently in flight. Useful for diagnostics
+/// when scenarios spawn multiple workers.
+pub fn stress_active_count() -> usize {
+    STRESS_ACTIVE.load(Ordering::Relaxed)
+}
+
+/// RAII guard: decrements `STRESS_ACTIVE` on drop. The worker thread
+/// holds one for its lifetime so the counter goes back down regardless
+/// of whether the run finished normally, errored out, or panicked
+/// (the `catch_unwind` wrapper in `RunController::start` still lets the
+/// guard's Drop fire).
+pub(crate) struct StressActiveGuard;
+
+impl StressActiveGuard {
+    pub(crate) fn new() -> Self {
+        STRESS_ACTIVE.fetch_add(1, Ordering::SeqCst);
+        Self
+    }
+}
+
+impl Drop for StressActiveGuard {
+    fn drop(&mut self) {
+        STRESS_ACTIVE.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 pub use hardware::{ensure_components_for_run, ensure_components_from_snapshot};
 
 pub use controller::{RunController, RunPlan, RunSpec, RunStage, RunUpdate, RunVerdict};

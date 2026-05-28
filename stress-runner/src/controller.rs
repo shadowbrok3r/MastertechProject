@@ -308,6 +308,10 @@ fn worker(
     running: Arc<AtomicBool>,
 ) {
     let started_at = Instant::now();
+    // Drop guard bumps the process-wide STRESS_ACTIVE counter. Reset by
+    // the guard's Drop, so it works even if the worker panics — the
+    // `catch_unwind` in `RunController::start` still unwinds locals.
+    let _stress_active_guard = crate::StressActiveGuard::new();
     log::info!(
         "[stress-runner/worker] start: computer={:?} target_kind={:?} plan={:?}",
         spec.computer, spec.target_kind, std::mem::discriminant(&spec.plan)

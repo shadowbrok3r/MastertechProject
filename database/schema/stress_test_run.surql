@@ -67,8 +67,11 @@ DEFINE FIELD scenario_stages.*  ON stress_test_run TYPE object                  
 -- --- Timing ---
 DEFINE FIELD started_at          ON stress_test_run TYPE datetime DEFAULT time::now()              PERMISSIONS FULL;
 DEFINE FIELD ended_at            ON stress_test_run TYPE none | datetime                            PERMISSIONS FULL;
-DEFINE FIELD duration_planned_secs ON stress_test_run TYPE none | number                            PERMISSIONS FULL;
-DEFINE FIELD duration_actual_secs  ON stress_test_run TYPE none | number                            PERMISSIONS FULL;
+-- duration_planned_secs is u64 in Rust; SurrealDB `int` matches that.
+-- duration_actual_secs is f64 in Rust — must be float so the
+-- `Option<f64>` deserializer never sees an integer-typed value.
+DEFINE FIELD duration_planned_secs ON stress_test_run TYPE none | int                              PERMISSIONS FULL;
+DEFINE FIELD duration_actual_secs  ON stress_test_run TYPE none | float                            PERMISSIONS FULL;
 
 -- --- Environment ---
 DEFINE FIELD tech                ON stress_test_run TYPE none | string                              PERMISSIONS FULL;

@@ -677,9 +677,9 @@ pub struct FetchPluginParams {
 pub struct ValidateConnectionLinksParams {
     #[schemars(description = "connected_client.connection_string (HOST:hash9)")]
     pub connection_string: String,
-    #[schemars(description = "Optional customer id to validate")]
+    #[schemars(description = "Optional customer id to validate. Accepts `customer:key`, bare key, or SurrealQL `customer:`key`` (backticks when key contains `:`).")]
     pub customer_id: Option<String>,
-    #[schemars(description = "Optional computer id to validate")]
+    #[schemars(description = "Optional computer id to validate. Accepts `computer:key`, bare key, or SurrealQL `computer:`key`` (backticks when key contains `:`).")]
     pub computer_id: Option<String>,
 }
 
@@ -695,13 +695,13 @@ pub struct CreateDiagnosticSessionParams {
     pub connection_string: String,
     #[schemars(description = "Hostname of the machine being diagnosed")]
     pub hostname: String,
-    #[schemars(description = "REQUIRED. Customer record id (e.g. 'customer:abc123' or just 'abc123'). Look up first via find_customer_by_email/phone or via the connected_client.computer.customer graph. If you cannot resolve a customer, ask the user before retrying — do not fabricate.")]
+    #[schemars(description = "REQUIRED. Customer record id — `customer:197987`, bare `197987`, or SurrealQL `customer:`197987`` / `customer:`DESKTOP-HQAF13L:b57a7e8f9`` when copied from query results. Backticks are stripped automatically.")]
     pub customer_id: String,
-    #[schemars(description = "REQUIRED. Computer record id (e.g. 'computer:abc123' or just 'abc123'). Look up first via get_computer_details or via connected_client.computer. If you cannot resolve a computer, ask the user before retrying — do not fabricate.")]
+    #[schemars(description = "REQUIRED. Computer record id — canonical `computer:HOSTNAME:hash9`, bare key, or SurrealQL backtick-quoted form from SurrealDB. Backticks are stripped automatically.")]
     pub computer_id: String,
-    #[schemars(description = "Optional task record id (e.g. 'task:abc123') if this diagnostic corresponds to an in-house service task. Can be linked later via link_diagnostic_to_task.")]
+    #[schemars(description = "Optional task record id (`task:key` or SurrealQL `task:`key``).")]
     pub task_id: Option<String>,
-    #[schemars(description = "Optional service order record id (e.g. 'service_order:abc123') if a check-in service order exists for this device.")]
+    #[schemars(description = "Optional service order record id (`service_order:key` or SurrealQL quoted form).")]
     pub service_order_id: Option<String>,
     #[schemars(description = "Customer display name (if known)")]
     pub customer_name: Option<String>,
@@ -714,11 +714,11 @@ pub struct CreateDiagnosticSessionParams {
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct LinkDiagnosticToTaskParams {
-    #[schemars(description = "Session ID to update (e.g. session_id returned by create_diagnostic_session)")]
+    #[schemars(description = "Session ID to update (UUID string, or `diagnostic_session:`uuid`` from SurrealDB).")]
     pub session_id: String,
-    #[schemars(description = "Task record id to associate with this session (e.g. 'task:abc123' or just 'abc123')")]
+    #[schemars(description = "Task record id (`task:key` or SurrealQL quoted form).")]
     pub task_id: Option<String>,
-    #[schemars(description = "Optional service order record id to associate with this session")]
+    #[schemars(description = "Optional service order record id (`service_order:key` or SurrealQL quoted form).")]
     pub service_order_id: Option<String>,
 }
 
@@ -4168,23 +4168,10 @@ async fn run_local_cargo_compile(
     Ok((true, stdout, stderr, size))
 }
 
-/// Parse a Surreal record id from an MCP-supplied string. Accepts either
-/// the full `table:key` form or just the bare `key`, returning a record
-/// id on the requested table in either case. Used by the diagnostic
-/// tools to convert AI-supplied identifiers into the typed `RecordId`
-/// the schema now requires.
-///
-/// **Critical**: only strip the *first* colon (the table prefix).  The
-/// previous `split(':').last()` form stripped *every* colon, which
-/// silently truncated keys that themselves contain colons — like the
-/// canonical `computer:DESKTOP-HQAF13L:b57a7e8f9` (hostname:hash9) the
-/// rest of the codebase uses for client/computer records.  An AI tool
-/// call with that id would land in the DB as `computer:b57a7e8f9`
-/// (bare hash), orphaning the row off the real client.  Exact
-/// regression seen on diagnostic_session:91833f0d-… where the
-/// `computer_id` came in as `computer:b57a7e8f9` while the
-/// connected_client + computer table both use the full
-/// `DESKTOP-HQAF13L:b57a7e8f9` key.
+/// Parse a Surreal record id from an MCP-supplied string. Accepts `table:key`,
+/// bare `key`, and SurrealQL backtick-quoted keys (`table:`key-with:colons``).
+/// Only strips the first colon when the prefix is a table name so
+/// `computer:DESKTOP-HQAF13L:b57a7e8f9` keeps the full hostname:hash key.
 fn parse_record_id(s: &str, table: &'static str) -> database::schema::RecordId {
     database::schema::entity_link::parse_record_id(s, table)
 }

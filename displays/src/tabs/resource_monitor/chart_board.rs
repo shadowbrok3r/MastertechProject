@@ -73,6 +73,29 @@ impl ChartBoard {
         self.process_count.push(t, snap.processes.len() as f64);
     }
 
+    /// RMM-style cramped layout for the Home page: 4 columns × 2 rows of
+    /// shorter charts with no axis labels and no inner scroll. Keeps the
+    /// whole grid visible in roughly the same vertical footprint as a
+    /// single full-height chart in the original layout.
+    pub fn show_compact(&self, ui: &mut Ui) {
+        let palette = chart_palette(ui);
+        const COMPACT_HEIGHT: f32 = 78.0;
+        ui.add_space(2.0);
+        ui.columns(4, |cols| {
+            self.avg_cpu_pct.show_with(&mut cols[0], "avg_cpu_c", "Avg CPU %", "%", palette.avg_cpu, Some((0.0, 100.0)), COMPACT_HEIGHT, true);
+            self.peak_cpu_pct.show_with(&mut cols[1], "peak_cpu_c", "Peak CPU %", "%", palette.peak_cpu, Some((0.0, 100.0)), COMPACT_HEIGHT, true);
+            self.avg_freq_mhz.show_with(&mut cols[2], "avg_mhz_c", "Avg clock", "MHz", palette.clock, None, COMPACT_HEIGHT, true);
+            self.ram_used_pct.show_with(&mut cols[3], "ram_pct_c", "RAM used", "%", palette.memory, Some((0.0, 100.0)), COMPACT_HEIGHT, true);
+        });
+        ui.add_space(4.0);
+        ui.columns(4, |cols| {
+            self.page_file_used_pct.show_with(&mut cols[0], "pf_pct_c", "Page file", "%", palette.page_file, Some((0.0, 100.0)), COMPACT_HEIGHT, true);
+            self.top_disk_mb_s.show_with(&mut cols[1], "top_disk_c", "Top disk", "MB/s", palette.disk, None, COMPACT_HEIGHT, true);
+            self.top_net_mbps.show_with(&mut cols[2], "top_net_c", "Top adapter", "Mbps", palette.network, None, COMPACT_HEIGHT, true);
+            self.process_count.show_with(&mut cols[3], "proc_c", "Processes", "count", palette.process_count, None, COMPACT_HEIGHT, true);
+        });
+    }
+
     pub fn show(&self, ui: &mut Ui) {
         let palette = chart_palette(ui);
         egui::ScrollArea::vertical().show(ui, |ui| {
@@ -195,17 +218,34 @@ impl LineChart {
         color: egui::Color32,
         y_range: Option<(f64, f64)>,
     ) {
+        self.show_with(ui, id, title, unit, color, y_range, 130.0, false);
+    }
+
+    fn show_with(
+        &self,
+        ui: &mut Ui,
+        id: &str,
+        title: &str,
+        unit: &str,
+        color: egui::Color32,
+        y_range: Option<(f64, f64)>,
+        height: f32,
+        compact: bool,
+    ) {
         ui.vertical(|ui| {
             let latest = self.samples.back().map(|(_, y)| *y).unwrap_or(0.0);
             ui.horizontal(|ui| {
-                ui.label(RichText::new(title).strong());
+                let title_rt = if compact {
+                    RichText::new(title).strong().small()
+                } else {
+                    RichText::new(title).strong()
+                };
+                ui.label(title_rt);
                 ui.with_layout(
                     egui::Layout::right_to_left(egui::Align::Center),
                     |ui| {
-                        ui.colored_label(
-                            color,
-                            RichText::new(format!("{latest:.1} {unit}")).monospace(),
-                        );
+                        let val_rt = RichText::new(format!("{latest:.1} {unit}")).monospace();
+                        ui.colored_label(color, if compact { val_rt.small() } else { val_rt });
                     },
                 );
             });
@@ -217,15 +257,16 @@ impl LineChart {
                 .collect();
 
             let mut plot = Plot::new(id)
-                .height(130.0)
+                .height(height)
                 .allow_drag(false)
                 .allow_zoom(false)
                 .allow_scroll(false)
                 .show_background(false)
-                .show_axes([true, true])
-                .show_grid([true, true])
-                .x_axis_label("s")
-                .y_axis_label(unit);
+                .show_axes([!compact, !compact])
+                .show_grid([true, true]);
+            if !compact {
+                plot = plot.x_axis_label("s").y_axis_label(unit);
+            }
             if let Some((lo, hi)) = y_range {
                 plot = plot.include_y(lo).include_y(hi);
             }

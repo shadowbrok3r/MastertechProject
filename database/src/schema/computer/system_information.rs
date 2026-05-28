@@ -35,7 +35,50 @@ pub struct SystemInformation {
     pub network_interfaces: Vec<NetworkInterface>,
     /// List of active processes on host
     pub processes: Vec<Process>,
-    pub gpu_info: Gpu
+    pub gpu_info: Gpu,
+    /// Windows Hardware Error Architecture counters polled from the
+    /// system event log. `None` on non-Windows or when the WHEA
+    /// channel isn't readable (e.g. running unprivileged). The
+    /// stress-kit telemetry agent maintains these in the background
+    /// and the LiveData loop snapshots them into every payload.
+    ///
+    /// **Do NOT add `skip_serializing_if` here.** This struct is
+    /// serialized via bincode `standard()`, which is a positional
+    /// format — `skip_serializing_if` makes the encoder omit the
+    /// field when `None`, and the decoder then over-reads past the
+    /// buffer end and silently fails (every sysinfo payload gets
+    /// dropped, live charts go blank). `Option<T>` already encodes
+    /// as a 1-byte tag + payload regardless of variant, so leaving
+    /// the field unconditional costs at most one byte per payload.
+    /// `#[serde(default)]` stays so JSON / debug formats deserialize
+    /// cleanly when the field is missing in those contexts.
+    #[serde(default)]
+    pub whea: Option<WheaCounters>,
+    /// GPU TDR (Timeout Detection and Recovery) counters from Windows.
+    /// Same source as `whea` and same `None` semantics. Same
+    /// no-`skip_serializing_if` rule as `whea` — see comment above.
+    #[serde(default)]
+    pub tdr: Option<TdrCounters>,
+}
+
+/// Mirror of `stress_kit::telemetry::WheaCounters` carried over the
+/// wire so the admin's live view doesn't have to depend on stress-kit
+/// types. `delta_since_program_start` increments while the client
+/// process has been running; `absolute_since_boot` is the OS-wide
+/// running total since the machine booted.
+#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default)]
+pub struct WheaCounters {
+    pub delta_since_program_start: u64,
+    pub absolute_since_boot: u64,
+}
+
+/// Mirror of `stress_kit::telemetry::TdrCounters`. Same shape as
+/// `WheaCounters`; kept as a separate type so a future change to one
+/// doesn't accidentally affect the other.
+#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default)]
+pub struct TdrCounters {
+    pub delta_since_program_start: u64,
+    pub absolute_since_boot: u64,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default )]

@@ -251,11 +251,13 @@ impl crate::app_state::SharedContext {
                 || error_msg.contains("ConnectionFailed")
                 || error_msg.contains("stream terminated");
             if looks_transient {
-                // Cooldown: a single DB blip queues five identical errors
-                // (one per dead LIVE stream). Without this gate the banner
-                // would flicker open/close five times in the same frame.
+                // Cooldown swallows the burst of 5 identical errors from one blip.
                 const RESPAWN_COOLDOWN: web_time::Duration =
                     web_time::Duration::from_secs(10);
+                // Quiet period after which the auto-reconnect budget refills.
+                const ATTEMPT_RESET_WINDOW: web_time::Duration =
+                    web_time::Duration::from_secs(60);
+                const MAX_AUTO_RECONNECT_ATTEMPTS: u32 = 2;
                 let now = web_time::Instant::now();
                 let in_cooldown = self
                     .last_live_respawn_at
@@ -268,13 +270,37 @@ impl crate::app_state::SharedContext {
                         now.duration_since(self.last_live_respawn_at.unwrap())
                     );
                 } else {
-                    log::warn!(
-                        "Stream-terminated error — prompting operator to reconnect"
-                    );
+                    if self
+                        .last_live_respawn_at
+                        .map(|t| now.duration_since(t) >= ATTEMPT_RESET_WINDOW)
+                        .unwrap_or(false)
+                    {
+                        self.reconnect_attempts = 0;
+                    }
                     self.live_queries_active = false;
-                    self.needs_reconnect = true;
-                    self.show_reload_prompt = true;
                     self.last_live_respawn_at = Some(now);
+
+                    let user = self.current_user.clone();
+                    if self.reconnect_attempts < MAX_AUTO_RECONNECT_ATTEMPTS
+                        && user.is_some()
+                    {
+                        self.reconnect_attempts += 1;
+                        log::warn!(
+                            "Stream-terminated error — auto-reconnect attempt {} of {}",
+                            self.reconnect_attempts,
+                            MAX_AUTO_RECONNECT_ATTEMPTS
+                        );
+                        self.needs_reconnect = true;
+                        let user = user.unwrap();
+                        self.load_data(ctx, &user);
+                    } else {
+                        log::warn!(
+                            "Auto-reconnect exhausted (attempts={}) — prompting operator",
+                            self.reconnect_attempts
+                        );
+                        self.needs_reconnect = true;
+                        self.show_reload_prompt = true;
+                    }
                 }
             }
         }
@@ -473,9 +499,8 @@ impl crate::app_state::SharedContext {
                     );
                     ui.label(
                         eframe::egui::RichText::new(
-                            "The live subscription was dropped. Click Reconnect to \
-                             re-issue the subscriptions, or reload the page if that \
-                             doesn't recover.",
+                            "The live subscription was dropped. Try reconnecting first, \
+                            or reload the page if that doesn't recover.",
                         )
                         .color(eframe::egui::Color32::from_rgb(230, 200, 200)),
                     );

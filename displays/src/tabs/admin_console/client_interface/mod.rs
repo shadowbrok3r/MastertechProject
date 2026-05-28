@@ -13,6 +13,7 @@ use registry_editor::RegistryEditor;
 use startup_apps_viewer::StartupAppsViewer;
 use remote_scripts_viewer::RemoteScriptsViewer;
 use tabs::mcp_tool_log_viewer::McpToolLogViewer;
+use tabs::home_page::HomePage;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use ui::WsDisplayState;
@@ -162,6 +163,7 @@ pub struct WebSocketClient {
     pub startup_apps_viewer: StartupAppsViewer,
     pub remote_scripts_viewer: RemoteScriptsViewer,
     pub mcp_tool_log_viewer: McpToolLogViewer,
+    pub home_page: HomePage,
     /// Whether the remote egui frame capture is actively streaming.
     pub egui_viewer_active: bool,
     /// File transfer progress: (filename, chunks_sent, total_chunks)
@@ -268,7 +270,10 @@ Get-WmiObject")
             display_state_channel,
             timeout_counter: Instant::now(),
             toolbox,
-            state: WsDisplayState::Shell,
+            // Home is the RMM-style landing page (hardware inventory +
+            // live charts + active stress runs). Replaces the old Shell
+            // default so a fresh session shows status at-a-glance.
+            state: WsDisplayState::Home,
             explorer,
             helper_delegate,
             interactive: false,
@@ -327,6 +332,7 @@ Get-WmiObject")
             startup_apps_viewer: StartupAppsViewer::new(),
             remote_scripts_viewer: RemoteScriptsViewer::new(),
             mcp_tool_log_viewer: McpToolLogViewer::new(),
+            home_page: HomePage::new(),
             egui_viewer_active: false,
             file_transfer_progress: None,
             #[cfg(not(target_arch = "wasm32"))]

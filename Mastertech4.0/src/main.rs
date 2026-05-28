@@ -153,6 +153,14 @@ impl eframe::App for app_state::MasterTechApp {
     }
 }
 
+fn env_logger_with_dependency_filters() -> env_logger::Builder {
+    let mut builder = env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("info,evtx=warn"),
+    );
+    builder.filter_module("evtx", log::LevelFilter::Warn);
+    builder
+}
+
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
@@ -218,9 +226,7 @@ async fn main() -> eframe::Result<()> {
     //     they're useless to Claude Desktop anyway.
     //   * No `process::exit(0)` race with eframe's drop path.
     if matches.get_flag("mcp-stdio") {
-        let _ = env_logger::Builder::from_env(
-            env_logger::Env::default().default_filter_or("info"),
-        )
+        let _ = env_logger_with_dependency_filters()
         .target(env_logger::Target::Stderr)
         .try_init();
 
@@ -246,7 +252,10 @@ async fn main() -> eframe::Result<()> {
     }
 
     if matches.get_flag("term") {
-        let _init = tui_logger::init_logger(log::LevelFilter::Info);
+        let drain = tui_logger::Drain::new();
+        let _ = env_logger_with_dependency_filters()
+            .format(move |_buf, record| Ok(drain.log(record)))
+            .try_init();
         // simplelog::WriteLogger::init(
         //     log::LevelFilter::Debug,
         //     simplelog::Config::default(),
@@ -262,12 +271,17 @@ async fn main() -> eframe::Result<()> {
         ).unwrap();
     } else {
         // Create an EguiLogger; multi_log will take care of initialization.
-        let egui_logger = Box::new(displays::ui_tools::egui_logger::builder().build());
+        let egui_logger = Box::new(
+            displays::ui_tools::egui_logger::builder()
+                .add_blacklist("evtx::evtx_chunk")
+                .add_blacklist("evtx::evtx_parser")
+                .build(),
+        );
         // Early initialization of the logger
         let drain = tui_logger::Drain::new();
         // instead of tui_logger::init_logger, we use `env_logger`
         let tui_log = Box::new(
-            env_logger::Builder::default()
+            env_logger_with_dependency_filters()
             .format(move |_buf, record|
                 // patch the env-logger entry through our drain to the tui-logger
                 Ok(drain.log(record))

@@ -10,7 +10,11 @@ use super::WebSocketClient;
 
 
 pub enum WsDisplayState {
-    LiveStats,
+    /// RMM-style overview for this connected client: hardware inventory,
+    /// live stress-run status with countdown, live telemetry charts, and
+    /// a Processes sub-tab. Default landing screen for a new session.
+    /// Replaces the old `LiveStats` standalone tab.
+    Home,
     Explorer,
     Shell,
     ToolBox,
@@ -64,6 +68,22 @@ impl WebSocketClient {
                 // open. The Stop variant only appears when the relevant
                 // stream is already running.
                 ui.menu_button(RichText::new(menu_label("View")).color(btn_color).strong(), |ui| {
+                    // Home is the RMM-style overview — hardware inventory,
+                    // live charts, running stress tests, processes. Replaces
+                    // the old standalone "Charts" entry.
+                    if ui
+                        .button(format!("{} Home", icons::HOME))
+                        .clicked()
+                    {
+                        let _ = self.display_state_channel.0.try_send(WsDisplayState::Home);
+                        // Home renders live charts; fire the LiveData feed if
+                        // it isn't already running so the chart_board has data.
+                        if !self.live_stats_active {
+                            let _ = self.send_cmd_tx.try_send(Cmd::LiveData);
+                            self.live_stats_active = true;
+                        }
+                        ui.close();
+                    }
                     if ui.button("My Tools").clicked() {
                         let _ = self.display_state_channel.0.try_send(WsDisplayState::ToolBox);
                         let _ = self.toolbox.request_contents("/");
@@ -98,14 +118,24 @@ impl WebSocketClient {
                         ui.close();
                     }
                     ui.separator();
+                    // Live data feed toggle. Home's charts depend on this feed.
                     if self.live_stats_active {
-                        if ui.button(RichText::new(format!("{} Stop Charts", icons::STOP)).color(ui.style().visuals.error_fg_color)).clicked() {
+                        if ui
+                            .button(
+                                RichText::new(format!("{} Stop live data", icons::STOP))
+                                    .color(ui.style().visuals.error_fg_color),
+                            )
+                            .clicked()
+                        {
                             let _ = self.send_cmd_tx.try_send(Cmd::Quit);
                             self.live_stats_active = false;
                             ui.close();
                         }
-                    } else if ui.button("Charts").clicked() {
-                        let _ = self.display_state_channel.0.try_send(WsDisplayState::LiveStats);
+                    } else if ui
+                        .button(format!("{} Start live data", icons::PLAY))
+                        .on_hover_text("Resume the live telemetry feed that drives the Home page charts.")
+                        .clicked()
+                    {
                         let _ = self.send_cmd_tx.try_send(Cmd::LiveData);
                         self.live_stats_active = true;
                         ui.close();
@@ -320,7 +350,7 @@ impl WebSocketClient {
                 // arriving back at the window after switching tabs lose
                 // their place otherwise.
                 let current_view = match self.state {
-                    WsDisplayState::LiveStats     => "Charts",
+                    WsDisplayState::Home          => "Home",
                     WsDisplayState::Explorer      => "Explorer",
                     WsDisplayState::Shell         => "Shell",
                     WsDisplayState::ToolBox       => "My Tools",
@@ -377,7 +407,7 @@ impl WebSocketClient {
         });
 
         match self.state {
-            WsDisplayState::LiveStats => self.show_live_stats(ui),
+            WsDisplayState::Home => self.show_home(ui),
             WsDisplayState::Explorer => {
                 let cmd_tx = self.send_cmd_tx.clone();
                 ui.group(|ui| self.remote_explorer.display(ui, &cmd_tx)).inner

@@ -24,6 +24,52 @@ pub(super) struct GpuContext {
     pub backend_label: String,
 }
 
+fn adapter_score(info: &wgpu::AdapterInfo, prefer_discrete: bool) -> i32 {
+    let name = info.name.to_lowercase();
+    if name.contains("microsoft basic")
+        || name.contains("llvmpipe")
+        || name.contains("swiftshader")
+    {
+        return -1000;
+    }
+
+    if prefer_discrete {
+        if info.vendor == 0x10DE {
+            return 1000;
+        }
+        if info.vendor == 0x1002 {
+            if name.contains("rx ") || name.contains("radeon rx") || name.contains("vega") {
+                return 900;
+            }
+            if name.contains("graphics") && !name.contains("rx") {
+                return 100;
+            }
+            return 500;
+        }
+        if info.vendor == 0x8086 {
+            return 200;
+        }
+        400
+    } else if info.vendor == 0x8086 {
+        1000
+    } else if info.vendor == 0x1002 && name.contains("graphics") {
+        900
+    } else if info.vendor == 0x10DE {
+        100
+    } else {
+        400
+    }
+}
+
+fn pick_adapter(adapters: Vec<Adapter>, prefer_discrete: bool) -> Option<Adapter> {
+    adapters
+        .into_iter()
+        .map(|a| (adapter_score(&a.get_info(), prefer_discrete), a))
+        .max_by_key(|(score, _)| *score)
+        .filter(|(score, _)| *score > 0)
+        .map(|(_, a)| a)
+}
+
 impl GpuContext {
     pub(super) fn acquire(prefer_discrete: bool) -> Result<Self, String> {
         let instance = Instance::new(&InstanceDescriptor {
@@ -31,20 +77,48 @@ impl GpuContext {
             ..Default::default()
         });
 
-        let power = if prefer_discrete {
-            PowerPreference::HighPerformance
-        } else {
-            PowerPreference::LowPower
-        };
+        let adapters = instance.enumerate_adapters(Backends::PRIMARY);
+        if adapters.is_empty() {
+            return Err("no GPU adapters found".into());
+        }
 
-        let adapter = pollster::block_on(instance.request_adapter(&RequestAdapterOptions {
-            power_preference: power,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
-        .map_err(|e| format!("no compatible GPU adapter: {e}"))?;
+        for adapter in &adapters {
+            let info = adapter.get_info();
+            log::info!(
+                "[stress-kit/gpu] adapter: {} ({:?}, vendor 0x{:04x}, device 0x{:04x})",
+                info.name,
+                info.backend,
+                info.vendor,
+                info.device
+            );
+        }
+
+        let adapter = pick_adapter(adapters, prefer_discrete).unwrap_or_else(|| {
+            let power = if prefer_discrete {
+                PowerPreference::HighPerformance
+            } else {
+                PowerPreference::LowPower
+            };
+            log::warn!(
+                "[stress-kit/gpu] no scored adapter; falling back to wgpu power preference {:?}",
+                power
+            );
+            pollster::block_on(instance.request_adapter(&RequestAdapterOptions {
+                power_preference: power,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            }))
+            .expect("enumerate_adapters was non-empty")
+        });
 
         let info = adapter.get_info();
+        log::info!(
+            "[stress-kit/gpu] selected: {} ({:?}, vendor 0x{:04x}, device 0x{:04x})",
+            info.name,
+            info.backend,
+            info.vendor,
+            info.device
+        );
         let vendor_label = format!(
             "{} / {} (vendor 0x{:04x}, device 0x{:04x})",
             info.name, info.driver, info.vendor, info.device

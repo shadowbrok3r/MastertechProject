@@ -19,6 +19,8 @@ mod processes;
 mod whea_windows;
 #[cfg(target_os = "windows")]
 mod tdr_windows;
+#[cfg(target_os = "windows")]
+mod thermal_windows;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -65,6 +67,22 @@ pub struct TelemetrySnapshot {
     pub whea: Option<WheaCounters>,
     #[serde(default)]
     pub tdr: Option<TdrCounters>,
+    /// ACPI thermal-zone readings on Windows (sysinfo's per-component
+    /// temperature surface returns empty on modern Windows builds; we
+    /// fall back to WMI's `MSAcpi_ThermalZoneTemperature`). Empty on
+    /// non-Windows or when the WMI query isn't available.
+    #[serde(default)]
+    pub thermals: Vec<ThermalReading>,
+}
+
+/// One ACPI thermal-zone reading. Mirrors the lightweight shape we
+/// already use for `database::schema::component_temps` — `label` is
+/// usually the zone identifier (e.g. `TZ00_0`, `CPUZ_0`), `temp_c` is
+/// the live value in Celsius.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThermalReading {
+    pub label: String,
+    pub temp_c: f32,
 }
 
 impl TelemetrySnapshot {
@@ -147,6 +165,11 @@ fn capture_snapshot_blocking() -> TelemetrySnapshot {
         gpus: gpu::sample_gpus(&components),
         whea: None,
         tdr: None,
+        // capture_now is the synchronous one-shot path; it skips
+        // building a WMI connection (COM init isn't cheap) and lets
+        // the long-running agent populate thermals on its sampler
+        // thread instead.
+        thermals: Vec::new(),
     }
 }
 
@@ -173,6 +196,11 @@ fn sampler_loop(
     let mut tdr = tdr_windows::TdrMonitor::open();
     #[cfg(not(target_os = "windows"))]
     let tdr: Option<()> = None;
+
+    #[cfg(target_os = "windows")]
+    let mut thermal = thermal_windows::ThermalMonitor::open();
+    #[cfg(not(target_os = "windows"))]
+    let thermal: Option<()> = None;
 
     // First refresh seeds counters; the next tick yields usable rates.
     sys.refresh_cpu_all();
@@ -217,6 +245,13 @@ fn sampler_loop(
             tdr: {
                 let _ = tdr;
                 None
+            },
+            #[cfg(target_os = "windows")]
+            thermals: thermal.as_mut().map(|t| t.poll()).unwrap_or_default(),
+            #[cfg(not(target_os = "windows"))]
+            thermals: {
+                let _ = thermal;
+                Vec::new()
             },
         };
 

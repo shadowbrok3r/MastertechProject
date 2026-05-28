@@ -94,6 +94,8 @@ impl TabViewer for MastertechContext {
                 .enable_category("eframe::native::glow_integration".to_string(), false)
                 .enable_category("egui_glow::shader_version".to_string(), false)
                 .enable_category("egui_glow::painter".to_string(), false)
+                .enable_category("evtx::evtx_chunk".to_string(), false)
+                .enable_category("evtx::evtx_parser".to_string(), false)
                 .show(ui),
             TabId::AdminConsole => self.shared_ctx.admin_console(ui),
             TabId::FleetDashboard => self.shared_ctx.fleet_dashboard(ui),

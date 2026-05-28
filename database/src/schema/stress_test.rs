@@ -1023,6 +1023,10 @@ impl StressTestRun {
         summary: RunSummary,
         ended_at: Option<Datetime>,
     ) -> anyhow::Result<()> {
+        // `duration::secs(...)` returns an integer when the elapsed window
+        // is a whole number of seconds; round-tripping through the Rust
+        // `Option<f64>` field then fails with "Expected float, got number".
+        // Force the cast at the write site so the column is always a float.
         let sql = "UPDATE $id SET \
                 result = $result, \
                 finish_reason = $finish, \
@@ -1030,7 +1034,7 @@ impl StressTestRun {
                 failure_kind = $failure_kind, \
                 summary = $summary, \
                 ended_at = $ended_at, \
-                duration_actual_secs = duration::secs(($ended_at ?? time::now()) - started_at)";
+                duration_actual_secs = <float> duration::secs(($ended_at ?? time::now()) - started_at)";
         let failure_kind = failure_mode.kind().to_string();
         DATABASE
             .query(sql)
@@ -1049,7 +1053,8 @@ impl StressTestRun {
     pub async fn list_for_computer(computer: &RecordId) -> anyhow::Result<Vec<Self>> {
         let runs: Vec<Self> = DATABASE
             .query(
-                "SELECT * FROM stress_test_run \
+                "SELECT *, <float> duration_actual_secs AS duration_actual_secs \
+                 FROM stress_test_run \
                  WHERE computer = $c ORDER BY started_at DESC LIMIT 200",
             )
             .bind(("c", computer.clone()))
@@ -1063,7 +1068,8 @@ impl StressTestRun {
     pub async fn list_for_component(component: &RecordId) -> anyhow::Result<Vec<Self>> {
         let runs: Vec<Self> = DATABASE
             .query(
-                "SELECT * FROM stress_test_run \
+                "SELECT *, <float> duration_actual_secs AS duration_actual_secs \
+                 FROM stress_test_run \
                  WHERE target_component = $c OR touched_components CONTAINS $c \
                  ORDER BY started_at DESC LIMIT 500",
             )
@@ -1076,7 +1082,8 @@ impl StressTestRun {
     pub async fn list_for_session(session: &RecordId) -> anyhow::Result<Vec<Self>> {
         let runs: Vec<Self> = DATABASE
             .query(
-                "SELECT * FROM stress_test_run \
+                "SELECT *, <float> duration_actual_secs AS duration_actual_secs \
+                 FROM stress_test_run \
                  WHERE session_ref = $s ORDER BY started_at ASC",
             )
             .bind(("s", session.clone()))

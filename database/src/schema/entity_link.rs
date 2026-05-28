@@ -9,18 +9,27 @@ use crate::DATABASE;
 use serde::{Deserialize, Serialize};
 use surrealdb::Error;
 
-/// Parse a Surreal record id from a string. Accepts `table:key` or bare `key`.
-/// Only strips the first colon when the prefix looks like a table name.
+/// Strip SurrealQL backtick quoting from a record key (`key` → key).
+pub fn strip_surreal_key_quotes(key: &str) -> String {
+    let s = key.trim();
+    if s.len() >= 2 && s.starts_with('`') && s.ends_with('`') {
+        s[1..s.len() - 1].to_string()
+    } else {
+        s.to_string()
+    }
+}
+
+fn is_table_prefix(prefix: &str) -> bool {
+    !prefix.is_empty() && prefix.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Parse a Surreal record id from a string. Accepts `table:key`, bare `key`,
+/// and SurrealQL-quoted keys (`table:`key-with:colons``).
 pub fn parse_record_id(s: &str, table: &'static str) -> RecordId {
     let trimmed = s.trim();
     let key = match trimmed.split_once(':') {
-        Some((prefix, rest))
-            if !prefix.is_empty()
-                && prefix.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') =>
-        {
-            rest.to_string()
-        }
-        _ => trimmed.to_string(),
+        Some((prefix, rest)) if is_table_prefix(prefix) => strip_surreal_key_quotes(rest),
+        _ => strip_surreal_key_quotes(trimmed),
     };
     RecordId::new(table, key)
 }
@@ -487,4 +496,53 @@ pub async fn repair_connection_links(
     }
 
     Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::schema::{TASK_TABLE, TICKET_TABLE};
+
+    #[test]
+    fn strip_surreal_key_quotes_round_trip() {
+        assert_eq!(strip_surreal_key_quotes("`197987`"), "197987");
+        assert_eq!(
+            strip_surreal_key_quotes("`DESKTOP-HQAF13L:b57a7e8f9`"),
+            "DESKTOP-HQAF13L:b57a7e8f9"
+        );
+        assert_eq!(strip_surreal_key_quotes("plain"), "plain");
+    }
+
+    #[test]
+    fn parse_record_id_accepts_surreal_quoted_keys() {
+        assert_eq!(
+            parse_record_id("customer:`197987`", CUSTOMER_TABLE).key_string(),
+            "197987"
+        );
+        assert_eq!(
+            parse_record_id("computer:`DESKTOP-HQAF13L:b57a7e8f9`", COMPUTER_TABLE).key_string(),
+            "DESKTOP-HQAF13L:b57a7e8f9"
+        );
+        assert_eq!(
+            parse_record_id("service_order:`52918345`", TICKET_TABLE).key_string(),
+            "52918345"
+        );
+    }
+
+    #[test]
+    fn parse_record_id_plain_forms_unchanged() {
+        assert_eq!(
+            parse_record_id("computer:DESKTOP-HQAF13L:b57a7e8f9", COMPUTER_TABLE).key_string(),
+            "DESKTOP-HQAF13L:b57a7e8f9"
+        );
+        assert_eq!(parse_record_id("197987", CUSTOMER_TABLE).key_string(), "197987");
+        assert_eq!(
+            parse_record_id("DESKTOP-HQAF13L:b57a7e8f9", COMPUTER_TABLE).key_string(),
+            "DESKTOP-HQAF13L:b57a7e8f9"
+        );
+        assert_eq!(
+            parse_record_id("task:cliyh7tklg89djkq0ejd", TASK_TABLE).key_string(),
+            "cliyh7tklg89djkq0ejd"
+        );
+    }
 }

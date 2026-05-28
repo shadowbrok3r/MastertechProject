@@ -24,7 +24,7 @@ pub struct RemoteScriptsViewer {
     selected_category: usize,
     pub service_number: String,
     pub customer_email: String,
-    log_messages: Vec<String>,
+    pub log_messages: Vec<String>,
     pub running: bool,
     pub loading: bool,
     auto_scroll: bool,

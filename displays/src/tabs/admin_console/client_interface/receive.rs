@@ -488,11 +488,19 @@ impl WebSocketClient {
             return;
         }
         match self.state {
-            WsDisplayState::LiveStats => {
-                // let bin = &self.handle_binary_message(bin);
+            WsDisplayState::Home => {
+                // Home renders the live charts that need this sysinfo feed.
+                // Replaces the old `LiveStats` branch — same payload, same
+                // sink, just a new front-end host.
                 if let Some(sysinfo) = deserializer::<SystemInformation>(&bin){
-                    log::info!("Got sysinfo from admin console");
+                    log::debug!("[home] sysinfo arrived: {} bytes", bin.len());
                     self.resource_monitor.set_sysinfo(sysinfo);
+                } else {
+                    log::warn!(
+                        "[home] {} byte binary payload didn't decode as SystemInformation \
+                         (live charts stay blank until this is fixed)",
+                        bin.len()
+                    );
                 }
             },
             WsDisplayState::Terminal => {
@@ -549,6 +557,26 @@ impl WebSocketClient {
                                 }
                             }
                         }
+                    } else if let Cmd::DirectorySizeResult {
+                        path,
+                        total_bytes,
+                        file_count,
+                        dir_count,
+                        error,
+                    } = cmd
+                    {
+                        let message = self.remote_explorer.handle_directory_size_result(
+                            path,
+                            total_bytes,
+                            file_count,
+                            dir_count,
+                            error,
+                        );
+                        self.history.push(History {
+                            from: "System".to_string(),
+                            message,
+                            timestamp: chrono::Local::now().to_rfc3339(),
+                        });
                     } else if let Cmd::FilePreviewContent(path, content) = cmd {
                         log::info!("Received file preview content for: {}", path);
                         self.remote_explorer.handle_preview_content(path, content);

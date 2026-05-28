@@ -1,6 +1,7 @@
 pub mod resource_monitor;
 pub mod command_shell;
 pub mod mcp_tool_log_viewer;
+pub mod home_page;
 #[cfg(feature="tokio")]
 pub mod terminal_viewer;
 #[cfg(feature="tokio")]
