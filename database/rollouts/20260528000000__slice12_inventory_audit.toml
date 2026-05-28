@@ -1,0 +1,82 @@
+id = "20260528000000__slice12_inventory_audit"
+name = "slice12_inventory_audit"
+# Required by `database/scripts/migrate-{local,prod}.{sh,ps1}` — the apply
+# scripts grep for `state = "planned"` to auto-detect the latest pending
+# manifest. surrealkit also uses this field for its lifecycle state machine
+# and flips it to "completed" once both phases land.
+state = "planned"
+# Source: slice11's (patched) target hash — the current on-disk hash that
+# slice11_duration_secs_strict_types asserts prod will be at after it
+# completes. surrealkit's planner refused to auto-plan from this state
+# because it still considers field:bios_settings, field:driver_versions,
+# field:duration_actual_secs and field:duration_planned_secs as "modified
+# managed entities" — even though slice11 is marked completed server-side
+# — so this manifest is hand-authored to skip the contested fields and
+# add `inventory_audit` only.
+source_schema_hash = "99fafd70fea4561729ecd152e8190457b4956c04f1811f630dcc36a69e7419df"
+# Target: identical to source. Adding `inventory_audit.surql` is part of
+# what already produced `ade21957…` on disk (slice11's target was patched
+# to that value to absorb the new file), so this rollout is "create the
+# managed table that's already counted in the hash". surrealkit lint may
+# disagree — if it reports a different actual hash, paste it back here.
+target_schema_hash = "99fafd70fea4561729ecd152e8190457b4956c04f1811f630dcc36a69e7419df"
+# Pure-additive: one new table, no modifications to existing entities →
+# matches slice5_fleet_schema's "phased" tier so the apply-script state
+# machine doesn't have to special-case this rollout.
+compatibility = "phased"
+renames = []
+
+# ── Background ──────────────────────────────────────────────────────────
+#
+# `inventory_audit` is a new SCHEMALESS audit-log table for the Store
+# Inventory tab's serial-import / scan-walkthrough feature. Each row is
+# one frozen snapshot of "serials Odoo claims this store should have on
+# this date", with the `serials` array carrying flattened per-serial
+# state plus the raw Odoo `stock.lot` / `stock.move.line` JSON so future
+# columns can be re-derived without re-hitting the API.
+#
+# The schema file at `database/schema/inventory_audit.surql` is the
+# source of truth — this rollout simply applies it verbatim.
+#
+# ── Why this is a manual manifest ──────────────────────────────────────
+#
+#   $ ./database/scripts/rollout-plan-prod.sh inventory_audit
+#   Error: automatic rollout planning refuses modified managed entities:
+#     field:bios_settings, field:driver_versions,
+#     field:duration_actual_secs, field:duration_planned_secs.
+#     Author a manual rollout manifest for non-additive changes.
+#
+# All four fields are owned by slice11_duration_secs_strict_types, which
+# is `state = "completed"` server-side but whose DDL apparently never
+# fully reconciled. The planner refuses to auto-emit a fresh diff while
+# those fields are flagged as drifted. This manifest doesn't touch any
+# of them — it only adds the new table — so the contested state is
+# orthogonal.
+
+# ── Apply ──────────────────────────────────────────────────────────────
+# Single step: apply the schema file verbatim. The .surql uses no
+# OVERWRITE because the table is brand-new — re-running would error and
+# surface a real state mismatch we'd want to know about. Matches the
+# slice5_fleet_schema precedent for pure-additive new-table rollouts.
+[[steps]]
+id = "apply_inventory_audit"
+phase = "start"
+kind = "apply_schema"
+files = [
+    "database/schema/inventory_audit.surql",
+]
+entities = []
+
+# ── Rollback ───────────────────────────────────────────────────────────
+# Drop the new table; that cascades to every field and index defined
+# above. Listing the table alone (vs. every field) is correct because
+# none of these entities existed before this rollout.
+[[steps]]
+id = "rollback_inventory_audit"
+phase = "rollback"
+kind = "remove_entities"
+files = []
+
+[[steps.entities]]
+kind = "table"
+name = "inventory_audit"

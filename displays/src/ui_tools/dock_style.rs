@@ -5,7 +5,7 @@ use egui_dock::{Style, TabAddAlign, TabInteractionStyle};
 
 /// Builds dock chrome from the active egui theme and semantic accent colors.
 pub fn style(ctx: &Context) -> Style {
-    let egui_style = ctx.style();
+    let egui_style = ctx.global_style();
     let visuals = &egui_style.visuals;
     let mut dock = Style::from_egui(&egui_style);
 

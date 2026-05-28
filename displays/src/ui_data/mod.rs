@@ -469,6 +469,7 @@ impl crate::app_state::SharedContext {
     /// the five LIVE SELECT subscriptions against whatever WS the
     /// SurrealDB SDK is currently holding. If that fails too, the
     /// operator can click "Reload page" to fully restart the WASM app.
+    #[cfg(target_arch = "wasm32")]
     fn reload_prompt_ui(&mut self, ctx: &eframe::egui::Context) {
         if !self.show_reload_prompt {
             return;

@@ -51,7 +51,7 @@ impl PersistentShell {
         self.command_queue_tx = command_queue_tx;
 
         // Handle command queue processing with proper stdin handling
-        let output_tx_clone = self.output_tx.clone();
+        let _output_tx_clone = self.output_tx.clone();
         let is_ready_clone = self.is_ready.clone();
         
         tokio::spawn(async move {
@@ -153,6 +153,7 @@ impl PersistentShell {
         Ok(())
     }
 
+    #[cfg(target_os="windows")]
     pub async fn close(&mut self) -> anyhow::Result<()> {
         if let Some(mut process) = self.process.take() {
             // Try to terminate the process gracefully

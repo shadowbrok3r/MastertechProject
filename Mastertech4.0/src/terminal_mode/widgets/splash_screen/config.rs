@@ -1,4 +1,3 @@
-use super::SplashError;
 
 /// Splash screen configuration.
 #[derive(Clone, Copy, Debug)]

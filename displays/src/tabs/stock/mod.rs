@@ -1,18 +1,74 @@
 use eframe::egui::{Align2, Area, Button, CentralPanel, Color32, ComboBox, Frame, Hyperlink, Id, Key, Order, Panel, RichText, ScrollArea, Spinner, TextEdit, Ui, Widget, scroll_area};
 use crate::tabs::stock::store_inventory_viewer::{ExtraInventoryData, StockQuantityData, StockQuantityViewer};
 use crate::tabs::stock::everest_lookup::{EverestItemRow, EverestItemViewer, EverestLookupResult, EverestOrder, OdooSerialHistory, lookup_everest_order, fetch_serial_movement, order_to_rows, order_totals};
+use crate::tabs::stock::inventory_audit::{
+    list_audits, load_audit, lookup_serials_in_odoo, mark_found, render_history_windows,
+    save_audit, AuditSerialRow, HistoryWindow, InventoryAuditMeta, InventoryView,
+};
 use crate::channel_manager::ChannelManager;
 use crossbeam::channel::{Receiver, Sender};
 use crate::{PlatformSpawner, Spawner, TaskUiActions, get_current_user_from_auth};
-use database::schema::{Store, prestashop::{Customer, Address, xml::{modify_xml, remove_xml_tag}}};
+use database::schema::{RecordId, Store, prestashop::{Customer, Address, xml::{modify_xml, remove_xml_tag}}};
 use database::xidax_order_url;
 use egui_data_table::Renderer;
 use log::info;
+use std::collections::HashMap;
 
 pub mod everest_lookup;
+pub mod inventory_audit;
 pub mod row_viewer;
 pub mod stock_operations;
 pub mod store_inventory_viewer;
+
+/// Which "Import Serials" sub-action the user picked from the menu.
+#[derive(Copy, Clone, Debug)]
+enum ImportKick {
+    Csv,
+    Paste,
+}
+
+/// Open a file picker and parse the chosen file as one serial per line.
+/// Returns `None` if the user cancelled. Skips blank lines and a header
+/// row if the first line is non-alphanumeric or looks like the word
+/// "serial".
+fn pick_csv_serials() -> Option<Vec<String>> {
+    let path = rfd::FileDialog::new()
+        .add_filter("CSV / Text", &["csv", "txt"])
+        .set_title("Choose a list of serials to import")
+        .pick_file()?;
+    match std::fs::read_to_string(&path) {
+        Ok(contents) => Some(parse_serial_list(&contents)),
+        Err(e) => {
+            log::error!("Failed to read serial list {:?}: {e:?}", path);
+            None
+        }
+    }
+}
+
+/// Parse a newline-separated serial list. Trims, strips a single optional
+/// CSV-style first column wrapping comma (so "ABC123,..." works), filters
+/// blanks, and drops a header row that looks like "serial" / "Serial Number".
+fn parse_serial_list(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for (idx, raw) in text.lines().enumerate() {
+        let mut line = raw.trim().trim_matches(['"', '\'']).to_string();
+        if let Some(pos) = line.find(',') {
+            line.truncate(pos);
+            line = line.trim().to_string();
+        }
+        if line.is_empty() {
+            continue;
+        }
+        if idx == 0 {
+            let lower = line.to_ascii_lowercase();
+            if lower == "serial" || lower.starts_with("serial number") || lower.starts_with("s/n") {
+                continue;
+            }
+        }
+        out.push(line);
+    }
+    out
+}
 
 pub use row_viewer::*;
 pub use stock_operations::*;
@@ -72,6 +128,37 @@ pub struct StockTable {
     customer_searching: bool,
     // Shared serial-history scan input used from Company Stock / Store Inventory headers.
     serial_history_input: String,
+    // ---- Inventory audit state ----
+    /// Whether the Store Inventory table is showing Live data or a saved audit.
+    inventory_view: InventoryView,
+    /// Audits available in the current store's combobox.
+    audit_list: Vec<InventoryAuditMeta>,
+    /// Right-side paste panel for the "Paste Serials" import path.
+    import_panel_open: bool,
+    import_textarea: String,
+    /// Spinner toggle for the Odoo lookup phase of an import.
+    import_in_progress: bool,
+    /// When `true`, a separate keyboard-locked input is shown next to the
+    /// serial-history input. Each Enter looks the serial up in the loaded
+    /// audit and flips its `found` flag.
+    scan_mode_active: bool,
+    scan_input: String,
+    /// Transient banner after a scan ("✓ MARKED" or "✗ NOT IN AUDIT").
+    scan_feedback: Option<(String, Color32)>,
+    /// Floating Odoo-history Windows. One per clicked serial.
+    history_windows: Vec<HistoryWindow>,
+    /// Cache of item-code → (std_price, list_price) populated from the
+    /// Company Stock pull. Reused both to fill the Std/List columns on
+    /// the live Store Inventory view, and to seed the same columns when
+    /// importing a new audit.
+    extra_stock_prices: HashMap<String, (f64, f64)>,
+    pub audit_list_channel: (Sender<Vec<InventoryAuditMeta>>, Receiver<Vec<InventoryAuditMeta>>),
+    pub audit_lookup_channel: (Sender<Vec<AuditSerialRow>>, Receiver<Vec<AuditSerialRow>>),
+    pub audit_save_channel: (Sender<(InventoryAuditMeta, Vec<AuditSerialRow>)>, Receiver<(InventoryAuditMeta, Vec<AuditSerialRow>)>),
+    pub audit_load_channel: (Sender<(InventoryAuditMeta, Vec<AuditSerialRow>)>, Receiver<(InventoryAuditMeta, Vec<AuditSerialRow>)>),
+    pub serial_window_channel: (Sender<String>, Receiver<String>),
+    pub history_result_channel: (Sender<OdooSerialHistory>, Receiver<OdooSerialHistory>),
+    pub found_toggle_channel: (Sender<(RecordId, String, bool)>, Receiver<(RecordId, String, bool)>),
 }
 
 #[derive(Default, PartialEq, Clone)]
@@ -120,8 +207,18 @@ impl Default for StockTable {
         let everest_history_channel: (Sender<OdooSerialHistory>, Receiver<OdooSerialHistory>) = crossbeam::channel::unbounded();
         let everest_serial_click_channel: (Sender<String>, Receiver<String>) = crossbeam::channel::unbounded();
 
+        let audit_list_channel: (Sender<Vec<InventoryAuditMeta>>, Receiver<Vec<InventoryAuditMeta>>) = crossbeam::channel::unbounded();
+        let audit_lookup_channel: (Sender<Vec<AuditSerialRow>>, Receiver<Vec<AuditSerialRow>>) = crossbeam::channel::unbounded();
+        let audit_save_channel: (Sender<(InventoryAuditMeta, Vec<AuditSerialRow>)>, Receiver<(InventoryAuditMeta, Vec<AuditSerialRow>)>) = crossbeam::channel::unbounded();
+        let audit_load_channel: (Sender<(InventoryAuditMeta, Vec<AuditSerialRow>)>, Receiver<(InventoryAuditMeta, Vec<AuditSerialRow>)>) = crossbeam::channel::unbounded();
+        let serial_window_channel: (Sender<String>, Receiver<String>) = crossbeam::channel::unbounded();
+        let history_result_channel: (Sender<OdooSerialHistory>, Receiver<OdooSerialHistory>) = crossbeam::channel::unbounded();
+        let found_toggle_channel: (Sender<(RecordId, String, bool)>, Receiver<(RecordId, String, bool)>) = crossbeam::channel::unbounded();
+
         let mut inventory_serials_viewer = SerialsViewer::default();
         inventory_serials_viewer.stock_tx = Some(serial_channel.0.clone());
+        inventory_serials_viewer.serial_click_tx = Some(serial_window_channel.0.clone());
+        inventory_serials_viewer.found_toggle_tx = Some(found_toggle_channel.0.clone());
 
         let systems_in_store_viewer = SystemInStoreViewer::new(
             systems_task_channel.0.clone(),
@@ -187,6 +284,24 @@ impl Default for StockTable {
             everest_history_channel,
             everest_serial_click_channel,
             serial_history_input: String::new(),
+            // ---- Inventory audit ----
+            inventory_view: InventoryView::default(),
+            audit_list: Vec::new(),
+            import_panel_open: false,
+            import_textarea: String::new(),
+            import_in_progress: false,
+            scan_mode_active: false,
+            scan_input: String::new(),
+            scan_feedback: None,
+            history_windows: Vec::new(),
+            extra_stock_prices: HashMap::new(),
+            audit_list_channel,
+            audit_lookup_channel,
+            audit_save_channel,
+            audit_load_channel,
+            serial_window_channel,
+            history_result_channel,
+            found_toggle_channel,
         }
     }
 }
@@ -282,9 +397,78 @@ impl StockTable {
                                     let stock = get_stock(stock_tx.clone(), store_selection).await;
                                     info!("Stock call: {stock:?}");
                                 });
+                                // Re-pull the audit list for the newly selected store.
+                                let audit_tx = self.audit_list_channel.0.clone();
+                                let store_id = Store::from_odoo_store_id(&store_selection.to_string()).into_odoo_store_id();
+                                PlatformSpawner::spawn(async move {
+                                    if let Err(e) = list_audits(store_id, audit_tx).await {
+                                        log::error!("list_audits error: {e:?}");
+                                    }
+                                });
+                                self.inventory_view = InventoryView::Live;
+                                self.inventory_serials_viewer.audit_id = None;
+                                self.scan_mode_active = false;
                             }
                             ui.add_space(10.);
-        
+
+                            // ---- Inventory Source combobox ----
+                            let current_label = match &self.inventory_view {
+                                InventoryView::Live => "Live Inventory".to_string(),
+                                InventoryView::Audit(id) => self
+                                    .audit_list
+                                    .iter()
+                                    .find(|m| m.id == *id)
+                                    .map(|m| m.label.clone())
+                                    .unwrap_or_else(|| "Audit".to_string()),
+                            };
+                            let mut pick: Option<Option<RecordId>> = None;
+                            ComboBox::new("Audit_Source", "")
+                                .selected_text(current_label)
+                                .show_ui(ui, |ui| {
+                                    if ui
+                                        .selectable_label(matches!(self.inventory_view, InventoryView::Live), "Live Inventory")
+                                        .clicked()
+                                    {
+                                        pick = Some(None);
+                                    }
+                                    if self.audit_list.is_empty() {
+                                        ui.label(RichText::new("(no saved audits)").color(Color32::GRAY));
+                                    } else {
+                                        for meta in self.audit_list.iter() {
+                                            let selected = matches!(&self.inventory_view, InventoryView::Audit(id) if id == &meta.id);
+                                            if ui.selectable_label(selected, &meta.label).clicked() {
+                                                pick = Some(Some(meta.id.clone()));
+                                            }
+                                        }
+                                    }
+                                });
+                            if let Some(choice) = pick {
+                                match choice {
+                                    None => {
+                                        // Switch back to Live: re-pull stock.
+                                        self.inventory_view = InventoryView::Live;
+                                        self.inventory_serials_viewer.audit_id = None;
+                                        self.scan_mode_active = false;
+                                        let stock_tx = self.stock_channel.0.clone();
+                                        let store_selection = self.store_selection;
+                                        PlatformSpawner::spawn(async move {
+                                            let _ = get_stock(stock_tx, store_selection).await;
+                                        });
+                                    }
+                                    Some(id) => {
+                                        let tx = self.audit_load_channel.0.clone();
+                                        let load_id = id.clone();
+                                        PlatformSpawner::spawn(async move {
+                                            if let Err(e) = load_audit(load_id, tx).await {
+                                                log::error!("load_audit error: {e:?}");
+                                            }
+                                        });
+                                    }
+                                }
+                            }
+
+                            ui.add_space(10.);
+
                             if Button::new("Refresh").ui(ui).clicked() {
                                 let stock_tx = self.stock_channel.0.clone();
                                 let store_selection = self.store_selection;
@@ -294,11 +478,11 @@ impl StockTable {
                                 });
                             }
                             ui.add_space(10.);
-        
+
                             if Button::new("Refresh S/N Info").ui(ui).clicked() {
                                 let tx = self.serial_channel.0.clone();
                                 let data_table = self.inventory_serials_table.iter();
-                                let sns = data_table.map(|r| r.1.clone()).collect::<Vec<String>>();
+                                let sns = data_table.map(|r| r.4.clone()).collect::<Vec<String>>();
                                 PlatformSpawner::spawn(async move {
                                     let _res = find_attached_serials(sns, tx.clone()).await;
                                     if let Err(e) = _res {
@@ -309,9 +493,60 @@ impl StockTable {
                                 });
                             }
                             ui.add_space(10.);
+
+                            // ---- Import Serials menu ----
+                            let mut start_import = None;
+                            eframe::egui::containers::menu::MenuButton::new("Import Serials").ui(ui, |ui| {
+                                if ui.button("From CSV…").clicked() {
+                                    start_import = Some(ImportKick::Csv);
+                                    ui.close();
+                                }
+                                if ui.button("Paste List").clicked() {
+                                    start_import = Some(ImportKick::Paste);
+                                    ui.close();
+                                }
+                            });
+                            if let Some(kind) = start_import {
+                                match kind {
+                                    ImportKick::Csv => {
+                                        if let Some(serials) = pick_csv_serials() {
+                                            self.kick_off_import(serials);
+                                        }
+                                    }
+                                    ImportKick::Paste => {
+                                        self.import_panel_open = true;
+                                    }
+                                }
+                            }
+
+                            ui.add_space(10.);
+
+                            // ---- Start / Done Scanning toggle ----
+                            let in_audit = matches!(self.inventory_view, InventoryView::Audit(_));
+                            if in_audit {
+                                let btn_label = if self.scan_mode_active { "Done" } else { "Start Scanning" };
+                                if Button::new(btn_label).ui(ui).clicked() {
+                                    self.scan_mode_active = !self.scan_mode_active;
+                                    self.scan_input.clear();
+                                    self.scan_feedback = None;
+                                }
+                            }
+                            if self.import_in_progress {
+                                Spinner::new().size(16.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
+                            }
+
+                            ui.add_space(10.);
                             ui.separator();
                             ui.add_space(10.);
                             self.serial_history_scan_input(ui);
+
+                            // ---- Focus-locked scan input ----
+                            if self.scan_mode_active && in_audit {
+                                self.audit_scan_input(ui);
+                            }
+                            if let Some((msg, color)) = &self.scan_feedback {
+                                ui.colored_label(*color, msg);
+                            }
                         },
                         StockSelection::CostBreakdown => {
                             TextEdit::singleline(&mut self.cost_order_id)
@@ -544,7 +779,23 @@ impl StockTable {
             }
         }
 
+        // Floating Odoo-history windows (Store Inventory clicks land here).
+        // Rendered against the root context so they aren't clipped to the
+        // central panel.
+        render_history_windows(ui.ctx(), &mut self.history_windows);
+
         CentralPanel::default().show_inside(ui, |ui| {
+            // Right-side paste-list import panel (Store Inventory only).
+            if self.stock_selection == StockSelection::StoreInventory && self.import_panel_open {
+                Panel::right("inventory_import_panel")
+                    .resizable(true)
+                    .default_size(420.)
+                    .min_size(320.)
+                    .show_inside(ui, |ui| {
+                        self.render_import_panel(ui);
+                    });
+            }
+
             // Shared right-side history panel for Company Stock / Store Inventory tabs.
             // (The Everest tab manages its own panels inside show_everest.)
             let show_shared_history = matches!(
@@ -655,13 +906,102 @@ impl StockTable {
         });
     }
 
+    /// Kick off an audit import (the Odoo lookup phase). The save-and-swap
+    /// happens later when `audit_save_channel` fires.
+    fn kick_off_import(&mut self, serials: Vec<String>) {
+        if serials.is_empty() {
+            return;
+        }
+        self.import_in_progress = true;
+        self.scan_feedback = None;
+        let tx = self.audit_lookup_channel.0.clone();
+        let prices = self.extra_stock_prices.clone();
+        PlatformSpawner::spawn(async move {
+            if let Err(e) = lookup_serials_in_odoo(serials, prices, tx).await {
+                log::error!("lookup_serials_in_odoo error: {e:?}");
+            }
+        });
+    }
+
+    /// Focus-locked scan input rendered while `scan_mode_active`. The
+    /// barcode scanner's post-serial Enter normally makes a
+    /// `TextEdit::singleline` surrender focus; we explicitly re-grab it
+    /// **only when the widget isn't already focused**. Calling
+    /// `request_focus` unconditionally every frame fights TextEdit's
+    /// internal surrender_focus on Enter, which is why Enter previously
+    /// "did nothing" — the response never reported `lost_focus` and our
+    /// submit branch never fired.
+    fn audit_scan_input(&mut self, ui: &mut Ui) {
+        let id = Id::new("inventory_scan_input");
+        let response = TextEdit::singleline(&mut self.scan_input)
+            .id(id)
+            .desired_width(220.)
+            .hint_text("Scan serial → Enter")
+            .ui(ui);
+
+        let submitted = response.lost_focus()
+            && ui.input(|i| i.key_pressed(Key::Enter));
+        if submitted && !self.scan_input.trim().is_empty() {
+            let serial = self.scan_input.trim().to_string();
+            self.scan_input.clear();
+            self.handle_scan_submit(&serial);
+        }
+
+        // Re-grab focus *only* if we lost it (first-frame of scan mode,
+        // or right after the Enter-triggered surrender). Don't pre-empt
+        // a focused widget — that's what broke the Enter detection.
+        if !response.has_focus() {
+            ui.memory_mut(|m| m.request_focus(id));
+        }
+    }
+
+    /// Look up `serial` in the currently displayed audit table, flip the
+    /// found flag if present, and persist via the channel→`mark_found`
+    /// pipeline. Updates `scan_feedback` so the operator sees what
+    /// happened.
+    fn handle_scan_submit(&mut self, serial: &str) {
+        let audit_id = match &self.inventory_view {
+            InventoryView::Audit(id) => id.clone(),
+            _ => return,
+        };
+        let mut found_match = false;
+        let mut already_found = false;
+        let mut data = self.inventory_serials_table.take();
+        for row in data.iter_mut() {
+            if row.4.eq_ignore_ascii_case(serial) {
+                found_match = true;
+                if row.7 {
+                    already_found = true;
+                } else {
+                    row.7 = true;
+                }
+                break;
+            }
+        }
+        self.inventory_serials_table.replace(data);
+        if found_match {
+            if already_found {
+                self.scan_feedback = Some((format!("• {serial}: already marked"), Color32::GRAY));
+            } else {
+                self.scan_feedback = Some((format!("✓ {serial}: marked"), Color32::LIGHT_GREEN));
+                let tx = self.found_toggle_channel.0.clone();
+                let _ = tx.try_send((audit_id, serial.to_string(), true));
+            }
+        } else {
+            self.scan_feedback = Some((
+                format!("✗ {serial}: not in this audit"),
+                Color32::from_rgb(220, 120, 120),
+            ));
+        }
+    }
+
     /// Compact serial-history scan input shown in the Company Stock / Store Inventory
     /// headers. Submitting fires the same Odoo lookup as the Everest tab and opens
     /// the right-side history panel.
     fn serial_history_scan_input(&mut self, ui: &mut Ui) {
         let response = TextEdit::singleline(&mut self.serial_history_input)
             .desired_width(180.)
-            .hint_text("S/N → Odoo history")
+            .hint_text("S/N -> Odoo history")
             .ui(ui);
 
         let can_lookup = !self.serial_history_input.trim().is_empty() && !self.everest_history_loading;
@@ -830,6 +1170,61 @@ impl StockTable {
         });
     }
 
+    /// Right-side panel where the user pastes one serial per line. The
+    /// Import button kicks off the same Odoo lookup → save_audit flow
+    /// the CSV path uses.
+    fn render_import_panel(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            ui.heading("Import Serials");
+            ui.with_layout(
+                eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
+                |ui| {
+                    if ui.small_button("✕").on_hover_text("Close").clicked() {
+                        self.import_panel_open = false;
+                    }
+                },
+            );
+        });
+        ui.label(
+            RichText::new(
+                "Paste one serial per line. Looks each one up in Odoo and saves a new audit for the selected store.",
+            )
+            .color(Color32::GRAY),
+        );
+        ui.add_space(6.);
+        ScrollArea::vertical()
+            .max_height(ui.available_height() - 90.)
+            .show(ui, |ui| {
+                TextEdit::multiline(&mut self.import_textarea)
+                    .desired_rows(20)
+                    .desired_width(f32::INFINITY)
+                    .font(eframe::egui::TextStyle::Monospace)
+                    .ui(ui);
+            });
+        ui.add_space(8.);
+
+        let parsed = parse_serial_list(&self.import_textarea);
+        let count = parsed.len();
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(format!("{count} serials parsed"))
+                    .color(if count == 0 { Color32::GRAY } else { Color32::LIGHT_GREEN }),
+            );
+            ui.with_layout(
+                eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
+                |ui| {
+                    let enabled = count > 0 && !self.import_in_progress;
+                    if ui.add_enabled(enabled, Button::new("Import")).clicked() {
+                        self.kick_off_import(parsed);
+                    }
+                    if ui.button("Clear").clicked() {
+                        self.import_textarea.clear();
+                    }
+                },
+            );
+        });
+    }
+
     fn render_customer_panel(&mut self, ui: &mut Ui) {
         let Some(order) = &self.everest_order else { return; };
         ScrollArea::vertical().show(ui, |ui| {
@@ -914,7 +1309,7 @@ impl StockTable {
     fn render_serial_history_panel(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.heading("Serial History");
-            if ui.small_button("✕").on_hover_text("Close").clicked() {
+            if ui.small_button(crate::ui_tools::icons::CLOSE).on_hover_text("Close").clicked() {
                 self.everest_history = None;
                 self.everest_selected_serial = None;
             }
@@ -1019,6 +1414,17 @@ impl StockTable {
                 let stock = get_stock(stock_tx.clone(), store_selection).await;
                 log::info!("Stock call: {stock:?}");
             });
+
+            // Seed the audit-source combobox so it's populated by the
+            // time the user opens the Store Inventory tab.
+            let audit_tx = self.audit_list_channel.0.clone();
+            let store_id = Store::from_odoo_store_id(&store_selection.to_string()).into_odoo_store_id();
+            PlatformSpawner::spawn(async move {
+                if let Err(e) = list_audits(store_id, audit_tx).await {
+                    log::error!("list_audits error (first_run): {e:?}");
+                }
+            });
+
             self.is_admin = get_current_user_from_auth()
                 .map(|user| if user.get_username().is_empty() {
                     log::info!("User is empty");
@@ -1032,11 +1438,30 @@ impl StockTable {
 
     pub fn receive(&mut self, ui_actions_tx: Sender<TaskUiActions>) {
         if let Ok(stock_data) = self.stock_channel.1.try_recv() {
+            // A live stock pull always switches the Store Inventory view
+            // back to Live and drops any audit-row mode flags.
+            self.inventory_view = InventoryView::Live;
+            self.inventory_serials_viewer.audit_id = None;
+
             let data: Vec<SerialsData> = stock_data
                 .iter()
                 .map(|stock_data| {
+                    let item_code = stock_data.product_id.clone().1.clone();
+                    // Cache is keyed by bracket-only item code; the live
+                    // pull's product_id.1 is the full Odoo display name,
+                    // so strip everything after the closing bracket
+                    // before looking up.
+                    let cache_key = item_code_only(&item_code);
+                    let (std_price, list_price) = self
+                        .extra_stock_prices
+                        .get(&cache_key)
+                        .copied()
+                        .unwrap_or((0.0, 0.0));
                     SerialsData(
-                        stock_data.product_id.clone().1.clone(),
+                        item_code,
+                        std_price,
+                        list_price,
+                        0,
                         stock_data.lot_id.clone().1.parse::<String>().unwrap(),
                         "S/N Info ⮫".to_string(),
                         Store::from_odoo_store_id(&stock_data.location_id.0.to_string()).as_str().to_string(),
@@ -1047,13 +1472,14 @@ impl StockTable {
 
             let tx = self.serial_channel.0.clone();
 
-            let sns = data.iter().map(|r| r.1.clone()).collect::<Vec<String>>();
+            let sns = data.iter().map(|r| r.4.clone()).collect::<Vec<String>>();
 
             PlatformSpawner::spawn(async move {
                 let _res = find_attached_serials(sns, tx.clone()).await;
             });
 
             self.inventory_serials_table.replace(data);
+            self.recompute_qty_rollup();
         }
 
         if let Ok(serial_data) = self.serial_channel.1.try_recv() {
@@ -1061,19 +1487,19 @@ impl StockTable {
             let mut data_table = self.inventory_serials_table.take();
             for data in data_table.iter_mut() {
                 for serial_info in serial_data.result.iter() {
-                    if data.1 == serial_info.name {
+                    if data.4 == serial_info.name {
                         match serial_info.clone().bs_prest_ref {
                             BoolOrString::Bool(_) => {
-                                data.2 = "Not Attached".to_string();
-                                data.4 = false;
+                                data.5 = "Not Attached".to_string();
+                                data.7 = false;
                             }
                             BoolOrString::String(order_num) => {
                                 if !order_num.is_empty() {
-                                    data.2 = order_num;
-                                    data.4 = true;
+                                    data.5 = order_num;
+                                    data.7 = true;
                                 } else {
-                                    data.2 = "Not Attached".to_string();
-                                    data.4 = false;
+                                    data.5 = "Not Attached".to_string();
+                                    data.7 = false;
                                 }
                             }
                         };
@@ -1085,6 +1511,30 @@ impl StockTable {
 
         if let Ok(stock_inf) = self.extra_stock_channel.1.try_recv() {
             log::debug!("Serial Data: {:?}", stock_inf);
+
+            // Rebuild the price cache so future audit imports + Live
+            // refreshes can fan std/list prices into Store Inventory rows
+            // without an extra round-trip.
+            self.extra_stock_prices.clear();
+            for d in stock_inf.iter() {
+                let key = item_code_only(&d.display_name);
+                self.extra_stock_prices
+                    .insert(key, (d.standard_price, d.list_price));
+            }
+
+            // Backfill Std/List Price columns on any rows the Store
+            // Inventory view already shows (Live or audit).
+            let mut live = self.inventory_serials_table.take();
+            for row in live.iter_mut() {
+                let key = item_code_only(&row.0);
+                if let Some((std_price, list_price)) = self.extra_stock_prices.get(&key) {
+                    row.1 = *std_price;
+                    row.2 = *list_price;
+                }
+            }
+            self.inventory_serials_table.replace(live);
+            self.recompute_qty_rollup();
+
             let data: Vec<StockQuantityData> = stock_inf
                 .iter()
                 .map(|stock_data| {
@@ -1192,6 +1642,128 @@ impl StockTable {
             self.everest_history_loading = false;
             self.everest_history = Some(history);
         }
+
+        // ---- Inventory audit channel handling ----
+
+        // List of audits for the currently selected store arrived.
+        if let Ok(metas) = self.audit_list_channel.1.try_recv() {
+            self.audit_list = metas;
+        }
+
+        // Raw Odoo lookup finished: turn around and persist as an audit.
+        if let Ok(rows) = self.audit_lookup_channel.1.try_recv() {
+            self.import_in_progress = false;
+            let store = Store::from_odoo_store_id(&self.store_selection.to_string());
+            let user_id = get_current_user_from_auth().map(|u| u.get_id());
+            let tx = self.audit_save_channel.0.clone();
+            PlatformSpawner::spawn(async move {
+                if let Err(e) = save_audit(store, user_id, rows, tx).await {
+                    log::error!("save_audit error: {e:?}");
+                }
+            });
+        }
+
+        // Audit persisted: swap the view to it and refresh the listing.
+        if let Ok((meta, rows)) = self.audit_save_channel.1.try_recv() {
+            self.inventory_view = InventoryView::Audit(meta.id.clone());
+            self.audit_list.insert(0, meta.clone());
+            self.import_panel_open = false;
+            self.import_textarea.clear();
+            self.apply_audit_rows(meta.id, rows);
+        }
+
+        // User selected a different audit from the combobox.
+        if let Ok((meta, rows)) = self.audit_load_channel.1.try_recv() {
+            self.inventory_view = InventoryView::Audit(meta.id.clone());
+            self.apply_audit_rows(meta.id, rows);
+        }
+
+        // Clicked serial in the Store Inventory Serial Number column.
+        while let Ok(serial) = self.serial_window_channel.1.try_recv() {
+            // Don't open duplicates — focus-style behavior is up to egui.
+            if self.history_windows.iter().any(|w| w.serial == serial) {
+                continue;
+            }
+            self.history_windows.push(HistoryWindow::loading(serial.clone()));
+            let tx = self.history_result_channel.0.clone();
+            PlatformSpawner::spawn(async move {
+                if let Err(e) = fetch_serial_movement(serial, tx).await {
+                    log::error!("Odoo serial history (window) error: {e:?}");
+                }
+            });
+        }
+
+        // Movement history result for one of the floating windows.
+        while let Ok(history) = self.history_result_channel.1.try_recv() {
+            let serial = history.serial.clone();
+            if let Some(win) = self
+                .history_windows
+                .iter_mut()
+                .find(|w| w.serial == serial)
+            {
+                win.populate_from_history(history);
+            }
+        }
+
+        // Found-flag toggled on an audit row: persist to SurrealDB.
+        while let Ok((audit_id, serial, found)) = self.found_toggle_channel.1.try_recv() {
+            PlatformSpawner::spawn(async move {
+                if let Err(e) = mark_found(audit_id, serial, found).await {
+                    log::error!("mark_found error: {e:?}");
+                }
+            });
+        }
+    }
+
+    /// Recompute the `qty_by_item` rollup on the SerialsViewer from the
+    /// current contents of `inventory_serials_table`. Cheap (single
+    /// linear scan); call after any `.replace()` on the table.
+    fn recompute_qty_rollup(&mut self) {
+        let mut by_item: HashMap<String, u32> = HashMap::new();
+        for row in self.inventory_serials_table.iter() {
+            *by_item.entry(row.0.clone()).or_insert(0) += 1;
+        }
+        self.inventory_serials_viewer.qty_by_item = by_item;
+    }
+
+    /// Swap the Store Inventory table to render the given audit's rows.
+    fn apply_audit_rows(&mut self, audit_id: RecordId, rows: Vec<AuditSerialRow>) {
+        let data: Vec<SerialsData> = rows
+            .into_iter()
+            .map(|r| {
+                let item_code = r.item_code.unwrap_or_default();
+                let std_price = r.std_price.unwrap_or_else(|| {
+                    self.extra_stock_prices
+                        .get(&item_code)
+                        .map(|p| p.0)
+                        .unwrap_or(0.0)
+                });
+                let list_price = r.list_price.unwrap_or_else(|| {
+                    self.extra_stock_prices
+                        .get(&item_code)
+                        .map(|p| p.1)
+                        .unwrap_or(0.0)
+                });
+                let order_col = r
+                    .last_reference
+                    .clone()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "S/N Info ⮫".to_string());
+                SerialsData(
+                    item_code,
+                    std_price,
+                    list_price,
+                    0,
+                    r.serial,
+                    order_col,
+                    r.last_location.unwrap_or_default(),
+                    r.found,
+                )
+            })
+            .collect();
+        self.inventory_serials_table.replace(data);
+        self.inventory_serials_viewer.audit_id = Some(audit_id);
+        self.recompute_qty_rollup();
     }
 
     /// Show customer change modal
@@ -1360,6 +1932,19 @@ impl StockTable {
                         });
                     });
             });
+    }
+}
+
+/// Pull just the `[...]` bracket prefix off an Odoo display name. Items
+/// without brackets fall through unchanged. Used so the price cache
+/// (keyed on item code) lines up between the Company-Stock pull
+/// (which sees full display names) and the Store-Inventory rows
+/// (which already render bracket-only item codes).
+fn item_code_only(display: &str) -> String {
+    if let Some(end) = display.find(']') {
+        display[..=end].to_string()
+    } else {
+        display.to_string()
     }
 }
 

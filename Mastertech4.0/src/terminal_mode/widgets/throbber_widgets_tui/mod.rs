@@ -1,3 +1,4 @@
+#![allow(unused)]
 /*!
 # Throbber widget of [ratatui]
 

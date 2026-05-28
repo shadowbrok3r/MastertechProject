@@ -1,6 +1,6 @@
 use crate::{PlatformSpawner, Spawner, TaskUiActions, chats::ChatView, modals::{ModalType, create_task_modal::{CreateTaskModal, Tur}, task_modal::TaskModal}, tabs::TabId};
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-use database::schema::{RecordIdExt, TaskNotePayload, TaskNoteRead};
+use database::schema::{RecordIdExt, TaskNoteRead};
 use crate::app_state::SharedContext;
 use crate::viewports::ViewportData;
 use log::info;
@@ -276,56 +276,3 @@ impl SharedContext {
     }
 }
 
-
-/// We are calling this even though it doesnt return anything BECAUSE 
-/// the get_thread_id_from_order() will also handle the creation of new notes
-/// and in turn, will live update the modal with notes from prestashop / the database
-async fn get_or_insert_notes(
-    note_payload: (database::schema::RecordId, Vec<TaskNotePayload>, Option<String>)
-) -> anyhow::Result<(), anyhow::Error> {
-    // I will probably want to do this manually opposed to using TaskNotePayload::get_thread_id_from_order(&self)
-    // Because, that will have to make a separate API call for every single note, since &Self, in the 
-    // TaskNotePayloadHelper is TaskNotePayload, not Vec<TaskNotePayload>. so I will just want to 
-    // take a order number, query all the notes, see if all the notes in the db match all the notes
-    // in prestashop, and if not, sync the two databases.
-    let (task_id, mut notes, service_number) = note_payload.clone();
-
-    if notes.is_empty() || service_number.is_some() {
-        if let Some(service) = service_number.as_ref() {
-            let notes_res = TaskNotePayload::get_prestashop_notes_from_service(&service, Some(task_id.clone())).await;
-            match notes_res {
-                Ok(notes) => {log::info!("Got notes: {notes:?}"); },
-                Err(e) => log::error!("Error getting notes from service number: {e:?}"),
-            };
-        }
-
-    } else if !notes.is_empty() || service_number.is_none() {
-        let existing_note = notes
-            .iter_mut()
-            .next();
-
-        if let Some(note) = existing_note {
-            match note.get_thread_id_from_order().await {
-                Ok(thread_id) => {
-                    if thread_id.is_empty() {
-                        return Err(anyhow::anyhow!("Thread ID is empty"));
-                    } else {
-                        info!("receive_ui_action -> Thread ID: {thread_id:?}");
-                        return Ok(());
-                    }
-                    
-                },
-                Err(e) => log::error!("receive_ui_action -> Error getting thread ID from order: {e:?}"),
-            }
-        } else {
-            return Err(anyhow::anyhow!("receive_ui_action -> Error getting thread ID from order"));
-        }
-    } else {
-        let notes_res = TaskNotePayload::get_db_notes_from_task_id(task_id.clone()).await;
-        match notes_res {
-            Ok(notes) => {log::info!("Got notes: {notes:?}"); },
-            Err(e) => log::error!("Error getting notes from service number: {e:?}"),
-        };
-    }
-    Ok(())
-}

@@ -4,7 +4,6 @@ use database::{schema::{CustomerData, ExtendedSeb, LiveTaskPayload, LocalSebData
 use database::schema::GetKeysResponse;
 use eframe::egui::Context;
 use database::schema::RecordId;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::spawn;
 
@@ -14,6 +13,7 @@ use tokio::spawn;
 /// `get_settings = true` (or future code that re-enters this branch) would
 /// fan out N concurrent spec-gathers, starve tokio workers, and risk
 /// blocking the UI long enough to trip epaint's 10s mutex panic.
+#[cfg(target_os = "windows")]
 static SPECS_GATHER_STARTED: AtomicBool = AtomicBool::new(false);
 
 /// Once-guard for spawning the direct-TCP admin listener. Bound at most

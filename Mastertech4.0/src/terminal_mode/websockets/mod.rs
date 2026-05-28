@@ -1,3 +1,4 @@
+#![allow(unused)]
 use database::{schema::{utilities::{check_id_existence, query_id}, ConnectedClient, CONNECTED_CLIENT_TABLE}, websocket_url_with_room, DATABASE, WS_CLIENT_URL, WS_CLIENT_URL_LOCAL};
 use displays::{deserialize_command, remote_viewer::{encode_buffer_with_timestamp, ratagui::TerminalEvent}, serialize_system_info, tabs::admin_console::client_action::ClientHandler, Cmd, EventLogEntry, FileSystemAction, RegistryEdit, RegistryKeyInfo, RegistryValueEntry, RemoteDirEntry, RemoteScriptItem, RemoteScriptStatus, ScheduledTask, ServiceActionType, StartupApp, WindowsService};
 use crate::{filesystem::{get_client_hash, system_info::{get_sysinfo, get_sysinfo_no_gpu}}, tabs::file_browser::read_folder, transport::ClientTransport};
