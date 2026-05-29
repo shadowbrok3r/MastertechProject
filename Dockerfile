@@ -8,6 +8,7 @@ RUN rustup target add wasm32-unknown-unknown && \
     update-ca-certificates
 
 COPY Cargo.toml Cargo.toml
+COPY build_hash.rs build_hash.rs
 COPY MtechServer2.0 MtechServer2.0
 COPY displays displays
 COPY database database

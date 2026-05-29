@@ -208,11 +208,6 @@ impl SharedContext {
                                                 ui.add_space(30.0);
 
                                                 let button = Button::new("Create Account")
-                                                    .fill(Color32::from_rgb(30, 30, 35))
-                                                    .stroke(Stroke::new(
-                                                        2.0,
-                                                        Color32::from_rgb(30, 3, 28),
-                                                    ))
                                                     .min_size(Vec2::new(140.0, 15.0))
                                                     .ui(ui);
 
@@ -233,11 +228,6 @@ impl SharedContext {
                                                 ui.add_space(3.0);
 
                                                 if Button::new("Submit")
-                                                    .fill(Color32::from_rgb(30, 30, 35))
-                                                    .stroke(Stroke::new(
-                                                        2.0,
-                                                        Color32::from_rgb(30, 3, 28),
-                                                    ))
                                                     .min_size(Vec2::new(140.0, 40.0))
                                                     .ui(ui)
                                                     .clicked()

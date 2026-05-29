@@ -32,6 +32,7 @@ enum ImportKick {
 /// Returns `None` if the user cancelled. Skips blank lines and a header
 /// row if the first line is non-alphanumeric or looks like the word
 /// "serial".
+#[cfg(not(target_arch = "wasm32"))]
 fn pick_csv_serials() -> Option<Vec<String>> {
     let path = rfd::FileDialog::new()
         .add_filter("CSV / Text", &["csv", "txt"])
@@ -164,6 +165,7 @@ pub struct StockTable {
     pub serial_window_channel: (Sender<String>, Receiver<String>),
     pub history_result_channel: (Sender<OdooSerialHistory>, Receiver<OdooSerialHistory>),
     pub found_toggle_channel: (Sender<(RecordId, String, bool)>, Receiver<(RecordId, String, bool)>),
+    csv_import_channel: (Sender<Vec<String>>, Receiver<Vec<String>>),
 }
 
 #[derive(Default, PartialEq, Clone)]
@@ -219,6 +221,7 @@ impl Default for StockTable {
         let serial_window_channel: (Sender<String>, Receiver<String>) = crossbeam::channel::unbounded();
         let history_result_channel: (Sender<OdooSerialHistory>, Receiver<OdooSerialHistory>) = crossbeam::channel::unbounded();
         let found_toggle_channel: (Sender<(RecordId, String, bool)>, Receiver<(RecordId, String, bool)>) = crossbeam::channel::unbounded();
+        let csv_import_channel: (Sender<Vec<String>>, Receiver<Vec<String>>) = crossbeam::channel::unbounded();
 
         let mut inventory_serials_viewer = SerialsViewer::default();
         inventory_serials_viewer.stock_tx = Some(serial_channel.0.clone());
@@ -308,6 +311,7 @@ impl Default for StockTable {
             serial_window_channel,
             history_result_channel,
             found_toggle_channel,
+            csv_import_channel,
         }
     }
 }
@@ -515,8 +519,25 @@ impl StockTable {
                             if let Some(kind) = start_import {
                                 match kind {
                                     ImportKick::Csv => {
+                                        #[cfg(not(target_arch = "wasm32"))]
                                         if let Some(serials) = pick_csv_serials() {
                                             self.kick_off_import(serials);
+                                        }
+                                        #[cfg(target_arch = "wasm32")]
+                                        {
+                                            let tx = self.csv_import_channel.0.clone();
+                                            PlatformSpawner::spawn(async move {
+                                                if let Some(file) = rfd::AsyncFileDialog::new()
+                                                    .add_filter("CSV / Text", &["csv", "txt"])
+                                                    .set_title("Choose a list of serials to import")
+                                                    .pick_file()
+                                                    .await
+                                                {
+                                                    let contents = file.read().await;
+                                                    let text = String::from_utf8_lossy(&contents);
+                                                    let _ = tx.send(parse_serial_list(&text));
+                                                }
+                                            });
                                         }
                                     }
                                     ImportKick::Paste => {
@@ -1675,6 +1696,10 @@ impl StockTable {
         // List of audits for the currently selected store arrived.
         if let Ok(metas) = self.audit_list_channel.1.try_recv() {
             self.audit_list = metas;
+        }
+
+        if let Ok(serials) = self.csv_import_channel.1.try_recv() {
+            self.kick_off_import(serials);
         }
 
         // Raw Odoo lookup finished: turn around and persist as an audit.
