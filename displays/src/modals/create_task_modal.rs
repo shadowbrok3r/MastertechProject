@@ -225,6 +225,7 @@ impl DisplayModal for CreateTaskModal {
                             &mut seb_checking,
                             None, // No customer modal for create task
                             None, // No service history for create task
+                            Some(&mut tur.data.order.current_state),
                         );
                     },
                     ModalAction::ComputerInfoPage => {

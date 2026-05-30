@@ -1,12 +1,12 @@
 use crate::{Cmd, PlatformSpawner, Spawner, channel_manager::ChannelManager, tabs::{ai_playground::enhanced::EnhancedAiPlayground, tasks::task_layout::{SortField, SortOptions}}, ui_tools::toasts::{Toast, ToastOptions, ToastStyle}, virtual_filesystem::FileSystem};
-use eframe::egui::{self, Align, Button, CentralPanel, Color32, Context, Frame, Layout, Margin, RichText, ScrollArea, Stroke, Ui, Vec2, Widget};
+use eframe::egui::{self, Align, CentralPanel, Color32, Context, Frame, Layout, Margin, RichText, ScrollArea, Stroke, Ui, Vec2};
 use database::schema::{utilities::get_connected_clients, ConnectedClient, RecordIdExt, Sortable};
 use crossbeam::channel::{Receiver, Sender};
 use std::collections::{BTreeMap, HashMap};
 use client_interface::WebSocketClient;
 use crate::app_state::SharedContext;
 use crate::tabs::tasks::client_cards::should_show_connected_client_in_summaries;
-use crate::ui_tools::icons::{menu_label, GAME};
+use crate::ui_tools::icons::{self, menu_label};
 use client_action::ClientUiAction;
 use client_interface::TransportKind;
 use serde::Serialize;
@@ -72,13 +72,11 @@ impl BatchAction {
     }
 }
 
-#[derive(Serialize, Default)]
-pub enum WebConsolePageState {
-    #[default]
-    AllClients,
+/// Which optional right-side panel is open alongside the central client view.
+#[derive(Serialize, Clone, Copy, PartialEq)]
+pub enum RightPanel {
     ScriptEditor,
-    #[cfg(not(target_arch = "wasm32"))]
-    AiPlayground,
+    Chat,
 }
 
 #[derive(Serialize)]
@@ -89,7 +87,8 @@ pub struct AdminConsole {
     open_menu: bool,
     #[serde(skip)]
     pub ui_actions_channel: (Sender<ClientUiAction>, Receiver<ClientUiAction>),
-    state: WebConsolePageState,
+    /// Open right-side panel (Script Editor / Chat), or `None` when closed.
+    right_panel: Option<RightPanel>,
     pub sort_by: HashMap<String, SortOptions>,
     pub last_sort_field: Option<SortField>,
     pub loading: bool,
@@ -170,7 +169,7 @@ impl AdminConsole {
             pending_batch_action: None,
             ui_actions_channel,
             error: Default::default(),
-            state: Default::default(),
+            right_panel: None,
             script_editor: ScriptEditor::new(),
             ai_playground: EnhancedAiPlayground::default(),
             relink_popup: None,
@@ -347,6 +346,13 @@ impl SharedContext {
     pub fn admin_console(&mut self, ui: &mut Ui){
         self.web_console_layout.receive(ui.ctx());
 
+        // Keep the OpenAI/MCP endpoint+key override in sync with the logged-in
+        // user, so the chat panel authenticates from the user's saved settings
+        // regardless of which app load path populated `current_user`.
+        if let Some(user) = self.current_user.as_ref() {
+            crate::ai::apply_mcp_settings(user);
+        }
+
         // Drain `pending_admin_console_focus`, set by clicking
         // "Open Console" on a My Tasks client card. The action handler
         // in `receive_ui_action.rs` only used to flip
@@ -380,67 +386,43 @@ impl SharedContext {
             }
         }
 
-        let inner_margin = Margin::same(3);
-        let outer_margin = Margin::same(0);
+        let inner_margin = Margin::same(1);
+        let outer_margin = Margin::same(1);
         let stroke = Stroke::new(0.7_f32, Color32::from_additive_luminance(150));
-        let radius = eframe::egui::CornerRadius::same(5);
+        let radius = eframe::egui::CornerRadius::same(2);
 
-        ui.style_mut().spacing.button_padding = Vec2::new(10.0, 4.0);
+        
 
         eframe::egui::Panel::top("Client_Top_panel")
             .frame(
                 Frame::default()
-                    .fill(Color32::from_rgb(17,17,19))
+                    // .fill(Color32::from_rgb(17,17,19))
                     .inner_margin(inner_margin)
                     .outer_margin(outer_margin)
                     .stroke(stroke)
                     .corner_radius(radius)
             )
-            .show_separator_line(false)
-            .exact_size(35.)
+            .show_separator_line(true)
+            .exact_size(20.)
             .show_inside(ui, |ui |
         {
-            ui.with_layout(Layout::left_to_right(Align::Center),|ui | { 
+            egui::MenuBar::new().ui(ui, |ui| {
                 ui.set_height(15.);
-
+                ui.style_mut().spacing.button_padding = Vec2::new(5.0, 1.0);
                 let txt = match self.web_console_layout.open_menu {
                     false => "Show Clients ->",
                     true => "<- Hide Clients",
                 };
-
                 if ui.button(txt).clicked() {
                     self.web_console_layout.open_menu = !self.web_console_layout.open_menu;
                 }
 
-                ui.add_space(ui.available_width()/3.1);
-                let button_size = Vec2::new(70.0, 15.0);
-                if Button::new("Clients")
-                    .min_size(button_size)
-                    .ui(ui)
-                    .clicked() 
-                {
-                    self.refresh_client_list();
-                    self.web_console_layout.state = WebConsolePageState::AllClients;
-                }
-                ui.add_space(5.);
-                if Button::new("Script Editor")
-                    .min_size(button_size)
-                    .ui(ui)
-                    .clicked() 
-                {
-                    self.web_console_layout.state = WebConsolePageState::ScriptEditor;
-                }
-                ui.add_space(5.);
-                #[cfg(not(target_arch = "wasm32"))]
-                if Button::new(format!("{} AI Playground", GAME))
-                    .min_size(Vec2::new(95.0, 15.0))
-                    .ui(ui)
-                    .clicked()
-                {
-                    self.web_console_layout.state = WebConsolePageState::AiPlayground;
-                }
-
-                ui.add_space(5.);
+                // ── Clients menu: Refresh + Batch submenu ────────────────
+                ui.menu_button("Clients", |ui| {
+                    if ui.button(format!("{}  Refresh", icons::REFRESH)).clicked() {
+                        self.refresh_client_list();
+                        ui.close();
+                    }
 
                 // ── Batch menu (slice 4) ─────────────────────────────────
                 //
@@ -519,6 +501,24 @@ impl SharedContext {
                             }
                         },
                     );
+                });
+                }); // ── end Clients menu ─────────────────────────────────
+
+                // ── Panels menu: open Script Editor / Chat as a right panel ──
+                ui.menu_button("Panels", |ui| {
+                    let cur = self.web_console_layout.right_panel;
+                    let script_open = cur == Some(RightPanel::ScriptEditor);
+                    if ui.selectable_label(script_open, "Script Editor").clicked() {
+                        self.web_console_layout.right_panel =
+                            if script_open { None } else { Some(RightPanel::ScriptEditor) };
+                        ui.close();
+                    }
+                    let chat_open = cur == Some(RightPanel::Chat);
+                    if ui.selectable_label(chat_open, format!("{}  Chat", icons::CHAT)).clicked() {
+                        self.web_console_layout.right_panel =
+                            if chat_open { None } else { Some(RightPanel::Chat) };
+                        ui.close();
+                    }
                 });
 
                 // ── Active-client breadcrumb ────────────────────────────
@@ -719,6 +719,48 @@ impl SharedContext {
                 });
             });
         });
+
+        // Right panel: Script Editor / Chat, opened from the Panels menu, so an
+        // operator can drive the AI (or edit a script) while watching the
+        // focused client run things in the central panel.
+        let right_open = self.web_console_layout.right_panel.is_some();
+        eframe::egui::Panel::right("Client_Right_panel")
+            .frame(
+                Frame::default()
+                    .fill(ui.global_style().visuals.extreme_bg_color)
+                    .inner_margin(inner_margin)
+                    .outer_margin(outer_margin)
+                    .stroke(stroke)
+                    .corner_radius(radius)
+            )
+            .show_separator_line(false)
+            .min_size(440.)
+            .max_size(900.)
+            .show_animated_inside(ui, right_open, |ui| {
+                match self.web_console_layout.right_panel {
+                    // Chat owns its own compact top bar (threads + close), so no
+                    // extra header here. Its ✕ raises a close request we drain.
+                    Some(RightPanel::Chat) => {
+                        self.web_console_layout.ai_playground.enhanced_ai_playground(ui);
+                        if self.web_console_layout.ai_playground.take_close_request() {
+                            self.web_console_layout.right_panel = None;
+                        }
+                    }
+                    Some(RightPanel::ScriptEditor) => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Script Editor").strong());
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if ui.button(RichText::new(icons::CLOSE)).on_hover_text("Close panel").clicked() {
+                                    self.web_console_layout.right_panel = None;
+                                }
+                            });
+                        });
+                        ui.separator();
+                        self.web_console_layout.right_panel_ui(ui);
+                    }
+                    None => {}
+                }
+            });
 
         CentralPanel::default().show_inside(ui, |ui| {
             let ws_layout = &mut self.web_console_layout;

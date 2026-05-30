@@ -1062,25 +1062,32 @@ impl TerminalWebsocketClient {
                         }
                         Err(e) => {
                             log::error!("Failed to generate thumbnail: {}", e);
-                            sender.send(WsMessage::Text(format!("Error generating thumbnail: {}", e)));
-                        }
-                    }
-                }
-                
-                #[cfg(not(target_os = "windows"))]
-                {
-                    // Use image crate as fallback
-                    if let Ok(img) = image::open(&path_str) {
-                        let thumb = img.thumbnail(256, 256);
-                        let mut buf = Vec::new();
-                        if thumb.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png).is_ok() {
-                            let response = Cmd::ThumbnailResponse(path_str, buf);
+                            // Empty response marks the failure so the admin's
+                            // stream pump can move on instead of stalling.
+                            let response = Cmd::ThumbnailResponse(path_str, Vec::new());
                             if let Ok(payload) = encode_to_vec(&response, standard()) {
                                 sender.send(WsMessage::Binary(payload));
                             }
                         }
-                    } else {
-                        sender.send(WsMessage::Text("Error: Could not load image".to_string()));
+                    }
+                }
+
+                #[cfg(not(target_os = "windows"))]
+                {
+                    // Use image crate as fallback
+                    let buf = image::open(&path_str)
+                        .ok()
+                        .and_then(|img| {
+                            let mut buf = Vec::new();
+                            img.thumbnail(256, 256)
+                                .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+                                .ok()
+                                .map(|_| buf)
+                        })
+                        .unwrap_or_default();
+                    let response = Cmd::ThumbnailResponse(path_str, buf);
+                    if let Ok(payload) = encode_to_vec(&response, standard()) {
+                        sender.send(WsMessage::Binary(payload));
                     }
                 }
             }

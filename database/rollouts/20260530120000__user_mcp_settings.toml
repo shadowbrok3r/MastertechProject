@@ -1,0 +1,45 @@
+id = "20260530120000__user_mcp_settings"
+name = "user_mcp_settings"
+# `state = "planned"` so migrate-{local,prod} auto-detect this as the pending
+# manifest. surrealkit flips it to "completed" after the start phase lands.
+# Applied to surrealdb-dev (Mastertech/MastertechDB) — server __rollout shows completed.
+state = "completed"
+# Source: current prod/on-disk state — the target asserted by the last
+# completed rollout (connected_client_assigned_user_default).
+source_schema_hash = "c7f25fdc8605f8d25b827926fe8f06750e9c2085d5ae404f82d100640ca35e52"
+# Target: hash of the schema files after this change. Adding user.surql (+ the
+# mcp_settings fields) and the 14 backfilled table files changes the fingerprint.
+# Run `surrealkit rollout lint database/rollouts/20260530120000__user_mcp_settings.toml`
+# and paste the reported hash here if lint disagrees.
+target_schema_hash = "ac96b6967da3848d696ba8a12c9acc0c429441e9661fbc20baf5c66ab3be92c9"
+compatibility = "backward"
+renames = []
+
+# Two changes ship together (the migrate scripts lint target_schema_hash against
+# the live on-disk files, so two simultaneously-pending rollouts can't both edit
+# schema files):
+#   1. Additive: a new mcp_settings object (endpoint/api_key/model) on the
+#      existing SCHEMAFULL user table.
+#   2. Fix: notification.status default was the bare ident `Unread`; corrected to
+#      the string 'Unread'.
+# OVERWRITE per MIGRATIONS.md so a re-run on a previously-managed table can't trip
+# "field already exists". Existing user rows get mcp_settings = {} via the DEFAULT;
+# subfields stay NONE until the user saves. The notification default only affects
+# rows created after this runs.
+# DDL goes in [complete], matching the only rollout in this repo that actually
+# applied (connected_client_assigned_user_default). Putting additive DDL in
+# [start] left surrealkit marking the rollout completed without changing the
+# schema. On surrealdb-dev this rollout was already (wrongly) recorded completed,
+# so the same DDL was applied by hand via OVERWRITE; this block documents it and
+# applies cleanly on any environment that has not yet run this rollout.
+[start]
+ddl = ""
+
+[complete]
+ddl = """
+DEFINE FIELD OVERWRITE mcp_settings          ON user TYPE object DEFAULT {} PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE mcp_settings.endpoint ON user TYPE none | string     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE mcp_settings.api_key  ON user TYPE none | string     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE mcp_settings.model    ON user TYPE none | string     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE status                ON notification TYPE string DEFAULT 'Unread' PERMISSIONS FULL;
+"""

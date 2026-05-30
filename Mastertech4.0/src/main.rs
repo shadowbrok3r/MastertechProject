@@ -312,6 +312,9 @@ async fn main() -> eframe::Result<()> {
                 ..Default::default()
             },
             Box::new(|cc| {
+                // Register egui_extras image loaders so `ImageSource::Bytes`
+                // (remote explorer thumbnails/preview) can decode PNG bytes.
+                egui_extras::install_image_loaders(&cc.egui_ctx);
                 Ok(
                     Box::new(
                         app_state::MasterTechApp::new(cc)
