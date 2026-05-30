@@ -207,24 +207,20 @@ impl WebSocketClient {
                 WsEvent::Message(msg) => {
                     match msg {
                         WsMessage::Binary(bin) => {
-                            // When showing the terminal viewer, raw frames (zstd) go to the
-                            // terminal buffer. But admin-side Cmds (RemotePluginToolResult,
-                            // DirectFileTransferResult, LoadWasmPluginResult) must NEVER be
-                            // swallowed as terminal data — check for those first.
+                            // Intercept admin control-plane Cmd results in all states before view-specific decoding.
                             let mut handled_as_admin_cmd = false;
-                            if matches!(self.state, WsDisplayState::Terminal)
-                                && bin.first() != Some(&crate::EGUI_FRAME_TAG)
+                            if bin.first() != Some(&crate::EGUI_FRAME_TAG)
                             {
                                 if let Some(decoded) = deserializer::<Cmd>(&bin) {
                                     match decoded {
                                         Cmd::RemotePluginToolResult { request_id, plugin_id, tool_name, success, result_json } => {
-                                            log::info!("Remote plugin tool result (terminal state): {plugin_id}::{tool_name} req={request_id} success={success}");
+                                            log::info!("Remote plugin tool result: {plugin_id}::{tool_name} req={request_id} success={success}");
                                             #[cfg(not(target_arch = "wasm32"))]
                                             crate::plugins::mcp_bridge::resolve_pending_request(&request_id, success, result_json);
                                             handled_as_admin_cmd = true;
                                         }
                                         Cmd::DirectFileTransferResult { filename, success, message } => {
-                                            log::info!("File transfer result (terminal state): {filename} success={success}");
+                                            log::info!("File transfer result: {filename} success={success}");
                                             self.history.push(History {
                                                 from: "System".to_string(),
                                                 message: format!("File transfer '{filename}': {message}"),
@@ -234,7 +230,7 @@ impl WebSocketClient {
                                             handled_as_admin_cmd = true;
                                         }
                                         Cmd::LoadWasmPluginResult { plugin_id, success, message } => {
-                                            log::info!("WASM plugin result (terminal state): {plugin_id} success={success}");
+                                            log::info!("WASM plugin result: {plugin_id} success={success}");
                                             self.history.push(History {
                                                 from: "System".to_string(),
                                                 message: format!("WASM plugin '{plugin_id}': {message}"),

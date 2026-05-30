@@ -40,7 +40,9 @@ impl ClientKind {
 pub struct ConnectedClient {
     pub id: RecordId,
     pub assigned_user: Option<RecordId>,
+    #[serde(default)]
     pub client_hash: String,
+    #[serde(default)]
     pub connection_string: String,
     pub command_history: Option<Vec<String>>,
     pub connected: bool,

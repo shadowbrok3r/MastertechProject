@@ -24,7 +24,18 @@ pub fn sysinfo_to_telemetry(info: &SystemInformation) -> TelemetrySnapshot {
         ..Default::default()
     };
 
-    if !info.cpu.is_empty() || info.cpu_percentage > 0.0 {
+    if !info.cpu_cores.is_empty() {
+        for c in &info.cpu_cores {
+            snap.cores.push(CoreSample {
+                index: c.index,
+                name: format!("cpu{}", c.index),
+                brand: info.cpu.clone(),
+                usage_pct: c.usage_pct,
+                freq_mhz: c.freq_mhz,
+                temp_c: c.temp_c,
+            });
+        }
+    } else if !info.cpu.is_empty() || info.cpu_percentage > 0.0 {
         snap.cores.push(CoreSample {
             index: 0,
             name: "CPU".to_string(),
@@ -36,6 +47,13 @@ pub fn sysinfo_to_telemetry(info: &SystemInformation) -> TelemetrySnapshot {
                 .values()
                 .copied()
                 .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)),
+        });
+    }
+
+    for (label, temp) in &info.component_temps {
+        snap.thermals.push(stress_kit::telemetry::ThermalReading {
+            label: label.clone(),
+            temp_c: *temp,
         });
     }
 

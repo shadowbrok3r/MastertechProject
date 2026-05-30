@@ -59,6 +59,20 @@ pub struct SystemInformation {
     /// no-`skip_serializing_if` rule as `whea` — see comment above.
     #[serde(default)]
     pub tdr: Option<TdrCounters>,
+    /// Per-logical-core live samples for remote charting. Empty on
+    /// older clients until they upgrade the LiveData builder.
+    #[serde(default)]
+    pub cpu_cores: Vec<CpuCoreLive>,
+}
+
+/// Per-logical-core row on the LiveData wire (mirrors stress-kit `CoreSample`).
+#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default)]
+pub struct CpuCoreLive {
+    pub index: usize,
+    pub usage_pct: f32,
+    pub freq_mhz: u64,
+    #[serde(default)]
+    pub temp_c: Option<f32>,
 }
 
 /// Mirror of `stress_kit::telemetry::WheaCounters` carried over the

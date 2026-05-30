@@ -2,7 +2,7 @@ id = "20260527140000__slice11_duration_secs_strict_types"
 name = "slice11_duration_secs_strict_types"
 # Required by `database/scripts/migrate-local.{ps1,sh}` — the apply script
 # greps for `state = "planned"` to find the latest pending manifest.
-state = "planned"
+state = "completed"
 # Source: slice10's target hash (most recent completed rollout on this
 # repo's chain). If a different rollout has applied in between, surrealkit
 # will report the actual current hash in the lint error — paste it back here.

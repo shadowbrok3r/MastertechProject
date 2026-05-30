@@ -1,0 +1,18 @@
+id = "20260528150000__connected_client_assigned_user_default"
+name = "connected_client_assigned_user_default"
+state = "completed"
+# Source: slice12 target (schema on disk before assigned_user DEFAULT).
+source_schema_hash = "99fafd70fea4561729ecd152e8190457b4956c04f1811f630dcc36a69e7419df"
+target_schema_hash = "c7f25fdc8605f8d25b827926fe8f06750e9c2085d5ae404f82d100640ca35e52"
+compatibility = "none"
+renames = []
+
+# Adds DEFAULT $auth.id to assigned_user. Existing rows are unchanged;
+# default applies on CREATE only. Safe to run while the app is up.
+[start]
+ddl = ""
+
+[complete]
+ddl = """
+DEFINE FIELD OVERWRITE assigned_user ON connected_client TYPE none | record<user> DEFAULT $auth.id PERMISSIONS FULL;
+"""

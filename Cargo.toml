@@ -1,7 +1,19 @@
 [workspace]
 resolver = "3"
-members = [ "database" , "displays", "MtechServer2.0"]
-# , "Mastertech4.0", "axum_server", "plugin_builder", "qc-app", "stress-kit", "stress-runner", "tcp_protocol", "websocket_server2", "database-tools", 
+members = [ 
+    "database", 
+    "displays", 
+    "MtechServer2.0", 
+    "Mastertech4.0", 
+    "axum_server", 
+    "plugin_builder", 
+    "qc-app", 
+    "stress-kit", 
+    "stress-runner", 
+    "tcp_protocol", 
+    "websocket_server2", 
+    "database-tools" 
+] 
 
 [workspace.dependencies]
 stress-kit = { path = "stress-kit" }

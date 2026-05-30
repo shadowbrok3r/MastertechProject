@@ -134,6 +134,29 @@ pub fn temp_level(ui: &Ui, temp_c: f32) -> Color32 {
     }
 }
 
+/// Distinct series colors for per-core CPU charts (stable by index).
+pub fn core_series_color(index: usize) -> Color32 {
+    const PALETTE: [Color32; 16] = [
+        Color32::from_rgb(120, 200, 255),
+        Color32::from_rgb(220, 100, 100),
+        Color32::from_rgb(170, 230, 140),
+        Color32::from_rgb(220, 170, 90),
+        Color32::from_rgb(200, 120, 220),
+        Color32::from_rgb(140, 200, 200),
+        Color32::from_rgb(235, 12, 38),
+        Color32::from_rgb(12, 235, 97),
+        Color32::from_rgb(240, 141, 55),
+        Color32::from_rgb(0, 255, 255),
+        Color32::from_rgb(255, 0, 255),
+        Color32::from_rgb(128, 0, 128),
+        Color32::from_rgb(255, 180, 100),
+        Color32::from_rgb(100, 180, 255),
+        Color32::from_rgb(180, 255, 120),
+        Color32::from_rgb(255, 120, 180),
+    ];
+    PALETTE[index % PALETTE.len()]
+}
+
 pub fn result_pass(ui: &Ui) -> Color32 {
     success(ui)
 }
