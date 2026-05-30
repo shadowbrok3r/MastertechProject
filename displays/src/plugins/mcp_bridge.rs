@@ -3510,7 +3510,7 @@ impl PluginToolProvider {
 // ─── Server handler ────────────────────────────────────────────────────────────
 
 /// Shown to MCP clients in `initialize` (`ServerInfo.instructions`). Keep in sync with View menu + `nav_tab_anchor_key` in Mastertech `menu_bar.rs`.
-const INSTRUCTIONS: &str = r#"Mastertech Plugin System MCP (MasterTech desktop + admin Web Console).
+pub const INSTRUCTIONS: &str = r#"Mastertech Plugin System MCP (MasterTech desktop + admin Web Console).
 
 === Session (HTTP :9004/mcp) ===
 After initialize, POST notifications/initialized with the same Mcp-Session-Id before tools/call.

@@ -1,7 +1,7 @@
 #![allow(deprecated)]
 use eframe::egui::{vec2, Align, Button, CentralPanel, Color32, ComboBox, Context, Direction, FontId, Frame, Id, InnerResponse, Key, Layout, PopupCloseBehavior, Rect, RichText, ScrollArea, TextEdit, Ui, UiBuilder, Vec2, Widget};
-use database::{schema::{SortDirection, Status, Store, User}, DatabaseSelection, PlatformSpawner, Spawner, SurrealValue, DATABASE};
-use crate::{app_state::{AppState, MainPages, SharedContext}, tabs::tasks::task_layout::{SortField, SortOptions}};
+use database::{schema::{McpSettings, SortDirection, Status, Store, User}, DatabaseSelection, PlatformSpawner, Spawner, SurrealValue, DATABASE};
+use crate::{app_state::{AppState, MainPages, SharedContext}, tabs::tasks::task_layout::{SortField, SortOptions}, ui_tools::icons};
 use egui_extras::{Size, StripBuilder};
 use crossbeam::channel::Sender;
 use serde::Serialize;
@@ -16,14 +16,36 @@ pub struct UserPreferences {
     store: Store,
     database: DatabaseSelection,
     sort_by: SortOptions,
-    last_sort_field: Option<SortField>,   
+    last_sort_field: Option<SortField>,
     new_status: String,
+    mcp_endpoint: String,
+    mcp_api_key: String,
+    mcp_model: String,
     user: User
 }
 
 impl UserPreferences {
     pub fn set_user(&mut self, user: User) {
+        self.mcp_endpoint = user.get_mcp_endpoint().unwrap_or_default();
+        self.mcp_api_key = user.get_mcp_api_key().unwrap_or_default();
+        self.mcp_model = user.get_mcp_model().unwrap_or_default();
         self.user = user.clone();
+    }
+
+    pub fn save_mcp_settings(&mut self) {
+        let to_opt = |s: &str| { let t = s.trim(); if t.is_empty() { None } else { Some(t.to_string()) } };
+        let settings = McpSettings {
+            endpoint: to_opt(&self.mcp_endpoint),
+            api_key: to_opt(&self.mcp_api_key),
+            model: to_opt(&self.mcp_model),
+        };
+        self.user.set_mcp_settings(settings.clone());
+        crate::ai::apply_mcp_settings(&self.user);
+        PlatformSpawner::spawn(async move {
+            if let Err(e) = User::save_mcp_settings(settings).await {
+                error!("Error saving mcp settings: {e:?}");
+            }
+        });
     }
 
     pub async fn mod_account(&self, user_id: String) {
@@ -335,8 +357,9 @@ impl SharedContext {
                                                     });
 
                                                     ScrollArea::vertical()
-                                                    .auto_shrink(false)
+                                                    .auto_shrink([false, false])
                                                     .max_width(160.)
+                                                    .max_height(avail_size.y - 70.)
                                                     .show(ui, |ui| {
                                                         let clicked: &mut Option<Status> = &mut None;
                                                         for (idx, status) in self.account_mod.user.get_custom_statuses().iter().enumerate() {
@@ -437,12 +460,42 @@ impl SharedContext {
                                     });
 
                                     ui.add_space(10.0);
-                                    ui.heading("Theme Configuration");
+                                    ui.heading(RichText::new("MCP / AI Endpoint").strong());
                                     ui.add_space(10.0);
 
                                     ui.group(|ui| {
-                                        let tx = self.settings_sender.clone();
-                                        self.theme_config.edit_ui(ui, ctx, tx);
+                                        ui.set_max_width(360.0);
+                                        ui.vertical_centered(|ui| {
+                                            TextEdit::singleline(&mut self.account_mod.mcp_endpoint)
+                                                .hint_text(" OpenAI-compatible Endpoint")
+                                                .desired_width(330.)
+                                                .ui(ui);
+
+                                            ui.add_space(5.0);
+
+                                            TextEdit::singleline(&mut self.account_mod.mcp_api_key)
+                                                .hint_text(" API Key")
+                                                .desired_width(330.)
+                                                .password(true)
+                                                .ui(ui);
+
+                                            ui.add_space(5.0);
+
+                                            TextEdit::singleline(&mut self.account_mod.mcp_model)
+                                                .hint_text(" Model")
+                                                .desired_width(330.)
+                                                .ui(ui);
+
+                                            ui.add_space(8.0);
+
+                                            let save = Button::new(format!("{}  Save Endpoint", icons::SAVE))
+                                                .fill(Color32::from_rgb(30, 30, 35))
+                                                .min_size(Vec2::new(160.0, 18.0));
+
+                                            if ui.add(save).clicked() {
+                                                self.account_mod.save_mcp_settings();
+                                            }
+                                        });
                                     });
                                 });
                             });

@@ -1,6 +1,6 @@
 use eframe::egui::{Button, Color32, ComboBox, FontId, Grid, Hyperlink, Id, Margin, RichText, ScrollArea, Spinner, TextEdit, Ui, Vec2, Widget};
 use database::schema::{CarboniteResponse, ComputerData, CustomerData, LiveTaskPayload, Record, RecordIdExt, Status, TicketData, User};
-use database::schema::prestashop::Prestashop;
+use database::schema::prestashop::{OrderState, Prestashop};
 use database::schema::prestashop::xml::{modify_xml, remove_xml_tag};
 // use database::schema::helper_traits::parse_email_user;
 use database::DATABASE;
@@ -49,6 +49,7 @@ pub fn display_ticket_page(
     seb_checking: &mut bool,
     customer_modal_open: Option<&mut bool>,
     mut service_history_open: Option<&mut bool>,
+    order_current_state: Option<&mut String>,
 ) {
     // Check if this is a QC task
     let is_qc = task.status == Status::Qc;
@@ -103,6 +104,48 @@ pub fn display_ticket_page(
                     task.interact_status(&current_user, ui);
                 });
                 
+                ui.end_row();
+
+                ui.colored_label(Color32::LIGHT_RED, "Shelf");
+                if let Some(service_number) = task.service_number.as_ref() {
+                    let current_state = order_current_state
+                        .as_ref()
+                        .map(|s| s.as_str())
+                        .unwrap_or("");
+                    let current_display = if current_state.is_empty() {
+                        "Loading..."
+                    } else {
+                        OrderState::from_id_str(current_state)
+                    };
+                    let order_id = service_number.clone();
+                    let pending_state = std::cell::RefCell::new(None::<String>);
+                    ComboBox::from_id_salt(Id::new(format!("shelf_combo_{}", task.id.key_string())))
+                        .selected_text(current_display)
+                        .width(100.)
+                        .show_ui(ui, |ui| {
+                            for state in [OrderState::CheckinShelf, OrderState::InRepair, OrderState::DoneShelf] {
+                                let is_current = state.to_id_str() == current_state;
+                                if ui.selectable_label(is_current, state.as_str()).clicked() && !is_current {
+                                    let new_state = state.to_id_str().to_string();
+                                    *pending_state.borrow_mut() = Some(new_state.clone());
+                                    let order_id_clone = order_id.clone();
+                                    log::info!("Shelf changed for order: {order_id_clone}, new_state: {new_state}");
+                                    PlatformSpawner::spawn(async move {
+                                        update_order_field(&order_id_clone, "current_state", &new_state).await;
+                                    });
+                                }
+                            }
+                        });
+                    if let Some(new_state) = pending_state.into_inner() {
+                        if let Some(current) = order_current_state {
+                            *current = new_state;
+                        }
+                    }
+                } else {
+                    ui.label("—");
+                }
+                ui.label("");
+                ui.label("");
                 ui.end_row();
 
                 let customer = if let Some(customer) = customer { customer }  else { &mut CustomerData::default() };

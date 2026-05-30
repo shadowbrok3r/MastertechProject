@@ -11,9 +11,9 @@
 //! - Context menu with download, copy to tools, delete options
 
 use eframe::egui::{
-    self, Align, Align2, CentralPanel, Color32, FontId, Frame, Key, KeyboardShortcut, Layout,
-    Margin, Response, RichText, ScrollArea, Sense, Stroke, TextEdit, Ui, Vec2, CornerRadius,
-    scroll_area, Widget,
+    self, Align, Align2, CentralPanel, Color32, FontId, Frame, Image, ImageSource, Key,
+    KeyboardShortcut, Layout, Margin, Response, RichText, ScrollArea, Sense, Stroke, TextEdit,
+    TextureOptions, Ui, Vec2, CornerRadius, load::Bytes, scroll_area, Widget,
 };
 use crossbeam::channel::{Sender, Receiver};
 use egui_data_table::{
@@ -22,9 +22,30 @@ use egui_data_table::{
 };
 use egui_extras::Column as TableColumnConfig;
 use serde::Serialize;
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use crate::{Cmd, RemoteDirEntry, PlatformSpawner, Spawner};
 use crate::ui_tools::icons::{self, menu_label};
 use database::schema::file_storage::{self, FileEntry};
+
+/// Shared path → PNG-bytes thumbnail cache. The explorer fills it from
+/// `ThumbnailResponse`s; the row viewer reads it to paint icon-mode cells.
+type ThumbCache = Arc<Mutex<HashMap<String, Arc<[u8]>>>>;
+
+/// Max thumbnail requests in flight before the pump waits for responses.
+const MAX_INFLIGHT_THUMBS: usize = 12;
+/// Hard cap on thumbnail requests per folder so huge folders don't flood
+/// the client.
+const MAX_THUMBS_PER_FOLDER: usize = 1000;
+
+/// File-list layout: classic detail rows or a thumbnail grid.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExplorerViewMode {
+    List,
+    Icons,
+}
 
 /// Common folder shortcuts
 #[derive(Clone)]
@@ -112,11 +133,8 @@ pub struct PreviewState {
     pub text_content: Option<String>,
     /// Whether the content has been modified
     pub modified: bool,
-    /// Image thumbnail data (PNG bytes)
-    pub image_data: Option<Vec<u8>>,
-    /// Texture handle for rendered image
-    #[cfg(not(target_arch = "wasm32"))]
-    pub texture: Option<eframe::egui::TextureHandle>,
+    /// Image thumbnail PNG bytes, shared with egui's image loader.
+    pub image_data: Option<Arc<[u8]>>,
     /// Whether we're loading content
     pub loading: bool,
     /// Error message if loading failed
@@ -130,8 +148,6 @@ impl PreviewState {
         self.text_content = None;
         self.modified = false;
         self.image_data = None;
-        #[cfg(not(target_arch = "wasm32"))]
-        { self.texture = None; }
         self.loading = false;
         self.error = None;
     }
@@ -142,6 +158,8 @@ impl PreviewState {
 pub enum ExplorerAction {
     Navigate(String),
     Download(String),
+    /// Download every path in the list (bulk selection download).
+    DownloadMany(Vec<String>),
     DownloadDirectory(String),
     ScanDirectorySize(String),
     Execute(String),
@@ -166,6 +184,18 @@ pub struct RemoteFileRowViewer {
     pub action_tx: Option<Sender<ExplorerAction>>,
     #[serde(skip)]
     pub click_to_execute: bool,
+    /// Current layout, synced from the explorer each frame.
+    #[serde(skip)]
+    pub view_mode: ExplorerViewMode,
+    /// Thumbnail edge length in icon mode (drives column-0 width).
+    #[serde(skip)]
+    pub thumb_px: f32,
+    /// Shared thumbnail cache, read when painting icon-mode cells.
+    #[serde(skip)]
+    pub thumb_cache: ThumbCache,
+    /// Live selection, maintained from `on_highlight_change`.
+    #[serde(skip)]
+    pub selected_paths: HashSet<String>,
 }
 
 impl Default for RemoteFileRowViewer {
@@ -175,6 +205,10 @@ impl Default for RemoteFileRowViewer {
             hotkeys: Vec::new(),
             action_tx: None,
             click_to_execute: false,
+            view_mode: ExplorerViewMode::List,
+            thumb_px: 96.0,
+            thumb_cache: Arc::new(Mutex::new(HashMap::new())),
+            selected_paths: HashSet::new(),
         }
     }
 }
@@ -285,6 +319,28 @@ pub struct RemoteExplorer {
     pub action_rx: Receiver<ExplorerAction>,
     /// Sender kept so we can clone into the viewer on reset
     action_tx: Sender<ExplorerAction>,
+    /// Detail-rows vs thumbnail-grid layout.
+    pub view_mode: ExplorerViewMode,
+    /// Thumbnail edge length in icon mode, also the default column-0 width.
+    pub thumb_px: f32,
+    /// Auto-stream thumbnails on entering a folder in icon mode.
+    pub auto_load_thumbs: bool,
+    /// Manual streaming armed for the current folder (when auto is off).
+    manual_stream: bool,
+    /// Shared path → PNG cache, also held by the row viewer.
+    thumb_cache: ThumbCache,
+    /// Paths already requested this folder (avoids duplicate requests).
+    requested_thumbs: HashSet<String>,
+    /// Paths the client couldn't thumbnail (empty response) — excluded
+    /// from the in-flight count so the pump never stalls on them.
+    failed_thumbs: HashSet<String>,
+    /// Path awaiting an explicit preview-pane thumbnail (vs grid stream).
+    preview_pending: Option<String>,
+    /// Remote paths still to download in the current bulk job.
+    download_queue: VecDeque<String>,
+    /// Destination folder for a bulk download; `None` for a single file
+    /// (which uses a save-as dialog on completion).
+    download_dest: Option<PathBuf>,
 }
 
 impl Default for RemoteExplorer {
@@ -315,8 +371,10 @@ impl RemoteExplorer {
         .collect();
         
         let (action_tx, action_rx) = crossbeam::channel::unbounded();
+        let thumb_cache: ThumbCache = Arc::new(Mutex::new(HashMap::new()));
         let mut file_viewer = RemoteFileRowViewer::default();
         file_viewer.action_tx = Some(action_tx.clone());
+        file_viewer.thumb_cache = thumb_cache.clone();
 
         Self {
             current_path: "current".to_string(),
@@ -345,6 +403,16 @@ impl RemoteExplorer {
             file_viewer,
             action_rx,
             action_tx,
+            view_mode: ExplorerViewMode::List,
+            thumb_px: 96.0,
+            auto_load_thumbs: false,
+            manual_stream: false,
+            thumb_cache,
+            requested_thumbs: HashSet::new(),
+            failed_thumbs: HashSet::new(),
+            preview_pending: None,
+            download_queue: VecDeque::new(),
+            download_dest: None,
         }
     }
     
@@ -445,13 +513,18 @@ impl RemoteExplorer {
         // This is the last chunk - save the file
         self.pending_download = None;
         let file_data = std::mem::take(download_buffer);
-        
-        // Use native file dialog to let user choose save location
-        if let Some(save_path) = rfd::FileDialog::new()
-            .set_file_name(&filename)
-            .save_file()
-        {
-            match std::fs::write(&save_path, &file_data) {
+
+        // Bulk download into a pre-chosen folder writes straight through
+        // with no per-file dialog; a single download still prompts for a
+        // save location.
+        let save_path = if let Some(dir) = &self.download_dest {
+            Some(dir.join(&filename))
+        } else {
+            rfd::FileDialog::new().set_file_name(&filename).save_file()
+        };
+
+        match save_path {
+            Some(save_path) => match std::fs::write(&save_path, &file_data) {
                 Ok(_) => {
                     let msg = format!("File saved to: {} ({} bytes)", save_path.display(), file_data.len());
                     log::info!("{}", msg);
@@ -462,10 +535,8 @@ impl RemoteExplorer {
                     log::error!("{}", msg);
                     Err(msg)
                 }
-            }
-        } else {
-            // User cancelled the save dialog
-            Err("Download cancelled".to_string())
+            },
+            None => Err("Download cancelled".to_string()),
         }
     }
     
@@ -507,33 +578,35 @@ impl RemoteExplorer {
         self.preview_visible = true;
     }
     
-    /// Handle thumbnail response
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn handle_thumbnail(&mut self, path: String, png_data: Vec<u8>, ctx: &eframe::egui::Context) {
-        self.preview.path = path;
-        self.preview.text_content = None;
-        self.preview.image_data = Some(png_data.clone());
-        self.preview.loading = false;
-        self.preview.error = None;
-        self.preview_visible = true;
-        
-        // Create texture from PNG data using the image crate
-        if let Ok(img) = ::image::load_from_memory(&png_data) {
-            let rgba = img.to_rgba8();
-            let size = [img.width() as usize, img.height() as usize];
-            let pixels = rgba.into_raw();
-            let color_image = eframe::egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
-            self.preview.texture = Some(ctx.load_texture(
-                "preview_thumbnail",
-                color_image,
-                eframe::egui::TextureOptions::default(),
-            ));
+    /// Handle a thumbnail response. Empty bytes mean the client couldn't
+    /// generate one — record the failure so the stream pump skips it.
+    /// Non-empty bytes land in the shared cache (icon-mode grid) and, when
+    /// this path was explicitly requested for preview, the preview pane.
+    pub fn handle_thumbnail(&mut self, path: String, png_data: Vec<u8>, _ctx: &eframe::egui::Context) {
+        if png_data.is_empty() {
+            self.failed_thumbs.insert(path.clone());
+            if self.preview_pending.as_deref() == Some(path.as_str()) {
+                self.preview_pending = None;
+                self.preview.loading = false;
+                self.preview.error = Some("No thumbnail available".to_string());
+            }
+            return;
         }
-    }
-    
-    #[cfg(target_arch = "wasm32")]
-    pub fn handle_thumbnail(&mut self, _path: String, _png_data: Vec<u8>, _ctx: &eframe::egui::Context) {
-        self.preview.error = Some("Thumbnails not supported in web browser".to_string());
+
+        let bytes: Arc<[u8]> = Arc::from(png_data.into_boxed_slice());
+        if let Ok(mut cache) = self.thumb_cache.lock() {
+            cache.insert(path.clone(), bytes.clone());
+        }
+
+        if self.preview_pending.as_deref() == Some(path.as_str()) {
+            self.preview_pending = None;
+            self.preview.path = path;
+            self.preview.text_content = None;
+            self.preview.image_data = Some(bytes);
+            self.preview.loading = false;
+            self.preview.error = None;
+            self.preview_visible = true;
+        }
     }
     
     /// Set the directory listing from response
@@ -547,7 +620,17 @@ impl RemoteExplorer {
         });
         self.file_table.replace(entries);
         self.loading = false;
-        
+
+        // Fresh folder: drop the previous folder's thumbnail bookkeeping
+        // and selection so streaming and the selection bar start clean.
+        self.requested_thumbs.clear();
+        self.failed_thumbs.clear();
+        self.manual_stream = false;
+        self.file_viewer.selected_paths.clear();
+        if let Ok(mut cache) = self.thumb_cache.lock() {
+            cache.clear();
+        }
+
         if let Some(path) = current_path {
             self.current_path = path.clone();
             self.path_input = path;
@@ -704,6 +787,92 @@ impl RemoteExplorer {
         });
     }
     
+    /// Begin downloading a set of remote files. One file uses a save-as
+    /// dialog; several prompt once for a destination folder and stream
+    /// sequentially into it (the wire protocol carries no per-chunk path,
+    /// so downloads must run one at a time).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn start_downloads(&mut self, paths: Vec<String>, cmd_tx: &Sender<Cmd>) {
+        if paths.is_empty() {
+            return;
+        }
+        if paths.len() == 1 {
+            self.download_dest = None;
+        } else {
+            match rfd::FileDialog::new().pick_folder() {
+                Some(dir) => self.download_dest = Some(dir),
+                None => return,
+            }
+        }
+        self.download_queue = paths.into_iter().collect();
+        self.start_next_download(cmd_tx);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn start_downloads(&mut self, _paths: Vec<String>, _cmd_tx: &Sender<Cmd>) {}
+
+    /// Pop the next queued path and ask the client for it.
+    fn start_next_download(&mut self, cmd_tx: &Sender<Cmd>) {
+        if let Some(path) = self.download_queue.pop_front() {
+            self.pending_download = Some(file_name_of(&path));
+            let _ = cmd_tx.try_send(Cmd::DownloadRemoteFile(path));
+        }
+    }
+
+    /// Called after each file finishes; starts the next or ends the job.
+    pub fn advance_download_queue(&mut self, cmd_tx: &Sender<Cmd>) {
+        if self.download_queue.is_empty() {
+            self.download_dest = None;
+        } else {
+            self.start_next_download(cmd_tx);
+        }
+    }
+
+    /// Requests whose response (or failure) hasn't arrived yet.
+    fn inflight_thumbs(&self) -> usize {
+        let have = self.thumb_cache.lock().map(|c| c.len()).unwrap_or(0);
+        self.requested_thumbs
+            .len()
+            .saturating_sub(have + self.failed_thumbs.len())
+    }
+
+    /// In icon mode, request thumbnails for image/media rows that don't
+    /// have one yet, throttled by `MAX_INFLIGHT_THUMBS` and capped per
+    /// folder. Runs when auto-load is on or the operator armed a manual
+    /// stream for this folder.
+    fn pump_thumbnails(&mut self, cmd_tx: &Sender<Cmd>) {
+        if self.view_mode != ExplorerViewMode::Icons {
+            return;
+        }
+        if !(self.auto_load_thumbs || self.manual_stream) {
+            return;
+        }
+        if self.requested_thumbs.len() >= MAX_THUMBS_PER_FOLDER {
+            return;
+        }
+        let budget = MAX_INFLIGHT_THUMBS.saturating_sub(self.inflight_thumbs());
+        if budget == 0 {
+            return;
+        }
+        let mut to_request: Vec<String> = Vec::new();
+        for row in self.file_table.iter() {
+            if to_request.len() >= budget {
+                break;
+            }
+            if row.is_directory || !is_thumbnailable(&row.name) {
+                continue;
+            }
+            if self.requested_thumbs.contains(&row.path) {
+                continue;
+            }
+            to_request.push(row.path.clone());
+        }
+        for path in to_request {
+            self.requested_thumbs.insert(path.clone());
+            let _ = cmd_tx.try_send(Cmd::RequestThumbnail(path));
+        }
+    }
+
     /// Display the explorer UI
     pub fn display(&mut self, ui: &mut Ui, cmd_tx: &Sender<Cmd>) {
         let inner_margin = Margin::same(4);
@@ -712,7 +881,10 @@ impl RemoteExplorer {
         
         // Poll for My Tools updates
         self.poll_tools_updates();
-        
+
+        // Stream thumbnails for the current folder when in icon mode.
+        self.pump_thumbnails(cmd_tx);
+
         // Load My Tools on first display if bucket is set and not yet initialized
         if !self.tools_initialized && !self.bucket_name.is_empty() {
             self.load_my_tools();
@@ -837,6 +1009,41 @@ impl RemoteExplorer {
                     // View menu and click-to-run toggle, right-aligned.
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.menu_button(RichText::new(menu_label("View")), |ui| {
+                            if ui
+                                .add(
+                                    egui::Button::new(format!("{} List view", icons::LIST))
+                                        .selected(self.view_mode == ExplorerViewMode::List),
+                                )
+                                .clicked()
+                            {
+                                self.view_mode = ExplorerViewMode::List;
+                                ui.close();
+                            }
+                            if ui
+                                .add(
+                                    egui::Button::new(format!("{} Icon view", icons::GRID))
+                                        .selected(self.view_mode == ExplorerViewMode::Icons),
+                                )
+                                .clicked()
+                            {
+                                self.view_mode = ExplorerViewMode::Icons;
+                                ui.close();
+                            }
+                            if ui
+                                .add(
+                                    egui::Button::new("Auto-load thumbnails")
+                                        .selected(self.auto_load_thumbs),
+                                )
+                                .on_hover_text(
+                                    "Stream thumbnails automatically when entering a folder in \
+                                     icon view. When off, use the 'Load thumbnails' button.",
+                                )
+                                .clicked()
+                            {
+                                self.auto_load_thumbs = !self.auto_load_thumbs;
+                                ui.close();
+                            }
+                            ui.separator();
                             if ui
                                 .add(
                                     egui::Button::new("Navigation sidebar")
@@ -1141,18 +1348,14 @@ impl RemoteExplorer {
                 }
             });
         } 
-        // Image preview (native only - texture field is cfg-gated)
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(texture) = &self.preview.texture {
-            // Image preview - show at original size, scrollable
-            ScrollArea::both()
-                .id_salt("preview_image_scroll")
-                .max_width(max_height - 30.)
-                .show(ui, |ui| {
-                    let tex_size = texture.size_vec2();
-                    // Show at original size by default
-                    ui.image((texture.id(), tex_size));
-                });
+        // Image preview — fill the pane while preserving aspect ratio.
+        if let Some(bytes) = &self.preview.image_data {
+            let avail = ui.available_size();
+            ui.add(
+                thumb_image(&self.preview.path, bytes.clone())
+                    .fit_to_exact_size(avail)
+                    .maintain_aspect_ratio(true),
+            );
         }
     }
     
@@ -1193,12 +1396,10 @@ impl RemoteExplorer {
                     self.navigate_to(path, cmd_tx);
                 }
                 ExplorerAction::Download(path) => {
-                    let filename = std::path::Path::new(&path)
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "download".to_string());
-                    self.pending_download = Some(filename);
-                    let _ = cmd_tx.try_send(Cmd::DownloadRemoteFile(path));
+                    self.start_downloads(vec![path], cmd_tx);
+                }
+                ExplorerAction::DownloadMany(paths) => {
+                    self.start_downloads(paths, cmd_tx);
                 }
                 ExplorerAction::DownloadDirectory(path) => {
                     let dirname = std::path::Path::new(&path)
@@ -1220,8 +1421,27 @@ impl RemoteExplorer {
                     let _ = cmd_tx.try_send(Cmd::PreviewRemoteFile(path));
                 }
                 ExplorerAction::PreviewImage(path) => {
-                    self.preview.loading = true;
-                    let _ = cmd_tx.try_send(Cmd::RequestThumbnail(path));
+                    self.preview.path = path.clone();
+                    self.preview.text_content = None;
+                    self.preview.error = None;
+                    self.preview_visible = true;
+                    // Reuse a streamed thumbnail if we already have it;
+                    // otherwise request it and route the reply to the pane.
+                    let cached = self
+                        .thumb_cache
+                        .lock()
+                        .ok()
+                        .and_then(|c| c.get(&path).cloned());
+                    if let Some(bytes) = cached {
+                        self.preview.image_data = Some(bytes);
+                        self.preview.loading = false;
+                        self.preview_pending = None;
+                    } else {
+                        self.preview.image_data = None;
+                        self.preview.loading = true;
+                        self.preview_pending = Some(path.clone());
+                        let _ = cmd_tx.try_send(Cmd::RequestThumbnail(path));
+                    }
                 }
                 ExplorerAction::CopyToTools(path) => {
                     self.pending_tool_upload = Some((path.clone(), Vec::new()));
@@ -1249,7 +1469,57 @@ impl RemoteExplorer {
         });
         ui.add_space(2.);
 
+        // Selection count + bulk actions, plus icon-view size/streaming knobs.
+        let selected_count = self.file_viewer.selected_paths.len();
+        let mut want_download: Option<Vec<String>> = None;
+        ui.horizontal(|ui| {
+            if selected_count > 0 {
+                ui.label(RichText::new(format!("{selected_count} selected")).strong());
+                if ui.button(format!("{} Download", icons::DOWNLOAD)).clicked() {
+                    let selected = &self.file_viewer.selected_paths;
+                    let paths: Vec<String> = self
+                        .file_table
+                        .iter()
+                        .filter(|r| !r.is_directory && selected.contains(&r.path))
+                        .map(|r| r.path.clone())
+                        .collect();
+                    if !paths.is_empty() {
+                        want_download = Some(paths);
+                    }
+                }
+                if ui.button(format!("{} Clear", icons::CLOSE)).clicked() {
+                    self.file_viewer.selected_paths.clear();
+                }
+                ui.separator();
+            }
+
+            if self.view_mode == ExplorerViewMode::Icons {
+                ui.label("Size");
+                ui.add(egui::Slider::new(&mut self.thumb_px, 48.0..=256.0).show_value(false));
+                if !self.auto_load_thumbs
+                    && ui
+                        .add_enabled(
+                            !self.manual_stream,
+                            egui::Button::new(format!("{} Load thumbnails", icons::IMAGE)),
+                        )
+                        .on_hover_text("Stream thumbnails for this folder")
+                        .clicked()
+                {
+                    self.manual_stream = true;
+                }
+            }
+        });
+        if let Some(paths) = want_download {
+            self.start_downloads(paths, cmd_tx);
+        }
+        ui.add_space(2.);
+
         self.file_viewer.click_to_execute = self.click_to_execute;
+        self.file_viewer.view_mode = self.view_mode;
+        self.file_viewer.thumb_px = self.thumb_px;
+
+        // Uniform tall rows in icon view; default heterogeneous rows in list view.
+        let row_height = (self.view_mode == ExplorerViewMode::Icons).then_some(self.thumb_px);
 
         ScrollArea::horizontal()
             .auto_shrink(false)
@@ -1259,6 +1529,7 @@ impl RemoteExplorer {
                         s.scroll_bar_visibility = scroll_area::ScrollBarVisibility::AlwaysVisible;
                         s.single_click_edit_mode = true;
                         s.auto_shrink = [false, false].into();
+                        s.table_row_height = row_height;
                     })
                     .ui(ui)
             );
@@ -1421,13 +1692,34 @@ impl RowViewer<RemoteDirEntry> for RemoteFileRowViewer {
         style.interaction.selectable_labels = false;
         match column {
             0 => {
-                let glyph = icons::file_icon(&row.name, row.is_directory);
-                let color = if row.is_directory {
-                    Color32::from_rgb(130, 170, 255)
+                if self.view_mode == ExplorerViewMode::Icons {
+                    let avail = ui.available_size();
+                    let cached = if !row.is_directory && is_thumbnailable(&row.name) {
+                        self.thumb_cache
+                            .lock()
+                            .ok()
+                            .and_then(|c| c.get(&row.path).cloned())
+                    } else {
+                        None
+                    };
+                    if let Some(bytes) = cached {
+                        ui.add(
+                            thumb_image(&row.path, bytes)
+                                .fit_to_exact_size(avail)
+                                .maintain_aspect_ratio(true),
+                        );
+                    } else {
+                        icon_placeholder(ui, &row.name, row.is_directory, avail);
+                    }
                 } else {
-                    ui.style().visuals.text_color()
-                };
-                ui.label(icons::icon_sized(glyph, 14.0).color(color));
+                    let glyph = icons::file_icon(&row.name, row.is_directory);
+                    let color = if row.is_directory {
+                        Color32::from_rgb(130, 170, 255)
+                    } else {
+                        ui.style().visuals.text_color()
+                    };
+                    ui.label(icons::icon_sized(glyph, 14.0).color(color));
+                }
             }
             1 => {
                 let name_color = if row.is_directory {
@@ -1544,9 +1836,23 @@ impl RowViewer<RemoteDirEntry> for RemoteFileRowViewer {
         }
     }
 
+    fn on_highlight_change(&mut self, highlighted: &[&RemoteDirEntry], unhighlighted: &[&RemoteDirEntry]) {
+        for row in unhighlighted {
+            self.selected_paths.remove(&row.path);
+        }
+        for row in highlighted {
+            self.selected_paths.insert(row.path.clone());
+        }
+    }
+
     fn column_render_config(&mut self, column: usize, _is_editing: bool) -> TableColumnConfig {
         let base = TableColumnConfig::auto();
         match column {
+            // Icon view gives column 0 a resizable, thumbnail-sized cell;
+            // list view keeps the tight glyph column.
+            0 if self.view_mode == ExplorerViewMode::Icons => {
+                TableColumnConfig::initial(self.thumb_px).at_least(40.).at_most(512.).resizable(true)
+            }
             0 => base.at_least(30.).at_most(35.),
             1 => TableColumnConfig::remainder().at_least(120.).clip(true).resizable(true),
             2 => base.at_least(140.).at_most(160.).resizable(true),  // modified
@@ -1619,10 +1925,15 @@ impl RowViewer<RemoteDirEntry> for RemoteFileRowViewer {
                 }
             }
             "download" => {
-                for (_, row) in ctx.selection.selected_rows.iter() {
-                    if !row.is_directory {
-                        let _ = tx.try_send(ExplorerAction::Download(row.path.clone()));
-                    }
+                let paths: Vec<String> = ctx
+                    .selection
+                    .selected_rows
+                    .iter()
+                    .filter(|(_, r)| !r.is_directory)
+                    .map(|(_, r)| r.path.clone())
+                    .collect();
+                if !paths.is_empty() {
+                    let _ = tx.try_send(ExplorerAction::DownloadMany(paths));
                 }
             }
             "preview_text" => {
@@ -1671,12 +1982,60 @@ fn is_text_file(filename: &str) -> bool {
 /// Check if a file is an image
 fn is_image_file(filename: &str) -> bool {
     let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
-    
+
     matches!(ext.as_str(),
         "jpg" | "jpeg" | "png" | "gif" | "bmp" | "webp" | "ico" |
         "svg" | "tiff" | "tif" |
         "raw" | "arw" | "cr2" | "cr3" | "nef" | "dng" | "orf" | "raf"
     )
+}
+
+/// Files the Shell can produce a real thumbnail for — images plus common
+/// video containers. Everything else keeps its glyph in icon view.
+fn is_thumbnailable(filename: &str) -> bool {
+    if is_image_file(filename) {
+        return true;
+    }
+    let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
+    matches!(ext.as_str(),
+        "mp4" | "mkv" | "mov" | "avi" | "webm" | "wmv" | "m4v" |
+        "mpg" | "mpeg" | "flv" | "m2ts" | "ts" | "3gp"
+    )
+}
+
+/// Final path component, falling back to the whole string.
+fn file_name_of(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.to_string())
+}
+
+/// Center a scaled file-type glyph in an icon-view cell — shown for
+/// folders, non-thumbnailable files, and images still streaming in.
+fn icon_placeholder(ui: &mut Ui, name: &str, is_dir: bool, avail: Vec2) {
+    let glyph = icons::file_icon(name, is_dir);
+    let color = if is_dir {
+        Color32::from_rgb(130, 170, 255)
+    } else {
+        Color32::from_gray(150)
+    };
+    let size = (avail.min_elem() * 0.5).clamp(14.0, 64.0);
+    ui.allocate_ui(avail, |ui| {
+        ui.centered_and_justified(|ui| {
+            ui.label(icons::icon_sized(glyph, size).color(color));
+        });
+    });
+}
+
+/// Build an egui image widget from cached PNG bytes, keyed by path so
+/// egui's loader caches one texture per file.
+fn thumb_image(path: &str, bytes: Arc<[u8]>) -> Image<'static> {
+    Image::new(ImageSource::Bytes {
+        uri: Cow::Owned(format!("bytes://rexpl/{path}")),
+        bytes: Bytes::Shared(bytes),
+    })
+    .texture_options(TextureOptions::LINEAR)
 }
 
 /// Format file size in human-readable format

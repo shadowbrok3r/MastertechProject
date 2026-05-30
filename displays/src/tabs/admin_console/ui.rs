@@ -14,7 +14,7 @@ use crate::ui_tools::{icons, theme};
 use crate::{PlatformSpawner, Spawner};
 use log::info;
 
-use super::{AdminConsole, WebConsolePageState};
+use super::{AdminConsole, RightPanel};
 
 /// How stale a `last_update` timestamp can be before we treat the client as
 /// offline — even if the DB `connected` flag is still `true`. Five minutes
@@ -441,28 +441,31 @@ impl AdminConsole {
         collapse.store(ui.ctx());
     }
 
+    /// Central panel: always renders the focused (Docked) client session.
+    /// Script Editor and Chat now live in the right panel (see `right_panel_ui`).
     pub fn ui(&mut self, ui: &mut Ui) {
-        match self.state {
-            WebConsolePageState::ScriptEditor => self.script_editor.ui(ui),
-            #[cfg(not(target_arch = "wasm32"))]
-            WebConsolePageState::AiPlayground => self.ai_playground.enhanced_ai_playground(ui),
-            _ => {
-                // Render the focused client (Docked layout) in the central panel.
-                if let Some(focused) = self.focused_client.clone() {
-                    let layout = self.session_layout
-                        .get(&focused)
-                        .copied()
-                        .unwrap_or_default();
-                    if layout == SessionLayout::Docked {
-                        if let Some(data) = self.clients.iter().find(|c| c.connection_string == focused).cloned() {
-                            if let Some(ws_client) = self.ws_clients.get_mut(&focused) {
-                                ws_client.client = data;
-                                ws_client.show(ui);
-                            }
-                        }
+        if let Some(focused) = self.focused_client.clone() {
+            let layout = self.session_layout
+                .get(&focused)
+                .copied()
+                .unwrap_or_default();
+            if layout == SessionLayout::Docked {
+                if let Some(data) = self.clients.iter().find(|c| c.connection_string == focused).cloned() {
+                    if let Some(ws_client) = self.ws_clients.get_mut(&focused) {
+                        ws_client.client = data;
+                        ws_client.show(ui);
                     }
                 }
             }
+        }
+    }
+
+    /// Right-side panel content selected from the Panels menu.
+    pub fn right_panel_ui(&mut self, ui: &mut Ui) {
+        match self.right_panel {
+            Some(RightPanel::ScriptEditor) => self.script_editor.ui(ui),
+            Some(RightPanel::Chat) => self.ai_playground.enhanced_ai_playground(ui),
+            None => {}
         }
     }
 }

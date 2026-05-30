@@ -502,6 +502,22 @@ pub fn deserializer<T: Serialize + for<'a> Deserialize<'a> + 'static >(bytes: &[
     } else { None }
 }
 
+/// Decode `T` only when the whole buffer is consumed, so a control-plane
+/// `Cmd` whose prefix happens to resemble `T` can't be misclassified.
+pub fn deserialize_exact<T: Serialize + for<'a> Deserialize<'a> + 'static>(bytes: &[u8]) -> Option<T> {
+    match decode_from_slice(bytes, standard()) {
+        Ok((data, read)) if read == bytes.len() => Some(data),
+        _ => None,
+    }
+}
+
+/// True when `bin` begins with the zstd frame magic. Terminal-mode
+/// clients multiplex zstd-compressed remote-viewer buffers onto the same
+/// binary channel as sysinfo and `Cmd`s; this disambiguates them.
+pub fn is_zstd_frame(bin: &[u8]) -> bool {
+    bin.len() >= 4 && bin[..4] == [0x28, 0xB5, 0x2F, 0xFD]
+}
+
 pub fn deserialize_command(bytes: &[u8]) -> Option<Cmd> {
     if let Ok((cmd, _)) = decode_from_slice(bytes, standard()){
         Some(cmd)

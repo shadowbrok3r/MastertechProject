@@ -1,17 +1,27 @@
 use eframe::egui::{
-    CentralPanel, Color32, ComboBox, Frame, Key, Margin, RichText, ScrollArea, TextEdit, Ui
+    Align, Button, CentralPanel, CollapsingHeader, Color32, Frame, Key, KeyboardShortcut, Layout,
+    Margin, Modifiers, Popup, PopupCloseBehavior, RichText, ScrollArea, TextEdit, Ui,
 };
 use crate::{
+    markdown_editor::viewer,
+    tabs::ai_playground::{ChatMessage, ChatMessageType, ChatThread, SentFrom},
+    ui_tools::icons,
     PlatformSpawner, Spawner,
-    tabs::ai_playground::{ChatMessage, ChatThread, SentFrom, ChatMessageType},
 };
 
 use std::collections::HashMap;
 use crossbeam::channel::{Receiver, Sender};
-use serde::{Deserialize, Serialize};
-use log::info;
+use serde::Serialize;
 
-/// Enhanced AI playground with diagnostic capabilities
+/// A chat thread loaded from the database, delivered to the UI thread.
+struct LoadedThread {
+    id: String,
+    title: String,
+    messages: Vec<ChatMessage>,
+}
+
+/// Streaming chat against the user's OpenAI-compatible MCP endpoint, with
+/// collapsible reasoning ("thinking") and an optional Mastertech tool-calling loop.
 #[derive(Serialize)]
 pub struct EnhancedAiPlayground {
     pub selected_thread: String,
@@ -25,433 +35,379 @@ pub struct EnhancedAiPlayground {
     pub save_chats: bool,
     pub image_id: String,
     pub open_modal: bool,
-    
-    // Enhanced features
-    pub current_mode: AiMode,
-    pub show_provider_config: bool,
-    
-    // Diagnostic features
-    pub pending_approvals: Vec<ScriptApprovalRequest>,
-    pub completion_suggestions: Vec<String>,
-    pub last_partial_command: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub enum AiMode {
-    Chat,           // Regular chat mode
-    Diagnostics,    // Computer diagnostics mode
-    Shell,          // Shell command completion mode
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScriptApprovalRequest {
-    pub id: String,
-    pub script: String,
-    pub description: String,
-    pub risk_level: String,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
+    /// Expose the Mastertech MCP tools to the model (native only).
+    pub use_mcp_tools: bool,
+    /// Set when the panel's close button is clicked; the host reads + clears it.
+    #[serde(skip)]
+    close_requested: bool,
+    /// One-time load guard for pulling persisted threads from the database.
+    #[serde(skip)]
+    loaded: bool,
+    #[serde(skip)]
+    load_tx: Sender<Vec<LoadedThread>>,
+    #[serde(skip)]
+    load_rx: Receiver<Vec<LoadedThread>>,
 }
 
 impl Default for EnhancedAiPlayground {
     fn default() -> Self {
         let (response_tx, response_rx) = crossbeam::channel::unbounded::<ChatMessage>();
-
+        let (load_tx, load_rx) = crossbeam::channel::unbounded::<Vec<LoadedThread>>();
         Self {
             selected_thread: String::new(),
-            threads: HashMap::new(),
             chat_title: HashMap::new(),
             edit_title: false,
+            threads: HashMap::new(),
             response_tx,
             response_rx,
             save_chats: false,
             image_id: String::new(),
             open_modal: false,
-            
-            current_mode: AiMode::Chat,
-            show_provider_config: false,
-            
-            pending_approvals: Vec::new(),
-            completion_suggestions: Vec::new(),
-            last_partial_command: String::new(),
+            use_mcp_tools: true,
+            close_requested: false,
+            loaded: false,
+            load_tx,
+            load_rx,
         }
     }
 }
 
 impl EnhancedAiPlayground {
+    /// Returns and clears the "close panel" request raised by the top-bar ✕.
+    pub fn take_close_request(&mut self) -> bool {
+        std::mem::take(&mut self.close_requested)
+    }
+
     pub fn enhanced_ai_playground(&mut self, ui: &mut Ui) {
-        // Top panel with mode selection and provider config
-        eframe::egui::Panel::top("enhanced_ai_top")
-            .frame(Frame::default().inner_margin(Margin::same(8)))
-            .exact_size(60.)
-            .show_inside(ui, |ui| {
-                ui.horizontal(|ui| {
-                    // Mode selection
-                    ui.label(RichText::new("Mode:").strong());
-                    ComboBox::from_label("")
-                        .selected_text(format!("{:?}", self.current_mode))
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.current_mode, AiMode::Chat, "💬 Chat");
-                            ui.selectable_value(&mut self.current_mode, AiMode::Diagnostics, "🔧 Diagnostics");
-                            ui.selectable_value(&mut self.current_mode, AiMode::Shell, "⚡ Shell Assistant");
-                        });
+        self.ensure_loaded();
 
-                    ui.add_space(20.);
+        eframe::egui::Panel::top("enhanced_ai_topbar")
+            .frame(Frame::default().inner_margin(Margin::symmetric(6, 2)))
+            .exact_size(28.)
+            .show_separator_line(false)
+            .show_inside(ui, |ui| self.show_chat_topbar(ui));
 
-                    // Provider configuration
-                    if ui.button("⚙ Provider Config").clicked() {
-                        self.show_provider_config = !self.show_provider_config;
-                    }
-
-                    ui.add_space(ui.available_width() - 200.);
-
-                    // Status indicator
-                    match self.current_mode {
-                        AiMode::Chat => ui.label(RichText::new("💬 Ready for conversation").color(Color32::LIGHT_GREEN)),
-                        AiMode::Diagnostics => ui.label(RichText::new("🔧 Diagnostic tools available").color(Color32::LIGHT_BLUE)),
-                        AiMode::Shell => ui.label(RichText::new("⚡ Command completion active").color(Color32::YELLOW)),
-                    };
-                });
-
-                // Provider configuration row
-                if self.show_provider_config {
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        ui.label("Provider:");
-                        ui.label("OpenAI GPT-4 (Default)");
-                        ui.label("⭕ Connected");
-                    });
-                }
-            });
-
-        // Left sidebar - mode-specific panels
-        eframe::egui::Panel::left("enhanced_ai_sidebar")
-            .frame(Frame::default().inner_margin(Margin::same(8)))
-            .exact_size(220.)
-            .show_inside(ui, |ui| {
-                match self.current_mode {
-                    AiMode::Chat => self.show_chat_sidebar(ui),
-                    AiMode::Diagnostics => self.show_diagnostics_sidebar(ui),
-                    AiMode::Shell => self.show_shell_sidebar(ui),
-                }
-            });
-
-        // Bottom panel - input area
         eframe::egui::Panel::bottom("enhanced_ai_input")
-            .frame(Frame::default().inner_margin(Margin::same(8)))
-            .exact_size(80.)
-            .show_inside(ui, |ui| {
-                match self.current_mode {
-                    AiMode::Chat => self.show_chat_input(ui),
-                    AiMode::Diagnostics => self.show_diagnostics_input(ui),
-                    AiMode::Shell => self.show_shell_input(ui),
-                }
-            });
+            .frame(Frame::default().inner_margin(Margin::same(6)))
+            .exact_size(92.)
+            .show_inside(ui, |ui| self.show_chat_input(ui));
 
-        // Central panel - main content
         CentralPanel::default()
-            .frame(Frame::dark_canvas(ui.style()))
-            .show_inside(ui, |ui| {
-                match self.current_mode {
-                    AiMode::Chat => self.show_chat_content(ui),
-                    AiMode::Diagnostics => self.show_diagnostics_content(ui),
-                    AiMode::Shell => self.show_shell_content(ui),
-                }
-            });
+            .frame(Frame::central_panel(ui.style()).inner_margin(Margin::same(10)))
+            .show_inside(ui, |ui| self.show_chat_content(ui));
 
-        // Handle events
         self.handle_enhanced_ai_events(ui);
     }
 
-    fn show_chat_sidebar(&mut self, ui: &mut Ui) {
-        ui.vertical_centered(|ui| {
-            ui.heading("💬 Chat Threads");
-            ui.separator();
-
-            // Show existing threads
-            let selected_thread = self.selected_thread.clone();
-            for (thread_id, _) in self.threads.iter() {
-                let title = self.chat_title
-                    .get(thread_id)
-                    .unwrap_or(thread_id);
-
-                if ui.selectable_label(
-                    selected_thread.eq(thread_id), 
-                    RichText::new(title)
-                ).clicked() {
-                    self.selected_thread = thread_id.clone();
-                }
-            }
-
-            ui.add_space(10.);
-
-            if ui.button("➕ New Chat").clicked() {
-                self.create_new_chat_thread();
-            }
-        });
+    fn thread_title(&self, id: &str) -> String {
+        self.chat_title.get(id).cloned().unwrap_or_else(|| {
+            self.threads
+                .get(id)
+                .and_then(|t| t.messages.iter().find_map(|m| match &m.content {
+                    ChatMessageType::Text(s) if matches!(m.from, SentFrom::Me) => Some(short_title(s)),
+                    _ => None,
+                }))
+                .unwrap_or_else(|| "New chat".to_string())
+        })
     }
 
-    fn show_diagnostics_sidebar(&mut self, ui: &mut Ui) {
-        ui.vertical_centered(|ui| {
-            ui.heading("🔧 Diagnostic Tools");
-            ui.separator();
+    fn current_thread_title(&self) -> String {
+        if self.threads.contains_key(&self.selected_thread) {
+            self.thread_title(&self.selected_thread)
+        } else {
+            "Threads".to_string()
+        }
+    }
 
-            if ui.button("🕱 Analyze BSOD Dumps").clicked() {
-                self.run_diagnostic_tool("analyze_bsod", serde_json::json!({"include_recent": true}));
-            }
+    /// Compact top bar: hover-open threads dropdown + New chat on the left;
+    /// model, tools toggle and close on the right.
+    fn show_chat_topbar(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            // ── Threads dropdown (opens on hover, stays open over the popup) ──
+            let label = format!("{}  {}  {}", icons::CHAT, self.current_thread_title(), icons::CHEV_OPEN);
+            let resp = ui.button(RichText::new(label));
+            // Stay open while the pointer is over the button OR the popup
+            // (compared against last frame's popup rect, so crossing the gap
+            // between them doesn't snap it shut).
+            let rect_id = ui.make_persistent_id("threads_dropdown_rect");
+            let last_rect = ui.memory(|m| m.data.get_temp::<eframe::egui::Rect>(rect_id));
+            let pointer = ui.ctx().pointer_hover_pos();
+            let over_popup = match (last_rect, pointer) {
+                (Some(r), Some(p)) => r.expand(8.0).contains(p),
+                _ => false,
+            };
+            let open = resp.hovered() || over_popup;
 
-            if ui.button("📋 Check Event Logs").clicked() {
-                self.run_diagnostic_tool("analyze_event_logs", serde_json::json!({
-                    "log_name": "System",
-                    "hours_back": 24
-                }));
-            }
-
-            if ui.button("📊 Performance Report").clicked() {
-                self.run_diagnostic_tool("generate_performance_report", serde_json::json!({
-                    "duration_hours": 24,
-                    "include_processes": true,
-                    "include_hardware": true
-                }));
-            }
-
-            if ui.button("💻 System Summary").clicked() {
-                self.run_diagnostic_tool("get_system_summary", serde_json::json!({
-                    "include_hardware": true,
-                    "include_software": true,
-                    "include_network": true
-                }));
-            }
-
-            ui.separator();
-            ui.heading("⏳ Pending Approvals");
-
-            for approval in &self.pending_approvals {
-                ui.group(|ui| {
-                    ui.vertical(|ui| {
-                        ui.label(RichText::new(&approval.description).strong());
-                        ui.label(format!("Risk: {}", approval.risk_level));
-                        ui.horizontal(|ui| {
-                            if ui.button("✅ Approve").clicked() {
-                                // Handle approval
+            let mut picked: Option<String> = None;
+            let popup = Popup::from_response(&resp)
+                .open(open)
+                .gap(2.0)
+                .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
+                .show(|ui| {
+                    ui.set_min_width(220.);
+                    if self.threads.is_empty() {
+                        ui.label(RichText::new("No chats yet").weak());
+                        return;
+                    }
+                    let selected = self.selected_thread.clone();
+                    let mut ids: Vec<String> = self.threads.keys().cloned().collect();
+                    ids.sort();
+                    ScrollArea::vertical().max_height(320.).show(ui, |ui| {
+                        for id in ids {
+                            let title = self.thread_title(&id);
+                            if ui
+                                .selectable_label(selected == id, RichText::new(format!("{}  {title}", icons::CHAT)))
+                                .clicked()
+                            {
+                                picked = Some(id);
                             }
-                            if ui.button("❌ Deny").clicked() {
-                                // Handle denial
-                            }
-                        });
+                        }
                     });
                 });
+            let stored = popup.map(|r| r.response.rect).unwrap_or(eframe::egui::Rect::NOTHING);
+            ui.memory_mut(|m| m.data.insert_temp(rect_id, stored));
+            if let Some(id) = picked {
+                self.selected_thread = id;
             }
-        });
-    }
 
-    fn show_shell_sidebar(&mut self, ui: &mut Ui) {
-        ui.vertical_centered(|ui| {
-            ui.heading("⚡ Shell Assistant");
-            ui.separator();
+            if ui.button(RichText::new(icons::PLUS)).on_hover_text("New chat").clicked() {
+                self.create_new_chat_thread();
+            }
 
-            ui.label("Recent Commands:");
-            ScrollArea::vertical().max_width(200.).show(ui, |ui| {
-                for suggestion in &self.completion_suggestions {
-                    if ui.button(suggestion).clicked() {
-                        // Use this suggestion
-                        if let Some(thread) = self.threads.get_mut(&self.selected_thread) {
-                            thread.input = suggestion.clone();
-                        }
-                    }
+            // ── Right side: close · tools · model ──
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui.button(RichText::new(icons::CLOSE)).on_hover_text("Close chat").clicked() {
+                    self.close_requested = true;
                 }
+                #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+                if ui
+                    .selectable_label(self.use_mcp_tools, RichText::new(icons::WRENCH))
+                    .on_hover_text("Use Mastertech tools")
+                    .clicked()
+                {
+                    self.use_mcp_tools = !self.use_mcp_tools;
+                }
+                let model = crate::ai::effective_model(crate::ai::gpts::MODEL);
+                ui.label(RichText::new(model).weak().small());
             });
-
-            ui.separator();
-
-            ui.label("Quick Actions:");
-            if ui.button("🔍 System Info").clicked() {
-                self.suggest_command("systeminfo");
-            }
-            if ui.button("📂 List Processes").clicked() {
-                self.suggest_command("tasklist");
-            }
-            if ui.button("🌐 Network Status").clicked() {
-                self.suggest_command("ipconfig /all");
-            }
-            if ui.button("💾 Disk Usage").clicked() {
-                self.suggest_command("dir C:\\ /s");
-            }
         });
     }
 
     fn show_chat_input(&mut self, ui: &mut Ui) {
-        if let Some(thread) = self.threads.get_mut(&self.selected_thread) {
-            // Move input to a local variable to avoid borrow issues
-            let mut input = thread.input.clone();
-            let mut send = false;
-            ui.horizontal(|ui| {
-                let text_edit = TextEdit::multiline(&mut input)
-                    .desired_width(ui.available_width() - 80.)
-                    .hint_text("Ask me anything...");
-                let response = ui.add(text_edit);
-                if ui.button("Send").clicked() || (response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter))) {
-                    send = true;
-                }
-            });
-            // Write back input if changed
-            if thread.input != input {
-                thread.input = input;
-            }
-            if send {
-                self.send_chat_message();
-            }
-        }
-    }
-
-    fn show_diagnostics_input(&mut self, ui: &mut Ui) {
-        if let Some(thread) = self.threads.get_mut(&self.selected_thread) {
-            let mut input = thread.input.clone();
-            let mut analyze = false;
-            ui.vertical(|ui| {
+        let mut send = false;
+        if self.threads.contains_key(&self.selected_thread) {
+            if let Some(thread) = self.threads.get_mut(&self.selected_thread) {
+                let row_h = ui.available_height();
+                let send_w = 38.0;
                 ui.horizontal(|ui| {
-                    let text_edit = TextEdit::multiline(&mut input)
-                        .desired_width(ui.available_width() - 80.)
-                        .hint_text("Describe the issue you're experiencing...");
-                    ui.add(text_edit);
-                    if ui.button("Analyze").clicked() {
-                        analyze = true;
+                    let resp = ui.add_sized(
+                        [ui.available_width() - send_w - 6.0, row_h],
+                        TextEdit::multiline(&mut thread.input)
+                            .hint_text("Ask anything…  (Shift+Enter for newline)")
+                            .return_key(Some(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))),
+                    );
+                    let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                    let clicked = ui
+                        .add_sized([send_w, row_h], Button::new(RichText::new(icons::UP).strong()))
+                        .on_hover_text("Send")
+                        .clicked();
+                    if (clicked || enter) && !thread.input.trim().is_empty() {
+                        send = true;
                     }
                 });
-                ui.label(RichText::new("💡 Try: 'My computer is running slow', 'Blue screen occurred', 'Check for errors'")
-                    .italics().weak());
+            }
+        } else {
+            ui.centered_and_justified(|ui| {
+                ui.label(RichText::new(format!("Start a new chat with  {}  above.", icons::PLUS)).weak());
             });
-            if thread.input != input {
-                thread.input = input;
-            }
-            if analyze {
-                self.send_diagnostic_request();
-            }
         }
-    }
 
-    fn show_shell_input(&mut self, ui: &mut Ui) {
-        if let Some(thread) = self.threads.get_mut(&self.selected_thread) {
-            let mut input = thread.input.clone();
-            let mut changed = false;
-            let mut complete = false;
-            ui.horizontal(|ui| {
-                let text_edit = TextEdit::singleline(&mut input)
-                    .desired_width(ui.available_width() - 80.)
-                    .hint_text("Type a partial command...");
-                let response = ui.add(text_edit);
-                if response.changed() {
-                    changed = true;
-                }
-                if ui.button("Complete").clicked() {
-                    complete = true;
-                }
-            });
-            if thread.input != input {
-                thread.input = input.clone();
-            }
-            if changed {
-                self.last_partial_command = input;
-                self.get_command_completions();
-            }
-            if complete {
-                self.get_command_completions();
-            }
+        if send {
+            self.send_chat_message();
         }
     }
 
     fn show_chat_content(&mut self, ui: &mut Ui) {
-        // Regular chat display (similar to existing implementation)
-        let messages = if let Some(thread) = self.threads.get(&self.selected_thread) {
-            thread.messages.clone()
-        } else {
-            Vec::new()
-        };
-        ScrollArea::vertical().show(ui, |ui| {
-            for message in messages.iter() {
-                self.render_chat_message(ui, message);
-            }
-        });
-    }
+        let messages = self
+            .threads
+            .get(&self.selected_thread)
+            .map(|t| t.messages.clone())
+            .unwrap_or_default();
 
-    fn show_diagnostics_content(&mut self, ui: &mut Ui) {
-        let messages = if let Some(thread) = self.threads.get(&self.selected_thread) {
-            thread.messages.clone()
-        } else {
-            Vec::new()
-        };
-        let threads_empty = self.threads.is_empty();
-        ScrollArea::vertical().show(ui, |ui| {
-            ui.heading("🔧 Computer Diagnostics");
-            ui.separator();
-            for message in messages.iter() {
-                self.render_diagnostic_message(ui, message);
-            }
-            if threads_empty {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(100.);
-                    ui.heading("Welcome to Computer Diagnostics");
-                    ui.label("Select a diagnostic tool from the sidebar or describe an issue you're experiencing.");
-                    ui.add_space(20.);
-                    ui.label("I can help you with:");
-                    ui.label("• Analyzing Blue Screen crashes (BSOD)");
-                    ui.label("• Checking Windows Event Logs for errors");
-                    ui.label("• Generating performance reports");
-                    ui.label("• Providing system health summaries");
-                    ui.label("• Recommending solutions for common issues");
-                });
-            }
-        });
-    }
+        if messages.is_empty() {
+            ui.vertical_centered(|ui| {
+                ui.add_space(120.);
+                ui.label(RichText::new(format!("{}", icons::CHAT)).size(40.).weak());
+                ui.heading(RichText::new("Mastertech Assistant").strong());
+                ui.label(RichText::new("Ask a question to get started.").weak());
+            });
+            return;
+        }
 
-    fn show_shell_content(&mut self, ui: &mut Ui) {
-        let suggestions: Vec<String> = self.completion_suggestions.clone();
-        ScrollArea::vertical().show(ui, |ui| {
-            ui.heading("⚡ Shell Command Assistant");
-            ui.separator();
-            if !suggestions.is_empty() {
-                ui.label("Command Completions:");
-                for suggestion in &suggestions {
-                    ui.horizontal(|ui| {
-                        if ui.button("▶").clicked() {
-                            // Execute command suggestion
-                        }
-                        ui.label(suggestion);
-                    });
+        ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .stick_to_bottom(true)
+            .show(ui, |ui| {
+                for message in &messages {
+                    self.render_chat_message(ui, message);
+                    ui.add_space(6.);
                 }
-            } else {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(100.);
-                    ui.heading("Shell Command Assistant");
-                    ui.label("Start typing a command in the input box below for intelligent completions.");
-                    ui.add_space(20.);
-                    ui.label("Features:");
-                    ui.label("• Smart command completion for CMD, PowerShell, and Bash");
-                    ui.label("• Context-aware suggestions");
-                    ui.label("• Common administrative commands");
-                    ui.label("• Safety warnings for potentially dangerous commands");
-                });
-            }
-        });
+            });
     }
 
-    fn handle_enhanced_ai_events(&mut self, ui: &mut Ui) {
-        while let Ok(response) = self.response_rx.try_recv() {
-            ui.ctx().request_repaint();
-            
-            let current_thread = self.threads
-                .entry(response.thread_id.clone())
-                .or_insert_with(|| ChatThread {
-                    id: response.thread_id.clone(),
-                    messages: Vec::new(),
-                    images: Vec::new(),
-                    input: String::new(),
+    fn render_chat_message(&self, ui: &mut Ui, message: &ChatMessage) {
+        match &message.content {
+            ChatMessageType::Reasoning(reasoning) => {
+                if reasoning.trim().is_empty() {
+                    return;
+                }
+                CollapsingHeader::new(RichText::new(format!("{}  Thinking", icons::LIGHTBULB)).weak())
+                    .id_salt(format!("think-{}", message.id))
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        ui.style_mut().visuals.override_text_color = Some(ui.visuals().weak_text_color());
+                        viewer::easy_mark(ui, reasoning);
+                    });
+            }
+            ChatMessageType::Text(text)
+            | ChatMessageType::Code(text)
+            | ChatMessageType::Error(text)
+            | ChatMessageType::FileId(text) => {
+                let is_user = matches!(message.from, SentFrom::Me);
+                let (glyph, name) = if is_user {
+                    (icons::p::USER, "You")
+                } else {
+                    (icons::ROBOT, "Assistant")
+                };
+                let fill = if is_user {
+                    ui.visuals().widgets.active.weak_bg_fill
+                } else {
+                    ui.visuals().faint_bg_color
+                };
+                Frame::group(ui.style()).fill(fill).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        let color = if is_user { Color32::LIGHT_BLUE } else { Color32::LIGHT_GREEN };
+                        ui.label(RichText::new(format!("{glyph}  {name}")).strong().color(color).small());
+                    });
+                    if matches!(message.content, ChatMessageType::Error(_)) {
+                        ui.colored_label(ui.visuals().error_fg_color, text);
+                    } else {
+                        viewer::easy_mark(ui, text);
+                    }
                 });
-
-            current_thread.messages.push(response);
+            }
+            ChatMessageType::Image(_) | ChatMessageType::Done => {}
         }
     }
 
-    // Helper methods
+    /// Kicks off a one-time load of the user's persisted chat threads.
+    fn ensure_loaded(&mut self) {
+        if self.loaded {
+            return;
+        }
+        self.loaded = true;
+        let tx = self.load_tx.clone();
+        PlatformSpawner::spawn(async move {
+            if let Ok(serde_json::Value::Array(rows)) = database::schema::User::load_ai_chat_threads().await {
+                let loaded: Vec<LoadedThread> = rows
+                    .into_iter()
+                    .filter_map(|r| {
+                        let id = r.get("thread_id")?.as_str()?.to_string();
+                        let title = r.get("title").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                        let messages = r
+                            .get("messages")
+                            .cloned()
+                            .and_then(|m| serde_json::from_value::<Vec<ChatMessage>>(m).ok())
+                            .unwrap_or_default();
+                        Some(LoadedThread { id, title, messages })
+                    })
+                    .collect();
+                let _ = tx.send(loaded);
+            }
+        });
+    }
+
+    fn thread_entry(&mut self, tid: &str) -> &mut ChatThread {
+        self.threads.entry(tid.to_string()).or_insert_with(|| ChatThread {
+            id: tid.to_string(),
+            messages: Vec::new(),
+            images: Vec::new(),
+            input: String::new(),
+        })
+    }
+
+    fn upsert_stream(&mut self, tid: &str, id: &str, ts: i32, from: SentFrom, chunk: String, reasoning: bool) {
+        let thread = self.thread_entry(tid);
+        if let Some(m) = thread.messages.iter_mut().find(|m| m.id == id) {
+            match &mut m.content {
+                ChatMessageType::Text(s) if !reasoning => s.push_str(&chunk),
+                ChatMessageType::Reasoning(s) if reasoning => s.push_str(&chunk),
+                _ => {}
+            }
+        } else {
+            let content = if reasoning {
+                ChatMessageType::Reasoning(chunk)
+            } else {
+                ChatMessageType::Text(chunk)
+            };
+            thread.messages.push(ChatMessage { id: id.to_string(), thread_id: tid.to_string(), ts, from, content });
+        }
+    }
+
+    /// Persists one thread to the database (fire-and-forget).
+    fn save_thread(&mut self, tid: &str) {
+        if let Some(thread) = self.threads.get(tid) {
+            let messages = serde_json::to_value(&thread.messages).unwrap_or_else(|_| serde_json::Value::Array(Vec::new()));
+            let title = self.thread_title(tid);
+            let id = tid.to_string();
+            PlatformSpawner::spawn(async move {
+                if let Err(e) = database::schema::User::save_ai_chat_thread(&id, &title, messages).await {
+                    log::error!("save_ai_chat_thread: {e:?}");
+                }
+            });
+        }
+    }
+
+    fn handle_enhanced_ai_events(&mut self, ui: &mut Ui) {
+        // Merge any threads loaded from the database.
+        while let Ok(loaded) = self.load_rx.try_recv() {
+            let first = loaded.first().map(|l| l.id.clone());
+            for lt in loaded {
+                self.chat_title.insert(lt.id.clone(), lt.title);
+                self.threads.entry(lt.id.clone()).or_insert_with(|| ChatThread {
+                    id: lt.id.clone(),
+                    messages: lt.messages,
+                    images: Vec::new(),
+                    input: String::new(),
+                });
+            }
+            if !self.threads.contains_key(&self.selected_thread) {
+                if let Some(f) = first {
+                    self.selected_thread = f;
+                }
+            }
+            ui.ctx().request_repaint();
+        }
+
+        while let Ok(response) = self.response_rx.try_recv() {
+            ui.ctx().request_repaint();
+            let id = response.id.clone();
+            let tid = response.thread_id.clone();
+            let ts = response.ts;
+            let from = response.from.clone();
+            match response.content {
+                ChatMessageType::Text(chunk) => self.upsert_stream(&tid, &id, ts, from, chunk, false),
+                ChatMessageType::Reasoning(chunk) => self.upsert_stream(&tid, &id, ts, from, chunk, true),
+                // Turn finished — persist the full thread.
+                ChatMessageType::Done => self.save_thread(&tid),
+                other => {
+                    self.thread_entry(&tid).messages.push(ChatMessage { id, thread_id: tid.clone(), ts, from, content: other });
+                }
+            }
+        }
+    }
+
     fn create_new_chat_thread(&mut self) {
         let thread_id = uuid::Uuid::new_v4().to_string();
         self.selected_thread = thread_id.clone();
@@ -464,83 +420,59 @@ impl EnhancedAiPlayground {
     }
 
     fn send_chat_message(&mut self) {
-        // Implementation similar to existing chat functionality
-        info!("Sending chat message in enhanced AI playground");
-    }
-
-    fn send_diagnostic_request(&mut self) {
-        if let Some(thread) = self.threads.get(&self.selected_thread) {
-            let input = thread.input.clone();
-            let response_tx = self.response_tx.clone();
-            
-            PlatformSpawner::spawn(async move {
-                // This would integrate with diagnostic tools
-                let response = ChatMessage {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    thread_id: "diagnostic".to_string(),
-                    ts: chrono::Utc::now().timestamp() as i32,
-                    from: SentFrom::Gpt,
-                    content: ChatMessageType::Text(format!("Analyzing: {}", input)),
-                };
-                let _ = response_tx.send(response);
-            });
+        if !self.threads.contains_key(&self.selected_thread) {
+            self.create_new_chat_thread();
         }
-    }
 
-    fn get_command_completions(&mut self) {
-        let partial_command = self.last_partial_command.clone();
-        if !partial_command.is_empty() {
-            // This would use command completion
-            self.completion_suggestions = vec![
-                format!("{} /?", partial_command),
-                format!("{}list", partial_command),
-                format!("{}info", partial_command),
-            ];
-        }
-    }
+        let (input, thread_id) = match self.threads.get_mut(&self.selected_thread) {
+            Some(thread) => {
+                let input = thread.input.trim().to_string();
+                if input.is_empty() {
+                    return;
+                }
+                thread.input.clear();
+                (input, thread.id.clone())
+            }
+            None => return,
+        };
 
-    fn suggest_command(&mut self, command: &str) {
-        if let Some(thread) = self.threads.get_mut(&self.selected_thread) {
-            thread.input = command.to_string();
-        }
-    }
-
-    fn run_diagnostic_tool(&mut self, tool_name: &str, _params: serde_json::Value) {
-        let response_tx = self.response_tx.clone();
-        let tool_name = tool_name.to_string();
-        
-        PlatformSpawner::spawn(async move {
-            // This would run the actual diagnostic tool
-            let response = ChatMessage {
-                id: uuid::Uuid::new_v4().to_string(),
-                thread_id: "diagnostic".to_string(),
-                ts: chrono::Utc::now().timestamp() as i32,
-                from: SentFrom::Gpt,
-                content: ChatMessageType::Text(format!("Running {}...", tool_name)),
-            };
-            let _ = response_tx.send(response);
+        // Echo the user's message into the thread.
+        let _ = self.response_tx.try_send(ChatMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            thread_id: thread_id.clone(),
+            ts: 0,
+            from: SentFrom::Me,
+            content: ChatMessageType::Text(input.clone()),
         });
-    }
 
-    fn render_chat_message(&self, ui: &mut Ui, message: &ChatMessage) {
-        // Implementation similar to existing chat message rendering
-        ui.label(format!("{:?}: {:?}", message.from, message.content));
-    }
-
-    fn render_diagnostic_message(&self, ui: &mut Ui, message: &ChatMessage) {
-        // Enhanced rendering for diagnostic messages with special formatting
-        ui.group(|ui| {
-            ui.vertical(|ui| {
-                ui.label(RichText::new(format!("{:?}", message.from)).strong());
-                match &message.content {
-                    ChatMessageType::Text(text) => {
-                        ui.label(text);
-                    }
-                    _ => {
-                        ui.label(format!("{:?}", message.content));
-                    }
+        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        {
+            use crate::{PlatformSpawner, Spawner};
+            let prior = self
+                .threads
+                .get(&thread_id)
+                .map(|t| crate::ai::mcp_chat::history_json_from_messages(&t.messages))
+                .unwrap_or_default();
+            let tx = self.response_tx.clone();
+            let use_tools = self.use_mcp_tools;
+            PlatformSpawner::spawn(async move {
+                if let Err(e) = crate::ai::mcp_chat::stream_chat(input, prior, thread_id, use_tools, tx).await {
+                    log::error!("stream_chat error: {e:?}");
                 }
             });
-        });
+        }
+        #[cfg(not(all(not(target_arch = "wasm32"), feature = "tokio")))]
+        {
+            let _ = (input, thread_id);
+        }
+    }
+}
+
+fn short_title(s: &str) -> String {
+    let t = s.trim().replace('\n', " ");
+    if t.chars().count() <= 28 {
+        t
+    } else {
+        format!("{}…", t.chars().take(28).collect::<String>())
     }
 }

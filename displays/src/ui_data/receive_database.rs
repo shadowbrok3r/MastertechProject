@@ -24,6 +24,7 @@ impl crate::app_state::SharedContext {
 
                     let usr = self.current_user.clone();
                     if let Some(user) = usr {
+                        crate::ai::apply_mcp_settings(&user);
                         self.load_data(ctx, &user);
                         let _ = self.app_state_tx.try_send(crate::app_state::AppState::Authenticated(crate::app_state::MainPages::Tasks));
                     } else {

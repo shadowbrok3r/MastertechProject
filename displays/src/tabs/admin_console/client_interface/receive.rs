@@ -3,7 +3,7 @@ use database::schema::{Node, SystemInformation};
 use ewebsock::{WsEvent, WsMessage};
 use eframe::egui::Context;
 
-use super::{deserializer, ui::WsDisplayState, History, WebSocketClient};
+use super::{deserialize_exact, deserializer, is_zstd_frame, ui::WsDisplayState, History, WebSocketClient};
 
 impl WebSocketClient {
     pub fn receive(&mut self, ctx: &Context) {
@@ -200,16 +200,23 @@ impl WebSocketClient {
         }
 
         // Drain ALL pending websocket messages in one frame to avoid backlog.
-        // For terminal binary buffers, keep only the latest to skip stale frames.
-        let mut latest_terminal_bin: Option<Vec<u8>> = None;
+        // Remote-viewer frames (zstd terminal buffers + tagged egui frames)
+        // are coalesced to the latest to skip stale frames; everything else
+        // is decoded immediately.
+        let mut latest_viewer_frame: Option<Vec<u8>> = None;
         while let Some(event) = self.transport.try_recv() {
             match event {
                 WsEvent::Message(msg) => {
                     match msg {
                         WsMessage::Binary(bin) => {
-                            // Intercept admin control-plane Cmd results in all states before view-specific decoding.
+                            // Terminal-mode clients multiplex zstd remote-viewer
+                            // buffers and egui frames onto the same channel as
+                            // sysinfo/Cmd; route by content, not by view state.
+                            let is_viewer_frame = bin.first() == Some(&crate::EGUI_FRAME_TAG)
+                                || is_zstd_frame(&bin);
+                            // Intercept admin control-plane Cmd results before view-specific decoding.
                             let mut handled_as_admin_cmd = false;
-                            if bin.first() != Some(&crate::EGUI_FRAME_TAG)
+                            if !is_viewer_frame
                             {
                                 if let Some(decoded) = deserializer::<Cmd>(&bin) {
                                     match decoded {
@@ -244,8 +251,8 @@ impl WebSocketClient {
                                 }
                             }
                             if !handled_as_admin_cmd {
-                                if matches!(self.state, WsDisplayState::Terminal) {
-                                    latest_terminal_bin = Some(bin);
+                                if is_viewer_frame {
+                                    latest_viewer_frame = Some(bin);
                                 } else {
                                     self.handle_binary_message(bin, ctx);
                                 }
@@ -328,8 +335,8 @@ impl WebSocketClient {
             }
         }
 
-        // Forward only the latest terminal buffer, skipping all stale frames
-        if let Some(bin) = latest_terminal_bin {
+        // Forward only the latest remote-viewer frame, skipping stale ones.
+        if let Some(bin) = latest_viewer_frame {
             let _ = self.msg_from_client_tx.try_send(WsMessage::Binary(bin));
         }
         
@@ -483,26 +490,16 @@ impl WebSocketClient {
             }
             return;
         }
-        match self.state {
-            WsDisplayState::Home => {
-                // Home renders the live charts that need this sysinfo feed.
-                // Replaces the old `LiveStats` branch — same payload, same
-                // sink, just a new front-end host.
-                if let Some(sysinfo) = deserializer::<SystemInformation>(&bin){
-                    log::debug!("[home] sysinfo arrived: {} bytes", bin.len());
-                    self.resource_monitor.set_sysinfo(sysinfo);
-                } else {
-                    log::warn!(
-                        "[home] {} byte binary payload didn't decode as SystemInformation \
-                         (live charts stay blank until this is fixed)",
-                        bin.len()
-                    );
-                }
-            },
-            WsDisplayState::Terminal => {
-                let _ = self.msg_from_client_tx.try_send(WsMessage::Binary(bin));
-            },
-            _ => {
+        // Live telemetry feeds the resource monitor regardless of which tab
+        // is active, so the Home charts keep updating in the background.
+        // Full-buffer decode so a control-plane Cmd whose prefix resembles
+        // SystemInformation can't be misread as telemetry.
+        if let Some(sysinfo) = deserialize_exact::<SystemInformation>(&bin) {
+            log::debug!("[sysinfo] {} bytes -> resource monitor", bin.len());
+            self.resource_monitor.set_sysinfo(sysinfo);
+            return;
+        }
+        {
                 if let Some(cmd) = deserializer::<Cmd>(&bin){
                     // Handle DirectoryListing directly here for the remote explorer
                     if let Cmd::DirectoryListing(entries, path) = &cmd {
@@ -551,6 +548,10 @@ impl WebSocketClient {
                                         timestamp: chrono::Local::now().to_rfc3339(),
                                     });
                                 }
+                            }
+                            // Advance the bulk-download queue once a file finishes.
+                            if is_last {
+                                self.remote_explorer.advance_download_queue(&self.send_cmd_tx);
                             }
                         }
                     } else if let Cmd::DirectorySizeResult {
@@ -865,9 +866,8 @@ impl WebSocketClient {
                             self.buffer.push('\n');
                         }
                     }
-                }        
+                }
             }
-        }
     }
 
     fn handle_text_message(&mut self, text: String) {

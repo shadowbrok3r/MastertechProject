@@ -219,6 +219,7 @@ impl TaskModal {
         let notes_tx = initial_notes_tx.clone();
         let history_tx = task_history_tx.clone();
         let computers_tx_clone = computers_tx.clone();
+        let resync_tx_for_init = resync_tx.clone();
         let id = task.id.clone();
         let service_number = task.service_number.clone();
         PlatformSpawner::spawn(async move {
@@ -254,6 +255,13 @@ impl TaskModal {
                     Ok(notes) => { let _ = notes_tx.try_send(notes); },
                     Err(e) => log::error!("Error getting notes from task ID: {e:?}"),
                 }
+                let sn = service_number.clone();
+                PlatformSpawner::spawn(async move {
+                    match get_prestashop_payload(&sn).await {
+                        Ok(data) => { let _ = resync_tx_for_init.try_send(data); },
+                        Err(e) => log::error!("Error fetching prestashop data on modal open: {e:?}"),
+                    }
+                });
             }
             
             // Fetch customer's computers for computer search
@@ -1220,6 +1228,7 @@ impl DisplayModal for TaskModal {
                     &mut self.seb_checking,
                     Some(&mut self.customer_modal_open),
                     Some(&mut self.open_customer_service_history),
+                    self.prestashop_data.as_mut().map(|p| &mut p.order.current_state),
                 ),                
                 ModalAction::ComputerInfoPage => {
                     let mut import_presta_clicked = false;

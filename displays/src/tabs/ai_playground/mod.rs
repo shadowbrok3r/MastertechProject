@@ -25,6 +25,8 @@ pub struct AiPlayground {
     pub save_chats: bool,
     image_id: String,
     open_modal: bool,
+    /// Route sends through the Mastertech MCP tool-calling loop (native only).
+    use_mcp_tools: bool,
 }
 
 pub type ImageType = (String, Bytes);
@@ -56,6 +58,8 @@ pub enum SentFrom {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ChatMessageType {
     Text(String),
+    /// Streamed model reasoning ("thinking") tokens, rendered in a collapsible block.
+    Reasoning(String),
     FileId(String),
     Code(String),
     Image(ImageType),
@@ -85,6 +89,7 @@ impl Default for AiPlayground {
             save_chats: false,
             image_id: String::new(),
             open_modal: false,
+            use_mcp_tools: true,
         }
     }
 }
@@ -266,6 +271,12 @@ impl AiPlayground {
     }
 
     fn chat(&mut self, ui: &mut Ui) {
+        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        ui.checkbox(
+            &mut self.use_mcp_tools,
+            RichText::new(format!("{}  Mastertech Tools", crate::ui_tools::icons::WRENCH)),
+        );
+        let use_mcp_tools = self.use_mcp_tools;
         if let Some(thread) = self.threads.get_mut(&self.selected_thread) {
             ui.horizontal_centered(|ui| {
 
@@ -296,7 +307,7 @@ impl AiPlayground {
 
                 if text_edit.lost_focus() && key_press {
                     text_edit.request_focus();
-                    Self::submit_input(thread, self.response_tx.clone());
+                    Self::submit_input(thread, self.response_tx.clone(), use_mcp_tools);
                 }
 
                 ui.add_space(10.);
@@ -309,27 +320,46 @@ impl AiPlayground {
                     .on_hover_text(RichText::new("(Or CTRL + Shift to submit)"));
 
                 if submit.clicked() {
-                    Self::submit_input(thread, self.response_tx.clone());
+                    Self::submit_input(thread, self.response_tx.clone(), use_mcp_tools);
                 }
             });
         }
     }
 
-    fn submit_input(thread: &mut ChatThread, response_tx: Sender<ChatMessage>) {
-        
+    fn submit_input(thread: &mut ChatThread, response_tx: Sender<ChatMessage>, _use_mcp_tools: bool) {
         let input = thread.input.clone();
         thread.input.clear();
 
-        // let current_thread = &self.selected_thread;
-        let id = if !thread.id.is_empty() {
-            Some(thread.id.clone())
+        let thread_id = thread.id.clone();
+
+        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        if _use_mcp_tools {
+            let prior = crate::ai::mcp_chat::history_from_messages(&thread.messages);
+            // Echo the user's message into the thread; the tool loop doesn't.
+            let _ = response_tx.try_send(ChatMessage {
+                id: uuid::Uuid::new_v4().to_string(),
+                thread_id: thread_id.clone(),
+                ts: 0,
+                from: SentFrom::Me,
+                content: ChatMessageType::Text(input.clone()),
+            });
+            let tx = response_tx.clone();
+            PlatformSpawner::spawn(async move {
+                if let Err(e) = crate::ai::mcp_chat::mcp_chat_stream(input, prior, thread_id, tx).await {
+                    log::error!("mcp_chat_stream error: {e:?}");
+                }
+            });
+            return;
+        }
+
+        let id = if !thread_id.is_empty() {
+            Some(thread_id)
         } else { None };
 
         PlatformSpawner::spawn(async move {
-            
             let res = assistant_call_with_response_ai_tools(
-                input.as_str(), 
-                id, 
+                input.as_str(),
+                id,
                 response_tx.clone()
             ).await;
 
@@ -367,6 +397,15 @@ impl AiPlayground {
                     } else {
                         log::info!("We did NOT have an existing message. Pushing response: {:?}", response);
                         // Add the message if it's not already in the thread
+                        current_thread.messages.push(response);
+                    }
+                }
+                ChatMessageType::Reasoning(ref msg) => {
+                    if let Some(existing_message) = current_thread.messages.iter_mut().find(|m| m.id == response.id) {
+                        if let ChatMessageType::Reasoning(existing_content) = &mut existing_message.content {
+                            existing_content.push_str(msg);
+                        }
+                    } else {
                         current_thread.messages.push(response);
                     }
                 }
@@ -566,9 +605,12 @@ impl AiPlayground {
                                     ui.set_width(ui.available_width());
                                     // info!("Got msg: {item:?}"));
                                     match &item.content {
-                                        ChatMessageType::Text(msg) 
-                                        | ChatMessageType::FileId(msg) 
+                                        ChatMessageType::Text(msg)
+                                        | ChatMessageType::FileId(msg)
                                         | ChatMessageType::Error(msg) => viewer::easy_mark(ui, msg),
+                                        ChatMessageType::Reasoning(msg) => {
+                                            ui.collapsing(RichText::new("Thinking").weak(), |ui| viewer::easy_mark(ui, msg));
+                                        }
                                         ChatMessageType::Code(code) => {
                                             info!("Got code: {code:?}");
                                             let language = "python";

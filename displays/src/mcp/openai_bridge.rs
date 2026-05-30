@@ -5,7 +5,7 @@ use serde_json;
 use std::collections::{VecDeque, HashSet};
 use crossbeam::channel::Sender as CrossbeamSender;
 
-use crate::{ai::{GEMINI_API_KEY, GEMINI_API_BASE}, mcp::mcp::ShellType, openai::{
+use crate::{ai::{effective_api_base, effective_api_key, effective_model}, mcp::mcp::ShellType, openai::{
     config::OpenAIConfig,
     types::chat::{
         ChatCompletionRequestMessage,
@@ -31,12 +31,11 @@ pub struct OpenAiMcpSession {
 
 impl OpenAiMcpSession {
     pub async fn connect(addr: &str, model: String, system_prompt: Option<String>) -> Result<Self> {
-        let api_key = std::env::var("GEMINI_API_KEY")
-            .unwrap_or_else(|_| GEMINI_API_KEY.to_string());
-        if api_key.is_empty() { log::warn!("GEMINI_API_KEY not set – Gemini calls will fail until provided"); }
+        let api_key = effective_api_key();
+        if api_key.is_empty() { log::warn!("No OpenAI/Gemini API key set – completions will fail until provided"); }
 
-        let api_base = std::env::var("GEMINI_API_BASE")
-            .unwrap_or_else(|_| GEMINI_API_BASE.to_string());
+        let api_base = effective_api_base();
+        let model = effective_model(&model);
 
         let config = OpenAIConfig::new()
             .with_api_key(&api_key)
@@ -121,12 +120,10 @@ impl OpenAiMcpSession {
             ),
         };
 
-        let api_base = std::env::var("GEMINI_API_BASE")
-            .unwrap_or_else(|_| GEMINI_API_BASE.to_string());
+        let api_base = effective_api_base();
         let url = format!("{}/chat/completions", api_base.trim_end_matches('/'));
-        let api_key = std::env::var("GEMINI_API_KEY")
-            .unwrap_or_else(|_| GEMINI_API_KEY.to_string());
-        if api_key.is_empty() { log::warn!("GEMINI_API_KEY not set – streaming will fail"); }
+        let api_key = effective_api_key();
+        if api_key.is_empty() { log::warn!("No OpenAI/Gemini API key set – streaming will fail"); }
 
         let request_body = serde_json::json!({
             "model": self.model,

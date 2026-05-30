@@ -25,7 +25,9 @@ pub struct User {
     user_statuses: Option<Vec<Status>>,
     authorization: UserAuthorization,
     version: String,
-    sales: Option<Vec<RecordId>>
+    sales: Option<Vec<RecordId>>,
+    #[serde(default)]
+    mcp_settings: Option<McpSettings>,
 }
 
 impl Default for User {
@@ -46,8 +48,16 @@ impl Default for User {
             authorization: UserAuthorization::User,
             version: String::new(),
             sales: None,
+            mcp_settings: None,
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq, SurrealValue)]
+pub struct McpSettings {
+    pub endpoint: Option<String>,
+    pub api_key: Option<String>,
+    pub model: Option<String>,
 }
 
 impl Eq for User {}
@@ -270,6 +280,27 @@ impl User {
 
     pub fn get_minio_access_key(&self) -> Option<String> {
         self.minio_access_key.clone()
+    }
+
+    pub fn get_mcp_settings(&self) -> McpSettings {
+        self.mcp_settings.clone().unwrap_or_default()
+    }
+
+    pub fn get_mcp_endpoint(&self) -> Option<String> {
+        self.mcp_settings.as_ref().and_then(|m| m.endpoint.clone())
+    }
+
+    pub fn get_mcp_api_key(&self) -> Option<String> {
+        self.mcp_settings.as_ref().and_then(|m| m.api_key.clone())
+    }
+
+    pub fn get_mcp_model(&self) -> Option<String> {
+        self.mcp_settings.as_ref().and_then(|m| m.model.clone())
+    }
+
+    pub fn set_mcp_settings(&mut self, mcp_settings: McpSettings) -> &mut Self {
+        self.mcp_settings = Some(mcp_settings);
+        self
     }
 
     pub fn set_email(&mut self, email: &str) -> &mut Self {
@@ -561,6 +592,44 @@ impl User {
             Err(e) => log::error!("update_mobile_color_scheme -> Error updating User Settings: {e:?}"),
         };
         Ok(())
+    }
+
+    pub async fn save_mcp_settings(settings: McpSettings) -> anyhow::Result<(), anyhow::Error> {
+        match DATABASE
+            .query("UPDATE $auth.id SET mcp_settings = $settings")
+            .bind(("settings", settings))
+            .await
+        {
+            Ok(res) => log::info!("user/mod.rs -> save_mcp_settings -> Result: {res:?}"),
+            Err(e) => log::error!("user/mod.rs -> save_mcp_settings -> Error: {e:?}"),
+        }
+        Ok(())
+    }
+
+    /// Upserts one AI-playground chat thread for the current user. `messages` is
+    /// the serialized message array; the record id is the thread's local uuid.
+    pub async fn save_ai_chat_thread(
+        thread_id: &str,
+        title: &str,
+        messages: serde_json::Value,
+    ) -> anyhow::Result<(), anyhow::Error> {
+        DATABASE
+            .query("UPSERT type::record('ai_chat', $tid) SET user = $auth.id, title = $title, messages = $messages, updated_at = time::now()")
+            .bind(("tid", thread_id.to_string()))
+            .bind(("title", title.to_string()))
+            .bind(("messages", messages))
+            .await?;
+        Ok(())
+    }
+
+    /// Loads the current user's AI-playground chat threads, newest first, as an
+    /// array of `{ thread_id, title, messages }` objects.
+    pub async fn load_ai_chat_threads() -> anyhow::Result<serde_json::Value, anyhow::Error> {
+        let rows: Vec<serde_json::Value> = DATABASE
+            .query("SELECT record::id(id) AS thread_id, title, messages, updated_at FROM ai_chat WHERE user = $auth.id ORDER BY updated_at DESC")
+            .await?
+            .take(0)?;
+        Ok(serde_json::Value::Array(rows))
     }
 
     pub async fn load_user_threads() -> anyhow::Result<Vec<ChatThread>, anyhow::Error> {
