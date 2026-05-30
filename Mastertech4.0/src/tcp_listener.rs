@@ -661,27 +661,26 @@ pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) 
     // created yet (first-run race between the WS sender and this task).
     let publish_uuid = client_uuid.clone();
     let port = addr.port();
-    let connection_string = get_client_hash().connection_string;
+    let identity = get_client_hash();
+    let connection_string = identity.connection_string;
+    let client_hash = identity.client_hash;
     tokio::spawn(async move {
         let ip_string = local_ip.to_string();
         for attempt in 0..5u32 {
-            // UPSERT (not UPDATE): on first-run we may race the
-            // `websockets::connect()` row-create and publish before the
-            // row exists. SurrealDB 3.x `UPDATE` is strictly update —
-            // it silently no-ops on a missing row, so the admin never
-            // sees `local_ip` / `tcp_port` and can't dial the client
-            // directly. UPSERT creates-or-updates so the publish always
-            // lands regardless of who wins the race.
+            // Create-or-update: sole writer of this client's row in GUI mode,
+            // so it sets every required identity field, not just TCP coords.
             let res = DATABASE
                 .query(
                     "UPSERT $client SET local_ip = $ip, tcp_port = $port, \
-                     connection_string = $cs, connected = true, \
+                     connection_string = $cs, client_hash = $client_hash, \
+                     connected = true, assigned_user = $auth.id, \
                      last_update = time::now()",
                 )
                 .bind(("client", publish_uuid.clone()))
                 .bind(("ip", ip_string.clone()))
                 .bind(("port", port))
                 .bind(("cs", connection_string.clone()))
+                .bind(("client_hash", client_hash.clone()))
                 .await;
             match res {
                 Ok(_) => {

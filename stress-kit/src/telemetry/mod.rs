@@ -31,6 +31,7 @@ use serde::{Deserialize, Serialize};
 use sysinfo::{Components, CpuRefreshKind, Disks, MemoryRefreshKind, Networks, RefreshKind, System};
 
 pub use self::core::CoreSample;
+pub use self::core::sample_cores;
 pub use self::disk::DiskRateSample;
 pub use self::gpu::GpuSample;
 pub use self::memory::MemorySample;

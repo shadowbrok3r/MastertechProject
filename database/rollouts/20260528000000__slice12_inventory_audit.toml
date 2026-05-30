@@ -4,7 +4,7 @@ name = "slice12_inventory_audit"
 # scripts grep for `state = "planned"` to auto-detect the latest pending
 # manifest. surrealkit also uses this field for its lifecycle state machine
 # and flips it to "completed" once both phases land.
-state = "planned"
+state = "completed"
 # Source: slice11's (patched) target hash — the current on-disk hash that
 # slice11_duration_secs_strict_types asserts prod will be at after it
 # completes. surrealkit's planner refused to auto-plan from this state

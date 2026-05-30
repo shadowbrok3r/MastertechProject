@@ -347,10 +347,11 @@ impl EntityLinkResolutionModal {
         self.customer_fetch_rx = None;
         match result {
             Ok(fetched) => {
-                // Keep the customer id we already had (it's the
-                // canonical Surreal record key) and only fill empty
-                // contact fields.
-                if !fetched.id.key_string().is_empty() && self.customer.id.key_string().is_empty() {
+                // Adopt the fetched canonical (cust_code-keyed) customer id,
+                // replacing the random CustomerData::default() id.
+                if !fetched.id.key_string().is_empty()
+                    && self.customer.id.key_string() != fetched.id.key_string()
+                {
                     self.customer.id = fetched.id;
                 }
                 if !fetched.cust_code.is_empty() && self.customer.cust_code.is_empty() {
@@ -613,6 +614,7 @@ impl EntityLinkResolutionModal {
         let mut customer = self.customer.clone();
         let existing_customer = self.existing_customer.clone();
         let order_for_friendly = self.customer_match_order.clone();
+        let service_number = self.service_number.clone();
         let prior_customer_id = self.customer_id.clone();
         let old_computer_id = self.old_computer_id.clone();
         let commit_tx = self.commit_tx.clone();
@@ -698,9 +700,25 @@ impl EntityLinkResolutionModal {
                 }
                 computer.customer = Some(resolved_customer_id.clone());
 
+                // Merge over the existing (live-client) row so suggestion specs
+                // fill gaps without wiping hardware the client already reported.
+                let mut merged = match DATABASE
+                    .select::<Option<ComputerData>>(computer.id.clone())
+                    .await
+                {
+                    Ok(Some(existing)) => existing,
+                    _ => ComputerData {
+                        id: computer.id.clone(),
+                        ..ComputerData::default()
+                    },
+                };
+                overlay_computer_specs(&mut merged, &computer);
+                merged.id = computer.id.clone();
+                merged.customer = Some(resolved_customer_id.clone());
+
                 let upsert: Result<Option<ComputerData>, surrealdb::Error> = DATABASE
-                    .upsert(computer.id.clone())
-                    .content(computer.clone())
+                    .upsert(merged.id.clone())
+                    .content(merged.clone())
                     .await;
                 if let Err(e) = upsert {
                     let _ = commit_tx.try_send(Err(format!("computer upsert failed: {e}")));
@@ -735,26 +753,47 @@ impl EntityLinkResolutionModal {
             // changed. `customer_locked = true` matches relink_popup so
             // the auto-derived friendly_name from OA3 doesn't clobber
             // this assignment on the next reconnect.
-            let friendly_name = if needs_customer && !customer.name.trim().is_empty() {
-                if order_for_friendly.is_empty() {
-                    customer.name.clone()
-                } else {
-                    format!("{} - {}", customer.name.trim(), order_for_friendly)
-                }
+            // Always "Name - Service#"; fall back to the typed service_number
+            // when the cached match carried no order. Empty when no number is
+            // available, which preserves the existing friendly_name instead of
+            // downgrading it to a bare name.
+            let order_suffix = if !order_for_friendly.trim().is_empty() {
+                order_for_friendly.trim().to_string()
+            } else {
+                service_number.trim().to_string()
+            };
+            let friendly_name = if needs_customer
+                && !customer.name.trim().is_empty()
+                && !order_suffix.is_empty()
+            {
+                format!("{} - {}", customer.name.trim(), order_suffix)
             } else {
                 String::new()
             };
+            let write_friendly = !friendly_name.is_empty();
 
-            let cc_sql = if needs_computer && needs_customer {
-                "UPDATE connected_client SET computer = $compid, customer = $custid, \
-                 friendly_name = $name, customer_locked = true \
-                 WHERE connection_string == $cs"
-            } else if needs_computer {
-                "UPDATE connected_client SET computer = $compid WHERE connection_string == $cs"
-            } else {
-                "UPDATE connected_client SET customer = $custid, \
-                 friendly_name = $name, customer_locked = true \
-                 WHERE connection_string == $cs"
+            let cc_sql = match (needs_computer, needs_customer, write_friendly) {
+                (true, true, true) => {
+                    "UPDATE connected_client SET computer = $compid, customer = $custid, \
+                     friendly_name = $name, customer_locked = true \
+                     WHERE connection_string == $cs"
+                }
+                (true, true, false) => {
+                    "UPDATE connected_client SET computer = $compid, customer = $custid, \
+                     customer_locked = true WHERE connection_string == $cs"
+                }
+                (true, false, _) => {
+                    "UPDATE connected_client SET computer = $compid WHERE connection_string == $cs"
+                }
+                (false, _, true) => {
+                    "UPDATE connected_client SET customer = $custid, computer = $compid, \
+                     friendly_name = $name, customer_locked = true \
+                     WHERE connection_string == $cs"
+                }
+                (false, _, false) => {
+                    "UPDATE connected_client SET customer = $custid, computer = $compid, \
+                     customer_locked = true WHERE connection_string == $cs"
+                }
             };
             let _: Result<(), surrealdb::Error> = DATABASE
                 .query(cc_sql)
@@ -770,6 +809,38 @@ impl EntityLinkResolutionModal {
                 computer.id.key_string(),
             )));
         });
+    }
+}
+
+/// Overlay non-empty hardware fields from `src` onto `dst`, leaving
+/// existing values where `src` carries none.
+fn overlay_computer_specs(dst: &mut ComputerData, src: &ComputerData) {
+    if !src.cpu.is_empty() {
+        dst.cpu = src.cpu.clone();
+    }
+    if !src.gpu.is_empty() {
+        dst.gpu = src.gpu.clone();
+    }
+    if !src.ram.is_empty() {
+        dst.ram = src.ram.clone();
+    }
+    if !src.operating_system.is_empty() {
+        dst.operating_system = src.operating_system.clone();
+    }
+    if !src.motherboard_name.is_empty() {
+        dst.motherboard_name = src.motherboard_name.clone();
+    }
+    if !src.hostname.is_empty() {
+        dst.hostname = src.hostname.clone();
+    }
+    if src.device_serial.as_ref().is_some_and(|s| !s.is_empty()) {
+        dst.device_serial = src.device_serial.clone();
+    }
+    if src.device_mfg.as_ref().is_some_and(|s| !s.is_empty()) {
+        dst.device_mfg = src.device_mfg.clone();
+    }
+    if src.device_model.as_ref().is_some_and(|s| !s.is_empty()) {
+        dst.device_model = src.device_model.clone();
     }
 }
 

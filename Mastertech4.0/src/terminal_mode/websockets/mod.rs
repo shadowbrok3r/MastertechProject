@@ -2784,19 +2784,19 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                 let _ = call_tx.try_send((request_id.clone(), plugin_id.clone(), tool_name.clone(), args_json));
                 let result_rx = displays::plugins::remote_tool_result_receiver();
                 let mut result: Option<(bool, String)> = None;
-                for _ in 0..1200 {
+                // Poll up to 90s (9000 * 10ms) for the background plugin result.
+                for _ in 0..9000 {
                     if let Ok((rid, success, rjson)) = result_rx.try_recv() {
                         if rid == request_id {
                             result = Some((success, rjson));
                             break;
                         }
                     }
-                    // Yield to tokio so the PluginManager background task can run and process the call
                     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                 }
                 let (success, result_json) = result.unwrap_or((
                     false,
-                    "PluginManager did not process the call within 12 seconds".to_string(),
+                    "PluginManager did not return a result within 90 seconds".to_string(),
                 ));
                 let result_cmd = Cmd::RemotePluginToolResult {
                     request_id,
@@ -3150,6 +3150,18 @@ pub async fn live_computer_stats(tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>
                                 .component_temps
                                 .entry(reading.label.clone())
                                 .or_insert(reading.temp_c);
+                        }
+                        if !snapshot.cores.is_empty() {
+                            systeminfo.cpu_cores = snapshot
+                                .cores
+                                .iter()
+                                .map(|c| database::schema::CpuCoreLive {
+                                    index: c.index,
+                                    usage_pct: c.usage_pct,
+                                    freq_mhz: c.freq_mhz,
+                                    temp_c: c.temp_c,
+                                })
+                                .collect();
                         }
 
                         tx.send(serialize_system_info(&systeminfo))?

@@ -30,7 +30,7 @@ DEFINE EVENT `update` ON connected_client
         };
     };
 
-DEFINE FIELD assigned_user    ON connected_client TYPE none | record<user>    PERMISSIONS FULL;
+DEFINE FIELD assigned_user    ON connected_client TYPE none | record<user>    DEFAULT $auth.id PERMISSIONS FULL;
 DEFINE FIELD command_history  ON connected_client TYPE none | array<object>  PERMISSIONS FULL;
 DEFINE FIELD command_history.* ON connected_client TYPE object               PERMISSIONS FULL;
 DEFINE FIELD computer         ON connected_client TYPE none | record<computer> PERMISSIONS FULL;

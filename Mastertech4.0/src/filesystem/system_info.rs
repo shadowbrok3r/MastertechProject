@@ -1,4 +1,4 @@
-use database::schema::{COMPUTER_TABLE, ComputerData, DriveData, Gpu, LocalSebData, NetworkInterface, Process as SysProcess, ProcessDiskUsage, SystemInformation, get_data::get_order_info_from_serial};
+use database::schema::{COMPUTER_TABLE, ComputerData, CpuCoreLive, DriveData, Gpu, LocalSebData, NetworkInterface, Process as SysProcess, ProcessDiskUsage, SystemInformation, get_data::get_order_info_from_serial};
 use crate::{filesystem::get_machine_instance, tabs::tur_sheet::get_ticket::request_seb_info};
 use std::{collections::HashMap, env, str, sync::Arc, time::Duration};
 use sysinfo::{Components, Disks, Motherboard, Networks, Product, System};
@@ -16,6 +16,18 @@ use chrono::Utc;
 use crate::terminal_mode::tabs::script_categories::check_windows_activation;
 
 pub const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+fn live_cpu_cores(sys: &System, components: &Components) -> Vec<CpuCoreLive> {
+    stress_kit::telemetry::sample_cores(sys, components)
+        .into_iter()
+        .map(|c| CpuCoreLive {
+            index: c.index,
+            usage_pct: c.usage_pct,
+            freq_mhz: c.freq_mhz,
+            temp_c: c.temp_c,
+        })
+        .collect()
+}
 
 #[async_trait]
 pub trait ComputerInfo {
@@ -569,12 +581,11 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     *cpu_percentage = sys.global_cpu_usage();
-    // Refreshing CPU information.
     for cpu in sys.cpus() {
-        // cpu_percentage = cpu.cpu_usage();
         cpu_clock = cpu.frequency() as f32;
         *cpu_name = cpu.brand().to_string();
     }
+    let cpu_cores = live_cpu_cores(sys, &components);
 
     Ok(SystemInformation {
         name,
@@ -605,6 +616,7 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
         // here so the synchronous builders stay cheap.
         whea: None,
         tdr: None,
+        cpu_cores,
     })
 }
 
@@ -745,12 +757,11 @@ pub async fn get_sysinfo_no_gpu() -> anyhow::Result<SystemInformation, anyhow::E
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     *cpu_percentage = sys.global_cpu_usage();
-    // Refreshing CPU information.
     for cpu in sys.cpus() {
-        // cpu_percentage = cpu.cpu_usage();
         cpu_clock = cpu.frequency() as f32;
         *cpu_name = cpu.brand().to_string();
     }
+    let cpu_cores = live_cpu_cores(sys, &components);
 
     Ok(SystemInformation {
         name,
@@ -778,5 +789,6 @@ pub async fn get_sysinfo_no_gpu() -> anyhow::Result<SystemInformation, anyhow::E
         product_vendor: Product::vendor_name().unwrap_or_default(),
         whea: None,
         tdr: None,
+        cpu_cores,
     })
 }

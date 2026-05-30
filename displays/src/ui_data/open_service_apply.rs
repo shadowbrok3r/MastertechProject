@@ -37,7 +37,22 @@ pub async fn apply_open_service_confirm(apply: &OpenServiceConfirmApply) -> Resu
         .await
         .map_err(|e| format!("customer upsert: {e}"))?;
 
-    let mut computer = computer_from_specs(specs, computer_id.clone(), customer_id.clone());
+    // Start from the existing (live-client) computer row so empty order
+    // specs fall back to the hardware the client already reported; overlay
+    // any non-empty order specs on top.
+    let mut computer = match DATABASE
+        .select::<Option<ComputerData>>(computer_id.clone())
+        .await
+    {
+        Ok(Some(existing)) => existing,
+        _ => ComputerData {
+            id: computer_id.clone(),
+            ..ComputerData::default()
+        },
+    };
+    overlay_order_specs(&mut computer, specs);
+    computer.id = computer_id.clone();
+    computer.customer = Some(customer_id.clone());
     if computer.hostname.is_empty() {
         if let Some((host, _)) = apply.connection_string.split_once(':') {
             computer.hostname = host.to_string();
@@ -93,34 +108,31 @@ pub async fn apply_open_service_confirm(apply: &OpenServiceConfirmApply) -> Resu
     Ok(())
 }
 
-fn computer_from_specs(
-    specs: &PrestaSpecsSnapshot,
-    id: RecordId,
-    customer_id: RecordId,
-) -> ComputerData {
-    ComputerData {
-        id,
-        customer: Some(customer_id),
-        cpu: specs.cpu.clone(),
-        gpu: specs.gpu.clone(),
-        ram: specs.ram.clone(),
-        operating_system: specs.operating_system.clone(),
-        device_serial: if specs.device_serial.is_empty() {
-            None
-        } else {
-            Some(specs.device_serial.clone())
-        },
-        device_mfg: if specs.device_mfg.is_empty() {
-            None
-        } else {
-            Some(specs.device_mfg.clone())
-        },
-        device_model: if specs.device_model.is_empty() {
-            None
-        } else {
-            Some(specs.device_model.clone())
-        },
-        motherboard_name: specs.motherboard_name.clone(),
-        ..ComputerData::default()
+/// Overlay non-empty PrestaShop order specs onto a computer row, leaving
+/// existing values in place where the order carries none.
+fn overlay_order_specs(computer: &mut ComputerData, specs: &PrestaSpecsSnapshot) {
+    if !specs.cpu.is_empty() {
+        computer.cpu = specs.cpu.clone();
+    }
+    if !specs.gpu.is_empty() {
+        computer.gpu = specs.gpu.clone();
+    }
+    if !specs.ram.is_empty() {
+        computer.ram = specs.ram.clone();
+    }
+    if !specs.operating_system.is_empty() {
+        computer.operating_system = specs.operating_system.clone();
+    }
+    if !specs.motherboard_name.is_empty() {
+        computer.motherboard_name = specs.motherboard_name.clone();
+    }
+    if !specs.device_serial.is_empty() {
+        computer.device_serial = Some(specs.device_serial.clone());
+    }
+    if !specs.device_mfg.is_empty() {
+        computer.device_mfg = Some(specs.device_mfg.clone());
+    }
+    if !specs.device_model.is_empty() {
+        computer.device_model = Some(specs.device_model.clone());
     }
 }

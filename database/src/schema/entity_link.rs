@@ -486,13 +486,18 @@ pub async fn repair_connection_links(
     report["diagnostic_sessions_updated"] = serde_json::json!(sessions.len());
 
     if let Some(cust) = client.customer.clone() {
-        DATABASE
-            .query("UPDATE $cid SET customer = $cust RETURN AFTER")
-            .bind(("cid", canonical.clone()))
-            .bind(("cust", cust))
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?
-            .take::<Option<ComputerData>>(0)?;
+        if matches!(record_exists(cust.clone()).await, Ok(Some(true))) {
+            DATABASE
+                .query("UPDATE $cid SET customer = $cust RETURN AFTER")
+                .bind(("cid", canonical.clone()))
+                .bind(("cust", cust))
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?
+                .take::<Option<ComputerData>>(0)?;
+        } else {
+            report["dangling_customer_not_propagated"] =
+                serde_json::json!(cust.key_string());
+        }
     }
 
     Ok(report)
