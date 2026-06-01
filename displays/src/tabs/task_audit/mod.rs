@@ -1,4 +1,5 @@
 use database::schema::prestashop_schema::{self, MissedCallOrder, PrestashopPayload};
+use database::schema::prestashop::{OrderState, OrderType};
 use crossbeam::channel::{Receiver, Sender};
 use crate::{app_state::SharedContext, channel_manager::ChannelManager, TaskUiActions};
 use egui_data_table::DataTable;
@@ -48,28 +49,32 @@ impl TaskAuditViewer {
     }
 }
 
-#[derive(PartialEq, Debug, Clone, Default)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum TaskAudit {
-    #[default]
-    AllServices,
-    CheckinShelf,
     MyInRepair,
-    InRepair,
-    DoneShelf,
     MyServices,
-    NeedsCall
+    Status(OrderState),
+    AllExcept { order_type: OrderType, excluded: Vec<OrderState> },
+}
+
+impl Default for TaskAudit {
+    fn default() -> Self {
+        Self::AllExcept { order_type: OrderType::ServiceOrder, excluded: Vec::new() }
+    }
 }
 
 impl TaskAudit {
-    fn as_str(&self) -> &str {
+    /// Stable key for caching pulled orders and pagination per selection.
+    pub fn cache_key(&self) -> String {
         match self {
-            TaskAudit::CheckinShelf => "Check-in Shelf",
-            TaskAudit::MyInRepair => "My In Repair",
-            TaskAudit::InRepair => "In Repair",
-            TaskAudit::DoneShelf => "Done Shelf",
-            TaskAudit::AllServices => "All Services",
-            TaskAudit::MyServices => "My Services",
-            TaskAudit::NeedsCall => "Needs Call",
+            Self::MyInRepair => "my_in_repair".to_string(),
+            Self::MyServices => "my_services".to_string(),
+            Self::Status(state) => format!("status:{}", state.to_id_str()),
+            Self::AllExcept { order_type, excluded } => {
+                let mut ids: Vec<&str> = excluded.iter().map(|s| s.to_id_str()).collect();
+                ids.sort_unstable();
+                format!("all:{}:excl:{}", order_type.to_id_str(), ids.join(","))
+            }
         }
     }
 }

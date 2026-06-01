@@ -1,6 +1,6 @@
 use eframe::egui::{Button, CentralPanel, ComboBox, Id, Layout, RichText, ScrollArea, Separator, Spinner, TextEdit, Ui, Widget};
 use eframe::egui::{Color32, Grid, Style, scroll_area};
-use database::schema::prestashop::OrderState;
+use database::schema::prestashop::{OrderState, OrderType};
 use crate::{PlatformSpawner, TaskUiActions};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use database::schema::{Store, User};
@@ -176,57 +176,83 @@ impl TaskAuditViewer {
                     ui.selectable_value(selected, Store::SAN.into_store_id() as u64, Store::SAN.as_str());
                 });
 
-                let selected_text = self.audit_selection.as_str().to_string();
-                let selected = &mut self.audit_selection;
-                let current_selection = selected.clone();
+                let selected_text = match &self.audit_selection {
+                    TaskAudit::MyInRepair => " My In Repair ".to_string(),
+                    TaskAudit::MyServices => " My Services ".to_string(),
+                    TaskAudit::Status(OrderState::CheckinShelf) => " Check-in Shelf ".to_string(),
+                    TaskAudit::Status(OrderState::InRepair) => " In Repair ".to_string(),
+                    TaskAudit::Status(OrderState::DoneShelf) => " Done Shelf ".to_string(),
+                    TaskAudit::Status(state) => format!(" {} ", state.as_str()),
+                    TaskAudit::AllExcept { order_type, .. } => match order_type {
+                        OrderType::SalesOrder => " All Sales ".to_string(),
+                        _ => " All Service ".to_string(),
+                    },
+                };
 
                 ComboBox::new("TaskAudit Type Selection", "")
                     .selected_text(selected_text)
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(selected, TaskAudit::MyInRepair, " My In Repair ");
-                        ui.selectable_value(selected, TaskAudit::NeedsCall, " Missed Calls ");
-                        ui.selectable_value(selected, TaskAudit::CheckinShelf, " Check-in Shelf ");
-                        ui.selectable_value(selected, TaskAudit::InRepair, " In Repair ");
-                        ui.selectable_value(selected, TaskAudit::DoneShelf, " Done Shelf ");
-                        ui.selectable_value(selected, TaskAudit::AllServices, " All Services ");
-                    })
-                    .response;
+                        ui.selectable_value(&mut self.audit_selection, TaskAudit::MyInRepair, " My In Repair ");
+                        ui.selectable_value(&mut self.audit_selection, TaskAudit::MyServices, " My Services ");
+                        ui.selectable_value(&mut self.audit_selection, TaskAudit::Status(OrderState::CheckinShelf), " Check-in Shelf ");
+                        ui.selectable_value(&mut self.audit_selection, TaskAudit::Status(OrderState::InRepair), " In Repair ");
+                        ui.selectable_value(&mut self.audit_selection, TaskAudit::Status(OrderState::DoneShelf), " Done Shelf ");
+
+                        let is_service = matches!(&self.audit_selection, TaskAudit::AllExcept { order_type: OrderType::ServiceOrder, .. });
+                        if ui.selectable_label(is_service, " All Service ").clicked() && !is_service {
+                            self.audit_selection = TaskAudit::AllExcept { order_type: OrderType::ServiceOrder, excluded: Vec::new() };
+                        }
+
+                        let is_sales = matches!(&self.audit_selection, TaskAudit::AllExcept { order_type: OrderType::SalesOrder, .. });
+                        if ui.selectable_label(is_sales, " All Sales ").clicked() && !is_sales {
+                            self.audit_selection = TaskAudit::AllExcept { order_type: OrderType::SalesOrder, excluded: Vec::new() };
+                        }
+                    });
+
+                if let TaskAudit::AllExcept { order_type, excluded } = &mut self.audit_selection {
+                    let applicable = order_type.applicable_states();
+                    let exclude_text = if excluded.is_empty() {
+                        " Exclude ".to_string()
+                    } else {
+                        format!(" Exclude ({}) ", excluded.len())
+                    };
+                    ComboBox::new("TaskAudit Exclude Selection", "")
+                        .selected_text(exclude_text)
+                        .show_ui(ui, |ui| {
+                            for state in applicable {
+                                let mut is_excluded = excluded.contains(&state);
+                                if ui.checkbox(&mut is_excluded, state.as_str()).changed() {
+                                    if is_excluded {
+                                        excluded.push(state);
+                                    } else {
+                                        excluded.retain(|s| s != &state);
+                                    }
+                                }
+                            }
+                        });
+                }
 
                 ui.add_space(10.);
-                
-                if current_selection != *selected {
-                    self.loading = true;
-                    let order_tx = self.order_channel.0.clone();
-                    let selection = selected.as_str();
-                    let start_idx = self.index.entry(selection.to_string()).or_insert(0).clone();
-                    let svcs = if let Some(k) = self.service_map.get_mut(&selection.to_string()) {
-                        k.iter().map(|k| k.order.id.clone()).collect::<Vec<String>>()
-                    } else {
-                        Vec::new()
-                    };
-                    info!("Services from cache: {:?}", svcs.clone());
-                    self.time = Some(web_time::Instant::now());
-                    Self::get_services(selected.clone(), current_user.clone(), order_tx, svcs, start_idx, self.missed_calls_tx.clone(), self.services_viewer.store_selection.to_string());
-                }
-                
+
                 if let Some(time) = self.time.clone() {
                     if time.elapsed() > web_time::Duration::from_secs(5) {
                         self.loading = false;
                     }
                 }
 
-                if Button::new(" Refresh ").ui(ui).clicked() {
+                if Button::new(" Load ").ui(ui).clicked() {
+                    self.loading = true;
                     let order_tx = self.order_channel.0.clone();
                     let selected = self.audit_selection.clone();
-                    let selection = selected.as_str();
+                    let key = selected.cache_key();
 
                     let start_idx = self
                         .index
-                        .entry(selection.to_string())
+                        .entry(key.clone())
                         .or_insert(0)
                         .clone();
 
-                    let svcs = if let Some(k) = self.service_map.get_mut(&selection.to_string()) {
+                    let svcs = if let Some(k) = self.service_map.get_mut(&key) {
                         k.iter().map(|k| k.order.id.clone()).collect::<Vec<String>>()
                     } else {
                         Vec::new()
@@ -238,16 +264,16 @@ impl TaskAuditViewer {
                 if Button::new(" Load +10 ").ui(ui).clicked() {
                     let order_tx = self.order_channel.0.clone();
                     let selected = self.audit_selection.clone();
-                    let selection = selected.as_str();
+                    let key = selected.cache_key();
 
                     let start_idx = self
                         .index
-                        .entry(selection.to_string())
+                        .entry(key.clone())
                         .and_modify(|i| *i+=10)
                         .or_insert(0)
                         .clone();
 
-                    let svcs = if let Some(k) = self.service_map.get_mut(&selection.to_string()) {
+                    let svcs = if let Some(k) = self.service_map.get_mut(&key) {
                         k.iter().map(|k| k.order.id.clone()).collect::<Vec<String>>()
                     } else {
                         Vec::new()
@@ -268,7 +294,7 @@ impl TaskAuditViewer {
         CentralPanel::default()
             .show_inside(ui, |ui| 
         {
-            if let Some(table) = self.service_map.get_mut(&self.audit_selection.as_str().to_string()) {
+            if let Some(table) = self.service_map.get_mut(&self.audit_selection.cache_key()) {
                 // style.single_click_edit_mode = true;
                 Renderer::new(table, &mut self.services_viewer)
                 .with_style_modify(|s| {

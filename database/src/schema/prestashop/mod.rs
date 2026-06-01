@@ -828,7 +828,7 @@ impl DesktopModel {
     ];
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum OrderType {
     SalesOrder,
     ServiceOrder,
@@ -878,6 +878,45 @@ impl OrderType {
             "14" => Self::Rci,
             _ => Self::SalesOrder
         }
+    }
+
+    /// Order states applicable to this order type, in display order.
+    pub fn applicable_states(&self) -> Vec<OrderState> {
+        match self {
+            Self::ServiceOrder => vec![
+                OrderState::CheckinShelf,
+                OrderState::InRepair,
+                OrderState::InRepairRemote,
+                OrderState::PendingReview,
+                OrderState::PendingRma,
+                OrderState::PendingCustomerCallback,
+                OrderState::PendingAcPortRepair,
+                OrderState::PendingSpoPayment,
+                OrderState::ReplacementPartOrdered,
+                OrderState::DoneShelf,
+            ],
+            Self::SalesOrder => vec![
+                OrderState::OrderPlaced,
+                OrderState::AcceptedByOdoo,
+                OrderState::OdooPendingReview,
+                OrderState::PrePulled,
+                OrderState::ReadyToBuild,
+                OrderState::QcAndBurnin,
+                OrderState::ShipToStore,
+                OrderState::Shipped,
+                OrderState::DeliveredToStore,
+                OrderState::Returned,
+            ],
+            _ => Vec::new(),
+        }
+    }
+
+    /// Applicable states minus `excluded`.
+    pub fn included_states(&self, excluded: &[OrderState]) -> Vec<OrderState> {
+        self.applicable_states()
+            .into_iter()
+            .filter(|s| !excluded.contains(s))
+            .collect()
     }
 }
 

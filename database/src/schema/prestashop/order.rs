@@ -121,6 +121,13 @@ pub enum OrderState {
     Returned,
     InRepair,
     CheckinShelf,
+    // Temporary placeholder ids; real Prestashop state ids unknown.
+    PendingRma,
+    PendingCustomerCallback,
+    PendingAcPortRepair,
+    PendingSpoPayment,
+    ReplacementPartOrdered,
+    InRepairRemote,
 }
 
 impl OrderState {
@@ -140,6 +147,12 @@ impl OrderState {
             Self::Returned => "Returned",
             Self::InRepair => "In Repair",
             Self::CheckinShelf => "Checkin Shelf",
+            Self::PendingRma => "Pending RMA",
+            Self::PendingCustomerCallback => "Pending Customer Callback",
+            Self::PendingAcPortRepair => "Pending AC Port Repair",
+            Self::PendingSpoPayment => "Pending SPO Payment",
+            Self::ReplacementPartOrdered => "Replacement Part Ordered",
+            Self::InRepairRemote => "In Repair Remote",
         }
     }
 
@@ -159,6 +172,12 @@ impl OrderState {
             "29" => "Check-in Shelf",
             "242" => "Odoo Pending Review",
             "58" => "Pending Review",
+            "9001" => "Pending RMA",
+            "9002" => "Pending Customer Callback",
+            "9003" => "Pending AC Port Repair",
+            "9004" => "Pending SPO Payment",
+            "9005" => "Replacement Part Ordered",
+            "9006" => "In Repair Remote",
             _ => "Accepted By Odoo"
         }
     }
@@ -179,6 +198,12 @@ impl OrderState {
             "30" => Self::InRepair,
             "29" => Self::CheckinShelf,
             "58" => Self::PendingReview,
+            "9001" => Self::PendingRma,
+            "9002" => Self::PendingCustomerCallback,
+            "9003" => Self::PendingAcPortRepair,
+            "9004" => Self::PendingSpoPayment,
+            "9005" => Self::ReplacementPartOrdered,
+            "9006" => Self::InRepairRemote,
             _ => Self::AcceptedByOdoo
         }
     }
@@ -200,6 +225,12 @@ impl OrderState {
             Self::InRepair => 30,
             Self::CheckinShelf => 29,
             Self::PendingReview => 58,
+            Self::PendingRma => 9001,
+            Self::PendingCustomerCallback => 9002,
+            Self::PendingAcPortRepair => 9003,
+            Self::PendingSpoPayment => 9004,
+            Self::ReplacementPartOrdered => 9005,
+            Self::InRepairRemote => 9006,
         }
     }
 
@@ -219,6 +250,12 @@ impl OrderState {
             Self::InRepair => "30",
             Self::CheckinShelf => "29",
             Self::PendingReview => "58",
+            Self::PendingRma => "9001",
+            Self::PendingCustomerCallback => "9002",
+            Self::PendingAcPortRepair => "9003",
+            Self::PendingSpoPayment => "9004",
+            Self::ReplacementPartOrdered => "9005",
+            Self::InRepairRemote => "9006",
         }
     }
 
