@@ -10,18 +10,16 @@ use wgpu::util::DeviceExt;
 
 use crate::Metrics;
 
-use super::gpu_common::{emit_fatal_tick, emit_tick, run_unsupported, GpuContext, TICK};
+use super::gpu_common::{
+    emit_fatal_tick, emit_tick, run_unsupported, GpuContext, MAX_DISPATCH_GROUPS, TICK, WG_SIZE,
+};
 
-/// Bail out after this many consecutive readback failures. See the same
-/// constant in `gpu_pcie.rs` for the rationale.
 const MAX_CONSECUTIVE_READBACK_ERRORS: u32 = 3;
-
-const WG_SIZE: u32 = 64;
 const MIN_BUFFER_BYTES: u64 = 16 * 1024 * 1024;
 
 const SHADER: &str = r#"
 struct Params {
-    len:    u32,   // number of u32 elements
+    len:    u32,
     seed:   u32,
     _pad0:  u32,
     _pad1:  u32,
@@ -41,22 +39,29 @@ fn pattern(i: u32, seed: u32) -> u32 {
 
 @compute @workgroup_size(64)
 fn write_main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let i = gid.x;
-    if (i >= params.len) { return; }
-    buf[i] = pattern(i, params.seed);
+    if (gid.x >= params.len) { return; }
+    buf[gid.x] = pattern(gid.x, params.seed);
 }
 
 @compute @workgroup_size(64)
 fn verify_main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let i = gid.x;
-    if (i >= params.len) { return; }
-    let expected = pattern(i, params.seed);
-    let actual = buf[i];
-    if (actual != expected) {
+    if (gid.x >= params.len) { return; }
+    let expected = pattern(gid.x, params.seed);
+    if (buf[gid.x] != expected) {
         atomicAdd(&errors[0], 1u);
     }
 }
 "#;
+
+fn capped_element_count(memory_cap_mb: u64) -> (u64, u64) {
+    let cap_bytes = (memory_cap_mb.max(16).min(256)) * 1024 * 1024;
+    let buffer_bytes = cap_bytes.max(MIN_BUFFER_BYTES);
+    let max_elements = (MAX_DISPATCH_GROUPS as u64) * (WG_SIZE as u64);
+    let wg = WG_SIZE as u64;
+    let elements = ((buffer_bytes / 4) / wg) * wg;
+    let elements = elements.min(max_elements);
+    (elements, elements * 4)
+}
 
 pub(crate) fn run(
     _thread_count: usize,
@@ -70,22 +75,19 @@ pub(crate) fn run(
         Err(e) => return run_unsupported(format!("gpu_vram acquire failed: {e}"), cancel, tx, started_at),
     };
 
-    let cap_bytes = (memory_cap_mb.max(16)) * 1024 * 1024;
-    let buffer_bytes = cap_bytes.max(MIN_BUFFER_BYTES);
-    let element_bytes = 4u64;
-    let elements = ((buffer_bytes / element_bytes) / (WG_SIZE as u64)) * (WG_SIZE as u64);
-    let buffer_bytes = elements * element_bytes;
+    let (elements, buffer_bytes) = capped_element_count(memory_cap_mb);
+    let groups = (elements as u32).div_ceil(WG_SIZE);
 
     log::info!(
-        "[stress-kit/gpu_vram] acquired {} ({}), allocating {} MiB VRAM ({} elements)",
+        "[stress-kit/gpu_vram] acquired {} ({}), {} MiB VRAM ({} workgroups)",
         ctx.vendor_label, ctx.backend_label,
-        buffer_bytes / (1024 * 1024), elements
+        buffer_bytes / (1024 * 1024), groups
     );
 
     let buf = ctx.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("gpu_vram buf"),
         size: buffer_bytes,
-        usage: wgpu::BufferUsages::STORAGE,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
 
@@ -145,8 +147,6 @@ pub(crate) fn run(
         ],
     });
 
-    let groups = (elements as u32).div_ceil(WG_SIZE);
-
     let mut last_tick = Instant::now();
     let mut bytes_touched_in_tick: u64 = 0;
     let mut total_errors_observed: u64 = 0;
@@ -180,6 +180,7 @@ pub(crate) fn run(
         }
         encoder.copy_buffer_to_buffer(&errors_buf, 0, &readback_buf, 0, 16);
         ctx.queue.submit(std::iter::once(encoder.finish()));
+        let _ = ctx.device.poll(wgpu::PollType::Wait);
 
         let slice = readback_buf.slice(..);
         let (tx_map, rx_map) = std::sync::mpsc::channel();
@@ -197,9 +198,6 @@ pub(crate) fn run(
                 count
             }
             _ => {
-                // map_async arms map_context.initial_range before the callback
-                // fires; unmap() must reset it on failure or the next iteration
-                // panics with "Buffer is already mapped".
                 readback_buf.unmap();
                 consecutive_readback_errors += 1;
                 if consecutive_readback_errors >= MAX_CONSECUTIVE_READBACK_ERRORS {

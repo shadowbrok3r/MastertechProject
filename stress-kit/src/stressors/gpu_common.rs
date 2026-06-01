@@ -15,6 +15,10 @@ use crate::Metrics;
 
 pub(super) const TICK: Duration = Duration::from_millis(500);
 
+/// D3D12 caps each dispatch dimension at 65535 workgroups.
+pub(super) const MAX_DISPATCH_GROUPS: u32 = 65535;
+pub(super) const WG_SIZE: u32 = 64;
+
 pub(super) struct GpuContext {
     #[allow(dead_code)]
     pub adapter: Adapter,
