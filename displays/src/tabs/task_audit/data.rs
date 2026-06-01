@@ -1,4 +1,4 @@
-use database::schema::{TaskNotePayload, User, get_data::get_services_by_status, helper_traits::EmployeeHelper, prestashop::OrderState, prestashop_schema::{self, Employee, MissedCallOrder, PrestashopOrderType, PrestashopPayload}, utilities::{create_full_task_payload, get_prestashop_payload}};
+use database::schema::{TaskNotePayload, User, helper_traits::EmployeeHelper, prestashop_schema::{self, Employee, MissedCallOrder, PrestashopPayload}, utilities::{create_full_task_payload, get_missing_call_days, get_prestashop_payload}};
 use crossbeam::channel::Sender;
 use egui_data_table::DataTable;
 use itertools::Itertools;
@@ -10,9 +10,9 @@ use super::{row_viewer::TaskRowViewer, TaskAudit, TaskAuditViewer};
 
 impl TaskAuditViewer { // NEED TO LOOK INTO SOME NOTES THINKING THERE IS NOT A SERVICE NUMBER IF THERE ISNT A THREAD
     pub fn get_services(
-        selected: TaskAudit, 
-        current_user: Option<User>, 
-        order_tx: Sender<prestashop_schema::PrestashopPayload>, 
+        selected: TaskAudit,
+        current_user: Option<User>,
+        order_tx: Sender<prestashop_schema::PrestashopPayload>,
         current_orders: Vec<String>,
         start_idx: i32,
         missed_calls_tx: Sender<Vec<MissedCallOrder>>,
@@ -26,162 +26,48 @@ impl TaskAuditViewer { // NEED TO LOOK INTO SOME NOTES THINKING THERE IS NOT A S
         employee.id_store = usr.get_store_id().unwrap_or_default();
         let id_store = id_store.clone();
         PlatformSpawner::spawn(async move {
-            match selected {
-                TaskAudit::CheckinShelf => {
-                    // Fetch services within the range
-                    let orders = employee
-                        .get_services_by_status(OrderState::CheckinShelf.to_id_str(), start_idx, start_idx+30, &id_store)
-                        .await;
+            let orders = match &selected {
+                TaskAudit::MyInRepair => employee.get_my_services_in_repair().await,
+                TaskAudit::MyServices => employee.get_all_my_services().await,
+                TaskAudit::Status(state) => {
+                    employee.get_services_by_status(state.to_id_str(), start_idx, start_idx + 30, &id_store).await
+                }
+                TaskAudit::AllExcept { order_type, excluded } => {
+                    let included = order_type.included_states(excluded);
+                    if included.is_empty() {
+                        Ok(Vec::new())
+                    } else {
+                        let ids: Vec<&str> = included.iter().map(|s| s.to_id_str()).collect();
+                        employee
+                            .get_services_by_states(order_type.to_id_str(), &ids, start_idx, start_idx + 30, &id_store)
+                            .await
+                    }
+                }
+            };
 
-                    // Handle the fetched services
-                    match orders {
-                        Ok(svcs) => {
-                            for order_num in svcs.iter() {
-                                if !current_orders.contains(&order_num.id) {
-                                    let presta_payload = Employee::to_prestashop_payload(&order_num.id).await;
-                                    match presta_payload {
-                                        Ok(service) => order_tx.try_send(service).unwrap(),
-                                        Err(e) => log::error!("Error getting check-in shelf services: {:?}", e),
-                                    }
+            match orders {
+                Ok(svcs) => {
+                    for order_num in svcs.iter() {
+                        if current_orders.contains(&order_num.id) {
+                            continue;
+                        }
+                        match Employee::to_prestashop_payload(&order_num.id).await {
+                            Ok(service) => {
+                                let missing_days = get_missing_call_days(&service.order.date_add, &service.customer_messages);
+                                if !missing_days.is_empty() {
+                                    let _ = missed_calls_tx.try_send(vec![MissedCallOrder {
+                                        id: service.order.id.clone(),
+                                        date_add: service.order.date_add.clone(),
+                                        missing_days,
+                                    }]);
                                 }
+                                let _ = order_tx.try_send(service);
                             }
-                        },
-                        Err(e) => log::error!("Error getting check-in shelf services: {:?}", e)
-                    };
-                },
-                TaskAudit::MyInRepair => {
-                    // Fetch services within the range            
-                    let orders = employee
-                        .get_my_services_in_repair()
-                        .await;
-
-                    // Handle the fetched services
-                    match orders {
-                        Ok(svcs) => {
-                            for order_num in svcs.iter() {
-                                if !current_orders.contains(&order_num.id) {
-                                    let presta_payload = Employee::to_prestashop_payload(&order_num.id).await;
-                                    match presta_payload {
-                                        Ok(service) => order_tx.try_send(service).unwrap(),
-                                        Err(e) => log::error!("Error getting check-in shelf services: {:?}", e),
-                                    }
-                                }
-                            }
-                        },
-                        Err(e) => log::error!("Error getting check-in shelf services: {:?}", e)
-                    };
-                },
-                TaskAudit::InRepair => {
-                    // Fetch services within the range
-                    let orders = employee
-                        .get_services_by_status(OrderState::InRepair.to_id_str(), start_idx, start_idx+30, &id_store)
-                        .await;
-
-                    // Handle the fetched services
-                    match orders {
-                        Ok(svcs) => {
-                            for order_num in svcs.iter() {
-                                if !current_orders.contains(&order_num.id) {
-                                    let presta_payload = Employee::to_prestashop_payload(&order_num.id).await;
-                                    match presta_payload {
-                                        Ok(service) => order_tx.try_send(service).unwrap(),
-                                        Err(e) => log::error!("Error getting inrepair services: {:?}", e),
-                                    }
-                                }
-                            }
-                        },
-                        Err(e) => log::error!("Error getting in repair shelf services: {:?}", e)
-                    };
-                },
-                TaskAudit::DoneShelf => {
-                    // Fetch services within the range
-                    let orders = employee
-                        .get_services_by_status(OrderState::DoneShelf.to_id_str(), start_idx, start_idx+30, &id_store)
-                        .await;
-
-                    // Handle the fetched services
-                    match orders {
-                        Ok(svcs) => {
-                            for order_num in svcs.iter() {
-                                if !current_orders.contains(&order_num.id) {
-                                    let presta_payload = Employee::to_prestashop_payload(&order_num.id).await;
-                                    match presta_payload {
-                                        Ok(service) => order_tx.try_send(service).unwrap(),
-                                        Err(e) => log::error!("Error getting check-in shelf services: {:?}", e),
-                                    }
-                                }
-                            }
-                        },
-                        Err(e) => log::error!("Error with get_services_by_status 40: : {:?}", e)
-                    };
-                },
-                TaskAudit::AllServices => {
-                    // Fetch services within the range
-                    let orders = employee
-                        .get_all_my_services()
-                        .await;
-
-                    // Handle the fetched services
-                    match orders {
-                        Ok(svcs) => {
-                            for order_num in svcs.iter() {
-                                if !current_orders.contains(&order_num.id) {
-                                    let presta_payload = Employee::to_prestashop_payload(&order_num.id).await;
-                                    match presta_payload {
-                                        Ok(service) => order_tx.try_send(service).unwrap(),
-                                        Err(e) => log::error!("Error getting check-in shelf services: {:?}", e),
-                                    }
-                                }
-                            }
-                        },
-                        Err(e) => log::error!("Error with get_all_services_in_my_store: {:?}", e)
-                    };
-                },
-                TaskAudit::MyServices => {
-                    // Fetch services within the range
-                    let orders = employee
-                        .get_all_my_services()
-                        .await;
-
-                    // Handle the fetched services
-                    match orders {
-                        Ok(svcs) => {
-                            for order_num in svcs.iter() {
-                                if !current_orders.contains(&order_num.id) {
-                                    let presta_payload = Employee::to_prestashop_payload(&order_num.id).await;
-                                    match presta_payload {
-                                        Ok(service) => order_tx.try_send(service).unwrap(),
-                                        Err(e) => log::error!("Error getting check-in shelf services: {:?}", e),
-                                    }
-                                }
-                            }
-                        },
-                        Err(e) => log::error!("Error with get_my_services_in_repair: {:?}", e)
-                    };
-                },
-                TaskAudit::NeedsCall => {
-                    // let endpoint = PrestashopOrderType::CheckinShelf;
-                    for endpoint in PrestashopOrderType::VALUES {
-                        if endpoint != PrestashopOrderType::DoneShelf {
-                            // If refresh is true, grab new data immediately
-                            match get_services_by_status(endpoint.id(), &employee.id_store).await {
-                                Ok(missed_calls) => {
-                                    let _ = missed_calls_tx.try_send(missed_calls.clone());
-                                    for order_num in missed_calls.iter() {
-                                        if !current_orders.contains(&order_num.id) {
-                                            let presta_payload = Employee::to_prestashop_payload(&order_num.id).await;
-                                            match presta_payload {
-                                                Ok(service) => order_tx.try_send(service).unwrap(),
-                                                Err(e) => log::error!("Error getting check-in shelf services: {:?}", e),
-                                            }
-                                        }
-                                    }
-                                },
-                                Err(e) => log::error!("Error with get_services_by_status: {:?}", e),
-                            };
+                            Err(e) => log::error!("Error getting service payload: {e:?}"),
                         }
                     }
-                },
+                }
+                Err(e) => log::error!("Error getting services: {e:?}"),
             }
         });
 
@@ -196,7 +82,7 @@ impl TaskAuditViewer { // NEED TO LOOK INTO SOME NOTES THINKING THERE IS NOT A S
                     .services_viewer
                     .missed_calls
                     .iter()
-                    .any(|existing| existing.id == new_call.id) 
+                    .any(|existing| existing.id == new_call.id)
                 {
                     self.services_viewer.missed_calls.push(new_call);
                 }
@@ -205,15 +91,15 @@ impl TaskAuditViewer { // NEED TO LOOK INTO SOME NOTES THINKING THERE IS NOT A S
 
         if let Ok(order) = self.order_channel.1.try_recv() {
             self.loading = true;
-            let key = self.audit_selection.as_str();
+            let key = self.audit_selection.cache_key();
 
             self
                 .service_map
-                .entry(key.to_string())
+                .entry(key.clone())
                 .or_insert(DataTable::default());
 
-            
-            if let Some(k) = self.service_map.get_mut(&key.to_string()) {
+
+            if let Some(k) = self.service_map.get_mut(&key) {
                 if !k.iter().contains(&order) {
                     log::info!("Order: {order:?}");
                     k.push(order);
@@ -235,7 +121,7 @@ impl TaskAuditViewer { // NEED TO LOOK INTO SOME NOTES THINKING THERE IS NOT A S
                 // }
             // }
         }
-    
+
         if let Ok(notes) = self.services_viewer.notes_channel.1.try_recv() {
             log::info!("Got notes: {notes:?}");
             if self.services_viewer.selected.is_some() {
