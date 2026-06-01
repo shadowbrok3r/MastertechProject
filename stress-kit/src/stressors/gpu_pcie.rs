@@ -10,15 +10,11 @@ use wgpu::util::DeviceExt;
 
 use crate::Metrics;
 
-use super::gpu_common::{emit_fatal_tick, emit_tick, run_unsupported, GpuContext, TICK};
+use super::gpu_common::{
+    emit_fatal_tick, emit_tick, run_unsupported, GpuContext, MAX_DISPATCH_GROUPS, TICK, WG_SIZE,
+};
 
-/// Bail out after this many consecutive readback failures. Three in a row
-/// almost always means the wgpu device is in a stuck validation-error
-/// state (e.g. the buffer was destroyed under us by a prior failure) and
-/// each subsequent iteration just multiplies the log spam.
 const MAX_CONSECUTIVE_READBACK_ERRORS: u32 = 3;
-
-const WG_SIZE: u32 = 64;
 const MIN_BUFFER_BYTES: u64 = 4 * 1024 * 1024;
 
 const TOUCH_SHADER: &str = r#"
@@ -29,11 +25,20 @@ struct Params { len: u32, _p0: u32, _p1: u32, _p2: u32 };
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let i = gid.x;
-    if (i >= params.len) { return; }
-    buf[i] = buf[i] ^ 0x5a5a5a5au;
+    if (gid.x >= params.len) { return; }
+    buf[gid.x] = buf[gid.x] ^ 0x5a5a5a5au;
 }
 "#;
+
+fn capped_element_count(memory_cap_mb: u64) -> (u64, u64) {
+    let cap_bytes = (memory_cap_mb.max(4).min(256)) * 1024 * 1024;
+    let buffer_bytes = cap_bytes.max(MIN_BUFFER_BYTES);
+    let max_elements = (MAX_DISPATCH_GROUPS as u64) * (WG_SIZE as u64);
+    let wg = WG_SIZE as u64;
+    let elements = ((buffer_bytes / 4) / wg) * wg;
+    let elements = elements.min(max_elements);
+    (elements, elements * 4)
+}
 
 pub(crate) fn run(
     _thread_count: usize,
@@ -47,15 +52,12 @@ pub(crate) fn run(
         Err(e) => return run_unsupported(format!("gpu_pcie acquire failed: {e}"), cancel, tx, started_at),
     };
 
-    let cap_bytes = (memory_cap_mb.max(4).min(256)) * 1024 * 1024;
-    let buffer_bytes = cap_bytes.max(MIN_BUFFER_BYTES);
-    let element_bytes = 4u64;
-    let elements = ((buffer_bytes / element_bytes) / (WG_SIZE as u64)) * (WG_SIZE as u64);
-    let buffer_bytes = elements * element_bytes;
+    let (elements, buffer_bytes) = capped_element_count(memory_cap_mb);
+    let groups = (elements as u32).div_ceil(WG_SIZE);
 
     log::info!(
-        "[stress-kit/gpu_pcie] acquired {} ({}), {} MiB round-trip buffer",
-        ctx.vendor_label, ctx.backend_label, buffer_bytes / (1024 * 1024)
+        "[stress-kit/gpu_pcie] acquired {} ({}), {} MiB round-trip buffer ({} workgroups)",
+        ctx.vendor_label, ctx.backend_label, buffer_bytes / (1024 * 1024), groups
     );
 
     let staging_upload: Vec<u32> = (0..elements as usize)
@@ -106,7 +108,6 @@ pub(crate) fn run(
             wgpu::BindGroupEntry { binding: 1, resource: params_buf.as_entire_binding() },
         ],
     });
-    let groups = (elements as u32).div_ceil(WG_SIZE);
 
     let mut last_tick = Instant::now();
     let mut bytes_in_tick: u64 = 0;
@@ -129,6 +130,7 @@ pub(crate) fn run(
         }
         encoder.copy_buffer_to_buffer(&gpu_buf, 0, &readback_buf, 0, buffer_bytes);
         ctx.queue.submit(std::iter::once(encoder.finish()));
+        let _ = ctx.device.poll(wgpu::PollType::Wait);
 
         let slice = readback_buf.slice(..);
         let (tx_map, rx_map) = std::sync::mpsc::channel();
@@ -145,9 +147,6 @@ pub(crate) fn run(
                 consecutive_readback_errors = 0;
             }
             _ => {
-                // map_async arms map_context.initial_range before the callback
-                // fires; unmap() must reset it on failure or the next iteration
-                // panics with "Buffer is already mapped".
                 readback_buf.unmap();
                 consecutive_readback_errors += 1;
                 if consecutive_readback_errors >= MAX_CONSECUTIVE_READBACK_ERRORS {

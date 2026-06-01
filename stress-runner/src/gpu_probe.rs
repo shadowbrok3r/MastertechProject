@@ -26,7 +26,7 @@ pub fn gpu_probe_stages(mult: f32) -> Vec<RunStage> {
     vec![
         mk("gpu_compute", stress_kit::Stressor::Gpu, 30, 256),
         mk("gpu_matmul", stress_kit::Stressor::GpuMatmul, 30, 256),
-        mk("gpu_vram", stress_kit::Stressor::GpuVram, 45, 1024),
+        mk("gpu_vram", stress_kit::Stressor::GpuVram, 45, 256),
         mk("gpu_pcie", stress_kit::Stressor::GpuPcie, 20, 64),
     ]
 }

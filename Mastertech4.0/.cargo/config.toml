@@ -8,6 +8,17 @@ rustflags = ["-C", "link-arg=-fuse-ld=/usr/bin/mold", "-Awarnings"]
 rustflags = ["-C", "target-feature=+crt-static", "-Awarnings"]
 # rustflags = ["-C", "link-arg=-fuse-ld=C:\\Users\\Owner\\Documents\\Mold\\bin\\mold", "-Awarnings"]
 
+# to compile msvc from linux
+# sudo pacman -S clang lld
+# Add the MSVC target to rustup
+# rustup target add x86_64-pc-windows-msvc 
+
+# Install cargo-xwin
+# cargo install --locked cargo-xwin
+
+# Build your project
+# cargo xwin build --target x86_64-pc-windows-msvc --profile release-fast
+
 # [build]
 #target = [
     # "x86_64-pc-windows-msvc", # windows MSVC 64
