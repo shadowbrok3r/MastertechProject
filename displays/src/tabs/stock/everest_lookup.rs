@@ -9,7 +9,8 @@ use egui_data_table::{
 use egui_extras::Column as TableColumnConfig;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
+use std::collections::HashMap;
 
 /* ------------------------------------ API types ------------------------------------ */
 
@@ -374,6 +375,283 @@ async fn fetch_move_lines(client: &Client, lot_id: i64) -> Result<Vec<OdooMoveLi
     let result = v.get("result").cloned().unwrap_or(Value::Null);
     let moves: Vec<OdooMoveLine> = serde_json::from_value(result)?;
     Ok(moves)
+}
+
+/* ------------------------------ Everest customer / order-list ------------------------------ */
+
+/// A loosely-typed Everest record (one row from a list endpoint). We don't
+/// have published schemas for the customer / order-list calls, so each row is
+/// kept as the raw JSON object and fields are pulled by name with a
+/// case-insensitive fallback.
+pub type EverestRow = Map<String, Value>;
+
+/// Pull the first non-empty value for any of `keys` from `row`. Tries exact
+/// matches first, then case-insensitive matches.
+pub fn row_str(row: &EverestRow, keys: &[&str]) -> String {
+    for k in keys {
+        if let Some(v) = row.get(*k) {
+            let s = value_as_str(v);
+            if !s.is_empty() {
+                return s;
+            }
+        }
+    }
+    for k in keys {
+        for (rk, rv) in row.iter() {
+            if rk.eq_ignore_ascii_case(k) {
+                let s = value_as_str(rv);
+                if !s.is_empty() {
+                    return s;
+                }
+            }
+        }
+    }
+    String::new()
+}
+
+/// Best-effort display name for a customer/order row.
+pub fn row_customer_name(row: &EverestRow) -> String {
+    let first = row_str(row, &["FIRST_NAME"]);
+    let last = row_str(row, &["LAST_NAME"]);
+    let fl = format!("{} {}", first.trim(), last.trim());
+    if !fl.trim().is_empty() {
+        return fl.trim().to_string();
+    }
+    let name = row_str(row, &["NAME"]);
+    if !name.is_empty() {
+        return name;
+    }
+    let acct = row_str(row, &["ACCT_NAME"]);
+    if !acct.is_empty() {
+        return acct;
+    }
+    "Unknown".to_string()
+}
+
+pub fn row_cust_code(row: &EverestRow) -> String {
+    row_str(row, &["CUST_CODE", "CUSTCODE", "CUST_NO"])
+}
+
+pub fn row_doc_no(row: &EverestRow) -> String {
+    row_str(row, &["DOC_NO", "DOCNUM", "DOC_NUM", "ID_ORDER", "ORDER_NO"])
+}
+
+/// Customer search result delivered to the UI.
+#[derive(Debug, Clone, Default)]
+pub struct EverestCustomerSearchResult {
+    pub query: String,
+    pub by_email: bool,
+    pub customers: Vec<EverestRow>,
+    /// For email searches we already have the orders, so cache them per
+    /// customer code to avoid a second round-trip when the user drills in.
+    pub prefetched_orders: HashMap<String, Vec<EverestRow>>,
+    pub error: Option<String>,
+}
+
+/// Orders-for-a-customer result delivered to the UI.
+#[derive(Debug, Clone, Default)]
+pub struct EverestCustomerOrdersResult {
+    pub cust_code: String,
+    pub orders: Vec<EverestRow>,
+    pub error: Option<String>,
+}
+
+/// Generic Everest list call: posts `call` with positional `args` (arg1,
+/// arg2, ...) and parses the response into a list of records.
+async fn everest_list_call(client: &Client, call: &str, args: &[Value]) -> Result<Vec<EverestRow>> {
+    let mut payload = Map::new();
+    payload.insert("action".into(), json!("everest_call"));
+    payload.insert("application".into(), json!("everest"));
+    payload.insert("call".into(), json!(call));
+    payload.insert("user_email".into(), json!(SCAFFOLD_USER));
+    payload.insert("user_password".into(), json!(SCAFFOLD_PASS));
+    for (i, a) in args.iter().enumerate() {
+        payload.insert(format!("arg{}", i + 1), a.clone());
+    }
+
+    let resp = client
+        .post(SCAFFOLD_URL)
+        .header("Content-Type", "application/json")
+        .json(&Value::Object(payload))
+        .send()
+        .await?;
+
+    let status = resp.status();
+    let body = resp.text().await?;
+    if !status.is_success() {
+        return Err(anyhow!("HTTP {status}: {body}"));
+    }
+    parse_everest_rows(&body)
+}
+
+/// Parse an Everest list response. Accepts a top-level array, an object that
+/// wraps the list under some key, or a single object (treated as one row).
+fn parse_everest_rows(body: &str) -> Result<Vec<EverestRow>> {
+    let v: Value = serde_json::from_str(body).with_context(|| {
+        format!(
+            "Parsing Everest list response: {}",
+            body.chars().take(200).collect::<String>()
+        )
+    })?;
+    match v {
+        Value::Array(arr) => Ok(arr.into_iter().filter_map(|x| x.as_object().cloned()).collect()),
+        Value::Object(map) => {
+            for (_k, val) in map.iter() {
+                if let Some(arr) = val.as_array() {
+                    return Ok(arr.iter().filter_map(|x| x.as_object().cloned()).collect());
+                }
+            }
+            Ok(vec![map])
+        }
+        _ => Ok(Vec::new()),
+    }
+}
+
+/// Search Everest for customers. Phone searches run every formatted variant
+/// (matching the rest of the app's phone lookups) through `getCustomerByPhone`
+/// and dedupe. Email searches use `getOrdersByEmail`, grouping the returned
+/// orders into a synthetic customer list (and caching those orders).
+pub async fn search_everest_customers(
+    query: String,
+    by_email: bool,
+    tx: Sender<EverestCustomerSearchResult>,
+) -> Result<(), Error> {
+    let client = Client::builder().build()?;
+    let mut out = EverestCustomerSearchResult {
+        query: query.clone(),
+        by_email,
+        ..Default::default()
+    };
+
+    if by_email {
+        // getOrdersByEmail returns lightweight order rows with NO customer
+        // code, so we enrich a single customer from the first order's full
+        // header (which carries CUST_CODE + name). The drill-down then uses
+        // getOrdersByCustomerId like the phone path, giving richer rows.
+        match everest_list_call(&client, "getOrdersByEmail", &[json!(query.trim())]).await {
+            Ok(orders) if !orders.is_empty() => {
+                let mut cust = EverestRow::new();
+                let first_order_no = row_doc_no(&orders[0]);
+                if !first_order_no.is_empty() {
+                    if let Ok(order) = get_order_by_docnum(&client, &first_order_no).await {
+                        let h = &order.header;
+                        cust.insert("CUST_CODE".into(), json!(h.cust_code));
+                        cust.insert("NAME".into(), json!(h.name));
+                        cust.insert("FIRST_NAME".into(), json!(h.first_name));
+                        cust.insert("LAST_NAME".into(), json!(h.last_name));
+                        cust.insert("ACCT_NAME".into(), json!(h.acct_name));
+                        cust.insert("TEL1".into(), json!(h.tel1));
+                        cust.insert("EMAIL".into(), json!(h.email));
+                    }
+                }
+                if row_cust_code(&cust).is_empty() {
+                    // Enrichment failed; fall back to the lightweight orders
+                    // under a synthetic (email) key so the drill-down still
+                    // works without a customer code.
+                    cust.insert("CUST_CODE".into(), json!(query.trim()));
+                    cust.insert("EMAIL".into(), json!(query.trim()));
+                    out.prefetched_orders
+                        .insert(query.trim().to_string(), orders.clone());
+                }
+                cust.insert("total_documents".into(), json!(orders.len().to_string()));
+                out.customers.push(cust);
+            }
+            Ok(_) => {}
+            Err(e) => out.error = Some(format!("Email lookup failed: {e}")),
+        }
+    } else {
+        let combos = database::schema::utilities::format_us_phone_number(&query);
+        let combos = if combos.is_empty() {
+            vec![query.trim().to_string()]
+        } else {
+            combos
+        };
+        let mut seen: Vec<String> = Vec::new();
+        let mut last_err: Option<String> = None;
+        for combo in combos.iter() {
+            match everest_list_call(&client, "getCustomerByPhone", &[json!(combo)]).await {
+                Ok(rows) => {
+                    for r in rows.into_iter() {
+                        let code = row_cust_code(&r);
+                        let key = if code.is_empty() {
+                            row_customer_name(&r)
+                        } else {
+                            code
+                        };
+                        if seen.contains(&key) {
+                            continue;
+                        }
+                        seen.push(key);
+                        out.customers.push(r);
+                    }
+                }
+                Err(e) => last_err = Some(format!("Phone lookup failed: {e}")),
+            }
+        }
+        if out.customers.is_empty() {
+            out.error = last_err;
+        }
+    }
+
+    let _ = tx.try_send(out);
+    Ok(())
+}
+
+/// Fetch every order on a customer's account via `getOrdersByCustomerId`.
+pub async fn fetch_customer_orders(
+    cust_code: String,
+    tx: Sender<EverestCustomerOrdersResult>,
+) -> Result<(), Error> {
+    let client = Client::builder().build()?;
+    let out = match everest_list_call(
+        &client,
+        "getOrdersByCustomerId",
+        &[json!(cust_code), json!(200)],
+    )
+    .await
+    {
+        Ok(orders) => EverestCustomerOrdersResult {
+            cust_code,
+            orders,
+            error: None,
+        },
+        Err(e) => EverestCustomerOrdersResult {
+            cust_code,
+            orders: Vec::new(),
+            error: Some(format!("Orders lookup failed: {e}")),
+        },
+    };
+    let _ = tx.try_send(out);
+    Ok(())
+}
+
+/// Fetch a full Everest order directly by DOCNUM (used when a sales-order
+/// number is clicked in the customer-orders list). Reuses the same
+/// `EverestLookupResult` channel as the serial flow.
+pub async fn lookup_everest_order_by_docnum(
+    docnum: String,
+    tx: Sender<EverestLookupResult>,
+) -> Result<(), Error> {
+    let client = Client::builder().build()?;
+    match get_order_by_docnum(&client, &docnum).await {
+        Ok(order) => {
+            let _ = tx.try_send(EverestLookupResult {
+                serial: String::new(),
+                lookup_entries: Vec::new(),
+                order: Some(order),
+                error: None,
+            });
+        }
+        Err(e) => {
+            let _ = tx.try_send(EverestLookupResult {
+                serial: String::new(),
+                lookup_entries: Vec::new(),
+                order: None,
+                error: Some(format!("Order fetch failed for DOCNUM {docnum}: {e}")),
+            });
+        }
+    }
+    Ok(())
 }
 
 /* ------------------------------------ Row data + viewer ------------------------------------ */

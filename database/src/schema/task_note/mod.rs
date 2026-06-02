@@ -216,6 +216,51 @@ impl TaskNotePayload {
         Ok(())
     }
 
+    /// Create a note that exists ONLY in Prestashop (no SurrealDB task_note row).
+    ///
+    /// Used by the Task Audit view, where orders are not tied to a SurrealDB
+    /// task. There is no valid `record<task>` to satisfy the task_note schema,
+    /// so we skip the DB insert entirely and only push the customer message to
+    /// Prestashop. Private notes are not supported here because a private note
+    /// is DB-only and would have nowhere to live.
+    pub async fn create_prestashop_note_only(&mut self) -> anyhow::Result<(), anyhow::Error> {
+        if self.id_employee.is_none() {
+            return Err(anyhow::anyhow!("We need an employee ID to create notes"));
+        }
+
+        let service_number = self.service_number.clone().unwrap_or_default();
+        if service_number.is_empty() {
+            return Err(anyhow::anyhow!("Prestashop-only notes require a service number"));
+        }
+
+        // Resolve a customer thread for this order, creating one if none exists.
+        let thread_id = match self.id_customer_thread.clone() {
+            Some(t) if !t.is_empty() => t,
+            _ => {
+                let api = Prestashop::default();
+                let mut query: HashMap<&str, &str> = HashMap::new();
+                query.insert("filter[id_order]", service_number.as_str());
+                query.insert("output_format", "JSON");
+                let threads: Vec<CustomerThread> = api
+                    .request_resources_wasm("customer_threads", query)
+                    .await
+                    .unwrap_or_default();
+                match threads.into_iter().find(|t| !t.id.is_empty()) {
+                    Some(t) => t.id,
+                    None => self.create_customer_thread().await?.id,
+                }
+            }
+        };
+
+        self.id_customer_thread = Some(thread_id);
+        let response = self.create_customer_message().await?;
+        log::info!(
+            "task_note/mod.rs -> create_prestashop_note_only -> created message id: {}",
+            response.id
+        );
+        Ok(())
+    }
+
     /// Checks if a user is tagged in a note and updates the note if necessary.
     ///
     /// # Returns

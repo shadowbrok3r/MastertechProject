@@ -13,7 +13,10 @@ pub struct EasyMarkEditor {
     show_rendered: bool,
     pub inputs: BTreeSet<String>,
     pub highlighter: highlighter::MemoizedEasymarkHighlighter,
-    pub private_note: bool
+    pub private_note: bool,
+    /// When false, the "Private Note" toggle is hidden and notes are always
+    /// non-private (used by Task Audit, where notes are Prestashop-only).
+    pub allow_private: bool,
 }
 
 impl PartialEq for EasyMarkEditor {
@@ -31,7 +34,8 @@ impl Default for EasyMarkEditor {
             show_rendered: false,
             highlighter: Default::default(),
             inputs: BTreeSet::new(),
-            private_note: false
+            private_note: false,
+            allow_private: true,
         }
     }
 }
@@ -44,7 +48,8 @@ impl EasyMarkEditor {
             show_rendered: false,
             highlighter: Default::default(),
             inputs: BTreeSet::new(),
-            private_note: false
+            private_note: false,
+            allow_private: true,
         }
     }
 
@@ -77,7 +82,11 @@ impl EasyMarkEditor {
         ui.columns(5, |columns| {
             let _res = columns[0].add(Button::new("Hotkeys").min_size(Vec2::new(60.0, 10.0))).on_hover_ui(nested_hotkeys_ui);
             columns[1].checkbox(&mut self.show_rendered, "Show rendered");
-            columns[3].checkbox(&mut self.private_note, "Private Note");
+            if self.allow_private {
+                columns[3].checkbox(&mut self.private_note, "Private Note");
+            } else {
+                self.private_note = false;
+            }
             let res = columns[4].add(Button::new("Submit").min_size(Vec2::new(60.0, 10.0)));
             response = Some(res);
         });

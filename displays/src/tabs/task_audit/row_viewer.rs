@@ -1,6 +1,6 @@
 use crate::{channel_manager::ChannelManager, chats::ChatView, Spawner};
 use eframe::egui::{Color32, ComboBox, Hyperlink, Id, Label, Widget};
-use database::schema::{Store, TaskNotePayload, User, helper_traits::parse_email_user, prestashop::{Prestashop, OrderState}, prestashop_schema::{MissedCallOrder, PrestashopPayload}};
+use database::schema::{Store, TaskNotePayload, User, helper_traits::parse_email_user, prestashop::{Prestashop, OrderState}, prestashop_schema::{Employee, MissedCallOrder, PrestashopPayload}};
 use database::schema::prestashop::xml::{modify_xml, remove_xml_tag};
 use database::xidax_order_url;
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -11,6 +11,14 @@ use egui_extras::Column;
 use log::info;
 
 use super::codec::Codec;
+
+/// In-table edits that must be reflected immediately, emitted from the
+/// row comboboxes and applied to the cached table by the owning view.
+pub enum RowFieldUpdate {
+    Status { order_id: String, new_state: String },
+    SalesRep { order_id: String, employee: Employee },
+    SplitRep { order_id: String, employee: Option<Employee> },
+}
 
 #[derive(serde::Serialize)]
 pub struct TaskRowViewer {
@@ -25,6 +33,10 @@ pub struct TaskRowViewer {
     pub tur_channel: (Sender<PrestashopPayload>, Receiver<PrestashopPayload>),
     #[serde(skip)]
     pub create_task_channel: (Sender<PrestashopPayload>, Receiver<PrestashopPayload>),
+    #[serde(skip)]
+    pub field_update_channel: (Sender<RowFieldUpdate>, Receiver<RowFieldUpdate>),
+    #[serde(skip)]
+    pub note_created_channel: (Sender<String>, Receiver<String>),
     pub missed_calls: Vec<MissedCallOrder>,
     pub store_selection: u64,
     #[serde(skip)]
@@ -37,10 +49,14 @@ impl Default for TaskRowViewer {
         let notes_channel = <Vec<TaskNotePayload>>::create_unbounded_channel();
         let tur_channel = PrestashopPayload::create_unbounded_channel();
         let create_task_channel = PrestashopPayload::create_unbounded_channel();
+        let field_update_channel = crossbeam::channel::unbounded();
+        let note_created_channel = crossbeam::channel::unbounded();
         Self {
             notes_channel,
             tur_channel,
             create_task_channel,
+            field_update_channel,
+            note_created_channel,
             filter: Default::default(),
             row_protection: Default::default(),
             selected: Default::default(),
@@ -64,12 +80,38 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
     }
 
     fn filter_row(&mut self, row: &PrestashopPayload) -> bool {
-        row.order.id.contains(&self.filter) 
-        || row.customer.name.to_lowercase().contains(&self.filter)
-        || row.sales_rep.clone().unwrap_or_default().firstname.to_lowercase().contains(&self.filter)
-        || row.sales_rep.clone().unwrap_or_default().lastname.to_lowercase().contains(&self.filter)
-        || row.split_rep.clone().unwrap_or_default().firstname.to_lowercase().contains(&self.filter)
-        || row.split_rep.clone().unwrap_or_default().lastname.to_lowercase().contains(&self.filter)
+        let filter = self.filter.trim().to_lowercase();
+        if filter.is_empty() {
+            return true;
+        }
+
+        let service = row.order.associations.order_service.get(0).cloned().unwrap_or_default();
+        let sales = row.sales_rep.clone().unwrap_or_default();
+        let split = row.split_rep.clone().unwrap_or_default();
+
+        // Match against the m/d/Y display date as well as the raw date_add.
+        let formatted_date = NaiveDateTime::parse_from_str(&row.order.date_add, "%Y-%m-%d %H:%M:%S")
+            .map(|ndt| {
+                let dt: DateTime<Utc> = DateTime::from_naive_utc_and_offset(ndt, Utc);
+                dt.format("%m/%d/%Y").to_string()
+            })
+            .unwrap_or_default();
+
+        [
+            row.order.id.to_lowercase(),
+            row.customer.name.to_lowercase(),
+            formatted_date,
+            row.order.date_add.to_lowercase(),
+            sales.firstname.to_lowercase(),
+            sales.lastname.to_lowercase(),
+            split.firstname.to_lowercase(),
+            split.lastname.to_lowercase(),
+            service.device_mfg.to_lowercase(),
+            service.device_model.to_lowercase(),
+            service.check_in_notes.to_lowercase(),
+        ]
+        .iter()
+        .any(|field| field.contains(&filter))
     }
 
     fn show_cell_view(&mut self, ui: &mut eframe::egui::Ui, row: &PrestashopPayload, column: usize) {
@@ -141,6 +183,10 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                                 let new_state = state.to_id_str().to_string();
                                 let order_id_clone = order_id.clone();
                                 log::info!("Status changed for order: {order_id_clone}, new_state: {new_state}");
+                                let _ = self.field_update_channel.0.try_send(RowFieldUpdate::Status {
+                                    order_id: order_id.clone(),
+                                    new_state: new_state.clone(),
+                                });
                                 PlatformSpawner::spawn(async move {
                                     update_order_field(&order_id_clone, "current_state", &new_state).await;
                                 });
@@ -168,6 +214,10 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                         if ui.selectable_label(is_checkin_shelf, "Check-in Shelf").clicked() && !is_checkin_shelf {
                             let order_id_clone = order_id.clone();
                             log::info!("Sales Rep changed to Check-in Shelf for order: {}", order_id_clone);
+                            let _ = self.field_update_channel.0.try_send(RowFieldUpdate::SalesRep {
+                                order_id: order_id.clone(),
+                                employee: Employee { id: "1347".to_string(), email: "Check-in Shelf".to_string(), ..Default::default() },
+                            });
                             PlatformSpawner::spawn(async move {
                                 update_order_field(&order_id_clone, "id_employee_sales_rep", "1347").await;
                             });
@@ -182,6 +232,15 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                                     let order_id_clone = order_id.clone();
                                     let emp_id_str = emp_id.to_string();
                                     log::info!("Sales Rep changed for order: {order_id_clone}, new emp_id: {emp_id_str}");
+                                    let _ = self.field_update_channel.0.try_send(RowFieldUpdate::SalesRep {
+                                        order_id: order_id.clone(),
+                                        employee: Employee {
+                                            id: emp_id_str.clone(),
+                                            email: user.get_email().to_string(),
+                                            firstname: user.get_username().to_string(),
+                                            ..Default::default()
+                                        },
+                                    });
                                     PlatformSpawner::spawn(async move {
                                         update_order_field(&order_id_clone, "id_employee_sales_rep", &emp_id_str).await;
                                     });
@@ -210,6 +269,10 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                         if ui.selectable_label(is_none, "None").clicked() && !is_none {
                             let order_id_clone = order_id.clone();
                             log::info!("Split Rep cleared for order: {order_id_clone}");
+                            let _ = self.field_update_channel.0.try_send(RowFieldUpdate::SplitRep {
+                                order_id: order_id.clone(),
+                                employee: None,
+                            });
                             PlatformSpawner::spawn(async move {
                                 update_order_field(&order_id_clone, "id_employee_split_rep", "").await;
                             });
@@ -224,6 +287,15 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                                     let order_id_clone = order_id.clone();
                                     let emp_id_str = emp_id.to_string();
                                     log::info!("Split Rep changed for order: {order_id_clone}, new emp_id: {emp_id_str}");
+                                    let _ = self.field_update_channel.0.try_send(RowFieldUpdate::SplitRep {
+                                        order_id: order_id.clone(),
+                                        employee: Some(Employee {
+                                            id: emp_id_str.clone(),
+                                            email: user.get_email().to_string(),
+                                            firstname: user.get_username().to_string(),
+                                            ..Default::default()
+                                        }),
+                                    });
                                     PlatformSpawner::spawn(async move {
                                         update_order_field(&order_id_clone, "id_employee_split_rep", &emp_id_str).await;
                                     });
