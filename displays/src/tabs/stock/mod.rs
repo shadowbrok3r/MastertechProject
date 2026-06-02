@@ -1,6 +1,6 @@
 use eframe::egui::{Align2, Area, Button, CentralPanel, Color32, ComboBox, Frame, Hyperlink, Id, Key, Link, Order, Panel, RichText, ScrollArea, Spinner, TextEdit, Ui, Widget, scroll_area};
 use crate::tabs::stock::store_inventory_viewer::{ExtraInventoryData, StockQuantityData, StockQuantityViewer};
-use crate::tabs::stock::everest_lookup::{EverestItemRow, EverestItemViewer, EverestLookupResult, EverestOrder, OdooSerialHistory, lookup_everest_order, fetch_serial_movement, order_to_rows, order_totals};
+use crate::tabs::stock::everest_lookup::{EverestItemRow, EverestItemViewer, EverestLookupResult, EverestOrder, OdooSerialHistory, lookup_everest_order, fetch_serial_movement, order_to_rows, order_totals, EverestRow, EverestCustomerSearchResult, EverestCustomerOrdersResult, search_everest_customers, fetch_customer_orders, lookup_everest_order_by_docnum, row_str, row_customer_name, row_cust_code, row_doc_no};
 use crate::tabs::stock::inventory_audit::{
     format_date_long, format_date_short, list_audits, load_audit, lookup_serials_in_odoo,
     mark_found, render_history_windows, save_audit, AuditSerialRow, HistoryWindow,
@@ -118,6 +118,22 @@ pub struct StockTable {
     pub everest_order_channel: (Sender<EverestLookupResult>, Receiver<EverestLookupResult>),
     pub everest_history_channel: (Sender<OdooSerialHistory>, Receiver<OdooSerialHistory>),
     pub everest_serial_click_channel: (Sender<String>, Receiver<String>),
+    // Everest customer search + breadcrumb navigation
+    everest_view: EverestView,
+    everest_crumbs: Vec<EverestCrumb>,
+    everest_nav: Option<EverestNav>,
+    everest_order_intent: EverestOrderIntent,
+    everest_customer_query: String,
+    everest_customer_search_type: CustomerSearchType,
+    everest_search_loading: bool,
+    everest_orders_loading: bool,
+    everest_search_result: Option<EverestCustomerSearchResult>,
+    everest_results_shown: usize,
+    everest_current_cust: String,
+    everest_orders_by_cust: HashMap<String, Vec<EverestRow>>,
+    everest_order_by_doc: HashMap<String, EverestOrder>,
+    pub everest_search_channel: (Sender<EverestCustomerSearchResult>, Receiver<EverestCustomerSearchResult>),
+    pub everest_orders_channel: (Sender<EverestCustomerOrdersResult>, Receiver<EverestCustomerOrdersResult>),
     // Customer change modal state
     pub customer_change_channel: (Sender<CustomerChangeRequest>, Receiver<CustomerChangeRequest>),
     pub customer_search_results_channel: (Sender<Vec<(Customer, Address)>>, Receiver<Vec<(Customer, Address)>>),
@@ -175,6 +191,47 @@ pub enum CustomerSearchType {
     Phone,
 }
 
+/// Which screen the Everest tab is currently showing.
+#[derive(Default, PartialEq, Clone, Debug)]
+enum EverestView {
+    #[default]
+    Empty,
+    Results,
+    CustomerOrders,
+    OrderDetail,
+}
+
+/// One entry in the Everest navigation trail. Each crumb carries enough to
+/// restore its view from cache without re-fetching.
+#[derive(Clone, Debug)]
+enum EverestCrumb {
+    Results,
+    Customer { cust_code: String, label: String },
+    Order { doc_no: String, label: String },
+}
+
+/// A navigation action collected during rendering and applied afterwards
+/// (avoids borrowing `self` while iterating cached data).
+#[derive(Clone, Debug)]
+enum EverestNav {
+    Crumb(usize),
+    OpenCustomer { cust_code: String, label: String },
+    OpenOrder { doc_no: String, label: String },
+    OpenSerial(String),
+    LoadMore,
+}
+
+/// What to do with the breadcrumb stack when an order-detail load resolves.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum EverestOrderIntent {
+    /// Fresh top-level lookup: reset the trail to just this order.
+    Reset,
+    /// Drill-down (clicked serial): append an order crumb on arrival.
+    PushOnArrival,
+    /// Crumb was already pushed at the click site (clicked order number).
+    AlreadyPushed,
+}
+
 #[derive(Default, PartialEq)]
 pub enum StockSelection {
     #[default]
@@ -213,6 +270,8 @@ impl Default for StockTable {
         let everest_order_channel: (Sender<EverestLookupResult>, Receiver<EverestLookupResult>) = crossbeam::channel::unbounded();
         let everest_history_channel: (Sender<OdooSerialHistory>, Receiver<OdooSerialHistory>) = crossbeam::channel::unbounded();
         let everest_serial_click_channel: (Sender<String>, Receiver<String>) = crossbeam::channel::unbounded();
+        let everest_search_channel: (Sender<EverestCustomerSearchResult>, Receiver<EverestCustomerSearchResult>) = crossbeam::channel::unbounded();
+        let everest_orders_channel: (Sender<EverestCustomerOrdersResult>, Receiver<EverestCustomerOrdersResult>) = crossbeam::channel::unbounded();
 
         let audit_list_channel: (Sender<Vec<InventoryAuditMeta>>, Receiver<Vec<InventoryAuditMeta>>) = crossbeam::channel::unbounded();
         let audit_lookup_channel: (Sender<Vec<AuditSerialRow>>, Receiver<Vec<AuditSerialRow>>) = crossbeam::channel::unbounded();
@@ -291,6 +350,21 @@ impl Default for StockTable {
             everest_order_channel,
             everest_history_channel,
             everest_serial_click_channel,
+            everest_view: EverestView::Empty,
+            everest_crumbs: Vec::new(),
+            everest_nav: None,
+            everest_order_intent: EverestOrderIntent::Reset,
+            everest_customer_query: String::new(),
+            everest_customer_search_type: CustomerSearchType::Phone,
+            everest_search_loading: false,
+            everest_orders_loading: false,
+            everest_search_result: None,
+            everest_results_shown: 20,
+            everest_current_cust: String::new(),
+            everest_orders_by_cust: HashMap::new(),
+            everest_order_by_doc: HashMap::new(),
+            everest_search_channel,
+            everest_orders_channel,
             serial_history_input: String::new(),
             // ---- Inventory audit ----
             inventory_view: InventoryView::default(),
@@ -700,6 +774,9 @@ impl StockTable {
                                 self.everest_selected_serial = None;
                                 self.everest_history = None;
                                 self.everest_items_table.replace(Vec::new());
+                                self.everest_view = EverestView::OrderDetail;
+                                self.everest_order_intent = EverestOrderIntent::Reset;
+                                self.everest_crumbs.clear();
                                 let tx = self.everest_order_channel.0.clone();
                                 PlatformSpawner::spawn(async move {
                                     if let Err(e) = lookup_everest_order(serial, tx).await {
@@ -711,6 +788,45 @@ impl StockTable {
                             if self.everest_loading {
                                 ui.add_space(6.);
                                 Spinner::new().size(18.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
+                            }
+
+                            ui.add_space(10.);
+                            ui.separator();
+                            ui.add_space(10.);
+
+                            // ---- Customer search (phone / email) ----
+                            ui.selectable_value(&mut self.everest_customer_search_type, CustomerSearchType::Phone, "Phone");
+                            ui.selectable_value(&mut self.everest_customer_search_type, CustomerSearchType::Email, "Email");
+
+                            let cust_resp = TextEdit::singleline(&mut self.everest_customer_query)
+                                .desired_width(200.)
+                                .hint_text(match self.everest_customer_search_type {
+                                    CustomerSearchType::Phone => "Customer phone",
+                                    CustomerSearchType::Email => "Customer email",
+                                })
+                                .ui(ui);
+
+                            let can_search = !self.everest_customer_query.trim().is_empty() && !self.everest_search_loading;
+                            let search_submit = cust_resp.lost_focus()
+                                && ui.input(|i| i.key_pressed(Key::Enter))
+                                && can_search;
+                            if ui.add_enabled(can_search, Button::new("Search")).clicked() || search_submit {
+                                let query = self.everest_customer_query.trim().to_string();
+                                let by_email = matches!(self.everest_customer_search_type, CustomerSearchType::Email);
+                                self.everest_search_loading = true;
+                                self.everest_error = None;
+                                self.everest_search_result = None;
+                                self.everest_view = EverestView::Results;
+                                let tx = self.everest_search_channel.0.clone();
+                                PlatformSpawner::spawn(async move {
+                                    if let Err(e) = search_everest_customers(query, by_email, tx).await {
+                                        log::error!("Everest customer search error: {e:?}");
+                                    }
+                                });
+                            }
+
+                            if self.everest_search_loading {
+                                Spinner::new().size(16.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
                             }
 
                             ui.add_space(10.);
@@ -1054,8 +1170,10 @@ impl StockTable {
     }
 
     fn show_everest(&mut self, ui: &mut Ui) {
-        // Bottom: order totals summary (only when an order is loaded).
-        if let Some(order) = self.everest_order.as_ref() {
+        let in_detail = self.everest_view == EverestView::OrderDetail;
+
+        // Bottom: order totals summary (only on the order-detail view).
+        if let Some(order) = self.everest_order.as_ref().filter(|_| in_detail) {
             let totals = order_totals(order);
             let kit_codes: Vec<String> = order
                 .items
@@ -1109,8 +1227,8 @@ impl StockTable {
             });
         }
 
-        // Right: serial-history side panel, only when populated.
-        if self.everest_history.is_some() || self.everest_history_loading {
+        // Right: serial-history side panel, only when populated (detail only).
+        if in_detail && (self.everest_history.is_some() || self.everest_history_loading) {
             Panel::right("everest_serial_history_panel")
                 .resizable(true)
                 .default_size(360.)
@@ -1120,8 +1238,8 @@ impl StockTable {
                 });
         }
 
-        // Left: customer + addresses, only when an order is loaded.
-        if self.everest_order.is_some() {
+        // Left: customer + addresses, only when an order is loaded (detail only).
+        if in_detail && self.everest_order.is_some() {
             Panel::left("everest_customer_panel")
                 .resizable(true)
                 .default_size(300.)
@@ -1131,8 +1249,23 @@ impl StockTable {
                 });
         }
 
-        // Center: items table or empty/loading hint.
+        // Center: breadcrumb trail above the active view's content.
         CentralPanel::default().show_inside(ui, |ui| {
+            self.render_everest_breadcrumb(ui);
+
+            match self.everest_view {
+                EverestView::Results => { self.render_everest_results(ui); return; }
+                EverestView::CustomerOrders => { self.render_everest_orders(ui); return; }
+                EverestView::Empty => {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(50.);
+                        ui.label("Scan a serial number, or search for a customer by phone / email.");
+                    });
+                    return;
+                }
+                EverestView::OrderDetail => {}
+            }
+
             if self.everest_loading && self.everest_order.is_none() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(50.);
@@ -1195,6 +1328,287 @@ impl StockTable {
                     .ui(ui);
             }
         });
+
+        // Apply any navigation collected during rendering (after all borrows
+        // of `self` from the panels/closures above are released).
+        if let Some(nav) = self.everest_nav.take() {
+            self.apply_everest_nav(nav);
+        }
+    }
+
+    /// Breadcrumb trail for the Everest tab. Clicking an earlier crumb
+    /// restores that view from cache (no re-fetch).
+    fn render_everest_breadcrumb(&mut self, ui: &mut Ui) {
+        if self.everest_crumbs.is_empty() {
+            return;
+        }
+        let crumbs = self.everest_crumbs.clone();
+        let last = crumbs.len().saturating_sub(1);
+        ui.horizontal(|ui| {
+            for (i, crumb) in crumbs.iter().enumerate() {
+                if i > 0 {
+                    ui.label(RichText::new("›").color(Color32::GRAY));
+                }
+                let label = match crumb {
+                    EverestCrumb::Results => "Search Results".to_string(),
+                    EverestCrumb::Customer { label, .. } => label.clone(),
+                    EverestCrumb::Order { label, .. } => format!("Order {label}"),
+                };
+                if i == last {
+                    ui.label(RichText::new(label).strong().color(Color32::from_rgb(255, 200, 80)));
+                } else if ui.link(RichText::new(label).color(Color32::LIGHT_BLUE)).clicked() {
+                    self.everest_nav = Some(EverestNav::Crumb(i));
+                }
+            }
+        });
+        ui.separator();
+    }
+
+    /// Customer search-results table (paged 20 at a time).
+    fn render_everest_results(&mut self, ui: &mut Ui) {
+        if self.everest_search_loading {
+            ui.vertical_centered(|ui| {
+                ui.add_space(50.);
+                ui.label("Searching Everest customers...");
+                Spinner::new().size(40.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
+            });
+            return;
+        }
+        let Some(res) = self.everest_search_result.as_ref() else {
+            ui.vertical_centered(|ui| {
+                ui.add_space(50.);
+                ui.label("No search run yet.");
+            });
+            return;
+        };
+        let total = res.customers.len();
+        if total == 0 {
+            ui.vertical_centered(|ui| {
+                ui.add_space(50.);
+                ui.label(RichText::new("No customers found.").color(Color32::GRAY));
+            });
+            return;
+        }
+        let shown = self.everest_results_shown.min(total);
+        let rows: Vec<EverestRow> = res.customers[..shown].to_vec();
+
+        ui.label(
+            RichText::new(format!("Showing {shown} of {total} customers"))
+                .color(Color32::LIGHT_BLUE),
+        );
+        ui.add_space(4.);
+
+        ScrollArea::vertical().show(ui, |ui| {
+            use egui_extras::{Column as TblCol, TableBuilder};
+            TableBuilder::new(ui)
+                .striped(true)
+                .resizable(true)
+                .column(TblCol::remainder().at_least(180.))
+                .column(TblCol::auto().at_least(90.))
+                .column(TblCol::auto().at_least(120.))
+                .column(TblCol::remainder().at_least(160.))
+                .column(TblCol::auto().at_least(70.))
+                .header(20., |mut h| {
+                    h.col(|ui| { ui.strong("Name"); });
+                    h.col(|ui| { ui.strong("Cust Code"); });
+                    h.col(|ui| { ui.strong("Phone"); });
+                    h.col(|ui| { ui.strong("Email"); });
+                    h.col(|ui| { ui.strong("Invoices"); });
+                })
+                .body(|mut body| {
+                    for row in rows.iter() {
+                        let name = row_customer_name(row);
+                        let code = row_cust_code(row);
+                        let phone = row_str(row, &["TEL1", "TEL2", "MOBILE_PHONE", "PHONE"]);
+                        let email = row_str(row, &["EMAIL"]);
+                        let invoices = row_str(row, &["total_documents", "NUM_INV"]);
+                        body.row(22., |mut r| {
+                            r.col(|ui| {
+                                if Link::new(RichText::new(&name).color(Color32::LIGHT_BLUE)).ui(ui).clicked() {
+                                    self.everest_nav = Some(EverestNav::OpenCustomer {
+                                        cust_code: code.clone(),
+                                        label: name.clone(),
+                                    });
+                                }
+                            });
+                            r.col(|ui| { ui.label(&code); });
+                            r.col(|ui| { ui.label(&phone); });
+                            r.col(|ui| { ui.label(&email); });
+                            r.col(|ui| { ui.label(&invoices); });
+                        });
+                    }
+                });
+        });
+
+        if shown < total {
+            ui.add_space(6.);
+            if Button::new(format!("Load +20  ({} remaining)", total - shown)).ui(ui).clicked() {
+                self.everest_nav = Some(EverestNav::LoadMore);
+            }
+        }
+    }
+
+    /// All orders on the selected customer's account.
+    fn render_everest_orders(&mut self, ui: &mut Ui) {
+        if self.everest_orders_loading {
+            ui.vertical_centered(|ui| {
+                ui.add_space(50.);
+                ui.label("Loading customer orders...");
+                Spinner::new().size(40.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
+            });
+            return;
+        }
+        let cust = self.everest_current_cust.clone();
+        let orders = self.everest_orders_by_cust.get(&cust).cloned().unwrap_or_default();
+        if orders.is_empty() {
+            ui.vertical_centered(|ui| {
+                ui.add_space(50.);
+                ui.label(RichText::new("No orders found for this customer.").color(Color32::GRAY));
+            });
+            return;
+        }
+
+        ui.label(RichText::new(format!("{} orders", orders.len())).color(Color32::LIGHT_BLUE));
+        ui.add_space(4.);
+
+        ScrollArea::vertical().show(ui, |ui| {
+            use egui_extras::{Column as TblCol, TableBuilder};
+            TableBuilder::new(ui)
+                .striped(true)
+                .resizable(true)
+                .column(TblCol::auto().at_least(110.))
+                .column(TblCol::remainder().at_least(140.))
+                .column(TblCol::auto().at_least(100.))
+                .column(TblCol::auto().at_least(70.))
+                .column(TblCol::auto().at_least(90.))
+                .column(TblCol::auto().at_least(100.))
+                .header(20., |mut h| {
+                    h.col(|ui| { ui.strong("Order #"); });
+                    h.col(|ui| { ui.strong("Type"); });
+                    h.col(|ui| { ui.strong("Date"); });
+                    h.col(|ui| { ui.strong("Dept"); });
+                    h.col(|ui| { ui.strong("Sales Rep"); });
+                    h.col(|ui| { ui.strong("Amount"); });
+                })
+                .body(|mut body| {
+                    for row in orders.iter() {
+                        let doc = row_doc_no(row);
+                        let alias = row_str(row, &["DOC_ALIAS"]);
+                        let date = row_str(row, &["ORDER_DATE", "DATE", "DOC_DATE"]);
+                        let date = date.split_whitespace().next().unwrap_or(&date).to_string();
+                        let dep = row_str(row, &["DEP", "DEP_CODE", "DEPARTMENT"]);
+                        let rep = row_str(row, &["SALES_REP", "REP"]);
+                        let amount = row_str(row, &["INV_AMOUNT", "AMOUNT", "TOTAL"]);
+                        body.row(22., |mut r| {
+                            r.col(|ui| {
+                                if doc.is_empty() {
+                                    ui.label(RichText::new("—").color(Color32::GRAY));
+                                } else if Link::new(RichText::new(&doc).color(Color32::from_rgb(42, 195, 222))).ui(ui).clicked() {
+                                    self.everest_nav = Some(EverestNav::OpenOrder {
+                                        doc_no: doc.clone(),
+                                        label: doc.clone(),
+                                    });
+                                }
+                            });
+                            r.col(|ui| { ui.label(RichText::new(&alias).color(Color32::LIGHT_GRAY)); });
+                            r.col(|ui| { ui.label(&date); });
+                            r.col(|ui| { ui.label(&dep); });
+                            r.col(|ui| { ui.label(&rep); });
+                            r.col(|ui| {
+                                if amount.is_empty() {
+                                    ui.label("");
+                                } else {
+                                    ui.label(RichText::new(format!("$ {amount}")).color(Color32::LIGHT_GREEN));
+                                }
+                            });
+                        });
+                    }
+                });
+        });
+    }
+
+    /// Apply a collected Everest navigation action.
+    fn apply_everest_nav(&mut self, nav: EverestNav) {
+        match nav {
+            EverestNav::LoadMore => {
+                self.everest_results_shown += 20;
+            }
+            EverestNav::Crumb(i) => self.everest_goto_crumb(i),
+            EverestNav::OpenCustomer { cust_code, label } => {
+                self.everest_current_cust = cust_code.clone();
+                self.everest_view = EverestView::CustomerOrders;
+                self.everest_crumbs.push(EverestCrumb::Customer {
+                    cust_code: cust_code.clone(),
+                    label,
+                });
+                if !self.everest_orders_by_cust.contains_key(&cust_code) {
+                    self.everest_orders_loading = true;
+                    let tx = self.everest_orders_channel.0.clone();
+                    PlatformSpawner::spawn(async move {
+                        if let Err(e) = fetch_customer_orders(cust_code, tx).await {
+                            log::error!("Everest customer orders error: {e:?}");
+                        }
+                    });
+                }
+            }
+            EverestNav::OpenOrder { doc_no, label } => {
+                self.everest_crumbs.push(EverestCrumb::Order {
+                    doc_no: doc_no.clone(),
+                    label,
+                });
+                self.everest_view = EverestView::OrderDetail;
+                if let Some(order) = self.everest_order_by_doc.get(&doc_no).cloned() {
+                    self.everest_items_table.replace(order_to_rows(&order));
+                    self.everest_order = Some(order);
+                } else {
+                    self.everest_loading = true;
+                    self.everest_error = None;
+                    self.everest_order_intent = EverestOrderIntent::AlreadyPushed;
+                    let tx = self.everest_order_channel.0.clone();
+                    PlatformSpawner::spawn(async move {
+                        if let Err(e) = lookup_everest_order_by_docnum(doc_no, tx).await {
+                            log::error!("Everest order-by-docnum error: {e:?}");
+                        }
+                    });
+                }
+            }
+            EverestNav::OpenSerial(serial) => {
+                self.everest_loading = true;
+                self.everest_error = None;
+                self.everest_order_intent = EverestOrderIntent::PushOnArrival;
+                let tx = self.everest_order_channel.0.clone();
+                PlatformSpawner::spawn(async move {
+                    if let Err(e) = lookup_everest_order(serial, tx).await {
+                        log::error!("Everest serial lookup error: {e:?}");
+                    }
+                });
+            }
+        }
+    }
+
+    /// Jump back to crumb `i`, truncating the trail and restoring that view
+    /// entirely from cached data.
+    fn everest_goto_crumb(&mut self, i: usize) {
+        if i >= self.everest_crumbs.len() {
+            return;
+        }
+        self.everest_crumbs.truncate(i + 1);
+        match self.everest_crumbs[i].clone() {
+            EverestCrumb::Results => {
+                self.everest_view = EverestView::Results;
+            }
+            EverestCrumb::Customer { cust_code, .. } => {
+                self.everest_current_cust = cust_code;
+                self.everest_view = EverestView::CustomerOrders;
+            }
+            EverestCrumb::Order { doc_no, .. } => {
+                if let Some(order) = self.everest_order_by_doc.get(&doc_no).cloned() {
+                    self.everest_items_table.replace(order_to_rows(&order));
+                    self.everest_order = Some(order);
+                }
+                self.everest_view = EverestView::OrderDetail;
+            }
+        }
     }
 
     /// Right-side panel where the user pastes one serial per line. The
@@ -1659,30 +2073,61 @@ impl StockTable {
             self.everest_loading = false;
             self.everest_error = result.error;
             if let Some(order) = result.order {
+                let doc = order.header.doc_no.clone();
                 let rows = order_to_rows(&order);
                 log::info!(
                     "Everest order loaded: DOC {} with {} item rows",
-                    order.header.doc_no, rows.len()
+                    doc, rows.len()
                 );
                 self.everest_items_table.replace(rows);
+                self.everest_order_by_doc.insert(doc.clone(), order.clone());
                 self.everest_order = Some(order);
-            } else {
+                self.everest_view = EverestView::OrderDetail;
+                let label = doc.clone();
+                match self.everest_order_intent {
+                    EverestOrderIntent::Reset => {
+                        self.everest_crumbs = vec![EverestCrumb::Order { doc_no: doc, label }];
+                    }
+                    EverestOrderIntent::PushOnArrival => {
+                        self.everest_crumbs.push(EverestCrumb::Order { doc_no: doc, label });
+                    }
+                    EverestOrderIntent::AlreadyPushed => {}
+                }
+                self.everest_order_intent = EverestOrderIntent::Reset;
+            } else if self.everest_order_intent == EverestOrderIntent::Reset {
                 self.everest_order = None;
                 self.everest_items_table.replace(Vec::new());
             }
         }
 
-        // Everest: user clicked an MFG serial cell -> fetch Odoo history
+        // Everest: user clicked an MFG serial cell -> look the serial up in
+        // Everest (serial → DOCNUM → order), NOT Odoo movement history.
         if let Ok(serial) = self.everest_serial_click_channel.1.try_recv() {
-            self.everest_selected_serial = Some(serial.clone());
-            self.everest_history = None;
-            self.everest_history_loading = true;
-            let tx = self.everest_history_channel.0.clone();
-            PlatformSpawner::spawn(async move {
-                if let Err(e) = fetch_serial_movement(serial, tx).await {
-                    log::error!("Odoo serial history error: {e:?}");
-                }
-            });
+            self.apply_everest_nav(EverestNav::OpenSerial(serial));
+        }
+
+        // Everest: customer search results arrived.
+        if let Ok(res) = self.everest_search_channel.1.try_recv() {
+            self.everest_search_loading = false;
+            self.everest_results_shown = 20;
+            for (code, ords) in res.prefetched_orders.iter() {
+                self.everest_orders_by_cust.insert(code.clone(), ords.clone());
+            }
+            if res.error.is_some() {
+                self.everest_error = res.error.clone();
+            }
+            self.everest_search_result = Some(res);
+            self.everest_view = EverestView::Results;
+            self.everest_crumbs = vec![EverestCrumb::Results];
+        }
+
+        // Everest: a customer's orders arrived.
+        if let Ok(res) = self.everest_orders_channel.1.try_recv() {
+            self.everest_orders_loading = false;
+            if let Some(err) = &res.error {
+                self.everest_error = Some(err.clone());
+            }
+            self.everest_orders_by_cust.insert(res.cust_code, res.orders);
         }
 
         // Everest: Odoo movement history arrived

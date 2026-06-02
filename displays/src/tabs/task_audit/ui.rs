@@ -158,7 +158,7 @@ impl TaskAuditViewer {
         {
             ui.horizontal_top(|ui| {
                 TextEdit::singleline(&mut self.services_viewer.filter)
-                    .hint_text(" Search for SO# / Customer")
+                    .hint_text(" Search SO# / Customer / Device / Model / Notes / Date")
                     .ui(ui);
 
                 ui.add_space(10.);
@@ -179,6 +179,7 @@ impl TaskAuditViewer {
                 let selected_text = match &self.audit_selection {
                     TaskAudit::MyInRepair => " My In Repair ".to_string(),
                     TaskAudit::MyServices => " My Services ".to_string(),
+                    TaskAudit::NeedsCallToday => " Calls Due Today ".to_string(),
                     TaskAudit::Status(OrderState::CheckinShelf) => " Check-in Shelf ".to_string(),
                     TaskAudit::Status(OrderState::InRepair) => " In Repair ".to_string(),
                     TaskAudit::Status(OrderState::DoneShelf) => " Done Shelf ".to_string(),
@@ -194,6 +195,7 @@ impl TaskAuditViewer {
                     .show_ui(ui, |ui| {
                         ui.selectable_value(&mut self.audit_selection, TaskAudit::MyInRepair, " My In Repair ");
                         ui.selectable_value(&mut self.audit_selection, TaskAudit::MyServices, " My Services ");
+                        ui.selectable_value(&mut self.audit_selection, TaskAudit::NeedsCallToday, " Calls Due Today ");
                         ui.selectable_value(&mut self.audit_selection, TaskAudit::Status(OrderState::CheckinShelf), " Check-in Shelf ");
                         ui.selectable_value(&mut self.audit_selection, TaskAudit::Status(OrderState::InRepair), " In Repair ");
                         ui.selectable_value(&mut self.audit_selection, TaskAudit::Status(OrderState::DoneShelf), " Done Shelf ");

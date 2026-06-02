@@ -27,8 +27,15 @@ pub struct ChatView{
     service_number: Option<String>,
     hovered: HashSet<RecordId>,
     remove_hovered: Option<RecordId>,
+    /// When true, notes are created in Prestashop only (no SurrealDB task_note)
+    /// and the "Private Note" toggle is hidden. Used by the Task Audit view.
+    pub prestashop_only: bool,
+    /// Optional notifier fired with the service number after a note is
+    /// successfully created, so an owning view (Task Audit) can react.
     #[serde(skip)]
-    new_notes_tx: Sender<Vec<TaskNotePayload>>, 
+    note_created_tx: Option<Sender<String>>,
+    #[serde(skip)]
+    new_notes_tx: Sender<Vec<TaskNotePayload>>,
     #[serde(skip)]
     new_notes_rx: Receiver<Vec<TaskNotePayload>>,
     #[serde(skip)]
@@ -62,6 +69,8 @@ impl Default for ChatView {
             service_number: None,
             hovered: HashSet::new(),
             remove_hovered: None,
+            prestashop_only: false,
+            note_created_tx: None,
             new_notes_tx, new_notes_rx,
             ui_event_tx, ui_event_rx,
         }
@@ -119,9 +128,25 @@ impl ChatView {
             service_number,
             hovered: HashSet::new(),
             remove_hovered: None,
+            prestashop_only: false,
+            note_created_tx: None,
             new_notes_tx, new_notes_rx,
             ui_event_tx, ui_event_rx,
         }
+    }
+
+    /// Enables Prestashop-only note creation (no SurrealDB task_note row) and
+    /// hides the private-note toggle. Used by the Task Audit view.
+    pub fn set_prestashop_only(&mut self, prestashop_only: bool) -> &mut Self {
+        self.prestashop_only = prestashop_only;
+        self
+    }
+
+    /// Sets a notifier that fires with the service number after a note is
+    /// successfully created.
+    pub fn set_note_created_tx(&mut self, tx: Sender<String>) -> &mut Self {
+        self.note_created_tx = Some(tx);
+        self
     }
 
     pub fn set_notes(&mut self, notes: Vec<TaskNotePayload>) -> &mut Self {
@@ -368,6 +393,7 @@ impl ChatView {
             
             let markdown_editor = &mut self.markdown_editor;
             markdown_editor.inputs = self.users.clone();
+            markdown_editor.allow_private = !self.prestashop_only;
 
             if let Some(response) = markdown_editor.ui(ui) {
                 if response.clicked() || enter_pressed {
@@ -409,21 +435,51 @@ impl ChatView {
                             };
 
                             error!("chats/mod.rs -> new_note: {new_note:#?}");
-                            
+
                             // Copy note to clipboard regardless of result
                             let note_text = new_note.note.clone();
                             ui.ctx().copy_text(note_text.clone());
-                            
+
+                            let prestashop_only = self.prestashop_only;
+                            let note_created_tx = self.note_created_tx.clone();
+                            let notes_tx = self.new_notes_tx.clone();
+                            let service_number = self.service_number.clone();
+                            let refresh_task_id = task_id.clone();
+
                             PlatformSpawner::spawn(async move {
-                                if let Err(e) = new_note.handle_note_creation().await {
-                                    error!("Failed to create task note: {:?}", e);
-                                    // Send error toast
-                                    let tx = get_toast_sender();
-                                    let _ = tx.try_send(ToastMessage::Error(
-                                        format!("Failed to send note: {:?}. Note copied to clipboard.", e)
-                                    ));
+                                let result = if prestashop_only {
+                                    new_note.create_prestashop_note_only().await
                                 } else {
-                                    info!("chats/mod.rs -> Task note successfully created.");
+                                    new_note.handle_note_creation().await
+                                };
+
+                                match result {
+                                    Ok(_) => {
+                                        info!("chats/mod.rs -> Task note successfully created.");
+
+                                        // Notify the owning view (Task Audit) that a note landed.
+                                        if let (Some(tx), Some(svc)) = (note_created_tx, service_number.clone()) {
+                                            let _ = tx.try_send(svc);
+                                        }
+
+                                        // Pull the latest notes so the new note shows up in the chat.
+                                        if let Some(svc) = service_number {
+                                            if !svc.is_empty() {
+                                                match TaskNotePayload::get_prestashop_notes_from_service(&svc, Some(refresh_task_id)).await {
+                                                    Ok(notes) => { let _ = notes_tx.try_send(notes); },
+                                                    Err(e) => error!("chats/mod.rs -> Failed to refresh notes after send: {e:?}"),
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to create task note: {:?}", e);
+                                        // Send error toast
+                                        let tx = get_toast_sender();
+                                        let _ = tx.try_send(ToastMessage::Error(
+                                            format!("Failed to send note: {:?}. Note copied to clipboard.", e)
+                                        ));
+                                    }
                                 }
                             });
                         },

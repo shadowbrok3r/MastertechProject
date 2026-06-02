@@ -161,6 +161,100 @@ fn env_logger_with_dependency_filters() -> env_logger::Builder {
     builder
 }
 
+fn output_log_path() -> std::path::PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("output.log")))
+        .unwrap_or_else(|| std::path::PathBuf::from("output.log"))
+}
+
+#[cfg(target_os = "windows")]
+fn attach_parent_console() {
+    use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+    unsafe {
+        let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn attach_parent_console() {}
+
+fn stderr_logger() -> Box<dyn log::Log + 'static> {
+    Box::new(
+        env_logger_with_dependency_filters()
+            .target(env_logger::Target::Stderr)
+            .build(),
+    )
+}
+
+fn file_logger() -> Box<dyn log::Log + 'static> {
+    let log_path = output_log_path();
+    Box::new(simplelog::WriteLogger::new(
+        log::LevelFilter::Trace,
+        simplelog::Config::default(),
+        std::fs::File::create(&log_path)
+            .unwrap_or_else(|e| panic!("create {}: {e}", log_path.display())),
+    ))
+}
+
+async fn run_gui(log_to_file: bool) -> eframe::Result<()> {
+    let egui_logger = Box::new(
+        displays::ui_tools::egui_logger::builder()
+            .add_blacklist("evtx::evtx_chunk")
+            .add_blacklist("evtx::evtx_parser")
+            .build(),
+    );
+    let drain = tui_logger::Drain::new();
+    let tui_log = Box::new(
+        env_logger_with_dependency_filters()
+            .format(move |_buf, record| Ok(drain.log(record)))
+            .build(),
+    );
+    let mut loggers: Vec<Box<dyn log::Log + 'static>> =
+        vec![egui_logger, tui_log];
+    if log_to_file {
+        attach_parent_console();
+        loggers.push(stderr_logger());
+        loggers.push(file_logger());
+        eprintln!("Mastertech logging to {}", output_log_path().display());
+    }
+    multi_log::MultiLogger::init(loggers, log::Level::Info)
+        .expect("Error initializing multi_logger");
+
+    tokio::spawn(async move {
+        utilities::ai::run_mcp_server_tcp().await?;
+        Ok::<(), anyhow::Error>(())
+    });
+    let eframe_app = eframe::run_native(
+        format!("Mastertech-{}", database::version_with_build!()).as_str(),
+        eframe::NativeOptions {
+            viewport: eframe::egui::ViewportBuilder::default()
+                .with_inner_size([1000.0, 750.0])
+                .with_drag_and_drop(true)
+                .with_icon(load_icon()),
+            ..Default::default()
+        },
+        Box::new(|cc| {
+            egui_extras::install_image_loaders(&cc.egui_ctx);
+            Ok(Box::new(app_state::MasterTechApp::new(cc)))
+        }),
+    );
+
+    if let Err(e) = eframe_app {
+        error!("Error running eframe_native: {e:?} \nswitching to secondary application");
+        let res = terminal_mode::run_terminal_mode().await;
+        if let Err(e) = res {
+            error!("Error running terminal app: {e:?}");
+        }
+    } else {
+        displays::signal_shutdown();
+        tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+        log::info!("main -> egui closed; forcing process exit to release the launching terminal");
+        std::process::exit(0);
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
@@ -175,16 +269,9 @@ async fn main() -> eframe::Result<()> {
         }
     }
 
-    match check_old_exe() {
-        Ok(_) => log::info!("check_old_exe ran ok"),
-        Err(e) => log::error!("check_old_exe Err: {e:?}"),
-    }
-
-    // console_subscriber::init(); // for tokio console
     let matches = clap::Command::new("Mastertech")
         .version(env!("CARGO_PKG_VERSION"))
         .author("Shadowbroker")
-        // .about("Accepts a command-line argument and prints it")
         .arg(
             clap::Arg::new("term")
                 .short('t')
@@ -196,7 +283,7 @@ async fn main() -> eframe::Result<()> {
             clap::Arg::new("log")
                 .short('l')
                 .long("log")
-                .help("output log to file (output.log)")
+                .help("Also write logs to output.log beside the exe, and mirror to cmd when launched from a console")
                 .action(clap::ArgAction::SetTrue),
         )
         .arg(
@@ -213,6 +300,22 @@ async fn main() -> eframe::Result<()> {
                 .action(clap::ArgAction::SetTrue),
         )
         .get_matches();
+
+    let log_to_file = matches.get_flag("log");
+    if log_to_file {
+        attach_parent_console();
+        eprintln!("Mastertech logging to {}", output_log_path().display());
+    }
+
+    match check_old_exe() {
+        Ok(_) => log::info!("check_old_exe ran ok"),
+        Err(e) => {
+            if log_to_file {
+                eprintln!("check_old_exe failed: {e:?}");
+            }
+            log::error!("check_old_exe Err: {e:?}");
+        }
+    }
 
     // ── --mcp-stdio: headless single-session MCP for Claude Desktop ────────────
     //
@@ -253,107 +356,28 @@ async fn main() -> eframe::Result<()> {
 
     if matches.get_flag("term") {
         let drain = tui_logger::Drain::new();
-        let _ = env_logger_with_dependency_filters()
-            .format(move |_buf, record| Ok(drain.log(record)))
-            .try_init();
-        // simplelog::WriteLogger::init(
-        //     log::LevelFilter::Debug,
-        //     simplelog::Config::default(),
-        //     std::fs::File::create("output.log").unwrap()
-        // ).unwrap();
-        let res = terminal_mode::run_terminal_mode().await;
-        log::info!("TERM MODE: {res:?}"); // \n{init:?}
-    } else if matches.get_flag("log") {
-        simplelog::WriteLogger::init(
-            log::LevelFilter::Trace,
-            simplelog::Config::default(),
-            std::fs::File::create("output.log").unwrap()
-        ).unwrap();
-    } else {
-        // Create an EguiLogger; multi_log will take care of initialization.
-        let egui_logger = Box::new(
-            displays::ui_tools::egui_logger::builder()
-                .add_blacklist("evtx::evtx_chunk")
-                .add_blacklist("evtx::evtx_parser")
-                .build(),
-        );
-        // Early initialization of the logger
-        let drain = tui_logger::Drain::new();
-        // instead of tui_logger::init_logger, we use `env_logger`
-        let tui_log = Box::new(
-            env_logger_with_dependency_filters()
-            .format(move |_buf, record|
-                // patch the env-logger entry through our drain to the tui-logger
-                Ok(drain.log(record))
-            ).build()
-        );
-        
-        multi_log::MultiLogger::init(vec![egui_logger, tui_log], log::Level::Info).expect("Error initializing multi_logger");
-
-        tokio::spawn(async move {
-            utilities::ai::run_mcp_server_tcp().await?;
-            Ok::<(), anyhow::Error>(())
-        });        
-        // let init = displays::tabs::logger::logging::builder().init();
-        // log::info!("Init logger: {init:?}");
-        // simplelog::WriteLogger::init(
-        //     log::LevelFilter::Info,
-        //     simplelog::Config::default(),
-        //     std::fs::File::create("output.log").unwrap()
-        // ).unwrap();
-        let eframe_app = eframe::run_native(
-            format!("Mastertech-{}", database::version_with_build!()).as_str(),
-            eframe::NativeOptions {
-                viewport: eframe::egui::ViewportBuilder::default()
-                    .with_inner_size([1000.0, 750.0])
-                    .with_drag_and_drop(true)
-                    .with_icon(load_icon()),
-                    // .with_always_on_top(),
-                ..Default::default()
-            },
-            Box::new(|cc| {
-                // Register egui_extras image loaders so `ImageSource::Bytes`
-                // (remote explorer thumbnails/preview) can decode PNG bytes.
-                egui_extras::install_image_loaders(&cc.egui_ctx);
-                Ok(
-                    Box::new(
-                        app_state::MasterTechApp::new(cc)
-                    )
-                )
-            }),
-        );
-
-        if let Err(e) = eframe_app { 
-            // displays::tabs::logger::logging::builder().init()
-
-            // let init = tui_logger::init_logger(log::LevelFilter::Info);
-            // log::info!("Init logger: {init:?}");
-
-            // tui_logger::set_default_level(log::LevelFilter::Info);
-
-            // simplelog::WriteLogger::init(
-            //     log::LevelFilter::Info,
-            //     simplelog::Config::default(),
-            //     std::fs::File::create("tui-output.log").unwrap()
-            // ).unwrap();
-            error!("Error running eframe_native: {e:?} \nswitching to secondary application");
-            let res = terminal_mode::run_terminal_mode().await;
-            if let Err(e) = res {
-                error!("Error running terminal app: {e:?}");
-            }
+        if log_to_file {
+            attach_parent_console();
+            let tui_log = Box::new(
+                env_logger_with_dependency_filters()
+                    .format(move |_buf, record| Ok(drain.log(record)))
+                    .build(),
+            );
+            eprintln!("Mastertech logging to {}", output_log_path().display());
+            multi_log::MultiLogger::init(
+                vec![tui_log, stderr_logger(), file_logger()],
+                log::Level::Info,
+            )
+            .expect("Error initializing multi_logger");
         } else {
-            // The egui window has closed.  `MasterTechApp::on_exit` already
-            // fired `signal_shutdown`; give cooperating accept loops up to ~750ms
-            // to actually unwind, then force-terminate so the launching console
-            // window can close.  Without this, dropping the implicit
-            // `#[tokio::main]` runtime can stall indefinitely on Windows IOCP
-            // waits / `axum::serve` / `rmcp::serve_server` background work, and
-            // the user has to manually close the parent terminal.
-            displays::signal_shutdown();
-            tokio::time::sleep(std::time::Duration::from_millis(750)).await;
-            log::info!("main -> egui closed; forcing process exit to release the launching terminal");
-            std::process::exit(0);
+            let _ = env_logger_with_dependency_filters()
+                .format(move |_buf, record| Ok(drain.log(record)))
+                .try_init();
         }
+        let res = terminal_mode::run_terminal_mode().await;
+        log::info!("TERM MODE: {res:?}");
+    } else {
+        run_gui(log_to_file).await?;
     }
     
     Ok(())

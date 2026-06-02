@@ -55,6 +55,9 @@ pub enum TaskAudit {
     MyServices,
     Status(OrderState),
     AllExcept { order_type: OrderType, excluded: Vec<OrderState> },
+    /// Check-in Shelf services that still need a call today: checked in on a
+    /// prior day with no customer message dated today.
+    NeedsCallToday,
 }
 
 impl Default for TaskAudit {
@@ -69,6 +72,7 @@ impl TaskAudit {
         match self {
             Self::MyInRepair => "my_in_repair".to_string(),
             Self::MyServices => "my_services".to_string(),
+            Self::NeedsCallToday => "needs_call_today".to_string(),
             Self::Status(state) => format!("status:{}", state.to_id_str()),
             Self::AllExcept { order_type, excluded } => {
                 let mut ids: Vec<&str> = excluded.iter().map(|s| s.to_id_str()).collect();

@@ -1332,6 +1332,33 @@ pub fn get_missing_call_days(order_date_str: &str, customer_messages: &[Customer
     missing_days
 }
 
+/// True if an order needs a call today: it was checked in on a previous day
+/// (not today) and has no customer message dated today.
+pub fn needs_call_today(order_date_str: &str, customer_messages: &[CustomerMessage]) -> bool {
+    let today: NaiveDate = Local::now().naive_local().date();
+
+    let order_date = match NaiveDateTime::parse_from_str(order_date_str, "%Y-%m-%d %H:%M:%S") {
+        Ok(dt) => dt.date(),
+        Err(e) => {
+            log::error!("needs_call_today: failed to parse order date {order_date_str}: {e}");
+            return false;
+        }
+    };
+
+    // Checked in today -> no call needed yet.
+    if order_date >= today {
+        return false;
+    }
+
+    let called_today = customer_messages.iter().any(|msg| {
+        NaiveDateTime::parse_from_str(&msg.date_add, "%Y-%m-%d %H:%M:%S")
+            .map(|dt| dt.date() == today)
+            .unwrap_or(false)
+    });
+
+    !called_today
+}
+
 
 #[cfg(test)]
 mod tests {

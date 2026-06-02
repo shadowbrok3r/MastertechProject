@@ -1,4 +1,4 @@
-use database::schema::{TaskNotePayload, User, helper_traits::EmployeeHelper, prestashop_schema::{self, Employee, MissedCallOrder, PrestashopPayload}, utilities::{create_full_task_payload, get_missing_call_days, get_prestashop_payload}};
+use database::schema::{TaskNotePayload, User, helper_traits::EmployeeHelper, prestashop::OrderState, prestashop_schema::{self, Employee, MissedCallOrder, PrestashopPayload}, utilities::{create_full_task_payload, get_missing_call_days, get_prestashop_payload, needs_call_today}};
 use crossbeam::channel::Sender;
 use egui_data_table::DataTable;
 use itertools::Itertools;
@@ -6,7 +6,7 @@ use chrono::Utc;
 
 use crate::{PlatformSpawner, Spawner};
 
-use super::{row_viewer::TaskRowViewer, TaskAudit, TaskAuditViewer};
+use super::{row_viewer::{RowFieldUpdate, TaskRowViewer}, TaskAudit, TaskAuditViewer};
 
 impl TaskAuditViewer { // NEED TO LOOK INTO SOME NOTES THINKING THERE IS NOT A SERVICE NUMBER IF THERE ISNT A THREAD
     pub fn get_services(
@@ -32,6 +32,9 @@ impl TaskAuditViewer { // NEED TO LOOK INTO SOME NOTES THINKING THERE IS NOT A S
                 TaskAudit::Status(state) => {
                     employee.get_services_by_status(state.to_id_str(), start_idx, start_idx + 30, &id_store).await
                 }
+                TaskAudit::NeedsCallToday => {
+                    employee.get_services_by_status(OrderState::CheckinShelf.to_id_str(), start_idx, start_idx + 30, &id_store).await
+                }
                 TaskAudit::AllExcept { order_type, excluded } => {
                     let included = order_type.included_states(excluded);
                     if included.is_empty() {
@@ -53,6 +56,13 @@ impl TaskAuditViewer { // NEED TO LOOK INTO SOME NOTES THINKING THERE IS NOT A S
                         }
                         match Employee::to_prestashop_payload(&order_num.id).await {
                             Ok(service) => {
+                                // For the "needs call today" view, only keep orders that
+                                // were checked in on a prior day and have no call today.
+                                if matches!(selected, TaskAudit::NeedsCallToday)
+                                    && !needs_call_today(&service.order.date_add, &service.customer_messages)
+                                {
+                                    continue;
+                                }
                                 let missing_days = get_missing_call_days(&service.order.date_add, &service.customer_messages);
                                 if !missing_days.is_empty() {
                                     let _ = missed_calls_tx.try_send(vec![MissedCallOrder {
@@ -76,6 +86,38 @@ impl TaskAuditViewer { // NEED TO LOOK INTO SOME NOTES THINKING THERE IS NOT A S
     }
 
     pub fn receive(&mut self, store_users: Vec<User>, _frame: &mut eframe::Frame) {
+        // Apply immediate in-table edits emitted by the row comboboxes so the
+        // table reflects status / sales rep / split rep changes right away.
+        while let Ok(update) = self.services_viewer.field_update_channel.1.try_recv() {
+            for table in self.service_map.values_mut() {
+                for row in table.iter_mut() {
+                    match &update {
+                        RowFieldUpdate::Status { order_id, new_state } if &row.order.id == order_id => {
+                            row.order.current_state = new_state.clone();
+                        }
+                        RowFieldUpdate::SalesRep { order_id, employee } if &row.order.id == order_id => {
+                            row.sales_rep = Some(employee.clone());
+                        }
+                        RowFieldUpdate::SplitRep { order_id, employee } if &row.order.id == order_id => {
+                            row.split_rep = employee.clone();
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        // When a note is created from the "needs call today" view, the order
+        // now has a call today, so drop it from the table.
+        while let Ok(service_number) = self.services_viewer.note_created_channel.1.try_recv() {
+            if matches!(self.audit_selection, TaskAudit::NeedsCallToday) {
+                let key = self.audit_selection.cache_key();
+                if let Some(table) = self.service_map.get_mut(&key) {
+                    table.retain(|row| row.order.id != service_number);
+                }
+            }
+        }
+
         if let Ok(missed_calls) = self.missed_calls_rx.try_recv() {
             for new_call in missed_calls {
                 if !self
@@ -127,10 +169,13 @@ impl TaskAuditViewer { // NEED TO LOOK INTO SOME NOTES THINKING THERE IS NOT A S
             if self.services_viewer.selected.is_some() {
                 log::info!("Creating chat view");
                 let svc_num = self.services_viewer.selected.clone().unwrap_or_default().order.id.clone();
+                let note_created_tx = self.services_viewer.note_created_channel.0.clone();
                 self.services_viewer.chat_view
                     .set_notes(notes.clone())
                     .set_service_number(svc_num.clone())
-                    .set_users(store_users.clone());
+                    .set_users(store_users.clone())
+                    .set_prestashop_only(true)
+                    .set_note_created_tx(note_created_tx);
             }
         }
 
