@@ -498,6 +498,203 @@ pub fn qc_fleet_routes() -> Router<AppState> {
         .route("/api/v1/qc/agents/{machine_id}/commands", axum::routing::get(poll_commands))
         .route("/api/v1/qc/agents/{machine_id}/ack",      axum::routing::post(ack_command))
         .route("/api/v1/qc/audit",                   axum::routing::get(audit_log))
+        .route("/api/v1/qc/fingerprint",             axum::routing::post(ingest_fingerprint))
+}
+
+/// `POST /api/v1/qc/fingerprint` — pre-OS hardware fingerprint from the
+/// Mastertech UEFI agent (HTTP path). Delegates to [`store_fingerprint`].
+pub async fn ingest_fingerprint(Json(payload): Json<serde_json::Value>) -> impl IntoResponse {
+    let resp = store_fingerprint(payload, None).await;
+    let ok = resp.get("status").and_then(|v| v.as_str()) == Some("stored");
+    let code = if ok {
+        StatusCode::OK
+    } else {
+        StatusCode::INTERNAL_SERVER_ERROR
+    };
+    (code, Json(resp))
+}
+
+/// Persist a posted fingerprint: upsert `qc_fingerprint:<serial>`, project the
+/// hardware fields into `computer:<serial>`, mark the box as a live
+/// `connected_client` of kind `qc_agent`, and append a `fleet_event`. Shared by
+/// the HTTP route and the plain-TCP QC listener. Returns the JSON response body.
+/// `source_ip` is the dialing box's IP when known (TCP path).
+pub async fn store_fingerprint(
+    payload: serde_json::Value,
+    source_ip: Option<String>,
+) -> serde_json::Value {
+    use database::schema::qc_fingerprint::{fingerprint_record_id, HardwareFingerprint};
+
+    let s = |ptr: &str| {
+        payload
+            .pointer(ptr)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let serial = match s("/system/serial") {
+        v if v.is_empty() => "unknown".to_string(),
+        v => v,
+    };
+    let cpu_cores = payload
+        .pointer("/cpu/cores")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    let ram_bytes = payload
+        .pointer("/memory/total_bytes")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let dimm_count = payload
+        .pointer("/memory/dimms")
+        .and_then(|v| v.as_array())
+        .map_or(0, |a| a.len()) as u32;
+    let disk_count = payload
+        .pointer("/storage")
+        .and_then(|v| v.as_array())
+        .map_or(0, |a| a.len()) as u32;
+    let win11_ready = payload
+        .get("win11_ready")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let rec = HardwareFingerprint {
+        id: fingerprint_record_id(&serial),
+        serial: serial.clone(),
+        uuid: s("/system/uuid"),
+        captured_at: now_db_datetime(),
+        cpu_model: s("/cpu/model"),
+        cpu_cores,
+        ram_bytes,
+        dimm_count,
+        disk_count,
+        win11_ready,
+        raw: payload.clone(),
+    };
+
+    let res: Result<Option<HardwareFingerprint>, _> =
+        DATABASE.upsert(fingerprint_record_id(&serial)).content(rec).await;
+
+    // Project the hardware fields into a `computer` record keyed by serial.
+    // OS/business fields are left blank for the Windows agent / order linkage.
+    {
+        use database::schema::computer::{ComputerData, DriveData};
+        use database::schema::{COMPUTER_TABLE, RecordId};
+
+        let gpu = payload
+            .pointer("/gpu")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|g| {
+                        let vid = g.get("vendor_id").and_then(|x| x.as_u64()).unwrap_or(0);
+                        if vid == 0 {
+                            return None;
+                        }
+                        let vn = g.get("vendor").and_then(|x| x.as_str()).unwrap_or("");
+                        let did = g.get("device_id").and_then(|x| x.as_u64()).unwrap_or(0);
+                        Some(format!("{vn} [{vid:04x}:{did:04x}]"))
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            })
+            .unwrap_or_default();
+
+        let ram = match ram_bytes / (1024 * 1024 * 1024) {
+            0 => String::new(),
+            g => format!("{g} GB"),
+        };
+
+        let drives: Vec<DriveData> = payload
+            .pointer("/storage")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .map(|d| {
+                        let gib = d.get("capacity_bytes").and_then(|x| x.as_u64()).unwrap_or(0)
+                            / (1024 * 1024 * 1024);
+                        DriveData {
+                            drive_letter: String::new(),
+                            drive_type: d
+                                .get("drive_type")
+                                .and_then(|x| x.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                            total_size: if gib > 0 { gib.to_string() } else { String::new() },
+                            space_left: String::new(),
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let comp = ComputerData {
+            id: RecordId::new(COMPUTER_TABLE, serial.clone()),
+            cpu: s("/cpu/model"),
+            gpu,
+            ram,
+            drives,
+            device_name: Some(s("/firmware/chassis")),
+            device_mfg: Some(s("/system/manufacturer")),
+            device_model: Some(s("/system/product")),
+            device_serial: Some(serial.clone()),
+            motherboard_name: s("/baseboard/product"),
+            motherboard_serial: s("/baseboard/serial"),
+            motherboard_asset_tag: s("/baseboard/asset_tag"),
+            motherboard_vendor: s("/baseboard/manufacturer"),
+            product_name: s("/system/product"),
+            product_sku: s("/system/sku"),
+            product_serial: s("/system/serial"),
+            product_vendor: s("/system/manufacturer"),
+            ..ComputerData::default()
+        };
+        let cid = comp.id.clone();
+        let r: Result<Option<ComputerData>, _> = DATABASE.upsert(cid).content(comp).await;
+        if let Err(e) = r {
+            tracing::warn!(serial = %serial, error = %e, "qc.fingerprint computer upsert failed");
+        }
+    }
+
+    // Mark the box as a live connected client (kind = qc_agent) so it shows up
+    // in the inventory/dashboard for the duration of the QC session.
+    {
+        use database::schema::client::{ClientKind, ConnectedClient};
+        use database::schema::{CONNECTED_CLIENT_TABLE, RecordId};
+
+        let friendly = match s("/system/product") {
+            p if p.is_empty() => format!("UEFI QC {serial}"),
+            p => p,
+        };
+        let cc = ConnectedClient {
+            id: RecordId::new(CONNECTED_CLIENT_TABLE, format!("qc_{serial}")),
+            connection_string: serial.clone(),
+            client_hash: serial.clone(),
+            connected: true,
+            last_update: Some(now_db_datetime()),
+            friendly_name: Some(friendly),
+            local_ip: source_ip,
+            client_kind: ClientKind::QcAgent,
+            ..Default::default()
+        };
+        let cid = cc.id.clone();
+        let r: Result<Option<ConnectedClient>, _> = DATABASE.upsert(cid).content(cc).await;
+        if let Err(e) = r {
+            tracing::warn!(serial = %serial, error = %e, "qc.fingerprint connected_client upsert failed");
+        }
+    }
+
+    // Append-only history alongside the upserted current row.
+    mirror_event(serial.clone(), FleetEventKind::Report, Some(payload));
+
+    match res {
+        Ok(_) => {
+            tracing::info!(serial = %serial, "qc.fingerprint stored");
+            serde_json::json!({ "status": "stored", "serial": serial, "win11_ready": win11_ready })
+        }
+        Err(e) => {
+            tracing::warn!(serial = %serial, error = %e, "qc.fingerprint upsert failed");
+            serde_json::json!({ "status": "error", "error": e.to_string() })
+        }
+    }
 }
 
 // ── SurrealDB mirror helpers ──────────────────────────────────────────────────

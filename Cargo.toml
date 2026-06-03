@@ -12,7 +12,8 @@ members = [
     "stress-runner", 
     "tcp_protocol", 
     "websocket_server2", 
-    "database-tools" 
+    "database-tools",
+    "uefi"
 ] 
 
 [workspace.dependencies]

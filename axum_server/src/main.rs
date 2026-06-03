@@ -81,6 +81,11 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // Plain-TCP QC fingerprint listener for pre-OS UEFI agents (raw TCP4, no
+    // TLS). Runs alongside the HTTP server; best-effort (logs + disables itself
+    // if the port can't bind).
+    tokio::spawn(routes::api::qc_tcp::serve());
+
     let app = Router::new()
         .merge(routes(app_state.clone()))
         .layer(map_response(middleware_logger))

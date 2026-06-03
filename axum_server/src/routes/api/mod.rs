@@ -2,6 +2,7 @@ pub mod surreal;
 pub mod orders;
 pub mod parts;
 pub mod qc_fleet;
+pub mod qc_tcp;
 pub mod scheduled;
 pub mod build;
 
