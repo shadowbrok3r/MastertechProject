@@ -45,4 +45,4 @@ DEFINE FIELD tcp_port         ON connected_client TYPE none | number DEFAULT 910
 -- `plugin_builder` worker. The admin/MCP `list_build_workers` tool
 -- filters on this; the Web Console default view hides workers.
 -- Rows without this field are treated as `machine` for back-compat.
-DEFINE FIELD client_kind      ON connected_client TYPE string DEFAULT 'machine' ASSERT $value IN ['machine', 'build_worker'] PERMISSIONS FULL;
+DEFINE FIELD client_kind      ON connected_client TYPE string DEFAULT 'machine' ASSERT $value IN ['machine', 'build_worker', 'qc_agent'] PERMISSIONS FULL;

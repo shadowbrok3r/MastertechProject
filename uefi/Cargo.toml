@@ -1,0 +1,14 @@
+[package]
+name = "uefi-app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+uefi = { version = "0.37.0", features = ["alloc"] }
+uefi-raw = "0.14"
+ratatui = { version = "0.30.0", default-features = false }
+terminput = { version = "0.5.14", default-features = false }
+ratatui-uefi = { path = "crates/ratatui-uefi" }
+terminput-uefi = { path = "crates/terminput-uefi" }
+anyhow.workspace = true
+log.workspace = true

@@ -19,6 +19,10 @@ pub enum ClientKind {
     Machine,
     #[surreal(value = "build_worker")]
     BuildWorker,
+    /// Pre-OS UEFI QC fingerprint agent — dials in over plain TCP, pushes a
+    /// hardware fingerprint, and shows up as a live client for the duration.
+    #[surreal(value = "qc_agent")]
+    QcAgent,
 }
 
 impl Default for ClientKind {
@@ -32,6 +36,7 @@ impl ClientKind {
         match self {
             Self::Machine => "machine",
             Self::BuildWorker => "build_worker",
+            Self::QcAgent => "qc_agent",
         }
     }
 }

@@ -1,0 +1,10 @@
+[package]
+name = "ratatui-uefi"
+version = "0.1.0"
+description = "UEFI environment backend for the Ratatui Terminal UI library (vendored fork bumped to ratatui 0.30 / uefi 0.37)."
+edition = "2024"
+publish = false
+
+[dependencies]
+ratatui = { version = "0.30.0", default-features = false }
+uefi = { version = "0.37.0", features = ["alloc"] }

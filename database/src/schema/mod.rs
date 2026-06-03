@@ -38,6 +38,7 @@ pub mod stress_test_sql;
 pub mod service_match;
 pub mod entity_link;
 pub mod fleet;
+pub mod qc_fingerprint;
 pub mod task_creation;
 
 pub use task::*;
@@ -92,6 +93,7 @@ pub const HARDWARE_TEST_BASELINE_TABLE: &str = "hardware_test_baseline";
 pub const FLEET_AGENT_TABLE: &str = "fleet_agent";
 pub const FLEET_EVENT_TABLE: &str = "fleet_event";
 pub const FLEET_COMMAND_TABLE: &str = "fleet_command";
+pub const QC_FINGERPRINT_TABLE: &str = "qc_fingerprint";
 
 pub use prestashop as prestashop_schema;
 
