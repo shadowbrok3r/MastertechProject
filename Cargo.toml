@@ -1,20 +1,17 @@
 [workspace]
 resolver = "3"
-members = [ 
-    "database", 
-    "displays", 
-    "MtechServer2.0", 
-    "Mastertech4.0", 
-    "axum_server", 
-    "plugin_builder", 
-    "qc-app", 
-    "stress-kit", 
-    "stress-runner", 
-    "tcp_protocol", 
-    "websocket_server2", 
-    "database-tools",
-    "uefi"
-] 
+members = [ "database", "displays", "MtechServer2.0" ]
+    # "Mastertech4.0", 
+    # "axum_server", 
+    # "plugin_builder", 
+    # "qc-app", 
+    # "stress-kit", 
+    # "stress-runner", 
+    # "tcp_protocol", 
+    # "websocket_server2", 
+    # "database-tools",
+    # "uefi"
+# ] 
 
 [workspace.dependencies]
 stress-kit = { path = "stress-kit" }
@@ -23,8 +20,8 @@ database = { path = "database" }
 tcp_protocol = { path = "tcp_protocol" }
 eframe = { version="0.34", features=["serde",  "default_fonts", "glow"], default-features=false } 
 ratatui = { version = "0.30", default-features = true, features = [ "crossterm", "unstable", "serde" ]}
-surrealdb = { version = "3.1.2", features = ["protocol-ws"] }
-surrealdb-types = { version = "3.1.2" }
+surrealdb = { version = "3.1.3", features = ["protocol-ws"] }
+surrealdb-types = { version = "3.1.3" }
 egui_extras = { version = "0.34", features = ["datepicker", "syntect", "serde", "image", "all_loaders" ]}
 egui-data-table = { git = "https://github.com/shadowbrok3r/egui-data-table", features = ["persistency"]}
 egui_json_tree = { version = "0.15", features = ["serde_json"] }
@@ -66,7 +63,7 @@ async-trait = "0.1"
 once_cell = "1"
 simplelog = "0.12.2"
 bytes = "1.11"
-brotli = "8.0.2"
+brotli = "8.0.3"
 base64 = "0.22"
 itertools = "0.14"
 
