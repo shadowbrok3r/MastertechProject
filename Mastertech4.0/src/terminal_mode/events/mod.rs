@@ -1,5 +1,5 @@
 use crate::terminal_mode::{systems::{communication_system::CommunicationSystem, notification_system::{Notification, NotificationType}}, tabs::Tab};
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use crossbeam::channel::{unbounded, Receiver, TryRecvError};
 use futures::{FutureExt, StreamExt};
 
@@ -27,6 +27,9 @@ impl EventHandler {
         let _tx = tx.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(tick_rate);
+            // Track genuinely-held buttons. Some terminals report bare motion as
+            // Drag (button-state word non-zero); we reinterpret those as Moved.
+            let (mut left_held, mut right_held, mut middle_held) = (false, false, false);
 
             loop {
                 let delay = interval.tick();
@@ -42,7 +45,28 @@ impl EventHandler {
                                             let _ = _tx.send(Event::Key(key));
                                         }
                                     },
-                                    ratatui::crossterm::event::Event::Mouse(mouse) => {let _ = _tx.try_send(Event::Mouse(mouse));},
+                                    ratatui::crossterm::event::Event::Mouse(mut mouse) => {
+                                        match mouse.kind {
+                                            MouseEventKind::Down(MouseButton::Left) => left_held = true,
+                                            MouseEventKind::Down(MouseButton::Right) => right_held = true,
+                                            MouseEventKind::Down(MouseButton::Middle) => middle_held = true,
+                                            MouseEventKind::Up(MouseButton::Left) => left_held = false,
+                                            MouseEventKind::Up(MouseButton::Right) => right_held = false,
+                                            MouseEventKind::Up(MouseButton::Middle) => middle_held = false,
+                                            MouseEventKind::Drag(btn) => {
+                                                let held = match btn {
+                                                    MouseButton::Left => left_held,
+                                                    MouseButton::Right => right_held,
+                                                    MouseButton::Middle => middle_held,
+                                                };
+                                                if !held {
+                                                    mouse.kind = MouseEventKind::Moved;
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                        let _ = _tx.try_send(Event::Mouse(mouse));
+                                    },
                                     _ => {}
                                 }
                             }
@@ -74,18 +98,20 @@ impl <'a>TerminalApp<'a> {
         if let Ok(menu_bar) = self.menu_bar.try_borrow() {
             // Handle remote mouse event if provided
             if let Some(mouse_event) = remote_mouse_event {
-                menu_bar.handle_mouse_event(&mouse_event);
+                let menu_consumed = menu_bar.handle_menu_mouse(&mouse_event);
                 let current_tab = menu_bar.current_tab.borrow().clone();
-                match current_tab {
-                    Tab::TurSheet => self.service_tab.borrow_mut().handle_mouse_event(&mouse_event),
-                    Tab::Scripts => self.scripts_tab.borrow_mut().handle_mouse_event(&mouse_event),
-                    Tab::SystemInfo => self.sysinfo_tab.handle_mouse_event(&mouse_event),
-                    Tab::Login => self.login_tab.borrow_mut().handle_mouse_event(&mouse_event),
-                    Tab::Tasks => self.tasks_tab.borrow_mut().handle_mouse_event(&mouse_event),
-                    Tab::Webconsole => self.webconsole_tab.borrow_mut().handle_mouse_event(&mouse_event),
-                    Tab::Logs => self.logger.handle_mouse_event(&mouse_event),
-                    Tab::Ncdu => self.ncdu_tab.borrow_mut().handle_mouse_event(&mouse_event),
-                };
+                if !menu_consumed {
+                    match current_tab {
+                        Tab::TurSheet => self.service_tab.borrow_mut().handle_mouse_event(&mouse_event),
+                        Tab::Scripts => self.scripts_tab.borrow_mut().handle_mouse_event(&mouse_event),
+                        Tab::SystemInfo => self.sysinfo_tab.handle_mouse_event(&mouse_event),
+                        Tab::Login => self.login_tab.borrow_mut().handle_mouse_event(&mouse_event),
+                        Tab::Tasks => self.tasks_tab.borrow_mut().handle_mouse_event(&mouse_event),
+                        Tab::Webconsole => self.webconsole_tab.borrow_mut().handle_mouse_event(&mouse_event),
+                        Tab::Logs => self.logger.handle_mouse_event(&mouse_event),
+                        Tab::Ncdu => self.ncdu_tab.borrow_mut().handle_mouse_event(&mouse_event),
+                    };
+                }
             }
 
             if let Some(key_event) = remote_key_event {
@@ -153,8 +179,14 @@ impl <'a>TerminalApp<'a> {
                 };
             }
 
-            if let Ok(events) = self.event_handler.next() {
+            // Drain all queued input each frame. Mouse motion floods Moved events far
+            // faster than one-per-frame can consume, which starved hover highlighting.
+            let mut drained = 0u16;
+            while let Ok(events) = self.event_handler.next() {
                 let current_tab = menu_bar.current_tab.borrow().clone();
+                // An open dropdown consumes navigation/Esc keys before the content tab.
+                let menu_consumed_key = matches!(events, Event::Key(ke) if menu_bar.handle_menu_key(ke));
+                if !menu_consumed_key {
                 match events {
                     Event::Key(key_event) => {
                         let ctrl_key = key_event.modifiers.contains(KeyModifiers::CONTROL);
@@ -224,20 +256,27 @@ impl <'a>TerminalApp<'a> {
                         };
                     },
                     Event::Mouse(mouse_event) => {
-                        menu_bar.handle_mouse_event(&mouse_event);
-                        match current_tab {
-                            Tab::TurSheet => self.service_tab.borrow_mut().handle_mouse_event(&mouse_event),
-                            Tab::Scripts => self.scripts_tab.borrow_mut().handle_mouse_event(&mouse_event),
-                            Tab::SystemInfo => self.sysinfo_tab.handle_mouse_event(&mouse_event),
-                            Tab::Login => self.login_tab.borrow_mut().handle_mouse_event(&mouse_event),
-                            Tab::Tasks => self.tasks_tab.borrow_mut().handle_mouse_event(&mouse_event),
-                            Tab::Webconsole => self.webconsole_tab.borrow_mut().handle_mouse_event(&mouse_event),
-                            Tab::Logs => self.logger.handle_mouse_event(&mouse_event),
-                            Tab::Ncdu => self.ncdu_tab.borrow_mut().handle_mouse_event(&mouse_event)
-                        };
+                        let menu_consumed = menu_bar.handle_menu_mouse(&mouse_event);
+                        if !menu_consumed {
+                            match current_tab {
+                                Tab::TurSheet => self.service_tab.borrow_mut().handle_mouse_event(&mouse_event),
+                                Tab::Scripts => self.scripts_tab.borrow_mut().handle_mouse_event(&mouse_event),
+                                Tab::SystemInfo => self.sysinfo_tab.handle_mouse_event(&mouse_event),
+                                Tab::Login => self.login_tab.borrow_mut().handle_mouse_event(&mouse_event),
+                                Tab::Tasks => self.tasks_tab.borrow_mut().handle_mouse_event(&mouse_event),
+                                Tab::Webconsole => self.webconsole_tab.borrow_mut().handle_mouse_event(&mouse_event),
+                                Tab::Logs => self.logger.handle_mouse_event(&mouse_event),
+                                Tab::Ncdu => self.ncdu_tab.borrow_mut().handle_mouse_event(&mouse_event)
+                            };
+                        }
                     },
                     Event::Error => log::error!("Error in event loop"),
                     Event::Tick => {}
+                }
+                }
+                drained = drained.saturating_add(1);
+                if *quit || drained >= 512 {
+                    break;
                 }
             }
         }

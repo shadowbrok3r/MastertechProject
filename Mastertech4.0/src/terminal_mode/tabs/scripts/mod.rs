@@ -1,4 +1,4 @@
-use crate::{tabs::file_browser::command::{RobocopyMessage, RobocopyProgress}, utilities::scripts::ScheduledTask, terminal_mode::{context::TerminalContext, events::action_handler::{get_update_sender, ActionHandler, WidgetId}, fx::{EffectStage, UniqueEffectId}, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK, SPRINGGREEN}, widgets::{button::Button, input_field::InputField}}};
+use crate::{tabs::file_browser::command::{RobocopyMessage, RobocopyProgress}, utilities::scripts::ScheduledTask, terminal_mode::{context::TerminalContext, events::action_handler::{get_update_sender, ActionHandler, WidgetId}, fx::{EffectStage, UniqueEffectId}, widgets::{button::{Button, Theme}, input_field::InputField}}};
 use stress_runner::{RunController, RunUpdate, RunVerdict, Stressor, TelemetryAgent};
 use std::{cell::RefCell, collections::HashMap, fmt::Display, sync::{Arc, Mutex}};
 use ratatui::{layout::{Position, Rect}, widgets::{ListState, ScrollbarState}};
@@ -99,8 +99,12 @@ pub struct ScriptsTab<'a> {
     popup_list_state: RefCell<ListState>,
     popup_items: RefCell<HashMap<String, Vec<TodoItem>>>,
     /// (category, text) of the running script
-    current_script: RefCell<Option<(Category, String)>>, 
+    current_script: RefCell<Option<(Category, String)>>,
     is_popup_open: RefCell<bool>,
+    /// Job Builder column collapsed (default) vs expanded.
+    job_builder_collapsed: RefCell<bool>,
+    /// Clickable region that toggles the Job Builder collapse.
+    job_builder_toggle_area: RefCell<Option<Rect>>,
     // destination_directory: String,
     data_transfer_progress_tx: Sender<RobocopyMessage>,
     data_transfer_progress_rx: Receiver<RobocopyMessage>,
@@ -312,16 +316,16 @@ impl<'a> ScriptsTab<'a> {
         Self {
             service_number_field: InputField::new("Service #", WidgetId("ServiceNumberScriptsPage".to_string())),
             custom_path_field: InputField::new("Source Path", WidgetId("CustomPath".to_string())),
-            tuneup_btn: Button::new("Tuneup / QC =>", WidgetId("Tuneup / QC".to_owned())).theme(CATPPUCCINTHEME),
-            user_scripts_btn: Button::new("User Scripts =>", WidgetId("UserScripts".to_owned())).theme(CATPPUCCINTHEME),
-            informational_btn: Button::new("Informational =>", WidgetId("Informational".to_owned())).theme(CATPPUCCINTHEME),
-            stress_tests_btn: Button::new("Stress Tests =>", WidgetId("Stress Tests".to_owned())).theme(CATPPUCCINTHEME),
-            run_btn: Button::new("Run Selected", WidgetId("Run".to_owned())).theme(DEEPPINK),
+            tuneup_btn: Button::new("Tuneup / QC", WidgetId("Tuneup / QC".to_owned())).compact(),
+            user_scripts_btn: Button::new("User Scripts", WidgetId("UserScripts".to_owned())).compact(),
+            informational_btn: Button::new("Informational", WidgetId("Informational".to_owned())).compact(),
+            stress_tests_btn: Button::new("Stress Tests", WidgetId("Stress Tests".to_owned())).compact(),
+            run_btn: Button::new("Run Selected", WidgetId("Run".to_owned())).theme(Theme::ACCENT),
             stress_test_btn: Button::new(
-                "Stress Test (RC=cycle)",
+                "Quick Stress",
                 WidgetId("StressTest".to_owned()),
             )
-            .theme(SPRINGGREEN),
+            .theme(Theme::ACCENT),
             #[cfg(target_os="windows")]
             antivirus_products: Vec::new(),
             #[cfg(target_os="windows")]
@@ -368,6 +372,8 @@ impl<'a> ScriptsTab<'a> {
             current_script: RefCell::new(None),
             data_path_buttons: Vec::new(),
             is_popup_open: RefCell::new(false),
+            job_builder_collapsed: RefCell::new(true),
+            job_builder_toggle_area: RefCell::new(None),
             // destination_directory: String::new(),
             source_directories: Vec::new(),
             progress: RefCell::new(None),
@@ -758,10 +764,10 @@ impl<'a> ScriptsTab<'a> {
 
                 self.log_message(&format!("Path {:<5} Size: {:>5}", path.clone(), size.clone()));
                 let btn = Button::new(
-                    format!(" {} | {} ", path.clone(), size.clone()), 
+                    format!(" {} | {} ", path.clone(), size.clone()),
                     WidgetId(path.clone())
                 )
-                .theme(CYAN);
+                .theme(Theme::NEUTRAL);
                 self.data_path_buttons.push(btn);
             }
 

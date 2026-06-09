@@ -13,6 +13,7 @@ use database::schema::{
     TaskNotePayload, TaskHistory,
 };
 use std::cell::RefCell;
+use crossbeam::channel::Receiver;
 use crate::terminal_mode::{
     events::action_handler::WidgetId,
     styling::CATPPUCCINTHEME,
@@ -135,6 +136,12 @@ pub struct TaskModal<'a> {
     pub tab_button_areas: RefCell<Vec<Rect>>,
     /// Scroll offset for content
     pub scroll_offset: RefCell<u16>,
+    // Async data-load receivers (senders live in the spawned fetch task).
+    ticket_rx: Receiver<TicketData>,
+    customer_rx: Receiver<CustomerData>,
+    computer_rx: Receiver<ComputerData>,
+    notes_rx: Receiver<Vec<TaskNotePayload>>,
+    history_rx: Receiver<Vec<TaskHistory>>,
 }
 
 impl<'a> TaskModal<'a> {
@@ -160,20 +167,41 @@ impl<'a> TaskModal<'a> {
         let close_btn = Button::new("✕ Close", WidgetId("TaskModalClose".to_string()))
             .theme(CATPPUCCINTHEME);
         
-        // Spawn async data loading
-        tokio::spawn(async move {
-            // Load associated data
-            if let Ok(ticket) = TicketData::get_associated_ticket(task_id.clone()).await {
-                log::info!("Loaded ticket for task modal: {:?}", ticket.id);
-            }
-            if let Ok(customer) = CustomerData::get_associated_customer(task_id.clone()).await {
-                log::info!("Loaded customer for task modal: {}", customer.name);
-            }
-            if let Ok(computer) = ComputerData::get_associated_computer(task_id.clone()).await {
-                log::info!("Loaded computer for task modal: {}", computer.hostname);
-            }
-        });
-        
+        let (ticket_tx, ticket_rx) = crossbeam::channel::unbounded();
+        let (customer_tx, customer_rx) = crossbeam::channel::unbounded();
+        let (computer_tx, computer_rx) = crossbeam::channel::unbounded();
+        let (notes_tx, notes_rx) = crossbeam::channel::unbounded();
+        let (history_tx, history_rx) = crossbeam::channel::unbounded();
+
+        // Spawn async data loading; results are delivered back over the channels
+        // and drained each frame in `receive()`.
+        {
+            let (t_tx, cu_tx, co_tx, n_tx, h_tx) = (
+                ticket_tx.clone(),
+                customer_tx.clone(),
+                computer_tx.clone(),
+                notes_tx.clone(),
+                history_tx.clone(),
+            );
+            tokio::spawn(async move {
+                if let Ok(ticket) = TicketData::get_associated_ticket(task_id.clone()).await {
+                    let _ = t_tx.send(ticket);
+                }
+                if let Ok(customer) = CustomerData::get_associated_customer(task_id.clone()).await {
+                    let _ = cu_tx.send(customer);
+                }
+                if let Ok(computer) = ComputerData::get_associated_computer(task_id.clone()).await {
+                    let _ = co_tx.send(computer);
+                }
+                if let Ok(notes) = TaskNotePayload::get_db_notes_from_task_id(task_id.clone()).await {
+                    let _ = n_tx.send(notes);
+                }
+                if let Ok(history) = TaskHistory::get_history_for_task(task_id.clone()).await {
+                    let _ = h_tx.send(history);
+                }
+            });
+        }
+
         Self {
             modal_id,
             task,
@@ -193,6 +221,31 @@ impl<'a> TaskModal<'a> {
             tab_bar_area: RefCell::new(Rect::default()),
             tab_button_areas: RefCell::new(Vec::new()),
             scroll_offset: RefCell::new(0),
+            ticket_rx,
+            customer_rx,
+            computer_rx,
+            notes_rx,
+            history_rx,
+        }
+    }
+
+    /// Drain async data-load results into the modal each frame.
+    pub fn receive(&self) {
+        if let Ok(ticket) = self.ticket_rx.try_recv() {
+            *self.ticket.borrow_mut() = Some(ticket);
+            *self.loading.borrow_mut() = false;
+        }
+        if let Ok(customer) = self.customer_rx.try_recv() {
+            *self.customer.borrow_mut() = Some(customer);
+        }
+        if let Ok(computer) = self.computer_rx.try_recv() {
+            *self.computer.borrow_mut() = Some(computer);
+        }
+        if let Ok(notes) = self.notes_rx.try_recv() {
+            *self.notes.borrow_mut() = notes;
+        }
+        if let Ok(history) = self.history_rx.try_recv() {
+            *self.history.borrow_mut() = history;
         }
     }
     

@@ -1,4 +1,4 @@
-use crate::terminal_mode::styling::{ColorCycle, IndexResolver, RepeatingColorCycle, RepeatingCycle, CATPPUCCIN};
+use crate::terminal_mode::styling::{ColorCycle, IndexResolver, RepeatingColorCycle, RepeatingCycle, THEME};
 use tachyonfx::{color_from_hsl, color_to_hsl, fx::{self, parallel, sequence, sweep_in}, CellFilter, Duration, Effect, Interpolation};
 use ratatui::{buffer::Buffer, layout::{Position, Rect, Size}};
 
@@ -226,6 +226,7 @@ fn select_category_color_cycle(
 //
 // # Returns
 // A unique Effect that outlines and animates relevant key caps.
+#[allow(dead_code)]
 pub fn outline_selected_cells(
     stage: &mut EffectStage<UniqueEffectId>,
     buffer_size: Size,
@@ -233,14 +234,12 @@ pub fn outline_selected_cells(
     filter: CellFilter
 ) -> Effect {
     let buf = Buffer::empty(Rect::from((Position::default(), buffer_size)));
-    let outline = selected_category(CATPPUCCIN.pink, *buf.area());
-    // CellFilter::BgColor(Color::Rgb(20, 20, 24));
+    let outline = selected_category(THEME.accent, *buf.area());
 
     let fx = parallel(&[
         outline,
         sequence(&[
-            sweep_in(tachyonfx::Motion::LeftToRight, 80, 100, CATPPUCCIN.sapphire, (50, Interpolation::QuadIn)),
-            // led_kbd_border(),
+            sweep_in(tachyonfx::Motion::LeftToRight, 80, 100, THEME.accent, (50, Interpolation::QuadIn)),
             color_cycle_fg(select_category_color_cycle(base_color, 4), 10, |_| true),
         ]).with_filter(filter),
     ]);
@@ -331,9 +330,9 @@ pub fn unique_border_effect(
 /// A unique Effect that replaces any previous selected tab effect
 pub fn selected_tab_effect(
     stage: &mut EffectStage<UniqueEffectId>,
-    base_color: Color,
+    _base_color: Color,
     area: Rect,
 ) -> Effect {
-    let fx = animated_border(base_color, area, 35.0);
+    let fx = animated_border(THEME.accent, area, 20.0);
     stage.unique(UniqueEffectId::SelectedTab, fx)
 }

@@ -3,6 +3,7 @@ uefi/build
 uefi/dist
 uefi/iso
 uefi/boot
+docs/
 MtechServer2.0/dist
 # Rust compile target directories:
 MtechServer2.0/target

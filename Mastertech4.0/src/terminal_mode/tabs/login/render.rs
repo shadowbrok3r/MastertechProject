@@ -1,5 +1,5 @@
 use ratatui::{layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, widgets::{Block, Borders, Widget, WidgetRef}, Frame};
-use crate::{terminal_mode::{styling::CATPPUCCIN, widgets::{button::ButtonState, ButtonType, ShrinkArea, SHORTCUT_SET}}};
+use crate::{terminal_mode::{styling::THEME, widgets::{button::ButtonState, ButtonType, ShrinkArea, SHORTCUT_SET}}};
 use displays::pages::login_page::Login;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use super::LoginTab;
@@ -10,7 +10,8 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for LoginTab<'a> {
     fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(CATPPUCCIN.maroon)
+            .border_style(THEME.accent)
+            .title_style(THEME.title())
             .border_set(SHORTCUT_SET)
             .title(format!("Login"));
 

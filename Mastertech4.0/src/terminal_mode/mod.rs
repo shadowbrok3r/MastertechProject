@@ -369,6 +369,9 @@ impl <'a>TerminalApp<'a> {
                     self.logger.draw::<B>(f, main_content_area);
                 },
             }
+
+            // Dropdown overlay paints on top of the content tab.
+            menu_bar.draw_overlay(f);
         }
         Ok(())
     }

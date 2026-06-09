@@ -6,5 +6,5 @@ edition = "2024"
 publish = false
 
 [dependencies]
-ratatui = { version = "0.30.0", default-features = false }
+ratatui = { version = "0.30.1", default-features = false, features = ["layout-cache", "std"] }
 uefi = { version = "0.37.0", features = ["alloc"] }

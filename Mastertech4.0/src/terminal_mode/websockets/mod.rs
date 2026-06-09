@@ -1940,6 +1940,10 @@ if (Test-Path $path) {{
                 let tx = self.command_tx.clone();
                 tokio::spawn(async move {
 
+                let task_epoch = Instant::now();
+                // Millis from task_epoch when the current script started; AtomicU64 keeps the future Send.
+                let script_started_ms = std::sync::atomic::AtomicU64::new(0);
+
                 let send_log = |tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>, msg: String| {
                     let cmd = Cmd::RemoteScriptLog(msg);
                     if let Ok(payload) = encode_to_vec(&cmd, standard()) {
@@ -1948,15 +1952,39 @@ if (Test-Path $path) {{
                 };
 
                 let send_result = |tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>, name: &str, status: RemoteScriptStatus| {
+                    let verdict = match status {
+                        RemoteScriptStatus::Success => Some("PASSED"),
+                        RemoteScriptStatus::Failed => Some("FAILED"),
+                        _ => None,
+                    };
                     let cmd = Cmd::RemoteScriptResult { name: name.to_string(), status };
                     if let Ok(payload) = encode_to_vec(&cmd, standard()) {
                         let _ = tx.send(payload);
                     }
+                    // `<name> PASSED/FAILED in <secs>s` marker clears the admin home-page active-run card.
+                    if let Some(verdict) = verdict {
+                        let elapsed_s = (task_epoch.elapsed().as_millis() as u64)
+                            .saturating_sub(script_started_ms.load(std::sync::atomic::Ordering::SeqCst))
+                            / 1000;
+                        let marker = Cmd::RemoteScriptLog(format!(
+                            "{name} {verdict} in {elapsed_s}s — remote script finished"
+                        ));
+                        if let Ok(payload) = encode_to_vec(&marker, standard()) {
+                            let _ = tx.send(payload);
+                        }
+                    }
                 };
 
                 for script in &scripts {
+                    script_started_ms.store(
+                        task_epoch.elapsed().as_millis() as u64,
+                        std::sync::atomic::Ordering::SeqCst,
+                    );
                     send_log(&tx, format!("Starting: {}", script.name));
 
+                    let allowed_secs =
+                        displays::scripts::default_remote_script_timeout_secs(&script.name);
+                    let script_fut = async {
                     match script.name.as_str() {
                         "Disable Sleep / Hibernation" => {
                             match crate::terminal_mode::tabs::script_categories::disable_hibernation_and_sleep() {
@@ -1975,7 +2003,7 @@ if (Test-Path $path) {{
                             if service_number.is_empty() {
                                 send_log(&tx, "Webroot activation requires SO number".into());
                                 send_result(&tx, &script.name, RemoteScriptStatus::Failed);
-                                continue;
+                                return;
                             }
                             send_log(&tx, "Fetching CPS keys...".into());
                             let so = service_number.clone();
@@ -2007,7 +2035,7 @@ if (Test-Path $path) {{
                             if service_number.is_empty() {
                                 send_log(&tx, "SuperAnti activation requires SO number".into());
                                 send_result(&tx, &script.name, RemoteScriptStatus::Failed);
-                                continue;
+                                return;
                             }
                             let killed = crate::utilities::scripts::antivirus::kill_sas_processes();
                             send_log(&tx, format!("Killed {killed} SAS processes"));
@@ -2042,7 +2070,7 @@ if (Test-Path $path) {{
                             if service_number.is_empty() || customer_email.is_empty() {
                                 send_log(&tx, "SEB activation requires SO number and email".into());
                                 send_result(&tx, &script.name, RemoteScriptStatus::Failed);
-                                continue;
+                                return;
                             }
                             let client = reqwest::Client::new();
                             let (progress_tx, _) = crossbeam::channel::unbounded();
@@ -2065,7 +2093,7 @@ if (Test-Path $path) {{
                                 Err(e) => {
                                     send_log(&tx, format!("No internet: {e}"));
                                     send_result(&tx, &script.name, RemoteScriptStatus::Failed);
-                                    continue;
+                                    return;
                                 }
                             }
                             send_log(&tx, "Starting Windows Updates (search + install)...".into());
@@ -2193,7 +2221,7 @@ if (Test-Path $path) {{
                             if !sas_exe.exists() {
                                 send_log(&tx, "SAS not installed".into());
                                 send_result(&tx, &script.name, RemoteScriptStatus::Failed);
-                                continue;
+                                return;
                             }
                             let killed = crate::utilities::scripts::antivirus::kill_sas_processes();
                             send_log(&tx, format!("Killed {killed} SAS processes"));
@@ -2397,7 +2425,7 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                                 Err(e) => {
                                     send_log(&tx, format!("No internet: {e}"));
                                     send_result(&tx, &script.name, RemoteScriptStatus::Failed);
-                                    continue;
+                                    return;
                                 }
                             }
                             send_log(&tx, "Searching for available Windows updates (no install)...".into());
@@ -2498,7 +2526,7 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                                     ),
                                 );
                                 send_result(&tx, &script.name, RemoteScriptStatus::Failed);
-                                continue;
+                                return;
                             }
 
                             send_log(&tx, format!("{name}: running via stress-runner (persisted)"));
@@ -2634,7 +2662,7 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                                 if let Err(e) = std::fs::write(&script_file, content) {
                                     send_log(&tx, format!("Failed to write script: {e}"));
                                     send_result(&tx, &script.name, RemoteScriptStatus::Failed);
-                                    continue;
+                                    return;
                                 }
 
                                 let output = if ext == "ps1" {
@@ -2699,6 +2727,21 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                                 send_result(&tx, &script.name, RemoteScriptStatus::Failed);
                             }
                         }
+                    }
+                    };
+                    // Per-script budget so one hung script can't stall the batch forever.
+                    if tokio::time::timeout(Duration::from_secs(allowed_secs), script_fut)
+                        .await
+                        .is_err()
+                    {
+                        send_log(
+                            &tx,
+                            format!(
+                                "{}: exceeded {allowed_secs}s planned timeout — abandoning script",
+                                script.name
+                            ),
+                        );
+                        send_result(&tx, &script.name, RemoteScriptStatus::Failed);
                     }
                 }
 

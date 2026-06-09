@@ -5,6 +5,8 @@ use button::ButtonState;
 // pub mod autocomplete;
 pub mod json_viewer;
 pub mod button;
+pub mod menu_item;
+pub mod dropdown_menu;
 pub mod input_field;
 pub mod autocomplete_input;
 pub mod splash_screen;
@@ -92,8 +94,10 @@ pub trait ButtonType <'a> {
 /// - Its height reduced by `2 * padding_y`.
 ///
 /// This effectively insets the rect equally from all sides.
-pub trait ShrinkArea { 
+pub trait ShrinkArea {
     fn shrink(&self, padding_x: u16, padding_y: u16) -> Rect;
+    /// Insets the rect equally on all four sides.
+    fn shrink_symmetric(&self, padding_x: u16, padding_y: u16) -> Rect;
 }
 
 impl ShrinkArea for Rect {
@@ -103,6 +107,15 @@ impl ShrinkArea for Rect {
             y: self.y, // keep the top edge fixed
             width: self.width.saturating_sub(2 * padding_x),
             height: self.height.saturating_sub(padding_y), // subtract only from the bottom
+        }
+    }
+
+    fn shrink_symmetric(&self, padding_x: u16, padding_y: u16) -> Rect {
+        Rect {
+            x: self.x.saturating_add(padding_x),
+            y: self.y.saturating_add(padding_y),
+            width: self.width.saturating_sub(2 * padding_x),
+            height: self.height.saturating_sub(2 * padding_y),
         }
     }
 }

@@ -373,6 +373,11 @@ impl HomePage {
             self.parse_log_line(line);
         }
         self.log_cursor = lines.len();
+        // Reap log-stream cards whose planned budget (plus grace) expired without a completion marker.
+        self.log_runs.retain(|_, run| {
+            let allowed = run.duration_planned_secs.unwrap_or(600) + 300;
+            run.started_at.elapsed().as_secs() <= allowed
+        });
     }
 
     /// Status lines we recognise from the stress-runner remote scripts:
@@ -389,7 +394,9 @@ impl HomePage {
                     run_id: String::new(),
                     tool_label: name.to_string(),
                     started_at: Instant::now(),
-                    duration_planned_secs: None,
+                    duration_planned_secs: Some(
+                        crate::scripts::default_remote_script_timeout_secs(name),
+                    ),
                     source: ActiveRunSource::LogStream,
                     // Log stream never knows which hardware_component a
                     // run targets — the DB poll fills that in once it

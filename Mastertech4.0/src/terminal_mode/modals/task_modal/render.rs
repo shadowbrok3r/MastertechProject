@@ -2,7 +2,7 @@
 
 use ratatui::{
     crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind},
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Position, Rect},
     prelude::Backend,
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -11,16 +11,17 @@ use ratatui::{
 };
 use database::schema::Status;
 use crate::terminal_mode::{
-    styling::CATPPUCCIN,
+    styling::{CATPPUCCIN, THEME, APP_BACKGROUND},
     widgets::{ButtonType, HandleWidget},
 };
 use super::{ModalPage, TaskModal};
 
 impl<'a> HandleWidget<'a> for TaskModal<'a> {
     fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
+        self.receive();
         let modal_area = self.calculate_modal_area(area);
         *self.modal_area.borrow_mut() = modal_area;
-        
+
         // Draw dimmed background
         let dim_block = Block::default()
             .style(Style::default().bg(Color::Rgb(0, 0, 0)));
@@ -31,8 +32,9 @@ impl<'a> HandleWidget<'a> for TaskModal<'a> {
         let modal_block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(CATPPUCCIN.lavender))
-            .style(Style::default().bg(Color::Rgb(20, 20, 28)))
+            .border_style(Style::default().fg(THEME.accent))
+            .title_style(THEME.title())
+            .style(Style::default().bg(APP_BACKGROUND))
             .title(format!(" {} - {} ", self.task.task_name, self.modal_id))
             .title_alignment(ratatui::layout::Alignment::Center);
         
@@ -98,6 +100,16 @@ impl<'a> HandleWidget<'a> for TaskModal<'a> {
 
         match mouse_event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                let pos = Position::new(x, y);
+                // Switch tabs on click.
+                let tab_areas = self.tab_button_areas.borrow().clone();
+                if let Some(i) = tab_areas.iter().position(|ta| ta.contains(pos)) {
+                    *self.current_page.borrow_mut() = ModalPage::from_index(i);
+                    for (j, btn) in self.tab_buttons.iter().enumerate() {
+                        btn.set_selected(j == i);
+                    }
+                    return;
+                }
                 if !inside_modal {
                     // Click outside modal closes it
                     self.request_close();
@@ -209,34 +221,34 @@ impl<'a> TaskModal<'a> {
         // Left column
         let mut left_lines = vec![
             Line::from(vec![
-                Span::styled("Service #: ", Style::default().fg(CATPPUCCIN.red)),
+                Span::styled("Service #: ", Style::default().fg(THEME.tertiary)),
                 Span::raw(task.service_number.clone().unwrap_or_default()),
             ]),
             Line::from(vec![
-                Span::styled("Status: ", Style::default().fg(CATPPUCCIN.red)),
+                Span::styled("Status: ", Style::default().fg(THEME.tertiary)),
                 Span::styled(task.status.as_str(), Self::status_style(&task.status)),
             ]),
             Line::from(vec![
-                Span::styled("Priority: ", Style::default().fg(CATPPUCCIN.red)),
+                Span::styled("Priority: ", Style::default().fg(THEME.tertiary)),
                 Span::styled(task.priority.as_str(), Self::priority_style(&task.priority)),
             ]),
             Line::from(vec![
-                Span::styled("Due Date: ", Style::default().fg(CATPPUCCIN.red)),
+                Span::styled("Due Date: ", Style::default().fg(THEME.tertiary)),
                 Span::raw(task.due_date.format("%m/%d/%Y").to_string()),
             ]),
             Line::from(vec![
-                Span::styled("Completed: ", Style::default().fg(CATPPUCCIN.red)),
+                Span::styled("Completed: ", Style::default().fg(THEME.tertiary)),
                 Span::raw(if task.completed { "Yes" } else { "No" }),
             ]),
         ];
         
         if let Some(ref ticket) = *ticket {
             left_lines.push(Line::from(vec![
-                Span::styled("Tech: ", Style::default().fg(CATPPUCCIN.red)),
+                Span::styled("Tech: ", Style::default().fg(THEME.tertiary)),
                 Span::raw(&ticket.tech),
             ]));
             left_lines.push(Line::from(vec![
-                Span::styled("Salesman: ", Style::default().fg(CATPPUCCIN.red)),
+                Span::styled("Salesman: ", Style::default().fg(THEME.tertiary)),
                 Span::raw(&ticket.salesman),
             ]));
         }
@@ -249,19 +261,19 @@ impl<'a> TaskModal<'a> {
         let mut right_lines = vec![];
         if let Some(ref cust) = *customer {
             right_lines.push(Line::from(vec![
-                Span::styled("Customer: ", Style::default().fg(CATPPUCCIN.red)),
+                Span::styled("Customer: ", Style::default().fg(THEME.tertiary)),
                 Span::raw(&cust.name),
             ]));
             right_lines.push(Line::from(vec![
-                Span::styled("Phone: ", Style::default().fg(CATPPUCCIN.red)),
+                Span::styled("Phone: ", Style::default().fg(THEME.tertiary)),
                 Span::raw(&cust.phone_number),
             ]));
             right_lines.push(Line::from(vec![
-                Span::styled("Email: ", Style::default().fg(CATPPUCCIN.red)),
+                Span::styled("Email: ", Style::default().fg(THEME.tertiary)),
                 Span::raw(&cust.email),
             ]));
             right_lines.push(Line::from(vec![
-                Span::styled("Cust Code: ", Style::default().fg(CATPPUCCIN.red)),
+                Span::styled("Cust Code: ", Style::default().fg(THEME.tertiary)),
                 Span::raw(&cust.cust_code),
             ]));
         } else {
@@ -276,7 +288,7 @@ impl<'a> TaskModal<'a> {
             .borders(Borders::TOP)
             .border_style(Style::default().fg(CATPPUCCIN.surface0))
             .title(" Description ")
-            .title_style(Style::default().fg(CATPPUCCIN.peach));
+            .title_style(THEME.title());
         
         let desc_para = Paragraph::new(task.task_description.clone())
             .block(desc_block)
@@ -292,47 +304,47 @@ impl<'a> TaskModal<'a> {
         let lines: Vec<Line> = if let Some(ref comp) = *computer {
             vec![
                 Line::from(vec![
-                    Span::styled("Hostname: ", Style::default().fg(CATPPUCCIN.red)),
+                    Span::styled("Hostname: ", Style::default().fg(THEME.tertiary)),
                     Span::raw(&comp.hostname),
                 ]),
                 Line::from(vec![
-                    Span::styled("CPU: ", Style::default().fg(CATPPUCCIN.red)),
+                    Span::styled("CPU: ", Style::default().fg(THEME.tertiary)),
                     Span::raw(&comp.cpu),
                 ]),
                 Line::from(vec![
-                    Span::styled("GPU: ", Style::default().fg(CATPPUCCIN.red)),
+                    Span::styled("GPU: ", Style::default().fg(THEME.tertiary)),
                     Span::raw(&comp.gpu),
                 ]),
                 Line::from(vec![
-                    Span::styled("RAM: ", Style::default().fg(CATPPUCCIN.red)),
+                    Span::styled("RAM: ", Style::default().fg(THEME.tertiary)),
                     Span::raw(&comp.ram),
                 ]),
                 Line::from(vec![
-                    Span::styled("OS: ", Style::default().fg(CATPPUCCIN.red)),
+                    Span::styled("OS: ", Style::default().fg(THEME.tertiary)),
                     Span::raw(&comp.operating_system),
                 ]),
                 Line::from(vec![
-                    Span::styled("Device Name: ", Style::default().fg(CATPPUCCIN.red)),
+                    Span::styled("Device Name: ", Style::default().fg(THEME.tertiary)),
                     Span::raw(comp.device_name.as_deref().unwrap_or("N/A")),
                 ]),
                 Line::from(vec![
-                    Span::styled("Device Mfg: ", Style::default().fg(CATPPUCCIN.red)),
+                    Span::styled("Device Mfg: ", Style::default().fg(THEME.tertiary)),
                     Span::raw(comp.device_mfg.as_deref().unwrap_or("N/A")),
                 ]),
                 Line::from(vec![
-                    Span::styled("Device Model: ", Style::default().fg(CATPPUCCIN.red)),
+                    Span::styled("Device Model: ", Style::default().fg(THEME.tertiary)),
                     Span::raw(comp.device_model.as_deref().unwrap_or("N/A")),
                 ]),
                 Line::from(vec![
-                    Span::styled("Device Serial: ", Style::default().fg(CATPPUCCIN.red)),
+                    Span::styled("Device Serial: ", Style::default().fg(THEME.tertiary)),
                     Span::raw(comp.device_serial.as_deref().unwrap_or("N/A")),
                 ]),
                 Line::from(vec![
-                    Span::styled("Product Name: ", Style::default().fg(CATPPUCCIN.red)),
+                    Span::styled("Product Name: ", Style::default().fg(THEME.tertiary)),
                     Span::raw(&comp.product_name),
                 ]),
                 Line::from(vec![
-                    Span::styled("Product Vendor: ", Style::default().fg(CATPPUCCIN.red)),
+                    Span::styled("Product Vendor: ", Style::default().fg(THEME.tertiary)),
                     Span::raw(&comp.product_vendor),
                 ]),
             ]
@@ -341,7 +353,7 @@ impl<'a> TaskModal<'a> {
         };
         
         let para = Paragraph::new(lines)
-            .block(Block::default().title(" Computer Info ").title_style(Style::default().fg(CATPPUCCIN.peach)));
+            .block(Block::default().title(" Computer Info ").title_style(THEME.title()));
         f.render_widget(para, area);
     }
     
@@ -379,7 +391,7 @@ impl<'a> TaskModal<'a> {
         };
         
         let para = Paragraph::new(lines)
-            .block(Block::default().title(" Software ").title_style(Style::default().fg(CATPPUCCIN.peach)));
+            .block(Block::default().title(" Software ").title_style(THEME.title()));
         f.render_widget(para, area);
     }
     
@@ -421,7 +433,7 @@ impl<'a> TaskModal<'a> {
         };
         
         let para = Paragraph::new(lines)
-            .block(Block::default().title(" Task History ").title_style(Style::default().fg(CATPPUCCIN.peach)));
+            .block(Block::default().title(" Task History ").title_style(THEME.title()));
         f.render_widget(para, area);
     }
     
@@ -446,7 +458,7 @@ impl<'a> TaskModal<'a> {
         };
         
         let para = Paragraph::new(lines)
-            .block(Block::default().title(" Task Notes ").title_style(Style::default().fg(CATPPUCCIN.peach)))
+            .block(Block::default().title(" Task Notes ").title_style(THEME.title()))
             .wrap(Wrap { trim: true });
         f.render_widget(para, area);
     }

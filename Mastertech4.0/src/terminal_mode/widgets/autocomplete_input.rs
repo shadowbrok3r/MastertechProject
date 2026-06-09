@@ -7,8 +7,8 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Widget, WidgetRef}
 };
 use crate::terminal_mode::{
-    events::action_handler::{get_event_sender, WidgetEvent, WidgetId}, 
-    styling::{CATPPUCCIN, CATPPUCCINTHEME, DEEPPINK}
+    events::action_handler::{get_event_sender, WidgetEvent, WidgetId},
+    styling::{CATPPUCCIN, CATPPUCCINTHEME, THEME, APP_BACKGROUND}
 };
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use super::{button::{ButtonState, Theme}, ButtonType};
@@ -83,7 +83,7 @@ impl<'a> AutoCompleteInput<'a> {
     fn set_cursor(&self) {
         let mut input = self.input.borrow_mut();
         match *self.state.borrow() {
-            ButtonState::Active => input.set_cursor_style(Style::default().fg(Color::Cyan).not_hidden()),
+            ButtonState::Active => input.set_cursor_style(Style::default().fg(THEME.tertiary).not_hidden()),
             _ => input.set_cursor_style(Style::default().hidden())
         }
     }
@@ -154,11 +154,11 @@ impl<'a> AutoCompleteInput<'a> {
 
         let block = Block::default()
             .border_type(BorderType::Rounded)
-            .border_style(Style::new().fg(DEEPPINK.text))
-            .style(Style::new().bg(Color::Rgb(12, 12, 16)).fg(CATPPUCCIN.sky));
+            .border_style(Style::new().fg(THEME.accent))
+            .style(Style::new().bg(APP_BACKGROUND).fg(THEME.text));
 
         Clear.render(popup_area, buf);
-        buf.set_style(popup_area, Style::default().bg(Color::Rgb(12, 12, 16)));
+        buf.set_style(popup_area, Style::default().bg(APP_BACKGROUND));
 
         let inner_area = block.inner(popup_area);
         block.render(popup_area, buf);
@@ -173,9 +173,9 @@ impl<'a> AutoCompleteInput<'a> {
             .map(|(i, suggestion)| {
                 let selected = Some(i) == *self.selected_suggestion.borrow();
                 let style = if selected {
-                    Style::default().bg(CATPPUCCIN.surface1)
+                    Style::default().bg(THEME.surface).fg(THEME.accent)
                 } else {
-                    Style::default().bg(Color::Rgb(12, 12, 16))
+                    Style::default().bg(APP_BACKGROUND).fg(THEME.text)
                 };
                 ListItem::new(suggestion.clone()).style(style)
             })
@@ -186,10 +186,11 @@ impl<'a> AutoCompleteInput<'a> {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(CATPPUCCIN.blue))
+                    .border_style(Style::default().fg(THEME.tertiary))
                     .title("Suggestions")
+                    .title_style(THEME.title())
             )
-            .style(Style::default().bg(CATPPUCCIN.mantle));
+            .style(Style::default().bg(APP_BACKGROUND));
 
         let mut list_state = ListState::default();
         if let Some(selected) = *self.selected_suggestion.borrow() {
@@ -339,12 +340,12 @@ impl<'a> ButtonType<'a> for AutoCompleteInput<'a> {
     fn colors(&self) -> (Color, Color, Color, Color) {
         let t = self.theme;
         match *self.state.borrow() {
-            ButtonState::Normal => (CATPPUCCIN.lavender, t.text, t.shadow, t.highlight),
-            ButtonState::Selected => (CATPPUCCIN.blue, CATPPUCCIN.text, CATPPUCCIN.sapphire, CATPPUCCIN.red),
-            ButtonState::Active => (CATPPUCCIN.green, CATPPUCCIN.teal, CATPPUCCIN.red, CATPPUCCIN.blue),
-            ButtonState::Hovered => (CATPPUCCIN.lavender, CATPPUCCIN.sapphire, CATPPUCCIN.red, CATPPUCCIN.maroon),
-            ButtonState::AltClicked => (CATPPUCCIN.maroon, CATPPUCCIN.maroon, CATPPUCCIN.maroon, CATPPUCCIN.maroon),
-            ButtonState::Selecting => (CATPPUCCIN.sky, CATPPUCCIN.teal, CATPPUCCIN.sapphire, CATPPUCCIN.blue),
+            ButtonState::Normal => (t.background, THEME.text_muted, t.shadow, THEME.border_idle()),
+            ButtonState::Selected => (t.background, THEME.text, t.shadow, THEME.tertiary),
+            ButtonState::Active => (t.background, THEME.text, t.shadow, THEME.accent),
+            ButtonState::Hovered => (t.background, THEME.text, t.shadow, THEME.tertiary),
+            ButtonState::AltClicked => (t.background, THEME.text_muted, t.shadow, THEME.border_idle()),
+            ButtonState::Selecting => (t.background, THEME.text, t.shadow, THEME.accent),
         }
     }
 

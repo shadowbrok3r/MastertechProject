@@ -1,5 +1,5 @@
 use ratatui::{layout::{Alignment, Constraint, Direction, Layout, Rect}, prelude::{Backend, Color}, style::{Modifier, Style}, symbols::line::DOUBLE, widgets::{Block, BorderType, Borders, Clear, LineGauge, Paragraph, Wrap}, Frame};
-use crate::terminal_mode::{fx::{effect::UniqueEffectId, EffectStage}, styling::{CATPPUCCIN, CYAN, SPRINGGREEN}};
+use crate::terminal_mode::{fx::{effect::UniqueEffectId, EffectStage}, styling::THEME};
 use std::{hash::Hasher, time::Instant};
 
 #[allow(dead_code)]
@@ -70,10 +70,10 @@ impl Notification {
 
     pub fn border_color(&self) -> Color {
         match self.notification_type {
-            NotificationType::Info => SPRINGGREEN.highlight,
-            NotificationType::Warning => CATPPUCCIN.yellow,
-            NotificationType::Error => CATPPUCCIN.red,
-            NotificationType::Other => CYAN.highlight,
+            NotificationType::Info => THEME.accent,
+            NotificationType::Warning => THEME.warning,
+            NotificationType::Error => THEME.error,
+            NotificationType::Other => THEME.tertiary,
         }
     }
 
@@ -124,8 +124,8 @@ impl Notification {
             //     Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(Style::default().fg(border_color))
             // )
             .filled_symbol(DOUBLE.horizontal)
-            .style(Style::default().fg(CATPPUCCIN.sapphire))
-            .filled_style(Style::default().fg(CATPPUCCIN.pink))
+            .style(Style::default().fg(THEME.surface))
+            .filled_style(Style::default().fg(THEME.accent))
             .ratio(self.elapsed_ratio());
 
         frame.render_widget(text, chunks[0]);

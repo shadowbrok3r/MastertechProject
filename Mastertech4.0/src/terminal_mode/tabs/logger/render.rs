@@ -5,6 +5,7 @@ use log::*;
 pub use ratatui::crossterm::event::KeyCode as Key;
 use crate::terminal_mode::tabs::logger::LoggerMode;
 use crate::terminal_mode::widgets::HandleWidget;
+use crate::terminal_mode::styling::{CATPPUCCIN, THEME};
 
 use super::{Logger, MyLogFormatter};
 
@@ -26,8 +27,8 @@ impl <'a>HandleWidget<'a> for Logger {
         .areas(area);
 
         Tabs::new(self.tab_names.iter().cloned())
-            .block(Block::default().title("States").borders(Borders::ALL))
-            .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+            .block(Block::default().title("States").title_style(THEME.title()).borders(Borders::ALL).border_style(Style::default().fg(THEME.tertiary)))
+            .highlight_style(Style::default().fg(THEME.accent).add_modifier(Modifier::REVERSED))
             .select(self.selected_tab)
             .render(tabs_area, buf);
 
@@ -35,11 +36,11 @@ impl <'a>HandleWidget<'a> for Logger {
         let state = &states[self.selected_tab];
 
         TuiLoggerSmartWidget::default()
-            .style_error(Style::default().fg(Color::Red))
-            .style_debug(Style::default().fg(Color::Green))
-            .style_warn(Style::default().fg(Color::Yellow))
-            .style_trace(Style::default().fg(Color::Magenta))
-            .style_info(Style::default().fg(Color::Cyan))
+            .style_error(Style::default().fg(CATPPUCCIN.red))
+            .style_debug(Style::default().fg(CATPPUCCIN.green))
+            .style_warn(Style::default().fg(CATPPUCCIN.yellow))
+            .style_trace(Style::default().fg(CATPPUCCIN.mauve))
+            .style_info(Style::default().fg(CATPPUCCIN.sky))
             .output_separator(':')
             .output_timestamp(Some("%H:%M:%S".to_string()))
             .output_level(Some(TuiLoggerLevelOutput::Abbreviated))
@@ -53,7 +54,7 @@ impl <'a>HandleWidget<'a> for Logger {
         _formatter = Some(Box::new(MyLogFormatter {}));
 
         TuiLoggerWidget::default()
-            .block(Block::bordered().title("Unfiltered Logs"))
+            .block(Block::bordered().title("Unfiltered Logs").title_style(THEME.title()).border_style(Style::default().fg(THEME.tertiary)))
             .opt_formatter(_formatter)
             .output_separator('|')
             .output_timestamp(Some("%F %H:%M:%S%.3f".to_string()))
@@ -61,13 +62,13 @@ impl <'a>HandleWidget<'a> for Logger {
             .output_target(false)
             .output_file(false)
             .output_line(true)
-            .style(Style::default().fg(Color::White))
+            .style(Style::default().fg(CATPPUCCIN.text))
             .render(bottom, buf);
 
         if let Some(percent) = self.progress_counter {
             Gauge::default()
-                .block(Block::bordered().title("progress-task"))
-                .gauge_style((Color::White, Modifier::ITALIC))
+                .block(Block::bordered().title("progress-task").title_style(THEME.title()))
+                .gauge_style((THEME.accent, Modifier::ITALIC))
                 .percent(percent)
                 .render(progress_area, buf);
         }
@@ -76,7 +77,7 @@ impl <'a>HandleWidget<'a> for Logger {
                 "Q: Quit | Tab: Switch state | ↑/↓: Select target | f: Focus target | ←/→: Display level | +/-: Filter level".into(),
                 "Space: Toggle hidden targets | h: Hide target selector | PageUp/Down: Scroll | Esc: Cancel scroll".into(),
             ])
-            .style(Color::Gray)
+            .style(CATPPUCCIN.subtext0)
             .centered()
             .render(help_area, buf);
         }
