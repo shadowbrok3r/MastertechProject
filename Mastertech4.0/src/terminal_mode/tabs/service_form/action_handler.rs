@@ -118,6 +118,9 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                             self.keys = key.clone();
                             self.webroot_key_btn.set_label(key.webroot_key.clone());
                             self.superanti_key_btn.set_label(key.superanti_key.clone());
+                            // Glow the key buttons once real keys are present.
+                            self.webroot_key_btn.set_highlight(!key.webroot_key.trim().is_empty());
+                            self.superanti_key_btn.set_highlight(!key.superanti_key.trim().is_empty());
                         }
                     },
                     "CopyWebroot" => {

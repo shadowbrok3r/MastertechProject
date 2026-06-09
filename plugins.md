@@ -80,6 +80,14 @@ flowchart LR
 - **Management:** `list_plugins`, `enable_plugin`, `disable_plugin`, `call_plugin_tool`
 - **WASM lifecycle / authoring:** `plugin_source`, `plugin_compile`, `plugin_deploy`, `plugin_rollback`, `plugin_watch`
 - **WAT / validation:** `plugin_emit_clock_wasm`, `plugin_compile_wat` (clock demo + arbitrary WAT → wasm bytes, validated with wasmtime)
+- **Channel health / telemetry / stress (2026-06-09):** `remote_channel_health` (per-subchannel probe matrix with short timeouts — call before any remote operation), `telemetry_snapshot` (host TelemetryAgent: cores, memory, disk/net rates, GPU, WHEA/TDR deltas), `stress_scenario_run` (custom staged stress-kit scenario, persisted like catalog scripts), `stress_runs_reap` (finalize zombie `in_progress` stress_test_run rows)
+
+**Semantics fixed 2026-06-09**
+
+- `fetch_plugin` registers artifacts in a process-global ArtifactStore (was per-HTTP-session, breaking fetch→deploy).
+- `plugin_deploy_remote` waits up to 20 s for the client's `LoadWasmPluginResult` ack (`load_acknowledged` in the response).
+- `scripts_run_remote` rejects concurrent callers with a busy error instead of silently clobbering the pending waiter; stale `RemoteScriptsComplete` frames are dropped unless they carry the awaited script's result.
+- Remote clients run every script under a per-script timeout (`displays::scripts::default_remote_script_timeout_secs`) and emit a `<name> PASSED/FAILED in <secs>s` log marker so admin home-page active-run cards always clear; the admin additionally reaps log-stream cards past planned+300 s.
 
 **UI hint:** The Plugins tab in `displays` summarizes MCP endpoints for operators.
 

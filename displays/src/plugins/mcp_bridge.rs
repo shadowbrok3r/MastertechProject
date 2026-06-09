@@ -294,6 +294,15 @@ impl ArtifactStore {
     }
 }
 
+// One store shared by every transport and session; the streamable-HTTP factory
+// constructs a fresh PluginToolProvider per session, which must not reset artifacts.
+static GLOBAL_ARTIFACTS: Lazy<Arc<Mutex<ArtifactStore>>> =
+    Lazy::new(|| Arc::new(Mutex::new(ArtifactStore::new())));
+
+// 1s-cadence sampler shared by telemetry_snapshot and stress_scenario_run; started on first use.
+static TELEMETRY_AGENT: Lazy<Arc<stress_runner::TelemetryAgent>> =
+    Lazy::new(|| Arc::new(stress_runner::TelemetryAgent::start(1000)));
+
 // ─── Plugin store directory ────────────────────────────────────────────────────
 
 fn plugin_store_root() -> PathBuf {
@@ -350,7 +359,7 @@ impl PluginToolProvider {
         Self {
             tool_router: Self::tool_router(),
             manager,
-            artifacts: Arc::new(Mutex::new(ArtifactStore::new())),
+            artifacts: GLOBAL_ARTIFACTS.clone(),
         }
     }
 
@@ -501,6 +510,68 @@ pub struct RemoteEguiGetLastFrameMetaParams {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct RemoteChannelHealthParams {
+    #[schemars(description = "Web Console connection_string of the remote client (from remote_egui_list_targets).")]
+    pub connection_string: String,
+    #[schemars(description = "Per-probe timeout in seconds (default 5, clamped to 1-30).")]
+    pub probe_timeout_secs: Option<u64>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct TelemetrySnapshotParams {
+    #[schemars(description = "Wait this many ms for a fresh sample when the agent just started (default 1200, max 5000).")]
+    pub warmup_ms: Option<u64>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema, Clone)]
+#[schemars(inline)]
+pub struct ScenarioStageParam {
+    #[schemars(description = "Stressor (snake_case): cpu, memory, disk, matrix, memcpy, bitops, cache, vm, stream, branch, atomic, mutex, switch, prime, fp, hash, prefetch, icache, tsc, gpu, gpu_matmul, gpu_vram, gpu_pcie")]
+    pub stressor: String,
+    #[schemars(description = "Stage length in seconds (1-1800)")]
+    pub duration_secs: u64,
+    #[schemars(description = "Worker threads; 0 = logical CPU count")]
+    #[serde(default)]
+    pub threads: usize,
+    #[schemars(description = "Heap cap per memory worker in MiB (default 256)")]
+    pub memory_cap_mb: Option<u64>,
+    #[schemars(description = "Temp-file size for the disk stressor in MiB (default 512)")]
+    pub disk_file_mb: Option<u64>,
+    #[schemars(description = "Stage label (defaults to the stressor name)")]
+    pub label: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct StressRunsReapParams {
+    #[schemars(description = "Reap runs whose started_at is older than now minus this many seconds (default 3600, min 600).")]
+    pub grace_secs: Option<u64>,
+    #[schemars(description = "Only reap runs for this hostname.")]
+    pub hostname: Option<String>,
+    #[schemars(description = "Preview the rows without mutating (default false).")]
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct StressScenarioRunParams {
+    #[schemars(description = "Ordered stages; each runs one stressor for duration_secs. 1-16 stages, total runtime capped at 7200s.")]
+    pub stages: Vec<ScenarioStageParam>,
+    #[schemars(description = "Optional wall-clock cap in seconds for the whole scenario.")]
+    pub total_wall_secs: Option<u64>,
+    #[schemars(description = "With total_wall_secs set, loop the stage list until the wall cap.")]
+    #[serde(default)]
+    pub repeat_until_total: bool,
+    #[schemars(description = "Service order number for stress_test_run.service_order linkage (e.g. '2147605').")]
+    pub service_number: Option<String>,
+    #[schemars(description = "Diagnostic session id to link as session_ref.")]
+    pub diagnostic_session_id: Option<String>,
+    #[schemars(description = "Preset label recorded on the run (default 'mcp:scenario-v1').")]
+    pub preset_label: Option<String>,
+    #[schemars(description = "Free-form notes recorded on the run.")]
+    pub notes: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct RemoteEguiClickParams {
     #[schemars(description = "Web Console room id.")]
     pub connection_string: String,
@@ -523,7 +594,9 @@ pub struct RemoteEguiTypeParams {
 }
 
 /// One step for [`remote_egui_perform_steps`]. Use tag `"step"` (snake_case values).
+// Inlined so clients that strip $defs still see the full step schema.
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
+#[schemars(inline)]
 #[serde(tag = "step", rename_all = "snake_case")]
 pub enum RemoteEguiStep {
     /// Primary click: optional hover PointerMoved, then press + release.
@@ -598,6 +671,7 @@ pub struct RemoteEguiClickAnchorParams {
 // ─── Shared param helpers ────────────────────────────────────────────────────
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema, Clone)]
+#[schemars(inline)]
 pub struct PluginUsageRefParam {
     pub plugin_id: String,
     pub tool_name: String,
@@ -735,10 +809,28 @@ pub struct LogDiagnosticEntryParams {
     #[schemars(description = "Optional structured data — MUST be a JSON object or array, NOT a stringified JSON. Pass e.g. {\"complaint\":\"bsod\", \"events\": [...]} not \"{\\\"complaint\\\":...\\\"}\". The server will defensively parse stringified JSON but a real object is preferred.")]
     pub data: Option<serde_json::Value>,
     #[schemars(description = "Plugins used for this entry, e.g. [{\"plugin_id\": \"com.mastertech.hw-diag\", \"tool_name\": \"whea_errors\"}]")]
+    #[serde(default, deserialize_with = "de_plugins_used")]
     pub plugins_used: Option<Vec<PluginUsageRefParam>>,
 }
 
+/// Accepts a real array or a stringified JSON array from clients with degraded schemas.
+fn de_plugins_used<'de, D>(d: D) -> Result<Option<Vec<PluginUsageRefParam>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    let v = Option::<serde_json::Value>::deserialize(d)?;
+    match v {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(s)) => {
+            serde_json::from_str(&s).map(Some).map_err(serde::de::Error::custom)
+        }
+        Some(other) => serde_json::from_value(other).map(Some).map_err(serde::de::Error::custom),
+    }
+}
+
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
+#[schemars(inline)]
 pub struct RecordStressTestEventParams {
     #[schemars(description = "Event kind: stage_started, unexpected_shutdown, tdr, bsod, custom, operator_note, …")]
     pub kind: String,
@@ -1015,6 +1107,16 @@ async fn execute_one_remote_script(
         let mut guard = super::remote_script_notify::REMOTE_SCRIPT_PENDING
             .lock()
             .map_err(|_| to_internal("REMOTE_SCRIPT_PENDING poisoned"))?;
+        // Reject instead of clobbering a live waiter; reclaim only if its receiver is gone.
+        if let Some((pending_name, pending_tx)) = guard.take() {
+            if !pending_tx.is_closed() {
+                let busy = format!(
+                    "Remote script '{pending_name}' is still awaiting completion on this admin; remote scripts run one at a time. Retry after it finishes or times out."
+                );
+                *guard = Some((pending_name, pending_tx));
+                return Err(to_internal(busy));
+            }
+        }
         if let Ok(mut accum) = super::remote_script_notify::REMOTE_SCRIPT_ACCUM.lock() {
             *accum = super::remote_script_notify::RemoteScriptSession::default();
         }
@@ -1387,6 +1489,163 @@ impl PluginToolProvider {
             }))
             .map_err(to_internal)?]))
         }
+    }
+
+    #[tool(
+        name = "remote_channel_health",
+        description = "Probe every admin↔client subchannel for one connected client in a single call with short timeouts: DB heartbeat freshness, admin WS session presence, egui frame stream freshness, scripts round-trip (GetRemoteScriptList echo), and plugin-call round-trip (sentinel tool call). Returns a per-channel matrix plus a verdict (healthy / one_way_alive_round_trips_dead / no_session / degraded). Call this BEFORE scripts_run_remote, call_remote_plugin_tool, or a stress suite instead of discovering a wedged channel through a 60s+ tool timeout."
+    )]
+    async fn remote_channel_health(
+        &self,
+        Parameters(p): Parameters<RemoteChannelHealthParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let probe_timeout =
+            std::time::Duration::from_secs(p.probe_timeout_secs.unwrap_or(5).clamp(1, 30));
+        let cs = p.connection_string.clone();
+        let hub = super::remote_egui_control::hub();
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+
+        // DB heartbeat freshness.
+        let q = format!(
+            "SELECT connected, last_update FROM connected_client WHERE connection_string = '{}';",
+            cs.replace('\'', "")
+        );
+        let heartbeat = match database::DATABASE.query(&q).await {
+            Ok(mut resp) => match resp.take::<Vec<serde_json::Value>>(0) {
+                Ok(rows) => rows
+                    .into_iter()
+                    .next()
+                    .map(|r| {
+                        let staleness_ms = r
+                            .get("last_update")
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                            .map(|t| (chrono::Utc::now() - t.with_timezone(&chrono::Utc)).num_milliseconds());
+                        serde_json::json!({
+                            "status": "ok",
+                            "connected": r.get("connected").cloned().unwrap_or(serde_json::Value::Null),
+                            "staleness_ms": staleness_ms,
+                        })
+                    })
+                    .unwrap_or_else(|| serde_json::json!({ "status": "no_row" })),
+                Err(e) => serde_json::json!({ "status": "query_error", "detail": e.to_string() }),
+            },
+            Err(e) => serde_json::json!({ "status": "query_error", "detail": e.to_string() }),
+        };
+
+        // Admin WS session + egui frame stream freshness.
+        let session_present = hub.list_targets().iter().any(|t| t == &cs);
+        let frame_stream = match hub.get_last_frame_meta(&cs) {
+            Some(meta) => {
+                let meta_value = serde_json::to_value(&meta).unwrap_or_default();
+                let staleness_ms = meta_value
+                    .get("timestamp_ms")
+                    .and_then(|v| v.as_u64())
+                    .map(|t| now_ms.saturating_sub(t));
+                serde_json::json!({
+                    "status": "ok",
+                    "staleness_ms": staleness_ms,
+                    "frame_count": meta_value.get("frame_count").cloned().unwrap_or(serde_json::Value::Null),
+                })
+            }
+            None => serde_json::json!({ "status": "no_frames" }),
+        };
+
+        // Scripts round-trip: GetRemoteScriptList must echo a RemoteScriptListResponse.
+        let scripts_round_trip = if !session_present {
+            serde_json::json!({ "status": "no_session" })
+        } else {
+            let rx = super::remote_script_notify::register_script_list_waiter();
+            let cmd = crate::Cmd::GetRemoteScriptList;
+            match bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
+                .map_err(|e| e.to_string())
+                .and_then(|bytes| hub.send_raw_binary(&cs, bytes))
+            {
+                Err(e) => serde_json::json!({ "status": "send_failed", "detail": e }),
+                Ok(()) => {
+                    let t0 = std::time::Instant::now();
+                    match tokio::time::timeout(probe_timeout, rx).await {
+                        Ok(Ok(categories)) => serde_json::json!({
+                            "status": "ok",
+                            "latency_ms": t0.elapsed().as_millis() as u64,
+                            "categories": categories,
+                        }),
+                        Ok(Err(_)) => serde_json::json!({ "status": "waiter_dropped" }),
+                        Err(_) => serde_json::json!({
+                            "status": "timeout",
+                            "timeout_secs": probe_timeout.as_secs(),
+                        }),
+                    }
+                }
+            }
+        };
+
+        // Plugin-call round-trip: sentinel tool on the always-registered frame-capture plugin.
+        let plugin_round_trip = if !session_present {
+            serde_json::json!({ "status": "no_session" })
+        } else {
+            let request_id = format!("hp-{}", uuid::Uuid::new_v4());
+            let rx = register_pending_request(request_id.clone());
+            let _guard = PendingRequestGuard { request_id: request_id.clone() };
+            let cmd = crate::Cmd::CallRemotePluginTool {
+                request_id: request_id.clone(),
+                plugin_id: "com.mastertech.egui-frame-capture".to_string(),
+                tool_name: "__channel_health_probe__".to_string(),
+                args_json: "{}".to_string(),
+            };
+            match bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
+                .map_err(|e| e.to_string())
+                .and_then(|bytes| hub.send_raw_binary(&cs, bytes))
+            {
+                Err(e) => serde_json::json!({ "status": "send_failed", "detail": e }),
+                Ok(()) => {
+                    let t0 = std::time::Instant::now();
+                    match tokio::time::timeout(probe_timeout, rx).await {
+                        // Any response — even "unknown tool" — proves the responder loop is alive.
+                        Ok(Ok((_success, _body))) => serde_json::json!({
+                            "status": "ok",
+                            "latency_ms": t0.elapsed().as_millis() as u64,
+                        }),
+                        Ok(Err(_)) => serde_json::json!({ "status": "waiter_dropped" }),
+                        Err(_) => serde_json::json!({
+                            "status": "timeout",
+                            "timeout_secs": probe_timeout.as_secs(),
+                        }),
+                    }
+                }
+            }
+        };
+
+        let scripts_ok = scripts_round_trip["status"] == "ok";
+        let plugin_ok = plugin_round_trip["status"] == "ok";
+        let frames_fresh = frame_stream["staleness_ms"].as_u64().map(|s| s < 15_000).unwrap_or(false);
+
+        let (verdict, advice) = if !session_present {
+            ("no_session", "No admin Web Console WS session for this connection_string. Connect from Web Console first; remote tools cannot reach this client at all.")
+        } else if scripts_ok && plugin_ok {
+            ("healthy", "All round-trip channels respond. Safe to run remote scripts, plugin tools, and stress suites.")
+        } else if frames_fresh {
+            ("one_way_alive_round_trips_dead", "Frames stream but request/response channels don't answer — the client's responder loop is wedged or the build predates these channels. Restart the client app (or drive it via remote egui input as a fallback). Do not start remote scripts; they will time out.")
+        } else {
+            ("degraded", "Session registered but neither fresh frames nor round-trip responses. Client likely disconnected uncleanly; expect reconnect or restart before remote operations.")
+        };
+
+        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+            "connection_string": cs,
+            "verdict": verdict,
+            "advice": advice,
+            "channels": {
+                "db_heartbeat": heartbeat,
+                "admin_ws_session": { "status": if session_present { "ok" } else { "missing" } },
+                "egui_frame_stream": frame_stream,
+                "scripts_round_trip": scripts_round_trip,
+                "plugin_call_round_trip": plugin_round_trip,
+            },
+        }))
+        .map_err(to_internal)?]))
     }
 
     #[tool(
@@ -1940,20 +2199,48 @@ impl PluginToolProvider {
         let serialized = bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
             .map_err(|e| to_internal(format!("bincode serialize: {e}")))?;
 
-        super::remote_egui_control::hub()
-            .send_raw_binary(&p.connection_string, serialized)
-            .map_err(to_internal)?;
+        // Register the ack waiter before sending so the result can't race past us.
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<(bool, String)>();
+        if let Ok(mut pending) = super::remote_script_notify::DEPLOY_ACK_PENDING.lock() {
+            pending.insert(p.plugin_id.clone(), ack_tx);
+        }
 
-        Ok(CallToolResult::success(vec![Content::json(
-            serde_json::json!({
+        if let Err(e) = super::remote_egui_control::hub()
+            .send_raw_binary(&p.connection_string, serialized)
+        {
+            if let Ok(mut pending) = super::remote_script_notify::DEPLOY_ACK_PENDING.lock() {
+                pending.remove(&p.plugin_id);
+            }
+            return Err(to_internal(e));
+        }
+
+        let ack = tokio::time::timeout(std::time::Duration::from_secs(20), ack_rx).await;
+        if ack.is_err() {
+            if let Ok(mut pending) = super::remote_script_notify::DEPLOY_ACK_PENDING.lock() {
+                pending.remove(&p.plugin_id);
+            }
+        }
+
+        let body = match ack {
+            Ok(Ok((load_success, load_message))) => serde_json::json!({
+                "plugin_id": p.plugin_id,
+                "connection_string": p.connection_string,
+                "deployed_remote": load_success,
+                "load_acknowledged": true,
+                "load_message": load_message,
+                "artifact_bytes": size,
+            }),
+            _ => serde_json::json!({
                 "plugin_id": p.plugin_id,
                 "connection_string": p.connection_string,
                 "deployed_remote": true,
+                "load_acknowledged": false,
                 "artifact_bytes": size,
-                "note": "Plugin bytes sent to remote client. It will load asynchronously; check list_plugins on the remote MCP or watch for a toast notification.",
+                "note": "Bytes sent but no LoadWasmPluginResult ack within 20s — old client build or wedged channel. Verify with call_remote_plugin_tool or the remote MCP's list_plugins.",
             }),
-        )
-        .map_err(to_internal)?]))
+        };
+
+        Ok(CallToolResult::success(vec![Content::json(body).map_err(to_internal)?]))
     }
 
     #[tool(
@@ -3008,6 +3295,224 @@ impl PluginToolProvider {
         Ok(CallToolResult::success(vec![Content::json(
             serde_json::json!({ "results": result }),
         )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "telemetry_snapshot",
+        description = "Live hardware telemetry snapshot from this host's stress-kit TelemetryAgent: per-core load/frequency, memory, disk and network rates, GPU, top processes, plus Windows WHEA error / GPU TDR counters and thermal state. The sampler starts on first call and refreshes every 1s. Use during or after stress runs, or for a quick health read without running any script."
+    )]
+    async fn telemetry_snapshot(
+        &self,
+        Parameters(p): Parameters<TelemetrySnapshotParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let agent = TELEMETRY_AGENT.clone();
+        let mut snap = agent.snapshot();
+        if snap.captured_at_unix_ms == 0 {
+            let warmup = p.warmup_ms.unwrap_or(1200).min(5000);
+            tokio::time::sleep(std::time::Duration::from_millis(warmup)).await;
+            snap = agent.snapshot();
+        }
+        Ok(CallToolResult::success(vec![
+            Content::json(snap).map_err(to_internal)?,
+        ]))
+    }
+
+    #[tool(
+        name = "stress_scenario_run",
+        description = "Run a CUSTOM staged stress scenario on this host via stress-runner (persisted like catalog scripts: stress_test_run + stress_test_event + stress_test_metric + hardware_component). Compose any sequence of stress-kit stressors with per-stage durations, e.g. ramp cpu → fp → stream while watching telemetry_snapshot. Caps: 16 stages, 1800s/stage, 7200s total. Blocks until the scenario finishes; returns run_id, verdict, and per-stage final metrics."
+    )]
+    async fn stress_scenario_run(
+        &self,
+        Parameters(p): Parameters<StressScenarioRunParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        use stress_runner::{RunPlan, RunSpec, RunStage, RunUpdate, TargetKind, TestTool};
+
+        if p.stages.is_empty() || p.stages.len() > 16 {
+            return Err(to_internal("Provide 1-16 stages."));
+        }
+        let mut stages: Vec<RunStage> = Vec::with_capacity(p.stages.len());
+        for s in &p.stages {
+            if s.duration_secs == 0 || s.duration_secs > 1800 {
+                return Err(to_internal(format!(
+                    "Stage '{}' duration_secs must be 1-1800.",
+                    s.label.clone().unwrap_or_else(|| s.stressor.clone())
+                )));
+            }
+            let stressor: stress_runner::Stressor =
+                serde_json::from_value(serde_json::Value::String(s.stressor.clone())).map_err(
+                    |_| {
+                        to_internal(format!(
+                            "Unknown stressor '{}'. Valid: cpu, memory, disk, matrix, memcpy, bitops, cache, vm, stream, branch, atomic, mutex, switch, prime, fp, hash, prefetch, icache, tsc, gpu, gpu_matmul, gpu_vram, gpu_pcie",
+                            s.stressor
+                        ))
+                    },
+                )?;
+            stages.push(RunStage {
+                label: s.label.clone().unwrap_or_else(|| s.stressor.clone()),
+                stressor,
+                threads: s.threads,
+                duration_secs: s.duration_secs,
+                memory_cap_mb: s.memory_cap_mb.unwrap_or(256),
+                disk_file_mb: s.disk_file_mb.unwrap_or(512),
+            });
+        }
+        let stage_sum: u64 = stages.iter().map(|s| s.duration_secs).sum();
+        let budget_secs = p.total_wall_secs.unwrap_or(stage_sum).min(7200).max(1);
+        if stage_sum > 7200 {
+            return Err(to_internal("Total stage time exceeds the 7200s cap."));
+        }
+
+        let target_kind = {
+            let kinds: Vec<TargetKind> = stages
+                .iter()
+                .map(|s| stress_runner::default_target_kind(s.stressor))
+                .collect();
+            if kinds.windows(2).all(|w| w[0] == w[1]) {
+                kinds[0]
+            } else {
+                TargetKind::Mixed
+            }
+        };
+
+        let preset = p
+            .preset_label
+            .clone()
+            .unwrap_or_else(|| "mcp:scenario-v1".to_string());
+        let spec = RunSpec {
+            computer: stress_runner::local_computer_record(),
+            tool: TestTool::StressKitScenario {
+                name: Some(preset.clone()),
+            },
+            target_kind,
+            target_component: None,
+            touched_components: Vec::new(),
+            service_order: p
+                .service_number
+                .as_deref()
+                .map(|n| parse_record_id(n.trim(), "service_order")),
+            session_ref: p
+                .diagnostic_session_id
+                .as_deref()
+                .map(|s| parse_record_id(s.trim(), "diagnostic_session")),
+            task_ref: None,
+            tech: Some("mcp".to_string()),
+            hostname: None,
+            machine_id: None,
+            bios_settings: Default::default(),
+            driver_versions: Default::default(),
+            notes: p.notes.clone(),
+            preset_label: Some(preset),
+            tags: vec!["origin:mcp".to_string(), "preset:scenario".to_string()],
+            plan: RunPlan::Scenario {
+                stages,
+                total_wall_secs: p.total_wall_secs,
+                repeat_until_total: p.repeat_until_total,
+            },
+        };
+
+        let telemetry = TELEMETRY_AGENT.clone();
+        let handle = tokio::task::spawn_blocking(move || {
+            let mut run_id: Option<String> = None;
+            let mut logs: Vec<String> = Vec::new();
+            let mut stage_metrics: std::collections::HashMap<String, serde_json::Value> =
+                std::collections::HashMap::new();
+            let verdict = stress_runner::drive_blocking(spec, telemetry, |update| match update {
+                RunUpdate::Started { run_id: id } => {
+                    use database::schema::RecordIdExt;
+                    run_id = Some(id.key_string());
+                }
+                RunUpdate::StageStarted { index, label, stage_count } => {
+                    logs.push(format!("Stage {}/{}: {}", index + 1, stage_count, label));
+                }
+                RunUpdate::Tick { stage_label, metrics, .. } => {
+                    let key = stage_label.unwrap_or_else(|| "run".to_string());
+                    if let Ok(v) = serde_json::to_value(&metrics) {
+                        stage_metrics.insert(key, v);
+                    }
+                }
+                RunUpdate::StageFinished { .. } => {}
+                RunUpdate::Warning { message } => logs.push(format!("warning: {message}")),
+                RunUpdate::Error { message } => logs.push(format!("error: {message}")),
+                RunUpdate::Finished(_) => {}
+            });
+            (run_id, logs, stage_metrics, verdict)
+        });
+
+        let grace = std::time::Duration::from_secs(budget_secs + 180);
+        let (run_id, logs, stage_metrics, verdict) = match tokio::time::timeout(grace, handle).await
+        {
+            Ok(Ok(out)) => out,
+            Ok(Err(e)) => return Err(to_internal(format!("scenario worker panicked: {e}"))),
+            Err(_) => {
+                return Err(to_internal(format!(
+                    "Scenario exceeded budget+grace ({}s) — the run thread may still be finishing; check stress_test_run for the in_progress row and backfill with record_stress_test_run if needed.",
+                    grace.as_secs()
+                )))
+            }
+        };
+
+        let verdict_json = verdict.map(|v| {
+            use database::schema::RecordIdExt;
+            serde_json::json!({
+                "run_id": v.run_id.key_string(),
+                "result": serde_json::to_value(&v.result).unwrap_or_default(),
+                "finish_reason": serde_json::to_value(&v.finish_reason).unwrap_or_default(),
+                "failure_mode": serde_json::to_value(&v.failure_mode).unwrap_or_default(),
+                "summary": serde_json::to_value(&v.summary).unwrap_or_default(),
+                "duration_secs": v.duration_secs,
+            })
+        });
+
+        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+            "run_id": run_id,
+            "verdict": verdict_json,
+            "stage_metrics": stage_metrics,
+            "logs": logs,
+            "persisted": true,
+        }))
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "stress_runs_reap",
+        description = "Finalize zombie stress_test_run rows stuck at result='in_progress' past their window (client hang/reboot prevented finalize). Marks them aborted with ended_at=now and a reap note appended. Use dry_run:true to preview. Returns the affected run ids."
+    )]
+    async fn stress_runs_reap(
+        &self,
+        Parameters(p): Parameters<StressRunsReapParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let grace = p.grace_secs.unwrap_or(3600).max(600);
+        let cutoff = (chrono::Utc::now() - chrono::Duration::seconds(grace as i64)).to_rfc3339();
+        let host_filter = if p.hostname.is_some() {
+            " AND hostname = $hostname"
+        } else {
+            ""
+        };
+        let q = if p.dry_run {
+            format!(
+                "SELECT id, hostname, preset_label, started_at FROM stress_test_run WHERE result = 'in_progress' AND started_at < <datetime>$cutoff{host_filter};"
+            )
+        } else {
+            format!(
+                "UPDATE stress_test_run SET result = 'aborted', ended_at = time::now(), notes = string::concat(notes ?? '', ' [reaped: stale in_progress past planned window]') WHERE result = 'in_progress' AND started_at < <datetime>$cutoff{host_filter} RETURN id, hostname, preset_label, started_at;"
+            )
+        };
+        let mut query = database::DATABASE.query(&q).bind(("cutoff", cutoff));
+        if let Some(h) = p.hostname.clone() {
+            query = query.bind(("hostname", h));
+        }
+        let rows: Vec<serde_json::Value> = query
+            .await
+            .map_err(to_internal)?
+            .take(0)
+            .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+            "dry_run": p.dry_run,
+            "grace_secs": grace,
+            "affected": rows.len(),
+            "runs": rows,
+        }))
         .map_err(to_internal)?]))
     }
 

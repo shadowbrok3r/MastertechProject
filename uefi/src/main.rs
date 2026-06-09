@@ -1,6 +1,7 @@
 #![feature(uefi_std)]
 
 use anyhow::Result;
+use core::num::NonZeroUsize;
 use ratatui::{
     Frame, Terminal,
     layout::{Constraint, Direction, Layout, Rect},
@@ -94,6 +95,10 @@ fn setup_uefi_crate() {
         let ih = uefi::Handle::from_ptr(image_handle.as_ptr().cast()).unwrap();
         uefi::boot::set_image_handle(ih);
     }
+}
+
+fn init_ratatui_perf() {
+    Layout::init_cache(NonZeroUsize::new(128).unwrap());
 }
 
 fn create_ui() -> Result<(
@@ -2355,6 +2360,7 @@ impl App {
 }
 
 fn run() -> Result<()> {
+    init_ratatui_perf();
     let (mut terminal, mut input_reader) = create_ui()?;
     let mut app = App {
         info: SysInfo::collect(),

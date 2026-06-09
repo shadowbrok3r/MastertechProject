@@ -20,7 +20,7 @@ use database::schema::{
     // TicketData, merge_task, merge_ticket, merge_customer, merge_computer,ComputerData, CustomerData, LiveTaskPayload
 };
 
-use crate::terminal_mode::styling::CATPPUCCIN;
+use crate::terminal_mode::styling::{CATPPUCCIN, THEME};
 
 /// The current page/tab being displayed in the merge modal
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -190,8 +190,9 @@ impl DuplicateMergeModal {
             .title_alignment(Alignment::Center)
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(CATPPUCCIN.peach))
-            .style(Style::default().bg(Color::Rgb(20, 20, 28)));
+            .border_style(Style::default().fg(THEME.accent))
+            .title_style(THEME.title())
+            .style(Style::default().bg(THEME.surface));
 
         let inner = block.inner(modal_area);
         f.render_widget(block, modal_area);
@@ -228,7 +229,7 @@ impl DuplicateMergeModal {
                 let label = format!("{} {}", page.as_str(), indicator);
                 
                 let style = if i == self.tab_index {
-                    Style::default().fg(CATPPUCCIN.peach).add_modifier(Modifier::BOLD)
+                    Style::default().fg(THEME.accent).add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(CATPPUCCIN.text)
                 };
@@ -239,7 +240,7 @@ impl DuplicateMergeModal {
 
         let tabs = Tabs::new(tab_titles)
             .block(Block::default().borders(Borders::BOTTOM).border_style(Style::default().fg(CATPPUCCIN.surface0)))
-            .highlight_style(Style::default().fg(CATPPUCCIN.peach).add_modifier(Modifier::BOLD))
+            .highlight_style(Style::default().fg(THEME.accent).add_modifier(Modifier::BOLD))
             .select(self.tab_index);
 
         f.render_widget(tabs, area);
@@ -426,7 +427,7 @@ impl DuplicateMergeModal {
         };
         
         let mut lines: Vec<Line> = vec![
-            Line::from(Span::styled("Resolution Summary", Style::default().fg(CATPPUCCIN.peach).add_modifier(Modifier::BOLD))),
+            Line::from(Span::styled("Resolution Summary", Style::default().fg(THEME.accent).add_modifier(Modifier::BOLD))),
             Line::from(""),
             Line::from(vec![
                 Span::styled(format!("{:<15}", "Entity"), Style::default().fg(CATPPUCCIN.mauve).add_modifier(Modifier::BOLD)),

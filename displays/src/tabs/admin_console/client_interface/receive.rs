@@ -703,6 +703,7 @@ impl WebSocketClient {
                         }
                     } else if let Cmd::RemoteScriptListResponse { categories } = cmd {
                         log::info!("Received {} script categories", categories.len());
+                        crate::plugins::remote_script_notify::notify_script_list(categories.len());
                         self.remote_scripts_viewer.set_script_list(categories);
                         if let Some(user) = crate::get_current_user_from_auth() {
                             self.remote_scripts_viewer.load_custom_scripts(&user.get_user_bucket_name());
@@ -723,6 +724,7 @@ impl WebSocketClient {
                         self.remote_scripts_viewer.set_complete();
                     } else if let Cmd::LoadWasmPluginResult { plugin_id, success, message } = cmd {
                         log::info!("WASM plugin deploy result: {plugin_id} success={success} {message}");
+                        crate::plugins::remote_script_notify::notify_deploy_ack(&plugin_id, success, &message);
                         self.history.push(History {
                             from: "System".to_string(),
                             message: format!("WASM plugin '{plugin_id}': {message}"),

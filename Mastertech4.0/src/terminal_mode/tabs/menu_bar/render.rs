@@ -1,43 +1,48 @@
 use database::schema::User;
-use ratatui::{crossterm::event::MouseEvent, layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, style::Stylize, widgets::{Block, Paragraph, Widget, WidgetRef, Wrap}, Frame};
+use ratatui::{
+    layout::{Alignment, Constraint, Layout, Rect},
+    prelude::Backend,
+    style::Style,
+    widgets::{Block, BorderType, Paragraph, Widget, WidgetRef, Wrap},
+    Frame,
+};
 
-use crate::{filesystem::get_client_hash, terminal_mode::{styling::CATPPUCCIN, widgets::{ButtonType, HandleWidget, ShrinkArea}}};
+use crate::{
+    filesystem::get_client_hash,
+    terminal_mode::{
+        styling::THEME,
+        widgets::{HandleWidget, ShrinkArea},
+    },
+};
 
 use super::MenuBar;
 
+impl<'a> MenuBar<'a> {
+    /// Renders the open dropdown over the full frame. Called after the content
+    /// tab so the menu paints on top.
+    pub fn draw_overlay(&mut self, f: &mut Frame) {
+        let frame = f.area();
+        self.dropdown.borrow_mut().render(f, frame);
+    }
+}
 
-impl <'a> HandleWidget <'_> for MenuBar <'_> {
+impl<'a> HandleWidget<'_> for MenuBar<'_> {
     fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
-        // let tab_order = self.tabs.len();
-        // let mut constraints = vec![Constraint::Length(20); tab_order];
-        // constraints.push(Constraint::Length(25)); // For the title paragraph
-        // let row = Layout::default()
-        //     .direction(Direction::Horizontal)
-        //     .constraints(constraints)
-        //     .split(area);
-        // for (idx, (_, button)) in self.tabs.iter().enumerate() {
-        //     button.render_ref(row[idx].shrink(3, 1), f.buffer_mut());
-        // }
-
-        let row = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(20), Constraint::Length(20),
-            Constraint::Length(20), Constraint::Length(20),
-            Constraint::Length(20), Constraint::Length(20),
-            Constraint::Length(20), Constraint::Length(20),
-            Constraint::Length(20), Constraint::Length(25),
+        let cols = Layout::horizontal([
+            Constraint::Length(12),
+            Constraint::Length(12),
+            Constraint::Length(12),
+            Constraint::Length(12),
+            Constraint::Fill(1),
+            Constraint::Length(24),
         ])
         .split(area);
 
-        self.ticket_tab.render_ref(row[0].shrink(3, 1), f.buffer_mut());
-        self.scripts_tab.render_ref(row[1].shrink(3, 1), f.buffer_mut());
-        self.system_tab.render_ref(row[2].shrink(3, 1), f.buffer_mut());
-        self.ncdu_tab.render_ref(row[3].shrink(3, 1), f.buffer_mut());
-        self.tasks_tab.render_ref(row[4].shrink(3, 1), f.buffer_mut());
-        self.webconsole_tab.render_ref(row[5].shrink(3, 1), f.buffer_mut());
-        self.logs_tab.render_ref(row[6].shrink(3, 1), f.buffer_mut());
-        self.login_tab.render_ref(row[7].shrink(3, 1), f.buffer_mut());
+        self.service_trigger.render_ref(cols[0].shrink_symmetric(1, 1), f.buffer_mut());
+        self.tools_trigger.render_ref(cols[1].shrink_symmetric(1, 1), f.buffer_mut());
+        self.remote_trigger.render_ref(cols[2].shrink_symmetric(1, 1), f.buffer_mut());
+        self.account_trigger.render_ref(cols[3].shrink_symmetric(1, 1), f.buffer_mut());
+
         let title = &mut self.client_title;
         let user = &mut User::default();
 
@@ -51,56 +56,36 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
         }
 
         if title.is_empty() {
-            let client = get_client_hash();
-            *title = client.connection_string.clone();
+            *title = get_client_hash().connection_string.clone();
         }
 
-        let para = Paragraph::new(format!("{}", &**title))
+        let connected = self.connection_state.0;
+        let title_para = Paragraph::new(format!("{}", &**title))
             .block(
-                Block::default()
-                    .title_alignment(ratatui::layout::Alignment::Center)
-                    .border_type(ratatui::widgets::BorderType::Rounded)
-                    .fg(CATPPUCCIN.lavender)
+                Block::bordered()
+                    .border_type(BorderType::Rounded)
+                    .border_style(THEME.border(connected))
                     .title(user.get_name())
+                    .title_alignment(Alignment::Center),
             )
             .right_aligned()
-            .wrap(Wrap{ trim: false});
-        (&para).render(row[8], f.buffer_mut());
+            .wrap(Wrap { trim: false });
+        (&title_para).render(cols[4].shrink(1, 1), f.buffer_mut());
 
-        let state = &self.connection_state;
-        let color = if state.0 { CATPPUCCIN.green } else { CATPPUCCIN.maroon };
-        if state.0 {
-            let para = Paragraph::new(format!("Server Msg: {}", state.1))
-            .block(
-                Block::default()
-                    .title_alignment(ratatui::layout::Alignment::Center)
-                    .border_type(ratatui::widgets::BorderType::Rounded)
-                    .fg(color)
-                    .title(format!("Connected: {}", state.0))
-            )
-            .right_aligned()
-            .wrap(Wrap{ trim: false});
-            (&para).render(row[9], f.buffer_mut());
+        if connected {
+            let para = Paragraph::new(format!("Server: {}", self.connection_state.1))
+                .block(
+                    Block::bordered()
+                        .border_type(BorderType::Rounded)
+                        .border_style(Style::new().fg(THEME.success))
+                        .title("Connected")
+                        .title_alignment(Alignment::Center),
+                )
+                .right_aligned()
+                .wrap(Wrap { trim: false });
+            (&para).render(cols[5].shrink(1, 1), f.buffer_mut());
         } else {
-            self.connect_ws_btn.render_ref(row[9].shrink(3, 1), f.buffer_mut());
+            self.connect_ws_btn.render_ref(cols[5].shrink(1, 1), f.buffer_mut());
         }
-
-        // self.effect_stage.process_effects(
-        //     tachyonfx::Duration::from_millis(16), 
-        //     f.buffer_mut(), 
-        //     area
-        // );
-    }
-    
-    fn handle_mouse_event(&self, mouse_event: &MouseEvent) {
-        self.ticket_tab.handle_mouse_event(&mouse_event);
-        self.scripts_tab.handle_mouse_event(&mouse_event);
-        self.tasks_tab.handle_mouse_event(&mouse_event);
-        self.system_tab.handle_mouse_event(&mouse_event);
-        self.ncdu_tab.handle_mouse_event(&mouse_event);
-        self.logs_tab.handle_mouse_event(&mouse_event);
-        self.login_tab.handle_mouse_event(&mouse_event);
-        self.webconsole_tab.handle_mouse_event(&mouse_event);
-        self.connect_ws_btn.handle_mouse_event(&mouse_event);
     }
 }

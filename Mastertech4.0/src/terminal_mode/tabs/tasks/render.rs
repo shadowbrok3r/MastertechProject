@@ -1,9 +1,9 @@
-use ratatui::{crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind}, layout::{Constraint, Rect}, prelude::Backend, style::{Color, Modifier, Style}, text::{Line, Span, Text}, widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table}, Frame};
-use crate::terminal_mode::{fx::unique_border_effect, styling::CATPPUCCIN, widgets::{ButtonType, HandleWidget}};
+use ratatui::{crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind}, layout::{Constraint, Layout, Position, Rect}, prelude::Backend, style::{Color, Modifier, Style}, text::{Line, Span, Text}, widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, WidgetRef}, Frame};
+use crate::terminal_mode::{fx::unique_border_effect, styling::{CATPPUCCIN, THEME, APP_BACKGROUND}, widgets::{ButtonType, HandleWidget}};
 use database::schema::{LiveTaskPayload, RecordIdExt, User};
 use unicode_width::UnicodeWidthStr;
 use std::cmp::max;
-use super::{EditMode, SortColumn, SortDirection, TasksTab};
+use super::{EditMode, SortColumn, SortDirection, TaskFilter, TasksTab};
 
 // Static default widths for columns (first 5 columns only, description fills rest)
 // Due, Status, Task, Assignee, Priority
@@ -16,24 +16,23 @@ const MIN_DESCRIPTION_WIDTH: u16 = 30;
 /// This allows the composite widget to draw itself and handle events.
 impl<'a> HandleWidget <'a> for TasksTab<'a> {
     fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
-        // Check if modal is open - use a single borrow to avoid RefCell conflict
-        let has_modal = {
-            let modal_ref = self.open_task_modal.borrow();
-            modal_ref.is_some()
-        };
-        
+        let has_modal = self.open_task_modal.borrow().is_some();
+
+        // Filter bar on top, table below.
+        let rows = Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).split(area);
+        self.draw_filter_bar(f, rows[0]);
+        self.draw_table_impl(f, rows[1]);
+
         if has_modal {
-            // Draw the table dimmed in background first
-            self.draw_table_impl(f, area);
-            
-            // Draw modal on top - need mutable borrow for HandleWidget::draw
             if let Some(ref mut modal) = *self.open_task_modal.borrow_mut() {
                 modal.draw::<B>(f, area);
             }
             return;
         }
-        
-        self.draw_table_impl(f, area);
+
+        // Filter dropdown overlay paints on top of the table.
+        let frame = f.area();
+        self.filter_dropdown.borrow_mut().render(f, frame);
     }
     
     fn handle_mouse_event(&self, mouse_event: &MouseEvent) {
@@ -56,11 +55,43 @@ impl<'a> HandleWidget <'a> for TasksTab<'a> {
         if has_modal {
             return;
         }
-        
+
+        // Filter dropdown takes priority (it overlays the table).
+        let pos = Position::new(mouse_event.column, mouse_event.row);
+        if self.filter_dropdown.borrow().is_open() {
+            match mouse_event.kind {
+                MouseEventKind::Moved => {
+                    self.filter_dropdown.borrow_mut().on_mouse_move(pos);
+                    return;
+                }
+                MouseEventKind::Down(MouseButton::Left) => {
+                    let clicked = self.filter_dropdown.borrow_mut().on_click(pos);
+                    if let Some(idx) = clicked {
+                        if let Some(filter) = TaskFilter::ALL.get(idx) {
+                            self.set_filter(*filter);
+                        }
+                    }
+                    self.filter_dropdown.borrow_mut().close();
+                    self.filter_trigger.set_menu_open(false);
+                    return;
+                }
+                _ => {}
+            }
+        }
+        if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+            if self.filter_trigger.get_area().map_or(false, |a| a.contains(pos)) {
+                let items = self.filter_items();
+                let anchor = self.filter_trigger.get_area().unwrap_or_default();
+                self.filter_dropdown.borrow_mut().open_at(anchor, items, "Filter");
+                self.filter_trigger.set_menu_open(true);
+                return;
+            }
+        }
+
         let table_area = *self.table_area.borrow();
         let x = mouse_event.column;
         let y = mouse_event.row;
-        
+
         self.sort_due_btn.handle_mouse_event(mouse_event);
         self.sort_status_btn.handle_mouse_event(mouse_event);
         self.sort_priority_btn.handle_mouse_event(mouse_event);
@@ -99,15 +130,14 @@ impl<'a> HandleWidget <'a> for TasksTab<'a> {
                         *self.hovered_header_col.borrow_mut() = hovered_col;
                         *self.hovered_row.borrow_mut() = None;
                     } else {
-                        // Calculate which row is being hovered
-                        let relative_y = (y - table_area.y - header_height) as usize;
-                        let row_idx = relative_y / 3;
-                        
-                        if row_idx < self.items.len() {
-                            *self.hovered_row.borrow_mut() = Some(row_idx);
-                        } else {
-                            *self.hovered_row.borrow_mut() = None;
-                        }
+                        // Resolve the hovered row from recorded row rects.
+                        let row = self
+                            .row_areas
+                            .borrow()
+                            .iter()
+                            .find(|(_, r)| y >= r.y && y < r.y + r.height)
+                            .map(|(idx, _)| *idx);
+                        *self.hovered_row.borrow_mut() = row;
                         *self.hovered_header_col.borrow_mut() = None;
                     }
                 } else {
@@ -152,20 +182,21 @@ impl<'a> HandleWidget <'a> for TasksTab<'a> {
                         return;
                     }
                     
-                    // Calculate which row was clicked
+                    // Resolve the clicked row from recorded row rects.
                     if y >= table_area.y + header_height {
-                        let relative_y = (y - table_area.y - header_height) as usize;
-                        let row_idx = relative_y / 3;
-                        
-                        if row_idx < self.items.len() {
-                            let mut state = self.state.borrow_mut();
-                            state.select(Some(row_idx));
-                            
+                        let clicked_row = self
+                            .row_areas
+                            .borrow()
+                            .iter()
+                            .find(|(_, r)| y >= r.y && y < r.y + r.height)
+                            .map(|(idx, _)| *idx);
+
+                        if let Some(row_idx) = clicked_row {
                             // Calculate which column was clicked
                             let widths = if self.widths.len() >= 5 { &self.widths } else { &DEFAULT_WIDTHS.to_vec() };
                             let mut col_start = table_area.x + 1;
-                            let mut col_idx = 0;
-                            
+                            let mut col_idx = 5; // default to Description (fills remainder)
+
                             for (i, width) in widths.iter().enumerate() {
                                 let col_end = col_start + width + 1;
                                 if x >= col_start && x < col_end {
@@ -174,18 +205,16 @@ impl<'a> HandleWidget <'a> for TasksTab<'a> {
                                 }
                                 col_start = col_end;
                             }
-                            
-                            // Check if description column (or beyond) was clicked
-                            if col_idx >= widths.len() || x >= col_start {
-                                col_idx = 5; // Description column
+
+                            {
+                                let mut state = self.state.borrow_mut();
+                                state.select(Some(row_idx));
+                                state.select_column(Some(col_idx));
+                                state.select_cell(Some((row_idx, col_idx)));
                             }
-                            
-                            state.select_column(Some(col_idx));
-                            state.select_cell(Some((row_idx, col_idx)));
-                            
-                            // If Task Name column (2) was clicked, open modal
+
+                            // Clicking the Task Name column opens the task modal.
                             if col_idx == 2 {
-                                drop(state);
                                 self.open_modal(row_idx);
                             }
                         }
@@ -296,6 +325,12 @@ impl<'a> HandleWidget <'a> for TasksTab<'a> {
 }
 
 impl<'a> TasksTab<'a> {
+    /// Draw the filter trigger ("My Tasks ▾") above the table.
+    fn draw_filter_bar(&self, f: &mut Frame, area: Rect) {
+        let cols = Layout::horizontal([Constraint::Length(22), Constraint::Fill(1)]).split(area);
+        self.filter_trigger.render_ref(cols[0], f.buffer_mut());
+    }
+
     /// Draw the main table
     fn draw_table_impl(&self, f: &mut Frame, area: Rect) {
         // Store the table area for mouse hit-testing
@@ -322,18 +357,20 @@ impl<'a> TasksTab<'a> {
             Cell::from(Text::from(Self::header_with_sort("Priority", SortColumn::Priority, sort_col, sort_dir, hovered_header == Some(4), widths[4] as usize))),
             Cell::from(Text::from(Self::center_text_with_borders("Description".to_string(), description_width as usize, 3))),
         ])
-        .style(Style::default().fg(CATPPUCCIN.sapphire).bg(Color::Rgb(12,12,16)).add_modifier(Modifier::BOLD))
+        .style(Style::default().fg(THEME.accent).bg(APP_BACKGROUND).add_modifier(Modifier::BOLD))
         .height(3)
         .bottom_margin(1);
 
         let hovered_row = *self.hovered_row.borrow();
-        
+        let mut row_heights: Vec<u16> = Vec::with_capacity(self.items.len());
+
         let rows: Vec<Row> = self.items.iter().enumerate().map(|(i, task)| {
             // Get username from assignee RecordId
             let assignee_name = self.get_username(&task.assignee);
-            
+
             let wrapped_desc = Self::wrap_text_with_borders(task.task_description.clone(), description_width as usize);
             let height = wrapped_desc.len().max(3) as u16;
+            row_heights.push(height);
             total_height += height;
             
             // Color code based on status
@@ -358,11 +395,11 @@ impl<'a> TasksTab<'a> {
             // Determine row background based on hover and alternating
             let is_hovered = hovered_row == Some(i);
             let bg_color = if is_hovered {
-                Color::Rgb(35, 35, 50) // Lighter when hovered
+                THEME.surface
             } else if i % 2 == 0 {
                 CATPPUCCIN.base
             } else {
-                Color::Rgb(14, 14, 18)
+                APP_BACKGROUND
             };
             
             let fg_color = if is_hovered {
@@ -373,11 +410,11 @@ impl<'a> TasksTab<'a> {
                 CATPPUCCIN.text
             };
             
-            // Task name is clickable - show it with underline when this row is hovered
+            // Task name is clickable — always accent-colored, underlined on hover.
             let task_name_style = if is_hovered {
-                Style::default().fg(CATPPUCCIN.blue).add_modifier(Modifier::UNDERLINED)
+                Style::default().fg(THEME.accent).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
             } else {
-                Style::default()
+                Style::default().fg(THEME.accent)
             };
             
             Row::new(vec![
@@ -435,21 +472,40 @@ impl<'a> TasksTab<'a> {
             .block(
                 Block::default()
                 .title(" My Tasks ")
+                .title_style(THEME.title())
                 .border_type(BorderType::Rounded)
                 .borders(Borders::ALL)
-                .style(Style::default().fg(CATPPUCCIN.lavender))
+                .style(Style::default().fg(THEME.tertiary))
                 .title_alignment(ratatui::layout::Alignment::Center)
             )
-            .column_highlight_style(Style::default().bg(Color::Rgb(25, 25, 35)))
-            .cell_highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(CATPPUCCIN.surface0).fg(CATPPUCCIN.peach))
-            .row_highlight_style(Style::default().bg(Color::Rgb(20, 20, 30)));
+            .column_highlight_style(Style::default().bg(Color::Rgb(20, 20, 28)))
+            .cell_highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::Rgb(34, 34, 46)).fg(THEME.accent))
+            .row_highlight_style(Style::default().bg(Color::Rgb(20, 20, 28)));
 
         f.render_stateful_widget(table, area, &mut table_state);
-        
+
+        // Record each visible row's screen rect (with its item index) so mouse
+        // hit-testing handles variable row heights and the scroll offset.
+        {
+            let header_h: u16 = 4;
+            let offset = table_state.offset();
+            let mut y = area.y + header_h;
+            let mut areas: Vec<(usize, Rect)> = Vec::new();
+            for (i, &h) in row_heights.iter().enumerate().skip(offset) {
+                if y >= area.bottom() {
+                    break;
+                }
+                let vis_h = h.min(area.bottom() - y);
+                areas.push((i, Rect { x: area.x, y, width: area.width, height: vis_h }));
+                y += h;
+            }
+            *self.row_areas.borrow_mut() = areas;
+        }
+
         // Apply animated border effect to the table
         {
             let mut effect_stage = self.effect_stage.borrow_mut();
-            unique_border_effect(&mut effect_stage, "TasksTableBorder", CATPPUCCIN.lavender, area);
+            unique_border_effect(&mut effect_stage, "TasksTableBorder", THEME.accent, area);
             effect_stage.process_effects(tachyonfx::Duration::from_millis(16), f.buffer_mut(), area);
         }
 
@@ -460,10 +516,10 @@ impl<'a> TasksTab<'a> {
             f.render_stateful_widget(
                 Scrollbar::new(ScrollbarOrientation::VerticalRight)
                     .begin_symbol(Some("▲"))
-                    .track_style(Style::new().fg(CATPPUCCIN.base))
+                    .track_style(Style::new().fg(THEME.surface))
                     .track_symbol(Some("│"))
                     .thumb_symbol("█")
-                    .thumb_style(Style::new().fg(CATPPUCCIN.sky))
+                    .thumb_style(Style::new().fg(THEME.accent))
                     .end_symbol(Some("▼")),
                 area,
                 &mut v_scrollbar_state,
@@ -478,10 +534,10 @@ impl<'a> TasksTab<'a> {
             f.render_stateful_widget(
                 Scrollbar::new(ScrollbarOrientation::HorizontalBottom)
                     .begin_symbol(Some("◀"))
-                    .track_style(Style::new().fg(CATPPUCCIN.base))
+                    .track_style(Style::new().fg(THEME.surface))
                     .track_symbol(Some("─"))
                     .thumb_symbol("█")
-                    .thumb_style(Style::new().fg(CATPPUCCIN.sky))
+                    .thumb_style(Style::new().fg(THEME.accent))
                     .end_symbol(Some("▶")),
                 area,
                 &mut h_scrollbar_state,
@@ -574,9 +630,10 @@ impl<'a> TasksTab<'a> {
                 f.render_widget(Clear, popup_area);
                 let block = Block::default()
                     .title(" Due Date ")
+                    .title_style(THEME.title())
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .style(Style::default().fg(CATPPUCCIN.yellow));
+                    .style(Style::default().fg(THEME.accent));
                 f.render_widget(block.clone(), popup_area);
                 let text = Paragraph::new("Date editing coming soon\nPress ESC to close")
                     .style(Style::default().fg(CATPPUCCIN.text))
@@ -616,9 +673,10 @@ impl<'a> TasksTab<'a> {
         
         let block = Block::default()
             .title(format!(" {} ", title))
+            .title_style(THEME.title())
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .style(Style::default().fg(CATPPUCCIN.peach).bg(Color::Rgb(20, 20, 25)));
+            .style(Style::default().fg(THEME.accent).bg(THEME.surface));
         
         let inner = block.inner(area);
         f.render_widget(block, area);
@@ -634,7 +692,7 @@ impl<'a> TasksTab<'a> {
         for (i, option) in options.iter().enumerate().skip(scroll_offset).take(visible_height) {
             let y = inner.y + (i - scroll_offset) as u16;
             let style = if i == selected_idx {
-                Style::default().fg(CATPPUCCIN.base).bg(CATPPUCCIN.peach).add_modifier(Modifier::BOLD)
+                Style::default().fg(APP_BACKGROUND).bg(THEME.accent).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(CATPPUCCIN.text)
             };

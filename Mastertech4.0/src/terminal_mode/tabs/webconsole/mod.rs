@@ -1,4 +1,4 @@
-use crate::terminal_mode::{context::TerminalContext, events::action_handler::{get_update_sender, ActionHandler, WidgetId}, styling::CATPPUCCINTHEME, widgets::button::Button};
+use crate::terminal_mode::{context::TerminalContext, events::action_handler::{get_update_sender, ActionHandler, WidgetId}, widgets::button::{Button, Theme}};
 use crossbeam::channel::{Receiver, Sender};
 use database::{schema::ConnectedClient, websocket_url_with_room, WS_MASTER_URL, WS_MASTER_URL_LOCAL};
 use displays::remote_viewer::{decode_buffer, ratagui::TerminalEvent};
@@ -42,7 +42,7 @@ impl <'a> WebconsoleTab <'a> {
         let (connected_clients_tx, connected_clients_rx) = crossbeam::channel::unbounded();
         let (event_tx, event_rx) = crossbeam::channel::unbounded();
         Self {
-            get_clients_btn: Button::new("Get Clients",WidgetId("GetClients".to_owned())).theme(CATPPUCCINTHEME),
+            get_clients_btn: Button::new("Get Clients",WidgetId("GetClients".to_owned())).theme(Theme::TERTIARY),
             ws_clients: HashMap::new(),
             client_map: HashMap::new(),
             // current_client: None,
@@ -67,7 +67,7 @@ impl <'a> WebconsoleTab <'a> {
                 // {
                     self.ws_clients.insert(
                         client.connection_string.clone(),
-                        Button::new(&client.connection_string, WidgetId(client.connection_string.clone())).theme(CATPPUCCINTHEME),
+                        Button::new(&client.connection_string, WidgetId(client.connection_string.clone())).theme(Theme::NEUTRAL),
                     );
                     // Store full client info so we can look up local_ip/tcp_port
                     // when opening a connection.

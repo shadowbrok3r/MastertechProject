@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::Context;
 use ratatui::{prelude::*, widgets::{Block, Borders}};
 use file_explorer::{File, FileExplorer, Theme};
-use crate::terminal_mode::{context::TerminalContext, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}};
+use crate::terminal_mode::{context::TerminalContext, styling::THEME};
 
 pub mod render;
 pub mod file_explorer;
@@ -22,19 +22,19 @@ impl NcduTab {
         let theme = Theme::default()
             // .with_highlight_symbol("=> ")
             .add_default_title()
-            .with_block(Block::default().borders(Borders::ALL).border_type(ratatui::widgets::BorderType::Rounded))
-            .with_dir_style(Style::default().fg(CYAN.text).add_modifier(Modifier::BOLD))
+            .with_block(Block::default().borders(Borders::ALL).border_type(ratatui::widgets::BorderType::Rounded).border_style(Style::default().fg(THEME.accent)))
+            .with_dir_style(Style::default().fg(THEME.tertiary).add_modifier(Modifier::BOLD))
             .with_highlight_item_style(
                 Style::default()
-                    .fg(DEEPPINK.text)
+                    .fg(THEME.accent)
                     .add_modifier(Modifier::BOLD)
-                    .bg(Color::Rgb(14, 14, 20)),
+                    .bg(THEME.surface),
             )
             .with_highlight_dir_style(
                 Style::default()
-                    .fg(CATPPUCCINTHEME.text)
+                    .fg(THEME.accent)
                     .add_modifier(Modifier::BOLD)
-                    .bg(Color::Rgb(14, 14, 20)),
+                    .bg(THEME.surface),
             )
             .with_scroll_padding(1);
 

@@ -1,5 +1,5 @@
-use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect}, prelude::Backend, style::{Color, Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget, WidgetRef, Wrap}, Frame};
-use crate::terminal_mode::{events::action_handler::WidgetId, fx::effect::animated_border, styling::{BASE_COLORS, CATPPUCCIN, DEEPPINK, SPRINGGREEN, APP_BACKGROUND}, tabs::checklist::TodoItem, widgets::{ButtonType, HandleWidget, ShrinkArea}};
+use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect}, prelude::Backend, style::{Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget, Wrap}, Frame};
+use crate::terminal_mode::{events::action_handler::WidgetId, fx::effect::animated_border, styling::{CATPPUCCIN, APP_BACKGROUND, THEME}, tabs::checklist::TodoItem, widgets::{ButtonType, HandleWidget, ShrinkArea}};
 use super::{checklist::Status, ScriptsTab};
 use displays::get_current_user_from_auth;
 use unicode_width::UnicodeWidthStr;
@@ -39,8 +39,9 @@ impl<'a> ScriptsTab<'a> {
     fn draw_log_section<B: Backend>(&self, f: &mut Frame, area: Rect) {
         let block = Block::default()
             .borders(Borders::ALL)
-            .style(Style::new().fg(CATPPUCCIN.blue))
+            .border_style(Style::new().fg(THEME.accent))
             .title("Run Report")
+            .title_style(THEME.title())
             .border_type(BorderType::Rounded);
 
         let outer_area = area;
@@ -71,19 +72,20 @@ impl<'a> ScriptsTab<'a> {
         let mut log_text: Vec<Line> = Vec::new();
 
         // Add regular logs
-        log_text.extend(self.reports.borrow().iter().enumerate().map(|(index, r)| {
-            let color = BASE_COLORS[index % BASE_COLORS.len()];
+        log_text.extend(self.reports.borrow().iter().map(|r| {
             let (left_text, right_text) = match r.msg.split_once(" => ") {
-                Some((left, right)) => (left.trim(), right.trim()),
-                None => (r.msg.as_str(), ""),
+                Some((left, right)) => (left.trim().to_string(), right.trim().to_string()),
+                None => (r.msg.clone(), String::new()),
             };
             let available_width = inner_area.width as usize;
             let reporter_text = format!("{:?} => ", r.reporter);
-            let reporter_length = reporter_text.len();
-            let width = available_width.saturating_sub(left_text.len() + reporter_length);
-            let formatted_msg = format!("{:?} => {:<} {:>width$}", r.reporter, left_text, right_text, width = width);
+            let width = available_width.saturating_sub(left_text.len() + reporter_text.len());
 
-            Line::from(Span::styled(formatted_msg, Style::default().fg(color)))
+            Line::from(vec![
+                Span::styled(reporter_text, Style::default().fg(THEME.tertiary)),
+                Span::styled(left_text, Style::default().fg(THEME.text)),
+                Span::styled(format!(" {:>width$}", right_text, width = width), Style::default().fg(THEME.text_muted)),
+            ])
         }));
 
         // Add robocopy logs (up to ROBOCOPY_DISPLAY_LINES) if present
@@ -91,11 +93,11 @@ impl<'a> ScriptsTab<'a> {
             let robocopy_logs: Vec<Line> = self.robocopy_reports.borrow().iter().rev() // Latest first
                 .take(Self::ROBOCOPY_DISPLAY_LINES)
                 .rev() // Restore order
-                .enumerate()
-                .map(|(index, r)| {
-                    let color = BASE_COLORS[index % BASE_COLORS.len()];
-                    let formatted_msg = format!("Robocopy: {}", r.msg);
-                    Line::from(Span::styled(formatted_msg, Style::default().fg(color)))
+                .map(|r| {
+                    Line::from(vec![
+                        Span::styled("Robocopy: ", Style::default().fg(THEME.tertiary)),
+                        Span::styled(r.msg.clone(), Style::default().fg(THEME.text)),
+                    ])
                 })
                 .collect();
             log_text.extend(robocopy_logs);
@@ -153,10 +155,10 @@ impl<'a> ScriptsTab<'a> {
 
             let v_scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalLeft)
                 .begin_symbol(Some("🢁"))
-                .track_style(Style::new().fg(CATPPUCCIN.base))
+                .track_style(Style::new().fg(THEME.surface))
                 .track_symbol(Some("║║"))
                 .thumb_symbol("⦕⦖")
-                .thumb_style(Style::new().fg(CATPPUCCIN.sky))
+                .thumb_style(Style::new().fg(THEME.accent))
                 .end_symbol(Some("🢃"));
 
             f.render_stateful_widget(
@@ -173,16 +175,39 @@ impl<'a> ScriptsTab<'a> {
 
             let h_scrollbar = Scrollbar::new(ScrollbarOrientation::HorizontalBottom)
                 .begin_symbol(Some("⟸"))
-                .track_style(Style::new().fg(CATPPUCCIN.base))
+                .track_style(Style::new().fg(THEME.surface))
                 .track_symbol(Some("⥈"))
                 .thumb_symbol("|⟗|")
-                .thumb_style(Style::new().fg(CATPPUCCIN.sky))
+                .thumb_style(Style::new().fg(THEME.accent))
                 .end_symbol(Some("⟹"));
             f.render_stateful_widget(
                 h_scrollbar,
                 h_scroll_area,
                 &mut h_scrollbar_state,
             );
+        }
+    }
+
+    /// Collapsed Job Builder: a thin pink spine with a vertical label. Click to expand.
+    fn draw_job_builder_spine(&self, f: &mut Frame, area: Rect) {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::new().fg(THEME.accent));
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+        let label = "\u{25b8} JOB BUILDER";
+        for (i, ch) in label.chars().enumerate() {
+            let yy = inner.y + i as u16;
+            if yy >= inner.y + inner.height {
+                break;
+            }
+            let style = if i == 0 {
+                Style::new().fg(THEME.accent)
+            } else {
+                Style::new().fg(THEME.tertiary)
+            };
+            f.buffer_mut().set_string(inner.x, yy, ch.to_string(), style);
         }
     }
 
@@ -208,25 +233,25 @@ impl<'a> ScriptsTab<'a> {
                     ListItem::new(
                     Line::styled(
                         format!("* {} *", list.name),
-                        Style::default().fg(CATPPUCCIN.sapphire).bold(),
+                        THEME.title(),
                         )
                     )
                 );
 
                 for item in &list.items {
                     let symbol = match item.status {
-                        Status::Completed => "[X]", // ☒
-                        Status::Todo => "[ ]",
+                        Status::Completed => "\u{25fc}", // ◼
+                        Status::Todo => "\u{25fb}",       // ◻
                     };
 
                     let mut style = match item.status {
-                        Status::Completed => Style::default().fg(CATPPUCCIN.teal),
-                        Status::Todo => Style::default().fg(CATPPUCCIN.pink),
+                        Status::Completed => Style::default().fg(THEME.accent),
+                        Status::Todo => Style::default().fg(THEME.tertiary),
                     };
-                    
+
                     if let Some((current_cat, current_text)) = &*self.current_script.borrow() {
                         if *current_cat == item.category() && *current_text == item.text {
-                            style = Style::new().bg(CATPPUCCIN.base).fg(CATPPUCCIN.sky);
+                            style = Style::new().bg(THEME.surface).fg(THEME.text);
                         }
                     }
 
@@ -248,11 +273,12 @@ impl<'a> ScriptsTab<'a> {
                 Block::default()
                     .borders(Borders::ALL)
                     .title("Job Builder")
+                    .title_style(THEME.title())
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::new().fg(CATPPUCCIN.lavender)),
+                    .border_style(Style::new().fg(THEME.tertiary)),
             )
-            .highlight_symbol("=> ")
-            .highlight_style(Style::new().bg(CATPPUCCIN.base).fg(CATPPUCCIN.teal));
+            .highlight_symbol("\u{25b8} ")
+            .highlight_style(THEME.menu_highlight());
 
         let mut list_state = self.list_state.borrow_mut();
         f.render_stateful_widget(checklist, list_area, &mut list_state);
@@ -267,10 +293,10 @@ impl<'a> ScriptsTab<'a> {
 
         let vertical_scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalLeft)
             .begin_symbol(Some("↑ ↑"))
-            .track_style(Style::new().fg(CATPPUCCIN.base))
+            .track_style(Style::new().fg(THEME.surface))
             .track_symbol(Some("║ ║"))
             .thumb_symbol("|▮|")
-            .thumb_style(Style::new().fg(CATPPUCCIN.sky)) // .bg(CATPPUCCIN.base)
+            .thumb_style(Style::new().fg(THEME.accent)) // .bg(CATPPUCCIN.base)
             .end_symbol(Some("↓ ↓"));
 
         f.render_stateful_widget(
@@ -324,7 +350,9 @@ impl<'a> ScriptsTab<'a> {
             .border_type(BorderType::Rounded)
             .title(popup_title)
             .title_alignment(Alignment::Center)
-            .style(Style::default().fg(SPRINGGREEN.text));
+            .title_style(THEME.title())
+            .border_style(Style::default().fg(THEME.accent))
+            .style(Style::default().bg(APP_BACKGROUND).fg(THEME.text));
 
         f.render_widget(block, popup_area);
 
@@ -383,11 +411,14 @@ impl<'a> ScriptsTab<'a> {
                 vec![ListItem::new("No Options")],
                 |items| {
                     items.iter().map(|item| {
-                        let prefix = match item.status {
-                            Status::Todo => "[ ]",
-                            Status::Completed => "[X]",
+                        let (marker, color) = match item.status {
+                            Status::Todo => ("\u{25fb} ", THEME.tertiary),
+                            Status::Completed => ("\u{25fc} ", THEME.accent),
                         };
-                        ListItem::new(Line::from(format!("{} {}", prefix, item.text)))
+                        ListItem::new(Line::from(vec![
+                            Span::styled(marker, Style::new().fg(color)),
+                            Span::styled(item.text.clone(), Style::new().fg(THEME.text)),
+                        ]))
                     }).collect()
                 }
             );
@@ -397,12 +428,13 @@ impl<'a> ScriptsTab<'a> {
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
                     .title(format!("{} Menu", widget_id.0))
-                    .border_style(Style::new().fg(DEEPPINK.text))
+                    .title_style(THEME.title())
+                    .border_style(Style::new().fg(THEME.accent))
                     .title_alignment(ratatui::layout::Alignment::Center)
-                    .style(Style::new().bg(APP_BACKGROUND).fg(CATPPUCCIN.sky))
+                    .style(Style::new().bg(APP_BACKGROUND).fg(THEME.text))
                 )
-                .highlight_style(Style::new().bg(CATPPUCCIN.base).fg(CATPPUCCIN.text))
-                .highlight_symbol(">>");
+                .highlight_style(THEME.menu_highlight())
+                .highlight_symbol("\u{25b8} ");
 
             f.render_widget(Clear, *popup_area);
             let mut popup_state = self.popup_list_state.borrow_mut();
@@ -623,17 +655,18 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         let right_half = main_chunks[1];
 
         const SCRIPT_BUTTONS_ROW_HEIGHT: u16 = 3;
-        // Slots: tuneup, informational, user_scripts, stress_tests, service_number,
-        // current_script, progress, update progress, fs progress, transfers (split into two slots),
-        // run, stress_test cycle.
-        const SCRIPT_BUTTONS_SLOT_COUNT: u16 = 13;
+        // Action slots below the category buttons: service_number, current_script,
+        // progress, update progress, fs progress, transfers (two slots), run, stress.
+        const SCRIPT_BUTTONS_SLOT_COUNT: u16 = 9;
         const SCRIPT_BUTTONS_VIRTUAL_HEIGHT: u16 = SCRIPT_BUTTONS_SLOT_COUNT * SCRIPT_BUTTONS_ROW_HEIGHT;
+        const CATEGORY_HEIGHT: u16 = 12; // 4 framed buttons, 3 rows each
 
         let left_side_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(2), // title: exactly 2 lines
-                Constraint::Fill(1),  // button viewport: all remaining space
+                Constraint::Length(2),               // title
+                Constraint::Length(CATEGORY_HEIGHT), // compact framed category buttons
+                Constraint::Fill(1),                 // action widgets
             ])
             .split(left_half);
 
@@ -643,7 +676,22 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
 
         (&para).render(left_side_chunks[0], f.buffer_mut());
 
-        let buttons_area = left_side_chunks[1];
+        // Compact framed category buttons, tightly stacked.
+        let cat_rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Length(3),
+            ])
+            .split(left_side_chunks[1]);
+        f.render_widget(&self.tuneup_btn, cat_rows[0].shrink_symmetric(1, 0));
+        f.render_widget(&self.informational_btn, cat_rows[1].shrink_symmetric(1, 0));
+        f.render_widget(&self.user_scripts_btn, cat_rows[2].shrink_symmetric(1, 0));
+        f.render_widget(&self.stress_tests_btn, cat_rows[3].shrink_symmetric(1, 0));
+
+        let buttons_area = left_side_chunks[2];
         let needs_scroll = buttons_area.height < SCRIPT_BUTTONS_VIRTUAL_HEIGHT;
 
         // Only allocate a scrollbar column when content overflows the viewport
@@ -664,7 +712,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         self.script_buttons_scroll_offset.replace(scroll_offset);
         self.script_buttons_viewport.replace(Some(viewport_rect));
 
-        // Build slot rects: each of 11 slots has virtual height SCRIPT_BUTTONS_ROW_HEIGHT
+        // Build slot rects: each slot has virtual height SCRIPT_BUTTONS_ROW_HEIGHT
         let mut slot_rects: Vec<Rect> = Vec::with_capacity(SCRIPT_BUTTONS_SLOT_COUNT as usize);
         if needs_scroll {
             for i in 0..SCRIPT_BUTTONS_SLOT_COUNT {
@@ -698,34 +746,28 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
             }
         }
 
-        let layout = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(25),  // Checklist 
-                Constraint::Percentage(75),  // Log Messages
-            ])
-            .split(right_half);
+        let job_builder_collapsed = *self.job_builder_collapsed.borrow();
+        let (checklist_area, log_area, jb_toggle_area) = if job_builder_collapsed {
+            let cols = Layout::horizontal([Constraint::Length(5), Constraint::Fill(1)]).split(right_half);
+            (cols[0], cols[1], cols[0])
+        } else {
+            let cols = Layout::horizontal([Constraint::Percentage(28), Constraint::Percentage(72)]).split(right_half);
+            // The title row of the checklist toggles the collapse.
+            let title = Rect { x: cols[0].x, y: cols[0].y, width: cols[0].width, height: 1 };
+            (cols[0], cols[1], title)
+        };
+        self.job_builder_toggle_area.replace(Some(jb_toggle_area));
 
         // Shrink helper: only shrink when rect height >= 3 so we don't give widgets height < 3
         let shrink_slot = |r: Rect, px: u16, py: u16| {
             if r.height >= 3 { r.shrink(px, py) } else { r }
         };
 
-        // Render main buttons (only when slot has non-zero height)
+        // Render action widgets (only when slot has non-zero height)
         if slot_rects[0].height > 0 {
-            f.render_widget(&self.tuneup_btn, shrink_slot(slot_rects[0], 2, 1));
-        }
-        if slot_rects[1].height > 0 {
-            f.render_widget(&self.informational_btn, shrink_slot(slot_rects[1], 2, 1));
-        }
-        if slot_rects[2].height > 0 {
-            f.render_widget(&self.user_scripts_btn, shrink_slot(slot_rects[2], 2, 1));
-        }
-        if slot_rects[3].height > 0 {
-            f.render_widget(&self.stress_tests_btn, shrink_slot(slot_rects[3], 2, 1));
-        }
-        if slot_rects[4].height > 0 {
-            f.render_widget(&self.service_number_field, shrink_slot(slot_rects[4], 2, 1));
+            // Cap the input to a compact 3-row box so a tall slot doesn't stretch it.
+            let sn_slot = Rect { height: slot_rects[0].height.min(3), ..slot_rects[0] };
+            f.render_widget(&self.service_number_field, sn_slot.shrink_symmetric(2, 0));
         }
 
         let current_script = self.current_script.borrow().clone();
@@ -739,11 +781,11 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
             .block(
                 Block::default()
                 .border_type(BorderType::Rounded)
-                .style(Style::default().fg(CATPPUCCIN.sky))
+                .style(Style::default().fg(THEME.accent))
             );
 
-        if slot_rects[5].height > 0 {
-            f.render_widget(script_textarea, shrink_slot(slot_rects[5], 4, 1));
+        if slot_rects[1].height > 0 {
+            f.render_widget(script_textarea, shrink_slot(slot_rects[1], 4, 1));
         }
 
         let mut progress_mut = self.progress.borrow_mut();
@@ -751,11 +793,11 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         if let Some(progress) = *progress_mut {
             let gauge = Gauge::default()
                 .block(Block::bordered().title(format!("{script_name} Progress")))
-                .gauge_style(Style::new().fg(CATPPUCCIN.pink).bg(CATPPUCCIN.base))
+                .gauge_style(Style::new().fg(THEME.accent).bg(THEME.surface))
                 .ratio(progress.0 as f64 / progress.1 as f64);
 
-            if slot_rects[6].height > 0 {
-                f.render_widget(&gauge, shrink_slot(slot_rects[6], 2, 1));
+            if slot_rects[2].height > 0 {
+                f.render_widget(&gauge, shrink_slot(slot_rects[2], 2, 1));
             }
 
             if progress.0 == progress.1 {
@@ -771,11 +813,11 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
 
             let gauge = Gauge::default()
                 .block(Block::bordered().title(title))
-                .gauge_style(Style::new().fg(CATPPUCCIN.pink).bg(CATPPUCCIN.base))
+                .gauge_style(Style::new().fg(THEME.accent).bg(THEME.surface))
                 .ratio(update_progress as f64 / 100.0);
 
-            if slot_rects[7].height > 0 {
-                f.render_widget(&gauge, shrink_slot(slot_rects[7], 2, 1));
+            if slot_rects[3].height > 0 {
+                f.render_widget(&gauge, shrink_slot(slot_rects[3], 2, 1));
             }
 
             if update_progress == 100 {
@@ -794,21 +836,21 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
 
                 let gauge = Gauge::default()
                     .block(Block::bordered().title(format!("{script_name} Progress")))
-                    .gauge_style(Style::new().fg(CATPPUCCIN.pink).bg(CATPPUCCIN.base))
+                    .gauge_style(Style::new().fg(THEME.accent).bg(THEME.surface))
                     .ratio(ratio as f64);
 
-                if slot_rects[8].height > 0 {
-                    f.render_widget(&gauge, shrink_slot(slot_rects[8], 2, 1));
+                if slot_rects[4].height > 0 {
+                    f.render_widget(&gauge, shrink_slot(slot_rects[4], 2, 1));
                 }
             }
         }
 
-        if slot_rects[9].height > 0 {
+        if slot_rects[5].height > 0 {
             if self.loading {
                 let throbber = crate::terminal_mode::widgets::throbber_widgets_tui::Throbber::default()
                     .label("Scanning Directories..")
                     .throbber_set(crate::terminal_mode::widgets::throbber_widgets_tui::VERTICAL_BLOCK);
-                f.render_widget(throbber, shrink_slot(slot_rects[9], 0, 1));
+                f.render_widget(throbber, shrink_slot(slot_rects[5], 0, 1));
             } else {
                 let active_processes = self.active_robocopy_processes.borrow();
                 if !active_processes.is_empty() {
@@ -847,22 +889,23 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                         .borders(Borders::ALL)
                         .border_type(BorderType::Rounded)
                         .title(format!(" Active Transfers ({}) ", transfer_count))
-                        .border_style(Style::new().fg(CATPPUCCIN.sky));
+                        .title_style(THEME.title())
+                        .border_style(Style::new().fg(THEME.tertiary));
 
                     let transfer_list = Paragraph::new(transfer_lines)
                         .block(transfer_block)
                         .wrap(Wrap { trim: false });
 
-                    let combined_height = slot_rects[9].height.saturating_add(slot_rects[10].height);
-                    let combined_area = if slot_rects[10].height > 0 && combined_height >= 2 {
+                    let combined_height = slot_rects[5].height.saturating_add(slot_rects[6].height);
+                    let combined_area = if slot_rects[6].height > 0 && combined_height >= 2 {
                         Rect::new(
-                            slot_rects[9].x,
-                            slot_rects[9].y,
-                            slot_rects[9].width,
+                            slot_rects[5].x,
+                            slot_rects[5].y,
+                            slot_rects[5].width,
                             combined_height,
                         )
                     } else {
-                        slot_rects[9]
+                        slot_rects[5]
                     };
                     f.render_widget(transfer_list, shrink_slot(combined_area, 0, 1));
                 }
@@ -870,15 +913,15 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         }
 
         self.run_btn.set_disabled(self.run_button_should_be_disabled());
-        if slot_rects[11].height > 0 {
-            f.render_widget(&self.run_btn, shrink_slot(slot_rects[11], 4, 1));
+        if slot_rects[7].height > 0 {
+            f.render_widget(&self.run_btn, shrink_slot(slot_rects[7], 4, 1));
         }
 
         // Quick single-stressor cycle button kept for live throughput preview;
-        // the new category-style Stress Tests button at slot 3 is the catalog path.
-        if slot_rects[12].height > 0 {
+        // the Stress Tests category button opens the catalog popup.
+        if slot_rects[8].height > 0 {
             self.stress_test_btn.set_disabled(self.stress_run.borrow().is_some());
-            f.render_widget(&self.stress_test_btn, shrink_slot(slot_rects[12], 4, 1));
+            f.render_widget(&self.stress_test_btn, shrink_slot(slot_rects[8], 4, 1));
         }
 
         // Script buttons column scrollbar — only when content overflows
@@ -895,28 +938,34 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         }
 
         // Render log section
-        self.draw_log_section::<B>(f, layout[1]);
+        self.draw_log_section::<B>(f, log_area);
 
-        // Render Checklist
-        self.draw_checklist::<B>(f, layout[0]);
-        
-        // Add animated border effects to the sections
+        // Render the Job Builder (collapsed spine or full checklist)
+        if job_builder_collapsed {
+            self.draw_job_builder_spine(f, checklist_area);
+        } else {
+            self.draw_checklist::<B>(f, checklist_area);
+        }
+
+        // Add animated border effects to the sections. Reset on collapse toggle
+        // (handled in the mouse handler) so the borders track the new areas.
         {
             let mut effects_init = self.effects_init.borrow_mut();
             let mut effect_stage = self.effect_stage.borrow_mut();
-            
+
             if !*effects_init {
-                // Initialize border effects for the log section (Run Report)
-                let log_effect = animated_border(CATPPUCCIN.blue, layout[1], 20.0);
+                // Run Report panel border: pink.
+                let log_effect = animated_border(THEME.accent, log_area, 20.0);
                 effect_stage.add_effect(log_effect);
-                
-                // Initialize border effect for checklist (Job Builder)
-                let checklist_effect = animated_border(CATPPUCCIN.lavender, layout[0], 18.0);
+
+                // Job Builder panel border: mauve when open, pink spine when collapsed.
+                let cl_color = if job_builder_collapsed { THEME.accent } else { THEME.tertiary };
+                let checklist_effect = animated_border(cl_color, checklist_area, 18.0);
                 effect_stage.add_effect(checklist_effect);
-                
+
                 *effects_init = true;
             }
-            
+
             // Process effects
             let fx_duration = tachyonfx::Duration::from_millis(16);
             effect_stage.process_effects(fx_duration, f.buffer_mut(), area);
@@ -940,11 +989,24 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
 
         self.service_number_field.handle_mouse_event(&mouse_event);
 
+        // Job Builder collapse toggle — consume the click and re-anchor effects.
+        if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+            if let Some(toggle) = *self.job_builder_toggle_area.borrow() {
+                if toggle.contains(mouse_position) {
+                    let collapsed = *self.job_builder_collapsed.borrow();
+                    self.job_builder_collapsed.replace(!collapsed);
+                    *self.effect_stage.borrow_mut() = crate::terminal_mode::fx::EffectStage::default();
+                    *self.effects_init.borrow_mut() = false;
+                    return;
+                }
+            }
+        }
+
         match mouse_event.kind {
             MouseEventKind::ScrollDown => {
                 if let Some(viewport) = *self.script_buttons_viewport.borrow() {
                     if viewport.contains(mouse_position) {
-                        const SCRIPT_BUTTONS_VIRTUAL_HEIGHT: u16 = 13 * 3;
+                        const SCRIPT_BUTTONS_VIRTUAL_HEIGHT: u16 = 9 * 3;
                         let max_offset = SCRIPT_BUTTONS_VIRTUAL_HEIGHT.saturating_sub(viewport.height);
                         let mut offset = *self.script_buttons_scroll_offset.borrow();
                         offset = (offset + 1).min(max_offset);

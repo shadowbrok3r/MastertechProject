@@ -1,5 +1,5 @@
 use ratatui::{buffer::Buffer, crossterm::event::{KeyCode, KeyModifiers}, layout::{Position, Rect}, style::{Color, Style, Stylize}, text::Line, widgets::{Block, BorderType, Borders, Widget, WidgetRef}};
-use crate::terminal_mode::{events::action_handler::{get_event_sender, WidgetEvent, WidgetId}, styling::{CATPPUCCIN, CATPPUCCINTHEME, APP_BACKGROUND}};
+use crate::terminal_mode::{events::action_handler::{get_event_sender, WidgetEvent, WidgetId}, styling::{CATPPUCCIN, CATPPUCCINTHEME, APP_BACKGROUND, THEME}};
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use super::{button::{ButtonState, Theme}, ButtonType};
 use super::tui_textarea::{CursorMove, TextArea};
@@ -80,7 +80,7 @@ impl <'a> InputField <'a>{
         let mut input = self.input.borrow_mut();
         match *self.state.borrow() {
             ButtonState::Active | ButtonState::Selecting => {
-                input.set_cursor_style(Style::default().fg(Color::Cyan).not_hidden())
+                input.set_cursor_style(Style::default().fg(THEME.tertiary).not_hidden())
             },
             _ => input.set_cursor_style(Style::default().hidden())
         }
@@ -257,12 +257,12 @@ impl <'a> ButtonType <'a> for InputField <'a> {
     fn colors(&self) -> (Color, Color, Color, Color) {
         let t = self.theme;
         match *self.state.borrow() {
-            ButtonState::Normal => (CATPPUCCIN.lavender, t.text, t.shadow, t.highlight),
-            ButtonState::Selected => (CATPPUCCIN.blue, CATPPUCCIN.text, CATPPUCCIN.sapphire, CATPPUCCIN.red),
-            ButtonState::Active => (CATPPUCCIN.green, CATPPUCCIN.teal, CATPPUCCIN.red, CATPPUCCIN.blue),
-            ButtonState::Hovered => (CATPPUCCIN.lavender, CATPPUCCIN.sapphire, CATPPUCCIN.red, CATPPUCCIN.maroon),
-            ButtonState::AltClicked => (CATPPUCCIN.maroon, CATPPUCCIN.maroon, CATPPUCCIN.maroon, CATPPUCCIN.maroon),
-            ButtonState::Selecting => (CATPPUCCIN.sky, CATPPUCCIN.teal, CATPPUCCIN.sapphire, CATPPUCCIN.blue),
+            ButtonState::Normal => (t.background, THEME.text_muted, t.shadow, THEME.border_idle()),
+            ButtonState::Selected => (t.background, THEME.text, t.shadow, THEME.tertiary),
+            ButtonState::Active => (t.background, THEME.text, t.shadow, THEME.accent),
+            ButtonState::Hovered => (t.background, THEME.text, t.shadow, THEME.tertiary),
+            ButtonState::AltClicked => (t.background, THEME.text_muted, t.shadow, THEME.border_idle()),
+            ButtonState::Selecting => (t.background, THEME.text, t.shadow, THEME.accent),
         }
     }
 

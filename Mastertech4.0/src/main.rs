@@ -197,6 +197,51 @@ fn file_logger() -> Box<dyn log::Log + 'static> {
     ))
 }
 
+fn start_tui_logger_event_pump() {
+    use std::sync::Once;
+    static START: Once = Once::new();
+    START.call_once(|| {
+        std::thread::Builder::new()
+            .name("tui-logger::move_events".into())
+            .spawn(|| {
+                let duration = std::time::Duration::from_millis(10);
+                loop {
+                    std::thread::park_timeout(duration);
+                    tui_logger::move_events();
+                }
+            })
+            .expect("tui-logger mover thread");
+    });
+    tui_logger::set_default_level(log::LevelFilter::Info);
+}
+
+fn tui_drain_logger() -> Box<dyn log::Log + 'static> {
+    let drain = tui_logger::Drain::new();
+    Box::new(
+        env_logger_with_dependency_filters()
+            .format(move |_buf, record| Ok(drain.log(record)))
+            .build(),
+    )
+}
+
+fn init_terminal_mode_logging(log_to_file: bool) {
+    start_tui_logger_event_pump();
+    if log_to_file {
+        attach_parent_console();
+        multi_log::MultiLogger::init(
+            vec![tui_drain_logger(), stderr_logger(), file_logger()],
+            log::Level::Info,
+        )
+        .expect("Error initializing multi_logger");
+    } else {
+        let drain = tui_logger::Drain::new();
+        env_logger_with_dependency_filters()
+            .format(move |_buf, record| Ok(drain.log(record)))
+            .try_init()
+            .expect("Error initializing terminal mode logger");
+    }
+}
+
 async fn run_gui(log_to_file: bool) -> eframe::Result<()> {
     let egui_logger = Box::new(
         displays::ui_tools::egui_logger::builder()
@@ -204,14 +249,9 @@ async fn run_gui(log_to_file: bool) -> eframe::Result<()> {
             .add_blacklist("evtx::evtx_parser")
             .build(),
     );
-    let drain = tui_logger::Drain::new();
-    let tui_log = Box::new(
-        env_logger_with_dependency_filters()
-            .format(move |_buf, record| Ok(drain.log(record)))
-            .build(),
-    );
+    start_tui_logger_event_pump();
     let mut loggers: Vec<Box<dyn log::Log + 'static>> =
-        vec![egui_logger, tui_log];
+        vec![egui_logger, tui_drain_logger()];
     if log_to_file {
         attach_parent_console();
         loggers.push(stderr_logger());
@@ -355,25 +395,7 @@ async fn main() -> eframe::Result<()> {
     }
 
     if matches.get_flag("term") {
-        let drain = tui_logger::Drain::new();
-        if log_to_file {
-            attach_parent_console();
-            let tui_log = Box::new(
-                env_logger_with_dependency_filters()
-                    .format(move |_buf, record| Ok(drain.log(record)))
-                    .build(),
-            );
-            eprintln!("Mastertech logging to {}", output_log_path().display());
-            multi_log::MultiLogger::init(
-                vec![tui_log, stderr_logger(), file_logger()],
-                log::Level::Info,
-            )
-            .expect("Error initializing multi_logger");
-        } else {
-            let _ = env_logger_with_dependency_filters()
-                .format(move |_buf, record| Ok(drain.log(record)))
-                .try_init();
-        }
+        init_terminal_mode_logging(log_to_file);
         let res = terminal_mode::run_terminal_mode().await;
         log::info!("TERM MODE: {res:?}");
     } else {

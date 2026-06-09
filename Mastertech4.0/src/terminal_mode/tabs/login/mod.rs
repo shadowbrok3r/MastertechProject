@@ -1,4 +1,4 @@
-use crate::{terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::CATPPUCCINTHEME, systems::{communication_system::{DataMessage, Message}, notification_system::{Notification, NotificationType}}, widgets::{button::{Button, ButtonState}, input_field::InputField, ButtonType}}, utilities::save_encrypted_user_data};
+use crate::{terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, systems::{communication_system::{DataMessage, Message}, notification_system::{Notification, NotificationType}}, widgets::{button::{Button, ButtonState, Theme}, input_field::InputField, ButtonType}}, utilities::save_encrypted_user_data};
 use displays::pages::login_page::{Login, HASH};
 use std::{cell::RefCell, sync::{Arc, Mutex}};
 use database::{schema::User, Database, DATABASE};
@@ -24,7 +24,7 @@ impl <'a> LoginTab <'a> {
         let password_field = InputField::new("Password", WidgetId("Password".to_string()));
         password_field.input.borrow_mut().set_mask_char('*');
         Self {
-            login_btn: Button::new("Login",WidgetId("LoginSubmit".to_owned())).theme(CATPPUCCINTHEME),
+            login_btn: Button::new("Login",WidgetId("LoginSubmit".to_owned())).theme(Theme::ACCENT),
             username_field: InputField::new("Username", WidgetId("Username".to_string())),
             password_field,
             active_field: RefCell::new(None),

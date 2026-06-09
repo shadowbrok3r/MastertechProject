@@ -1,8 +1,9 @@
 use crate::terminal_mode::context::TerminalContext;
 use crate::terminal_mode::fx::{EffectStage, UniqueEffectId};
 use crate::terminal_mode::events::action_handler::WidgetId;
-use crate::terminal_mode::styling::CATPPUCCINTHEME;
-use crate::terminal_mode::widgets::button::Button;
+use crate::terminal_mode::widgets::button::{Button, Theme};
+use crate::terminal_mode::widgets::dropdown_menu::DropdownMenu;
+use crate::terminal_mode::widgets::menu_item::MenuItem;
 use crate::terminal_mode::modals::TaskModal;
 use std::{cell::RefCell, sync::{Arc, Mutex}};
 use database::schema::{LiveTaskPayload, Priority, RecordIdExt, Status, User};
@@ -24,6 +25,27 @@ pub enum SortColumn {
     Assignee,
     Priority,
     Description,
+}
+
+/// Which set of tasks the list shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TaskFilter {
+    #[default]
+    My,
+    Store,
+    Completed,
+}
+
+impl TaskFilter {
+    pub fn label(&self) -> &'static str {
+        match self {
+            TaskFilter::My => "My Tasks",
+            TaskFilter::Store => "Store Tasks",
+            TaskFilter::Completed => "Completed",
+        }
+    }
+
+    pub const ALL: [TaskFilter; 3] = [TaskFilter::My, TaskFilter::Store, TaskFilter::Completed];
 }
 
 /// Sort direction
@@ -70,8 +92,8 @@ pub struct TasksTab<'a> {
     pub current_user: User,
     /// Table area for mouse hit-testing
     pub table_area: RefCell<Rect>,
-    /// Row areas for mouse click detection
-    pub row_areas: RefCell<Vec<Rect>>,
+    /// Visible row screen rects paired with their item index (for hit-testing).
+    pub row_areas: RefCell<Vec<(usize, Rect)>>,
     /// Header area for click detection
     pub header_area: RefCell<Rect>,
     /// Current edit mode
@@ -94,17 +116,27 @@ pub struct TasksTab<'a> {
     pub sort_due_btn: Button<'a>,
     pub sort_status_btn: Button<'a>,
     pub sort_priority_btn: Button<'a>,
+    /// Current task filter (My / Store / Completed).
+    pub filter: RefCell<TaskFilter>,
+    /// Set when the filter changes so `check_tasks` rebuilds the list.
+    pub filter_dirty: RefCell<bool>,
+    /// Trigger button that opens the filter dropdown.
+    pub filter_trigger: Button<'a>,
+    /// The filter dropdown overlay.
+    pub filter_dropdown: RefCell<DropdownMenu>,
 }
 
 impl<'a> TasksTab<'a> {
     pub fn new(_client: Client, ctx: Arc<Mutex<TerminalContext>>) -> Self {
         // Create sortable header buttons
         let sort_due_btn = Button::new("Due ▼", WidgetId("TasksSortDue".to_string()))
-            .theme(CATPPUCCINTHEME);
+            .theme(Theme::NEUTRAL);
         let sort_status_btn = Button::new("Status", WidgetId("TasksSortStatus".to_string()))
-            .theme(CATPPUCCINTHEME);
+            .theme(Theme::NEUTRAL);
         let sort_priority_btn = Button::new("Priority", WidgetId("TasksSortPriority".to_string()))
-            .theme(CATPPUCCINTHEME);
+            .theme(Theme::NEUTRAL);
+        let filter_trigger = Button::new(TaskFilter::My.label(), WidgetId("TasksFilter".to_string()))
+            .menu_trigger();
 
         Self {
             ctx,
@@ -129,7 +161,47 @@ impl<'a> TasksTab<'a> {
             sort_due_btn,
             sort_status_btn,
             sort_priority_btn,
+            filter: RefCell::new(TaskFilter::My),
+            filter_dirty: RefCell::new(false),
+            filter_trigger,
+            filter_dropdown: RefCell::new(DropdownMenu::new()),
         }
+    }
+
+    /// Build the dropdown rows for the filter, marking the active one.
+    pub fn filter_items(&self) -> Vec<MenuItem> {
+        let current = *self.filter.borrow();
+        TaskFilter::ALL
+            .iter()
+            .map(|f| MenuItem::new(f.label()).active(*f == current))
+            .collect()
+    }
+
+    /// Request a new filter; `check_tasks` applies it (label + list rebuild).
+    pub fn set_filter(&self, filter: TaskFilter) {
+        *self.filter.borrow_mut() = filter;
+        *self.filter_dirty.borrow_mut() = true;
+    }
+
+    /// Rebuild `items` from the context task list using the current filter.
+    fn rebuild_items(&mut self) {
+        let filter = *self.filter.borrow();
+        let me = self.current_user.get_id();
+        if let Ok(ctx) = self.ctx.lock() {
+            self.items.clear();
+            for task in ctx.tasks.iter() {
+                let keep = match filter {
+                    TaskFilter::My => task.assignee == me && !task.completed,
+                    TaskFilter::Store => !task.completed,
+                    TaskFilter::Completed => task.completed,
+                };
+                if keep {
+                    self.items.push(task.clone());
+                }
+            }
+        }
+        self.widths = Self::calculate_widths(&self.items, &self.store_users);
+        self.sort_items();
     }
     
     /// Update sort button labels based on current sort state
@@ -218,26 +290,30 @@ impl<'a> TasksTab<'a> {
     }
 
     pub fn check_tasks(&mut self) {
+        let mut needs_rebuild = false;
         if let Ok(mut ctx) = self.ctx.lock() {
             // Update store users from context
             if !ctx.store_users.is_empty() && self.store_users.is_empty() {
                 self.store_users = ctx.store_users.clone();
             }
-            
             if ctx.new_tasks {
                 ctx.new_tasks = false;
-                self.items.clear();
-                for task in ctx.tasks.iter() {
-                    if task.assignee == self.current_user.get_id() && !task.completed {
-                        self.items.push(task.clone());
-                    }
-                }
-        
-                self.widths = Self::calculate_widths(&self.items, &self.store_users);
+                needs_rebuild = true;
             }
             if !ctx.user.get_name().is_empty() {
                 self.current_user = ctx.user.clone();
             }
+        }
+
+        // A filter change (set via the dropdown) also forces a rebuild.
+        if *self.filter_dirty.borrow() {
+            *self.filter_dirty.borrow_mut() = false;
+            self.filter_trigger.set_label(self.filter.borrow().label().to_string());
+            needs_rebuild = true;
+        }
+
+        if needs_rebuild {
+            self.rebuild_items();
         }
     }
     

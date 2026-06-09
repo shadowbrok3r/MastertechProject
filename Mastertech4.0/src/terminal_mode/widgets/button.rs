@@ -1,9 +1,9 @@
 use crossbeam::channel::Sender;
 use ratatui::{
-    buffer::Buffer, crossterm::event::{MouseButton, MouseEvent, MouseEventKind}, layout::{Position, Rect}, style::{Color, Style}, text::Line, widgets::{Widget, WidgetRef}
+    buffer::Buffer, crossterm::event::{MouseButton, MouseEvent, MouseEventKind}, layout::{Position, Rect}, style::{Color, Modifier, Style}, text::Line, widgets::{Widget, WidgetRef}
 };
-use tachyonfx::{CellFilter, Effect};
-use crate::{filesystem::get_client_hash, terminal_mode::{events::action_handler::{get_event_sender, WidgetButton, WidgetEvent, WidgetId}, fx::{effect::{outline_selected_cells, UniqueEffectId}, EffectStage}, styling::{TURQUOISE, APP_BACKGROUND}}};
+use tachyonfx::Effect;
+use crate::{filesystem::get_client_hash, terminal_mode::{events::action_handler::{get_event_sender, WidgetButton, WidgetEvent, WidgetId}, fx::{effect::{animated_border, UniqueEffectId}, EffectStage}, styling::{TURQUOISE, APP_BACKGROUND, THEME}}};
 use std::{cell::RefCell, fmt::{Debug, Display}};
 use super::{ButtonType, SHORTCUT_SET};
 use unicode_width::{UnicodeWidthStr, UnicodeWidthChar};
@@ -41,6 +41,12 @@ pub struct Button<'a> {
     effects_enabled: bool,
     /// When true, button is greyed out and does not respond to clicks
     disabled: RefCell<bool>,
+    /// Visual variant: Compact / Standard / MenuTrigger
+    variant: ButtonVariant,
+    /// MenuTrigger only: whether the associated dropdown is currently open
+    menu_open: RefCell<bool>,
+    /// When true, the button shows its effect persistently (not just on hover).
+    highlighted: RefCell<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -53,6 +59,40 @@ pub enum ButtonState {
     AltClicked,
     /// Used when user is dragging to select text in an InputField
     Selecting,
+}
+
+/// Visual style of a button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ButtonVariant {
+    /// Tight rounded-box frame: mauve border idle, pink on hover, no fill. No tachyonfx.
+    Compact,
+    /// Rounded box border with centered label. The original look.
+    #[default]
+    Standard,
+    /// Flat label with caret and a pink underline when open/active. Top nav.
+    MenuTrigger,
+}
+
+/// Truncates `s` to `max_width` display columns, appending ".." when clipped.
+pub(crate) fn truncate_to_width(s: &str, max_width: usize) -> String {
+    if s.width() <= max_width {
+        return s.to_string();
+    }
+    if max_width <= 2 {
+        return s.chars().take(max_width).collect();
+    }
+    let mut out = String::new();
+    let mut w = 0;
+    for ch in s.chars() {
+        let cw = ch.width().unwrap_or(1);
+        if w + cw + 2 > max_width {
+            break;
+        }
+        out.push(ch);
+        w += cw;
+    }
+    out.push_str("..");
+    out
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -79,6 +119,166 @@ impl<'a> Button<'a> {
             is_selected_tab: RefCell::new(false),
             effects_enabled: true,
             disabled: RefCell::new(false),
+            variant: ButtonVariant::Standard,
+            menu_open: RefCell::new(false),
+            highlighted: RefCell::new(false),
+        }
+    }
+
+    /// Keep this button's effect on persistently (e.g., to flag loaded data),
+    /// independent of hover. Re-arms the effect so it tracks the current area.
+    pub fn set_highlight(&self, on: bool) {
+        *self.highlighted.borrow_mut() = on;
+        if on {
+            *self.init.borrow_mut() = true;
+        }
+    }
+
+    /// Set the visual variant (Compact / Standard / MenuTrigger).
+    pub fn variant(mut self, variant: ButtonVariant) -> Self {
+        self.variant = variant;
+        self
+    }
+
+    /// Shorthand for `.variant(ButtonVariant::Compact)`.
+    pub fn compact(mut self) -> Self {
+        self.variant = ButtonVariant::Compact;
+        self
+    }
+
+    /// Shorthand for `.variant(ButtonVariant::MenuTrigger)`.
+    pub fn menu_trigger(mut self) -> Self {
+        self.variant = ButtonVariant::MenuTrigger;
+        self
+    }
+
+    /// MenuTrigger: set whether the dropdown is currently open.
+    pub fn set_menu_open(&self, open: bool) {
+        *self.menu_open.borrow_mut() = open;
+    }
+
+    /// MenuTrigger: whether the dropdown is currently open.
+    pub fn is_menu_open(&self) -> bool {
+        *self.menu_open.borrow()
+    }
+
+    /// Renders the Compact variant: a tight rounded-box frame, no background fill.
+    fn render_compact(&self, area: Rect, buf: &mut Buffer) {
+        self.set_area(area);
+        if area.width < 2 || area.height == 0 {
+            return;
+        }
+        let disabled = *self.disabled.borrow();
+        let hovered = matches!(
+            *self.state.borrow(),
+            ButtonState::Hovered | ButtonState::Selected | ButtonState::Active
+        );
+        let border = if disabled {
+            Color::DarkGray
+        } else if hovered {
+            THEME.accent
+        } else {
+            THEME.tertiary
+        };
+        let fg = if disabled {
+            Color::DarkGray
+        } else if hovered {
+            THEME.accent
+        } else {
+            THEME.text
+        };
+        let border_style = Style::default().fg(border).bg(APP_BACKGROUND);
+        let inner = area.width.saturating_sub(2) as usize;
+        let label = truncate_to_width(&self.title, inner);
+        let lw = label.width() as u16;
+        let lx = area.x + 1 + (area.width.saturating_sub(2).saturating_sub(lw)) / 2;
+
+        if area.height >= 3 {
+            let w = area.width.saturating_sub(2) as usize;
+            let top = format!("{}{}{}", SHORTCUT_SET.top_left, SHORTCUT_SET.horizontal_top.repeat(w), SHORTCUT_SET.top_right);
+            let bot = format!("{}{}{}", SHORTCUT_SET.bottom_left, SHORTCUT_SET.horizontal_bottom.repeat(w), SHORTCUT_SET.bottom_right);
+            buf.set_string(area.x, area.y, top, border_style);
+            buf.set_string(area.x, area.y + area.height - 1, bot, border_style);
+            for y in (area.y + 1)..(area.y + area.height - 1) {
+                buf.set_string(area.x, y, SHORTCUT_SET.vertical_left, border_style);
+                buf.set_string(area.x + area.width - 1, y, SHORTCUT_SET.vertical_right, border_style);
+            }
+            buf.set_string(lx, area.y + area.height / 2, &label, Style::default().fg(fg).bg(APP_BACKGROUND));
+        } else {
+            let y = area.y;
+            buf.set_string(area.x, y, SHORTCUT_SET.vertical_left, border_style);
+            buf.set_string(area.x + area.width - 1, y, SHORTCUT_SET.vertical_right, border_style);
+            buf.set_string(lx, y, &label, Style::default().fg(fg).bg(APP_BACKGROUND));
+        }
+
+        // Animated pink border glow on hover.
+        if hovered && !disabled && self.effects_enabled && area.height >= 3 {
+            let mut init = self.init.borrow_mut();
+            if *init {
+                *init = false;
+                let fx = animated_border(THEME.accent, area, 25.0);
+                self.effect_stage.borrow_mut().add_effect(fx);
+            }
+            drop(init);
+            self.effect_stage
+                .borrow_mut()
+                .process_effects(tachyonfx::Duration::from_millis(16), buf, area);
+        }
+    }
+
+    /// Renders the MenuTrigger variant: flat label + caret, pink underline when open/active.
+    fn render_menu_trigger(&self, area: Rect, buf: &mut Buffer) {
+        self.set_area(area);
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let disabled = *self.disabled.borrow();
+        let open = *self.menu_open.borrow() || self.is_selected();
+        let hovered = matches!(
+            *self.state.borrow(),
+            ButtonState::Hovered | ButtonState::Selected | ButtonState::Active
+        );
+        let active = open || hovered;
+        let fg = if disabled {
+            Color::DarkGray
+        } else if active {
+            THEME.accent
+        } else {
+            THEME.text
+        };
+        let bg = APP_BACKGROUND;
+        buf.set_style(area, Style::default().fg(fg).bg(bg));
+
+        let label = truncate_to_width(
+            &format!("{} \u{25be}", self.title),
+            area.width.saturating_sub(1) as usize,
+        );
+        let lw = label.width() as u16;
+        let lx = area.x + area.width.saturating_sub(lw) / 2;
+        let ly = area.y + area.height.saturating_sub(1) / 2;
+        let mut label_style = Style::default().fg(fg).bg(bg);
+        if active {
+            label_style = label_style.add_modifier(Modifier::BOLD);
+        }
+        buf.set_string(lx, ly, &label, label_style);
+
+        if area.height >= 2 {
+            let underline_color = if disabled {
+                Color::DarkGray
+            } else if open {
+                THEME.accent
+            } else if hovered {
+                THEME.tertiary
+            } else {
+                THEME.border_idle()
+            };
+            let underline = SHORTCUT_SET.horizontal_top.repeat(area.width as usize);
+            buf.set_string(
+                area.x,
+                area.y + area.height - 1,
+                underline,
+                Style::default().fg(underline_color).bg(bg),
+            );
         }
     }
 
@@ -132,13 +332,18 @@ impl<'a> Button<'a> {
         if *self.disabled.borrow() || !self.effects_enabled {
             return false;
         }
-        
+        // Compact / MenuTrigger variants stay tachyonfx-free.
+        if !matches!(self.variant, ButtonVariant::Standard) {
+            return false;
+        }
+
         if self.is_tab_button {
             // Tab buttons only show effects when selected
             *self.is_selected_tab.borrow()
         } else {
-            // Regular buttons show effects in Active or Hovered state
-            matches!(*self.state.borrow(), ButtonState::Active | ButtonState::Hovered | ButtonState::Selected)
+            // Standard buttons glow on hover, click, or when explicitly highlighted.
+            *self.highlighted.borrow()
+                || matches!(*self.state.borrow(), ButtonState::Active | ButtonState::Hovered | ButtonState::Selected)
         }
     }
 
@@ -235,10 +440,8 @@ impl <'a> ButtonType<'a> for Button<'a> {
                 }
             }
             MouseEventKind::Moved => {
-                // If you want hover behavior, do it here
                 if area.contains(mouse_position) {
-                    // self.event_sender.try_send(WidgetEvent::Hover { widget_id: self.id });
-                    self.set_state(ButtonState::Selected);
+                    self.set_state(ButtonState::Hovered);
                 } else {
                     self.set_state(ButtonState::Normal);
                 }
@@ -250,6 +453,18 @@ impl <'a> ButtonType<'a> for Button<'a> {
 
 impl <'a> WidgetRef for Button<'a> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
+        match self.variant {
+            ButtonVariant::Compact => {
+                self.render_compact(area, buf);
+                return;
+            }
+            ButtonVariant::MenuTrigger => {
+                self.render_menu_trigger(area, buf);
+                return;
+            }
+            ButtonVariant::Standard => {}
+        }
+
         let (background, text, shadow, highlight) = self.colors();
 
         // When height < 3 we cannot draw full borders + label; draw a minimal one-line representation
@@ -414,13 +629,8 @@ impl <'a> WidgetRef for Button<'a> {
                     let effect = selected_tab_effect(&mut effect_stage, background, area);
                     effect_stage.add_effect(effect);
                 } else {
-                    // For regular buttons, use the outline effect
-                    let effect1 = outline_selected_cells(
-                        &mut effect_stage, 
-                        area.as_size(),
-                        background,
-                        CellFilter::FgColor(Color::White)
-                    );
+                    // Pink animated border on hover/click — independent of cell colors.
+                    let effect1 = animated_border(THEME.accent, area, 25.0);
                     effect_stage.add_effect(effect1);
                 }
             }
