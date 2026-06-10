@@ -18,22 +18,22 @@ use uefi::proto::network::snp::SimpleNetwork;
 use uefi::proto::pci::root_bridge::PciRootBridgeIo;
 use uefi::table::cfg::ConfigTableEntry;
 
-/// Mastertech "OLED" palette, mapped to the 16 EFI text-console colors.
-///
-/// The UEFI SimpleTextOutput backend cannot render true RGB, so the color
-/// scheme's indigo/lavender/magenta are approximated by the nearest ANSI
-/// colors. The one value that maps exactly is the most important for the OLED
-/// look: a pure-black `#000000` background == EFI `Black`.
+mod styling;
+
+/// Semantic palette derived from the terminal-mode theme (see `styling`).
+/// RGB values are quantized to the nearest EFI text color by ratatui-uefi.
 mod palette {
+    use crate::styling::{APP_BACKGROUND, CATPPUCCIN, THEME};
     use ratatui::style::Color;
-    pub const BG: Color = Color::Black; // panel_fill / window_fill #000000
-    pub const TEXT: Color = Color::White; // override_text_color ~#E8E8E8
-    pub const MUTED: Color = Color::Gray; // borders / section headers / footer
-    pub const LABEL: Color = Color::Cyan; // field labels
-    pub const ACCENT: Color = Color::LightMagenta; // purple/magenta identity
-    pub const GOOD: Color = Color::LightCyan; // present / yes / link up
-    pub const BAD: Color = Color::DarkGray; // absent / no
-    pub const ERR: Color = Color::LightRed; // error / link down
+    pub const BG: Color = APP_BACKGROUND; // near-black app background
+    pub const TEXT: Color = THEME.text; // catppuccin text
+    pub const MUTED: Color = CATPPUCCIN.overlay1; // section headers / footer
+    pub const LABEL: Color = CATPPUCCIN.sapphire; // field labels
+    pub const ACCENT: Color = THEME.accent; // deep pink identity
+    pub const BORDER: Color = THEME.border_idle(); // idle panel borders
+    pub const GOOD: Color = THEME.success; // present / yes / link up
+    pub const BAD: Color = CATPPUCCIN.overlay0; // absent / no
+    pub const ERR: Color = THEME.error; // error / link down
 }
 
 /// Default upload endpoint, baked from the workspace `.env` ORCHESTRATOR_URL at
@@ -1803,7 +1803,7 @@ fn base_style() -> Style {
 fn panel(title: &str) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(palette::MUTED).bg(palette::BG))
+        .border_style(Style::default().fg(palette::BORDER).bg(palette::BG))
         .title(Span::styled(
             format!(" {title} "),
             Style::default()
@@ -2301,7 +2301,8 @@ fn render(frame: &mut Frame, app: &App) {
         .highlight_style(
             Style::default()
                 .fg(palette::ACCENT)
-                .add_modifier(Modifier::BOLD),
+                .add_modifier(Modifier::BOLD)
+                .add_modifier(Modifier::REVERSED),
         )
         .divider(Span::styled("  ", Style::default().fg(palette::MUTED)));
     frame.render_widget(tabs, root[0]);

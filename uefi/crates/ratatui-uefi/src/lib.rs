@@ -32,9 +32,103 @@ fn to_uefi_color(color: ratatui::style::Color) -> Option<console::text::Color> {
         ratatui::style::Color::LightMagenta => Some(console::text::Color::LightMagenta),
         ratatui::style::Color::LightCyan => Some(console::text::Color::LightCyan),
         ratatui::style::Color::White => Some(console::text::Color::White),
-        ratatui::style::Color::Rgb(..)
-        | ratatui::style::Color::Indexed(_)
-        | ratatui::style::Color::Reset => None,
+        ratatui::style::Color::Rgb(r, g, b) => Some(quantize_rgb(r, g, b)),
+        ratatui::style::Color::Indexed(i) => {
+            let (r, g, b) = xterm_to_rgb(i);
+            Some(quantize_rgb(r, g, b))
+        }
+        ratatui::style::Color::Reset => None,
+    }
+}
+
+/// Nearest EFI text color for an RGB value, hue-first so pastel palettes
+/// (e.g. Catppuccin) keep their identity instead of collapsing to gray.
+fn quantize_rgb(r: u8, g: u8, b: u8) -> console::text::Color {
+    use console::text::Color as C;
+    let (r, g, b) = (r as f32, g as f32, b as f32);
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let sat = if max == 0.0 { 0.0 } else { (max - min) / max };
+
+    // Low saturation: gray ramp by brightness.
+    if sat < 0.25 {
+        return match max as u16 {
+            0..=63 => C::Black,
+            64..=143 => C::DarkGray,
+            144..=207 => C::LightGray,
+            _ => C::White,
+        };
+    }
+
+    // Hue in degrees [0, 360).
+    let delta = max - min;
+    let hue = if max == r {
+        60.0 * (((g - b) / delta).rem_euclid(6.0))
+    } else if max == g {
+        60.0 * ((b - r) / delta + 2.0)
+    } else {
+        60.0 * ((r - g) / delta + 4.0)
+    };
+
+    let bright = max > 170.0;
+    match hue as u16 {
+        0..=29 | 330..=360 => if bright { C::LightRed } else { C::Red },
+        30..=89 => if bright { C::Yellow } else { C::Brown },
+        90..=149 => if bright { C::LightGreen } else { C::Green },
+        150..=209 => if bright { C::LightCyan } else { C::Cyan },
+        210..=269 => if bright { C::LightBlue } else { C::Blue },
+        _ => if bright { C::LightMagenta } else { C::Magenta },
+    }
+}
+
+/// RGB for an xterm-256 palette index.
+fn xterm_to_rgb(i: u8) -> (u8, u8, u8) {
+    match i {
+        // Standard + bright ANSI colors.
+        0 => (0, 0, 0),
+        1 => (170, 0, 0),
+        2 => (0, 170, 0),
+        3 => (170, 85, 0),
+        4 => (0, 0, 170),
+        5 => (170, 0, 170),
+        6 => (0, 170, 170),
+        7 => (170, 170, 170),
+        8 => (85, 85, 85),
+        9 => (255, 85, 85),
+        10 => (85, 255, 85),
+        11 => (255, 255, 85),
+        12 => (85, 85, 255),
+        13 => (255, 85, 255),
+        14 => (85, 255, 255),
+        15 => (255, 255, 255),
+        // 6x6x6 color cube.
+        16..=231 => {
+            let i = i - 16;
+            let step = |v: u8| if v == 0 { 0 } else { 55 + v * 40 };
+            (step(i / 36), step((i / 6) % 6), step(i % 6))
+        }
+        // Grayscale ramp.
+        232..=255 => {
+            let v = 8 + (i - 232) * 10;
+            (v, v, v)
+        }
+    }
+}
+
+/// EFI text backgrounds only support the first 8 (dark) colors; clamp the
+/// bright variants down so set_color never gets an invalid attribute.
+fn clamp_bg(color: console::text::Color) -> console::text::Color {
+    use console::text::Color as C;
+    match color {
+        C::DarkGray => C::Black,
+        C::LightRed => C::Red,
+        C::LightGreen => C::Green,
+        C::Yellow => C::Brown,
+        C::LightBlue => C::Blue,
+        C::LightMagenta => C::Magenta,
+        C::LightCyan => C::Cyan,
+        C::White => C::LightGray,
+        other => other,
     }
 }
 
@@ -56,6 +150,7 @@ impl ratatui::backend::Backend for UefiOutputBackend {
                 // Swap foreground and background colors.
                 std::mem::swap(&mut fg, &mut bg);
             }
+            let bg = clamp_bg(bg);
 
             // Best-effort, per cell. Real firmware consoles often return a
             // warning/error for glyphs missing from their font (e.g. box

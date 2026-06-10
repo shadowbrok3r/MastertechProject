@@ -219,7 +219,10 @@ fn tui_drain_logger() -> Box<dyn log::Log + 'static> {
     let drain = tui_logger::Drain::new();
     Box::new(
         env_logger_with_dependency_filters()
-            .format(move |_buf, record| Ok(drain.log(record)))
+            .format(move |_buf, record| {
+                terminal_mode::data::log_capture::capture_record(record);
+                Ok(drain.log(record))
+            })
             .build(),
     )
 }
@@ -236,7 +239,10 @@ fn init_terminal_mode_logging(log_to_file: bool) {
     } else {
         let drain = tui_logger::Drain::new();
         env_logger_with_dependency_filters()
-            .format(move |_buf, record| Ok(drain.log(record)))
+            .format(move |_buf, record| {
+                terminal_mode::data::log_capture::capture_record(record);
+                Ok(drain.log(record))
+            })
             .try_init()
             .expect("Error initializing terminal mode logger");
     }

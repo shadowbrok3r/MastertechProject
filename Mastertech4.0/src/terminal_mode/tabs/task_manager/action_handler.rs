@@ -17,9 +17,9 @@ impl ActionHandler for SysinfoTab {
         match event {
             WidgetEvent::ButtonClick { widget_id, button: _, source: _} => {
                 match widget_id.0.as_str() {
-                    "RefreshSystemInfo" => { 
-                        let _ = self.stop_tx.send(()); 
-                        self.first_run = true;
+                    "RefreshSystemInfo" => {
+                        // Restart the poll task; next draw re-starts it.
+                        self.stop_polling();
                     }
                     _ => {}
                 }
