@@ -10,6 +10,7 @@ use chrono::Utc;
 use super::events::action_handler::{get_event_sender, ApiEvent, WidgetEvent};
 
 pub mod first_run;
+pub mod log_capture;
 
 
 #[derive(Debug, Clone)]

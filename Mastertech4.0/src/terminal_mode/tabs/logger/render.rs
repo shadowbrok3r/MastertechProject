@@ -53,8 +53,16 @@ impl <'a>HandleWidget<'a> for Logger {
         let mut _formatter: Option<Box<dyn LogFormatter>> = None;
         _formatter = Some(Box::new(MyLogFormatter {}));
 
+        // Flash copy confirmation in the title for a few seconds.
+        let unfiltered_title = match self.copied_feedback {
+            Some((at, lines)) if at.elapsed().as_secs() < 4 => {
+                format!("Unfiltered Logs — Copied {lines} lines to clipboard ✔")
+            }
+            _ => "Unfiltered Logs".to_string(),
+        };
+
         TuiLoggerWidget::default()
-            .block(Block::bordered().title("Unfiltered Logs").title_style(THEME.title()).border_style(Style::default().fg(THEME.tertiary)))
+            .block(Block::bordered().title(unfiltered_title).title_style(THEME.title()).border_style(Style::default().fg(THEME.tertiary)))
             .opt_formatter(_formatter)
             .output_separator('|')
             .output_timestamp(Some("%F %H:%M:%S%.3f".to_string()))
@@ -75,7 +83,7 @@ impl <'a>HandleWidget<'a> for Logger {
         if area.width > 120 {
             Text::from(vec![
                 "Q: Quit | Tab: Switch state | ↑/↓: Select target | f: Focus target | ←/→: Display level | +/-: Filter level".into(),
-                "Space: Toggle hidden targets | h: Hide target selector | PageUp/Down: Scroll | Esc: Cancel scroll".into(),
+                "c: Copy all logs | Space: Toggle hidden targets | h: Hide target selector | PageUp/Down: Scroll | Esc: Cancel scroll".into(),
             ])
             .style(CATPPUCCIN.subtext0)
             .centered()
@@ -85,6 +93,10 @@ impl <'a>HandleWidget<'a> for Logger {
 
     fn handle_key_event(&mut self, key_event: KeyEvent) -> bool {
         debug!(target: "Logger", "Handling UI event: {:?}", key_event);
+        if key_event.code == Key::Char('c') {
+            self.copy_all_logs();
+            return false;
+        }
         let mut states = self.states.borrow_mut();
         let Some(state) = states.get_mut(self.selected_tab) else {return false;};
 

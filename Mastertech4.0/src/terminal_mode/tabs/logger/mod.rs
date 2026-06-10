@@ -1,5 +1,6 @@
 use ratatui::prelude::*;
 use std::cell::RefCell;
+use std::time::Instant;
 use tui_logger::*;
 pub mod render;
 
@@ -9,6 +10,8 @@ pub struct Logger {
     tab_names: Vec<&'static str>,
     selected_tab: usize,
     progress_counter: Option<u16>,
+    /// Set when the backlog was copied, to flash feedback in the title.
+    copied_feedback: Option<(Instant, usize)>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -78,11 +81,23 @@ impl Logger {
             tab_names,
             selected_tab: 0,
             progress_counter: None,
+            copied_feedback: None,
         }
     }
 
     fn _next_tab(&mut self) {
         self.selected_tab = (self.selected_tab + 1) % self.tab_names.len();
+    }
+
+    /// Copy the full captured log backlog to the system clipboard.
+    fn copy_all_logs(&mut self) {
+        match crate::terminal_mode::data::log_capture::copy_all_to_clipboard() {
+            Ok(lines) => {
+                self.copied_feedback = Some((Instant::now(), lines));
+                log::info!("Copied {lines} log lines to clipboard");
+            }
+            Err(e) => log::error!("Failed to copy logs to clipboard: {e:?}"),
+        }
     }
 }
 

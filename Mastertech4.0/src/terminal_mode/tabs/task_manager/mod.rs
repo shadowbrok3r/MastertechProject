@@ -10,7 +10,8 @@ pub mod render;
 
 pub struct SysinfoTab {
     system: SystemInformation,
-    first_run: bool,
+    /// True while the background sysinfo poll task is running.
+    polling: bool,
     process_scroll_state: ScrollbarState,
     process_table_state: TableState,
     cpu_history: Vec<Sample>,
@@ -40,7 +41,7 @@ impl SysinfoTab {
         let (stop_tx, stop_rx) = tokio::sync::broadcast::channel(1);
         Self {
             system: Default::default(),
-            first_run: true,
+            polling: false,
             process_table_state: TableState::default(),
             process_scroll_state: ScrollbarState::default(),
 
@@ -64,7 +65,7 @@ impl SysinfoTab {
             loop {
                 tokio::select! {
                     _ = shutdown_rx.recv() => {
-                        log::warn!("Received shutdown signal, restarting sysinfo task");
+                        log::info!("Sysinfo poll task stopped");
                         break;
                     }
                     _ = tokio::time::sleep(std::time::Duration::from_secs_f32(0.2)) => {
@@ -73,6 +74,25 @@ impl SysinfoTab {
                 }
             }
         });
+    }
+
+    /// Start the background poll task if it isn't already running.
+    pub fn ensure_polling(&mut self) {
+        if !self.polling {
+            self.polling = true;
+            self.get_sysinfo(self.stop_rx.resubscribe());
+        }
+    }
+
+    /// Stop the background poll task. Called when the System tab is no
+    /// longer visible so sysinfo collection doesn't run in the background.
+    pub fn stop_polling(&mut self) {
+        if self.polling {
+            self.polling = false;
+            let _ = self.stop_tx.send(());
+            // Drop any samples still queued so re-entry starts fresh.
+            while self.rx.try_recv().is_ok() {}
+        }
     }
 
     /// Call this on every update (or in your draw loop) to record the latest value.
@@ -127,7 +147,20 @@ impl SysinfoTab {
                 });
         }
 
-        log::info!("self.component_temp_history: {:?}", self.component_temp_history.len());
-        // (Optionally, trim histories if they exceed a desired maximum length.)
+        // Keep histories bounded; charts only show a 15s window.
+        Self::trim_history(&mut self.cpu_history);
+        Self::trim_history(&mut self.mem_history);
+        Self::trim_history(&mut self.gpu_history);
+        for history in self.component_temp_history.values_mut() {
+            Self::trim_history(history);
+        }
+    }
+
+    /// Drop samples beyond the retention cap, oldest first.
+    fn trim_history(history: &mut Vec<Sample>) {
+        const MAX_SAMPLES: usize = 512;
+        if history.len() > MAX_SAMPLES {
+            history.drain(0..history.len() - MAX_SAMPLES);
+        }
     }
 }

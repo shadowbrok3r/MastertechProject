@@ -316,10 +316,7 @@ impl SysinfoTab {
 impl<'a> HandleWidget<'a> for SysinfoTab {
     fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
         // Update histories and fetch new sysinfo if available.
-        if self.first_run {
-            self.first_run = false;
-            self.get_sysinfo(self.stop_rx.resubscribe());
-        }
+        self.ensure_polling();
 
         if let Ok(sysinfo) = self.rx.try_recv() {
             self.update_history(sysinfo);

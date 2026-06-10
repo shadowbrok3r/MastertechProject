@@ -352,9 +352,14 @@ impl <'a>TerminalApp<'a> {
 
         if let Ok(mut menu_bar) = menu_bar {
             menu_bar.draw::<B>(f, tab_area);
-                
+
             let buf = &mut Buffer::empty(Rect::ZERO);
-            
+
+            // Sysinfo polling only runs while the System tab is visible.
+            if *menu_bar.current_tab.borrow() != Tab::SystemInfo {
+                self.sysinfo_tab.stop_polling();
+            }
+
             // (2) Render Main content area depends on which tab is selected
             match *menu_bar.current_tab.borrow() {
                 Tab::TurSheet => self.service_tab.borrow_mut().draw::<B>(f, main_content_area),
