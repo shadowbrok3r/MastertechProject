@@ -508,15 +508,36 @@ pub async fn init_database() -> anyhow::Result<(), anyhow::Error> {
 /// Check if the database connection is alive by running a simple query
 /// Returns true if connected, false if connection is dead
 pub async fn is_db_connected() -> bool {
-    // Try a simple query to check connection health
-    match DATABASE.query("RETURN true").await {
-        Ok(mut response) => {
-            let result: Option<bool> = response.take(0).unwrap_or(None);
-            result.unwrap_or(false)
+    // A dead websocket black-holes queries; bound the probe so the check can fail.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let probe = DATABASE.query("RETURN true");
+        match tokio::time::timeout(std::time::Duration::from_secs(3), probe).await {
+            Ok(Ok(mut response)) => {
+                let result: Option<bool> = response.take(0).unwrap_or(None);
+                result.unwrap_or(false)
+            }
+            Ok(Err(e)) => {
+                log::warn!("Database connection check failed: {}", e);
+                false
+            }
+            Err(_) => {
+                log::warn!("Database connection check timed out after 3s; treating connection as dead");
+                false
+            }
         }
-        Err(e) => {
-            log::warn!("Database connection check failed: {}", e);
-            false
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        match DATABASE.query("RETURN true").await {
+            Ok(mut response) => {
+                let result: Option<bool> = response.take(0).unwrap_or(None);
+                result.unwrap_or(false)
+            }
+            Err(e) => {
+                log::warn!("Database connection check failed: {}", e);
+                false
+            }
         }
     }
 }
