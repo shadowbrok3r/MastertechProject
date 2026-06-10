@@ -985,7 +985,7 @@ pub struct ScriptsRunParams {
     )]
     pub customer_email: Option<String>,
     #[schemars(
-        description = "Timeout in seconds to wait for the script to finish. Default 600 (10 minutes). Increase for Windows Updates / scans."
+        description = "Timeout in seconds to wait for the script to finish. Defaults to the per-script budget (600 for most; 3600 for updates/scans; 7200 for Tron/Data Transfer)."
     )]
     #[serde(default, deserialize_with = "deserialize_lenient_u64")]
     pub timeout_secs: Option<u64>,
@@ -1007,7 +1007,7 @@ pub struct ScriptsRunRemoteParams {
     pub service_number: Option<String>,
     #[schemars(description = "Customer email. Required for SuperEasyBackup activation.")]
     pub customer_email: Option<String>,
-    #[schemars(description = "Timeout in seconds to wait for the script to complete on the remote. Default 600.")]
+    #[schemars(description = "Timeout in seconds to wait for the script to complete on the remote. Defaults to the per-script budget (600 for most; 3600 for updates/scans; 7200 for Tron/Data Transfer).")]
     #[serde(default, deserialize_with = "deserialize_lenient_u64")]
     pub timeout_secs: Option<u64>,
     #[schemars(
@@ -1127,7 +1127,9 @@ async fn execute_one_remote_script(
         .send_raw_binary(&p.connection_string, serialized)
         .map_err(to_internal)?;
 
-    let timeout = std::time::Duration::from_secs(p.timeout_secs.unwrap_or(600));
+    let timeout = std::time::Duration::from_secs(p.timeout_secs.unwrap_or_else(|| {
+        crate::scripts::default_remote_script_timeout_secs(&p.script_name)
+    }));
     let session = match tokio::time::timeout(timeout, rx).await {
         Ok(Ok(s)) => s,
         Ok(Err(_)) => {
@@ -1508,13 +1510,18 @@ impl PluginToolProvider {
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
 
-        // DB heartbeat freshness.
-        let q = format!(
-            "SELECT connected, last_update FROM connected_client WHERE connection_string = '{}';",
-            cs.replace('\'', "")
-        );
-        let heartbeat = match database::DATABASE.query(&q).await {
-            Ok(mut resp) => match resp.take::<Vec<serde_json::Value>>(0) {
+        // DB heartbeat freshness; bounded by probe_timeout so a dead DB socket reports instead of hanging.
+        let heartbeat_probe = database::DATABASE
+            .query("SELECT connected, last_update FROM connected_client WHERE connection_string = $cs;")
+            .bind(("cs", cs.clone()));
+        let heartbeat = match tokio::time::timeout(probe_timeout, heartbeat_probe).await {
+            Err(_) => serde_json::json!({
+                "status": "timeout",
+                "timeout_secs": probe_timeout.as_secs(),
+                "detail": "DB query never returned — admin's SurrealDB websocket is wedged; all DB-backed tools will hang until it reconnects.",
+            }),
+            Ok(Err(e)) => serde_json::json!({ "status": "query_error", "detail": e.to_string() }),
+            Ok(Ok(mut resp)) => match resp.take::<Vec<serde_json::Value>>(0) {
                 Ok(rows) => rows
                     .into_iter()
                     .next()
@@ -1533,7 +1540,6 @@ impl PluginToolProvider {
                     .unwrap_or_else(|| serde_json::json!({ "status": "no_row" })),
                 Err(e) => serde_json::json!({ "status": "query_error", "detail": e.to_string() }),
             },
-            Err(e) => serde_json::json!({ "status": "query_error", "detail": e.to_string() }),
         };
 
         // Admin WS session + egui frame stream freshness.
@@ -3482,27 +3488,15 @@ impl PluginToolProvider {
         &self,
         Parameters(p): Parameters<StressRunsReapParams>,
     ) -> Result<CallToolResult, ErrorData> {
+        const REAP_SELECT: &str = "SELECT id, hostname, preset_label, started_at FROM stress_test_run WHERE result = 'in_progress' AND started_at < <datetime>$cutoff AND ($hostname IS NONE OR hostname = $hostname);";
+        const REAP_UPDATE: &str = "UPDATE stress_test_run SET result = 'aborted', ended_at = time::now(), notes = string::concat(notes ?? '', ' [reaped: stale in_progress past planned window]') WHERE result = 'in_progress' AND started_at < <datetime>$cutoff AND ($hostname IS NONE OR hostname = $hostname) RETURN id, hostname, preset_label, started_at;";
+
         let grace = p.grace_secs.unwrap_or(3600).max(600);
         let cutoff = (chrono::Utc::now() - chrono::Duration::seconds(grace as i64)).to_rfc3339();
-        let host_filter = if p.hostname.is_some() {
-            " AND hostname = $hostname"
-        } else {
-            ""
-        };
-        let q = if p.dry_run {
-            format!(
-                "SELECT id, hostname, preset_label, started_at FROM stress_test_run WHERE result = 'in_progress' AND started_at < <datetime>$cutoff{host_filter};"
-            )
-        } else {
-            format!(
-                "UPDATE stress_test_run SET result = 'aborted', ended_at = time::now(), notes = string::concat(notes ?? '', ' [reaped: stale in_progress past planned window]') WHERE result = 'in_progress' AND started_at < <datetime>$cutoff{host_filter} RETURN id, hostname, preset_label, started_at;"
-            )
-        };
-        let mut query = database::DATABASE.query(&q).bind(("cutoff", cutoff));
-        if let Some(h) = p.hostname.clone() {
-            query = query.bind(("hostname", h));
-        }
-        let rows: Vec<serde_json::Value> = query
+        let rows: Vec<serde_json::Value> = database::DATABASE
+            .query(if p.dry_run { REAP_SELECT } else { REAP_UPDATE })
+            .bind(("cutoff", cutoff))
+            .bind(("hostname", p.hostname.clone()))
             .await
             .map_err(to_internal)?
             .take(0)
@@ -3616,7 +3610,9 @@ impl PluginToolProvider {
             .send(req)
             .map_err(|e| to_internal(format!("Failed to enqueue script request: {e}")))?;
 
-        let timeout = std::time::Duration::from_secs(p.timeout_secs.unwrap_or(600));
+        let timeout = std::time::Duration::from_secs(p.timeout_secs.unwrap_or_else(|| {
+            crate::scripts::default_remote_script_timeout_secs(&p.script_name)
+        }));
         let result = match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(result)) => result,
             Ok(Err(_)) => {
@@ -4324,7 +4320,7 @@ Tools:
     script_name    : exact display name from scripts_list (e.g. "Activate Webroot", "Stress: CPU")
     service_number : required for Activate Webroot, Activate SuperAnti, Activate SEB
     customer_email : required for Activate SEB
-    timeout_secs   : default 600. Bump for Windows Updates / full AV scans.
+    timeout_secs   : defaults to the per-script budget (600 for most; 3600 for updates/scans; 7200 for Tron/Data Transfer).
   Returns: { request_id, success, message, logs[] }.
   ⚠️  Only use for admin-machine operations (e.g. testing, admin-side installs).
       For customer QC, use scripts_run_remote instead.
