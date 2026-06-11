@@ -89,6 +89,12 @@ pub fn qc_floor_for(stressor: Stressor) -> f64 {
         Stressor::Prefetch => 50.0,
         Stressor::Icache => 5.0,
         Stressor::Tsc => 5.0,
+        // Verify-style stressors spend most cycles on checking; floors are
+        // "is it making progress at all" sanity, not performance grades.
+        Stressor::MemTest => 100.0,
+        Stressor::CpuVerify => 10.0,
+        Stressor::Linpack => 1.0,
+        Stressor::Psu => 1.0,
         Stressor::Gpu => 100.0,
         Stressor::GpuMatmul => 100.0,
         Stressor::GpuVram => 1000.0,

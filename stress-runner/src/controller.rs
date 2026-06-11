@@ -344,6 +344,12 @@ fn worker(
         );
     }
 
+    // Driver-stack integrity: a discrete controller WMI-active but invisible
+    // to wgpu/NVML means GPU work lands on the iGPU; warn on every run.
+    for fault in stress_kit::gpu_stack::check_gpu_stack().broken {
+        send(&update_tx, RunUpdate::Warning { message: fault });
+    }
+
     if spec.target_component.is_none() && spec.touched_components.is_empty() {
         let msg = "refusing to start run: no hardware_component records could be \
                    created or linked (see warnings above). Every stress_test_run \
@@ -575,12 +581,7 @@ fn drive_single(
     started_at: Instant,
 ) {
     let mut last_tick = Instant::now();
-    let mut latest_metrics = Metrics {
-        elapsed_secs: 0.0,
-        throughput: 0.0,
-        last_error: None,
-                fatal: false,
-    };
+    let mut latest_metrics = Metrics::default();
     let mut metric_batch: Vec<StressTestMetric> = Vec::with_capacity(METRIC_BATCH_SIZE);
 
     let deadline = duration_secs.map(|d| started_at + Duration::from_secs(d));
@@ -616,7 +617,10 @@ fn drive_single(
             last_tick = Instant::now();
             let snapshot = telemetry.snapshot();
             if snapshot.is_populated() {
-                acc.absorb(&latest_metrics, &snapshot, throughput_unit);
+                let new_errors = acc.absorb(&latest_metrics, &snapshot, throughput_unit);
+                if new_errors > 0 {
+                    persist_error_event(run_id, stressor, new_errors, latest_metrics.last_error.clone());
+                }
 
                 match metric_from_snapshot(
                     run_id.clone(),
@@ -702,12 +706,7 @@ fn drive_scenario(
     let mut current_stage_throughput_count: u32 = 0;
     let mut current_stage_last_error: Option<String> = None;
     let mut current_stage_had_error = false;
-    let mut latest_metrics = Metrics {
-        elapsed_secs: 0.0,
-        throughput: 0.0,
-        last_error: None,
-                fatal: false,
-    };
+    let mut latest_metrics = Metrics::default();
     let mut metric_batch: Vec<StressTestMetric> = Vec::with_capacity(METRIC_BATCH_SIZE);
     let mut finished = false;
 
@@ -813,7 +812,14 @@ fn drive_scenario(
             last_tick = Instant::now();
             let snapshot = telemetry.snapshot();
             if snapshot.is_populated() {
-                acc.absorb(&latest_metrics, &snapshot, current_unit);
+                let new_errors = acc.absorb(&latest_metrics, &snapshot, current_unit);
+                if new_errors > 0 {
+                    let stressor = current_stage_index
+                        .and_then(|i| stage_specs.get(i))
+                        .map(|s| s.stressor)
+                        .unwrap_or(Stressor::Cpu);
+                    persist_error_event(run_id, stressor, new_errors, latest_metrics.last_error.clone());
+                }
 
                 match metric_from_snapshot(
                     run_id.clone(),
@@ -924,6 +930,35 @@ fn persist_event(
     });
 }
 
+/// Persist a `stress_test_event` for newly observed test errors. Memory
+/// stressors map to `memory_error`; everything else lands as `custom`
+/// with a `data_mismatch` code.
+fn persist_error_event(
+    run_ref: &RecordId,
+    stressor: Stressor,
+    new_errors: u64,
+    detail: Option<String>,
+) {
+    let kind = match stressor {
+        Stressor::MemTest | Stressor::Memory | Stressor::GpuVram => DbEventKind::MemoryError,
+        _ => DbEventKind::Custom,
+    };
+    let mut event = DbStressTestEvent::new(run_ref.clone(), kind, "stress-kit");
+    event.code = Some("data_mismatch".to_string());
+    event.detail = detail.unwrap_or_else(|| {
+        format!("{} reported {new_errors} new error(s)", stressor.label())
+    });
+    event.data = Some(serde_json::json!({
+        "stressor": stressor.label(),
+        "new_errors": new_errors,
+    }));
+    runtime::spawn(async move {
+        if let Err(err) = DbStressTestEvent::create(&event).await {
+            log::warn!("stress-runner: failed to persist error event: {err}");
+        }
+    });
+}
+
 fn flush_metrics(batch: &mut Vec<StressTestMetric>) -> anyhow::Result<()> {
     if batch.is_empty() {
         return Ok(());
@@ -970,12 +1005,24 @@ struct SummaryAccumulator {
     last_throughput_unit: Option<String>,
     whea_delta_count: u32,
     disk_io_errors: u32,
+    max_power_w: Option<u32>,
+    /// `Metrics.errors` from stages that already reset their counter.
+    completed_stage_errors: u64,
+    /// Latest cumulative `Metrics.errors` of the in-flight stage.
+    current_stage_errors: u64,
     last_error: Option<String>,
     scenario_finish: Option<DbFinishReason>,
 }
 
 impl SummaryAccumulator {
-    fn absorb(&mut self, metrics: &Metrics, snapshot: &TelemetrySnapshot, unit: &'static str) {
+    /// Fold one tick into the rollup. Returns how many new test errors this
+    /// tick revealed so the caller can persist a `stress_test_event`.
+    fn absorb(
+        &mut self,
+        metrics: &Metrics,
+        snapshot: &TelemetrySnapshot,
+        unit: &'static str,
+    ) -> u64 {
         // throughput
         if metrics.throughput > 0.0 {
             self.peak_throughput = Some(
@@ -987,8 +1034,26 @@ impl SummaryAccumulator {
             self.throughput_samples = self.throughput_samples.saturating_add(1);
             self.last_throughput_unit = Some(unit.to_string());
         }
+
+        // `Metrics.errors` is cumulative per stressor; a drop means a new
+        // stage started with a fresh counter.
+        let mut new_errors = 0u64;
+        if metrics.errors < self.current_stage_errors {
+            self.completed_stage_errors =
+                self.completed_stage_errors.saturating_add(self.current_stage_errors);
+            self.current_stage_errors = 0;
+        }
+        if metrics.errors > self.current_stage_errors {
+            new_errors = metrics.errors - self.current_stage_errors;
+            self.current_stage_errors = metrics.errors;
+        }
+
         if let Some(err) = &metrics.last_error {
-            self.disk_io_errors = self.disk_io_errors.saturating_add(1);
+            // Count message transitions only; `latest_metrics` repeats the
+            // same string every tick until the stressor replaces it.
+            if metrics.errors == 0 && self.last_error.as_deref() != Some(err.as_str()) {
+                self.disk_io_errors = self.disk_io_errors.saturating_add(1);
+            }
             self.last_error = Some(err.clone());
         }
 
@@ -1013,6 +1078,21 @@ impl SummaryAccumulator {
         if let Some(whea) = &snapshot.whea {
             self.whea_delta_count = whea.delta_since_program_start as u32;
         }
+
+        // GPU board power summed across cards (NVML); CPU package power has
+        // no portable source, so this is the PSU-load proxy we have.
+        let gpu_w: f64 = snapshot.gpus.iter().filter_map(|g| g.power_w).map(f64::from).sum();
+        if gpu_w > 0.0 {
+            let w = gpu_w.round() as u32;
+            self.max_power_w = Some(self.max_power_w.map_or(w, |m| m.max(w)));
+        }
+
+        new_errors
+    }
+
+    fn total_test_errors(&self) -> u64 {
+        self.completed_stage_errors
+            .saturating_add(self.current_stage_errors)
     }
 
     fn into_summary(&self) -> RunSummary {
@@ -1039,7 +1119,7 @@ impl SummaryAccumulator {
             } else {
                 None
             },
-            max_power_w: None,
+            max_power_w: self.max_power_w,
             max_fan_rpm: None,
             peak_throughput: self.peak_throughput,
             avg_throughput: if self.throughput_samples > 0 {
@@ -1056,6 +1136,7 @@ impl SummaryAccumulator {
             bsod_code: None,
             disk_io_errors: self.disk_io_errors,
             memory_errors: 0,
+            test_errors: self.total_test_errors().min(u32::MAX as u64) as u32,
         }
     }
 
@@ -1064,11 +1145,20 @@ impl SummaryAccumulator {
         run_id: &RecordId,
         cancel: &Arc<AtomicBool>,
         duration_secs: f64,
-        _tool: &TestTool,
+        tool: &TestTool,
     ) -> RunVerdict {
-        let summary = self.into_summary();
+        let mut summary = self.into_summary();
+        // Memtest mismatches also count as memory errors for the
+        // HCI/TM5-shaped rubric fields.
+        if matches!(
+            tool,
+            TestTool::StressKit { stressor: database::schema::StressKitStressor::MemTest }
+        ) {
+            summary.memory_errors = summary.test_errors;
+        }
         let cancelled = cancel.load(Ordering::Relaxed);
         let had_failure = summary.whea_delta_count > 0
+            || summary.test_errors > 0
             || summary.disk_io_errors > 0
             || summary.bsod_detected
             || summary.thermal_throttle_detected;
@@ -1078,6 +1168,8 @@ impl SummaryAccumulator {
                 FailureMode::WheaError {
                     count: summary.whea_delta_count,
                 }
+            } else if summary.test_errors > 0 {
+                FailureMode::DataMismatch { addresses: None }
             } else if summary.disk_io_errors > 0 {
                 FailureMode::DiskIoError {
                     message: self.last_error.clone().unwrap_or_default(),

@@ -7,10 +7,12 @@ mod fleet_client;
 mod hw_monitor;
 mod hw_sampler;
 mod mcp;
+mod order_panel;
 mod qc_benchmark;
 mod oa3_sager;
 mod reporting;
 mod schema;
+mod spec_check;
 mod stress_panel;
 mod telemetry;
 
@@ -84,6 +86,10 @@ async fn main() -> eframe::Result<()> {
         options,
         Box::new(|cc| {
             let ctx = &cc.egui_ctx;
+            // Phosphor icon glyphs merged into the default fonts.
+            let mut fonts = egui::FontDefinitions::default();
+            egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+            ctx.set_fonts(fonts);
             match serde_json::from_str::<Style>(STYLE) {
                 Ok(theme) => {
                     let style = std::sync::Arc::new(theme);

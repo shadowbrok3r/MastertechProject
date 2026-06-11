@@ -23,3 +23,5 @@ DEFINE FIELD failure_kind ON stress_test_run TYPE string;
 DEFINE FIELD result ON stress_test_run TYPE string;
 DEFINE FIELD summary ON stress_test_run TYPE object;
 DEFINE FIELD embedding ON stress_test_run TYPE none | array<float>;
+
+DEFINE TABLE benchmark_result TYPE ANY SCHEMALESS;

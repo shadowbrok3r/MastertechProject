@@ -56,6 +56,7 @@ pub(crate) fn run(
                 throughput: mflops,
                 last_error: None,
                 fatal: false,
+                errors: 0,
             });
 
             last_count = now;

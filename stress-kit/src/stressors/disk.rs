@@ -51,6 +51,7 @@ pub(crate) fn run(
                 throughput: mib_per_sec,
                 last_error,
                 fatal: false,
+                errors: 0,
             });
 
             last_bytes = now_bytes;

@@ -45,6 +45,24 @@ pub async fn request_everest(serial13: &str) -> Result<String> {
     Ok(format!("{} - {}", name.trim(), docnum))
 }
 
+/// Fetch the order header for a known Everest DOCNUM.
+/// Returns `(customer_name, docnum)`.
+pub async fn request_everest_header_by_docnum(docnum: &str) -> Result<(String, String)> {
+    let client = Client::builder().build()?;
+    let header = get_order(&client, crate::SCAFFOLD_USER, crate::SCAFFOLD_PASS, docnum)
+        .await
+        .context("Everest order fetch failed")?;
+
+    let name = header.first_name.as_ref()
+        .and_then(|f| header.last_name.as_ref().map(|l| format!("{} {}", f.trim(), l.trim())))
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| header.name.clone().filter(|s| !s.trim().is_empty()))
+        .or_else(|| header.acct_name.clone().filter(|s| !s.trim().is_empty()))
+        .unwrap_or_else(|| "Unknown Customer".into());
+
+    Ok((name.trim().to_string(), docnum.to_string()))
+}
+
 async fn lookup_docnum(client: &Client, email: &str, password: &str, serial: &str) -> Result<String> {
     let payload = serde_json::json!({
         "action": "everest_call",

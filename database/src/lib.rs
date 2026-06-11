@@ -13,6 +13,7 @@ use schema::User;
 use log::info;
 
 pub mod live_data;
+pub mod orders;
 pub mod schema;
 
 pub use platform::PlatformSpawner;
@@ -105,6 +106,17 @@ pub const ORCHESTRATOR_URL: &str = env!("ORCHESTRATOR_URL");
 /// Dev fleet-orchestrator base. Selected when the binary is built with
 /// `cfg(debug_assertions)` (i.e. any non-release profile).
 pub const ORCHESTRATOR_URL_DEV: &str = env!("ORCHESTRATOR_URL_DEV");
+
+/// PrestaShop employee credential-check endpoint (QC tech sign-off).
+/// Empty string disables tech authentication at runtime.
+pub const PRESTASHOP_AUTH_URL: &str = env!("PRESTASHOP_AUTH_URL");
+
+/// Shopify Admin API base.
+/// Empty string disables the Shopify order backend at runtime.
+pub const SHOPIFY_STORE_URL: &str = env!("SHOPIFY_STORE_URL");
+/// Read-only Admin API token. Writes go through the Worker, never from here.
+pub const SHOPIFY_ADMIN_TOKEN: &str = env!("SHOPIFY_ADMIN_TOKEN");
+pub const SHOPIFY_API_VERSION: &str = env!("SHOPIFY_API_VERSION");
 
 /// Pick the active orchestrator URL based on the current build profile.
 /// Debug → [`ORCHESTRATOR_URL_DEV`]; release → [`ORCHESTRATOR_URL`].

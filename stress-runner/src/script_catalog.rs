@@ -21,6 +21,10 @@ pub const QC_BENCHMARK_PRESET: &str = "qc-mcp:benchmark-v1";
 
 pub const STRESS_SCRIPT_NAMES: &[&str] = &[
     "GPU Stress Test",
+    "Memory Test",
+    "Stress: CPU Verify",
+    "Stress: Linpack",
+    "Stress: PSU",
     "Stress: CPU",
     "Stress: Matrix",
     "Stress: FP/FMA",
@@ -50,6 +54,52 @@ pub fn is_stress_script(name: &str) -> bool {
     STRESS_SCRIPT_NAMES.contains(&name) || name == "QC Benchmark"
 }
 
+/// Scored benchmarks exposed as named scripts. "Benchmark Suite" runs the
+/// standard set (plus GPU kinds when present); the rest map 1:1 to a
+/// [`database::schema::BenchmarkKind`] via [`benchmark_kind_for_script`].
+pub const BENCHMARK_SCRIPT_NAMES: &[&str] = &[
+    "Benchmark Suite",
+    "Benchmark: CPU Single",
+    "Benchmark: CPU Multi",
+    "Benchmark: Matrix Single",
+    "Benchmark: Matrix Multi",
+    "Benchmark: Linpack",
+    "Benchmark: Memory Bandwidth",
+    "Benchmark: Memcpy",
+    "Benchmark: Memory Latency",
+    "Benchmark: Disk",
+    "Benchmark: GPU Compute",
+    "Benchmark: GPU Matmul",
+    "Benchmark: GPU VRAM",
+    "Benchmark: GPU PCIe",
+];
+
+pub fn is_benchmark_script(name: &str) -> bool {
+    BENCHMARK_SCRIPT_NAMES.contains(&name)
+}
+
+/// `None` for "Benchmark Suite" (and unknown names) — the suite is resolved
+/// by [`crate::run_benchmark_script`].
+pub fn benchmark_kind_for_script(name: &str) -> Option<database::schema::BenchmarkKind> {
+    use database::schema::BenchmarkKind as K;
+    match name {
+        "Benchmark: CPU Single" => Some(K::CpuSingle),
+        "Benchmark: CPU Multi" => Some(K::CpuMulti),
+        "Benchmark: Matrix Single" => Some(K::MatrixSingle),
+        "Benchmark: Matrix Multi" => Some(K::MatrixMulti),
+        "Benchmark: Linpack" => Some(K::Linpack),
+        "Benchmark: Memory Bandwidth" => Some(K::MemoryBandwidth),
+        "Benchmark: Memcpy" => Some(K::Memcpy),
+        "Benchmark: Memory Latency" => Some(K::MemoryLatency),
+        "Benchmark: Disk" => Some(K::Disk),
+        "Benchmark: GPU Compute" => Some(K::GpuCompute),
+        "Benchmark: GPU Matmul" => Some(K::GpuMatmul),
+        "Benchmark: GPU VRAM" => Some(K::GpuVram),
+        "Benchmark: GPU PCIe" => Some(K::GpuPcie),
+        _ => None,
+    }
+}
+
 pub fn build_stress_script_spec(
     name: &str,
     computer: RecordId,
@@ -58,6 +108,22 @@ pub fn build_stress_script_spec(
     match name {
         "GPU Stress Test" => Some(gpu_probe_spec(computer, 1.0)),
         "QC Benchmark" => Some(qc_benchmark_spec(computer)),
+        "Memory Test" => Some(single_with_mem(
+            computer,
+            Stressor::MemTest,
+            duration_secs,
+            "memtest",
+            4096,
+        )),
+        "Stress: CPU Verify" => Some(single(computer, Stressor::CpuVerify, duration_secs, "cpu_verify")),
+        "Stress: Linpack" => Some(single_with_mem(
+            computer,
+            Stressor::Linpack,
+            duration_secs,
+            "linpack",
+            1024,
+        )),
+        "Stress: PSU" => Some(single(computer, Stressor::Psu, duration_secs, "psu")),
         "Stress: CPU" => Some(single(computer, Stressor::Cpu, duration_secs, "cpu")),
         "Stress: Matrix" => Some(single(computer, Stressor::Matrix, duration_secs, "matrix")),
         "Stress: FP/FMA" => Some(single(computer, Stressor::Fp, duration_secs, "fp")),
@@ -89,6 +155,21 @@ fn single(computer: RecordId, s: Stressor, secs: u64, label: &str) -> RunSpec {
     let mut spec = RunSpec::single_stresskit(computer, s, Some(secs));
     spec.preset_label = Some(format!("scripts:single:{label}"));
     spec.tags.push(format!("preset:single:{label}"));
+    spec
+}
+
+/// `single` with a raised memory cap for footprint-hungry stressors.
+fn single_with_mem(
+    computer: RecordId,
+    s: Stressor,
+    secs: u64,
+    label: &str,
+    memory_cap_mb: u64,
+) -> RunSpec {
+    let mut spec = single(computer, s, secs, label);
+    if let RunPlan::Single { memory_cap_mb: cap, .. } = &mut spec.plan {
+        *cap = memory_cap_mb;
+    }
     spec
 }
 

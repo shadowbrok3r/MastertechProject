@@ -121,6 +121,8 @@ pub struct WebSocketClient {
     /// fine.  Both fields are updated by `WebSocketClient::receive`.
     pub last_app_ping_sent: Option<Instant>,
     pub last_app_pong_received: Option<Instant>,
+    /// Last time the pong-silence wedge warning was logged.
+    pub last_pong_silence_warn: Option<Instant>,
     pub app_ping_nonce: u64,
     /// Track if we're using persistent shell mode
     pub persistent_shell_mode: bool,
@@ -290,6 +292,7 @@ Get-WmiObject")
             last_pong_time: None,
             last_app_ping_sent: None,
             last_app_pong_received: None,
+            last_pong_silence_warn: None,
             app_ping_nonce: 0,
             connection_status: "Disconnected".to_string(),
             persistent_shell_mode: false,

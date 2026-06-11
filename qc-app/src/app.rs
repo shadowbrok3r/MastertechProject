@@ -13,6 +13,7 @@ use crate::hw_monitor::HwMonitor;
 use crate::hw_sampler::HwSampler;
 use crate::mcp::{QcMcpState, spawn_mcp_servers};
 use crate::oa3_sager::{self, H2oGeneration};
+use crate::order_panel::OrderPanel;
 use crate::reporting::ReportSink;
 use crate::stress_panel::{StressPanel, StressPanelConfig};
 use crate::telemetry::{Heartbeat, HwSnapshot, QcReport};
@@ -73,6 +74,9 @@ pub struct QcApp {
     db_line: Arc<Mutex<String>>,
     #[serde(skip)]
     stress_panel: StressPanel,
+    /// Order QC tab (lookup, gate, spec check, sign-off, comments, report).
+    #[serde(skip)]
+    order_panel: OrderPanel,
     /// Undocked hardware monitor window visibility.
     #[serde(skip, default = "init_arc_atomic_bool")]
     show_hw_monitor: Arc<AtomicBool>,
@@ -113,6 +117,7 @@ impl Default for QcApp {
             github_in_flight: init_arc_atomic_bool(),
             db_line: init_arc_mutex_string(),
             stress_panel: StressPanel::default(),
+            order_panel: OrderPanel::default(),
             show_hw_monitor: init_arc_atomic_bool(),
             hw_monitor: init_hw_monitor(),
             hw_sampler: None,
@@ -420,6 +425,9 @@ impl eframe::App for QcApp {
             }
         }
 
+        // New stress runs link to the active order session and signed-in tech.
+        self.stress_panel.set_order_context(self.order_panel.run_context());
+
         self.stress_panel.tick(ctx);
 
         // Undocked HW monitor: clone `Arc`s so the viewport closure does not capture `self`.
@@ -458,6 +466,8 @@ impl eframe::App for QcApp {
             )
             .ui(ui, |ui| {
                 ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.selected_tab, 4u8, "Order QC");
+                    ui.separator();
                     ui.selectable_value(&mut self.selected_tab, 0u8, "Swift DB");
                     ui.separator();
                     ui.selectable_value(&mut self.selected_tab, 1u8, "OA3 Sager");
@@ -481,6 +491,15 @@ impl eframe::App for QcApp {
             }
             3 => {
                 egui::CentralPanel::default().show_inside(ui, |ui| self.ui_settings(ui));
+            }
+            4 => {
+                let snapshot = self.hw_sampler.as_ref().map(|s| s.agent().snapshot());
+                let last_verdict = self.stress_panel.last_verdict_ref().cloned();
+                let last_preset = self.stress_panel.last_preset();
+                egui::CentralPanel::default().show_inside(ui, |ui| {
+                    self.order_panel
+                        .ui(ui, snapshot.as_ref(), last_verdict.as_ref(), last_preset)
+                });
             }
             _ => {
                 // Stress test tab. `stress_panel.ui` lays out its own

@@ -29,6 +29,8 @@
 //! ```
 
 mod stressors;
+pub mod bench;
+pub mod gpu_stack;
 pub mod scenario;
 pub mod telemetry;
 
@@ -77,14 +79,26 @@ pub enum Stressor {
     Icache,
     /// `rdtsc` read rate; reports Mread/s.
     Tsc,
+    /// Pattern write/verify memory test (moving inversions, walking ones,
+    /// address-in-address, random); reports MiB/s; mismatches counted in `errors`.
+    MemTest,
+    /// Duplicate-execution integer+FP workload compare; reports Mop/s;
+    /// mismatches counted in `errors`.
+    CpuVerify,
+    /// LU solve with partial pivoting + residual check; reports GFLOPS;
+    /// residual breaches counted in `errors`.
+    Linpack,
+    /// Combined CPU FMA + GPU compute load for max power draw; reports GFLOPS.
+    Psu,
 
     /// GPU compute-shader FMA + scattered-load hammer; reports GFLOPS.
     Gpu,
     /// GPU NxN fp32 matmul; reports GFLOPS.
     GpuMatmul,
-    /// GPU VRAM write-verify pattern walker; reports MiB/s; mismatches surface via `last_error`.
+    /// GPU VRAM write-verify pattern walker; reports MiB/s; mismatches counted in `errors`.
     GpuVram,
-    /// CPU↔GPU buffer round-trip; reports GB/s.
+    /// CPU↔GPU buffer round-trip with full readback verify; reports GB/s;
+    /// mismatches counted in `errors`.
     GpuPcie,
 }
 
@@ -110,6 +124,10 @@ impl Stressor {
             Self::Prefetch => "Prefetch",
             Self::Icache => "I-Cache",
             Self::Tsc => "TSC",
+            Self::MemTest => "Memory Test",
+            Self::CpuVerify => "CPU Verify",
+            Self::Linpack => "Linpack",
+            Self::Psu => "PSU Load",
             Self::Gpu => "GPU Compute",
             Self::GpuMatmul => "GPU Matmul",
             Self::GpuVram => "GPU VRAM",
@@ -138,6 +156,10 @@ impl Stressor {
             Self::Prefetch => "Mref/s",
             Self::Icache => "Mcall/s",
             Self::Tsc => "Mread/s",
+            Self::MemTest => "MiB/s",
+            Self::CpuVerify => "Mop/s",
+            Self::Linpack => "GFLOPS",
+            Self::Psu => "GFLOPS",
             Self::Gpu => "GFLOPS",
             Self::GpuMatmul => "GFLOPS",
             Self::GpuVram => "MiB/s",
@@ -147,6 +169,47 @@ impl Stressor {
 
     pub fn is_gpu(self) -> bool {
         matches!(self, Self::Gpu | Self::GpuMatmul | Self::GpuVram | Self::GpuPcie)
+    }
+
+    /// `true` when the stressor verifies results and counts mismatches in
+    /// [`Metrics::errors`] rather than only generating load.
+    pub fn detects_errors(self) -> bool {
+        matches!(
+            self,
+            Self::MemTest | Self::CpuVerify | Self::Linpack | Self::Disk | Self::GpuVram | Self::GpuPcie
+        )
+    }
+
+    pub fn all() -> &'static [Stressor] {
+        &[
+            Self::Cpu,
+            Self::Memory,
+            Self::Disk,
+            Self::Matrix,
+            Self::Memcpy,
+            Self::Bitops,
+            Self::Cache,
+            Self::Vm,
+            Self::Stream,
+            Self::Branch,
+            Self::Atomic,
+            Self::Mutex,
+            Self::Switch,
+            Self::Prime,
+            Self::Fp,
+            Self::Hash,
+            Self::Prefetch,
+            Self::Icache,
+            Self::Tsc,
+            Self::MemTest,
+            Self::CpuVerify,
+            Self::Linpack,
+            Self::Psu,
+            Self::Gpu,
+            Self::GpuMatmul,
+            Self::GpuVram,
+            Self::GpuPcie,
+        ]
     }
 }
 
@@ -186,6 +249,10 @@ pub struct Metrics {
     /// this as a stage-level abort signal.
     #[serde(default)]
     pub fatal: bool,
+    /// Cumulative detected-error count since the stressor started (data
+    /// mismatches, residual breaches). `0` for load-only stressors.
+    #[serde(default)]
+    pub errors: u64,
 }
 
 /// Background run; [`Drop`] calls [`StressSession::stop`].
@@ -251,5 +318,70 @@ impl StressSession {
 impl Drop for StressSession {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Run a stressor briefly and return the last metrics sample seen.
+    fn run_briefly(stressor: Stressor, memory_cap_mb: u64, secs: u64) -> Metrics {
+        let session = StressSession::start(StressConfig {
+            stressor,
+            threads: 1,
+            timeout: Some(Duration::from_secs(secs)),
+            memory_cap_mb,
+            disk_file_mb: 1,
+        });
+        let deadline = Instant::now() + Duration::from_secs(secs + 8);
+        let mut last: Option<Metrics> = None;
+        while Instant::now() < deadline {
+            if let Some(m) = session.try_recv() {
+                last = Some(m);
+            }
+            if session.is_stopping() {
+                thread::sleep(Duration::from_millis(200));
+                if let Some(m) = session.try_recv() {
+                    last = Some(m);
+                }
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        last.expect("stressor emitted no metrics")
+    }
+
+    #[test]
+    fn memtest_clean_on_healthy_memory() {
+        let m = run_briefly(Stressor::MemTest, 32, 3);
+        assert_eq!(m.errors, 0, "memtest reported errors: {:?}", m.last_error);
+        assert!(m.throughput > 0.0, "memtest produced no throughput");
+    }
+
+    #[test]
+    fn cpu_verify_deterministic() {
+        let m = run_briefly(Stressor::CpuVerify, 16, 2);
+        assert_eq!(m.errors, 0, "cpu_verify mismatch: {:?}", m.last_error);
+        assert!(m.throughput > 0.0);
+    }
+
+    #[test]
+    fn linpack_residual_within_threshold() {
+        // 1 MiB cap clamps to the N=256 floor so debug-mode solves finish
+        // well inside the window.
+        let m = run_briefly(Stressor::Linpack, 1, 5);
+        assert_eq!(m.errors, 0, "linpack residual breach: {:?}", m.last_error);
+        assert!(m.throughput > 0.0, "linpack completed no solves in window");
+    }
+
+    #[test]
+    fn latency_ladder_sane() {
+        let points = bench::measure_ladder(&[64, 4096]);
+        assert_eq!(points.len(), 2);
+        for p in &points {
+            assert!(p.latency_ns > 0.0 && p.latency_ns < 10_000.0);
+            assert!(p.read_gb_per_s > 0.0);
+        }
     }
 }

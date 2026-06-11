@@ -2513,6 +2513,102 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                             send_result(&tx, &script.name, RemoteScriptStatus::Failed);
                         }
 
+                        name if stress_runner::is_benchmark_script(name) => {
+                            use std::sync::Arc;
+                            use stress_kit::telemetry::TelemetryAgent;
+
+                            send_log(&tx, format!("{name}: running scored benchmark(s) via stress-runner (persisted)"));
+
+                            enum BenchMsg {
+                                Log(String),
+                                Done(bool),
+                            }
+
+                            let script_name = script.name.clone();
+                            let (bench_tx, bench_rx) = crossbeam::channel::unbounded::<BenchMsg>();
+
+                            std::thread::spawn(move || {
+                                let client = crate::filesystem::get_client_hash();
+                                let computer = match client.computer.clone() {
+                                    Some(c) => c,
+                                    None => {
+                                        let _ = bench_tx.send(BenchMsg::Log(
+                                            "get_client_hash returned no computer record".into(),
+                                        ));
+                                        let _ = bench_tx.send(BenchMsg::Done(false));
+                                        return;
+                                    }
+                                };
+                                let telemetry = Arc::new(TelemetryAgent::start(1000));
+                                std::thread::sleep(std::time::Duration::from_millis(1500));
+                                let include_gpu = !telemetry.snapshot().gpus.is_empty();
+                                let secs = stress_runner::DEFAULT_BENCH_SECS;
+                                let _ = bench_tx.send(BenchMsg::Log(format!(
+                                    "{secs}s per benchmark, gpu kinds {}",
+                                    if include_gpu { "included" } else { "skipped (no GPU)" }
+                                )));
+
+                                let Some(outcomes) = stress_runner::run_benchmark_script(
+                                    &script_name,
+                                    computer,
+                                    telemetry,
+                                    secs,
+                                    include_gpu,
+                                ) else {
+                                    let _ = bench_tx.send(BenchMsg::Log(format!(
+                                        "Unknown benchmark script '{script_name}'"
+                                    )));
+                                    let _ = bench_tx.send(BenchMsg::Done(false));
+                                    return;
+                                };
+
+                                let mut success = true;
+                                for o in &outcomes {
+                                    if o.errors > 0 || o.error.is_some() {
+                                        success = false;
+                                    }
+                                    let _ = bench_tx.send(BenchMsg::Log(format!(
+                                        "{}: {:.1} {} (peak {:.1}) errors={}{}{}",
+                                        o.kind,
+                                        o.score,
+                                        o.unit,
+                                        o.peak.unwrap_or(o.score),
+                                        o.errors,
+                                        o.result_id
+                                            .as_deref()
+                                            .map(|id| format!(" [{id}]"))
+                                            .unwrap_or_default(),
+                                        o.error
+                                            .as_deref()
+                                            .map(|e| format!(" — {e}"))
+                                            .unwrap_or_default(),
+                                    )));
+                                }
+                                let _ = bench_tx.send(BenchMsg::Log(format!(
+                                    "{} benchmark(s) complete, {}",
+                                    outcomes.len(),
+                                    if success { "all clean" } else { "errors detected" }
+                                )));
+                                let _ = bench_tx.send(BenchMsg::Done(success));
+                            });
+
+                            let mut final_success: Option<bool> = None;
+                            while final_success.is_none() {
+                                while let Ok(msg) = bench_rx.try_recv() {
+                                    match msg {
+                                        BenchMsg::Log(line) => send_log(&tx, line),
+                                        BenchMsg::Done(ok) => final_success = Some(ok),
+                                    }
+                                }
+                                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                            }
+                            send_result(
+                                &tx,
+                                &script.name,
+                                if final_success.unwrap_or(false) { RemoteScriptStatus::Success } else { RemoteScriptStatus::Failed },
+                            );
+                        }
+
                         name if stress_runner::is_stress_script(name) => {
                             use std::sync::Arc;
                             use stress_kit::telemetry::TelemetryAgent;

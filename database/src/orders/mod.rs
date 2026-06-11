@@ -1,0 +1,554 @@
+//! Order-backend abstraction for bench QC (QCWizard parity port).
+//!
+//! PCL stays on PrestaShop while Xidax moves to Shopify, so qc-app talks to
+//! orders only through [`OrderBackend`]. Status gating is evaluated on
+//! PrestaShop-legacy status ids, which the Shopify status metaobjects carry
+//! as `legacy_id` — one gate table works for both backends.
+
+pub mod gate;
+pub mod prestashop_backend;
+pub mod shopify_backend;
+pub mod spec_check;
+
+pub use gate::{GateDecision, GateOutcome};
+pub use prestashop_backend::PrestashopBackend;
+pub use shopify_backend::ShopifyBackend;
+pub use spec_check::{CheckStatus, DetectedDisk, DetectedHardware, SpecCheckReport, SpecCheckRow};
+
+use crate::SurrealValue;
+use crate::schema::RecordId;
+use serde::{Deserialize, Serialize};
+
+pub const QC_REPORT_TABLE: &str = "qc_report";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BackendKind {
+    Prestashop,
+    Shopify,
+}
+
+impl BackendKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Prestashop => "prestashop",
+            Self::Shopify => "shopify",
+        }
+    }
+}
+
+/// Order lookup key. Shape decides the backend: PS ids start with `2`,
+/// Everest documents with `5`, Xidax build serials with `XBS-`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OrderKey {
+    Prestashop(String),
+    Everest(String),
+    ShopifyOrderNumber(String),
+    BuildSerial(String),
+}
+
+impl OrderKey {
+    /// `#` prefix forces Shopify. Bare digits route by QCWizard shape:
+    /// 6+ digits on `2` → PS, 7+ digits on `5` → Everest, rest → Shopify.
+    pub fn parse(input: &str) -> Option<Self> {
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        let upper = trimmed.to_uppercase();
+        if upper.starts_with("XBS-") {
+            return Some(Self::BuildSerial(upper));
+        }
+        if let Some(rest) = trimmed.strip_prefix('#') {
+            let rest = rest.trim();
+            return (!rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()))
+                .then(|| Self::ShopifyOrderNumber(rest.to_string()));
+        }
+        if trimmed.chars().all(|c| c.is_ascii_digit()) {
+            return match trimmed.chars().next() {
+                Some('2') if trimmed.len() >= 6 => Some(Self::Prestashop(trimmed.to_string())),
+                Some('5') if trimmed.len() >= 7 => Some(Self::Everest(trimmed.to_string())),
+                _ => Some(Self::ShopifyOrderNumber(trimmed.to_string())),
+            };
+        }
+        None
+    }
+
+    pub fn backend(&self) -> BackendKind {
+        match self {
+            Self::Prestashop(_) | Self::Everest(_) => BackendKind::Prestashop,
+            Self::ShopifyOrderNumber(_) | Self::BuildSerial(_) => BackendKind::Shopify,
+        }
+    }
+
+    pub fn display(&self) -> &str {
+        match self {
+            Self::Prestashop(s) | Self::Everest(s) | Self::ShopifyOrderNumber(s) | Self::BuildSerial(s) => s,
+        }
+    }
+}
+
+/// Order workflow class. PS repairs are `id_order_type == "4"`; Xidax order
+/// types carry a `legacy_id` on the `xidax_order_type` metaobject.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum OrderKind {
+    #[default]
+    Sales,
+    Repair,
+    Service,
+    Other,
+}
+
+impl OrderKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Sales => "Sales",
+            Self::Repair => "Repair",
+            Self::Service => "Service",
+            Self::Other => "Other",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StatusInfo {
+    pub legacy_id: i64,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct QcOrderItem {
+    pub row_id: String,
+    pub product_id: String,
+    pub name: String,
+    pub reference: String,
+    pub quantity: f64,
+    pub unit_price: String,
+    pub serials: Vec<String>,
+}
+
+impl QcOrderItem {
+    pub fn serial_attached(&self) -> bool {
+        self.serials.iter().any(|s| !s.trim().is_empty())
+    }
+}
+
+/// PS `order_config` row subset relevant to QC (techs, config state).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct OrderConfigInfo {
+    pub id: String,
+    pub name: String,
+    pub id_config: String,
+    pub builder_employee: Option<String>,
+    pub qc_employee: Option<String>,
+    pub state_legacy_id: Option<i64>,
+}
+
+/// Service-order device intake fields (repairs).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ServiceInfo {
+    pub device_name: String,
+    pub device_mfg: String,
+    pub device_model: String,
+    pub device_serial: String,
+    pub physical_damage: String,
+    pub check_in_notes: String,
+    pub intake_notes: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct QcOrder {
+    pub backend: Option<BackendKind>,
+    pub key: Option<OrderKey>,
+    /// PS order id or Shopify `legacyResourceId`.
+    pub id: String,
+    /// Shopify order GID when applicable.
+    pub gid: Option<String>,
+    /// PS `reference` / Shopify `name` (`#1234`).
+    pub reference: String,
+    pub customer_name: String,
+    pub kind: OrderKind,
+    pub status: StatusInfo,
+    pub items: Vec<QcOrderItem>,
+    pub total_paid: String,
+    pub everest_doc: Option<String>,
+    pub parent_order_id: Option<String>,
+    pub id_customer: Option<String>,
+    pub build_serial: Option<String>,
+    pub config: Option<OrderConfigInfo>,
+    pub service_info: Option<ServiceInfo>,
+    pub note: Option<String>,
+    /// Source PS order kept for spec extraction.
+    pub raw_prestashop: Option<crate::schema::prestashop::Order>,
+    /// Raw `xidax_order_config` metaobject nodes kept for spec extraction.
+    pub shopify_configs: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DriveSpec {
+    pub name: String,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SlotPick {
+    pub slot: String,
+    pub name: String,
+}
+
+/// Expected hardware parsed from the order configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BuildSpec {
+    pub model: String,
+    pub cpu: String,
+    pub gpu: String,
+    pub ram: String,
+    pub motherboard: Option<String>,
+    pub os: Option<String>,
+    pub drives: Vec<DriveSpec>,
+    pub extra: Vec<SlotPick>,
+    pub device_serial: String,
+    pub device_mfg: String,
+}
+
+impl BuildSpec {
+    pub fn is_empty(&self) -> bool {
+        self.cpu.is_empty()
+            && self.gpu.is_empty()
+            && self.ram.is_empty()
+            && self.drives.is_empty()
+            && self.extra.is_empty()
+    }
+}
+
+/// Authenticated QC technician.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct TechIdentity {
+    pub id_employee: String,
+    pub name: String,
+    pub email: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct OrderComment {
+    pub id: String,
+    pub author: String,
+    pub author_employee_id: Option<String>,
+    pub body: String,
+    pub created_at: String,
+    pub private: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct PhotoCheck {
+    pub present: bool,
+    pub count: usize,
+}
+
+/// QC sign-off checklist (ported from `qc_wizard.qc_sign_off` columns).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, SurrealValue)]
+pub struct QcChecklist {
+    pub bios_updated: bool,
+    pub core_isolation_enabled: bool,
+    pub tpm_enabled: bool,
+    pub physical_inspection_passed: bool,
+    pub power_cable_present: bool,
+    pub rgb_remote_present: bool,
+    pub wifi_antenna_present: bool,
+    pub ordered_parts_installed: bool,
+    pub system_drivers_installed: bool,
+    pub ordered_software_installed: bool,
+    pub cpu_overclock_done: bool,
+    pub gpu_overclock_done: bool,
+    pub ram_timings_configured: bool,
+    pub windows_activation_done: bool,
+    pub restart_test_passed: bool,
+}
+
+impl QcChecklist {
+    pub const LABELS: [(&'static str, &'static str); 15] = [
+        ("bios_updated", "BIOS updated"),
+        ("core_isolation_enabled", "Core isolation enabled"),
+        ("tpm_enabled", "TPM enabled"),
+        ("physical_inspection_passed", "Physical inspection passed"),
+        ("power_cable_present", "Power cable present"),
+        ("rgb_remote_present", "RGB remote present"),
+        ("wifi_antenna_present", "WiFi antenna present"),
+        ("ordered_parts_installed", "Ordered parts installed"),
+        ("system_drivers_installed", "System drivers installed"),
+        ("ordered_software_installed", "Ordered software installed"),
+        ("cpu_overclock_done", "CPU overclock done"),
+        ("gpu_overclock_done", "GPU overclock done"),
+        ("ram_timings_configured", "RAM timings configured"),
+        ("windows_activation_done", "Windows activation done"),
+        ("restart_test_passed", "Restart test passed"),
+    ];
+
+    pub fn field_mut(&mut self, key: &str) -> Option<&mut bool> {
+        Some(match key {
+            "bios_updated" => &mut self.bios_updated,
+            "core_isolation_enabled" => &mut self.core_isolation_enabled,
+            "tpm_enabled" => &mut self.tpm_enabled,
+            "physical_inspection_passed" => &mut self.physical_inspection_passed,
+            "power_cable_present" => &mut self.power_cable_present,
+            "rgb_remote_present" => &mut self.rgb_remote_present,
+            "wifi_antenna_present" => &mut self.wifi_antenna_present,
+            "ordered_parts_installed" => &mut self.ordered_parts_installed,
+            "system_drivers_installed" => &mut self.system_drivers_installed,
+            "ordered_software_installed" => &mut self.ordered_software_installed,
+            "cpu_overclock_done" => &mut self.cpu_overclock_done,
+            "gpu_overclock_done" => &mut self.gpu_overclock_done,
+            "ram_timings_configured" => &mut self.ram_timings_configured,
+            "windows_activation_done" => &mut self.windows_activation_done,
+            "restart_test_passed" => &mut self.restart_test_passed,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, SurrealValue)]
+pub struct SpecDiffSummary {
+    pub component: String,
+    pub expected: String,
+    pub detected: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, SurrealValue)]
+pub struct SpecCheckSummary {
+    pub matched: bool,
+    pub diffs: Vec<SpecDiffSummary>,
+}
+
+/// Bench QC result pushed to the order backend and persisted to SurrealDB.
+/// Mirrors the planned `xidax_qc.bench` metafield contract.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, SurrealValue)]
+pub struct QcReportPayload {
+    pub order_key: String,
+    pub order_id: String,
+    pub backend: String,
+    /// `passed` / `failed` / `aborted`.
+    pub verdict: String,
+    pub preset: Option<String>,
+    pub machine_id: Option<String>,
+    pub tech: Option<String>,
+    pub tech_employee_id: Option<String>,
+    pub signoff_tech: Option<String>,
+    pub signoff_employee_id: Option<String>,
+    pub duration_secs: f64,
+    pub whea_delta: i64,
+    pub tdr_delta: i64,
+    pub stressor_errors: i64,
+    pub cpu_max_c: Option<f64>,
+    pub gpu_max_c: Option<f64>,
+    pub spec_check: Option<SpecCheckSummary>,
+    /// `stress_test_run` record backing this verdict.
+    pub run_ref: Option<String>,
+    pub checklist: QcChecklist,
+    pub notes: String,
+}
+
+impl QcReportPayload {
+    /// Human-readable summary used for backend comment pushes.
+    pub fn summary_text(&self) -> String {
+        let mut out = format!(
+            "BENCH QC {} — order {} ({})\n",
+            self.verdict.to_uppercase(),
+            self.order_id,
+            self.preset.as_deref().unwrap_or("no preset"),
+        );
+        out.push_str(&format!(
+            "Errors: WHEA {} | TDR {} | stressor {}\n",
+            self.whea_delta, self.tdr_delta, self.stressor_errors
+        ));
+        if let Some(c) = self.cpu_max_c {
+            out.push_str(&format!("CPU max {c:.1}C "));
+        }
+        if let Some(g) = self.gpu_max_c {
+            out.push_str(&format!("GPU max {g:.1}C"));
+        }
+        out.push('\n');
+        if let Some(spec) = &self.spec_check {
+            if spec.matched {
+                out.push_str("Spec check: MATCHED\n");
+            } else {
+                out.push_str("Spec check: MISMATCH\n");
+                for d in &spec.diffs {
+                    out.push_str(&format!("  {}: expected '{}' detected '{}'\n", d.component, d.expected, d.detected));
+                }
+            }
+        }
+        if let Some(tech) = &self.tech {
+            out.push_str(&format!("Tech: {tech}\n"));
+        }
+        if let Some(so) = &self.signoff_tech {
+            out.push_str(&format!("Sign-off: {so}\n"));
+        }
+        if let Some(run) = &self.run_ref {
+            out.push_str(&format!("Run: {run}\n"));
+        }
+        if !self.notes.trim().is_empty() {
+            out.push_str(&format!("Notes: {}\n", self.notes.trim()));
+        }
+        out
+    }
+}
+
+/// SurrealDB row wrapping a submitted bench QC report.
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+pub struct QcReportRecord {
+    pub id: RecordId,
+    pub created_at: crate::schema::Datetime,
+    pub report: QcReportPayload,
+}
+
+/// Persist a bench QC report. Independent of any backend push so SurrealDB
+/// keeps the record even when the order backend write fails.
+pub async fn persist_qc_report(report: &QcReportPayload) -> anyhow::Result<RecordId> {
+    let id = crate::schema::random_record_id(QC_REPORT_TABLE);
+    let record = QcReportRecord {
+        id: id.clone(),
+        created_at: chrono::Utc::now().into(),
+        report: report.clone(),
+    };
+    let created: Option<QcReportRecord> = crate::DATABASE
+        .create(QC_REPORT_TABLE)
+        .content(record)
+        .await?;
+    created
+        .map(|r| r.id)
+        .ok_or_else(|| anyhow::anyhow!("qc_report insert returned no record"))
+}
+
+/// Backend contract for bench QC (master plan §6.3, extended with the
+/// identity / comments / photo legs of the gap matrix).
+pub trait OrderBackend {
+    fn backend_kind(&self) -> BackendKind;
+    fn find_order(&self, key: &OrderKey) -> impl std::future::Future<Output = anyhow::Result<QcOrder>> + Send;
+    fn build_spec(&self, order: &QcOrder) -> impl std::future::Future<Output = anyhow::Result<BuildSpec>> + Send;
+    fn status_gate(&self, order: &QcOrder) -> GateDecision;
+    fn advance_status(&self, order: &QcOrder, to_legacy_id: i64) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
+    fn submit_qc(&self, order: &QcOrder, report: &QcReportPayload) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
+    fn authenticate_tech(&self, email: &str, password: &str) -> impl std::future::Future<Output = anyhow::Result<TechIdentity>> + Send;
+    fn fetch_comments(&self, order: &QcOrder) -> impl std::future::Future<Output = anyhow::Result<Vec<OrderComment>>> + Send;
+    fn post_comment(&self, order: &QcOrder, tech: &TechIdentity, body: &str) -> impl std::future::Future<Output = anyhow::Result<OrderComment>> + Send;
+    fn check_build_photos(&self, order: &QcOrder) -> impl std::future::Future<Output = anyhow::Result<PhotoCheck>> + Send;
+}
+
+/// Concrete backend dispatch. Picks the implementation from the key shape;
+/// the UI can override with an explicit choice.
+#[derive(Debug, Clone)]
+pub enum QcBackend {
+    Prestashop(PrestashopBackend),
+    Shopify(ShopifyBackend),
+}
+
+impl QcBackend {
+    pub fn for_key(key: &OrderKey) -> Self {
+        match key.backend() {
+            BackendKind::Prestashop => Self::Prestashop(PrestashopBackend::new()),
+            BackendKind::Shopify => Self::Shopify(ShopifyBackend::from_env()),
+        }
+    }
+
+    pub fn backend_kind(&self) -> BackendKind {
+        match self {
+            Self::Prestashop(b) => b.backend_kind(),
+            Self::Shopify(b) => b.backend_kind(),
+        }
+    }
+
+    pub async fn find_order(&self, key: &OrderKey) -> anyhow::Result<QcOrder> {
+        match self {
+            Self::Prestashop(b) => b.find_order(key).await,
+            Self::Shopify(b) => b.find_order(key).await,
+        }
+    }
+
+    pub async fn build_spec(&self, order: &QcOrder) -> anyhow::Result<BuildSpec> {
+        match self {
+            Self::Prestashop(b) => b.build_spec(order).await,
+            Self::Shopify(b) => b.build_spec(order).await,
+        }
+    }
+
+    pub fn status_gate(&self, order: &QcOrder) -> GateDecision {
+        match self {
+            Self::Prestashop(b) => b.status_gate(order),
+            Self::Shopify(b) => b.status_gate(order),
+        }
+    }
+
+    pub async fn advance_status(&self, order: &QcOrder, to_legacy_id: i64) -> anyhow::Result<()> {
+        match self {
+            Self::Prestashop(b) => b.advance_status(order, to_legacy_id).await,
+            Self::Shopify(b) => b.advance_status(order, to_legacy_id).await,
+        }
+    }
+
+    pub async fn submit_qc(&self, order: &QcOrder, report: &QcReportPayload) -> anyhow::Result<()> {
+        match self {
+            Self::Prestashop(b) => b.submit_qc(order, report).await,
+            Self::Shopify(b) => b.submit_qc(order, report).await,
+        }
+    }
+
+    pub async fn authenticate_tech(&self, email: &str, password: &str) -> anyhow::Result<TechIdentity> {
+        match self {
+            Self::Prestashop(b) => b.authenticate_tech(email, password).await,
+            Self::Shopify(b) => b.authenticate_tech(email, password).await,
+        }
+    }
+
+    pub async fn fetch_comments(&self, order: &QcOrder) -> anyhow::Result<Vec<OrderComment>> {
+        match self {
+            Self::Prestashop(b) => b.fetch_comments(order).await,
+            Self::Shopify(b) => b.fetch_comments(order).await,
+        }
+    }
+
+    pub async fn post_comment(&self, order: &QcOrder, tech: &TechIdentity, body: &str) -> anyhow::Result<OrderComment> {
+        match self {
+            Self::Prestashop(b) => b.post_comment(order, tech, body).await,
+            Self::Shopify(b) => b.post_comment(order, tech, body).await,
+        }
+    }
+
+    pub async fn check_build_photos(&self, order: &QcOrder) -> anyhow::Result<PhotoCheck> {
+        match self {
+            Self::Prestashop(b) => b.check_build_photos(order).await,
+            Self::Shopify(b) => b.check_build_photos(order).await,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn order_key_routing_matches_qcwizard() {
+        assert_eq!(OrderKey::parse("212345"), Some(OrderKey::Prestashop("212345".into())));
+        assert_eq!(OrderKey::parse("51234567"), Some(OrderKey::Everest("51234567".into())));
+        assert_eq!(OrderKey::parse("#1042"), Some(OrderKey::ShopifyOrderNumber("1042".into())));
+        assert_eq!(OrderKey::parse("xbs-1042"), Some(OrderKey::BuildSerial("XBS-1042".into())));
+        assert_eq!(OrderKey::parse("   "), None);
+        assert_eq!(OrderKey::parse("abc"), None);
+    }
+
+    #[test]
+    fn short_numbers_route_to_shopify_not_everest() {
+        // A 4-digit Shopify order number starting with 5 or 2 must not be
+        // mistaken for an Everest doc / PS id.
+        assert_eq!(OrderKey::parse("5123"), Some(OrderKey::ShopifyOrderNumber("5123".into())));
+        assert_eq!(OrderKey::parse("2042"), Some(OrderKey::ShopifyOrderNumber("2042".into())));
+        assert_eq!(OrderKey::parse("#51234567"), Some(OrderKey::ShopifyOrderNumber("51234567".into())));
+    }
+
+    #[test]
+    fn order_key_backend_split() {
+        assert_eq!(OrderKey::parse("212345").unwrap().backend(), BackendKind::Prestashop);
+        assert_eq!(OrderKey::parse("51234567").unwrap().backend(), BackendKind::Prestashop);
+        assert_eq!(OrderKey::parse("1042").unwrap().backend(), BackendKind::Shopify);
+        assert_eq!(OrderKey::parse("XBS-1042").unwrap().backend(), BackendKind::Shopify);
+    }
+}

@@ -10,7 +10,7 @@ use wgpu::util::DeviceExt;
 
 use crate::Metrics;
 
-use super::gpu_common::{emit_tick, run_unsupported, GpuContext, TICK};
+use super::gpu_common::{emit_fatal_tick, emit_tick, run_unsupported, GpuContext, TICK};
 
 const SHADER: &str = r#"
 struct Params {
@@ -171,6 +171,10 @@ pub(crate) fn run(
         }
         ctx.queue.submit(std::iter::once(encoder.finish()));
         let _ = ctx.device.poll(wgpu::PollType::Wait);
+        if let Some(reason) = ctx.health.failure() {
+            emit_fatal_tick(tx, started_at, format!("gpu: {reason}"), 0);
+            return;
+        }
         dispatches_in_tick += 1;
 
         if last_tick.elapsed() >= TICK {
@@ -178,7 +182,7 @@ pub(crate) fn run(
             let invocations = INVOCATIONS_PER_DISPATCH * dispatches_in_tick;
             let total_ops = invocations * OPS_PER_INVOCATION;
             let gflops = (total_ops as f64) / dt / 1e9;
-            emit_tick(tx, started_at, gflops, None);
+            emit_tick(tx, started_at, gflops, None, 0);
             last_tick = Instant::now();
             dispatches_in_tick = 0;
         }
