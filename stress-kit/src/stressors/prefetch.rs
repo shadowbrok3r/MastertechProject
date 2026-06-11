@@ -68,6 +68,7 @@ pub(crate) fn run(
                 throughput: mref,
                 last_error: None,
                 fatal: false,
+                errors: 0,
             });
 
             last_count = now;

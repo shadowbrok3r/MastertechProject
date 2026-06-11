@@ -62,6 +62,24 @@ pub fn stress_tests_scripts() -> Vec<ScriptItem> {
             .with_pass_criteria("Every stage above qc_floor_for(stressor)")
             .with_warning_criteria("Stage throughput between 0.9× and 1.0× floor")
             .with_error_criteria("Any stage below floor, WHEA delta, or BSOD"),
+        // Verified tests (count real data errors, not just load)
+        ScriptItem::new("Memory Test", ScriptCategory::StressTests)
+            .with_description("RAM pattern write/verify: moving inversions, walking ones, address-in-address, random (MemTest86-style); reports MiB/s")
+            .with_pass_criteria("Zero mismatches across all patterns")
+            .with_error_criteria("Any data mismatch — treat as faulty RAM"),
+        ScriptItem::new("Stress: CPU Verify", ScriptCategory::StressTests)
+            .with_description("Deterministic integer+FP workload executed twice per seed with digest compare; reports Mop/s")
+            .with_pass_criteria("Zero digest divergences")
+            .with_error_criteria("Any divergence — silent data corruption under load"),
+        ScriptItem::new("Stress: Linpack", ScriptCategory::StressTests)
+            .with_description("Repeated LU solves with partial pivoting + HPL residual check; reports GFLOPS")
+            .with_pass_criteria("All residuals under the HPL threshold (16)")
+            .with_error_criteria("Any residual breach — compute error under load"),
+        ScriptItem::new("Stress: PSU", ScriptCategory::StressTests)
+            .with_description("All-core FMA chains + GPU compute shader simultaneously for max power draw; reports combined GFLOPS")
+            .with_pass_criteria("Run completes; no WHEA delta; no thermal runaway")
+            .with_warning_criteria("No GPU present — CPU-only load")
+            .with_error_criteria("WHEA events or reboot during the run"),
         // CPU singles
         ScriptItem::new("Stress: CPU", ScriptCategory::StressTests)
             .with_description("Float-op burst loop; reports Mop/s")
@@ -139,9 +157,46 @@ pub fn stress_tests_scripts() -> Vec<ScriptItem> {
             .with_pass_criteria("≥ 1000 MiB/s sustained; no mismatches")
             .with_error_criteria("VRAM mismatch surfaced via last_error"),
         ScriptItem::new("Stress: GPU PCIe", ScriptCategory::StressTests)
-            .with_description("CPU↔GPU buffer round-trip; reports GB/s")
-            .with_pass_criteria("≥ 1 GB/s sustained")
-            .with_warning_criteria("PCIe replay deltas during the run"),
+            .with_description("CPU↔GPU buffer round-trip with full readback verify; reports GB/s, mismatches counted")
+            .with_pass_criteria("≥ 1 GB/s sustained; zero mismatches")
+            .with_warning_criteria("PCIe replay deltas during the run")
+            .with_error_criteria("Any round-trip data mismatch"),
+        // Scored benchmarks — each persists a benchmark_result row (plus the
+        // backing stress_test_run) for cross-machine score comparison.
+        ScriptItem::new("Benchmark Suite", ScriptCategory::StressTests)
+            .with_description("Standard scored suite: cpu single/multi, matrix, linpack, memory bandwidth, memcpy, latency ladder, disk (+ GPU kinds when present); ~15 s each")
+            .with_pass_criteria("All benchmarks complete with zero errors; scores persisted")
+            .with_error_criteria("Any benchmark errors or fails to produce samples"),
+        ScriptItem::new("Benchmark: CPU Single", ScriptCategory::StressTests)
+            .with_description("Single-thread FMA throughput score (Mflop/s)"),
+        ScriptItem::new("Benchmark: CPU Multi", ScriptCategory::StressTests)
+            .with_description("All-thread FMA throughput score (Mflop/s)"),
+        ScriptItem::new("Benchmark: Matrix Single", ScriptCategory::StressTests)
+            .with_description("Single-thread matmul score (Mflop/s)"),
+        ScriptItem::new("Benchmark: Matrix Multi", ScriptCategory::StressTests)
+            .with_description("All-thread matmul score (Mflop/s)"),
+        ScriptItem::new("Benchmark: Linpack", ScriptCategory::StressTests)
+            .with_description("LU-solve GFLOPS score with residual verification")
+            .with_error_criteria("Any residual breach during measurement"),
+        ScriptItem::new("Benchmark: Memory Bandwidth", ScriptCategory::StressTests)
+            .with_description("STREAM copy/scale/add/triad bandwidth score (GB/s)"),
+        ScriptItem::new("Benchmark: Memcpy", ScriptCategory::StressTests)
+            .with_description("Bulk memcpy bandwidth score (GB/s)"),
+        ScriptItem::new("Benchmark: Memory Latency", ScriptCategory::StressTests)
+            .with_description("Pointer-chase ladder 4 KiB → 128 MiB; score is RAM ns/access (lower is better), full ladder in detail"),
+        ScriptItem::new("Benchmark: Disk", ScriptCategory::StressTests)
+            .with_description("Temp-file write+sync+read cycle score (MiB/s)")
+            .with_error_criteria("Any I/O error during measurement"),
+        ScriptItem::new("Benchmark: GPU Compute", ScriptCategory::StressTests)
+            .with_description("Compute-shader FMA throughput score (GFLOPS)"),
+        ScriptItem::new("Benchmark: GPU Matmul", ScriptCategory::StressTests)
+            .with_description("GPU NxN matmul throughput score (GFLOPS)"),
+        ScriptItem::new("Benchmark: GPU VRAM", ScriptCategory::StressTests)
+            .with_description("VRAM write+verify bandwidth score (MiB/s)")
+            .with_error_criteria("Any VRAM mismatch during measurement"),
+        ScriptItem::new("Benchmark: GPU PCIe", ScriptCategory::StressTests)
+            .with_description("CPU↔GPU verified round-trip bandwidth score (GB/s)")
+            .with_error_criteria("Any round-trip mismatch during measurement"),
     ]
 }
 
@@ -255,3 +310,44 @@ pub fn category_icon(category: &ScriptCategory) -> &'static str {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every script name stress-runner can execute must be listed in this
+    /// catalog, or it never appears in the terminal tab / admin console.
+    #[test]
+    fn stress_catalog_covers_runner_scripts() {
+        let names: Vec<String> = stress_tests_scripts()
+            .iter()
+            .map(|s| s.name.clone())
+            .collect();
+        for n in stress_runner::STRESS_SCRIPT_NAMES {
+            assert!(
+                names.iter().any(|x| x == n),
+                "stress script missing from displays catalog: {n}"
+            );
+        }
+        for n in stress_runner::BENCHMARK_SCRIPT_NAMES {
+            assert!(
+                names.iter().any(|x| x == n),
+                "benchmark script missing from displays catalog: {n}"
+            );
+        }
+        assert!(names.iter().any(|x| x == "QC Benchmark"));
+    }
+
+    /// Every benchmark script except the suite resolves to a kind.
+    #[test]
+    fn benchmark_scripts_resolve_to_kinds() {
+        for n in stress_runner::BENCHMARK_SCRIPT_NAMES {
+            let kind = stress_runner::benchmark_kind_for_script(n);
+            if *n == "Benchmark Suite" {
+                assert!(kind.is_none());
+            } else {
+                assert!(kind.is_some(), "no BenchmarkKind for script: {n}");
+            }
+        }
+    }
+}

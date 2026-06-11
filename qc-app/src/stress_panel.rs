@@ -107,10 +107,14 @@ pub enum StressorChoice {
     Prefetch,
     Icache,
     Tsc,
+    MemTest,
+    CpuVerify,
+    Linpack,
+    Psu,
 }
 
 impl StressorChoice {
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 23] = [
         Self::Cpu,
         Self::Memory,
         Self::Disk,
@@ -130,6 +134,10 @@ impl StressorChoice {
         Self::Prefetch,
         Self::Icache,
         Self::Tsc,
+        Self::MemTest,
+        Self::CpuVerify,
+        Self::Linpack,
+        Self::Psu,
     ];
 
     pub fn label(self) -> &'static str {
@@ -157,6 +165,10 @@ impl StressorChoice {
             Self::Prefetch => Stressor::Prefetch,
             Self::Icache => Stressor::Icache,
             Self::Tsc => Stressor::Tsc,
+            Self::MemTest => Stressor::MemTest,
+            Self::CpuVerify => Stressor::CpuVerify,
+            Self::Linpack => Stressor::Linpack,
+            Self::Psu => Stressor::Psu,
         }
     }
 
@@ -283,6 +295,10 @@ pub struct StressPanel {
     /// Live system telemetry charts (relocated from the hardware monitor).
     /// Fed every frame from the shared `HwSampler` via [`StressPanel::push_telemetry`].
     charts: ChartBoard,
+    /// `(service_order, tech)` applied to new runs while an order session is open.
+    order_context: Option<(RecordId, String)>,
+    /// Preset label of the most recently started run.
+    last_preset: Option<String>,
 }
 
 impl Default for StressPanel {
@@ -298,6 +314,8 @@ impl Default for StressPanel {
             show_verdict: false,
             pending_stage_pick: StressorChoice::Cpu,
             charts: ChartBoard::default(),
+            order_context: None,
+            last_preset: None,
         }
     }
 }
@@ -308,6 +326,29 @@ impl StressPanel {
     /// populated even when the user hasn't started a stress run.
     pub fn push_telemetry(&mut self, snapshot: &TelemetrySnapshot) {
         self.charts.push(snapshot);
+    }
+
+    /// Bind/unbind the order context stamped onto new runs.
+    pub fn set_order_context(&mut self, ctx: Option<(RecordId, String)>) {
+        self.order_context = ctx;
+    }
+
+    pub fn last_verdict_ref(&self) -> Option<&RunVerdict> {
+        self.last_verdict.as_ref()
+    }
+
+    pub fn last_preset(&self) -> Option<String> {
+        self.last_preset.clone()
+    }
+
+    /// Stamp order linkage onto a run spec before start.
+    fn apply_order_context(&self, spec: &mut RunSpec) {
+        if let Some((service_order, tech)) = self.order_context.as_ref() {
+            spec.service_order = Some(service_order.clone());
+            if !tech.is_empty() {
+                spec.tech = Some(tech.clone());
+            }
+        }
     }
 
     /// Drain controller updates.  Call from the host `update` loop each frame.
@@ -418,6 +459,8 @@ impl StressPanel {
         spec.plan = plan;
         spec.tool = TestTool::StressKit { stressor: cfg.stressor.to_db() };
         spec.preset_label = Some(format!("qc-app:single:{}", cfg.stressor.label()));
+        self.apply_order_context(&mut spec);
+        self.last_preset = spec.preset_label.clone();
         self.history.clear();
         self.latest = None;
         self.scenario_state = ScenarioState::default();
@@ -451,6 +494,8 @@ impl StressPanel {
             name: Some("qc-app:scenario".to_string()),
         };
         spec.preset_label = Some("qc-app:scenario".to_string());
+        self.apply_order_context(&mut spec);
+        self.last_preset = spec.preset_label.clone();
         self.history.clear();
         self.latest = None;
         self.scenario_state = ScenarioState::default();
@@ -491,6 +536,8 @@ impl StressPanel {
         };
         spec.preset_label = Some(crate::qc_benchmark::QC_BENCHMARK_PRESET.to_string());
         spec.tags = vec!["origin:gui".into(), "preset:qc-benchmark".into()];
+        self.apply_order_context(&mut spec);
+        self.last_preset = spec.preset_label.clone();
         self.history.clear();
         self.latest = None;
         self.scenario_state = ScenarioState::default();
@@ -613,7 +660,11 @@ impl StressPanel {
             });
 
             match s.stressor {
-                StressorChoice::Memory | StressorChoice::Memcpy | StressorChoice::Vm => {
+                StressorChoice::Memory
+                | StressorChoice::Memcpy
+                | StressorChoice::Vm
+                | StressorChoice::MemTest
+                | StressorChoice::Linpack => {
                     ui.horizontal(|ui| {
                         ui.label("Memory cap (MiB)");
                         ui.add_enabled(
@@ -646,7 +697,9 @@ impl StressPanel {
                 | StressorChoice::Hash
                 | StressorChoice::Prefetch
                 | StressorChoice::Icache
-                | StressorChoice::Tsc => {}
+                | StressorChoice::Tsc
+                | StressorChoice::CpuVerify
+                | StressorChoice::Psu => {}
             }
 
             ui.horizontal(|ui| {

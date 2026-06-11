@@ -34,6 +34,10 @@ pub fn stressor_to_db(s: Stressor) -> StressKitStressor {
         Stressor::Prefetch => StressKitStressor::Prefetch,
         Stressor::Icache => StressKitStressor::Icache,
         Stressor::Tsc => StressKitStressor::Tsc,
+        Stressor::MemTest => StressKitStressor::MemTest,
+        Stressor::CpuVerify => StressKitStressor::CpuVerify,
+        Stressor::Linpack => StressKitStressor::Linpack,
+        Stressor::Psu => StressKitStressor::Psu,
         Stressor::Gpu => StressKitStressor::Gpu,
         Stressor::GpuMatmul => StressKitStressor::GpuMatmul,
         Stressor::GpuVram => StressKitStressor::GpuVram,
@@ -64,6 +68,10 @@ pub fn stressor_from_db(s: StressKitStressor) -> Stressor {
         StressKitStressor::Prefetch => Stressor::Prefetch,
         StressKitStressor::Icache => Stressor::Icache,
         StressKitStressor::Tsc => Stressor::Tsc,
+        StressKitStressor::MemTest => Stressor::MemTest,
+        StressKitStressor::CpuVerify => Stressor::CpuVerify,
+        StressKitStressor::Linpack => Stressor::Linpack,
+        StressKitStressor::Psu => Stressor::Psu,
         StressKitStressor::Gpu => Stressor::Gpu,
         StressKitStressor::GpuMatmul => Stressor::GpuMatmul,
         StressKitStressor::GpuVram => Stressor::GpuVram,
@@ -88,10 +96,15 @@ pub fn default_target_kind(s: Stressor) -> TargetKind {
         | Stressor::Hash
         | Stressor::Prefetch
         | Stressor::Icache
-        | Stressor::Tsc => TargetKind::Cpu,
-        Stressor::Memory | Stressor::Memcpy | Stressor::Vm | Stressor::Stream => {
-            TargetKind::Memory
-        }
+        | Stressor::Tsc
+        | Stressor::CpuVerify
+        | Stressor::Linpack => TargetKind::Cpu,
+        Stressor::Memory
+        | Stressor::Memcpy
+        | Stressor::Vm
+        | Stressor::Stream
+        | Stressor::MemTest => TargetKind::Memory,
+        Stressor::Psu => TargetKind::Psu,
         Stressor::Disk => TargetKind::Storage,
         Stressor::Gpu | Stressor::GpuMatmul | Stressor::GpuVram | Stressor::GpuPcie => {
             TargetKind::Gpu

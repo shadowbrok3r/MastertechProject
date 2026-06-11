@@ -964,6 +964,19 @@ pub struct QuerySurrealDbParams {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct BenchmarkResultsQueryParams {
+    #[schemars(description = "Filter by the machine's hostname as reported by the client (e.g. \
+        \"BENCH-07\"). Omit to query across all machines.")]
+    pub hostname: Option<String>,
+    #[schemars(description = "Filter by benchmark kind: cpu_single, cpu_multi, matrix_single, \
+        matrix_multi, linpack, memory_bandwidth, memcpy, memory_latency, disk, gpu_compute, \
+        gpu_matmul, gpu_vram, gpu_pcie. Omit for all kinds.")]
+    pub kind: Option<String>,
+    #[schemars(description = "Max rows, newest first. Default 20, cap 200.")]
+    pub limit: Option<u64>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct ScriptsListParams {}
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
@@ -977,7 +990,7 @@ pub struct ScriptsRunParams {
     )]
     pub script_name: String,
     #[schemars(
-        description = "Service number. Required for activation scripts (Webroot, SuperAnti, SEB) and for EVERY StressTests script — populates stress_test_run.service_order so the run is linked to the customer / computer / ticket."
+        description = "Service number. Required for activation scripts (Webroot, SuperAnti, SEB) and for stress/verify StressTests scripts — populates stress_test_run.service_order so the run is linked to the customer / computer / ticket. NOT required for 'Benchmark Suite' / 'Benchmark: ...' scripts (scores are machine-keyed)."
     )]
     pub service_number: Option<String>,
     #[schemars(
@@ -1003,7 +1016,7 @@ pub struct ScriptsRunRemoteParams {
     pub category: String,
     #[schemars(description = "Display name of the script as listed by scripts_list (e.g. 'Activate Webroot', 'Activate SEB', 'GPU Stress Test', 'Stress: CPU').")]
     pub script_name: String,
-    #[schemars(description = "Service order number. Required for activation scripts (Webroot, SuperAnti, SEB) and for EVERY StressTests script — populates stress_test_run.service_order so the run is linked to the customer / computer / ticket.")]
+    #[schemars(description = "Service order number. Required for activation scripts (Webroot, SuperAnti, SEB) and for stress/verify StressTests scripts — populates stress_test_run.service_order so the run is linked to the customer / computer / ticket. NOT required for 'Benchmark Suite' / 'Benchmark: ...' scripts (scores are machine-keyed).")]
     pub service_number: Option<String>,
     #[schemars(description = "Customer email. Required for SuperEasyBackup activation.")]
     pub customer_email: Option<String>,
@@ -3305,6 +3318,46 @@ impl PluginToolProvider {
     }
 
     #[tool(
+        name = "benchmark_results_query",
+        description = "Query persisted benchmark scores (benchmark_result table), newest first. Benchmarks run via the StressTests scripts ('Benchmark Suite', 'Benchmark: CPU Multi', 'Benchmark: Memory Latency', ...) — use scripts_run_remote to run them on a connected client, then read the scores here. Filter by hostname and/or kind to compare one machine against the population. Each row carries score/unit/peak/low, threads, temps, an errors count (non-zero invalidates the score), and run_ref linking the backing stress_test_run."
+    )]
+    async fn benchmark_results_query(
+        &self,
+        Parameters(p): Parameters<BenchmarkResultsQueryParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let kind = match p.kind.as_deref() {
+            Some(k) => Some(
+                stress_runner::parse_benchmark_kind(k)
+                    .ok_or_else(|| to_internal(format!("unknown benchmark kind '{k}'")))?
+                    .as_str()
+                    .to_string(),
+            ),
+            None => None,
+        };
+        let limit = p.limit.unwrap_or(20).clamp(1, 200) as i64;
+        // Hostname compare is case-insensitive: benchmark rows store sysinfo
+        // casing ("OwnerPC") while stress_test_run stores COMPUTERNAME ("OWNERPC").
+        let rows: Vec<serde_json::Value> = database::DATABASE
+            .query(
+                "SELECT * FROM benchmark_result \
+                 WHERE ($h = NONE OR string::lowercase(hostname ?? '') = string::lowercase($h)) \
+                   AND ($k = NONE OR kind_label = $k) \
+                 ORDER BY captured_at DESC LIMIT $l",
+            )
+            .bind(("h", p.hostname.clone()))
+            .bind(("k", kind))
+            .bind(("l", limit))
+            .await
+            .map_err(to_internal)?
+            .take(0)
+            .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![Content::json(
+            serde_json::json!({ "count": rows.len(), "results": rows }),
+        )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
         name = "telemetry_snapshot",
         description = "Live hardware telemetry snapshot from this host's stress-kit TelemetryAgent: per-core load/frequency, memory, disk and network rates, GPU, top processes, plus Windows WHEA error / GPU TDR counters and thermal state. The sampler starts on first call and refreshes every 1s. Use during or after stress runs, or for a quick health read without running any script."
     )]
@@ -3512,7 +3565,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "scripts_list",
-        description = "List every script available in the host Mastertech Scripts tab catalog (Tuneup / QC, Informational, Junkware Removal, Stress Tests). Use the returned `category` + `script_name` values verbatim with scripts_run. Works whether or not the host is currently running — it's a static catalog. The Stress Tests category exposes 25 persisted stress runs (GPU Stress Test, QC Benchmark, and singles for every stress-kit stressor)."
+        description = "List every script available in the host Mastertech Scripts tab catalog (Tuneup / QC, Informational, Junkware Removal, Stress Tests). Use the returned `category` + `script_name` values verbatim with scripts_run. Works whether or not the host is currently running — it's a static catalog. The Stress Tests category exposes the persisted stress catalog (GPU Stress Test, QC Benchmark, Memory Test, verified CPU/Linpack/PSU tests, singles for every stress-kit stressor) plus the scored 'Benchmark Suite' / 'Benchmark: ...' entries that persist benchmark_result rows readable via benchmark_results_query."
     )]
     async fn scripts_list(
         &self,
@@ -3585,7 +3638,9 @@ impl PluginToolProvider {
             }
         };
 
+        // Benchmark scripts are exempt: scores are machine-keyed, not order-keyed.
         if category == ScriptCategory::StressTests
+            && !stress_runner::is_benchmark_script(&p.script_name)
             && p.service_number.as_deref().map(str::trim).unwrap_or("").is_empty()
         {
             return Err(to_internal(format!(

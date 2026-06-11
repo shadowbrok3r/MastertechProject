@@ -3,13 +3,16 @@ pub mod bitops;
 pub mod branch;
 pub mod cache;
 pub mod cpu;
+pub mod cpu_verify;
 pub mod disk;
 pub mod fp;
 pub mod hash;
 pub mod icache;
+pub mod linpack;
 pub mod matrix;
 pub mod memcpy;
 pub mod memory;
+pub mod memtest;
 pub mod mutex;
 pub mod prefetch;
 pub mod prime;
@@ -26,6 +29,8 @@ pub mod gpu_matmul;
 pub mod gpu_vram;
 #[cfg(feature = "gpu")]
 pub mod gpu_pcie;
+#[cfg(feature = "gpu")]
+pub mod psu;
 #[cfg(feature = "gpu")]
 mod gpu_common;
 
@@ -90,7 +95,16 @@ pub(crate) fn run_core(
         Stressor::Prefetch => prefetch::run(thread_count, cancel, tx, started_at),
         Stressor::Icache => icache::run(thread_count, cancel, tx, started_at),
         Stressor::Tsc => tsc::run(thread_count, cancel, tx, started_at),
+        Stressor::MemTest => {
+            memtest::run(thread_count, config.memory_cap_mb, cancel, tx, started_at)
+        }
+        Stressor::CpuVerify => cpu_verify::run(thread_count, cancel, tx, started_at),
+        Stressor::Linpack => {
+            linpack::run(thread_count, config.memory_cap_mb, cancel, tx, started_at)
+        }
 
+        #[cfg(feature = "gpu")]
+        Stressor::Psu => psu::run(thread_count, cancel, tx, started_at),
         #[cfg(feature = "gpu")]
         Stressor::Gpu => gpu::run(thread_count, cancel, tx, started_at),
         #[cfg(feature = "gpu")]
@@ -101,7 +115,11 @@ pub(crate) fn run_core(
         Stressor::GpuPcie => gpu_pcie::run(thread_count, config.memory_cap_mb, cancel, tx, started_at),
 
         #[cfg(not(feature = "gpu"))]
-        Stressor::Gpu | Stressor::GpuMatmul | Stressor::GpuVram | Stressor::GpuPcie => {
+        Stressor::Psu
+        | Stressor::Gpu
+        | Stressor::GpuMatmul
+        | Stressor::GpuVram
+        | Stressor::GpuPcie => {
             log::warn!("stress-kit built without 'gpu' feature; GPU stressor dispatched as no-op");
             let _ = (config, thread_count);
             let _ = tx.send(crate::Metrics {
@@ -109,6 +127,7 @@ pub(crate) fn run_core(
                 throughput: 0.0,
                 last_error: Some("stress-kit built without 'gpu' feature".into()),
                 fatal: false,
+                errors: 0,
             });
             while !cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 std::thread::sleep(std::time::Duration::from_millis(100));

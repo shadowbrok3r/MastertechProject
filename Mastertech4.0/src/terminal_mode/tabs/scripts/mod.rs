@@ -287,6 +287,7 @@ impl<'a> ScriptsTab<'a> {
         );
         let stress_items: Vec<TodoItem> = std::iter::once("QC Benchmark")
             .chain(stress_runner::STRESS_SCRIPT_NAMES.iter().copied())
+            .chain(stress_runner::BENCHMARK_SCRIPT_NAMES.iter().copied())
             .map(|name| TodoItem::new(name, Category::StressTests))
             .collect();
         checklists.insert(
@@ -611,31 +612,10 @@ impl<'a> ScriptsTab<'a> {
     /// handler — which is `&self` — can call it directly.  The button label
     /// stays generic; the current stressor is reported in the log.
     pub fn cycle_stress_choice(&self) {
-        let next = match *self.stress_choice.borrow() {
-            Stressor::Cpu => Stressor::Memory,
-            Stressor::Memory => Stressor::Disk,
-            Stressor::Disk => Stressor::Matrix,
-            Stressor::Matrix => Stressor::Memcpy,
-            Stressor::Memcpy => Stressor::Bitops,
-            Stressor::Bitops => Stressor::Cache,
-            Stressor::Cache => Stressor::Vm,
-            Stressor::Vm => Stressor::Stream,
-            Stressor::Stream => Stressor::Branch,
-            Stressor::Branch => Stressor::Atomic,
-            Stressor::Atomic => Stressor::Mutex,
-            Stressor::Mutex => Stressor::Switch,
-            Stressor::Switch => Stressor::Prime,
-            Stressor::Prime => Stressor::Fp,
-            Stressor::Fp => Stressor::Hash,
-            Stressor::Hash => Stressor::Prefetch,
-            Stressor::Prefetch => Stressor::Icache,
-            Stressor::Icache => Stressor::Tsc,
-            Stressor::Tsc => Stressor::Gpu,
-            Stressor::Gpu => Stressor::GpuMatmul,
-            Stressor::GpuMatmul => Stressor::GpuVram,
-            Stressor::GpuVram => Stressor::GpuPcie,
-            Stressor::GpuPcie => Stressor::Cpu,
-        };
+        let all = Stressor::all();
+        let current = *self.stress_choice.borrow();
+        let idx = all.iter().position(|s| *s == current).unwrap_or(0);
+        let next = all[(idx + 1) % all.len()];
         *self.stress_choice.borrow_mut() = next;
         self.log_message(format!(
             "Stress test stressor → {} ({}s)",

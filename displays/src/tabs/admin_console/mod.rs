@@ -185,6 +185,15 @@ impl AdminConsole {
     //     self
     // }
 
+    /// Drive every client session's transport. Rendering only pumps the
+    /// focused docked session, so without this an unfocused (or hidden-tab)
+    /// session never drains its channels and remote commands to it stall.
+    pub fn pump_sessions(&mut self, ctx: &Context) {
+        for ws in self.ws_clients.values_mut() {
+            ws.receive(ctx);
+        }
+    }
+
     pub fn receive(&mut self, ctx: &Context) {
         self.filesystem.receive();
         while let Ok((cs, cust_ok, comp_ok)) = self.fk_health_rx.try_recv() {

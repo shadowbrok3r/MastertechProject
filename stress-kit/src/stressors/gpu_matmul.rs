@@ -10,7 +10,7 @@ use wgpu::util::DeviceExt;
 
 use crate::Metrics;
 
-use super::gpu_common::{emit_tick, run_unsupported, GpuContext, TICK};
+use super::gpu_common::{emit_fatal_tick, emit_tick, run_unsupported, GpuContext, TICK};
 
 const N: u32 = 2048;
 const TILE: u32 = 16;
@@ -134,13 +134,17 @@ pub(crate) fn run(
         }
         ctx.queue.submit(std::iter::once(encoder.finish()));
         let _ = ctx.device.poll(wgpu::PollType::Wait);
+        if let Some(reason) = ctx.health.failure() {
+            emit_fatal_tick(tx, started_at, format!("gpu_matmul: {reason}"), 0);
+            return;
+        }
         matmuls_in_tick += 1;
 
         if last_tick.elapsed() >= TICK {
             let dt = last_tick.elapsed().as_secs_f64().max(f64::EPSILON);
             let total_ops = matmuls_in_tick * OPS_PER_MATMUL;
             let gflops = (total_ops as f64) / dt / 1e9;
-            emit_tick(tx, started_at, gflops, None);
+            emit_tick(tx, started_at, gflops, None, 0);
             last_tick = Instant::now();
             matmuls_in_tick = 0;
         }

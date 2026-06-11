@@ -12,7 +12,86 @@ impl<'a> ScriptsTab<'a> {
     pub fn handle_stress_tests(&mut self, item_text: &str, category: &Category) {
         self.current_reporter.replace(Reporter::StressTest);
         self.log_message(&format!("Starting Stress Tests script: {}", item_text));
+        if stress_runner::is_benchmark_script(item_text) {
+            self.run_benchmark_script(item_text, category);
+            return;
+        }
         self.run_stress_script(item_text, category);
+    }
+
+    /// Scored benchmarks ("Benchmark Suite" / "Benchmark: X"): each kind runs
+    /// a fixed measurement window and persists a `benchmark_result` row plus
+    /// its backing `stress_test_run`. No service number required — scores are
+    /// machine-keyed, not order-keyed.
+    fn run_benchmark_script(&mut self, item_text: &str, category: &Category) {
+        let client = crate::filesystem::get_client_hash();
+        let Some(computer) = client.computer.clone() else {
+            self.log_message("get_client_hash returned no computer record; aborting benchmark");
+            let _ = self
+                .checklist_completion_tx
+                .try_send((category.clone(), item_text.to_string(), false));
+            return;
+        };
+
+        let telemetry = {
+            let mut guard = self.stress_telemetry.borrow_mut();
+            if guard.is_none() {
+                *guard = Some(Arc::new(TelemetryAgent::start(1000)));
+            }
+            guard.as_ref().unwrap().clone()
+        };
+
+        let log_tx = self.script_log_tx.clone();
+        let checklist_tx = self.checklist_completion_tx.clone();
+        let category_clone = category.clone();
+        let item_clone = item_text.to_string();
+        let name = item_text.to_string();
+
+        std::thread::spawn(move || {
+            let include_gpu = !telemetry.snapshot().gpus.is_empty();
+            let secs = stress_runner::DEFAULT_BENCH_SECS;
+            let _ = log_tx.try_send(format!(
+                "{name}: {secs}s per benchmark, gpu kinds {}",
+                if include_gpu { "included" } else { "skipped (no GPU)" }
+            ));
+
+            let Some(outcomes) =
+                stress_runner::run_benchmark_script(&name, computer, telemetry, secs, include_gpu)
+            else {
+                let _ = log_tx.try_send(format!("Unknown benchmark script: {name}"));
+                let _ = checklist_tx.try_send((category_clone, item_clone, false));
+                return;
+            };
+
+            let mut success = true;
+            for o in &outcomes {
+                if o.errors > 0 || o.error.is_some() {
+                    success = false;
+                }
+                let _ = log_tx.try_send(format!(
+                    "{}: {:.1} {} (peak {:.1}) errors={}{}{}",
+                    o.kind,
+                    o.score,
+                    o.unit,
+                    o.peak.unwrap_or(o.score),
+                    o.errors,
+                    o.result_id
+                        .as_deref()
+                        .map(|id| format!(" [{id}]"))
+                        .unwrap_or_default(),
+                    o.error
+                        .as_deref()
+                        .map(|e| format!(" — {e}"))
+                        .unwrap_or_default(),
+                ));
+            }
+            let _ = log_tx.try_send(format!(
+                "{name} complete: {} benchmark(s), {}",
+                outcomes.len(),
+                if success { "all clean" } else { "errors detected" }
+            ));
+            let _ = checklist_tx.try_send((category_clone, item_clone, success));
+        });
     }
 
     fn run_stress_script(&mut self, item_text: &str, category: &Category) {

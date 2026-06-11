@@ -26,6 +26,7 @@
 //! - **Mastertech4.0** uses the same `RunController` from the terminal-mode
 //!   scripts tab, with a ratatui UI on top.
 
+mod benchmark;
 mod controller;
 mod drive;
 mod gpu_probe;
@@ -80,10 +81,17 @@ impl Drop for StressActiveGuard {
 
 pub use hardware::{ensure_components_for_run, ensure_components_from_snapshot};
 
+pub use benchmark::{
+    default_suite, parse_benchmark_kind, run_benchmark, run_benchmark_script, BenchmarkOutcome,
+    DEFAULT_BENCH_SECS,
+};
 pub use controller::{RunController, RunPlan, RunSpec, RunStage, RunUpdate, RunVerdict};
 pub use drive::drive_blocking;
 pub use gpu_probe::{gpu_probe_spec, gpu_probe_stages, GPU_PROBE_PRESET};
-pub use script_catalog::{build_stress_script_spec, is_stress_script, STRESS_SCRIPT_NAMES};
+pub use script_catalog::{
+    benchmark_kind_for_script, build_stress_script_spec, is_benchmark_script, is_stress_script,
+    BENCHMARK_SCRIPT_NAMES, STRESS_SCRIPT_NAMES,
+};
 pub use mapping::{
     compute_machine_id, computer_record_key, default_target_kind, generate_client_hash,
     local_computer_record, metric_from_snapshot, stressor_from_db, stressor_to_db,
@@ -93,9 +101,10 @@ pub use runtime::set_runtime_handle;
 // Re-export the most-used database + stress-kit types so callers only need to
 // depend on `stress-runner` for the common case.
 pub use database::schema::{
-    BiosSettings, DriverVersions, FailureMode, FinishReason as DbFinishReason, HardwareComponent,
-    HardwareKind, RecordId, RunResult, RunSummary, ScenarioStageSummary, StressKitStressor,
-    StressTestEvent, StressTestMetric, StressTestRun, TargetKind, TestTool,
+    BenchmarkKind, BenchmarkResult, BiosSettings, DriverVersions, FailureMode,
+    FinishReason as DbFinishReason, HardwareComponent, HardwareKind, RecordId, RunResult,
+    RunSummary, ScenarioStageSummary, StressKitStressor, StressTestEvent, StressTestMetric,
+    StressTestRun, TargetKind, TestTool,
 };
 
 pub use stress_kit::{

@@ -48,7 +48,12 @@ impl WebSocketClient {
             // operator (or a future UI badge) can act.
             if let Some(last_pong) = self.last_app_pong_received {
                 let age = now.duration_since(last_pong);
-                if age >= std::time::Duration::from_secs(60) {
+                let warn_due = self
+                    .last_pong_silence_warn
+                    .map(|t| now.duration_since(t) >= std::time::Duration::from_secs(60))
+                    .unwrap_or(true);
+                if age >= std::time::Duration::from_secs(60) && warn_due {
+                    self.last_pong_silence_warn = Some(now);
                     log::warn!(
                         "AppPong silence: no application-layer pong from {} for {:?} \
                          — kernel TCP may still report alive while the plugin host is wedged",

@@ -50,6 +50,7 @@ pub(crate) fn run(
                 throughput: gb_per_sec,
                 last_error: None,
                 fatal: false,
+                errors: 0,
             });
 
             last_bytes = now_bytes;

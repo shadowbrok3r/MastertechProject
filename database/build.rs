@@ -72,6 +72,14 @@ const ALL_INJECT_KEYS: &[&str] = &[
     // an empty URL just disables fleet reporting at runtime.
     "ORCHESTRATOR_URL",
     "ORCHESTRATOR_URL_DEV",
+    // PrestaShop employee credential-check endpoint (QC tech sign-off).
+    // Empty disables tech authentication at runtime.
+    "PRESTASHOP_AUTH_URL",
+    // Shopify Admin API (read-only token). Empty disables the Shopify order
+    // backend at runtime; writes always go through the Worker, never here.
+    "SHOPIFY_STORE_URL",
+    "SHOPIFY_ADMIN_TOKEN",
+    "SHOPIFY_API_VERSION",
 ];
 
 fn apply_defaults(map: &mut HashMap<String, String>) {
@@ -111,6 +119,15 @@ fn apply_defaults(map: &mut HashMap<String, String>) {
     }
     if map.get("ORCHESTRATOR_URL_DEV").is_none() {
         map.insert("ORCHESTRATOR_URL_DEV".into(), "http://localhost:8082".into());
+    }
+    // Empty string = feature disabled at runtime; never fails the build.
+    for key in ["PRESTASHOP_AUTH_URL", "SHOPIFY_STORE_URL", "SHOPIFY_ADMIN_TOKEN"] {
+        if map.get(key).is_none() {
+            map.insert(key.into(), String::new());
+        }
+    }
+    if map.get("SHOPIFY_API_VERSION").map_or(true, |s| s.is_empty()) {
+        map.insert("SHOPIFY_API_VERSION".into(), "2025-01".into());
     }
 }
 

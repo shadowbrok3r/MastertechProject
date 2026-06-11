@@ -373,6 +373,18 @@ pub enum StressKitStressor {
     Icache,
     #[surreal(value = "tsc")]
     Tsc,
+    /// Pattern write/verify memory test with mismatch counting.
+    #[surreal(value = "memtest")]
+    MemTest,
+    /// Duplicate-execution CPU workload compare with mismatch counting.
+    #[surreal(value = "cpu_verify")]
+    CpuVerify,
+    /// LU solve + residual check; GFLOPS score with residual-breach counting.
+    #[surreal(value = "linpack")]
+    Linpack,
+    /// Combined CPU FMA + GPU compute load for PSU/VRM stress.
+    #[surreal(value = "psu")]
+    Psu,
 
     #[surreal(value = "gpu")]
     Gpu,
@@ -406,6 +418,10 @@ impl StressKitStressor {
             Self::Prefetch => "prefetch",
             Self::Icache => "icache",
             Self::Tsc => "tsc",
+            Self::MemTest => "memtest",
+            Self::CpuVerify => "cpu_verify",
+            Self::Linpack => "linpack",
+            Self::Psu => "psu",
             Self::Gpu => "gpu",
             Self::GpuMatmul => "gpu_matmul",
             Self::GpuVram => "gpu_vram",
@@ -760,6 +776,12 @@ pub struct RunSummary {
     pub disk_io_errors: u32,
     /// Count of memory data-mismatch events from HCI / TM5 / Karhu.
     pub memory_errors: u32,
+    /// Cumulative `Metrics.errors` from verifying stress-kit stressors
+    /// (memtest mismatches, cpu_verify divergences, linpack residual
+    /// breaches, VRAM mismatches). Missing on rows older than this field.
+    #[serde(default)]
+    #[surreal(default)]
+    pub test_errors: u32,
 }
 
 // ============================================================

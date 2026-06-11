@@ -90,6 +90,10 @@ pub enum StressorKind {
     Prefetch,
     Icache,
     Tsc,
+    MemTest,
+    CpuVerify,
+    Linpack,
+    Psu,
     Gpu,
     GpuMatmul,
     GpuVram,
@@ -118,6 +122,10 @@ impl From<StressorKind> for Stressor {
             StressorKind::Prefetch => Stressor::Prefetch,
             StressorKind::Icache => Stressor::Icache,
             StressorKind::Tsc => Stressor::Tsc,
+            StressorKind::MemTest => Stressor::MemTest,
+            StressorKind::CpuVerify => Stressor::CpuVerify,
+            StressorKind::Linpack => Stressor::Linpack,
+            StressorKind::Psu => Stressor::Psu,
             StressorKind::Gpu => Stressor::Gpu,
             StressorKind::GpuMatmul => Stressor::GpuMatmul,
             StressorKind::GpuVram => Stressor::GpuVram,
@@ -168,6 +176,8 @@ pub struct ScenarioReport {
     pub finished_reason: String,
     pub total_elapsed_secs: f64,
     pub stages: Vec<StageReport>,
+    /// Controller verdict + telemetry rollup, when the run finished normally.
+    pub verdict: Option<RunVerdictDto>,
     /// First fatal `Error` emitted by the underlying RunController, if any.
     /// `None` on clean runs.
     pub error: Option<String>,
@@ -185,6 +195,8 @@ pub struct MetricsDto {
     pub elapsed_secs: f64,
     pub throughput: f64,
     pub last_error: Option<String>,
+    /// Cumulative detected-error count (data mismatches, residual breaches).
+    pub errors: u64,
 }
 
 impl From<&Metrics> for MetricsDto {
@@ -193,6 +205,48 @@ impl From<&Metrics> for MetricsDto {
             elapsed_secs: m.elapsed_secs,
             throughput: m.throughput,
             last_error: m.last_error.clone(),
+            errors: m.errors,
+        }
+    }
+}
+
+/// Condensed `RunVerdict` for the MCP wire: result, failure rubric, and the
+/// telemetry rollup (temps, clocks, errors) the controller accumulated.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct RunVerdictDto {
+    /// "pass" | "fail" | "aborted" | "inconclusive".
+    pub result: String,
+    /// Lowercase `FailureMode` tag ("none", "whea_error", "data_mismatch", ...).
+    pub failure_kind: String,
+    /// Cumulative test-detected errors (memtest mismatches, cpu_verify
+    /// divergences, linpack residual breaches, VRAM mismatches).
+    pub test_errors: u32,
+    pub whea_delta_count: u32,
+    pub disk_io_errors: u32,
+    pub max_temp_c: Option<f32>,
+    pub avg_temp_c: Option<f32>,
+    pub max_clock_mhz: Option<u32>,
+    pub max_power_w: Option<u32>,
+    pub peak_throughput: Option<f64>,
+    pub avg_throughput: Option<f64>,
+    pub throughput_unit: Option<String>,
+}
+
+impl From<&stress_runner::RunVerdict> for RunVerdictDto {
+    fn from(v: &stress_runner::RunVerdict) -> Self {
+        Self {
+            result: format!("{:?}", v.result).to_lowercase(),
+            failure_kind: v.failure_mode.kind().to_string(),
+            test_errors: v.summary.test_errors,
+            whea_delta_count: v.summary.whea_delta_count,
+            disk_io_errors: v.summary.disk_io_errors,
+            max_temp_c: v.summary.max_temp_c,
+            avg_temp_c: v.summary.avg_temp_c,
+            max_clock_mhz: v.summary.max_clock_mhz,
+            max_power_w: v.summary.max_power_w,
+            peak_throughput: v.summary.peak_throughput,
+            avg_throughput: v.summary.avg_throughput,
+            throughput_unit: v.summary.throughput_unit.clone(),
         }
     }
 }
@@ -619,6 +673,14 @@ impl QcToolProvider {
         &self,
         Parameters(args): Parameters<QcBenchmarkArgs>,
     ) -> Result<CallToolResult, ErrorData> {
+        // WMI vs wgpu/NVML cross-check; a broken user-mode stack means the
+        // probe stages silently run on the iGPU and the verdict must fail.
+        let driver_stack =
+            tokio::task::spawn_blocking(stress_kit::gpu_stack::check_gpu_stack)
+                .await
+                .map_err(|e| to_internal(format!("gpu_stack check join: {e}")))?;
+        let stack_fault = driver_stack.summary();
+
         let snap_before = self
             .state
             .telemetry
@@ -746,6 +808,8 @@ impl QcToolProvider {
 
         let verdict = if scenario.error.is_some() {
             "errored"
+        } else if stack_fault.is_some() {
+            "fail"
         } else if ecc_uncorrected_delta.unwrap_or(0) > 0 {
             "fail"
         } else if tdr_delta.unwrap_or(0) > 0 {
@@ -764,6 +828,7 @@ impl QcToolProvider {
 
         let reasoning = build_gpu_reasoning(
             verdict,
+            stack_fault.as_deref(),
             tdr_delta,
             pcie_replay_delta,
             ecc_corrected_delta,
@@ -784,6 +849,8 @@ impl QcToolProvider {
             ecc_corrected_delta,
             ecc_uncorrected_delta,
             gpu_snapshot: snap_after.and_then(|s| s.gpus.into_iter().next()),
+            driver_stack_broken: driver_stack.is_broken(),
+            driver_stack,
             stages: stage_results,
             reasoning,
             error: scenario.error,
@@ -842,6 +909,10 @@ impl QcToolProvider {
             StressorKind::Prefetch,
             StressorKind::Icache,
             StressorKind::Tsc,
+            StressorKind::MemTest,
+            StressorKind::CpuVerify,
+            StressorKind::Linpack,
+            StressorKind::Psu,
             StressorKind::Gpu,
             StressorKind::GpuMatmul,
             StressorKind::GpuVram,
@@ -855,10 +926,300 @@ impl QcToolProvider {
                     "kind": serde_json::to_value(k).unwrap_or(serde_json::Value::Null),
                     "label": s.label(),
                     "throughput_unit": s.throughput_unit(),
+                    "detects_errors": s.detects_errors(),
                 })
             })
             .collect();
         let json = serde_json::to_string_pretty(&rows)
+            .map_err(|e| to_internal(e.to_string()))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "run_memtest",
+        description = "Pattern write/verify memory test (moving inversions, walking ones, address-in-address, random). Counts actual data mismatches — the OCCT/MemTest86-style RAM check. Default 4096 MiB for 600 s. Persists stress_test_run + metrics + events; mismatches land as memory_error events and fail the run. Returns verdict, error count, throughput, temps."
+    )]
+    async fn run_memtest(
+        &self,
+        Parameters(args): Parameters<MemTestArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let report = self
+            .run_verified_single(
+                "memtest",
+                Stressor::MemTest,
+                args.threads.unwrap_or(0),
+                args.duration_secs.unwrap_or(600),
+                args.memory_cap_mb.unwrap_or(4096).max(64),
+                "qc-mcp:memtest-v1",
+                "preset:memtest",
+            )
+            .await?;
+        let json = serde_json::to_string_pretty(&report)
+            .map_err(|e| to_internal(e.to_string()))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "run_cpu_stability",
+        description = "CPU stability test with error detection: a deterministic integer+FP workload executes twice per seed and digests are compared — any divergence is silent data corruption (the OCCT CPU-test equivalent). Default 300 s, all threads. Persists like every stress run. Returns verdict, error count, Mop/s, temps, WHEA delta."
+    )]
+    async fn run_cpu_stability(
+        &self,
+        Parameters(args): Parameters<DurationOnlyArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let report = self
+            .run_verified_single(
+                "cpu_stability",
+                Stressor::CpuVerify,
+                0,
+                args.duration_secs.unwrap_or(300),
+                256,
+                "qc-mcp:cpu-stability-v1",
+                "preset:cpu-stability",
+            )
+            .await?;
+        let json = serde_json::to_string_pretty(&report)
+            .map_err(|e| to_internal(e.to_string()))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "run_linpack",
+        description = "Linpack-style benchmark/stress: repeated LU solves with partial pivoting; every solve's normalized residual is checked against the HPL threshold, so it both scores GFLOPS and detects compute errors. Default 120 s with a 1024 MiB matrix budget. Returns verdict, GFLOPS score (avg + peak), residual-breach count, temps."
+    )]
+    async fn run_linpack(
+        &self,
+        Parameters(args): Parameters<LinpackArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let report = self
+            .run_verified_single(
+                "linpack",
+                Stressor::Linpack,
+                0,
+                args.duration_secs.unwrap_or(120),
+                args.memory_cap_mb.unwrap_or(1024).max(64),
+                "qc-mcp:linpack-v1",
+                "preset:linpack",
+            )
+            .await?;
+        let json = serde_json::to_string_pretty(&report)
+            .map_err(|e| to_internal(e.to_string()))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "run_psu_test",
+        description = "Power-supply / VRM load test: saturates all CPU cores with FMA chains while a compute shader hammers the GPU simultaneously (OCCT Power-style). Default 300 s. Watches WHEA, temps, and GPU board power; reports max observed power draw. Runs CPU-only with a warning when no GPU is present."
+    )]
+    async fn run_psu_test(
+        &self,
+        Parameters(args): Parameters<DurationOnlyArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let report = self
+            .run_verified_single(
+                "psu",
+                Stressor::Psu,
+                0,
+                args.duration_secs.unwrap_or(300),
+                256,
+                "qc-mcp:psu-v1",
+                "preset:psu",
+            )
+            .await?;
+        let json = serde_json::to_string_pretty(&report)
+            .map_err(|e| to_internal(e.to_string()))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "run_benchmark",
+        description = "Run one scored benchmark and persist a benchmark_result row (plus the backing stress_test_run). Kinds: cpu_single, cpu_multi, matrix_single, matrix_multi, linpack, memory_bandwidth, memcpy, memory_latency, disk, gpu_compute, gpu_matmul, gpu_vram, gpu_pcie. Default 15 s measurement; warmup discarded; returns steady-state score, peak/low, temps, errors."
+    )]
+    async fn run_benchmark(
+        &self,
+        Parameters(args): Parameters<BenchArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let kind = stress_runner::parse_benchmark_kind(&args.kind)
+            .ok_or_else(|| to_internal(format!("unknown benchmark kind '{}'", args.kind)))?;
+        let telemetry = self.telemetry_or_err()?;
+        let computer = self.state.computer.clone();
+        let secs = args.duration_secs.unwrap_or(stress_runner::DEFAULT_BENCH_SECS);
+
+        let outcome = tokio::task::spawn_blocking(move || {
+            stress_runner::run_benchmark(kind, computer, telemetry, secs)
+        })
+        .await
+        .map_err(|e| to_internal(format!("benchmark task join: {e}")))?;
+
+        let json = serde_json::to_string_pretty(&outcome)
+            .map_err(|e| to_internal(e.to_string()))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "run_benchmark_suite",
+        description = "Run the standard benchmark suite sequentially (cpu single/multi, matrix, linpack, memory bandwidth, memcpy, latency ladder, disk; GPU kinds appended when a GPU is detected or include_gpu=true). Each persists a benchmark_result row. Default 15 s per benchmark — roughly 2-3 minutes CPU-only. Returns all scores."
+    )]
+    async fn run_benchmark_suite(
+        &self,
+        Parameters(args): Parameters<BenchSuiteArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let telemetry = self.telemetry_or_err()?;
+        let computer = self.state.computer.clone();
+        let secs = args.duration_secs.unwrap_or(stress_runner::DEFAULT_BENCH_SECS);
+        let has_gpu = !telemetry.snapshot().gpus.is_empty();
+        let include_gpu = args.include_gpu.unwrap_or(has_gpu);
+
+        // Catches the broken-stack machine where telemetry sees no GPU (NVML
+        // dead) so GPU kinds get skipped despite a WMI-active discrete card.
+        let gpu_stack_warning =
+            tokio::task::spawn_blocking(stress_kit::gpu_stack::check_gpu_stack)
+                .await
+                .map_err(|e| to_internal(format!("gpu_stack check join: {e}")))?
+                .summary();
+
+        let outcomes = tokio::task::spawn_blocking(move || {
+            let mut kinds = stress_runner::default_suite();
+            if include_gpu {
+                kinds.extend([
+                    stress_runner::BenchmarkKind::GpuCompute,
+                    stress_runner::BenchmarkKind::GpuMatmul,
+                    stress_runner::BenchmarkKind::GpuVram,
+                    stress_runner::BenchmarkKind::GpuPcie,
+                ]);
+            }
+            kinds
+                .into_iter()
+                .map(|k| stress_runner::run_benchmark(k, computer.clone(), telemetry.clone(), secs))
+                .collect::<Vec<_>>()
+        })
+        .await
+        .map_err(|e| to_internal(format!("suite task join: {e}")))?;
+
+        let total_errors: u32 = outcomes.iter().map(|o| o.errors).sum();
+        let body = serde_json::json!({
+            "count": outcomes.len(),
+            "total_errors": total_errors,
+            "gpu_stack_warning": gpu_stack_warning,
+            "results": outcomes,
+        });
+        let json = serde_json::to_string_pretty(&body)
+            .map_err(|e| to_internal(e.to_string()))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "get_benchmark_results",
+        description = "Query persisted benchmark_result history from SurrealDB. Defaults to this machine, newest first; filter by kind; set all_machines=true for cross-machine population comparison of one kind."
+    )]
+    async fn get_benchmark_results(
+        &self,
+        Parameters(args): Parameters<BenchHistoryArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        use database::schema::BenchmarkResult;
+        let limit = args.limit.unwrap_or(20);
+        let kind = match &args.kind {
+            Some(k) => Some(
+                stress_runner::parse_benchmark_kind(k)
+                    .ok_or_else(|| to_internal(format!("unknown benchmark kind '{k}'")))?,
+            ),
+            None => None,
+        };
+
+        let rows = if args.all_machines.unwrap_or(false) {
+            let kind = kind.ok_or_else(|| {
+                to_internal("all_machines=true requires a `kind` to compare across machines")
+            })?;
+            BenchmarkResult::list_for_kind(kind, limit)
+                .await
+                .map_err(|e| to_internal(format!("benchmark_result query failed: {e}")))?
+        } else {
+            BenchmarkResult::list_for_computer(&self.state.computer, kind, limit)
+                .await
+                .map_err(|e| to_internal(format!("benchmark_result query failed: {e}")))?
+        };
+
+        let json = serde_json::to_string_pretty(&rows)
+            .map_err(|e| to_internal(e.to_string()))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "measure_memory_latency",
+        description = "One-shot memory-hierarchy ladder (4 KiB to 128 MiB): pointer-chase latency (ns/access) and sequential read bandwidth (GB/s) per working-set size. Takes a few seconds; persists a benchmark_result row with the full ladder in `detail`. L1/L2/L3/RAM transitions are visible as latency steps."
+    )]
+    async fn measure_memory_latency(
+        &self,
+        Parameters(_p): Parameters<NoArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let computer = self.state.computer.clone();
+        let telemetry = self.telemetry_or_err()?;
+        let outcome = tokio::task::spawn_blocking(move || {
+            stress_runner::run_benchmark(
+                stress_runner::BenchmarkKind::MemoryLatency,
+                computer,
+                telemetry,
+                0,
+            )
+        })
+        .await
+        .map_err(|e| to_internal(format!("ladder task join: {e}")))?;
+        let json = serde_json::to_string_pretty(&outcome)
+            .map_err(|e| to_internal(e.to_string()))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "get_temperatures",
+        description = "All temperature sources in one flat list: per-core CPU °C, per-GPU °C, and ACPI thermal zones (Windows), plus max per source. Cheap — reads the latest telemetry sample."
+    )]
+    async fn get_temperatures(
+        &self,
+        Parameters(_p): Parameters<NoArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let snapshot = self.telemetry_or_err()?.snapshot();
+
+        let mut readings: Vec<serde_json::Value> = Vec::new();
+        let mut max_cpu: Option<f32> = None;
+        for c in &snapshot.cores {
+            if let Some(t) = c.temp_c {
+                max_cpu = Some(max_cpu.map_or(t, |m| m.max(t)));
+                readings.push(serde_json::json!({
+                    "source": "cpu_core",
+                    "label": format!("core {}", c.index),
+                    "temp_c": t,
+                }));
+            }
+        }
+        let mut max_gpu: Option<f32> = None;
+        for g in &snapshot.gpus {
+            if let Some(t) = g.temp_c {
+                max_gpu = Some(max_gpu.map_or(t, |m| m.max(t)));
+                readings.push(serde_json::json!({
+                    "source": "gpu",
+                    "label": g.name,
+                    "temp_c": t,
+                }));
+            }
+        }
+        let mut max_zone: Option<f32> = None;
+        for z in &snapshot.thermals {
+            max_zone = Some(max_zone.map_or(z.temp_c, |m| m.max(z.temp_c)));
+            readings.push(serde_json::json!({
+                "source": "thermal_zone",
+                "label": z.label,
+                "temp_c": z.temp_c,
+            }));
+        }
+
+        let body = serde_json::json!({
+            "captured_at_unix_ms": snapshot.captured_at_unix_ms,
+            "max_cpu_core_c": max_cpu,
+            "max_gpu_c": max_gpu,
+            "max_thermal_zone_c": max_zone,
+            "readings": readings,
+        });
+        let json = serde_json::to_string_pretty(&body)
             .map_err(|e| to_internal(e.to_string()))?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
@@ -961,6 +1322,7 @@ fn pair_delta<T: PartialOrd + std::ops::Sub<Output = T> + Copy>(before: Option<T
 
 fn build_gpu_reasoning(
     verdict: &str,
+    stack_fault: Option<&str>,
     tdr_delta: Option<u64>,
     pcie_replay_delta: Option<u64>,
     ecc_corrected_delta: Option<u64>,
@@ -970,11 +1332,17 @@ fn build_gpu_reasoning(
     error: Option<&str>,
 ) -> String {
     match verdict {
-        "errored" => format!(
-            "RunController reported a fatal error before/during the GPU probe. \
-             Per-stage numbers are not reliable telemetry.\n\nError: {}",
-            error.unwrap_or("<missing>")
-        ),
+        "errored" => {
+            let mut s = format!(
+                "RunController reported a fatal error before/during the GPU probe. \
+                 Per-stage numbers are not reliable telemetry.\n\nError: {}",
+                error.unwrap_or("<missing>")
+            );
+            if let Some(fault) = stack_fault {
+                s.push_str(&format!("\n\nAdditionally: {fault}"));
+            }
+            s
+        }
         "pass" => "All four GPU stages cleared their throughput floors. No VRAM mismatches, \
              no new TDR events, no ECC errors, no PCIe replay deltas. GPU subsystem healthy."
             .into(),
@@ -1007,6 +1375,13 @@ fn build_gpu_reasoning(
         }
         "fail" => {
             let mut bits = Vec::new();
+            if let Some(fault) = stack_fault {
+                bits.push(format!(
+                    "{fault}\nStage throughputs below came from whichever adapter wgpu \
+                     could still see (typically the iGPU) — do not read them as \
+                     discrete-GPU scores."
+                ));
+            }
             if ecc_uncorrected_delta.unwrap_or(0) > 0 {
                 bits.push(format!(
                     "{} UNCORRECTED ECC error(s) during the run — VRAM is failing. Replace the card.",
@@ -1049,6 +1424,10 @@ pub struct GpuProbeReport {
     pub ecc_corrected_delta: Option<u64>,
     pub ecc_uncorrected_delta: Option<u64>,
     pub gpu_snapshot: Option<GpuSample>,
+    /// True when a WMI-active discrete controller is missing from wgpu/NVML;
+    /// forces `verdict == "fail"` — stage scores came from the iGPU.
+    pub driver_stack_broken: bool,
+    pub driver_stack: stress_kit::gpu_stack::GpuStackReport,
     pub stages: Vec<QcStageResult>,
     pub reasoning: String,
     pub error: Option<String>,
@@ -1135,10 +1514,112 @@ pub struct StressorReport {
     pub throughput_unit: String,
     pub elapsed_secs: f64,
     pub last_metrics: Option<MetricsDto>,
+    /// Controller verdict + telemetry rollup, when the run finished normally.
+    pub verdict: Option<RunVerdictDto>,
     pub finished_reason: String,
     /// First fatal `Error` (or `Warning`) emitted by the underlying RunController,
     /// if any. `None` on clean runs. Present + `finished_reason: "controller_exited"`
     /// usually means the row create failed before the stressor even started.
+    pub error: Option<String>,
+}
+
+/// `run_memtest` arguments.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct MemTestArgs {
+    /// MiB of RAM to test, split across workers. Default 4096. Leave
+    /// headroom for the OS — testing more than ~75% of free RAM forces
+    /// paging and slows verification without improving coverage.
+    #[serde(default)]
+    pub memory_cap_mb: Option<u64>,
+    /// Test duration in seconds. Default 600. Patterns cycle until time is up.
+    #[serde(default)]
+    pub duration_secs: Option<u64>,
+    /// 0 = one worker per logical CPU (default).
+    #[serde(default)]
+    pub threads: Option<usize>,
+}
+
+/// Duration-only arguments (`run_cpu_stability`, `run_psu_test`).
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct DurationOnlyArgs {
+    /// Test duration in seconds. Defaults per tool.
+    #[serde(default)]
+    pub duration_secs: Option<u64>,
+}
+
+/// `run_linpack` arguments.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct LinpackArgs {
+    /// Test duration in seconds. Default 120.
+    #[serde(default)]
+    pub duration_secs: Option<u64>,
+    /// Matrix memory budget in MiB, split across workers (sets N). Default 1024.
+    #[serde(default)]
+    pub memory_cap_mb: Option<u64>,
+}
+
+/// `run_benchmark` arguments.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct BenchArgs {
+    /// Benchmark kind — see `run_benchmark` description for the list.
+    pub kind: String,
+    /// Measurement window in seconds (warmup discarded). Default 15.
+    #[serde(default)]
+    pub duration_secs: Option<u64>,
+}
+
+/// `run_benchmark_suite` arguments.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct BenchSuiteArgs {
+    /// Append the GPU benchmarks. Default: auto (true when a GPU is detected).
+    #[serde(default)]
+    pub include_gpu: Option<bool>,
+    /// Measurement window per benchmark in seconds. Default 15.
+    #[serde(default)]
+    pub duration_secs: Option<u64>,
+}
+
+/// `get_benchmark_results` arguments.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct BenchHistoryArgs {
+    /// Filter to one benchmark kind (e.g. "cpu_multi"). Optional.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// Max rows, newest first. Default 20.
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// Compare across every machine instead of just this one (requires `kind`).
+    #[serde(default)]
+    pub all_machines: Option<bool>,
+}
+
+/// Uniform report for the verified test tools (`run_memtest`,
+/// `run_cpu_stability`, `run_linpack`, `run_psu_test`).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct VerifiedTestReport {
+    pub test: String,
+    /// `stress_test_run:<id>` of the persisted run.
+    pub run_id: String,
+    /// "pass" | "fail" | "errored" | "inconclusive".
+    pub verdict: String,
+    /// Test-detected errors (mismatches / residual breaches). Any non-zero
+    /// value is a hardware fault, not noise.
+    pub errors: u32,
+    /// New WHEA events observed during the run (absolute before/after).
+    pub whea_delta: Option<u64>,
+    /// Steady-state average throughput — the score for linpack (GFLOPS) and
+    /// psu (combined GFLOPS).
+    pub score: Option<f64>,
+    pub peak: Option<f64>,
+    pub unit: String,
+    pub elapsed_secs: f64,
+    pub max_temp_c: Option<f32>,
+    pub avg_temp_c: Option<f32>,
+    /// Max GPU board power observed (NVML), the PSU-load proxy.
+    pub max_power_w: Option<u32>,
+    pub last_error: Option<String>,
+    pub finished_reason: String,
+    pub reasoning: String,
     pub error: Option<String>,
 }
 
@@ -1212,6 +1693,8 @@ struct DriveOutcome {
     /// Per-stage final metrics keyed by stage index; index 0 is always
     /// populated even for single-stressor runs.
     per_stage_final: std::collections::HashMap<u32, MetricsDto>,
+    /// Controller verdict captured from `RunUpdate::Finished`.
+    verdict: Option<RunVerdictDto>,
 }
 
 impl DriveOutcome {
@@ -1222,6 +1705,7 @@ impl DriveOutcome {
             throughput_unit: self.throughput_unit,
             elapsed_secs,
             last_metrics: self.last_metrics,
+            verdict: self.verdict,
             finished_reason: self.finished_reason,
             error: self.error,
         }
@@ -1246,6 +1730,7 @@ impl DriveOutcome {
                 .map(|m| m.elapsed_secs)
                 .unwrap_or(0.0),
             stages,
+            verdict: self.verdict,
             error: self.error,
         }
     }
@@ -1374,6 +1859,7 @@ fn drive_run(
                         finished_reason,
                         error: first_error,
                         per_stage_final,
+                        verdict: Some((&verdict).into()),
                     };
                 }
             }
@@ -1396,6 +1882,7 @@ fn drive_run(
                 finished_reason: "controller_exited".into(),
                 error: first_error,
                 per_stage_final,
+                verdict: None,
             };
         }
 
@@ -1410,6 +1897,150 @@ impl QcToolProvider {
             state,
         }
     }
+
+    fn telemetry_or_err(&self) -> Result<Arc<TelemetryAgent>, ErrorData> {
+        self.state
+            .telemetry
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .ok_or_else(|| to_internal("telemetry sampler not yet ready (first frame pending)"))
+    }
+
+    /// Shared driver for the verified test tools: WHEA-delta bracketing,
+    /// controller-backed persistence, and a uniform verdict rubric
+    /// (errored > fail on errors/WHEA/controller-fail > inconclusive > pass).
+    #[allow(clippy::too_many_arguments)]
+    async fn run_verified_single(
+        &self,
+        test: &str,
+        stressor: Stressor,
+        threads: usize,
+        duration_secs: u64,
+        memory_cap_mb: u64,
+        preset: &str,
+        tag: &str,
+    ) -> Result<VerifiedTestReport, ErrorData> {
+        let duration_secs = duration_secs.clamp(5, 24 * 3600);
+        let telemetry = self.telemetry_or_err()?;
+        let whea_before = telemetry.snapshot().whea.map(|w| w.absolute_since_boot);
+        let computer = self.state.computer.clone();
+        let slot = self.state.run_slot.clone();
+        let label = stressor.label().to_string();
+        let unit = stressor.throughput_unit().to_string();
+
+        let mut spec = RunSpec::single_stresskit(computer, stressor, Some(duration_secs));
+        spec.plan = RunPlan::Single {
+            stressor,
+            threads,
+            duration_secs: Some(duration_secs),
+            memory_cap_mb,
+            disk_file_mb: 16,
+        };
+        spec.tool = TestTool::StressKit {
+            stressor: stressor_to_db(stressor),
+        };
+        spec.preset_label = Some(preset.to_string());
+        spec.tags = vec!["origin:mcp".into(), tag.to_string()];
+
+        let tele_for_run = telemetry.clone();
+        let label_for_run = label.clone();
+        let unit_for_run = unit.clone();
+        let report = tokio::task::spawn_blocking(move || {
+            drive_single_via_controller(spec, tele_for_run, label_for_run, unit_for_run, slot)
+        })
+        .await
+        .map_err(|e| to_internal(format!("{test} task join: {e}")))?;
+
+        let whea_after = telemetry.snapshot().whea.map(|w| w.absolute_since_boot);
+        let whea_delta = match (whea_before, whea_after) {
+            (Some(b), Some(a)) => Some(a.saturating_sub(b)),
+            _ => None,
+        };
+
+        let errors = report
+            .verdict
+            .as_ref()
+            .map(|v| v.test_errors)
+            .or_else(|| {
+                report
+                    .last_metrics
+                    .as_ref()
+                    .map(|m| m.errors.min(u32::MAX as u64) as u32)
+            })
+            .unwrap_or(0);
+        let result = report
+            .verdict
+            .as_ref()
+            .map(|v| v.result.clone())
+            .unwrap_or_default();
+        let completed = matches!(
+            report.finished_reason.as_str(),
+            "completed" | "total_time" | "timeout"
+        );
+
+        let verdict = if report.error.is_some() {
+            "errored"
+        } else if errors > 0 || whea_delta.unwrap_or(0) > 0 || result == "fail" {
+            "fail"
+        } else if !completed {
+            "inconclusive"
+        } else {
+            "pass"
+        };
+
+        let reasoning = match verdict {
+            "pass" => format!(
+                "{label} ran {duration_secs}s with zero detected errors and no new WHEA events."
+            ),
+            "fail" => {
+                let mut bits = Vec::new();
+                if errors > 0 {
+                    bits.push(format!(
+                        "{errors} test-detected error(s) — treat as a hardware fault"
+                    ));
+                }
+                if whea_delta.unwrap_or(0) > 0 {
+                    bits.push(format!("{} new WHEA event(s)", whea_delta.unwrap_or(0)));
+                }
+                if bits.is_empty() {
+                    bits.push(format!(
+                        "controller verdict '{result}' ({})",
+                        report
+                            .verdict
+                            .as_ref()
+                            .map(|v| v.failure_kind.as_str())
+                            .unwrap_or("unknown")
+                    ));
+                }
+                bits.join("; ")
+            }
+            "errored" => {
+                "Infrastructure error before/while running — not a hardware verdict. See `error`."
+                    .into()
+            }
+            _ => "Run did not complete normally (cancelled). Re-run for a clean verdict.".into(),
+        };
+
+        Ok(VerifiedTestReport {
+            test: test.to_string(),
+            run_id: report.run_id,
+            verdict: verdict.to_string(),
+            errors,
+            whea_delta,
+            score: report.verdict.as_ref().and_then(|v| v.avg_throughput),
+            peak: report.verdict.as_ref().and_then(|v| v.peak_throughput),
+            unit,
+            elapsed_secs: report.elapsed_secs,
+            max_temp_c: report.verdict.as_ref().and_then(|v| v.max_temp_c),
+            avg_temp_c: report.verdict.as_ref().and_then(|v| v.avg_temp_c),
+            max_power_w: report.verdict.as_ref().and_then(|v| v.max_power_w),
+            last_error: report.last_metrics.as_ref().and_then(|m| m.last_error.clone()),
+            finished_reason: report.finished_reason,
+            reasoning,
+            error: report.error,
+        })
+    }
 }
 
 #[tool_handler]
@@ -1419,10 +2050,17 @@ impl ServerHandler for QcToolProvider {
             ServerCapabilities::builder().enable_tools().build(),
         )
         .with_instructions(
-            "QC tools. Telemetry: `get_hw_snapshot`, `get_extended_telemetry`. \
+            "QC tools. Telemetry: `get_hw_snapshot`, `get_extended_telemetry`, `get_gpu_telemetry`, \
+             `get_temperatures`. \
              Stress (all persist to SurrealDB via stress_runner): `list_stressors`, `run_stressor`, \
              `run_stress_scenario`, `run_qc_benchmark` (curated 8-stage burn-in with pass/fail verdict), \
-             `stop_stress_run`, `get_run_status`. Reporting: `get_last_report`, `send_report`.",
+             `run_gpu_probe`, `stop_stress_run`, `get_run_status`. \
+             Verified tests with error detection: `run_memtest` (RAM pattern verify), \
+             `run_cpu_stability` (duplicate-execution compare), `run_linpack` (LU + residual check), \
+             `run_psu_test` (CPU+GPU combined max load). \
+             Benchmarks with persisted scores: `run_benchmark`, `run_benchmark_suite`, \
+             `measure_memory_latency`, `get_benchmark_results` (score history / cross-machine). \
+             Reporting: `get_last_report`, `send_report`.",
         )
         .with_server_info(Implementation::from_build_env())
         .with_protocol_version(ProtocolVersion::LATEST)
