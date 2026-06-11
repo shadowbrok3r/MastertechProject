@@ -1,0 +1,82 @@
+# Platinum certification (~12 h) — longest tier, plus PCIe round-trip and
+# disk coverage OCCT System certificates don't include.
+
+[preset]
+name = "platinum"
+label = "cert:platinum-v1"
+description = "Platinum certification (~12h): extended CPU mix, Linpack, 2h RAM pattern-verify, GPU compute/matmul/VRAM/PCIe, disk, PSU combined load"
+target_kind = "system"
+tags = ["preset:cert", "cert:platinum"]
+
+[rules]
+whea_fails = true
+tdr_fails = true
+stressor_errors_fail = true
+max_cpu_temp_c = { limit_c = 95.0, consecutive_ticks = 5 }
+max_gpu_temp_c = { limit_c = 90.0, consecutive_ticks = 5 }
+clock_collapse = { below_pct_of_stage_max = 0.60, consecutive_ticks = 10, min_cpu_usage_pct = 50.0 }
+throughput_cv = { warmup_ticks = 10, max_cv = 0.20, min_samples = 30 }
+
+[[stage]]
+label = "cpu_fma"
+stressor = "fp"
+duration_secs = 4500
+
+[[stage]]
+label = "cpu_matrix"
+stressor = "matrix"
+duration_secs = 4500
+
+[[stage]]
+label = "cpu_integer"
+stressor = "cpu"
+duration_secs = 5400
+
+[[stage]]
+label = "cpu_verify"
+stressor = "cpu_verify"
+duration_secs = 5400
+
+[[stage]]
+label = "linpack"
+stressor = "linpack"
+duration_secs = 5400
+memory_mb = 2048
+
+[[stage]]
+label = "memtest_80pct"
+stressor = "mem_test"
+duration_secs = 7200
+memory_pct = 80
+
+[[stage]]
+label = "gpu_compute"
+stressor = "gpu"
+duration_secs = 2700
+
+[[stage]]
+label = "gpu_matmul"
+stressor = "gpu_matmul"
+duration_secs = 900
+
+[[stage]]
+label = "gpu_vram_80pct"
+stressor = "gpu_vram"
+duration_secs = 1800
+memory_pct = 80
+
+[[stage]]
+label = "gpu_pcie"
+stressor = "gpu_pcie"
+duration_secs = 1800
+
+[[stage]]
+label = "disk"
+stressor = "disk"
+duration_secs = 1800
+disk_file_mb = 2048
+
+[[stage]]
+label = "psu_combined"
+stressor = "psu"
+duration_secs = 1800

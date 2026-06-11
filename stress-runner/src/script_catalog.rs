@@ -20,6 +20,11 @@ use crate::{gpu_probe_spec, RunPlan, RunSpec, RunStage};
 pub const QC_BENCHMARK_PRESET: &str = "qc-mcp:benchmark-v1";
 
 pub const STRESS_SCRIPT_NAMES: &[&str] = &[
+    "Cert: Bronze",
+    "Cert: Silver",
+    "Cert: Gold",
+    "Cert: Platinum",
+    "Power Virus",
     "GPU Stress Test",
     "Memory Test",
     "Stress: CPU Verify",
@@ -106,6 +111,11 @@ pub fn build_stress_script_spec(
     duration_secs: u64,
 ) -> Option<RunSpec> {
     match name {
+        "Cert: Bronze" => cert_script_spec("bronze", computer),
+        "Cert: Silver" => cert_script_spec("silver", computer),
+        "Cert: Gold" => cert_script_spec("gold", computer),
+        "Cert: Platinum" => cert_script_spec("platinum", computer),
+        "Power Virus" => cert_script_spec("power-virus", computer),
         "GPU Stress Test" => Some(gpu_probe_spec(computer, 1.0)),
         "QC Benchmark" => Some(qc_benchmark_spec(computer)),
         "Memory Test" => Some(single_with_mem(
@@ -148,6 +158,17 @@ pub fn build_stress_script_spec(
         "Stress: GPU VRAM" => Some(single(computer, Stressor::GpuVram, duration_secs, "gpu_vram")),
         "Stress: GPU PCIe" => Some(single(computer, Stressor::GpuPcie, duration_secs, "gpu_pcie")),
         _ => None,
+    }
+}
+
+/// Certification preset at full duration with detected RAM/VRAM pools.
+fn cert_script_spec(preset_name: &str, computer: RecordId) -> Option<RunSpec> {
+    match crate::presets::load_cert_preset(preset_name) {
+        Ok(preset) => Some(crate::presets::cert_spec_detected(&preset, computer, 1.0)),
+        Err(err) => {
+            log::error!("script_catalog: cert preset '{preset_name}' failed to load: {err}");
+            None
+        }
     }
 }
 
@@ -220,5 +241,6 @@ fn qc_benchmark_spec(computer: RecordId) -> RunSpec {
             total_wall_secs: None,
             repeat_until_total: false,
         },
+        rules: None,
     }
 }

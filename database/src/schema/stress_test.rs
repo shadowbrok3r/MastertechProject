@@ -641,6 +641,16 @@ pub enum FailureMode {
     DataMismatch {
         addresses: Option<Vec<String>>,
     },
+    /// Sustained clock drop under load without a matching temperature breach.
+    ClockCollapse {
+        stage_label: String,
+        below_pct: f32,
+    },
+    /// Tick-throughput variance exceeded the configured band after warmup.
+    ThroughputUnstable {
+        stage_label: String,
+        cv: f64,
+    },
     /// Whole system rebooted or hard-hung during the run (Kernel-Power
     /// event 41, unexpected shutdown).
     Reboot,
@@ -666,6 +676,8 @@ impl FailureMode {
             Self::ThermalThrottle { .. } => "thermal_throttle",
             Self::DiskIoError { .. } => "disk_io_error",
             Self::DataMismatch { .. } => "data_mismatch",
+            Self::ClockCollapse { .. } => "clock_collapse",
+            Self::ThroughputUnstable { .. } => "throughput_unstable",
             Self::Reboot => "reboot",
             Self::Timeout => "timeout",
             Self::OperatorOverride { .. } => "operator_override",
@@ -731,7 +743,7 @@ pub struct DriverVersions {
 /// Per-stage summary inside a scenario run. Matches the shape that
 /// stress-kit's `ScenarioRunner` already emits, plus a label/duration
 /// so the run row is self-contained without joining metrics.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, SurrealValue)]
 pub struct ScenarioStageSummary {
     pub index: u32,
     pub label: String,
@@ -746,6 +758,46 @@ pub struct ScenarioStageSummary {
     pub throughput_unit: String,
     pub had_error: bool,
     pub last_error: Option<String>,
+    /// `"pass"` / `"fail"`; NONE when no verdict rules were attached.
+    #[serde(default)]
+    #[surreal(default)]
+    pub result: Option<String>,
+    /// Human-readable rule breaches for a failed stage.
+    #[serde(default)]
+    #[surreal(default)]
+    pub violations: Vec<String>,
+    #[serde(default)]
+    #[surreal(default)]
+    pub max_temp_c: Option<f32>,
+    #[serde(default)]
+    #[surreal(default)]
+    pub avg_temp_c: Option<f32>,
+    #[serde(default)]
+    #[surreal(default)]
+    pub max_gpu_temp_c: Option<f32>,
+    #[serde(default)]
+    #[surreal(default)]
+    pub max_clock_mhz: Option<u32>,
+    /// Stress-kit `Metrics.errors` accumulated within this stage.
+    #[serde(default)]
+    #[surreal(default)]
+    pub errors: u64,
+    /// WHEA counter movement between stage start and end.
+    #[serde(default)]
+    #[surreal(default)]
+    pub whea_delta: u32,
+    /// TDR counter movement between stage start and end.
+    #[serde(default)]
+    #[surreal(default)]
+    pub tdr_delta: u32,
+    /// Post-warmup coefficient of variation of tick throughput.
+    #[serde(default)]
+    #[surreal(default)]
+    pub throughput_cv: Option<f64>,
+    /// Longest consecutive run of collapsed-clock ticks under load.
+    #[serde(default)]
+    #[surreal(default)]
+    pub clock_collapse_ticks: u32,
 }
 
 /// Rolled-up metrics for the run. Populated by the qc-app supervisor
@@ -782,6 +834,10 @@ pub struct RunSummary {
     #[serde(default)]
     #[surreal(default)]
     pub test_errors: u32,
+    /// Max GPU temperature across all cards. Missing on older rows.
+    #[serde(default)]
+    #[surreal(default)]
+    pub max_gpu_temp_c: Option<f32>,
 }
 
 // ============================================================
@@ -1034,15 +1090,16 @@ impl StressTestRun {
         Ok(id)
     }
 
-    /// Finalize: write summary, verdict, finish reason, and ended_at in
-    /// one transaction. `failure_mode == None` + `result == Pass` is the
-    /// "clean run" path.
+    /// Finalize: write summary, verdict, finish reason, stage breakdown,
+    /// and ended_at in one transaction. `failure_mode == None` +
+    /// `result == Pass` is the "clean run" path.
     pub async fn finalize(
         run_id: &RecordId,
         result: RunResult,
         finish_reason: FinishReason,
         failure_mode: FailureMode,
         summary: RunSummary,
+        stages: Vec<ScenarioStageSummary>,
         ended_at: Option<Datetime>,
     ) -> anyhow::Result<()> {
         // `duration::secs(...)` returns an integer when the elapsed window
@@ -1055,6 +1112,7 @@ impl StressTestRun {
                 failure_mode = $failure, \
                 failure_kind = $failure_kind, \
                 summary = $summary, \
+                scenario_stages = $stages, \
                 ended_at = $ended_at, \
                 duration_actual_secs = <float> duration::secs(($ended_at ?? time::now()) - started_at)";
         let failure_kind = failure_mode.kind().to_string();
@@ -1066,9 +1124,23 @@ impl StressTestRun {
             .bind(("failure", failure_mode))
             .bind(("failure_kind", failure_kind))
             .bind(("summary", summary))
+            .bind(("stages", stages))
             .bind(("ended_at", ended_at.unwrap_or_else(|| chrono::Utc::now().into())))
             .await?;
         Ok(())
+    }
+
+    /// One run by id, with the float cast `list_for_computer` uses.
+    pub async fn get(run_id: &RecordId) -> anyhow::Result<Option<Self>> {
+        let run: Option<Self> = DATABASE
+            .query(
+                "SELECT *, <float> duration_actual_secs AS duration_actual_secs \
+                 FROM ONLY $id",
+            )
+            .bind(("id", run_id.clone()))
+            .await?
+            .take(0)?;
+        Ok(run)
     }
 
     /// History for one machine, newest first.
@@ -1164,6 +1236,23 @@ pub struct StressTestMetric {
     pub whea_delta_count: Option<u32>,
     /// Stress-kit `Metrics.last_error` from this tick.
     pub last_error: Option<String>,
+    /// Max GPU temperature across cards at this tick. Missing on older rows.
+    #[serde(default)]
+    #[surreal(default)]
+    pub gpu_temp_c: Option<f32>,
+    #[serde(default)]
+    #[surreal(default)]
+    pub gpu_clock_mhz: Option<u32>,
+    #[serde(default)]
+    #[surreal(default)]
+    pub gpu_power_w: Option<f32>,
+    #[serde(default)]
+    #[surreal(default)]
+    pub gpu_usage_pct: Option<f32>,
+    /// `TdrCounters.delta_since_program_start` at this tick.
+    #[serde(default)]
+    #[surreal(default)]
+    pub tdr_delta_count: Option<u32>,
 }
 
 impl StressTestMetric {
@@ -1184,6 +1273,11 @@ impl StressTestMetric {
             throughput_unit: None,
             whea_delta_count: None,
             last_error: None,
+            gpu_temp_c: None,
+            gpu_clock_mhz: None,
+            gpu_power_w: None,
+            gpu_usage_pct: None,
+            tdr_delta_count: None,
         }
     }
 

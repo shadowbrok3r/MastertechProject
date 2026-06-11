@@ -58,5 +58,6 @@ pub fn gpu_probe_spec(computer: RecordId, mult: f32) -> RunSpec {
             total_wall_secs: None,
             repeat_until_total: false,
         },
+        rules: None,
     }
 }

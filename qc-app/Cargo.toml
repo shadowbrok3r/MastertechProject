@@ -23,6 +23,7 @@ egui-phosphor = { version = "0.12.0", default-features = false, features = ["reg
 sysinfo = { version = "0.39", features = ["serde", "multithread"] }
 log.workspace = true
 anyhow.workspace = true
+chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

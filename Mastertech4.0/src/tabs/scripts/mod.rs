@@ -653,6 +653,15 @@ impl EguiScriptsTab {
                     }
                 }
                 RunUpdate::StageFinished { .. } => {}
+                RunUpdate::StageVerdict { label, pass, violations, .. } => {
+                    if !pass {
+                        let _ = log_tx2.try_send(ScriptLogEntry::warning(
+                            category2.clone(),
+                            &script_name2,
+                            format!("Stage {label} FAIL: {}", violations.join("; ")),
+                        ));
+                    }
+                }
                 RunUpdate::Finished(v) => {
                     let msg = format!(
                         "GPU probe {} in {:.1}s (run persisted)",

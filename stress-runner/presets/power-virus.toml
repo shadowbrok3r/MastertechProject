@@ -1,0 +1,23 @@
+# Power virus — max-heat combined CPU FMA + GPU compute for PSU/thermal
+# validation. Throughput CV is exempt for the psu stressor by design.
+
+[preset]
+name = "power-virus"
+label = "cert:power-virus-v1"
+description = "Power virus (30m): concurrent CPU FMA + GPU compute at max load for PSU and thermal validation"
+target_kind = "psu"
+tags = ["preset:cert", "cert:power-virus"]
+
+[rules]
+whea_fails = true
+tdr_fails = true
+stressor_errors_fail = true
+max_cpu_temp_c = { limit_c = 95.0, consecutive_ticks = 5 }
+max_gpu_temp_c = { limit_c = 90.0, consecutive_ticks = 5 }
+clock_collapse = { below_pct_of_stage_max = 0.60, consecutive_ticks = 10, min_cpu_usage_pct = 50.0 }
+throughput_cv = { warmup_ticks = 10, max_cv = 0.20, min_samples = 30 }
+
+[[stage]]
+label = "psu_combined"
+stressor = "psu"
+duration_secs = 1800

@@ -10,6 +10,7 @@ mod mcp;
 mod order_panel;
 mod qc_benchmark;
 mod oa3_sager;
+mod report_view;
 mod reporting;
 mod schema;
 mod spec_check;

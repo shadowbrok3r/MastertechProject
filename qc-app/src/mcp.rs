@@ -173,6 +173,8 @@ pub struct RunScenarioArgs {
 
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ScenarioReport {
+    /// Server-side run id (`stress_test_run:<uuid>` formatted).
+    pub run_id: String,
     pub finished_reason: String,
     pub total_elapsed_secs: f64,
     pub stages: Vec<StageReport>,
@@ -230,6 +232,20 @@ pub struct RunVerdictDto {
     pub peak_throughput: Option<f64>,
     pub avg_throughput: Option<f64>,
     pub throughput_unit: Option<String>,
+    pub tdr_count: u32,
+    pub max_gpu_temp_c: Option<f32>,
+    /// Per-stage rules verdicts; empty when the run carried no rules.
+    pub stage_verdicts: Vec<StageVerdictDto>,
+}
+
+/// One stage's rules verdict on the MCP wire.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct StageVerdictDto {
+    pub index: usize,
+    pub label: String,
+    pub pass: bool,
+    pub violations: Vec<String>,
+    pub peak_throughput: Option<f64>,
 }
 
 impl From<&stress_runner::RunVerdict> for RunVerdictDto {
@@ -247,6 +263,21 @@ impl From<&stress_runner::RunVerdict> for RunVerdictDto {
             peak_throughput: v.summary.peak_throughput,
             avg_throughput: v.summary.avg_throughput,
             throughput_unit: v.summary.throughput_unit.clone(),
+            tdr_count: v.summary.tdr_count,
+            max_gpu_temp_c: v.summary.max_gpu_temp_c,
+            stage_verdicts: v
+                .stage_outcomes
+                .iter()
+                .filter_map(|o| {
+                    o.verdict.as_ref().map(|sv| StageVerdictDto {
+                        index: sv.index as usize,
+                        label: sv.label.clone(),
+                        pass: sv.pass,
+                        violations: sv.violation_lines(),
+                        peak_throughput: o.summary.peak_throughput,
+                    })
+                })
+                .collect(),
         }
     }
 }
@@ -661,6 +692,102 @@ impl QcToolProvider {
             error: scenario.error,
         };
         let json = serde_json::to_string_pretty(&body)
+            .map_err(|e| to_internal(e.to_string()))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "run_certification",
+        description = "Run a certification preset (bronze ~1.5h, silver ~3.5h, gold ~8h, platinum ~12h, power-virus ~30m) with per-stage verdict rules (WHEA/TDR/errors/temp limits/clock collapse/throughput stability). duration_multiplier scales stage durations (e.g. 0.005 for a smoke run). Full persistence via stress-runner; returns run_id, per-stage verdicts, and the run verdict."
+    )]
+    async fn run_certification(
+        &self,
+        Parameters(args): Parameters<RunCertificationArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let preset = stress_runner::load_cert_preset(&args.preset)
+            .map_err(|e| to_internal(format!("{e:#}")))?;
+        let mult = args.duration_multiplier.unwrap_or(1.0).clamp(0.001, 1.0);
+
+        let telemetry = self
+            .state
+            .telemetry
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .ok_or_else(|| to_internal("telemetry sampler not yet ready"))?;
+        let computer = self.state.computer.clone();
+        let slot = self.state.run_slot.clone();
+
+        let snapshot = telemetry.snapshot();
+        let mut spec = if snapshot.memory.total_mb > 0 {
+            let gpu_vram_mb = snapshot.gpus.iter().filter_map(|g| g.memory_total_mb).max();
+            stress_runner::cert_spec(&preset, computer, snapshot.memory.total_mb, gpu_vram_mb, mult)
+        } else {
+            stress_runner::cert_spec_detected(&preset, computer, mult)
+        };
+        spec.tags.push("origin:mcp".into());
+
+        let labels: Vec<String> = preset.stages.iter().map(|s| s.label.clone()).collect();
+        let scenario = tokio::task::spawn_blocking(move || {
+            drive_scenario_via_controller(spec, telemetry, labels, slot)
+        })
+        .await
+        .map_err(|e| to_internal(format!("certification task join: {e}")))?;
+
+        let body = serde_json::json!({
+            "preset": preset.label,
+            "duration_multiplier": mult,
+            "run_id": scenario.run_id,
+            "verdict": scenario.verdict.as_ref().map(|v| v.result.clone()).unwrap_or_else(|| "errored".into()),
+            "failure_kind": scenario.verdict.as_ref().map(|v| v.failure_kind.clone()),
+            "whea_delta": scenario.verdict.as_ref().map(|v| v.whea_delta_count),
+            "tdr_delta": scenario.verdict.as_ref().map(|v| v.tdr_count),
+            "test_errors": scenario.verdict.as_ref().map(|v| v.test_errors),
+            "max_temp_c": scenario.verdict.as_ref().and_then(|v| v.max_temp_c),
+            "max_gpu_temp_c": scenario.verdict.as_ref().and_then(|v| v.max_gpu_temp_c),
+            "stage_verdicts": scenario.verdict.as_ref().map(|v| v.stage_verdicts.clone()),
+            "finished_reason": scenario.finished_reason,
+            "total_elapsed_secs": scenario.total_elapsed_secs,
+            "error": scenario.error,
+        });
+        let json = serde_json::to_string_pretty(&body)
+            .map_err(|e| to_internal(e.to_string()))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "get_run_report",
+        description = "Fetch the full report model for a stress run: header, verdict, per-stage results with rule violations, decimated temp/clock/throughput chart series, stage boundaries, and the event timeline. run_id accepts 'stress_test_run:<key>' or a bare key; omit it for the most recent run in this session."
+    )]
+    async fn get_run_report(
+        &self,
+        Parameters(args): Parameters<GetRunReportArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let raw = match args.run_id {
+            Some(id) => id,
+            None => {
+                let slot_id = self
+                    .state
+                    .run_slot
+                    .lock()
+                    .ok()
+                    .map(|s| s.latest.run_id.clone())
+                    .unwrap_or_default();
+                if slot_id.is_empty() || slot_id.starts_with("pending-") {
+                    return Err(to_internal(
+                        "no run in this session yet — pass run_id explicitly",
+                    ));
+                }
+                slot_id
+            }
+        };
+        let key = raw.strip_prefix("stress_test_run:").unwrap_or(&raw);
+        let run_id = stress_runner::RecordId::new("stress_test_run", key);
+        let data = stress_runner::fetch_report_data(&run_id)
+            .await
+            .map_err(|e| to_internal(format!("{e:#}")))?;
+        let model = stress_runner::RunReportModel::from_data(&data);
+        let json = serde_json::to_string_pretty(&model)
             .map_err(|e| to_internal(e.to_string()))?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
@@ -1237,6 +1364,25 @@ pub struct QcBenchmarkArgs {
     pub duration_multiplier: Option<f32>,
 }
 
+/// `run_certification` arguments.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct RunCertificationArgs {
+    /// Preset name: "bronze", "silver", "gold", "platinum", or "power-virus".
+    pub preset: String,
+    /// Scales every stage's `duration_secs`; `1.0` = full certification.
+    /// Clamped to `[0.001, 1.0]` server-side — use e.g. `0.005` for smoke.
+    #[serde(default, deserialize_with = "deser_opt_f32_or_str")]
+    pub duration_multiplier: Option<f32>,
+}
+
+/// `get_run_report` arguments.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct GetRunReportArgs {
+    /// `stress_test_run:<key>` or bare key; omit for the session's latest run.
+    #[serde(default)]
+    pub run_id: Option<String>,
+}
+
 /// Accept both a JSON number and a JSON string for f32 fields.
 /// The MCP harness sometimes encodes float arguments as `"0.25"` (string)
 /// rather than `0.25` (number); this handles both without rejecting either.
@@ -1723,6 +1869,7 @@ impl DriveOutcome {
             .collect();
         let _ = elapsed_secs;
         ScenarioReport {
+            run_id: self.run_id,
             finished_reason: self.finished_reason,
             total_elapsed_secs: self
                 .last_metrics
@@ -1826,6 +1973,8 @@ fn drive_run(
                     last = Some(dto);
                 }
                 RunUpdate::StageFinished { index: _ } => {}
+                // Stage verdicts arrive aggregated on the final RunVerdict.
+                RunUpdate::StageVerdict { .. } => {}
                 RunUpdate::Warning { message } => {
                     log::warn!("[qc-mcp/run] warning: {message}");
                     if let Ok(mut s) = slot.lock() {

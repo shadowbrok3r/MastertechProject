@@ -1,0 +1,71 @@
+# Gold certification — OCCT Gold System parity (~8 h).
+# Full CPU mix incl. Linpack residual checks, long RAM verify, VRAM verify, PSU stage.
+
+[preset]
+name = "gold"
+label = "cert:gold-v1"
+description = "Gold certification (~8h): CPU FMA/matrix/integer/verify, Linpack, 80% RAM pattern-verify, GPU compute + matmul, 80% VRAM verify, PSU combined load"
+target_kind = "system"
+tags = ["preset:cert", "cert:gold"]
+
+[rules]
+whea_fails = true
+tdr_fails = true
+stressor_errors_fail = true
+max_cpu_temp_c = { limit_c = 95.0, consecutive_ticks = 5 }
+max_gpu_temp_c = { limit_c = 90.0, consecutive_ticks = 5 }
+clock_collapse = { below_pct_of_stage_max = 0.60, consecutive_ticks = 10, min_cpu_usage_pct = 50.0 }
+throughput_cv = { warmup_ticks = 10, max_cv = 0.20, min_samples = 30 }
+
+[[stage]]
+label = "cpu_fma"
+stressor = "fp"
+duration_secs = 3600
+
+[[stage]]
+label = "cpu_matrix"
+stressor = "matrix"
+duration_secs = 3600
+
+[[stage]]
+label = "cpu_integer"
+stressor = "cpu"
+duration_secs = 3600
+
+[[stage]]
+label = "cpu_verify"
+stressor = "cpu_verify"
+duration_secs = 3600
+
+[[stage]]
+label = "linpack"
+stressor = "linpack"
+duration_secs = 3600
+memory_mb = 2048
+
+[[stage]]
+label = "memtest_80pct"
+stressor = "mem_test"
+duration_secs = 5400
+memory_pct = 80
+
+[[stage]]
+label = "gpu_compute"
+stressor = "gpu"
+duration_secs = 1800
+
+[[stage]]
+label = "gpu_matmul"
+stressor = "gpu_matmul"
+duration_secs = 900
+
+[[stage]]
+label = "gpu_vram_80pct"
+stressor = "gpu_vram"
+duration_secs = 900
+memory_pct = 80
+
+[[stage]]
+label = "psu_combined"
+stressor = "psu"
+duration_secs = 1800

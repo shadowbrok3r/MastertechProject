@@ -177,7 +177,30 @@ pub fn metric_from_snapshot(
             .as_ref()
             .map(|w| w.delta_since_program_start as u32),
         last_error: last_error.map(|s| s.to_string()),
+        gpu_temp_c: fold_gpu_max(snapshot, |g| g.temp_c),
+        gpu_clock_mhz: fold_gpu_max(snapshot, |g| g.gpu_clock_mhz),
+        gpu_power_w: fold_gpu_max(snapshot, |g| g.power_w),
+        gpu_usage_pct: fold_gpu_max(snapshot, |g| g.usage_pct),
+        tdr_delta_count: snapshot
+            .tdr
+            .as_ref()
+            .map(|t| t.delta_since_program_start as u32),
     })
+}
+
+/// Max of one optional field across all sampled GPUs.
+fn fold_gpu_max<T: PartialOrd + Copy>(
+    snapshot: &TelemetrySnapshot,
+    f: impl Fn(&stress_kit::telemetry::GpuSample) -> Option<T>,
+) -> Option<T> {
+    snapshot
+        .gpus
+        .iter()
+        .filter_map(f)
+        .fold(None, |acc: Option<T>, v| match acc {
+            Some(m) if m >= v => Some(m),
+            _ => Some(v),
+        })
 }
 
 fn validate_snapshot_for_metric(snapshot: &TelemetrySnapshot) -> anyhow::Result<()> {
