@@ -319,6 +319,16 @@ pub struct SpecCheckSummary {
     pub diffs: Vec<SpecDiffSummary>,
 }
 
+/// One stress stage line inside the bench QC payload (`xidax_qc.bench.stages`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, SurrealValue)]
+pub struct QcStageBrief {
+    pub label: String,
+    pub throughput: f64,
+    pub unit: String,
+    /// `"pass"` / `"fail"` / `"unscored"`.
+    pub result: String,
+}
+
 /// Bench QC result pushed to the order backend and persisted to SurrealDB.
 /// Mirrors the planned `xidax_qc.bench` metafield contract.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, SurrealValue)]
@@ -345,6 +355,9 @@ pub struct QcReportPayload {
     pub run_ref: Option<String>,
     pub checklist: QcChecklist,
     pub notes: String,
+    /// Per-stage stress results for the backing run.
+    #[serde(default)]
+    pub stages: Vec<QcStageBrief>,
 }
 
 impl QcReportPayload {
@@ -360,6 +373,15 @@ impl QcReportPayload {
             "Errors: WHEA {} | TDR {} | stressor {}\n",
             self.whea_delta, self.tdr_delta, self.stressor_errors
         ));
+        for s in &self.stages {
+            out.push_str(&format!(
+                "  Stage {}: {} ({:.1} {})\n",
+                s.label,
+                s.result.to_uppercase(),
+                s.throughput,
+                s.unit
+            ));
+        }
         if let Some(c) = self.cpu_max_c {
             out.push_str(&format!("CPU max {c:.1}C "));
         }

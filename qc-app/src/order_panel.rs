@@ -379,14 +379,35 @@ impl OrderPanel {
             whea_delta: last_verdict.map(|v| v.summary.whea_delta_count as i64).unwrap_or(0),
             tdr_delta: last_verdict.map(|v| v.summary.tdr_count as i64).unwrap_or(0),
             stressor_errors: last_verdict
-                .map(|v| (v.summary.memory_errors + v.summary.disk_io_errors) as i64)
+                .map(|v| {
+                    (v.summary.test_errors.max(v.summary.memory_errors)
+                        + v.summary.disk_io_errors) as i64
+                })
                 .unwrap_or(0),
             cpu_max_c: last_verdict.and_then(|v| v.summary.max_temp_c).map(f64::from),
-            gpu_max_c: None,
+            gpu_max_c: last_verdict.and_then(|v| v.summary.max_gpu_temp_c).map(f64::from),
             spec_check: self.spec_report.as_ref().map(|r| r.summary()),
             run_ref: last_verdict.map(|v| format!("stress_test_run:{}", v.run_id.key_string())),
             checklist: self.checklist,
             notes: self.report_notes.clone(),
+            stages: last_verdict
+                .map(|v| {
+                    v.stage_outcomes
+                        .iter()
+                        .map(|o| database::orders::QcStageBrief {
+                            label: o.summary.label.clone(),
+                            throughput: o.summary.avg_throughput.unwrap_or(0.0),
+                            unit: o.summary.throughput_unit.clone(),
+                            result: match (&o.verdict, o.summary.had_error) {
+                                (Some(v), _) if v.pass => "pass".to_string(),
+                                (Some(_), _) => "fail".to_string(),
+                                (None, true) => "fail".to_string(),
+                                (None, false) => "unscored".to_string(),
+                            },
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
         };
 
         self.submit_busy = true;

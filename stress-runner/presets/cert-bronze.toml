@@ -1,0 +1,44 @@
+# Bronze certification — OCCT Bronze System parity (~1.5 h).
+# CPU FMA -> CPU verify -> RAM pattern-verify -> GPU compute -> GPU matmul.
+
+[preset]
+name = "bronze"
+label = "cert:bronze-v1"
+description = "Bronze certification (~1.5h): CPU FMA, CPU verify, 80% RAM pattern-verify, GPU compute + matmul"
+target_kind = "system"
+tags = ["preset:cert", "cert:bronze"]
+
+[rules]
+whea_fails = true
+tdr_fails = true
+stressor_errors_fail = true
+max_cpu_temp_c = { limit_c = 95.0, consecutive_ticks = 5 }
+max_gpu_temp_c = { limit_c = 90.0, consecutive_ticks = 5 }
+clock_collapse = { below_pct_of_stage_max = 0.60, consecutive_ticks = 10, min_cpu_usage_pct = 50.0 }
+throughput_cv = { warmup_ticks = 10, max_cv = 0.20, min_samples = 30 }
+
+[[stage]]
+label = "cpu_fma"
+stressor = "fp"
+duration_secs = 1800
+
+[[stage]]
+label = "cpu_verify"
+stressor = "cpu_verify"
+duration_secs = 900
+
+[[stage]]
+label = "memtest_80pct"
+stressor = "mem_test"
+duration_secs = 900
+memory_pct = 80
+
+[[stage]]
+label = "gpu_compute"
+stressor = "gpu"
+duration_secs = 900
+
+[[stage]]
+label = "gpu_matmul"
+stressor = "gpu_matmul"
+duration_secs = 900

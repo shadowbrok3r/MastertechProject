@@ -653,6 +653,14 @@ impl<'a> ScriptsTab<'a> {
                         Some((metrics.throughput, throughput_unit));
                 }
                 RunUpdate::StageFinished { .. } => {}
+                RunUpdate::StageVerdict { label, pass, violations, .. } => {
+                    if !pass {
+                        self.log_message(format!(
+                            "Stage {label} FAIL: {}",
+                            violations.join("; ")
+                        ));
+                    }
+                }
                 RunUpdate::Finished(verdict) => {
                     let result_str = match verdict.result {
                         stress_runner::RunResult::Pass => "PASS",

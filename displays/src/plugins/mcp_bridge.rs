@@ -3468,6 +3468,7 @@ impl PluginToolProvider {
                 total_wall_secs: p.total_wall_secs,
                 repeat_until_total: p.repeat_until_total,
             },
+            rules: None,
         };
 
         let telemetry = TELEMETRY_AGENT.clone();
@@ -3491,6 +3492,16 @@ impl PluginToolProvider {
                     }
                 }
                 RunUpdate::StageFinished { .. } => {}
+                RunUpdate::StageVerdict { label, pass, violations, .. } => {
+                    if pass {
+                        logs.push(format!("Stage verdict: {label} PASS"));
+                    } else {
+                        logs.push(format!(
+                            "Stage verdict: {label} FAIL ({})",
+                            violations.join("; ")
+                        ));
+                    }
+                }
                 RunUpdate::Warning { message } => logs.push(format!("warning: {message}")),
                 RunUpdate::Error { message } => logs.push(format!("error: {message}")),
                 RunUpdate::Finished(_) => {}

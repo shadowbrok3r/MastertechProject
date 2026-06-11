@@ -33,6 +33,7 @@ use stress_kit::{
 };
 
 use crate::mapping::{default_target_kind, metric_from_snapshot};
+use crate::rules::{evaluate_stage, RuleViolation, StageStats, StageVerdict, VerdictRules};
 use crate::runtime;
 
 /// Tick interval for telemetry sampling and `StressTestMetric` row creation.
@@ -101,6 +102,8 @@ pub struct RunSpec {
     pub preset_label: Option<String>,
     pub tags: Vec<String>,
     pub plan: RunPlan,
+    /// Per-stage pass/fail policy; `None` keeps the legacy whole-run verdict.
+    pub rules: Option<VerdictRules>,
 }
 
 impl RunSpec {
@@ -140,6 +143,7 @@ impl RunSpec {
                 memory_cap_mb: 256,
                 disk_file_mb: 16,
             },
+            rules: None,
         }
     }
 }
@@ -173,12 +177,28 @@ pub enum RunUpdate {
     StageFinished {
         index: usize,
     },
+    /// Rules-evaluated stage outcome; emitted right after `StageFinished`
+    /// when the run carries `VerdictRules`.
+    StageVerdict {
+        index: usize,
+        label: String,
+        pass: bool,
+        violations: Vec<String>,
+        peak_throughput: Option<f64>,
+    },
     /// Final update.  After this, `is_running` returns false.
     Finished(RunVerdict),
     /// Non-fatal warning — surface in the UI but the run continues.
     Warning { message: String },
     /// Fatal error — followed by a `Finished` update with `RunResult::Aborted`.
     Error { message: String },
+}
+
+/// One finished stage: persisted summary plus its rules verdict (if any).
+#[derive(Debug, Clone)]
+pub struct StageOutcome {
+    pub summary: ScenarioStageSummary,
+    pub verdict: Option<StageVerdict>,
 }
 
 #[derive(Debug, Clone)]
@@ -189,6 +209,7 @@ pub struct RunVerdict {
     pub failure_mode: FailureMode,
     pub summary: RunSummary,
     pub duration_secs: f64,
+    pub stage_outcomes: Vec<StageOutcome>,
 }
 
 // ---------------------------------------------------------------------------
@@ -398,7 +419,8 @@ fn worker(
 
     // ---- 2. Track state for the final summary ----
     let mut acc = SummaryAccumulator::default();
-    let mut stages: Vec<ScenarioStageSummary> = Vec::new();
+    let mut outcomes: Vec<StageOutcome> = Vec::new();
+    let rules = spec.rules.clone();
 
     // ---- 3. Branch on plan ----
     match spec.plan.clone() {
@@ -439,6 +461,7 @@ fn worker(
             drive_single(
                 &session,
                 stressor,
+                threads,
                 throughput_unit,
                 &telemetry,
                 &cancel,
@@ -447,6 +470,8 @@ fn worker(
                 &mut acc,
                 duration_secs,
                 started_at,
+                &rules,
+                &mut outcomes,
             );
 
             persist_event(
@@ -457,6 +482,7 @@ fn worker(
                 None,
             );
             send(&update_tx, RunUpdate::StageFinished { index: 0 });
+            emit_stage_verdict(&update_tx, outcomes.last());
         }
 
         RunPlan::Scenario {
@@ -492,20 +518,24 @@ fn worker(
                 &update_tx,
                 &run_id_clone,
                 &mut acc,
-                &mut stages,
+                &rules,
+                &mut outcomes,
             );
         }
     }
 
     // ---- 4. Finalize ----
     let duration_secs = started_at.elapsed().as_secs_f64();
-    let verdict = acc.into_verdict(&run_id_clone, &cancel, duration_secs, &spec.tool);
-
-    // Best-effort scenario_stages write would go here if we needed it on the
-    // run row.  The finalize call below only updates summary + verdict; if a
-    // future caller wants per-stage rows on the run record, add an UPDATE
-    // here that sets `scenario_stages = $stages`.
-    let _ = stages;
+    let stages: Vec<ScenarioStageSummary> =
+        outcomes.iter().map(|o| o.summary.clone()).collect();
+    let verdict = acc.into_verdict(
+        &run_id_clone,
+        &cancel,
+        duration_secs,
+        &spec.tool,
+        &rules,
+        outcomes,
+    );
 
     // Same `'static` requirement as the create call — clone everything into
     // an owned async block.
@@ -514,6 +544,7 @@ fn worker(
     let finalize_reason = verdict.finish_reason;
     let finalize_failure = verdict.failure_mode.clone();
     let finalize_summary = verdict.summary.clone();
+    let finalize_stages = stages.clone();
     let res = runtime::block_on(async move {
         StressTestRun::finalize(
             &finalize_id,
@@ -521,6 +552,7 @@ fn worker(
             finalize_reason,
             finalize_failure,
             finalize_summary,
+            finalize_stages,
             None,
         )
         .await
@@ -571,6 +603,7 @@ fn build_run(spec: &RunSpec) -> StressTestRun {
 fn drive_single(
     session: &StressSession,
     stressor: Stressor,
+    threads: usize,
     throughput_unit: &'static str,
     telemetry: &Arc<TelemetryAgent>,
     cancel: &Arc<AtomicBool>,
@@ -579,10 +612,20 @@ fn drive_single(
     acc: &mut SummaryAccumulator,
     duration_secs: Option<u64>,
     started_at: Instant,
+    rules: &Option<VerdictRules>,
+    outcomes: &mut Vec<StageOutcome>,
 ) {
     let mut last_tick = Instant::now();
     let mut latest_metrics = Metrics::default();
     let mut metric_batch: Vec<StressTestMetric> = Vec::with_capacity(METRIC_BATCH_SIZE);
+    let label = stressor.label().to_string();
+    let effective_rules = rules.clone().unwrap_or_default();
+    let mut stage_stats = StageStats::begin(0, &label, stressor, &telemetry.snapshot());
+    let mut stage_last_error: Option<String> = None;
+    let mut stage_had_error = false;
+    let mut stage_peak: Option<f64> = None;
+    let mut stage_tp_sum = 0.0_f64;
+    let mut stage_tp_count = 0_u32;
 
     let deadline = duration_secs.map(|d| started_at + Duration::from_secs(d));
 
@@ -610,6 +653,15 @@ fn drive_single(
                 send(update_tx, RunUpdate::Error { message: msg });
                 session.stop();
             }
+            if m.throughput > 0.0 {
+                stage_peak = Some(stage_peak.map_or(m.throughput, |p: f64| p.max(m.throughput)));
+                stage_tp_sum += m.throughput;
+                stage_tp_count += 1;
+            }
+            if let Some(err) = &m.last_error {
+                stage_had_error = true;
+                stage_last_error = Some(err.clone());
+            }
             latest_metrics = m;
         }
 
@@ -617,7 +669,11 @@ fn drive_single(
             last_tick = Instant::now();
             let snapshot = telemetry.snapshot();
             if snapshot.is_populated() {
+                let whea_before = acc.whea_delta_count;
+                let tdr_before = acc.tdr_delta_count;
                 let new_errors = acc.absorb(&latest_metrics, &snapshot, throughput_unit);
+                stage_stats.absorb_tick(&latest_metrics, &snapshot, &effective_rules);
+                persist_counter_events(run_id, &acc, whea_before, tdr_before);
                 if new_errors > 0 {
                     persist_error_event(run_id, stressor, new_errors, latest_metrics.last_error.clone());
                 }
@@ -672,7 +728,6 @@ fn drive_single(
         }
 
         thread::sleep(Duration::from_millis(50));
-        let _ = stressor; // captured for future use (e.g. failure rubric)
     }
 
     if let Err(err) = flush_metrics(&mut metric_batch) {
@@ -683,6 +738,34 @@ fn drive_single(
             },
         );
     }
+
+    stage_stats.errors = stage_stats.errors.max(latest_metrics.errors);
+    stage_stats.finish(&telemetry.snapshot());
+    let verdict = rules.as_ref().map(|r| evaluate_stage(&stage_stats, r));
+    let avg = if stage_tp_count > 0 {
+        Some(stage_tp_sum / stage_tp_count as f64)
+    } else {
+        None
+    };
+    let summary = stage_summary_from_stats(
+        &stage_stats,
+        stressor,
+        threads as u32,
+        duration_secs.unwrap_or(0),
+        started_at.elapsed().as_secs_f64(),
+        stage_peak,
+        avg,
+        throughput_unit,
+        stage_had_error,
+        stage_last_error,
+        verdict.as_ref(),
+    );
+    if let Some(v) = &verdict {
+        if !v.pass {
+            persist_stage_verdict_event(run_id, v);
+        }
+    }
+    outcomes.push(StageOutcome { summary, verdict });
 }
 
 /// Drive a scenario run.
@@ -694,7 +777,8 @@ fn drive_scenario(
     update_tx: &Sender<RunUpdate>,
     run_id: &RecordId,
     acc: &mut SummaryAccumulator,
-    stages: &mut Vec<ScenarioStageSummary>,
+    rules: &Option<VerdictRules>,
+    outcomes: &mut Vec<StageOutcome>,
 ) {
     let mut last_tick = Instant::now();
     let mut current_stage_index: Option<usize> = None;
@@ -706,6 +790,8 @@ fn drive_scenario(
     let mut current_stage_throughput_count: u32 = 0;
     let mut current_stage_last_error: Option<String> = None;
     let mut current_stage_had_error = false;
+    let mut current_stage_stats: Option<StageStats> = None;
+    let effective_rules = rules.clone().unwrap_or_default();
     let mut latest_metrics = Metrics::default();
     let mut metric_batch: Vec<StressTestMetric> = Vec::with_capacity(METRIC_BATCH_SIZE);
     let mut finished = false;
@@ -731,6 +817,12 @@ fn drive_scenario(
                     current_stage_throughput_count = 0;
                     current_stage_last_error = None;
                     current_stage_had_error = false;
+                    current_stage_stats = Some(StageStats::begin(
+                        index as u32,
+                        &label,
+                        stressor,
+                        &telemetry.snapshot(),
+                    ));
 
                     // Persist a stress_test_event row for the stage transition.
                     persist_event(
@@ -771,24 +863,40 @@ fn drive_scenario(
                         None
                     };
                     let planned = stage_specs.get(index).map(|s| s.duration_secs).unwrap_or(0);
-                    let stressor_label = stage_specs
+                    let stressor = stage_specs
                         .get(index)
-                        .map(|s| s.stressor.label())
-                        .unwrap_or("")
-                        .to_ascii_lowercase();
-                    stages.push(ScenarioStageSummary {
-                        index: index as u32,
-                        label: current_stage_label.clone().unwrap_or_default(),
-                        stressor: stressor_label,
-                        threads: stage_specs.get(index).map(|s| s.threads as u32).unwrap_or(0),
-                        duration_planned_secs: planned,
-                        duration_actual_secs: elapsed,
-                        peak_throughput: current_stage_peak_throughput,
-                        avg_throughput: avg,
-                        throughput_unit: current_unit.to_string(),
-                        had_error: current_stage_had_error,
-                        last_error: current_stage_last_error.clone(),
+                        .map(|s| s.stressor)
+                        .unwrap_or(Stressor::Cpu);
+                    let mut stats = current_stage_stats.take().unwrap_or_else(|| {
+                        StageStats::begin(
+                            index as u32,
+                            current_stage_label.as_deref().unwrap_or(""),
+                            stressor,
+                            &telemetry.snapshot(),
+                        )
                     });
+                    stats.errors = stats.errors.max(latest_metrics.errors);
+                    stats.finish(&telemetry.snapshot());
+                    let verdict = rules.as_ref().map(|r| evaluate_stage(&stats, r));
+                    let summary = stage_summary_from_stats(
+                        &stats,
+                        stressor,
+                        stage_specs.get(index).map(|s| s.threads as u32).unwrap_or(0),
+                        planned,
+                        elapsed,
+                        current_stage_peak_throughput,
+                        avg,
+                        current_unit,
+                        current_stage_had_error,
+                        current_stage_last_error.clone(),
+                        verdict.as_ref(),
+                    );
+                    if let Some(v) = &verdict {
+                        if !v.pass {
+                            persist_stage_verdict_event(run_id, v);
+                        }
+                    }
+                    outcomes.push(StageOutcome { summary, verdict });
 
                     persist_event(
                         run_id,
@@ -799,6 +907,7 @@ fn drive_scenario(
                     );
 
                     send(update_tx, RunUpdate::StageFinished { index });
+                    emit_stage_verdict(update_tx, outcomes.last());
                 }
                 ScenarioEvent::Finished { reason, total_elapsed_secs } => {
                     acc.scenario_finish = Some(map_finish_reason(reason));
@@ -812,7 +921,13 @@ fn drive_scenario(
             last_tick = Instant::now();
             let snapshot = telemetry.snapshot();
             if snapshot.is_populated() {
+                let whea_before = acc.whea_delta_count;
+                let tdr_before = acc.tdr_delta_count;
                 let new_errors = acc.absorb(&latest_metrics, &snapshot, current_unit);
+                if let Some(stats) = current_stage_stats.as_mut() {
+                    stats.absorb_tick(&latest_metrics, &snapshot, &effective_rules);
+                }
+                persist_counter_events(run_id, &acc, whea_before, tdr_before);
                 if new_errors > 0 {
                     let stressor = current_stage_index
                         .and_then(|i| stage_specs.get(i))
@@ -959,6 +1074,110 @@ fn persist_error_event(
     });
 }
 
+/// Extended `ScenarioStageSummary` from per-stage stats + legacy tick fields.
+#[allow(clippy::too_many_arguments)]
+fn stage_summary_from_stats(
+    stats: &StageStats,
+    stressor: Stressor,
+    threads: u32,
+    planned_secs: u64,
+    elapsed_secs: f64,
+    peak_throughput: Option<f64>,
+    avg_throughput: Option<f64>,
+    unit: &str,
+    had_error: bool,
+    last_error: Option<String>,
+    verdict: Option<&StageVerdict>,
+) -> ScenarioStageSummary {
+    ScenarioStageSummary {
+        index: stats.index,
+        label: stats.label.clone(),
+        stressor: stressor.label().to_ascii_lowercase(),
+        threads,
+        duration_planned_secs: planned_secs,
+        duration_actual_secs: elapsed_secs,
+        peak_throughput,
+        avg_throughput,
+        throughput_unit: unit.to_string(),
+        had_error,
+        last_error,
+        result: verdict.map(|v| if v.pass { "pass" } else { "fail" }.to_string()),
+        violations: verdict.map(|v| v.violation_lines()).unwrap_or_default(),
+        max_temp_c: stats.max_cpu_temp_c,
+        avg_temp_c: stats.avg_cpu_temp_c(),
+        max_gpu_temp_c: stats.max_gpu_temp_c,
+        max_clock_mhz: stats.max_avg_clock_mhz,
+        errors: stats.errors,
+        whea_delta: stats.whea_delta,
+        tdr_delta: stats.tdr_delta,
+        throughput_cv: stats.throughput_cv(),
+        clock_collapse_ticks: stats.worst_collapse_run,
+    }
+}
+
+/// Forward the latest stage's rules verdict to the UI, if it carries one.
+fn emit_stage_verdict(tx: &Sender<RunUpdate>, outcome: Option<&StageOutcome>) {
+    let Some(outcome) = outcome else { return };
+    let Some(v) = &outcome.verdict else { return };
+    send(
+        tx,
+        RunUpdate::StageVerdict {
+            index: v.index as usize,
+            label: v.label.clone(),
+            pass: v.pass,
+            violations: v.violation_lines(),
+            peak_throughput: outcome.summary.peak_throughput,
+        },
+    );
+}
+
+/// Persist WHEA/TDR event rows when the run counters moved this tick.
+fn persist_counter_events(
+    run_id: &RecordId,
+    acc: &SummaryAccumulator,
+    whea_before: u32,
+    tdr_before: u32,
+) {
+    if acc.whea_delta_count > whea_before {
+        let mut event = DbStressTestEvent::new(run_id.clone(), DbEventKind::WheaHit, "telemetry");
+        event.detail = format!(
+            "WHEA counter moved {whea_before} -> {}",
+            acc.whea_delta_count
+        );
+        runtime::spawn(async move {
+            if let Err(err) = DbStressTestEvent::create(&event).await {
+                log::warn!("stress-runner: failed to persist whea event: {err}");
+            }
+        });
+    }
+    if acc.tdr_delta_count > tdr_before {
+        let mut event = DbStressTestEvent::new(run_id.clone(), DbEventKind::Tdr, "telemetry");
+        event.detail = format!("TDR counter moved {tdr_before} -> {}", acc.tdr_delta_count);
+        runtime::spawn(async move {
+            if let Err(err) = DbStressTestEvent::create(&event).await {
+                log::warn!("stress-runner: failed to persist tdr event: {err}");
+            }
+        });
+    }
+}
+
+/// Persist a `custom`/`stage_verdict` event for a failed stage.
+fn persist_stage_verdict_event(run_id: &RecordId, verdict: &StageVerdict) {
+    let mut event = DbStressTestEvent::new(run_id.clone(), DbEventKind::Custom, "verdict-rules");
+    event.code = Some("stage_verdict".to_string());
+    event.detail = format!(
+        "stage '{}' failed: {}",
+        verdict.label,
+        verdict.violation_lines().join("; ")
+    );
+    event.data = serde_json::to_value(verdict).ok();
+    runtime::spawn(async move {
+        if let Err(err) = DbStressTestEvent::create(&event).await {
+            log::warn!("stress-runner: failed to persist stage verdict event: {err}");
+        }
+    });
+}
+
 fn flush_metrics(batch: &mut Vec<StressTestMetric>) -> anyhow::Result<()> {
     if batch.is_empty() {
         return Ok(());
@@ -1004,6 +1223,8 @@ struct SummaryAccumulator {
     throughput_samples: u32,
     last_throughput_unit: Option<String>,
     whea_delta_count: u32,
+    tdr_delta_count: u32,
+    max_gpu_temp_c: Option<f32>,
     disk_io_errors: u32,
     max_power_w: Option<u32>,
     /// `Metrics.errors` from stages that already reset their counter.
@@ -1078,6 +1299,15 @@ impl SummaryAccumulator {
         if let Some(whea) = &snapshot.whea {
             self.whea_delta_count = whea.delta_since_program_start as u32;
         }
+        if let Some(tdr) = &snapshot.tdr {
+            self.tdr_delta_count = tdr.delta_since_program_start as u32;
+        }
+
+        for g in &snapshot.gpus {
+            if let Some(t) = g.temp_c {
+                self.max_gpu_temp_c = Some(self.max_gpu_temp_c.map_or(t, |m| m.max(t)));
+            }
+        }
 
         // GPU board power summed across cards (NVML); CPU package power has
         // no portable source, so this is the PSU-load proxy we have.
@@ -1131,12 +1361,13 @@ impl SummaryAccumulator {
             thermal_throttle_detected: false,
             vrm_throttle_detected: false,
             whea_delta_count: self.whea_delta_count,
-            tdr_count: 0,
+            tdr_count: self.tdr_delta_count,
             bsod_detected: false,
             bsod_code: None,
             disk_io_errors: self.disk_io_errors,
             memory_errors: 0,
             test_errors: self.total_test_errors().min(u32::MAX as u64) as u32,
+            max_gpu_temp_c: self.max_gpu_temp_c,
         }
     }
 
@@ -1146,6 +1377,8 @@ impl SummaryAccumulator {
         cancel: &Arc<AtomicBool>,
         duration_secs: f64,
         tool: &TestTool,
+        rules: &Option<VerdictRules>,
+        stage_outcomes: Vec<StageOutcome>,
     ) -> RunVerdict {
         let mut summary = self.into_summary();
         // Memtest mismatches also count as memory errors for the
@@ -1156,8 +1389,14 @@ impl SummaryAccumulator {
         ) {
             summary.memory_errors = summary.test_errors;
         }
+
+        let rules_failure = rules
+            .as_ref()
+            .and_then(|_| rules_failure_mode(&stage_outcomes, &mut summary));
+
         let cancelled = cancel.load(Ordering::Relaxed);
-        let had_failure = summary.whea_delta_count > 0
+        let had_failure = rules_failure.is_some()
+            || summary.whea_delta_count > 0
             || summary.test_errors > 0
             || summary.disk_io_errors > 0
             || summary.bsod_detected
@@ -1168,6 +1407,8 @@ impl SummaryAccumulator {
                 FailureMode::WheaError {
                     count: summary.whea_delta_count,
                 }
+            } else if let Some(mode) = rules_failure {
+                mode
             } else if summary.test_errors > 0 {
                 FailureMode::DataMismatch { addresses: None }
             } else if summary.disk_io_errors > 0 {
@@ -1199,6 +1440,63 @@ impl SummaryAccumulator {
             failure_mode,
             summary,
             duration_secs,
+            stage_outcomes,
         }
     }
+}
+
+/// Dominant `FailureMode` across failed stage verdicts, by severity:
+/// WHEA > TDR > temp > data mismatch > clock collapse > unstable throughput.
+/// Also folds throttle observations into the run summary flags.
+fn rules_failure_mode(
+    outcomes: &[StageOutcome],
+    summary: &mut RunSummary,
+) -> Option<FailureMode> {
+    let mut tdr: Option<FailureMode> = None;
+    let mut temp: Option<FailureMode> = None;
+    let mut mismatch: Option<FailureMode> = None;
+    let mut collapse: Option<FailureMode> = None;
+    let mut unstable: Option<FailureMode> = None;
+
+    for outcome in outcomes {
+        let Some(verdict) = &outcome.verdict else { continue };
+        let stage_had_temp_violation = verdict
+            .violations
+            .iter()
+            .any(|v| matches!(v, RuleViolation::CpuTemp { .. } | RuleViolation::GpuTemp { .. }));
+        for violation in &verdict.violations {
+            match violation {
+                RuleViolation::Whea { delta } => {
+                    return Some(FailureMode::WheaError { count: *delta });
+                }
+                RuleViolation::Tdr { delta } => {
+                    tdr.get_or_insert(FailureMode::Tdr { count: *delta });
+                }
+                RuleViolation::CpuTemp { peak_c, .. } | RuleViolation::GpuTemp { peak_c, .. } => {
+                    summary.thermal_throttle_detected = true;
+                    temp.get_or_insert(FailureMode::ThermalThrottle { peak_temp_c: *peak_c });
+                }
+                RuleViolation::StressorErrors { .. } => {
+                    mismatch.get_or_insert(FailureMode::DataMismatch { addresses: None });
+                }
+                RuleViolation::ClockCollapse { below_pct, .. } => {
+                    if !stage_had_temp_violation {
+                        summary.vrm_throttle_detected = true;
+                    }
+                    collapse.get_or_insert(FailureMode::ClockCollapse {
+                        stage_label: verdict.label.clone(),
+                        below_pct: *below_pct,
+                    });
+                }
+                RuleViolation::ThroughputUnstable { cv, .. } => {
+                    unstable.get_or_insert(FailureMode::ThroughputUnstable {
+                        stage_label: verdict.label.clone(),
+                        cv: *cv,
+                    });
+                }
+            }
+        }
+    }
+
+    tdr.or(temp).or(mismatch).or(collapse).or(unstable)
 }

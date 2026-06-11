@@ -32,6 +32,9 @@ mod drive;
 mod gpu_probe;
 mod hardware;
 mod mapping;
+mod presets;
+mod report;
+mod rules;
 mod runtime;
 mod script_catalog;
 
@@ -85,8 +88,22 @@ pub use benchmark::{
     default_suite, parse_benchmark_kind, run_benchmark, run_benchmark_script, BenchmarkOutcome,
     DEFAULT_BENCH_SECS,
 };
-pub use controller::{RunController, RunPlan, RunSpec, RunStage, RunUpdate, RunVerdict};
+pub use controller::{
+    RunController, RunPlan, RunSpec, RunStage, RunUpdate, RunVerdict, StageOutcome,
+};
 pub use drive::drive_blocking;
+pub use presets::{
+    cert_spec, cert_spec_detected, load_cert_preset, CertPreset, CertStage, MemorySpec,
+    CERT_PRESET_NAMES,
+};
+pub use report::{
+    fetch_report_data, EventMarker, ReportSeries, RunReportData, RunReportModel, StageBoundary,
+    TimelineRow,
+};
+pub use rules::{
+    evaluate_stage, ClockCollapseRule, RuleViolation, StageStats, StageVerdict, TempRule,
+    ThroughputCvRule, VerdictRules,
+};
 pub use gpu_probe::{gpu_probe_spec, gpu_probe_stages, GPU_PROBE_PRESET};
 pub use script_catalog::{
     benchmark_kind_for_script, build_stress_script_spec, is_benchmark_script, is_stress_script,

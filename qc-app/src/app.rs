@@ -99,6 +99,9 @@ pub struct QcApp {
     /// State exposed to MCP tools.
     #[serde(skip)]
     mcp_state: Option<Arc<QcMcpState>>,
+    /// Run report window (fresh verdicts + past runs).
+    #[serde(skip)]
+    report_view: crate::report_view::ReportView,
 }
 
 impl Default for QcApp {
@@ -125,6 +128,7 @@ impl Default for QcApp {
             fleet_client: None,
             last_heartbeat: None,
             mcp_state: None,
+            report_view: crate::report_view::ReportView::default(),
         }
     }
 }
@@ -166,12 +170,48 @@ impl QcApp {
                 client.ack(id);
             }
             InboundCommandKind::Custom { payload } => {
-                log::warn!(
-                    "qc-app: fleet command {id} kind=custom not yet handled; payload={}",
-                    payload
-                );
-                // Ack anyway so it doesn't loop forever; future commands can
-                // dispatch off `payload["op"]` once we wire more handlers.
+                match payload.get("op").and_then(|v| v.as_str()) {
+                    Some("run_stress_preset") => {
+                        let preset = payload
+                            .get("preset")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("bronze")
+                            .to_string();
+                        let mult = payload
+                            .get("duration_multiplier")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(1.0) as f32;
+                        match self.hw_sampler.as_ref().map(|s| s.agent()) {
+                            Some(telemetry) => {
+                                match self.stress_panel.start_certification_by_name(
+                                    &preset,
+                                    mult,
+                                    telemetry,
+                                    local_computer_record(),
+                                ) {
+                                    Ok(()) => log::info!(
+                                        "qc-app: fleet command {id} started preset '{preset}' at {mult}x"
+                                    ),
+                                    Err(err) => log::warn!(
+                                        "qc-app: fleet command {id} preset '{preset}' refused: {err}"
+                                    ),
+                                }
+                            }
+                            None => log::warn!(
+                                "qc-app: fleet command {id} refused — telemetry sampler not ready"
+                            ),
+                        }
+                    }
+                    Some("cancel_stress_run") => {
+                        self.stress_panel.stop_active_run();
+                        log::info!("qc-app: fleet command {id} cancelled the active run");
+                    }
+                    other => {
+                        log::warn!(
+                            "qc-app: fleet command {id} unhandled custom op {other:?}; payload={payload}"
+                        );
+                    }
+                }
                 client.ack(id);
             }
         }
@@ -429,6 +469,11 @@ impl eframe::App for QcApp {
         self.stress_panel.set_order_context(self.order_panel.run_context());
 
         self.stress_panel.tick(ctx);
+
+        if let Some(run_id) = self.stress_panel.take_report_request() {
+            self.report_view.open_run(run_id, ctx);
+        }
+        self.report_view.show(ctx, &local_computer_record());
 
         // Undocked HW monitor: clone `Arc`s so the viewport closure does not capture `self`.
         if self.show_hw_monitor.load(Ordering::Relaxed) {
