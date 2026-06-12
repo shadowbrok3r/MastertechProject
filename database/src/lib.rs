@@ -15,6 +15,7 @@ use log::info;
 pub mod live_data;
 pub mod orders;
 pub mod schema;
+pub mod xbm;
 
 pub use platform::PlatformSpawner;
 
@@ -117,6 +118,12 @@ pub const SHOPIFY_STORE_URL: &str = env!("SHOPIFY_STORE_URL");
 /// Read-only Admin API token. Writes go through the Worker, never from here.
 pub const SHOPIFY_ADMIN_TOKEN: &str = env!("SHOPIFY_ADMIN_TOKEN");
 pub const SHOPIFY_API_VERSION: &str = env!("SHOPIFY_API_VERSION");
+
+/// Xidax Build Management API base (`/api/v1`).
+pub const XBM_API_URL: &str = env!("XBM_API_URL");
+/// Per-consumer `xbm_` bearer key. Empty string disables the XBM client at
+/// runtime; reads then fall back to the Admin GraphQL path where available.
+pub const XBM_API_KEY: &str = env!("XBM_API_KEY");
 
 /// Pick the active orchestrator URL based on the current build profile.
 /// Debug → [`ORCHESTRATOR_URL_DEV`]; release → [`ORCHESTRATOR_URL`].

@@ -8,8 +8,9 @@
 
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use database::orders::{
-    gate::GateOutcome, persist_qc_report, BuildSpec, GateDecision, OrderComment, OrderKey,
-    OrderKind, PhotoCheck, QcBackend, QcChecklist, QcOrder, QcReportPayload, TechIdentity,
+    gate::GateOutcome, persist_qc_report, BackendKind, BuildSpec, GateDecision, OrderComment,
+    OrderKey, OrderKind, PhotoCheck, QcBackend, QcChecklist, QcOrder, QcReportPayload,
+    TechIdentity,
 };
 use database::schema::{RecordId, RecordIdExt, RunResult, TICKET_TABLE};
 use eframe::egui::{
@@ -261,8 +262,14 @@ impl OrderPanel {
         } else {
             (self.tech_email.clone(), self.tech_password.clone())
         };
-        if email.trim().is_empty() || password.is_empty() {
-            let err = Some("Email and password required.".to_string());
+        // Shopify identity is a roster name match; no PIN verification exists yet.
+        let needs_password = session.backend.backend_kind() == BackendKind::Prestashop;
+        if email.trim().is_empty() || (needs_password && password.is_empty()) {
+            let err = Some(if needs_password {
+                "Email and password required.".to_string()
+            } else {
+                "Tech name required.".to_string()
+            });
             if signoff { self.signoff_error = err } else { self.auth_error = err }
             return;
         }
@@ -811,16 +818,26 @@ impl OrderPanel {
                 });
             }
             None => {
+                let is_shopify = self
+                    .session
+                    .as_ref()
+                    .map(|s| s.backend.backend_kind() == BackendKind::Shopify)
+                    .unwrap_or(false);
+                let (id_hint, secret_hint) = if is_shopify {
+                    ("floor staff name", "PIN (unused)")
+                } else {
+                    ("employee email", "password")
+                };
                 ui.label(RichText::new("QC technician").strong().small());
                 ui.horizontal(|ui| {
                     ui.add(
                         TextEdit::singleline(&mut self.tech_email)
-                            .hint_text("employee email")
+                            .hint_text(id_hint)
                             .desired_width(170.0),
                     );
                     ui.add(
                         TextEdit::singleline(&mut self.tech_password)
-                            .hint_text("password")
+                            .hint_text(secret_hint)
                             .password(true)
                             .desired_width(120.0),
                     );
