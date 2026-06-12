@@ -1,15 +1,17 @@
 //! Shopify (Xidax) implementation of [`OrderBackend`].
 //!
-//! Reads go direct to the Admin GraphQL API with a minimal-scope token.
-//! Writes (status advance, QC submission, comments) are Worker territory —
-//! the `/qc/*` routes from the master plan — so they return explicit errors
-//! until those routes exist. Metafield layout follows the Data Model doc:
+//! The Build Management API (`crate::xbm`) is the primary surface: bench
+//! machines hold one `xbm_` key, and side-effectful actions (status advance)
+//! run their Odoo/email legs server-side. When no XBM key is configured,
+//! reads fall back to the Admin GraphQL API with a minimal-scope token.
+//! Metafield layout follows the Data Model doc:
 //! `xidax_workflow.current_status` → status metaobject with `legacy_id`,
 //! `xidax_order.{configs,installed_serials,build_serial,build_photos}`.
 
 use anyhow::{anyhow, Context};
 use serde_json::{json, Value};
 
+use crate::xbm::{AdvanceRequest, BuildDetail, XbmClient, QUEUE_BUCKETS};
 use crate::{SHOPIFY_ADMIN_TOKEN, SHOPIFY_API_VERSION, SHOPIFY_STORE_URL};
 
 use super::gate::{self, GateDecision};
@@ -23,6 +25,7 @@ pub struct ShopifyBackend {
     store_url: String,
     token: String,
     api_version: String,
+    xbm: Option<XbmClient>,
 }
 
 impl std::fmt::Debug for ShopifyBackend {
@@ -30,6 +33,7 @@ impl std::fmt::Debug for ShopifyBackend {
         f.debug_struct("ShopifyBackend")
             .field("store_url", &self.store_url)
             .field("api_version", &self.api_version)
+            .field("xbm_configured", &self.xbm.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -75,25 +79,37 @@ query QcOrderLookup($q: String!) {
 
 impl ShopifyBackend {
     pub fn from_env() -> Self {
+        let xbm = XbmClient::from_env();
         Self {
             store_url: SHOPIFY_STORE_URL.trim_end_matches('/').to_string(),
             token: SHOPIFY_ADMIN_TOKEN.to_string(),
             api_version: SHOPIFY_API_VERSION.to_string(),
+            xbm: xbm.configured().then_some(xbm),
         }
     }
 
     pub fn configured(&self) -> bool {
+        self.xbm.is_some() || self.graphql_configured()
+    }
+
+    fn graphql_configured(&self) -> bool {
         !self.store_url.is_empty() && !self.token.is_empty()
     }
 
     fn ensure_configured(&self) -> anyhow::Result<()> {
-        if self.configured() {
+        if self.graphql_configured() {
             Ok(())
         } else {
             Err(anyhow!(
-                "Shopify backend not configured — set SHOPIFY_STORE_URL and SHOPIFY_ADMIN_TOKEN in .env and rebuild."
+                "Shopify backend not configured — set XBM_API_KEY (preferred) or SHOPIFY_STORE_URL + SHOPIFY_ADMIN_TOKEN in .env and rebuild."
             ))
         }
+    }
+
+    fn xbm(&self) -> anyhow::Result<&XbmClient> {
+        self.xbm.as_ref().ok_or_else(|| {
+            anyhow!("Build Management API not configured — set XBM_API_KEY in .env and rebuild.")
+        })
     }
 
     async fn graphql(&self, query: &str, variables: Value) -> anyhow::Result<Value> {
@@ -281,6 +297,201 @@ impl ShopifyBackend {
         let lower = slot.to_lowercase();
         needles.iter().any(|n| lower.contains(n))
     }
+
+    /// Queue match by order name (`#N`) or build serial, then full detail.
+    async fn find_order_xbm(&self, key: &OrderKey) -> anyhow::Result<QcOrder> {
+        let xbm = self.xbm()?;
+        let wanted_name = format!("#{}", Self::order_number_from_key(key)?);
+        let wanted_serial = match key {
+            OrderKey::BuildSerial(s) => Some(s.to_uppercase()),
+            _ => None,
+        };
+
+        let queue = xbm
+            .orders(QUEUE_BUCKETS, None, None)
+            .await
+            .context("Build Management queue fetch failed")?;
+        let hit = queue.orders.iter().find(|o| {
+            o.name.eq_ignore_ascii_case(&wanted_name)
+                || wanted_serial.as_deref().is_some_and(|s| {
+                    o.build_serial.as_deref().is_some_and(|b| b.eq_ignore_ascii_case(s))
+                })
+        });
+        let Some(hit) = hit else {
+            return Err(anyhow!(
+                "No build-queue order matches {} (searched all workflow buckets).",
+                key.display()
+            ));
+        };
+
+        let detail = xbm
+            .order_detail(&hit.id)
+            .await
+            .context("Build Management order detail fetch failed")?;
+        Ok(Self::order_from_detail(&detail, key, &hit.id))
+    }
+
+    /// Map a Build Management detail payload onto the backend-neutral order.
+    fn order_from_detail(detail: &BuildDetail, key: &OrderKey, gid: &str) -> QcOrder {
+        let order = detail.order.as_ref();
+        let status = detail.current_status.as_ref();
+        let legacy_id = status.map(|s| s.legacy_id).unwrap_or(0);
+        let status_name = status.map(|s| s.name.clone()).unwrap_or_default();
+
+        let kind = match detail.order_type.as_ref().map(|t| t.legacy_id) {
+            Some(1) | Some(3) | Some(14) => OrderKind::Sales,
+            Some(2) => OrderKind::Service,
+            Some(4) | Some(5) | Some(6) | Some(12) => OrderKind::Repair,
+            Some(_) => OrderKind::Other,
+            None => OrderKind::Sales,
+        };
+
+        let items = detail
+            .line_items
+            .iter()
+            .map(|li| QcOrderItem {
+                row_id: Self::gid_tail(&li.id).to_string(),
+                product_id: li.product_handle.clone().unwrap_or_default(),
+                name: li.title.clone(),
+                reference: li.sku.clone().unwrap_or_default(),
+                quantity: li.qty as f64,
+                unit_price: String::new(),
+                serials: li
+                    .serials
+                    .iter()
+                    .filter(|s| s.reservation_status != "detached")
+                    .map(|s| s.serial.clone())
+                    .collect(),
+            })
+            .collect();
+
+        QcOrder {
+            backend: Some(BackendKind::Shopify),
+            key: Some(key.clone()),
+            id: Self::gid_tail(gid).to_string(),
+            gid: Some(gid.to_string()),
+            reference: order.map(|o| o.name.clone()).unwrap_or_default(),
+            customer_name: order
+                .and_then(|o| o.customer.as_ref())
+                .and_then(|c| c.name.clone())
+                .unwrap_or_default(),
+            kind,
+            status: StatusInfo {
+                legacy_id,
+                name: gate::status_display(legacy_id, &status_name),
+            },
+            items,
+            total_paid: String::new(),
+            everest_doc: None,
+            parent_order_id: None,
+            id_customer: None,
+            build_serial: detail
+                .config
+                .as_ref()
+                .and_then(|c| c.build_serial.clone())
+                .filter(|s| !s.trim().is_empty()),
+            config: None,
+            service_info: None,
+            note: order
+                .and_then(|o| o.note.clone())
+                .filter(|s| !s.trim().is_empty()),
+            raw_prestashop: None,
+            // XBM config block (object) vs GraphQL metaobject nodes (array);
+            // `build_spec` branches on the JSON shape.
+            shopify_configs: detail
+                .config
+                .as_ref()
+                .and_then(|c| serde_json::to_value(SpecConfig::from(c)).ok()),
+        }
+    }
+}
+
+/// Route slot picks into the build spec. Selection shapes vary: object keyed
+/// by slot, or array of pick objects.
+fn apply_selection(spec: &mut BuildSpec, selection: &Value) {
+    let picks: Vec<(String, String)> = match selection {
+        Value::Object(map) => map
+            .iter()
+            .map(|(slot, v)| {
+                let name = match v {
+                    Value::String(s) => s.clone(),
+                    Value::Object(o) => o
+                        .get("title")
+                        .or_else(|| o.get("name"))
+                        .or_else(|| o.get("label"))
+                        .or_else(|| o.get("product_name"))
+                        .and_then(|t| t.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    other => other.to_string(),
+                };
+                (slot.clone(), name)
+            })
+            .collect(),
+        Value::Array(arr) => arr
+            .iter()
+            .filter_map(|v| {
+                let o = v.as_object()?;
+                let slot = o
+                    .get("slot")
+                    .or_else(|| o.get("category"))
+                    .or_else(|| o.get("type"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let name = o
+                    .get("title")
+                    .or_else(|| o.get("name"))
+                    .or_else(|| o.get("label"))
+                    .or_else(|| o.get("product_name"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                (!name.is_empty()).then_some((slot, name))
+            })
+            .collect(),
+        _ => vec![],
+    };
+
+    for (slot, name) in picks {
+        if name.trim().is_empty() {
+            continue;
+        }
+        if ShopifyBackend::slot_matches(&slot, &["processor", "cpu"]) && spec.cpu.is_empty() {
+            spec.cpu = name;
+        } else if ShopifyBackend::slot_matches(&slot, &["gpu", "graphics", "video"]) && spec.gpu.is_empty() {
+            spec.gpu = name;
+        } else if ShopifyBackend::slot_matches(&slot, &["memory", "ram"]) && spec.ram.is_empty() {
+            spec.ram = name;
+        } else if ShopifyBackend::slot_matches(&slot, &["storage", "ssd", "hdd", "drive", "nvme", "m.2"]) {
+            let kind = if name.to_lowercase().contains("hdd") { "HDD" } else { "SSD" };
+            spec.drives.push(DriveSpec { name, kind: kind.into() });
+        } else if ShopifyBackend::slot_matches(&slot, &["motherboard", "mainboard"]) && spec.motherboard.is_none() {
+            spec.motherboard = Some(name);
+        } else if ShopifyBackend::slot_matches(&slot, &["os", "operating", "windows"]) && spec.os.is_none() {
+            spec.os = Some(name);
+        } else {
+            spec.extra.push(SlotPick { slot, name });
+        }
+    }
+}
+
+/// Subset of the XBM config block that `build_spec` consumes.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SpecConfig {
+    build_name: String,
+    build_template: String,
+    selection: Value,
+}
+
+impl From<&crate::xbm::DetailConfig> for SpecConfig {
+    fn from(c: &crate::xbm::DetailConfig) -> Self {
+        Self {
+            build_name: c.build_name.clone().unwrap_or_default(),
+            build_template: c.build_template.clone().unwrap_or_default(),
+            selection: c.selection.clone().unwrap_or(Value::Null),
+        }
+    }
 }
 
 impl OrderBackend for ShopifyBackend {
@@ -289,6 +500,10 @@ impl OrderBackend for ShopifyBackend {
     }
 
     async fn find_order(&self, key: &OrderKey) -> anyhow::Result<QcOrder> {
+        if self.xbm.is_some() {
+            return self.find_order_xbm(key).await;
+        }
+
         let number = Self::order_number_from_key(key)?;
 
         for query_string in [format!("name:#{number}"), format!("name:{number}")] {
@@ -309,89 +524,39 @@ impl OrderBackend for ShopifyBackend {
     }
 
     async fn build_spec(&self, order: &QcOrder) -> anyhow::Result<BuildSpec> {
-        let Some(configs) = order.shopify_configs.as_ref().and_then(|c| c.as_array()) else {
-            return Ok(BuildSpec {
-                model: order.items.first().map(|i| i.name.clone()).unwrap_or_default(),
-                ..Default::default()
-            });
-        };
-
         let mut spec = BuildSpec::default();
-        for config_node in configs {
-            let fields = Self::metaobject_fields(config_node);
-            if spec.model.is_empty() {
-                spec.model = fields
+        match order.shopify_configs.as_ref() {
+            // XBM detail config block: `{build_name, build_template, selection}`.
+            Some(Value::Object(obj)) => {
+                spec.model = obj
                     .get("build_name")
-                    .or_else(|| fields.get("build_template"))
-                    .cloned()
-                    .unwrap_or_default();
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| obj.get("build_template").and_then(|v| v.as_str()))
+                    .unwrap_or_default()
+                    .to_string();
+                if let Some(selection) = obj.get("selection") {
+                    apply_selection(&mut spec, selection);
+                }
             }
-            let Some(selection_raw) = fields.get("selection") else { continue };
-            let Ok(selection) = serde_json::from_str::<Value>(selection_raw) else { continue };
-
-            // Selection shapes vary: object keyed by slot, or array of picks.
-            let picks: Vec<(String, String)> = match &selection {
-                Value::Object(map) => map
-                    .iter()
-                    .map(|(slot, v)| {
-                        let name = match v {
-                            Value::String(s) => s.clone(),
-                            Value::Object(o) => o
-                                .get("title")
-                                .or_else(|| o.get("name"))
-                                .or_else(|| o.get("label"))
-                                .and_then(|t| t.as_str())
-                                .unwrap_or_default()
-                                .to_string(),
-                            other => other.to_string(),
-                        };
-                        (slot.clone(), name)
-                    })
-                    .collect(),
-                Value::Array(arr) => arr
-                    .iter()
-                    .filter_map(|v| {
-                        let o = v.as_object()?;
-                        let slot = o
-                            .get("slot")
-                            .or_else(|| o.get("category"))
-                            .or_else(|| o.get("type"))
-                            .and_then(|s| s.as_str())
-                            .unwrap_or_default()
-                            .to_string();
-                        let name = o
-                            .get("title")
-                            .or_else(|| o.get("name"))
-                            .or_else(|| o.get("label"))
-                            .and_then(|s| s.as_str())
-                            .unwrap_or_default()
-                            .to_string();
-                        (!name.is_empty()).then_some((slot, name))
-                    })
-                    .collect(),
-                _ => vec![],
-            };
-
-            for (slot, name) in picks {
-                if name.trim().is_empty() {
-                    continue;
+            // Admin GraphQL config metaobject nodes.
+            Some(Value::Array(configs)) => {
+                for config_node in configs {
+                    let fields = Self::metaobject_fields(config_node);
+                    if spec.model.is_empty() {
+                        spec.model = fields
+                            .get("build_name")
+                            .or_else(|| fields.get("build_template"))
+                            .cloned()
+                            .unwrap_or_default();
+                    }
+                    let Some(selection_raw) = fields.get("selection") else { continue };
+                    let Ok(selection) = serde_json::from_str::<Value>(selection_raw) else { continue };
+                    apply_selection(&mut spec, &selection);
                 }
-                if Self::slot_matches(&slot, &["processor", "cpu"]) && spec.cpu.is_empty() {
-                    spec.cpu = name;
-                } else if Self::slot_matches(&slot, &["gpu", "graphics", "video"]) && spec.gpu.is_empty() {
-                    spec.gpu = name;
-                } else if Self::slot_matches(&slot, &["memory", "ram"]) && spec.ram.is_empty() {
-                    spec.ram = name;
-                } else if Self::slot_matches(&slot, &["storage", "ssd", "hdd", "drive", "nvme", "m.2"]) {
-                    let kind = if name.to_lowercase().contains("hdd") { "HDD" } else { "SSD" };
-                    spec.drives.push(DriveSpec { name, kind: kind.into() });
-                } else if Self::slot_matches(&slot, &["motherboard", "mainboard"]) && spec.motherboard.is_none() {
-                    spec.motherboard = Some(name);
-                } else if Self::slot_matches(&slot, &["os", "operating", "windows"]) && spec.os.is_none() {
-                    spec.os = Some(name);
-                } else {
-                    spec.extra.push(SlotPick { slot, name });
-                }
+            }
+            _ => {
+                spec.model = order.items.first().map(|i| i.name.clone()).unwrap_or_default();
             }
         }
 
@@ -405,22 +570,79 @@ impl OrderBackend for ShopifyBackend {
         gate::evaluate_shopify(order.status.legacy_id, &order.status.name)
     }
 
-    async fn advance_status(&self, _order: &QcOrder, to_legacy_id: i64) -> anyhow::Result<()> {
-        Err(anyhow!(
-            "Shopify status advance ({to_legacy_id}) goes through the Worker POST /qc/advance route — not yet deployed (W7)."
-        ))
+    async fn advance_status(&self, order: &QcOrder, to_legacy_id: i64) -> anyhow::Result<()> {
+        let xbm = self.xbm()?;
+        let order_id = order
+            .gid
+            .as_deref()
+            .or((!order.id.is_empty()).then_some(order.id.as_str()))
+            .ok_or_else(|| anyhow!("Order has no Shopify id to advance."))?;
+
+        let statuses = xbm.statuses().await.context("status list fetch failed")?;
+        let target = statuses
+            .statuses
+            .iter()
+            .find(|s| s.legacy_id == to_legacy_id)
+            .ok_or_else(|| {
+                anyhow!("No workflow status carries legacy_id {to_legacy_id} — check /statuses seeding.")
+            })?;
+
+        let result = xbm
+            .advance_order(
+                order_id,
+                &AdvanceRequest {
+                    to_status_gid: Some(target.gid.clone()),
+                    to_status_name: None,
+                    note: Some("Bench QC status advance".to_string()),
+                    force: None,
+                },
+            )
+            .await
+            .context("status advance request failed")?;
+
+        if result.ok {
+            Ok(())
+        } else if result.precheck_failed == Some(true) {
+            Err(anyhow!(
+                "Advance to '{}' blocked by prechecks: {}",
+                target.name,
+                result.error.unwrap_or_else(|| "unmet precondition".into())
+            ))
+        } else {
+            Err(anyhow!(
+                "Advance to '{}' rejected: {}",
+                target.name,
+                result.error.unwrap_or_else(|| "unknown error".into())
+            ))
+        }
     }
 
     async fn submit_qc(&self, _order: &QcOrder, _report: &QcReportPayload) -> anyhow::Result<()> {
         Err(anyhow!(
-            "Shopify QC submission writes xidax_qc.bench through the Worker POST /qc/report route — not yet deployed (W7)."
+            "The Build Management API has no QC report endpoint yet — xidax_qc.bench submission needs a /qc route on build-mgmt (the report stays in SurrealDB meanwhile)."
         ))
     }
 
-    async fn authenticate_tech(&self, _email: &str, _password: &str) -> anyhow::Result<TechIdentity> {
-        Err(anyhow!(
-            "Xidax bench identity is undecided (floor-staff PIN list vs PS employees) — open question #4 in the master plan."
-        ))
+    async fn authenticate_tech(&self, name_or_email: &str, _pin: &str) -> anyhow::Result<TechIdentity> {
+        // Roster match only; the API exposes no PIN verification endpoint yet.
+        let xbm = self.xbm()?;
+        let roster = xbm
+            .staff(Some(true))
+            .await
+            .context("floor staff roster fetch failed")?;
+        let wanted = name_or_email.trim();
+        let staff = roster
+            .staff
+            .iter()
+            .find(|s| s.name.eq_ignore_ascii_case(wanted) || s.id == wanted)
+            .ok_or_else(|| {
+                anyhow!("No active floor staff named '{wanted}' — enter the name exactly as on the roster.")
+            })?;
+        Ok(TechIdentity {
+            id_employee: staff.id.clone(),
+            name: staff.name.clone(),
+            email: String::new(),
+        })
     }
 
     async fn fetch_comments(&self, order: &QcOrder) -> anyhow::Result<Vec<OrderComment>> {
@@ -442,7 +664,7 @@ impl OrderBackend for ShopifyBackend {
 
     async fn post_comment(&self, _order: &QcOrder, _tech: &TechIdentity, _body: &str) -> anyhow::Result<OrderComment> {
         Err(anyhow!(
-            "Posting Xidax order comments goes through the Worker — not yet deployed (W7)."
+            "The Build Management API has no order-comment endpoint yet — bench notes ride along on status advances for now."
         ))
     }
 
@@ -450,6 +672,16 @@ impl OrderBackend for ShopifyBackend {
         let Some(gid) = order.gid.as_ref() else {
             return Ok(PhotoCheck::default());
         };
+
+        if let Some(xbm) = self.xbm.as_ref() {
+            let detail = xbm
+                .order_detail(gid)
+                .await
+                .context("Build Management order detail fetch failed")?;
+            let count = detail.build_photos.len();
+            return Ok(PhotoCheck { present: count > 0, count });
+        }
+
         let query = r#"
             query QcBuildPhotos($id: ID!) {
               order(id: $id) {
@@ -465,5 +697,96 @@ impl OrderBackend for ShopifyBackend {
             .map(|v| v.len())
             .unwrap_or(0);
         Ok(PhotoCheck { present: count > 0, count })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::xbm::BuildDetail;
+
+    fn sample_detail() -> BuildDetail {
+        serde_json::from_value(serde_json::json!({
+            "order": {
+                "id": "gid://shopify/Order/123",
+                "name": "#1020",
+                "customer": { "name": "Jane Doe", "email": "j@x.com" },
+                "note": "fragile"
+            },
+            "config": {
+                "buildSerial": "XBS-1020",
+                "buildName": "Apex X-10",
+                "selection": [
+                    { "slot": "processor", "product_name": "Ryzen 9 9950X" },
+                    { "slot": "gpu", "product_name": "RTX 5080" },
+                    { "slot": "ram", "product_name": "64GB DDR5-6000" },
+                    { "slot": "storage-m2", "product_name": "2TB NVMe SSD" },
+                    { "slot": "case-fans", "product_name": "RGB fan kit" }
+                ]
+            },
+            "lineItems": [{
+                "id": "gid://shopify/LineItem/456",
+                "title": "Ryzen 9 9950X",
+                "qty": 1,
+                "slot": "processor",
+                "sku": "CPU-9950X",
+                "expectedSerials": 1,
+                "serials": [
+                    {
+                        "metaobjectGid": "gid://shopify/Metaobject/77",
+                        "serial": "SN-LIVE",
+                        "reservationStatus": "reserved"
+                    },
+                    {
+                        "metaobjectGid": "gid://shopify/Metaobject/78",
+                        "serial": "SN-GONE",
+                        "reservationStatus": "detached"
+                    }
+                ]
+            }],
+            "currentStatus": { "gid": "gid://shopify/Metaobject/9", "name": "In QC", "color": "#888", "legacyId": 109 },
+            "orderType": { "gid": "gid://shopify/Metaobject/2", "handle": "custom", "legacyId": 1, "name": "Custom" },
+            "buildPhotos": [],
+            "installedSerials": ["gid://shopify/Metaobject/77"]
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn order_from_detail_maps_core_fields() {
+        let key = OrderKey::ShopifyOrderNumber("1020".into());
+        let order =
+            ShopifyBackend::order_from_detail(&sample_detail(), &key, "gid://shopify/Order/123");
+        assert_eq!(order.id, "123");
+        assert_eq!(order.gid.as_deref(), Some("gid://shopify/Order/123"));
+        assert_eq!(order.reference, "#1020");
+        assert_eq!(order.customer_name, "Jane Doe");
+        assert_eq!(order.status.legacy_id, 109);
+        assert_eq!(order.status.name, "In QC");
+        assert_eq!(order.kind, OrderKind::Sales);
+        assert_eq!(order.build_serial.as_deref(), Some("XBS-1020"));
+        assert_eq!(order.note.as_deref(), Some("fragile"));
+        assert_eq!(order.items.len(), 1);
+        assert_eq!(order.items[0].row_id, "456");
+        // Detached serials drop out of the QC view.
+        assert_eq!(order.items[0].serials, vec!["SN-LIVE".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn build_spec_parses_xbm_selection() {
+        let key = OrderKey::ShopifyOrderNumber("1020".into());
+        let order =
+            ShopifyBackend::order_from_detail(&sample_detail(), &key, "gid://shopify/Order/123");
+        let backend = ShopifyBackend::default();
+        let spec = backend.build_spec(&order).await.unwrap();
+        assert_eq!(spec.model, "Apex X-10");
+        assert_eq!(spec.cpu, "Ryzen 9 9950X");
+        assert_eq!(spec.gpu, "RTX 5080");
+        assert_eq!(spec.ram, "64GB DDR5-6000");
+        assert_eq!(spec.drives.len(), 1);
+        assert_eq!(spec.drives[0].kind, "SSD");
+        assert_eq!(spec.extra.len(), 1);
+        assert_eq!(spec.extra[0].slot, "case-fans");
+        assert_eq!(spec.device_serial, "XBS-1020");
     }
 }

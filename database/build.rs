@@ -80,6 +80,10 @@ const ALL_INJECT_KEYS: &[&str] = &[
     "SHOPIFY_STORE_URL",
     "SHOPIFY_ADMIN_TOKEN",
     "SHOPIFY_API_VERSION",
+    // Xidax Build Management API (build-mgmt.xidax.com). Empty key disables
+    // the XBM client at runtime.
+    "XBM_API_URL",
+    "XBM_API_KEY",
 ];
 
 fn apply_defaults(map: &mut HashMap<String, String>) {
@@ -121,13 +125,24 @@ fn apply_defaults(map: &mut HashMap<String, String>) {
         map.insert("ORCHESTRATOR_URL_DEV".into(), "http://localhost:8082".into());
     }
     // Empty string = feature disabled at runtime; never fails the build.
-    for key in ["PRESTASHOP_AUTH_URL", "SHOPIFY_STORE_URL", "SHOPIFY_ADMIN_TOKEN"] {
+    for key in [
+        "PRESTASHOP_AUTH_URL",
+        "SHOPIFY_STORE_URL",
+        "SHOPIFY_ADMIN_TOKEN",
+        "XBM_API_KEY",
+    ] {
         if map.get(key).is_none() {
             map.insert(key.into(), String::new());
         }
     }
     if map.get("SHOPIFY_API_VERSION").map_or(true, |s| s.is_empty()) {
         map.insert("SHOPIFY_API_VERSION".into(), "2025-01".into());
+    }
+    if map.get("XBM_API_URL").map_or(true, |s| s.is_empty()) {
+        map.insert(
+            "XBM_API_URL".into(),
+            "https://build-mgmt.xidax.com/api/v1".into(),
+        );
     }
 }
 
