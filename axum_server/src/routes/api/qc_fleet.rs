@@ -519,6 +519,69 @@ pub async fn ingest_fingerprint(Json(payload): Json<serde_json::Value>) -> impl 
 /// `connected_client` of kind `qc_agent`, and append a `fleet_event`. Shared by
 /// the HTTP route and the plain-TCP QC listener. Returns the JSON response body.
 /// `source_ip` is the dialing box's IP when known (TCP path).
+/// SMBIOS strings vendors ship instead of a real serial number.
+fn is_placeholder_serial(s: &str) -> bool {
+    let t = s.trim();
+    if t.is_empty() || t == "-" || t == "0" {
+        return true;
+    }
+    let l = t.to_lowercase();
+    l.starts_with("to be filled")
+        || matches!(
+            l.as_str(),
+            "system serial number"
+                | "chassis serial number"
+                | "base board serial number"
+                | "default string"
+                | "unknown"
+                | "none"
+                | "not specified"
+                | "not applicable"
+                | "n/a"
+                | "no serial"
+                | "invalid"
+                | "123456789"
+                | "0123456789"
+        )
+}
+
+/// Stable machine key for record ids. SMBIOS serials are preferred but
+/// placeholder strings ("System Serial Number", "To be filled by O.E.M.", …)
+/// would key every such box onto one record, so fall back through baseboard
+/// serial → SMBIOS UUID → first MAC.
+fn derive_machine_key(payload: &serde_json::Value) -> String {
+    let s = |ptr: &str| {
+        payload
+            .pointer(ptr)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
+    for candidate in [s("/system/serial"), s("/baseboard/serial")] {
+        if !is_placeholder_serial(&candidate) {
+            return candidate;
+        }
+    }
+    let uuid = s("/system/uuid").to_lowercase();
+    let uuid_digits: String = uuid.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+    if !uuid_digits.is_empty()
+        && !uuid_digits.chars().all(|c| c == '0')
+        && !uuid_digits.chars().all(|c| c == 'f')
+    {
+        return format!("uuid-{uuid}");
+    }
+    if let Some(mac) = payload
+        .pointer("/macs/0")
+        .and_then(|v| v.as_str())
+        .map(|m| m.replace([':', '-'], "").to_lowercase())
+        .filter(|m| !m.is_empty() && !m.chars().all(|c| c == '0'))
+    {
+        return format!("mac-{mac}");
+    }
+    "unknown".to_string()
+}
+
 pub async fn store_fingerprint(
     payload: serde_json::Value,
     source_ip: Option<String>,
@@ -532,10 +595,7 @@ pub async fn store_fingerprint(
             .unwrap_or("")
             .to_string()
     };
-    let serial = match s("/system/serial") {
-        v if v.is_empty() => "unknown".to_string(),
-        v => v,
-    };
+    let serial = derive_machine_key(&payload);
     let cpu_cores = payload
         .pointer("/cpu/cores")
         .and_then(|v| v.as_u64())

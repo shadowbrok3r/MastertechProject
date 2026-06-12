@@ -50,6 +50,12 @@ fn quantize_rgb(r: u8, g: u8, b: u8) -> console::text::Color {
     let min = r.min(g).min(b);
     let sat = if max == 0.0 { 0.0 } else { (max - min) / max };
 
+    // Visually black regardless of hue (e.g. the 0x06060A app background:
+    // 40% mathematical saturation, but black on any real panel).
+    if max < 48.0 {
+        return C::Black;
+    }
+
     // Low saturation: gray ramp by brightness.
     if sat < 0.25 {
         return match max as u16 {
@@ -161,8 +167,13 @@ impl ratatui::backend::Backend for UefiOutputBackend {
             let _ = self.output.set_cursor_position(x as usize, y as usize);
             let _ = self.output.set_color(fg, bg);
             if self.output.write_str(cell.symbol()).is_err() {
-                // Substitute a guaranteed-ASCII glyph so layout stays readable.
+                // Glyph missing from the firmware font: degrade to a solid
+                // cell painted in the foreground color so filled glyphs
+                // (chart markers, block elements) stay visible.
+                let _ = self.output.set_cursor_position(x as usize, y as usize);
+                let _ = self.output.set_color(fg, clamp_bg(fg));
                 let _ = self.output.write_str(" ");
+                let _ = self.output.set_color(fg, bg);
             }
         }
 

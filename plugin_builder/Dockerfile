@@ -24,8 +24,10 @@ WORKDIR /src
 # `displays` and `Mastertech4.0` that bring in native-only deps (winit,
 # eframe, etc.) which can fail to resolve in this slim build image.
 COPY Cargo.toml .
+COPY build_hash.rs .
 COPY .env .env
-RUN sed -i 's/members = \[.*\]/members = [ "database", "plugin_builder" ]/' Cargo.toml
+# Range-replace: the members array spans multiple lines.
+RUN sed -i '/^members = \[/,/^\]/c\members = [ "database", "plugin_builder" ]' Cargo.toml
 
 COPY database/ ./database/
 COPY plugin_builder/ ./plugin_builder/

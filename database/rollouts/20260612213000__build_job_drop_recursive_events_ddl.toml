@@ -1,0 +1,34 @@
+id = "20260612213000__build_job_drop_recursive_events_ddl"
+name = "build_job_drop_recursive_events_ddl"
+state = "planned"
+# Schema files unchanged by this rollout (DDL aligns the live DB with what
+# database/schema/build_job.surql already says), so source == target.
+source_schema_hash = "51d290a8adee55292b0b3ddd7dba9ab270bbb9cc8653e58276a75a46d35617d6"
+target_schema_hash = "51d290a8adee55292b0b3ddd7dba9ab270bbb9cc8653e58276a75a46d35617d6"
+compatibility = "phased"
+renames = []
+
+# ── Why ────────────────────────────────────────────────────────────────────
+# `created_at_default` fires an UPDATE on CREATE, which triggers
+# `updated_at_touch`, whose own UPDATE re-triggers `updated_at_touch`
+# recursively until SurrealDB aborts with "excessive computation depth" —
+# so every CREATE on build_job fails and `plugin_compile_remote` can never
+# enqueue a job. Both events were redundant: created_at / updated_at carry
+# DEFAULT time::now(). The touch semantics move into the field definition
+# (VALUE time::now() recomputes on every write).
+#
+# NOTE: predecessor 20260612210000 used `[complete] ddl = ...`, which
+# surrealkit does not execute (steps must be `[[steps]]` with
+# kind = run_sql / apply_schema / remove_entities). It completed as a
+# registry-sync no-op; this rollout carries the actual DDL.
+
+[[steps]]
+id = "drop_recursive_events_and_redefine_timestamps"
+phase = "start"
+kind = "run_sql"
+sql = """
+REMOVE EVENT IF EXISTS created_at_default ON build_job;
+REMOVE EVENT IF EXISTS updated_at_touch ON build_job;
+DEFINE FIELD OVERWRITE created_at ON build_job TYPE datetime DEFAULT time::now() READONLY PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE updated_at ON build_job TYPE datetime VALUE time::now() PERMISSIONS FULL;
+"""

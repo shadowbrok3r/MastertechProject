@@ -21,7 +21,7 @@ use anyhow::{Context, Result};
 use crossbeam::channel::{Receiver, TryRecvError};
 use database::live_data::Action;
 use database::schema::{
-    BuildJob, ClientKind, ConnectedClient, RecordId, BUILD_JOB_TABLE, CONNECTED_CLIENT_TABLE,
+    BuildJob, ClientKind, ConnectedClient, RecordId, CONNECTED_CLIENT_TABLE,
 };
 use database::DATABASE;
 

@@ -9,6 +9,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Tabs, Wrap},
 };
+use uefi::Identify;
 use uefi::boot::{MemoryType, OpenProtocolAttributes, OpenProtocolParams};
 use uefi::mem::memory_map::MemoryMap;
 use uefi::proto::console;
@@ -18,6 +19,9 @@ use uefi::proto::network::snp::SimpleNetwork;
 use uefi::proto::pci::root_bridge::PciRootBridgeIo;
 use uefi::table::cfg::ConfigTableEntry;
 
+mod charts;
+mod order;
+mod stress;
 mod styling;
 
 /// Semantic palette derived from the terminal-mode theme (see `styling`).
@@ -40,16 +44,21 @@ mod palette {
 /// build time (see build.rs). Falls back to the production URL.
 const DEFAULT_URL: &str = env!("ORCHESTRATOR_URL");
 
-const TABS: [&str; 8] = [
+const TABS: [&str; 10] = [
     "Overview",
     "System",
     "Memory",
     "Firmware",
     "Network",
     "Storage",
+    "Stress",
+    "Order",
     "Readiness",
     "Log",
 ];
+
+const TAB_STRESS: usize = 6;
+const TAB_ORDER: usize = 7;
 
 /// In-memory ring log. Single-threaded app, but a Mutex keeps it simple and
 /// also lets us back the `log` facade (so the uefi crate's own debug!/trace!
@@ -105,11 +114,47 @@ fn create_ui() -> Result<(
     Terminal<ratatui_uefi::UefiOutputBackend>,
     terminput_uefi::UefiInputReader,
 )> {
-    // Output: use the same device handle that rendered correctly before
-    // (get_handle_for_protocol). Routing output through the ConSplitter
-    // (stdout_handle) breaks clear()/mode reporting on some firmware.
-    let output_handle = uefi::boot::get_handle_for_protocol::<console::text::Output>()?;
-    let output = uefi::boot::open_protocol_exclusive::<console::text::Output>(output_handle)?;
+    // Output: a single device handle, not the ConSplitter (stdout_handle) —
+    // routing through the splitter breaks clear()/mode reporting on some
+    // firmware. Prefer the handle that also carries GraphicsOutput: that is
+    // the physical screen console. Handle-database order is firmware-specific
+    // and the first Output handle can be a serial terminal or the StdErr
+    // splitter (e.g. OVMF, AMT/BMC serial-over-LAN boards), which renders
+    // nowhere visible.
+    let output_handles = uefi::boot::find_handles::<console::text::Output>()?;
+    let gop_backed = output_handles.iter().copied().find(|&h| {
+        uefi::boot::protocols_per_handle(h)
+            .map(|protos| protos.iter().any(|&&g| g == GraphicsOutput::GUID))
+            .unwrap_or(false)
+    });
+    let output_handle = match gop_backed {
+        Some(h) => h,
+        None => uefi::boot::get_handle_for_protocol::<console::text::Output>()?,
+    };
+    let mut output = uefi::boot::open_protocol_exclusive::<console::text::Output>(output_handle)?;
+    logln(format!("console: render handle={output_handle:?}"));
+
+    // Switch to the largest text mode the console supports so the TUI fills
+    // the panel (GOP consoles boot in 80x25). ratatui re-reads the backend
+    // size on every draw, so nothing else needs to know.
+    let current_cells = output
+        .current_mode()
+        .ok()
+        .flatten()
+        .map(|m| m.columns() * m.rows())
+        .unwrap_or(0);
+    let mut modes: Vec<_> = output.modes().collect();
+    modes.sort_by_key(|m| core::cmp::Reverse(m.columns() * m.rows()));
+    for mode in modes {
+        if mode.columns() * mode.rows() <= current_cells {
+            break;
+        }
+        // Firmware can list modes it then refuses to set; walk down the list.
+        if output.set_mode(mode).is_ok() {
+            logln(format!("console: mode {}x{}", mode.columns(), mode.rows()));
+            break;
+        }
+    }
 
     // Input: use the firmware's aggregated ConIn (stdin_handle from the system
     // table), NOT a single device — so an external USB keyboard works alongside
@@ -141,7 +186,7 @@ fn create_ui() -> Result<(
     };
     logln(format!("console: ConIn handle={con_in:?}"));
 
-    let terminal = Terminal::new(ratatui_uefi::UefiOutputBackend::new(output))?;
+    let mut terminal = Terminal::new(ratatui_uefi::UefiOutputBackend::new(output))?;
     let input_reader = terminput_uefi::UefiInputReader::new(input);
 
     Ok((terminal, input_reader))
@@ -906,10 +951,23 @@ fn fingerprint_json(info: &SysInfo) -> String {
     )
 }
 
+/// Fingerprint JSON with the stress summary spliced in when a run exists.
+fn fingerprint_with_stress(info: &SysInfo, stress: Option<serde_json::Value>) -> String {
+    let mut j = fingerprint_json(info);
+    if let Some(s) = stress {
+        j.truncate(j.len() - 1);
+        j.push_str(",\"stress\":");
+        j.push_str(&s.to_string());
+        j.push('}');
+    }
+    j
+}
+
 /// Parsed upload target.
 struct UploadUrl {
     /// Full normalized URL incl scheme/host/port/path (for EFI HTTP).
     full: String,
+    scheme: &'static str,
     /// host:port (for the raw-TCP4 path).
     host_port: String,
     path: String,
@@ -956,6 +1014,7 @@ fn parse_upload_url(target: &str) -> UploadUrl {
     let is_ipv4 = host.parse::<core::net::Ipv4Addr>().is_ok();
     UploadUrl {
         full: format!("{scheme}://{host}:{port}{path}"),
+        scheme,
         host_port: format!("{host}:{port}"),
         path,
         needs_efi_http: scheme == "https" || (scheme == "http" && !is_ipv4),
@@ -963,12 +1022,31 @@ fn parse_upload_url(target: &str) -> UploadUrl {
     }
 }
 
+/// GET `path` from the upload target's host, picking the transport like the
+/// fingerprint upload does. `tcp://` (QC frame) targets are redirected to the
+/// axum HTTP port on the same host. Returns (status code, body).
+fn http_get_json(target: &str, path: &str) -> Result<(u16, Vec<u8>), String> {
+    let u = parse_upload_url(target);
+    if u.is_qc_tcp {
+        let host = u
+            .host_port
+            .rsplit_once(':')
+            .map(|(h, _)| h.to_string())
+            .unwrap_or_else(|| u.host_port.clone());
+        return net_tcp::get(&format!("{host}:8082"), path);
+    }
+    if u.needs_efi_http {
+        return http_efi::get(&format!("{}://{}{}", u.scheme, u.host_port, path));
+    }
+    net_tcp::get(&u.host_port, path)
+}
+
 /// HTTP(S) POST via the EFI HTTP protocol — used for `https://` (TLS) and for
 /// hostnames (DNS), both of which the raw-TCP4 path can't do. Plain http:// is
 /// blocked by firmware policy, but https:// is allowed.
 mod http_efi {
     use crate::logln;
-    use uefi::boot::{self, OpenProtocolAttributes, OpenProtocolParams};
+    use uefi::boot;
     use uefi::proto::network::http::{HttpBinding, HttpHelper};
     use uefi_raw::protocol::network::http::HttpMethod;
 
@@ -1003,6 +1081,60 @@ mod http_efi {
         ));
         Ok(format!("HTTP {:?} ({}B)", resp.status, resp.body.len()))
     }
+
+    /// GET returning (status code, full body). Reads until Content-Length is
+    /// satisfied; without one, drains until the firmware reports the
+    /// connection finished.
+    pub fn get(url: &str) -> Result<(u16, Vec<u8>), String> {
+        logln(format!("http(efi): GET {url}"));
+        let handles = boot::find_handles::<HttpBinding>()
+            .map_err(|e| format!("no EFI HTTP service ({e:?})"))?;
+        let h = *handles.first().ok_or("no HTTP-capable interface")?;
+        let mut http = HttpHelper::new(h).map_err(|e| format!("http open: {e:?}"))?;
+        http.configure().map_err(|e| format!("configure: {e:?}"))?;
+        http.request(HttpMethod::GET, url, None)
+            .map_err(|e| format!("request: {e:?} (TLS/DNS/cert?)"))?;
+        let first = http
+            .response_first(true)
+            .map_err(|e| format!("response: {e:?}"))?;
+        let code = http_code(first.status);
+        let content_len = first
+            .headers
+            .iter()
+            .find(|(k, _)| k == "content-length")
+            .and_then(|(_, v)| v.trim().parse::<usize>().ok());
+        let mut body = first.body;
+        // 4 MiB cap: an order payload is a few KB; anything bigger is wrong.
+        let cap = content_len.unwrap_or(4 << 20).min(4 << 20);
+        while body.len() < cap {
+            match http.response_more(&mut body) {
+                Ok(chunk) if chunk.is_empty() => break,
+                Ok(_) => {}
+                // Connection finished (or anything else): stop draining.
+                Err(_) => break,
+            }
+        }
+        logln(format!("http(efi): GET done {code} ({}B)", body.len()));
+        Ok((code, body))
+    }
+
+    /// EFI status-code enum → numeric HTTP code (subset the app reacts to).
+    fn http_code(s: uefi_raw::protocol::network::http::HttpStatusCode) -> u16 {
+        use uefi_raw::protocol::network::http::HttpStatusCode as C;
+        match s {
+            C::STATUS_200_OK => 200,
+            C::STATUS_201_CREATED => 201,
+            C::STATUS_204_NO_CONTENT => 204,
+            C::STATUS_400_BAD_REQUEST => 400,
+            C::STATUS_401_UNAUTHORIZED => 401,
+            C::STATUS_403_FORBIDDEN => 403,
+            C::STATUS_404_NOT_FOUND => 404,
+            C::STATUS_500_INTERNAL_SERVER_ERROR => 500,
+            C::STATUS_502_BAD_GATEWAY => 502,
+            C::STATUS_503_SERVICE_UNAVAILABLE => 503,
+            other => 600 + other.0 as u16,
+        }
+    }
 }
 
 /// HTTP POST over raw EFI TCP4 (bypasses the EFI HTTP protocol, which firmware
@@ -1028,6 +1160,11 @@ mod net_tcp {
 
     #[unsafe_protocol(Tcp4Protocol::GUID)]
     struct Tcp4(Tcp4Protocol);
+
+    // TCP4 protocol statuses absent from uefi-raw's core Status list.
+    const ERROR_BIT: usize = 1 << (usize::BITS - 1);
+    const CONNECTION_FIN: Status = Status(ERROR_BIT | 104);
+    const CONNECTION_RESET: Status = Status(ERROR_BIT | 105);
 
     // The EFI transmit/receive data structs end in a flexible array of
     // fragments; these mirror them with exactly one fragment.
@@ -1104,6 +1241,242 @@ mod net_tcp {
     /// axum_server QC listener (Mastertech "connected client" path).
     pub fn send_qc(target: &str, body: &[u8]) -> Result<String, String> {
         run(target, "", body, true)
+    }
+
+    fn build_get(path: &str, host: &str) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(format!("GET {path} HTTP/1.1\r\n").as_bytes());
+        v.extend_from_slice(format!("Host: {host}\r\n").as_bytes());
+        v.extend_from_slice(b"Accept: application/json\r\n");
+        v.extend_from_slice(b"Connection: close\r\n\r\n");
+        v
+    }
+
+    /// HTTP GET over raw TCP4 returning (status code, body). Reads until
+    /// Content-Length is satisfied or the peer closes (Connection: close).
+    pub fn get(target: &str, path: &str) -> Result<(u16, Vec<u8>), String> {
+        let (rip, rport) =
+            parse_target(target).ok_or_else(|| "bad target (use a.b.c.d or a.b.c.d:port)".to_string())?;
+        logln(format!("tcp: GET {target}{path}"));
+        let handles = boot::find_handles::<Tcp4Sb>()
+            .map_err(|e| format!("no TCP4 service ({e:?})"))?;
+        let mut last = "no TCP4 interface".to_string();
+        for (idx, sbh) in handles.into_iter().enumerate() {
+            let mut sb = match unsafe {
+                boot::open_protocol::<Tcp4Sb>(
+                    OpenProtocolParams {
+                        handle: sbh,
+                        agent: boot::image_handle(),
+                        controller: None,
+                    },
+                    OpenProtocolAttributes::GetProtocol,
+                )
+            } {
+                Ok(s) => s,
+                Err(e) => {
+                    last = format!("open sb: {e:?}");
+                    continue;
+                }
+            };
+            let mut child: uefi_raw::Handle = core::ptr::null_mut();
+            let st = unsafe { (sb.0.create_child)(&mut sb.0, &mut child) };
+            if st != Status::SUCCESS {
+                last = format!("create_child: {st:?}");
+                continue;
+            }
+            let Some(child_handle) = (unsafe { Handle::from_ptr(child) }) else {
+                last = "null child handle".into();
+                continue;
+            };
+            let result = get_child(child_handle, idx, rip, rport, path, target);
+            let _ = unsafe { (sb.0.destroy_child)(&mut sb.0, child) };
+            match result {
+                Ok(out) => return Ok(out),
+                Err(e) => {
+                    logln(format!("tcp: GET if{idx} failed: {e}"));
+                    last = e;
+                }
+            }
+        }
+        Err(last)
+    }
+
+    fn get_child(
+        child: Handle,
+        idx: usize,
+        rip: Ipv4Address,
+        rport: u16,
+        path: &str,
+        host: &str,
+    ) -> Result<(u16, Vec<u8>), String> {
+        let mut tcp = unsafe {
+            boot::open_protocol::<Tcp4>(
+                OpenProtocolParams {
+                    handle: child,
+                    agent: boot::image_handle(),
+                    controller: None,
+                },
+                OpenProtocolAttributes::GetProtocol,
+            )
+        }
+        .map_err(|e| format!("open tcp4: {e:?}"))?;
+        let tcp_ptr: *mut Tcp4Protocol = &mut tcp.0;
+
+        let cfg = Tcp4ConfigData {
+            type_of_service: 0,
+            time_to_live: 64,
+            access_point: Tcp4AccessPoint {
+                use_default_address: Boolean::from(true),
+                station_address: Ipv4Address([0, 0, 0, 0]),
+                subnet_mask: Ipv4Address([0, 0, 0, 0]),
+                station_port: 0,
+                remote_address: rip,
+                remote_port: rport,
+                active_flag: Boolean::from(true),
+            },
+            control_option: core::ptr::null_mut(),
+        };
+        let st = unsafe { ((*tcp_ptr).configure)(tcp_ptr, &cfg) };
+        if st != Status::SUCCESS {
+            return Err(format!("configure: {st:?} (DHCP first?)"));
+        }
+
+        let event = unsafe { boot::create_event(EventType::empty(), Tpl::CALLBACK, None, None) }
+            .map_err(|e| format!("create_event: {e:?}"))?;
+        let ev = event.as_ptr();
+
+        let mut ct = Tcp4ConnectionToken {
+            completion_token: Tcp4CompletionToken {
+                event: ev,
+                status: Status::NOT_READY,
+            },
+        };
+        let st = unsafe { ((*tcp_ptr).connect)(tcp_ptr, &mut ct) };
+        if st != Status::SUCCESS {
+            return Err(format!("connect call: {st:?}"));
+        }
+        let st = unsafe { pump(tcp_ptr, &ct.completion_token.status, 10_000) };
+        if st != Status::SUCCESS {
+            return Err(format!("connect: {st:?}"));
+        }
+
+        // Transmit the GET request.
+        let req = build_get(path, host);
+        let mut tx = TxData1 {
+            push: Boolean::from(true),
+            urgent: Boolean::from(false),
+            data_length: req.len() as u32,
+            fragment_count: 1,
+            fragment_table: [Tcp4FragmentData {
+                fragment_length: req.len() as u32,
+                fragment_buf: req.as_ptr() as *mut u8,
+            }],
+        };
+        let mut txtok = Tcp4IoToken {
+            completion_token: Tcp4CompletionToken {
+                event: ev,
+                status: Status::NOT_READY,
+            },
+            packet: Tcp4Packet {
+                tx_data: (&mut tx as *mut TxData1).cast(),
+            },
+        };
+        let st = unsafe { ((*tcp_ptr).transmit)(tcp_ptr, &mut txtok) };
+        if st != Status::SUCCESS {
+            return Err(format!("transmit call: {st:?}"));
+        }
+        let st = unsafe { pump(tcp_ptr, &txtok.completion_token.status, 10_000) };
+        if st != Status::SUCCESS {
+            return Err(format!("transmit: {st:?}"));
+        }
+
+        // Drain the response until Content-Length is satisfied or FIN.
+        let mut full: Vec<u8> = Vec::new();
+        let mut rxbuf = vec![0u8; 16 * 1024];
+        let mut header_end: Option<usize> = None;
+        let mut content_len: Option<usize> = None;
+        loop {
+            let mut rx = RxData1 {
+                urgent: Boolean::from(false),
+                data_length: rxbuf.len() as u32,
+                fragment_count: 1,
+                fragment_table: [Tcp4FragmentData {
+                    fragment_length: rxbuf.len() as u32,
+                    fragment_buf: rxbuf.as_mut_ptr(),
+                }],
+            };
+            let mut rxtok = Tcp4IoToken {
+                completion_token: Tcp4CompletionToken {
+                    event: ev,
+                    status: Status::NOT_READY,
+                },
+                packet: Tcp4Packet {
+                    rx_data: (&mut rx as *mut RxData1).cast(),
+                },
+            };
+            let call = unsafe { ((*tcp_ptr).receive)(tcp_ptr, &mut rxtok) };
+            if call == CONNECTION_FIN || call == CONNECTION_RESET {
+                break;
+            }
+            if call != Status::SUCCESS {
+                if full.is_empty() {
+                    return Err(format!("recv call: {call:?}"));
+                }
+                break;
+            }
+            let st = unsafe { pump(tcp_ptr, &rxtok.completion_token.status, 15_000) };
+            if st == CONNECTION_FIN || st == CONNECTION_RESET {
+                break;
+            }
+            if st != Status::SUCCESS {
+                if full.is_empty() {
+                    return Err(format!("recv: {st:?}"));
+                }
+                break;
+            }
+            let got = (rx.data_length as usize).min(rxbuf.len());
+            if got == 0 {
+                break;
+            }
+            full.extend_from_slice(&rxbuf[..got]);
+            if header_end.is_none() {
+                if let Some(pos) = full.windows(4).position(|w| w == b"\r\n\r\n") {
+                    header_end = Some(pos + 4);
+                    let head = String::from_utf8_lossy(&full[..pos]).to_lowercase();
+                    content_len = head
+                        .lines()
+                        .find_map(|l| l.strip_prefix("content-length:"))
+                        .and_then(|v| v.trim().parse::<usize>().ok());
+                }
+            }
+            if let (Some(he), Some(cl)) = (header_end, content_len) {
+                if full.len() >= he + cl {
+                    break;
+                }
+            }
+            if full.len() > 4 << 20 {
+                break;
+            }
+        }
+        let _ = unsafe { ((*tcp_ptr).configure)(tcp_ptr, core::ptr::null()) };
+
+        let he = header_end.ok_or("no HTTP header in response")?;
+        let status_line = full[..he]
+            .split(|&b| b == b'\r')
+            .next()
+            .map(|l| String::from_utf8_lossy(l).to_string())
+            .unwrap_or_default();
+        let code: u16 = status_line
+            .split_whitespace()
+            .nth(1)
+            .and_then(|c| c.parse().ok())
+            .unwrap_or(0);
+        let mut body = full.split_off(he);
+        if let Some(cl) = content_len {
+            body.truncate(cl);
+        }
+        logln(format!("tcp: GET if{idx} {code} ({}B)", body.len()));
+        Ok((code, body))
     }
 
     fn run(target: &str, path: &str, body: &[u8], framed: bool) -> Result<String, String> {
@@ -1768,9 +2141,22 @@ impl SysInfo {
             }
         });
 
+        // GetProtocol, never exclusive: an exclusive GOP open forces the
+        // firmware to disconnect GraphicsConsoleDxe — the producer of the
+        // text console this app renders to.
         info.gop = (|| {
             let h = uefi::boot::get_handle_for_protocol::<GraphicsOutput>().ok()?;
-            let gop = uefi::boot::open_protocol_exclusive::<GraphicsOutput>(h).ok()?;
+            let gop = unsafe {
+                uefi::boot::open_protocol::<GraphicsOutput>(
+                    OpenProtocolParams {
+                        handle: h,
+                        agent: uefi::boot::image_handle(),
+                        controller: None,
+                    },
+                    OpenProtocolAttributes::GetProtocol,
+                )
+            }
+            .ok()?;
             let (w, ht) = gop.current_mode_info().resolution();
             Some(format!("{w} x {ht}"))
         })()
@@ -2107,7 +2493,8 @@ fn page_network(frame: &mut Frame, area: Rect, app: &App) {
     // Upload target + status.
     lines.push(Line::from(""));
     lines.push(header("Upload target"));
-    if app.editing {
+    let editing_target = app.editing == EditField::Target;
+    if editing_target {
         lines.push(Line::from(Span::styled(
             "[ EDITING - type host or host:port, then press ENTER to save ]",
             Style::default().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
@@ -2122,7 +2509,7 @@ fn page_network(frame: &mut Frame, area: Rect, app: &App) {
         Span::styled("target: ", Style::default().fg(palette::MUTED)),
         Span::styled(shown, Style::default().fg(palette::TEXT)),
         Span::styled(
-            if app.editing { "_" } else { "" },
+            if editing_target { "_" } else { "" },
             Style::default().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
         ),
     ]));
@@ -2147,7 +2534,7 @@ fn page_network(frame: &mut Frame, area: Rect, app: &App) {
         ]));
     }
     lines.push(Line::from(Span::styled(
-        if app.editing {
+        if editing_target {
             "ENTER save"
         } else {
             "'e' edit target    'p' send POST"
@@ -2213,6 +2600,384 @@ fn page_storage(frame: &mut Frame, area: Rect, info: &SysInfo) {
         }
     }
     frame.render_widget(para(lines, "Storage"), area);
+}
+
+fn page_stress(frame: &mut Frame, area: Rect, app: &App) {
+    let eng = &app.stress;
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(44), Constraint::Min(0)])
+        .split(area);
+
+    // Left: stage list, engine state, results.
+    let mut lines = vec![header("Stages")];
+    for (i, st) in stress::STAGES.iter().enumerate() {
+        let sel = i == eng.selected;
+        let running = eng.current_stage() == Some(*st);
+        let cursor = Span::styled(
+            if sel { "> " } else { "  " },
+            Style::default().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
+        );
+        let name_style = if sel {
+            Style::default().fg(palette::ACCENT).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(palette::TEXT)
+        };
+        let state = if running {
+            Span::styled(
+                format!(
+                    "RUN {:>9} {}",
+                    charts::fmt_mag(eng.live_rate().unwrap_or(0.0)),
+                    st.unit()
+                ),
+                Style::default().fg(palette::GOOD),
+            )
+        } else if let Some(r) = eng.results.iter().rev().find(|r| r.stage == *st) {
+            let (tag, color) = match r.pass {
+                Some(true) => ("PASS", palette::GOOD),
+                Some(false) => ("FAIL", palette::ERR),
+                None => ("done", palette::MUTED),
+            };
+            Span::styled(
+                format!("{tag} {:>9} {}", charts::fmt_mag(r.avg_rate), st.unit()),
+                Style::default().fg(color),
+            )
+        } else {
+            Span::styled("-", Style::default().fg(palette::BAD))
+        };
+        lines.push(Line::from(vec![
+            cursor,
+            Span::styled(format!("{:<13}", st.label()), name_style),
+            state,
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(header("Engine"));
+    lines.push(kv("Workers", eng.workers_label()));
+    lines.push(kv(
+        "Mode",
+        match eng.mode {
+            stress::Mode::Idle => "idle".to_string(),
+            stress::Mode::Single => format!(
+                "single - {} {:.0}s",
+                eng.current_stage().map(|s| s.label()).unwrap_or("-"),
+                eng.elapsed_in_stage()
+            ),
+            stress::Mode::Preset => format!(
+                "benchmark {}/{} - {} {:.0}s",
+                eng.preset_idx + 1,
+                stress::STAGES.len(),
+                eng.current_stage().map(|s| s.label()).unwrap_or("-"),
+                eng.elapsed_in_stage()
+            ),
+        },
+    ));
+    lines.push(kv(
+        "CPU temp",
+        match (eng.temp_now, eng.temp_max) {
+            (Some(c), Some(m)) => format!("{c:.0} C (max {m:.0} C)"),
+            _ => "n/a (Intel DTS only)".into(),
+        },
+    ));
+    let errs = eng.memtest_errors();
+    lines.push(Line::from(vec![
+        Span::styled(format!("{:<14}", "Mem errors"), Style::default().fg(palette::LABEL)),
+        Span::styled(
+            format!("{errs}"),
+            Style::default().fg(if errs == 0 { palette::GOOD } else { palette::ERR }),
+        ),
+    ]));
+    if !eng.status.is_empty() {
+        lines.push(kv("Status", eng.status.clone()));
+    }
+
+    // Results upload target ('p' posts fingerprint + stress summary here).
+    lines.push(Line::from(""));
+    lines.push(header("Results upload ('e' edit, 'p' post)"));
+    let editing_target = app.editing == EditField::Target;
+    if editing_target {
+        lines.push(Line::from(Span::styled(
+            "[ EDITING - ENTER to save ]",
+            Style::default().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
+        )));
+    }
+    lines.push(Line::from(vec![
+        Span::styled("target: ", Style::default().fg(palette::MUTED)),
+        Span::styled(
+            if app.target.is_empty() {
+                "<host:port>".to_string()
+            } else {
+                app.target.clone()
+            },
+            Style::default().fg(palette::TEXT),
+        ),
+        Span::styled(
+            if editing_target { "_" } else { "" },
+            Style::default().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    if !app.target.is_empty() {
+        let u = parse_upload_url(&app.target);
+        lines.push(Line::from(vec![
+            Span::styled("via:    ", Style::default().fg(palette::MUTED)),
+            Span::styled(
+                if u.is_qc_tcp {
+                    "QC TCP frame (axum 9201)"
+                } else if u.needs_efi_http {
+                    "EFI HTTP (DNS+TLS)"
+                } else {
+                    "raw TCP4 http (LAN)"
+                },
+                Style::default().fg(palette::LABEL),
+            ),
+        ]));
+    }
+    if !app.status.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled("last:   ", Style::default().fg(palette::MUTED)),
+            Span::styled(app.status.clone(), Style::default().fg(palette::GOOD)),
+        ]));
+    }
+    frame.render_widget(para(lines, "Stress"), cols[0]);
+
+    // Right: live charts (throughput + temperature).
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
+        .split(cols[1]);
+    let chart_stage = eng
+        .current_stage()
+        .or_else(|| eng.results.last().map(|r| r.stage));
+    let (title, unit, floor) = match chart_stage {
+        Some(s) => (
+            format!("{} throughput", s.label()),
+            s.unit(),
+            s.floor(),
+        ),
+        None => ("throughput (run a stage)".to_string(), "", None),
+    };
+    frame.render_widget(
+        charts::line_chart(
+            title,
+            unit,
+            styling::THEME.accent,
+            &eng.rate_hist,
+            eng.now_chart_secs(),
+            floor,
+        ),
+        rows[0],
+    );
+    if eng.temp_hist.is_empty() {
+        frame.render_widget(
+            para(
+                vec![Line::from(Span::styled(
+                    "no CPU thermal sensor (Intel DTS only for now)",
+                    Style::default().fg(palette::MUTED),
+                ))],
+                "CPU Package Temp",
+            ),
+            rows[1],
+        );
+    } else {
+        frame.render_widget(
+            charts::line_chart(
+                "CPU Package Temp".to_string(),
+                "C",
+                styling::CATPPUCCIN.peach,
+                &eng.temp_hist,
+                eng.now_chart_secs(),
+                Some(95.0),
+            ),
+            rows[1],
+        );
+    }
+}
+
+fn page_order(frame: &mut Frame, area: Rect, app: &App) {
+    use order::{GateKind, LookupState};
+    let mut lines = Vec::new();
+
+    if app.editing == EditField::Serial {
+        lines.push(Line::from(Span::styled(
+            "[ EDITING - type serial, then press ENTER to save ]",
+            Style::default().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
+        )));
+    }
+    lines.push(Line::from(vec![
+        Span::styled("serial: ", Style::default().fg(palette::MUTED)),
+        Span::styled(
+            if app.order.serial.is_empty() {
+                "<none - press 'e'>".to_string()
+            } else {
+                app.order.serial.clone()
+            },
+            Style::default().fg(palette::TEXT),
+        ),
+        Span::styled(
+            if app.editing == EditField::Serial { "_" } else { "" },
+            Style::default().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("server: ", Style::default().fg(palette::MUTED)),
+        Span::styled(app.target.clone(), Style::default().fg(palette::LABEL)),
+    ]));
+    lines.push(Line::from(""));
+
+    match &app.order.state {
+        LookupState::Idle => {
+            lines.push(Line::from(Span::styled(
+                "ENTER to look up the order for this serial",
+                Style::default().fg(palette::MUTED),
+            )));
+        }
+        LookupState::Busy => {
+            lines.push(Line::from(Span::styled(
+                "looking up order ...",
+                Style::default().fg(palette::ACCENT),
+            )));
+        }
+        LookupState::Failed(e) => {
+            lines.push(Line::from(Span::styled(
+                format!("lookup failed: {e}"),
+                Style::default().fg(palette::ERR),
+            )));
+        }
+        LookupState::Done(resp) if !resp.found => {
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "NOT FOUND{}",
+                    resp.error
+                        .as_deref()
+                        .map(|e| format!(" - {e}"))
+                        .unwrap_or_default()
+                ),
+                Style::default().fg(palette::ERR),
+            )));
+            if !resp.tried.is_empty() {
+                lines.push(kv("Tried", resp.tried.join(", ")));
+            }
+        }
+        LookupState::Done(resp) => {
+            let o = &resp.order;
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!(" {} ", resp.backend.to_uppercase()),
+                    Style::default()
+                        .fg(palette::BG)
+                        .bg(palette::ACCENT)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("  matched by {}", resp.matched_by),
+                    Style::default().fg(palette::MUTED),
+                ),
+            ]));
+            lines.push(Line::from(""));
+            lines.push(kv("Order", format!("{} (id {})", o.reference, o.id)));
+            lines.push(kv("Customer", o.customer.clone()));
+            lines.push(kv("Kind", o.kind.clone()));
+            lines.push(kv(
+                "Status",
+                format!("{} (#{})", o.status.name, o.status.legacy_id),
+            ));
+            lines.push(kv("Total", o.total.clone()));
+            if let Some(bs) = &o.build_serial {
+                lines.push(kv("Build SN", bs.clone()));
+            }
+            if let Some(ev) = &o.everest_doc {
+                lines.push(kv("Everest", ev.clone()));
+            }
+            if let Some(g) = &resp.gate {
+                let (color, label) = match g.kind() {
+                    GateKind::Good => (palette::GOOD, "QC OK"),
+                    GateKind::Refuse => (palette::ERR, "QC BLOCKED"),
+                    GateKind::Neutral => (palette::MUTED, "QC read-only"),
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(format!("{:<14}", "Gate"), Style::default().fg(palette::LABEL)),
+                    Span::styled(format!("{label} - {}", g.message), Style::default().fg(color)),
+                ]));
+            }
+            if let Some(od) = &resp.odoo {
+                lines.push(kv(
+                    "Odoo lot",
+                    format!(
+                        "{} (#{}) {}",
+                        od.name,
+                        od.lot_id,
+                        od.product_name.clone().unwrap_or_default()
+                    ),
+                ));
+            }
+            if let Some(sv) = &o.service {
+                lines.push(Line::from(""));
+                lines.push(header("Service intake"));
+                lines.push(kv("Device", format!("{} {} {}", sv.mfg, sv.device, sv.model)));
+                lines.push(kv("Device SN", sv.serial.clone()));
+                if !sv.notes.is_empty() {
+                    lines.push(kv("Notes", sv.notes.clone()));
+                }
+            }
+            if let Some(spec) = &resp.spec {
+                lines.push(Line::from(""));
+                lines.push(header("Ordered build spec"));
+                if !spec.model.is_empty() {
+                    lines.push(kv("Model", spec.model.clone()));
+                }
+                lines.push(kv("CPU", spec.cpu.clone()));
+                lines.push(kv("GPU", spec.gpu.clone()));
+                lines.push(kv("RAM", spec.ram.clone()));
+                if let Some(mb) = &spec.motherboard {
+                    lines.push(kv("Board", mb.clone()));
+                }
+                if let Some(os) = &spec.os {
+                    lines.push(kv("OS", os.clone()));
+                }
+                for d in &spec.drives {
+                    lines.push(kv("Drive", format!("{} ({})", d.name, d.kind)));
+                }
+                for x in &spec.extra {
+                    lines.push(kv(&x.slot, x.name.clone()));
+                }
+            }
+            if !o.items.is_empty() {
+                lines.push(Line::from(""));
+                lines.push(header("Items"));
+                for it in o.items.iter().take(12) {
+                    let serials = it
+                        .serials
+                        .iter()
+                        .filter(|s| !s.trim().is_empty())
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    lines.push(Line::from(vec![
+                        Span::styled(
+                            format!("{:>3} x ", it.qty),
+                            Style::default().fg(palette::LABEL),
+                        ),
+                        Span::styled(it.name.clone(), Style::default().fg(palette::TEXT)),
+                        Span::styled(
+                            if serials.is_empty() {
+                                String::new()
+                            } else {
+                                format!("  SN {}", serials.join(", "))
+                            },
+                            Style::default().fg(palette::GOOD),
+                        ),
+                    ]));
+                }
+                if o.items.len() > 12 {
+                    lines.push(Line::from(Span::styled(
+                        format!("... and {} more items", o.items.len() - 12),
+                        Style::default().fg(palette::MUTED),
+                    )));
+                }
+            }
+        }
+    }
+    frame.render_widget(para(lines, "Order Lookup"), area);
 }
 
 fn page_readiness(frame: &mut Frame, area: Rect, info: &SysInfo) {
@@ -2314,41 +3079,73 @@ fn render(frame: &mut Frame, app: &App) {
         3 => page_firmware(frame, root[1], &app.info),
         4 => page_network(frame, root[1], app),
         5 => page_storage(frame, root[1], &app.info),
-        6 => page_readiness(frame, root[1], &app.info),
+        6 => page_stress(frame, root[1], app),
+        7 => page_order(frame, root[1], app),
+        8 => page_readiness(frame, root[1], &app.info),
         _ => page_log(frame, root[1]),
     }
 
-    let footer = Paragraph::new(Line::from(vec![
-        Span::styled("Tab / -> ", Style::default().fg(palette::ACCENT)),
-        Span::styled("next   ", Style::default().fg(palette::MUTED)),
-        Span::styled("<- ", Style::default().fg(palette::ACCENT)),
-        Span::styled("prev   ", Style::default().fg(palette::MUTED)),
-        Span::styled("1-5 ", Style::default().fg(palette::ACCENT)),
-        Span::styled("jump   ", Style::default().fg(palette::MUTED)),
-        Span::styled("r ", Style::default().fg(palette::ACCENT)),
-        Span::styled("refresh   ", Style::default().fg(palette::MUTED)),
-        Span::styled("c ", Style::default().fg(palette::ACCENT)),
-        Span::styled("connect   ", Style::default().fg(palette::MUTED)),
-        Span::styled("d ", Style::default().fg(palette::ACCENT)),
-        Span::styled("dhcp   ", Style::default().fg(palette::MUTED)),
-        Span::styled("e/p ", Style::default().fg(palette::ACCENT)),
-        Span::styled("target/post   ", Style::default().fg(palette::MUTED)),
-        Span::styled("q ", Style::default().fg(palette::ACCENT)),
-        Span::styled("quit", Style::default().fg(palette::MUTED)),
-    ]))
-    .centered()
-    .style(base_style())
-    .block(panel(""));
+    let hints: &[(&str, &str)] = match app.tab {
+        TAB_STRESS => &[
+            ("Up/Dn", "stage"),
+            ("ENTER", "run/stop"),
+            ("b", "benchmark"),
+            ("s", "stop"),
+            ("e", "target"),
+            ("p", "upload"),
+            ("q", "quit"),
+        ],
+        TAB_ORDER => &[
+            ("ENTER", "lookup"),
+            ("e", "serial"),
+            ("Tab", "next"),
+            ("q", "quit"),
+        ],
+        _ => &[
+            ("Tab/->", "next"),
+            ("<-", "prev"),
+            ("1-9,0", "jump"),
+            ("r", "refresh"),
+            ("c", "connect"),
+            ("d", "dhcp"),
+            ("e/p", "target/post"),
+            ("q", "quit"),
+        ],
+    };
+    let mut spans = Vec::with_capacity(hints.len() * 2);
+    for (k, label) in hints {
+        spans.push(Span::styled(
+            format!("{k} "),
+            Style::default().fg(palette::ACCENT),
+        ));
+        spans.push(Span::styled(
+            format!("{label}   "),
+            Style::default().fg(palette::MUTED),
+        ));
+    }
+    let footer = Paragraph::new(Line::from(spans))
+        .centered()
+        .style(base_style())
+        .block(panel(""));
     frame.render_widget(footer, root[2]);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EditField {
+    None,
+    Target,
+    Serial,
 }
 
 struct App {
     info: SysInfo,
     tab: usize,
     target: String,
-    editing: bool,
+    editing: EditField,
     ifaces: Vec<IfaceIp>,
     status: String,
+    stress: stress::StressEngine,
+    order: order::OrderPanel,
 }
 
 impl App {
@@ -2363,13 +3160,24 @@ impl App {
 fn run() -> Result<()> {
     init_ratatui_perf();
     let (mut terminal, mut input_reader) = create_ui()?;
+    let info = SysInfo::collect();
+    let default_serial = {
+        let s = info.dmi.sys_serial.trim();
+        if s.is_empty() || s == "-" {
+            String::new()
+        } else {
+            s.to_string()
+        }
+    };
     let mut app = App {
-        info: SysInfo::collect(),
+        info,
         tab: 0,
         target: DEFAULT_URL.to_string(),
-        editing: false,
+        editing: EditField::None,
         ifaces: Vec::new(),
         status: String::new(),
+        stress: stress::StressEngine::new(),
+        order: order::OrderPanel::new(default_serial),
     };
 
     terminal.clear()?;
@@ -2392,31 +3200,58 @@ fn run() -> Result<()> {
     }
 
     loop {
+        app.stress.tick();
         terminal.draw(|frame| render(frame, &app))?;
 
-        let Some(terminput::Event::Key(key)) = input_reader.read_event()? else {
+        // Blocking input when idle; poll + frame ticks while a stress run
+        // needs the charts and counters refreshed.
+        let event = if app.stress.is_active() {
+            let ev = input_reader.poll_event()?;
+            if ev.is_none() {
+                uefi::boot::stall(core::time::Duration::from_millis(33));
+                continue;
+            }
+            ev
+        } else {
+            input_reader.read_event()?
+        };
+        let Some(terminput::Event::Key(key)) = event else {
             continue;
         };
-        logln(format!("key={:?} editing={} tab={}", key.code, app.editing, app.tab));
+        logln(format!(
+            "key={:?} editing={:?} tab={}",
+            key.code, app.editing, app.tab
+        ));
 
-        // While editing the upload target, all printable keys feed the field.
-        if app.editing {
+        // While editing a field, all printable keys feed it.
+        if app.editing != EditField::None {
+            let field = match app.editing {
+                EditField::Serial => &mut app.order.serial,
+                _ => &mut app.target,
+            };
             match key.code {
-                terminput::KeyCode::Enter | terminput::KeyCode::Esc => app.editing = false,
+                terminput::KeyCode::Enter | terminput::KeyCode::Esc => {
+                    app.editing = EditField::None
+                }
                 terminput::KeyCode::Backspace => {
-                    app.target.pop();
+                    field.pop();
                 }
                 terminput::KeyCode::Char(c) if c == '\u{8}' || c == '\u{7f}' => {
-                    app.target.pop();
+                    field.pop();
                 }
-                terminput::KeyCode::Char(c) if !c.is_control() => app.target.push(c),
+                terminput::KeyCode::Char(c) if !c.is_control() => field.push(c),
                 _ => {}
             }
             continue;
         }
 
         match key.code {
-            terminput::KeyCode::Char('q') | terminput::KeyCode::Esc => break,
+            terminput::KeyCode::Char('q') | terminput::KeyCode::Esc => {
+                if app.stress.is_active() {
+                    app.stress.stop();
+                }
+                break;
+            }
             terminput::KeyCode::Char('r') => app.info = SysInfo::collect(),
             terminput::KeyCode::Char('c') => {
                 connect_all_controllers();
@@ -2430,7 +3265,13 @@ fn run() -> Result<()> {
                 app.ifaces = ifaces;
                 app.status = status;
             }
-            terminput::KeyCode::Char('e') => app.editing = true,
+            terminput::KeyCode::Char('e') => {
+                app.editing = if app.tab == TAB_ORDER {
+                    EditField::Serial
+                } else {
+                    EditField::Target
+                };
+            }
             terminput::KeyCode::Char('p') => {
                 logln(format!("POST key: target='{}'", app.target));
                 if app.target.is_empty() {
@@ -2446,7 +3287,8 @@ fn run() -> Result<()> {
                     };
                     app.status = format!("POST: {transport} -> {} ...", u.full);
                     terminal.draw(|frame| render(frame, &app))?;
-                    let json = fingerprint_json(&app.info);
+                    let json =
+                        fingerprint_with_stress(&app.info, app.stress.summary_json());
                     let result = if u.is_qc_tcp {
                         net_tcp::send_qc(&u.host_port, json.as_bytes())
                     } else if u.needs_efi_http {
@@ -2460,18 +3302,80 @@ fn run() -> Result<()> {
                     };
                 }
             }
+            // Stress tab controls.
+            terminput::KeyCode::Up if app.tab == TAB_STRESS => {
+                app.stress.selected = app.stress.selected.saturating_sub(1);
+            }
+            terminput::KeyCode::Down if app.tab == TAB_STRESS => {
+                app.stress.selected =
+                    (app.stress.selected + 1).min(stress::STAGES.len() - 1);
+            }
+            terminput::KeyCode::Enter if app.tab == TAB_STRESS => {
+                if app.stress.is_active() {
+                    app.stress.stop();
+                } else {
+                    app.stress.start_single(stress::STAGES[app.stress.selected]);
+                }
+            }
+            terminput::KeyCode::Char('b') if app.tab == TAB_STRESS => {
+                app.stress.start_preset();
+            }
+            terminput::KeyCode::Char('s') if app.tab == TAB_STRESS => {
+                if app.stress.is_active() {
+                    app.stress.stop();
+                }
+            }
+            // Order tab controls.
+            terminput::KeyCode::Enter | terminput::KeyCode::Char('o')
+                if app.tab == TAB_ORDER =>
+            {
+                do_order_lookup(&mut app, &mut terminal)?;
+            }
             terminput::KeyCode::Right
             | terminput::KeyCode::Tab
             | terminput::KeyCode::Char('\t')
             | terminput::KeyCode::Char('l') => app.next(),
             terminput::KeyCode::Left | terminput::KeyCode::Char('h') => app.prev(),
-            terminput::KeyCode::Char(c @ '1'..='8') => {
+            terminput::KeyCode::Char(c @ '1'..='9') => {
                 app.tab = (c as usize - '1' as usize).min(TABS.len() - 1);
             }
+            terminput::KeyCode::Char('0') => app.tab = TABS.len() - 1,
             _ => {}
         }
     }
 
+    Ok(())
+}
+
+/// Blocking serial → order fetch against the upload target's host. Draws the
+/// busy state first so the screen reflects the in-flight request.
+fn do_order_lookup(
+    app: &mut App,
+    terminal: &mut Terminal<ratatui_uefi::UefiOutputBackend>,
+) -> Result<()> {
+    let serial = app.order.serial.trim().to_string();
+    if serial.is_empty() {
+        app.status = "set a serial first (press 'e')".into();
+        return Ok(());
+    }
+    if app.target.is_empty() {
+        app.status = "set a target first (Network tab, 'e')".into();
+        return Ok(());
+    }
+    app.order.state = order::LookupState::Busy;
+    terminal.draw(|frame| render(frame, app))?;
+    let path = format!(
+        "/api/v1/qc/order-by-serial/{}",
+        order::encode_path_segment(&serial)
+    );
+    logln(format!("order: GET {path}"));
+    app.order.state = match http_get_json(&app.target, &path) {
+        Ok((code, body)) => match order::parse_response(&body) {
+            Ok(resp) => order::LookupState::Done(Box::new(resp)),
+            Err(e) => order::LookupState::Failed(format!("HTTP {code}: {e}")),
+        },
+        Err(e) => order::LookupState::Failed(e),
+    };
     Ok(())
 }
 

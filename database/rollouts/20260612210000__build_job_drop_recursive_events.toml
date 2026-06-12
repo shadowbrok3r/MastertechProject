@@ -1,0 +1,24 @@
+id = "20260612210000__build_job_drop_recursive_events"
+name = "build_job_drop_recursive_events"
+state = "completed"
+source_schema_hash = "4dae50f3246af6946c2a421117f261aad0e1095dba466dc4470b80969d13f9b7"
+target_schema_hash = "51d290a8adee55292b0b3ddd7dba9ab270bbb9cc8653e58276a75a46d35617d6"
+compatibility = "phased"
+renames = []
+
+# Completed 2026-06-12 as a registry-sync NO-OP: it was authored with
+# `[start]/[complete] ddl = ...` blocks, which surrealkit does not execute
+# (steps must be `[[steps]]` with kind = run_sql / apply_schema /
+# remove_entities — see 20260612213000). Completing it did populate the
+# previously-empty `__entity` registry (435 rows) against the deduped
+# schema catalog (hardware_test_baseline view folded into
+# stress_test_run.surql, removing the duplicate DEFINE TABLE
+# stress_test_run that aborted every prior `rollout complete` and left a
+# stale `by_ns_key` index entry behind on each abort — repaired twice via
+# `REBUILD INDEX by_ns_key ON __entity`).
+#
+# The actual build_job DDL ships in
+# 20260612213000__build_job_drop_recursive_events_ddl.toml.
+#
+# Predecessor run 20260612200000 (same name) was rolled back after its
+# manifest was edited post-start (manifest checksum is pinned at start).

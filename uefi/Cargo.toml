@@ -14,3 +14,5 @@ ratatui-uefi = { path = "crates/ratatui-uefi" }
 terminput-uefi = { path = "crates/terminput-uefi" }
 anyhow.workspace = true
 log.workspace = true
+serde.workspace = true
+serde_json.workspace = true

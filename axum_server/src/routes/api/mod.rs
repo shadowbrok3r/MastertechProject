@@ -1,5 +1,6 @@
 pub mod surreal;
 pub mod orders;
+pub mod order_lookup;
 pub mod parts;
 pub mod qc_fleet;
 pub mod qc_tcp;
@@ -26,8 +27,12 @@ pub fn routes(state: crate::AppState) -> axum::Router {
             axum::routing::post(get_all_missed_calls)
         )
         .route(
-            "/api/repo", 
+            "/api/repo",
             axum::routing::post(surreal::handle_response)
+        )
+        .route(
+            "/api/v1/qc/order-by-serial/{serial}",
+            axum::routing::get(order_lookup::order_by_serial)
         )
         .merge(qc_fleet::qc_fleet_routes())
         .merge(build::build_routes())

@@ -117,3 +117,52 @@ DEFINE FIELD tags.*              ON stress_test_run TYPE string                 
 -- `fn::embed_text` so the HNSW index receives a 768-dim vector.
 DEFINE FIELD embedding           ON stress_test_run TYPE none | array<float>                       PERMISSIONS FULL;
 DEFINE FIELD embedding.*         ON stress_test_run TYPE float                                     PERMISSIONS FULL;
+
+-- ============================================================
+-- VIEW: hardware_test_baseline    (moved from hardware_test_baseline.surql 2026-06-12)
+-- ============================================================
+-- Pre-computed population stats per (target_component, tool_label).
+-- SurrealDB auto-refreshes this on every write to `stress_test_run`.
+-- Lives in this file so the view always applies after the table it
+-- selects FROM; a separate file needed a duplicate DEFINE TABLE
+-- stress_test_run dependency guard, which collided with surrealkit's
+-- per-entity registry sync during `rollout complete`.
+--
+-- Notes
+--   - Runs without a `target_component` (System / Mixed kind) are
+--     excluded — the per-component pivot is the whole point of this
+--     view.
+--   - In-progress runs are excluded so live test telemetry doesn't
+--     pollute the baseline.
+--   - `IF expr THEN 1 ELSE 0 END` lets us count rows matching a
+--     condition inside a single `math::sum` aggregation (SurrealQL
+--     doesn't have COUNT(CASE WHEN)).
+--   - Rust source of truth (read-only):
+--     `database::schema::stress_test::HardwareTestBaseline`.
+
+DEFINE TABLE hardware_test_baseline TYPE NORMAL AS
+    SELECT
+        target_component                                  AS component,
+        tool_label                                        AS tool,
+        count()                                           AS run_count,
+        math::sum(IF result = 'pass'         THEN 1 ELSE 0 END) AS pass_count,
+        math::sum(IF result = 'fail'         THEN 1 ELSE 0 END) AS fail_count,
+        math::sum(IF result = 'aborted'      THEN 1 ELSE 0 END) AS abort_count,
+        math::sum(IF result = 'inconclusive' THEN 1 ELSE 0 END) AS inconclusive_count,
+        math::mean(summary.max_temp_c)                    AS avg_max_temp_c,
+        math::max(summary.max_temp_c)                     AS peak_max_temp_c,
+        math::mean(summary.avg_temp_c)                    AS avg_temp_c,
+        math::mean(summary.max_clock_mhz)                 AS avg_max_clock_mhz,
+        math::mean(summary.avg_clock_mhz)                 AS avg_clock_mhz,
+        math::mean(summary.max_power_w)                   AS avg_max_power_w,
+        math::mean(summary.peak_throughput)               AS avg_peak_throughput,
+        math::mean(summary.whea_delta_count)              AS avg_whea_delta,
+        math::sum(summary.whea_delta_count)               AS total_whea_delta,
+        math::sum(summary.disk_io_errors)                 AS total_disk_io_errors,
+        math::sum(summary.memory_errors)                  AS total_memory_errors,
+        math::sum(IF summary.thermal_throttle_detected = true THEN 1 ELSE 0 END) AS throttle_count,
+        math::sum(IF summary.bsod_detected = true             THEN 1 ELSE 0 END) AS bsod_count
+    FROM stress_test_run
+    WHERE target_component != NONE
+        AND result != 'in_progress'
+    GROUP BY component, tool;

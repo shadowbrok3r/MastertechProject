@@ -24,8 +24,10 @@ pub const SALES_QC_TARGET: i64 = 71;
 /// Repair advance target on gate pass: Service Begun.
 pub const REPAIR_QC_TARGET: i64 = 26;
 
-/// Xidax bench flow statuses (master plan W7): In QC / Burn-in.
-pub const XIDAX_BENCH_STATUSES: &[i64] = &[109, 43];
+/// Xidax bench flow statuses: planned W7 ids (109 In QC / 43 Burn-in) plus
+/// 71 "QC & Burn-in" — the id the live store actually carries (2026-06
+/// `/statuses` capture; 109 absent there and 43 is a repair status).
+pub const XIDAX_BENCH_STATUSES: &[i64] = &[109, 43, 71];
 
 /// Xidax bench advance target on verdict pass: Preparing to Ship.
 pub const XIDAX_BENCH_TARGET: i64 = 76;

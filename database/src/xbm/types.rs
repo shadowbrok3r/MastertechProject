@@ -177,6 +177,7 @@ pub struct DetailLineItem {
     pub slot: String,
     pub sku: Option<String>,
     pub image: Option<String>,
+    pub image_alt: Option<String>,
     pub product_handle: Option<String>,
     pub is_pool_product: Option<bool>,
     pub expected_serials: i64,
@@ -211,6 +212,12 @@ pub struct StatusRef {
     pub color: String,
     pub legacy_id: i64,
     pub locked: Option<bool>,
+    /// `"awaiting_parts" | "building" | "qc" | "preparing" | "shipped" | ""`.
+    pub bucket: Option<String>,
+    pub production_locked: Option<bool>,
+    pub edit_locked: Option<bool>,
+    pub shipped: Option<bool>,
+    pub paid: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -596,6 +603,26 @@ pub struct ShippedTrendDay {
     pub count: i64,
 }
 
+// ─── GET /pool-summary ──────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct PoolSummaryPayload {
+    pub summary: Vec<PoolModelSummary>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PoolModelSummary {
+    pub model_sku: String,
+    pub available: i64,
+    pub pending: i64,
+    pub assigned: i64,
+    pub shipped: i64,
+    pub other: i64,
+    pub total_active: i64,
+}
+
 // ─── /prebuilt-units ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -649,6 +676,98 @@ pub struct CreateDebuildRequest {
     pub reason: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+}
+
+#[cfg(test)]
+mod fixture_tests {
+    //! Deserialize real (sanitized) API captures from 2026-06-12 so the wire
+    //! contract is enforced by CI, not by hand-written sample JSON.
+
+    use super::*;
+
+    fn data(envelope_json: &str) -> Value {
+        let env: Envelope = serde_json::from_str(envelope_json).unwrap();
+        assert!(env.ok, "fixture envelope not ok: {:?}", env.error);
+        env.data.unwrap()
+    }
+
+    #[test]
+    fn live_orders_qc_fixture_parses() {
+        let payload: QueuePayload =
+            serde_json::from_value(data(include_str!("fixtures/orders-qc.json"))).unwrap();
+        assert_eq!(payload.orders.len(), 16);
+        let with_build_serial = payload
+            .orders
+            .iter()
+            .filter(|o| o.build_serial.as_deref().is_some_and(|s| !s.is_empty()))
+            .count();
+        assert!(with_build_serial > 0, "expected some build serials in the qc bucket");
+        assert!(payload.orders.iter().all(|o| o.id.starts_with("gid://shopify/Order/")));
+    }
+
+    #[test]
+    fn live_order_detail_fixture_parses() {
+        let detail: BuildDetail =
+            serde_json::from_value(data(include_str!("fixtures/order-detail.json"))).unwrap();
+        let status = detail.current_status.as_ref().unwrap();
+        assert_eq!(status.legacy_id, 4);
+        assert_eq!(status.shipped, Some(true));
+        assert!(!detail.installed_serials.is_empty());
+        assert!(detail.installed_serials[0].starts_with("gid://shopify/Metaobject/"));
+        // Line items carry structured serial scans.
+        let scanned: Vec<_> = detail
+            .line_items
+            .iter()
+            .flat_map(|li| &li.serials)
+            .collect();
+        assert!(!scanned.is_empty());
+        assert!(scanned[0].serial.contains('-'));
+        assert_eq!(detail.prechecks[0].name, "serials_attached");
+        assert!(detail.timer.as_ref().unwrap().pull_completed_at.is_some());
+        // Config selection entries are snake_case objects.
+        let sel = detail.config.unwrap().selection.unwrap();
+        let first = &sel.as_array().unwrap()[0];
+        assert!(first.get("slot_handle").is_some());
+        assert!(first.get("product_name").is_some());
+    }
+
+    #[test]
+    fn live_serial_history_fixture_parses() {
+        let hist: SerialHistory =
+            serde_json::from_value(data(include_str!("fixtures/serial-history.json"))).unwrap();
+        assert!(hist.found);
+        let shopify = hist.shopify.unwrap();
+        assert_eq!(shopify.order.unwrap().name.as_deref(), Some("#1003"));
+        assert_eq!(shopify.variant.unwrap().sku.as_deref(), Some("MB/X670/GODLIKE"));
+        assert_eq!(hist.history[0].kind, "installed");
+    }
+
+    #[test]
+    fn live_statuses_fixture_parses() {
+        let payload: StatusesPayload =
+            serde_json::from_value(data(include_str!("fixtures/statuses.json"))).unwrap();
+        assert!(payload.statuses.len() > 30);
+        // The Xidax store carries the classic PrestaShop legacy-id space.
+        let by_id = |id: i64| payload.statuses.iter().find(|s| s.legacy_id == id);
+        assert_eq!(by_id(71).unwrap().name, "QC & Burn-in");
+        assert_eq!(by_id(67).unwrap().name, "Preparing to Ship");
+        assert_eq!(by_id(4).unwrap().name, "Shipped");
+        // Planned bench ids from master plan W7 are NOT live yet: 109 is
+        // absent and 43 is a repair status, so the gate also admits 71.
+        // When this assert flips, the store seeded the planned ids — revisit
+        // XIDAX_BENCH_STATUSES / XIDAX_BENCH_TARGET in orders/gate.rs.
+        assert!(by_id(109).is_none());
+        assert_ne!(by_id(43).unwrap().name, "Burn-in");
+    }
+
+    #[test]
+    fn live_pool_summary_fixture_parses() {
+        let payload: PoolSummaryPayload =
+            serde_json::from_value(data(include_str!("fixtures/pool-summary.json"))).unwrap();
+        assert_eq!(payload.summary.len(), 3);
+        assert!(payload.summary.iter().any(|m| m.model_sku == "x6-rtx5090-apex"));
+        assert!(payload.summary[0].total_active >= payload.summary[0].available);
+    }
 }
 
 #[cfg(test)]

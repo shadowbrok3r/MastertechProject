@@ -24,7 +24,12 @@ impl UefiInputReader {
             let mut events = [key_event];
             boot::wait_for_event(&mut events).discard_errdata()?;
         }
+        self.poll_event()
+    }
 
+    /// Non-blocking read: returns `Ok(None)` immediately when no key is
+    /// pending. Used while a stress run needs the UI loop ticking.
+    pub fn poll_event(&mut self) -> uefi::Result<Option<terminput::Event>> {
         let event = self.input.read_key()?;
         let code = match event {
             Some(Key::Printable(c)) if c == '\r' => Some(terminput::KeyCode::Enter),
