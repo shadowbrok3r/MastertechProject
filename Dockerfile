@@ -19,7 +19,7 @@ COPY .env .env
 # Wasm-only workspace: trim members and strip native path deps that are not
 # copied into this context (stress-kit, stress-runner). plugin_builder stays
 # because displays references it in Cargo.toml for manifest resolution.
-RUN sed -i 's|^members = .*|members = ["database", "displays", "MtechServer2.0", "tcp_protocol"]|' Cargo.toml && \
+RUN sed -i '/^members = \[/,/^\]/c\members = ["database", "displays", "MtechServer2.0", "tcp_protocol"]' Cargo.toml && \
     sed -i '/stress-kit/d; /stress-runner/d' Cargo.toml && \
     sed -i '/stress-kit/d; /stress-runner/d; /native-telemetry/d' displays/Cargo.toml
 

@@ -93,6 +93,31 @@ flowchart LR
 
 ---
 
+## Remote build pipeline (plugin_builder)
+
+**Default transport is SurrealDB (Slice 4), not websocket_server2.** Verified end-to-end locally 2026-06-12.
+
+```text
+plugin_compile_remote (MCP) ──▶ build_job row (status='pending')
+                                      │ LIVE SELECT
+plugin_builder worker: atomic claim ▶ cargo build ▶ wasm_bytes written back
+                                      │
+plugin_compile_status (MCP) copies bytes into ArtifactStore ▶ plugin_deploy
+```
+
+| Piece | Detail |
+|-------|--------|
+| Worker registration | `connected_client` row, `client_kind = build_worker`, deterministic id `connected_client:build_worker_<host>`, 30 s heartbeat |
+| Worker discovery | MCP `list_build_workers` and `GET http://<axum>:8082/api/build/workers` (rows with `last_update` within 90 s) |
+| axum_server endpoints | `POST /api/build/jobs`, `GET /api/build/jobs/{id}`, `GET /api/build/workers` (`axum_server/src/routes/api/build/mod.rs`) — HTTP wrappers over the same tables |
+| Fallback | `MASTERTECH_DB_MODE=0` → legacy websocket_server2 room relay on :8081 (`BuilderWire` bincode protocol). Kept as fallback only; nothing defaults to it. |
+| Local (bare-metal) worker | Override `BUILD_WORKER_TARGET_CACHE_ROOT` / `BUILD_WORKER_SCRATCH_ROOT` to writable paths; the `/var/cache` default is Docker-only. Debug builds connect to `DB_URL_LOCAL`. |
+| Fallback caveat | `plugin_compile_remote` silently falls back to **local** compile when no worker heartbeats are live — check `list_build_workers` first if you expect a remote build. |
+
+**Schema fix (2026-06-12):** `build_job`'s `created_at_default`/`updated_at_touch` events recursed (event UPDATE re-fired the UPDATE event) until SurrealDB aborted every CREATE with "excessive computation depth" — remote compile could never enqueue a job on a DB scaffolded with that schema. Events removed; `updated_at` now uses `VALUE time::now()`, `created_at` is `DEFAULT time::now() READONLY` (rollout `20260612213000__build_job_drop_recursive_events_ddl`). Apply to prod via `./database/scripts/migrate-prod.sh` when ready; prod may first need `REBUILD INDEX by_ns_key ON __entity;` if its `__entity` index carries the stale `table::stress_test_run` entry (see rollout `20260612210000` notes).
+
+---
+
 ## Remote control: egui → egui (implemented plumbing, AI/MCP next)
 
 Goal: **Admin Mastertech** sees a **live (or framed) egui stream** from a **connected remote client** and can send **pointer/scroll/key** input back so the tech’s UI is drivable from the shop console—eventually **by an agent** via MCP under strict policy.
@@ -176,6 +201,22 @@ Once the **host ABI** and **MCP management** loop are stable, WASM plugins becom
 | Admin inline viewer | `displays/src/tabs/admin_console/client_interface/mod.rs`, `tabs/egui_viewer.rs` |
 | TUR / DB merge | `Mastertech4.0/src/tabs/tur_sheet/`, `database/src/schema/` |
 | Phase 2 implementation notes | `.cursor/plans/PluginSystemPhase2.md` |
+
+---
+
+## Improvement roadmap (2026-06-12, from ironclaw review)
+
+Findings from comparing against [nearai/ironclaw](https://github.com/nearai/ironclaw)'s WASM tool system (wasmtime + component model + WIT, `src/tools/wasm/`, `wit/tool.wit`), ordered by leverage:
+
+1. **Guest SDK crate (`mastertech-plugin-sdk`)** — every plugin today hand-rolls a static-array allocator, packed `ptr|len` u64 encoding, and string marshalling (~100 lines of identical unsafe boilerplate, see `plugins/com_mastertech_mcp-demo-quick/src/lib.rs`). A small SDK crate with a `#[mastertech_plugin]`-style macro (or just safe `export_*!` helpers + a real bump allocator) removes all of it. Cheapest, highest-impact step; no host changes required.
+2. **ABI version stamp + load-time gate** — artifacts carry no record of the host ABI they were built against; a new host import breaks old plugins with memory-shape errors instead of a clear message. Stamp `abi_version` into the artifact (export or custom section) and refuse incompatible loads (ironclaw: `wit_version` + `check_wit_version_compat()` in `loader.rs`).
+3. **WIT as authoritative ABI spec, component model later** — even while staying on wasip1, describe the host imports/guest exports in a versioned `.wit` file as documentation + codegen source. Longer term, wasip2 components + `wasmtime::component::bindgen!` / `wit-bindgen` eliminate the hand-rolled marshalling on both sides (ironclaw's whole guest dep list is `wit-bindgen` + `serde`).
+4. **Fuel + epoch limits, classified trap errors** — plugins currently run with only a 60 s host-side dispatch timeout. Ironclaw runs every call with fuel (500M instructions), epoch interruption (500 ms ticks), a `ResourceLimiter` (10 MiB memory cap), and per-call budgets (log/http/tool-invoke counts), then maps traps to "out of fuel" vs "timed out" vs "memory cap" (`limits.rs`). Clear trap classification is what makes the MCP authoring loop converge.
+5. **Capability sidecar, default-deny** — `host_run_command` currently gives every plugin unrestricted shell. A `<plugin>.capabilities.json` (allowed commands/hosts/secrets/rate limits) enforced host-side, with credential injection at the boundary (guest can ask `secret-exists` but never reads secrets), would make plugin authoring delegable to agents safely (ironclaw `capabilities.rs`, `credential_injector.rs`).
+6. **Self-describing artifacts** — derive registry name/version/tools by calling the artifact's own exports at registration instead of trusting caller-supplied metadata; content-address artifacts (BLAKE3) and verify on load (ironclaw `storage.rs`).
+7. **Canned ABI context for the authoring loop** — inject host import signatures, the Cargo.toml template, and the build command into the agent prompt instead of letting each session rediscover them (ironclaw `wasm_tool_context()` in `src/tools/builder/core.rs`); pair with phase-machine compile-fix iteration caps.
+
+Where we're already ahead of ironclaw: `plugin_rollback` (they upgrade in place, no history), the remote build-worker farm (they only build locally/in-agent), and the SurrealDB registry with live worker discovery.
 
 ---
 

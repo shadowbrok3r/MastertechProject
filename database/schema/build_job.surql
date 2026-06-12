@@ -20,18 +20,6 @@
 
 DEFINE TABLE build_job TYPE NORMAL SCHEMALESS CHANGEFEED 1w PERMISSIONS FULL;
 
-DEFINE EVENT created_at_default ON build_job
-    WHEN $event = 'CREATE'
-    THEN {
-        UPDATE $value.id SET created_at = time::now();
-    };
-
-DEFINE EVENT updated_at_touch ON build_job
-    WHEN $event = 'UPDATE'
-    THEN {
-        UPDATE $this.id SET updated_at = time::now();
-    };
-
 DEFINE FIELD plugin_id           ON build_job TYPE string                                                             PERMISSIONS FULL;
 DEFINE FIELD cargo_toml          ON build_job TYPE string                                                             PERMISSIONS FULL;
 DEFINE FIELD lib_rs              ON build_job TYPE string                                                             PERMISSIONS FULL;
@@ -54,5 +42,6 @@ DEFINE FIELD wasm_bytes          ON build_job TYPE none | bytes                 
 DEFINE FIELD stdout              ON build_job TYPE string DEFAULT ''                                                  PERMISSIONS FULL;
 DEFINE FIELD stderr              ON build_job TYPE string DEFAULT ''                                                  PERMISSIONS FULL;
 DEFINE FIELD duration_ms         ON build_job TYPE number DEFAULT 0                                                   PERMISSIONS FULL;
-DEFINE FIELD created_at          ON build_job TYPE datetime DEFAULT time::now()                                       PERMISSIONS FULL;
-DEFINE FIELD updated_at          ON build_job TYPE datetime DEFAULT time::now()                                       PERMISSIONS FULL;
+DEFINE FIELD created_at          ON build_job TYPE datetime DEFAULT time::now() READONLY                              PERMISSIONS FULL;
+-- VALUE refreshes on every write, replacing the recursive updated_at_touch event.
+DEFINE FIELD updated_at          ON build_job TYPE datetime VALUE time::now()                                         PERMISSIONS FULL;

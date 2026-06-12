@@ -1,0 +1,29 @@
+id = "20260612190000__connected_client_qc_agent"
+name = "connected_client_qc_agent"
+state = "completed"
+# Target = schema/*.surql on disk (already contains the qc_agent variant).
+target_schema_hash = "4dae50f3246af6946c2a421117f261aad0e1095dba466dc4470b80969d13f9b7"
+compatibility = "phased"
+renames = []
+
+# NOTE (2026-06-12): applied MANUALLY (curl /sql) to local + production and
+# the __rollout rows reconciled by hand. `rollout complete` aborts with
+# "index by_ns_key already contains ['schema','table::stress_test_run']":
+# the schema catalog carries DEFINE TABLE stress_test_run twice (real def in
+# stress_test_run.surql + dependency guard in hardware_test_baseline.surql:27)
+# and surrealkit's per-entity DELETE+CREATE registry sync collides with its
+# own in-transaction insert. Dedupe the guard before the next full-catalog
+# rollout, or future manual manifests will hit the same wall.
+
+# The running DBs predate ClientKind::QcAgent (pre-OS UEFI fingerprint
+# agents), so their field assert still reads IN ['machine', 'build_worker']
+# and qc fingerprint connected_client upserts fail. Re-applies the definition
+# from database/schema/connected_client.surql (also migrations/002).
+# Metadata-only field redefinition; safe to run while the app is up.
+[start]
+ddl = ""
+
+[complete]
+ddl = """
+DEFINE FIELD OVERWRITE client_kind ON connected_client TYPE string DEFAULT 'machine' ASSERT $value IN ['machine', 'build_worker', 'qc_agent'] PERMISSIONS FULL;
+"""

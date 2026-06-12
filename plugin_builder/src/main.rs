@@ -2,16 +2,22 @@
 //! Mastertech plugins on behalf of admin/MCP agents running on
 //! machines without Rust installed.
 //!
-//! Topology:
+//! Default transport (DB mode, Slice 4):
 //! ```text
-//!   Mastertech4.0 (admin, no Rust)          plugin_builder (Docker, has Rust)
-//!           │                                       │
-//!           └──── websocket_server2 (relay) ────────┘
-//!                       /websocket?room_id=build_worker_<host>&role=…
+//!   MCP plugin_compile_remote ──▶ SurrealDB build_job (pending)
+//!                                       │ LIVE SELECT
+//!   plugin_builder claims, compiles, writes wasm_bytes back
+//!                                       │
+//!   MCP plugin_compile_status / axum_server :8082 /api/build/* read results
 //! ```
+//! The worker registers as a `connected_client` row (`client_kind =
+//! build_worker`) and heartbeats every 30 s; `list_build_workers` and
+//! `GET /api/build/workers` surface it from that row. No
+//! websocket_server2 involvement.
 //!
-//! The admin connects with `role=master`; this worker connects with
-//! `role=client`. Bytes flow through the relay verbatim. Both sides
+//! Fallback transport (`MASTERTECH_DB_MODE=0`): the legacy
+//! websocket_server2 room relay on :8081. The admin connects with
+//! `role=master`; this worker connects with `role=client`. Both sides
 //! speak the bincode [`BuilderWire`](plugin_builder::BuilderWire)
 //! protocol.
 //!
@@ -19,11 +25,12 @@
 //!
 //! | Variable                          | Default                                   |
 //! |-----------------------------------|-------------------------------------------|
-//! | `MASTERTECH_WS_URL`               | `ws://127.0.0.1:8081/websocket`           |
+//! | `MASTERTECH_DB_MODE`              | on (`0`/`false`/`off` → WS fallback)      |
+//! | `MASTERTECH_WS_URL`               | `ws://127.0.0.1:8081/websocket` (WS mode) |
 //! | `BUILD_WORKER_HOSTNAME`           | `hostname::get()`                         |
-//! | `BUILD_WORKER_ROOM`               | `build_worker_<hostname>`                 |
+//! | `BUILD_WORKER_ROOM`               | `build_worker_<hostname>` (WS mode)       |
 //! | `BUILD_WORKER_SCRATCH_ROOT`       | `/tmp/mtech-builder`                      |
-//! | `BUILD_WORKER_TARGET_CACHE_ROOT`  | `/var/cache/mtech-builder`                |
+//! | `BUILD_WORKER_TARGET_CACHE_ROOT`  | `/var/cache/mtech-builder` (Docker; use a writable path for bare-metal runs) |
 //! | `RUST_LOG`                        | `plugin_builder=info`                     |
 
 use std::path::PathBuf;
@@ -37,7 +44,7 @@ use tokio_tungstenite::tungstenite::Message;
 use url::Url;
 
 const WORKER_VERSION: &str = env!("CARGO_PKG_VERSION");
-const DEFAULT_WS_URL: &str = "ws://127.0.0.1:8081/websocket";
+const DEFAULT_WS_URL: &str = "ws://0.0.0.0:8081/websocket";
 const DEFAULT_SCRATCH_ROOT: &str = "/tmp/mtech-builder";
 const DEFAULT_TARGET_CACHE_ROOT: &str = "/var/cache/mtech-builder";
 const RECONNECT_BACKOFF: Duration = Duration::from_secs(5);
@@ -69,7 +76,7 @@ fn config_from_env() -> Result<Config> {
         .unwrap_or_else(|_| PathBuf::from(DEFAULT_SCRATCH_ROOT));
     let target_cache_root = std::env::var("BUILD_WORKER_TARGET_CACHE_ROOT")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(DEFAULT_TARGET_CACHE_ROOT));
+        .unwrap_or_else(|_| writable_target_cache_root());
 
     Ok(Config {
         ws_url: url,
@@ -78,6 +85,26 @@ fn config_from_env() -> Result<Config> {
         scratch_root,
         target_cache_root,
     })
+}
+
+/// `/var/cache/mtech-builder` when creatable (Docker), else the user
+/// cache dir so bare-metal `cargo run` works without env overrides.
+fn writable_target_cache_root() -> PathBuf {
+    let preferred = PathBuf::from(DEFAULT_TARGET_CACHE_ROOT);
+    if std::fs::create_dir_all(&preferred).is_ok() {
+        return preferred;
+    }
+    let fallback = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("mtech-builder");
+    log::warn!(
+        "{} not writable; using target cache {} (override with BUILD_WORKER_TARGET_CACHE_ROOT)",
+        preferred.display(),
+        fallback.display()
+    );
+    fallback
 }
 
 /// Returns true if the worker should use SurrealDB live queries

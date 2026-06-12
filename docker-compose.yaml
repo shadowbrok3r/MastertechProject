@@ -64,10 +64,12 @@ services:
     depends_on:
       - websocketserver
     environment:
-      # Points at the websocket_server2 service on the shared `web`
-      # network. Admin Mastertech4.0 instances reach this worker the
-      # same way they reach a customer machine: open a master session
-      # to room_id = build_worker_<hostname>.
+      # Default transport is SurrealDB live queries (DB mode): the
+      # worker registers in connected_client and claims build_job rows
+      # directly; release builds connect to DB_URL_DEV from .env baked
+      # at compile time. MASTERTECH_WS_URL is only used by the legacy
+      # fallback (MASTERTECH_DB_MODE=0): admin Mastertech4.0 opens a
+      # master session to room_id = build_worker_<hostname>.
       MASTERTECH_WS_URL: ws://websocketserver:8081/websocket
       RUST_LOG: plugin_builder=info
     volumes:

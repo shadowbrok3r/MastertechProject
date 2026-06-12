@@ -354,7 +354,7 @@ impl XbmClient {
     }
 
     /// `GET /pool-summary` — per-model rollup + replenishment targets.
-    pub async fn pool_summary(&self) -> Result<Value, XbmError> {
+    pub async fn pool_summary(&self) -> Result<PoolSummaryPayload, XbmError> {
         self.get("/pool-summary", &[]).await
     }
 
