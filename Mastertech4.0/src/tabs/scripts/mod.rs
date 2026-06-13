@@ -532,11 +532,6 @@ impl EguiScriptsTab {
             "Run Junkware Category" => {
                 self.execute_all_junkware(log_tx);
             },
-            "Run Tron" => {
-                let _ = log_tx.try_send(ScriptLogEntry::warning(
-                    category, &script_name, "Tron script not yet implemented"
-                ));
-            },
             "Install LibreOffice" => {
                 self.execute_install_libreoffice(client, log_tx, progress_tx, script_id, category, script_name);
             },
@@ -981,34 +976,26 @@ impl EguiScriptsTab {
         {
             std::thread::spawn(move || {
                 let _ = log_tx.try_send(ScriptLogEntry::info(
-                    category.clone(), &script_name, "Looking for SuperAntiSpyware..."
+                    category.clone(), &script_name, "Starting SuperAntiSpyware quick scan..."
                 ));
-                
-                if let Ok(programs) = InstalledProgram::get_installed_programs() {
-                    for program in programs {
-                        let display_name = program.display_name.clone().unwrap_or_default().to_lowercase();
-                        let publisher = program.publisher.clone().unwrap_or_default().to_lowercase();
-                        if display_name.contains("superantispyware") || publisher.contains("superantispyware") {
-                            let install_path = program.install_location.clone().unwrap_or_default();
-                            let _ = log_tx.try_send(ScriptLogEntry::info(
-                                category.clone(), &script_name,
-                                format!("Found SAS at: {}", install_path)
-                            ));
-                            // Run scan command here
-                            let _ = log_tx.try_send(ScriptLogEntry::success(
-                                category.clone(), &script_name, "SAS scan initiated"
-                            ));
-                            return;
+                match crate::utilities::scripts::antivirus::run_sas_quick_scan() {
+                    Ok(messages) => {
+                        for message in messages {
+                            let _ = log_tx.try_send(ScriptLogEntry::info(category.clone(), &script_name, message));
                         }
+                        let _ = log_tx.try_send(ScriptLogEntry::success(
+                            category, &script_name, "SAS quick scan started"
+                        ));
+                    }
+                    Err(e) => {
+                        let _ = log_tx.try_send(ScriptLogEntry::error(
+                            category, &script_name, format!("SAS scan failed: {e}")
+                        ));
                     }
                 }
-                
-                let _ = log_tx.try_send(ScriptLogEntry::warning(
-                    category, &script_name, "SuperAntiSpyware not found"
-                ));
             });
         }
-        
+
         #[cfg(not(target_os = "windows"))]
         let _ = log_tx.try_send(ScriptLogEntry::warning(
             category, &script_name, "SAS scan only available on Windows"
@@ -1025,37 +1012,19 @@ impl EguiScriptsTab {
         #[cfg(target_os = "windows")]
         {
             std::thread::spawn(move || {
-                let _ = log_tx.try_send(ScriptLogEntry::info(
-                    category.clone(), &script_name, "Looking for Webroot..."
-                ));
-                
-                if let Ok(programs) = InstalledProgram::get_installed_programs() {
-                    for program in programs {
-                        let display_name = program.display_name.clone().unwrap_or_default().to_lowercase();
-                        let publisher = program.publisher.clone().unwrap_or_default().to_lowercase();
-                        if display_name.contains("webroot") || display_name.contains("wrsa")
-                            || publisher.contains("webroot") || publisher.contains("wrsa")
-                        {
-                            let install_path = program.install_location.clone().unwrap_or_default();
-                            let _ = log_tx.try_send(ScriptLogEntry::info(
-                                category.clone(), &script_name,
-                                format!("Found Webroot at: {}", install_path)
-                            ));
-                            // Run scan: wrsa.exe -scan="C:"
-                            let _ = log_tx.try_send(ScriptLogEntry::success(
-                                category.clone(), &script_name, "Webroot scan initiated"
-                            ));
-                            return;
-                        }
+                match crate::utilities::scripts::antivirus::start_webroot_scan() {
+                    Ok(message) => {
+                        let _ = log_tx.try_send(ScriptLogEntry::success(category, &script_name, message));
+                    }
+                    Err(e) => {
+                        let _ = log_tx.try_send(ScriptLogEntry::error(
+                            category, &script_name, format!("Webroot scan failed: {e}")
+                        ));
                     }
                 }
-                
-                let _ = log_tx.try_send(ScriptLogEntry::warning(
-                    category, &script_name, "Webroot not found"
-                ));
             });
         }
-        
+
         #[cfg(not(target_os = "windows"))]
         let _ = log_tx.try_send(ScriptLogEntry::warning(
             category, &script_name, "Webroot scan only available on Windows"
@@ -1174,37 +1143,50 @@ impl EguiScriptsTab {
                 #[cfg(target_os = "windows")]
                 {
             std::thread::spawn(move || {
-                let _ = log_tx.try_send(ScriptLogEntry::info(
-                    category.clone(), &script_name, "Checking startup programs..."
-                ));
-                
-                if let Ok(programs) = StartupProgram::get_startup_programs() {
-                    let enabled_count = programs.iter()
-                        .filter(|p| matches!(p.decoded_state, Some(StartupState::Enabled)))
-                        .count();
-                    
+                use crate::utilities::scripts::{disable_hkcu_startup_entries, onedrive_in_use};
+
+                match disable_hkcu_startup_entries("msedge") {
+                    Ok(messages) => for message in messages {
+                        let _ = log_tx.try_send(ScriptLogEntry::info(
+                            category.clone(), &script_name, format!("Edge: {message}")
+                        ));
+                    },
+                    Err(e) => {
+                        let _ = log_tx.try_send(ScriptLogEntry::error(
+                            category.clone(), &script_name, format!("Edge startup: {e}")
+                        ));
+                    }
+                }
+
+                if onedrive_in_use() {
                     let _ = log_tx.try_send(ScriptLogEntry::info(
                         category.clone(), &script_name,
-                        format!("Found {} enabled startup programs", enabled_count)
+                        "OneDrive has a signed-in account; leaving its startup entry enabled."
                     ));
-                    
-                    for program in programs {
-                        if let Some(StartupState::Enabled) = program.decoded_state {
+                } else {
+                    match disable_hkcu_startup_entries("onedrive") {
+                        Ok(messages) => for message in messages {
                             let _ = log_tx.try_send(ScriptLogEntry::info(
-                                category.clone(), &script_name,
-                                format!("  • {}", program.property_name)
+                                category.clone(), &script_name, format!("OneDrive: {message}")
+                            ));
+                        },
+                        Err(e) => {
+                            let _ = log_tx.try_send(ScriptLogEntry::error(
+                                category.clone(), &script_name, format!("OneDrive startup: {e}")
                             ));
                         }
                     }
-                    
-                    let _ = log_tx.try_send(ScriptLogEntry::success(
-                        category, &script_name, "Startup apps check completed"
-                    ));
-                } else {
-                    let _ = log_tx.try_send(ScriptLogEntry::error(
-                        category, &script_name, "Failed to get startup programs"
-                    ));
+                    // Stop the running instance so sign-in prompts end immediately.
+                    use std::os::windows::process::CommandExt;
+                    let _ = std::process::Command::new("taskkill")
+                        .args(["/F", "/IM", "OneDrive.exe"])
+                        .creation_flags(0x08000000)
+                        .output();
                 }
+
+                let _ = log_tx.try_send(ScriptLogEntry::success(
+                    category, &script_name, "Startup apps processed"
+                ));
             });
         }
         
@@ -2122,26 +2104,7 @@ impl EguiScriptsTab {
 
 #[cfg(target_os = "windows")]
 fn disable_hibernation_and_sleep() -> anyhow::Result<bool> {
-    use powershell_script::PsScriptBuilder;
-    
-    let ps_script = r#"
-        powercfg /change standby-timeout-ac 0
-        powercfg /change standby-timeout-dc 0
-        powercfg /change monitor-timeout-ac 0
-        powercfg /change monitor-timeout-dc 0
-        powercfg /change hibernate-timeout-ac 0
-        powercfg /change hibernate-timeout-dc 0
-    "#;
-
-    let output = PsScriptBuilder::new()
-        .no_profile(true)
-        .non_interactive(true)
-        .hidden(true)
-        .print_commands(false)
-        .build()
-        .run(ps_script)?;
-
-    Ok(!output.stdout().unwrap_or_default().trim().is_empty())
+    crate::terminal_mode::tabs::script_categories::disable_hibernation_and_sleep()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]

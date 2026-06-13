@@ -19,11 +19,31 @@ use crate::runtime;
 const WARMUP_FRACTION: f64 = 0.25;
 pub const DEFAULT_BENCH_SECS: u64 = 15;
 
+/// `benchmark_result.notes` marker for zero-sample executions.
+pub const NO_SAMPLES_NOTE: &str = "no throughput samples collected";
+
+/// How a benchmark execution resolved: scored normally, ran clean but
+/// produced zero throughput samples (score meaningless, non-fatal), or
+/// failed outright.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum BenchmarkStatus {
+    #[default]
+    Scored,
+    NoSamples,
+    Error,
+}
+
 /// Condensed outcome returned to callers (MCP, UI).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BenchmarkOutcome {
     pub kind: String,
     pub label: String,
+    /// `scored`, `no_samples`, or `error`.
+    #[serde(default)]
+    pub status: BenchmarkStatus,
     pub score: f64,
     pub unit: String,
     pub peak: Option<f64>,
@@ -225,9 +245,13 @@ fn run_stressor_benchmark(
             error = Some("benchmark run produced no verdict".to_string());
         }
     }
-    if samples == 0 && error.is_none() {
-        error = Some("no throughput samples collected".to_string());
-    }
+    let mut status = if error.is_some() {
+        BenchmarkStatus::Error
+    } else if samples == 0 {
+        BenchmarkStatus::NoSamples
+    } else {
+        BenchmarkStatus::Scored
+    };
 
     let used_threads = if threads == 0 {
         std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) as u32
@@ -246,10 +270,14 @@ fn run_stressor_benchmark(
     row.max_temp_c = max_temp_c;
     row.avg_temp_c = avg_temp_c;
     row.hostname = sysinfo::System::host_name();
+    if status == BenchmarkStatus::NoSamples {
+        row.notes = Some(NO_SAMPLES_NOTE.to_string());
+    }
     let result_id = match persist_result(&row) {
         Ok(id) => Some(id),
         Err(e) => {
             error.get_or_insert(format!("benchmark_result persist failed: {e}"));
+            status = BenchmarkStatus::Error;
             None
         }
     };
@@ -257,6 +285,7 @@ fn run_stressor_benchmark(
     BenchmarkOutcome {
         kind: kind.as_str().to_string(),
         label: stressor.label().to_string(),
+        status,
         score,
         unit,
         peak,
@@ -285,17 +314,27 @@ fn run_latency_ladder(computer: RecordId) -> BenchmarkOutcome {
     let score = points.last().map(|p| p.latency_ns).unwrap_or(0.0);
     let detail = serde_json::to_value(&points).ok();
 
+    let mut status = if points.is_empty() {
+        BenchmarkStatus::NoSamples
+    } else {
+        BenchmarkStatus::Scored
+    };
+
     let mut row = BenchmarkResult::new(computer, BenchmarkKind::MemoryLatency, score, "ns");
     row.samples = points.len() as u32;
     row.threads = 1;
     row.duration_secs = wall_secs;
     row.detail = detail.clone();
     row.hostname = sysinfo::System::host_name();
+    if status == BenchmarkStatus::NoSamples {
+        row.notes = Some(NO_SAMPLES_NOTE.to_string());
+    }
     let mut persist_error: Option<String> = None;
     let result_id = match persist_result(&row) {
         Ok(id) => Some(id),
         Err(e) => {
             persist_error = Some(format!("benchmark_result persist failed: {e}"));
+            status = BenchmarkStatus::Error;
             None
         }
     };
@@ -303,6 +342,7 @@ fn run_latency_ladder(computer: RecordId) -> BenchmarkOutcome {
     BenchmarkOutcome {
         kind: BenchmarkKind::MemoryLatency.as_str().to_string(),
         label: "Memory Latency Ladder".to_string(),
+        status,
         score,
         unit: "ns".to_string(),
         peak: None,
@@ -317,11 +357,7 @@ fn run_latency_ladder(computer: RecordId) -> BenchmarkOutcome {
         result_id,
         run_id: None,
         detail,
-        error: if points.is_empty() {
-            Some("ladder produced no points".to_string())
-        } else {
-            persist_error
-        },
+        error: persist_error,
     }
 }
 

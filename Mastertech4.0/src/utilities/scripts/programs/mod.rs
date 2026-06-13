@@ -314,6 +314,46 @@ pub fn run_ps_script(script: &str) -> anyhow::Result<String, anyhow::Error> {
     Ok(out)
 }
 
+/// Removes the Copilot Store apps for the current user. On current Win11
+/// builds the taskbar Copilot icon is this pinned app, not the legacy
+/// ShowCopilotButton sidebar, so registry tweaks alone no longer unpin it.
+pub fn remove_copilot_appx() -> anyhow::Result<Vec<String>> {
+    let ps = powershell_script::PsScriptBuilder::new()
+        .no_profile(true)
+        .non_interactive(true)
+        .hidden(true)
+        .print_commands(false)
+        .build();
+
+    let script = r#"
+        foreach ($name in @('Microsoft.Copilot', 'Microsoft.Windows.Ai.Copilot.Provider')) {
+            $pkg = Get-AppxPackage -Name $name -ErrorAction SilentlyContinue
+            if ($pkg) {
+                $pkg | Remove-AppxPackage -ErrorAction SilentlyContinue
+                if (Get-AppxPackage -Name $name -ErrorAction SilentlyContinue) {
+                    "FAILED to remove $name"
+                } else {
+                    "Removed $name"
+                }
+            } else {
+                "$name not present"
+            }
+        }
+    "#;
+
+    let output = ps.run(script)?;
+    let stdout = output.stdout().unwrap_or_default();
+    let lines: Vec<String> = stdout
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+    if lines.iter().any(|l| l.starts_with("FAILED")) {
+        return Err(anyhow::anyhow!(lines.join("; ")));
+    }
+    Ok(lines)
+}
+
 /// Custom deserializer to handle fields that may be a string or a map
 fn deserialize_string_or_map<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where

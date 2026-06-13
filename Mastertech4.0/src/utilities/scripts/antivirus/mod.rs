@@ -38,6 +38,80 @@ pub fn kill_sas_processes() -> u32 {
     killed
 }
 
+/// Starts SAS's own Quick Scan scheduled task via `schtasks /Run`.
+/// Reads the QUICK_SCAN task GUID from SAS_CURRENTUSER.DB3, configuring the
+/// SAS settings + tasks first when none exist yet.
+pub fn run_sas_quick_scan() -> anyhow::Result<Vec<String>> {
+    use std::os::windows::process::CommandExt;
+
+    const SAS_EXE: &str = r"C:\Program Files\SUPERAntiSpyware\SUPERAntiSpyware.exe";
+    if !std::path::Path::new(SAS_EXE).exists() {
+        return Err(anyhow::anyhow!("SUPERAntiSpyware is not installed"));
+    }
+
+    let mut messages = Vec::new();
+    let scan_guid = match sas_tasks::get_quick_scan_task_guid() {
+        Ok(Some(guid)) => guid,
+        _ => {
+            messages.push("No SAS quick-scan task found; configuring SAS scheduled tasks...".to_string());
+            let killed = kill_sas_processes();
+            messages.push(format!("Killed {killed} SAS processes before configuring"));
+            std::thread::sleep(Duration::from_secs(2));
+            let (_, scan_guid) = sas_tasks::configure_sas_scheduled_tasks()?;
+            scan_guid
+        }
+    };
+
+    let task_name = format!(r"\SUPERAntiSpyware\SUPERAntiSpyware Scheduled Task {scan_guid}");
+    let run_task = |name: &str| -> anyhow::Result<std::process::Output> {
+        Ok(std::process::Command::new("schtasks")
+            .args(["/Run", "/TN", name])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()?)
+    };
+
+    let mut output = run_task(&task_name)?;
+    if !output.status.success() {
+        // DB row exists but the Windows task is gone — re-register and retry once.
+        messages.push("SAS scan task missing from Task Scheduler; re-registering...".to_string());
+        let killed = kill_sas_processes();
+        messages.push(format!("Killed {killed} SAS processes before configuring"));
+        std::thread::sleep(Duration::from_secs(2));
+        let (_, scan_guid) = sas_tasks::configure_sas_scheduled_tasks()?;
+        let task_name = format!(r"\SUPERAntiSpyware\SUPERAntiSpyware Scheduled Task {scan_guid}");
+        output = run_task(&task_name)?;
+    }
+
+    if output.status.success() {
+        messages.push(format!("Started SAS quick scan (task {scan_guid})"));
+        Ok(messages)
+    } else {
+        Err(anyhow::anyhow!(
+            "schtasks /Run failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
+/// Launches a Webroot scan of C: using the documented `WRSA.exe -scan="C:"` switch.
+pub fn start_webroot_scan() -> anyhow::Result<String> {
+    use std::os::windows::process::CommandExt;
+
+    let candidates = [
+        r"C:\Program Files\Webroot\WRSA.exe",
+        r"C:\Program Files (x86)\Webroot\WRSA.exe",
+    ];
+    let Some(exe) = candidates.iter().find(|p| std::path::Path::new(p).exists()) else {
+        return Err(anyhow::anyhow!("Webroot (WRSA.exe) is not installed"));
+    };
+
+    std::process::Command::new(exe)
+        .raw_arg(r#"-scan="C:""#)
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()?;
+    Ok(format!("Started Webroot scan: {exe} -scan=\"C:\""))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AntiVirusProduct {
     #[serde(rename = "displayName")]

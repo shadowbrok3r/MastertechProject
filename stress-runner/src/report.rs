@@ -272,6 +272,7 @@ fn failure_detail(run: &StressTestRun) -> Option<String> {
         F::AppError { message, .. } => format!("app error: {message}"),
         F::Bsod { code, .. } => format!("BSOD {}", code.as_deref().unwrap_or("(no code)")),
         F::Tdr { count } => format!("{count} GPU driver reset(s)"),
+        F::GpuDeviceLost { message } => format!("GPU device lost: {message}"),
         F::WheaError { count } => format!("{count} WHEA hardware error(s)"),
         F::ThermalThrottle { peak_temp_c } => format!("thermal limit breached (peak {peak_temp_c:.1}°C)"),
         F::DiskIoError { message } => format!("disk I/O: {message}"),

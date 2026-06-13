@@ -199,14 +199,19 @@ pub fn check_windows_activation() -> anyhow::Result<LicenseStatus, anyhow::Error
     Ok(result)
 }
 
+/// Sets all sleep/display/hibernate timeouts to never and turns hibernation
+/// off. powercfg prints nothing on success, so success is judged by exit codes.
 pub fn disable_hibernation_and_sleep() -> anyhow::Result<bool, anyhow::Error> {
     let ps_script = r#"
-        powercfg /change standby-timeout-ac 0
-        powercfg /change standby-timeout-dc 0
-        powercfg /change monitor-timeout-ac 0
-        powercfg /change monitor-timeout-dc 0
-        powercfg /change hibernate-timeout-ac 0
-        powercfg /change hibernate-timeout-dc 0
+        $failures = @()
+        powercfg /change standby-timeout-ac 0 | Out-Null;   if ($LASTEXITCODE -ne 0) { $failures += 'standby-timeout-ac' }
+        powercfg /change standby-timeout-dc 0 | Out-Null;   if ($LASTEXITCODE -ne 0) { $failures += 'standby-timeout-dc' }
+        powercfg /change monitor-timeout-ac 0 | Out-Null;   if ($LASTEXITCODE -ne 0) { $failures += 'monitor-timeout-ac' }
+        powercfg /change monitor-timeout-dc 0 | Out-Null;   if ($LASTEXITCODE -ne 0) { $failures += 'monitor-timeout-dc' }
+        powercfg /change hibernate-timeout-ac 0 | Out-Null; if ($LASTEXITCODE -ne 0) { $failures += 'hibernate-timeout-ac' }
+        powercfg /change hibernate-timeout-dc 0 | Out-Null; if ($LASTEXITCODE -ne 0) { $failures += 'hibernate-timeout-dc' }
+        powercfg /hibernate off | Out-Null;                 if ($LASTEXITCODE -ne 0) { $failures += 'hibernate-off' }
+        if ($failures.Count -eq 0) { 'ALL_OK' } else { "FAILED: $($failures -join ', ')" }
     "#;
 
     let output = PsScriptBuilder::new()
@@ -217,10 +222,18 @@ pub fn disable_hibernation_and_sleep() -> anyhow::Result<bool, anyhow::Error> {
         .build()
         .run(ps_script)?;
 
-    let stdout = output.stdout();
-    log::info!("disable_hibernation_and_sleep -> stdout: {stdout:?}");
+    let stdout = output.stdout().unwrap_or_default();
+    let stdout = stdout.trim();
+    log::info!("disable_hibernation_and_sleep -> {stdout:?}");
 
-    Ok(!stdout.unwrap_or_default().trim().is_empty())
+    if stdout.contains("ALL_OK") {
+        Ok(true)
+    } else {
+        Err(anyhow::anyhow!(
+            "powercfg reported: {stdout} (stderr: {:?})",
+            output.stderr().unwrap_or_default().trim()
+        ))
+    }
 }
 
 pub fn get_data_transfer_candidates() -> anyhow::Result<Vec<(String, String)>, anyhow::Error> {

@@ -2,6 +2,77 @@ use powershell_script::PsScriptBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[cfg(target_os = "windows")]
+const HKCU_RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+#[cfg(target_os = "windows")]
+const HKCU_STARTUP_APPROVED_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+/// StartupApproved flag bytes: first byte 0x03 marks the entry disabled.
+#[cfg(target_os = "windows")]
+const STARTUP_DISABLED_FLAG: [u8; 12] = [0x03, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+/// True when OneDrive has a signed-in account (any Accounts subkey with a UserEmail).
+#[cfg(target_os = "windows")]
+pub fn onedrive_in_use() -> bool {
+    use windows_registry::CURRENT_USER;
+    let Ok(accounts) = CURRENT_USER.open(r"Software\Microsoft\OneDrive\Accounts") else {
+        return false;
+    };
+    let Ok(subkeys) = accounts.keys() else {
+        return false;
+    };
+    for name in subkeys {
+        if let Ok(account) = accounts.open(&name) {
+            if account.get_string("UserEmail").map(|e| !e.is_empty()).unwrap_or(false) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Disables HKCU Run entries whose value name or command contains `needle`
+/// (case-insensitive) by writing the Task Manager "disabled" flag to
+/// StartupApproved\Run. The Run value itself is left in place so the
+/// customer can re-enable it from Task Manager.
+#[cfg(target_os = "windows")]
+pub fn disable_hkcu_startup_entries(needle: &str) -> anyhow::Result<Vec<String>> {
+    use windows_registry::{Type, CURRENT_USER};
+
+    let run_key = CURRENT_USER.open(HKCU_RUN_KEY)?;
+    let approved = CURRENT_USER
+        .options()
+        .read()
+        .write()
+        .create()
+        .open(HKCU_STARTUP_APPROVED_KEY)?;
+    let needle_lc = needle.to_lowercase();
+    let mut results = Vec::new();
+
+    for (name, value) in run_key.values()? {
+        let command = String::try_from(value).unwrap_or_default();
+        if !name.to_lowercase().contains(&needle_lc) && !command.to_lowercase().contains(&needle_lc) {
+            continue;
+        }
+        let already_disabled = approved
+            .get_value(&name)
+            .ok()
+            .and_then(|v| v.first().copied())
+            .map(|flag| flag == 0x03 || flag == 0x06)
+            .unwrap_or(false);
+        if already_disabled {
+            results.push(format!("'{name}' already disabled"));
+            continue;
+        }
+        approved.set_bytes(&name, Type::Bytes, &STARTUP_DISABLED_FLAG)?;
+        results.push(format!("Disabled startup entry '{name}' ({command})"));
+    }
+
+    if results.is_empty() {
+        results.push(format!("No startup entries matching '{needle}'"));
+    }
+    Ok(results)
+}
+
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct StartupProgram {
     #[serde(rename = "Path")]

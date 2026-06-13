@@ -1548,6 +1548,7 @@ impl VerdictPretty for RunVerdict {
             FailureMode::AppError { .. } => "app error",
             FailureMode::Bsod { .. } => "BSOD",
             FailureMode::Tdr { .. } => "TDR",
+            FailureMode::GpuDeviceLost { .. } => "GPU device lost",
             FailureMode::WheaError { .. } => "WHEA",
             FailureMode::ThermalThrottle { .. } => "thermal throttle",
             FailureMode::DiskIoError { .. } => "disk I/O",
