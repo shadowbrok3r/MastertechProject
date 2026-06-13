@@ -22,8 +22,6 @@ pub fn tuneup_scripts() -> Vec<ScriptItem> {
             .with_description("Run a full scan with Webroot"),
         ScriptItem::new("Run Junkware Category", ScriptCategory::Tuneup)
             .with_description("Remove all known junkware applications"),
-        ScriptItem::new("Run Tron", ScriptCategory::Tuneup)
-            .with_description("Run Tron automated cleanup script"),
         ScriptItem::new("Install LibreOffice", ScriptCategory::Tuneup)
             .with_description("Install LibreOffice via Ninite"),
         ScriptItem::new("Disable proxy settings", ScriptCategory::Tuneup)
@@ -52,6 +50,26 @@ pub fn tuneup_scripts() -> Vec<ScriptItem> {
 pub fn stress_tests_scripts() -> Vec<ScriptItem> {
     vec![
         // Presets
+        ScriptItem::new("Cert: Bronze", ScriptCategory::StressTests)
+            .with_description("Bronze certification (~1.5h): CPU FMA, CPU verify, 80% RAM pattern-verify, GPU compute + matmul")
+            .with_pass_criteria("All stages pass the cert rules (temps, WHEA, throughput stability)")
+            .with_error_criteria("Any rule violation, WHEA delta, or stressor error"),
+        ScriptItem::new("Cert: Silver", ScriptCategory::StressTests)
+            .with_description("Silver certification (~3.5h): CPU FMA + matrix, CPU verify, 80% RAM pattern-verify, GPU compute + matmul, PSU combined load")
+            .with_pass_criteria("All stages pass the cert rules (temps, WHEA, throughput stability)")
+            .with_error_criteria("Any rule violation, WHEA delta, or stressor error"),
+        ScriptItem::new("Cert: Gold", ScriptCategory::StressTests)
+            .with_description("Gold certification (~8h): CPU FMA/matrix/integer/verify, Linpack, 80% RAM pattern-verify, GPU compute + matmul, 80% VRAM verify, PSU combined load")
+            .with_pass_criteria("All stages pass the cert rules (temps, WHEA, throughput stability)")
+            .with_error_criteria("Any rule violation, WHEA delta, or stressor error"),
+        ScriptItem::new("Cert: Platinum", ScriptCategory::StressTests)
+            .with_description("Platinum certification (~12h): extended CPU mix, Linpack, 2h RAM pattern-verify, GPU compute/matmul/VRAM/PCIe, disk, PSU combined load")
+            .with_pass_criteria("All stages pass the cert rules (temps, WHEA, throughput stability)")
+            .with_error_criteria("Any rule violation, WHEA delta, or stressor error"),
+        ScriptItem::new("Power Virus", ScriptCategory::StressTests)
+            .with_description("Power virus (30m): concurrent CPU FMA + GPU compute at max load for PSU and thermal validation")
+            .with_pass_criteria("Run completes within temp limits; no WHEA, no TDR")
+            .with_error_criteria("Any rule violation, WHEA delta, or TDR event"),
         ScriptItem::new("GPU Stress Test", ScriptCategory::StressTests)
             .with_description("4-stage GPU probe: compute → matmul → VRAM write-verify → PCIe round-trip")
             .with_pass_criteria("All stages above throughput floors; no TDR, no ECC errors, no VRAM mismatches")
@@ -166,7 +184,8 @@ pub fn stress_tests_scripts() -> Vec<ScriptItem> {
         ScriptItem::new("Benchmark Suite", ScriptCategory::StressTests)
             .with_description("Standard scored suite: cpu single/multi, matrix, linpack, memory bandwidth, memcpy, latency ladder, disk (+ GPU kinds when present); ~15 s each")
             .with_pass_criteria("All benchmarks complete with zero errors; scores persisted")
-            .with_error_criteria("Any benchmark errors or fails to produce samples"),
+            .with_warning_criteria("Kind reporting status no_samples (zero throughput ticks; row persisted unscored, suite still passes)")
+            .with_error_criteria("Any benchmark errors"),
         ScriptItem::new("Benchmark: CPU Single", ScriptCategory::StressTests)
             .with_description("Single-thread FMA throughput score (Mflop/s)"),
         ScriptItem::new("Benchmark: CPU Multi", ScriptCategory::StressTests)

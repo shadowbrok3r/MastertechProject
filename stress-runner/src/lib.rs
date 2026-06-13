@@ -86,7 +86,7 @@ pub use hardware::{ensure_components_for_run, ensure_components_from_snapshot};
 
 pub use benchmark::{
     default_suite, parse_benchmark_kind, run_benchmark, run_benchmark_script, BenchmarkOutcome,
-    DEFAULT_BENCH_SECS,
+    BenchmarkStatus, DEFAULT_BENCH_SECS, NO_SAMPLES_NOTE,
 };
 pub use controller::{
     RunController, RunPlan, RunSpec, RunStage, RunUpdate, RunVerdict, StageOutcome,

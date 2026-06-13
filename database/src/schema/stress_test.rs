@@ -623,6 +623,11 @@ pub enum FailureMode {
     Tdr {
         count: u32,
     },
+    /// GPU stressor reported device loss/removal (wgpu device-lost or
+    /// uncaptured device error) without a logged TDR event.
+    GpuDeviceLost {
+        message: String,
+    },
     /// WHEA-Logger event count exceeded baseline during the run.
     WheaError {
         count: u32,
@@ -632,8 +637,7 @@ pub enum FailureMode {
     ThermalThrottle {
         peak_temp_c: f32,
     },
-    /// Stress-kit `Metrics.last_error` populated (only the disk
-    /// stressor sets this today).
+    /// Disk stressor I/O failure reported via `Metrics.last_error`.
     DiskIoError {
         message: String,
     },
@@ -672,6 +676,7 @@ impl FailureMode {
             Self::AppError { .. } => "app_error",
             Self::Bsod { .. } => "bsod",
             Self::Tdr { .. } => "tdr",
+            Self::GpuDeviceLost { .. } => "gpu_device_lost",
             Self::WheaError { .. } => "whea_error",
             Self::ThermalThrottle { .. } => "thermal_throttle",
             Self::DiskIoError { .. } => "disk_io_error",

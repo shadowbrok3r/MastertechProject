@@ -1,5 +1,5 @@
-use crate::{tabs::tur_sheet::get_ticket::SendRequest, terminal_mode::tabs::{checklist::Category, script_categories::{get_data_transfer_candidates, disable_hibernation_and_sleep}, scripts::Reporter, ScriptsTab}, utilities::{scripts::{antivirus::kill_sas_processes, install_sas, install_supereasybackup, install_webroot, run_ps_script}, windows::windows_update::install_windows_updates}};
-use crate::{utilities::{scripts::{install_program, StartupProgram, StartupState}, windows::{registry::{align_taskbar_left, disable_account_notifications, disable_content_delivery_allowed, disable_copilot, disable_lockscreen_notifications, disable_notifications, disable_recent_items_tracking, disable_silent_installed_apps_enabled, disable_start_account_notifications, disable_subscribed_content_enabled, disable_system_pane_suggestions_enabled, enable_more_pins_layout, remove_chat_from_taskbar}}}};
+use crate::{tabs::tur_sheet::get_ticket::SendRequest, terminal_mode::tabs::{checklist::Category, script_categories::{get_data_transfer_candidates, disable_hibernation_and_sleep}, scripts::Reporter, ScriptsTab}, utilities::{scripts::{antivirus::{kill_sas_processes, run_sas_quick_scan, start_webroot_scan}, install_sas, install_supereasybackup, install_webroot}, windows::windows_update::install_windows_updates}};
+use crate::{utilities::{scripts::{install_program, disable_hkcu_startup_entries, onedrive_in_use, remove_copilot_appx}, windows::{registry::{align_taskbar_left, disable_account_notifications, disable_content_delivery_allowed, disable_copilot, disable_lockscreen_notifications, disable_notifications, disable_recent_items_tracking, disable_silent_installed_apps_enabled, disable_start_account_notifications, disable_subscribed_content_enabled, disable_system_pane_suggestions_enabled, enable_more_pins_layout, remove_chat_from_taskbar}}}};
 
 
 impl <'a> ScriptsTab <'a> {
@@ -24,7 +24,6 @@ impl <'a> ScriptsTab <'a> {
             "Activate Webroot" => self.activate_webroot(item_text, category),
             "Activate SuperAnti" => self.activate_superanti(item_text, category),
             "Activate SEB" => self.activate_seb(item_text, category),
-            "Run Tron" => self.run_tron(item_text, category),
             "Run SuperAntiSpyware Scan" => self.run_superantispyware_scan(item_text, category),
             "Run Webroot Scan" => self.run_webroot_scan(item_text, category),
             "Run Junkware Category" => self.run_junkware_category(item_text, category),
@@ -49,15 +48,14 @@ impl <'a> ScriptsTab <'a> {
     // Tuneup Items
     pub fn disable_sleep_hibernation(&mut self, item_text: &str, category: &Category) {
         match disable_hibernation_and_sleep() {
-            Ok(disabled) => {
-                if disabled {
-                    self.log_message(format!("Disabled Sleep / Hibernation"));
-                    self.update_checklist(category.clone(), item_text, disabled);
-                } else {
-                    self.log_message(format!("Sleep / Hibernation already disabled"));
-                }
+            Ok(_) => {
+                self.log_message("Sleep / display / hibernate timeouts set to never; hibernation off.");
+                self.update_checklist(category.clone(), item_text, true);
             }
-            Err(e) => self.log_message(format!("Sleep / Hibernation already disabled? {e:?}")),
+            Err(e) => {
+                self.log_message(format!("Disable Sleep / Hibernation failed: {e:?}"));
+                self.update_checklist(category.clone(), item_text, false);
+            }
         }
     }
     
@@ -207,35 +205,40 @@ impl <'a> ScriptsTab <'a> {
         self.update_checklist(category.clone(), item_text, false);
     }
 
-    pub fn run_tron(&mut self, item_text: &str, category: &Category) {
-        self.log_message("Tron script not implemented yet.");
-        self.update_checklist(category.clone(), item_text, false);   
-    }
-
     pub fn run_webroot_scan(&mut self, item_text: &str, category: &Category) {
-        for program in self.installed_programs.iter() {
-            let display_name = program.display_name.clone().unwrap_or_default().to_lowercase();
-            let publisher = program.publisher.clone().unwrap_or_default().to_lowercase();
-            if display_name.contains("webroot")
-                || display_name.contains("wrsa")
-                || publisher.contains("webroot")
-                || publisher.contains("wrsa")
-            {
-                let install_path = program.install_location.clone().unwrap_or_default();
-                let res = run_ps_script(&format!("{install_path} -scan=\"C:\""));
-                match res {
-                    Ok(out) => self.log_message(format!("Webroot scan: {out}")),
-                    Err(e) => self.log_message(format!("Error running Webroot scan: {e:?}")),
-                }
+        match start_webroot_scan() {
+            Ok(message) => {
+                self.log_message(message);
+                self.update_checklist(category.clone(), item_text, true);
+            }
+            Err(e) => {
+                self.log_message(format!("Webroot scan failed: {e:?}"));
+                self.update_checklist(category.clone(), item_text, false);
             }
         }
-        self.update_checklist(category.clone(), item_text, false);
     }
 
-    /// TODO: NOT YET IMPLEMENTED
+    /// Starts SAS's own Quick Scan scheduled task, creating it first if needed.
     pub fn run_superantispyware_scan(&mut self, item_text: &str, category: &Category) {
-        self.log_message("SuperAntiSpyware scan not implemented.");  
-        self.update_checklist(category.clone(), item_text, false);
+        self.log_message("Starting SuperAntiSpyware quick scan...");
+        let log_tx = self.script_log_tx.clone();
+        let checklist_tx = self.checklist_completion_tx.clone();
+        let category_clone = category.clone();
+        let item_clone = item_text.to_string();
+        std::thread::spawn(move || {
+            match run_sas_quick_scan() {
+                Ok(messages) => {
+                    for message in messages {
+                        let _ = log_tx.try_send(message);
+                    }
+                    let _ = checklist_tx.try_send((category_clone, item_clone, true));
+                }
+                Err(e) => {
+                    let _ = log_tx.try_send(format!("SuperAntiSpyware scan failed: {e:?}"));
+                    let _ = checklist_tx.try_send((category_clone, item_clone, false));
+                }
+            }
+        });
     }
 
     pub fn run_junkware_category(&mut self, item_text: &str, category: &Category) {
@@ -422,39 +425,83 @@ impl <'a> ScriptsTab <'a> {
         }
     }
 
-    /// TODO: NOT YET IMPLEMENTED
+    /// Disables Edge auto-launch startup entries, and the OneDrive startup
+    /// entry when no OneDrive account is signed in.
     pub fn disable_startup_apps(&mut self, item_text: &str, category: &Category) {
-        if let Ok(programs) = StartupProgram::get_startup_programs() {
-            for program in programs {
-                log::info!("startup program -> {program:?}");
-                if let Some(StartupState::Enabled) = program.decoded_state {
-                    self.log_message(format!("startup program -> {program:?}")); 
-                }
+        let mut all_ok = true;
+
+        match disable_hkcu_startup_entries("msedge") {
+            Ok(messages) => for message in messages {
+                self.log_message(format!("Edge: {message}"));
+            },
+            Err(e) => {
+                all_ok = false;
+                self.log_message(format!("Edge startup: {e:?}"));
             }
         }
-        self.update_checklist(category.clone(), item_text, false);
+
+        if onedrive_in_use() {
+            self.log_message("OneDrive has a signed-in account; leaving its startup entry enabled.");
+        } else {
+            match disable_hkcu_startup_entries("onedrive") {
+                Ok(messages) => for message in messages {
+                    self.log_message(format!("OneDrive: {message}"));
+                },
+                Err(e) => {
+                    all_ok = false;
+                    self.log_message(format!("OneDrive startup: {e:?}"));
+                }
+            }
+            // Stop the running instance so sign-in prompts end immediately.
+            use std::os::windows::process::CommandExt;
+            let _ = std::process::Command::new("taskkill")
+                .args(["/F", "/IM", "OneDrive.exe"])
+                .creation_flags(0x08000000)
+                .output();
+            self.log_message("OneDrive not signed in: killed OneDrive.exe");
+        }
+
+        self.update_checklist(category.clone(), item_text, all_ok);
     }
 
     pub fn unpin_copilot(&mut self, item_text: &str, category: &Category) {
+        let mut all_ok = true;
         match disable_copilot() {
             Ok(results) => {
                 for result in results.iter() {
                     self.log_message(result);
                 }
             },
-            Err(e) => self.log_message(format!("Error disabling copilot: {e:?}")),
+            Err(e) => {
+                all_ok = false;
+                self.log_message(format!("Error disabling copilot: {e:?}"));
+            }
         }
-        self.update_checklist(category.clone(), item_text, true);
+        match remove_copilot_appx() {
+            Ok(messages) => for message in messages {
+                self.log_message(message);
+            },
+            Err(e) => {
+                all_ok = false;
+                self.log_message(format!("Error removing Copilot app: {e:?}"));
+            }
+        }
+        self.update_checklist(category.clone(), item_text, all_ok);
     }
 
     pub fn align_taskbar_left(&mut self, item_text: &str, category: &Category) {
         match align_taskbar_left() {
-            Ok(messages) => for message in messages {
-                self.log_message(&format!("TaskBarAlignment => {}", message.trim()));
+            Ok(messages) => {
+                for message in messages {
+                    self.log_message(&format!("TaskBarAlignment => {}", message.trim()));
+                }
+                self.update_checklist(category.clone(), item_text, true);
             },
-            Err(e) => self.log_message(&format!("TaskBarAlignment => {e:?}")),
+            Err(e) => {
+                self.log_message(&format!("TaskBarAlignment => {e:?}"));
+                self.update_checklist(category.clone(), item_text, false);
+            }
         }
-        self.update_checklist(category.clone(), item_text, false);
     }
 
     // WindowsUpdates Items

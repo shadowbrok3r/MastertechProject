@@ -2,7 +2,8 @@
 //! system with partially-pivoted LU, solve, and check the normalized
 //! residual ||Ax-b||inf / (||A||inf * ||x||inf * N * eps) against the HPL
 //! convention threshold. Breaches accumulate in `Metrics::errors`.
-//! Reports GFLOPS (2/3 N^3 + 2 N^2 per solve).
+//! Workers advance a shared flop counter per eliminated column, so every
+//! tick reports GFLOPS even while a solve is still in flight.
 //!
 //! A is regenerated from its seed for the residual check, so each worker
 //! holds one matrix plus three vectors.
@@ -27,35 +28,34 @@ pub(crate) fn run(
     started_at: Instant,
 ) {
     let n = matrix_order(memory_cap_mb, thread_count);
-    let flops_per_solve = (2.0 / 3.0) * (n as f64).powi(3) + 2.0 * (n as f64).powi(2);
 
-    let solve_counter = Arc::new(AtomicU64::new(0));
+    let flop_counter = Arc::new(AtomicU64::new(0));
     let error_counter = Arc::new(AtomicU64::new(0));
     let error_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
     let handles: Vec<_> = (0..thread_count)
         .map(|worker_id| {
             let cancel = cancel.clone();
-            let solves = solve_counter.clone();
+            let flops = flop_counter.clone();
             let errors = error_counter.clone();
             let slot = error_slot.clone();
             thread::Builder::new()
                 .name("stress-kit-linpack".into())
-                .spawn(move || linpack_worker(worker_id, n, cancel, solves, errors, slot))
+                .spawn(move || linpack_worker(worker_id, n, cancel, flops, errors, slot))
                 .expect("stress-kit: failed to spawn linpack worker")
         })
         .collect();
 
     let mut last_tick = Instant::now();
-    let mut last_solves: u64 = 0;
+    let mut last_flops: u64 = 0;
 
     while !cancel.load(Ordering::Relaxed) {
         thread::sleep(Duration::from_millis(50));
         if last_tick.elapsed() >= TICK {
-            let now = solve_counter.load(Ordering::Relaxed);
-            let delta = now.saturating_sub(last_solves);
+            let now = flop_counter.load(Ordering::Relaxed);
+            let delta = now.saturating_sub(last_flops);
             let delta_secs = last_tick.elapsed().as_secs_f64().max(f64::EPSILON);
-            let gflops = (delta as f64 * flops_per_solve) / delta_secs / 1e9;
+            let gflops = delta as f64 / delta_secs / 1e9;
 
             let _ = tx.send(Metrics {
                 elapsed_secs: started_at.elapsed().as_secs_f64(),
@@ -65,7 +65,7 @@ pub(crate) fn run(
                 errors: error_counter.load(Ordering::Relaxed),
             });
 
-            last_solves = now;
+            last_flops = now;
             last_tick = Instant::now();
         }
     }
@@ -86,7 +86,7 @@ fn linpack_worker(
     worker_id: usize,
     n: usize,
     cancel: Arc<AtomicBool>,
-    solves: Arc<AtomicU64>,
+    flops: Arc<AtomicU64>,
     errors: Arc<AtomicU64>,
     slot: Arc<Mutex<Option<String>>>,
 ) {
@@ -150,6 +150,9 @@ fn linpack_worker(
                 }
                 b[row] -= factor * b[k];
             }
+            // Column k: (n-k-1) rows × (1 div + 2(n-k-1) row update + 2 b update).
+            let rows = (n - k - 1) as u64;
+            flops.fetch_add(rows * (2 * rows + 3), Ordering::Relaxed);
         }
 
         // Back substitution into x.
@@ -161,6 +164,8 @@ fn linpack_worker(
             x[row] = sum / a[row * n + row];
         }
         std::hint::black_box(&x);
+        // Back substitution: ~n^2 flops.
+        flops.fetch_add((n * n) as u64, Ordering::Relaxed);
 
         // Residual against the regenerated original system.
         let mut rng = seed | 1;
@@ -194,8 +199,6 @@ fn linpack_worker(
                 *g = Some(msg);
             }
         }
-
-        solves.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -211,4 +214,42 @@ fn xorshift64(mut v: u64) -> u64 {
 #[inline]
 fn uniform(v: u64) -> f64 {
     (v >> 11) as f64 * (1.0 / (1u64 << 53) as f64) - 0.5
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Benchmark-shaped run (all threads, 1024 MB cap) must produce nonzero
+    /// throughput ticks while the first solve is still in flight.
+    #[test]
+    fn ticks_report_throughput_mid_solve() {
+        let thread_count = thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::channel::<Metrics>();
+        let started = Instant::now();
+
+        let cancel_run = cancel.clone();
+        let supervisor = thread::spawn(move || {
+            run(thread_count, 1024, &cancel_run, &tx, started);
+        });
+
+        let mut nonzero = 0u32;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline && nonzero < 3 {
+            match rx.recv_timeout(Duration::from_millis(600)) {
+                Ok(m) if m.throughput > 0.0 => nonzero += 1,
+                Ok(_) => {}
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        cancel.store(true, Ordering::SeqCst);
+        let _ = supervisor.join();
+
+        assert!(
+            nonzero >= 3,
+            "expected >=3 nonzero throughput ticks within 10s, got {nonzero}"
+        );
+    }
 }

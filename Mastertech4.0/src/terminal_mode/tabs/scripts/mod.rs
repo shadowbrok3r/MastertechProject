@@ -212,8 +212,7 @@ impl<'a> ScriptsTab<'a> {
                     TodoItem::new("Run SuperAntiSpyware Scan", Category::Tuneup),
                     TodoItem::new("Run Webroot Scan", Category::Tuneup),
                     TodoItem::new("Run Junkware Category", Category::JunkwareRemoval),
-                    TodoItem::new("Run Tron", Category::Tuneup), 
-                    // TodoItem::new("--------------------------------", Category::Tuneup), 
+                    // TodoItem::new("--------------------------------", Category::Tuneup),
                     TodoItem::new("Install LibreOffice", Category::Tuneup),
                     TodoItem::new("Disable proxy settings", Category::Tuneup), // Works
                     TodoItem::new("Disable Notifications", Category::Tuneup),

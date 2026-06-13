@@ -316,12 +316,17 @@ impl TerminalWebsocketClient {
 
         // After a drop (e.g. network driver during Windows Update), reconnect instead of spinning on a dead sender.
         const RECONNECT_DELAY: Duration = Duration::from_secs(2);
+        // Keepalive: ping cadence and the silence window after which the socket is presumed dead.
+        const PING_INTERVAL: Duration = Duration::from_secs(10);
+        const LIVENESS_TIMEOUT: Duration = Duration::from_secs(45);
 
         'ws_session: loop {
             let connection = ewebsock::connect(connection_url.clone(), ewebsock::Options::default());
 
             match connection {
                 Ok((ws_sender, receiver)) => {
+                    let mut last_event_at = Instant::now();
+                    let mut last_ping_at = Instant::now();
                     // Wrap the raw `WsSender` in our transport-agnostic
                     // `ClientTransport`. Existing `sender.send(WsMessage::...)`
                     // call sites inside `handle_command` work unchanged
@@ -337,6 +342,7 @@ impl TerminalWebsocketClient {
                     while let Some(event) = receiver.try_recv() {
                         // log::info!("Received WebSocket event: {:?}", event);
                         // update client to connected = false in db
+                        last_event_at = Instant::now();
                         match event {
                             WsEvent::Opened => { 
                                 log::info!("start_websocket_sender -> Connection Opened");
@@ -489,10 +495,28 @@ impl TerminalWebsocketClient {
                             Some(sysinfo) = self.sysinfo_rx.recv() => {
                                 sender.send(WsMessage::Binary(sysinfo));
                             }
+                            // Wake periodically so the event drain and keepalive run even with no outbound traffic.
+                            _ = tokio::time::sleep(PING_INTERVAL) => {}
                         }
                     }
 
-                    // Let other tasks run before looping again // THIS IS REQUIRED, or else the 
+                    // Keepalive: pong replies refresh last_event_at; prolonged silence means the
+                    // socket died without a Close/Error event (half-open TCP), so force a redial.
+                    if last_ping_at.elapsed() >= PING_INTERVAL {
+                        sender.send(WsMessage::Ping(Vec::new()));
+                        last_ping_at = Instant::now();
+                    }
+                    if last_event_at.elapsed() >= LIVENESS_TIMEOUT {
+                        log::warn!("start_websocket_sender -> no socket events for {LIVENESS_TIMEOUT:?}; reconnecting");
+                        let _ = connection_state_tx.send((false, "Connection silent — reconnecting".to_string()));
+                        let _ = start_tx.send(false);
+                        *ready = false;
+                        self.persistent_shell = None;
+                        tokio::time::sleep(RECONNECT_DELAY).await;
+                        continue 'ws_session;
+                    }
+
+                    // Let other tasks run before looping again // THIS IS REQUIRED, or else the
                     // server will not actually receive an Open event, and will terminate the loop
                     // immediately. we need to give some CPU time to yield, allowing the websocket
                     // handshake to complete
@@ -2191,16 +2215,16 @@ if (Test-Path $path) {{
                         }
 
                         "Unpin Copilot" => {
+                            let mut ok = true;
                             match crate::utilities::windows::registry::disable_copilot() {
-                                Ok(results) => {
-                                    for r in &results { send_log(&tx, r.clone()); }
-                                    send_result(&tx, &script.name, RemoteScriptStatus::Success);
-                                }
-                                Err(e) => {
-                                    send_log(&tx, format!("Error: {e}"));
-                                    send_result(&tx, &script.name, RemoteScriptStatus::Failed);
-                                }
+                                Ok(results) => for r in &results { send_log(&tx, r.clone()); },
+                                Err(e) => { ok = false; send_log(&tx, format!("Error: {e}")); }
                             }
+                            match crate::utilities::scripts::remove_copilot_appx() {
+                                Ok(msgs) => for m in msgs { send_log(&tx, m); },
+                                Err(e) => { ok = false; send_log(&tx, format!("Copilot app removal: {e}")); }
+                            }
+                            send_result(&tx, &script.name, if ok { RemoteScriptStatus::Success } else { RemoteScriptStatus::Failed });
                         }
 
                         "Align Taskbar to left" => {
@@ -2504,8 +2528,64 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                             send_result(&tx, &script.name, if all_ok { RemoteScriptStatus::Success } else { RemoteScriptStatus::Failed });
                         }
 
-                        "Disable proxy settings" | "Disable Startup Apps" | "Run Tron"
-                        | "Run SuperAntiSpyware Scan" | "Run Webroot Scan" | "Data Transfer"
+                        "Run SuperAntiSpyware Scan" => {
+                            let (sas_tx, sas_rx) = tokio::sync::oneshot::channel();
+                            std::thread::spawn(move || {
+                                let _ = sas_tx.send(crate::utilities::scripts::antivirus::run_sas_quick_scan());
+                            });
+                            match sas_rx.await {
+                                Ok(Ok(msgs)) => {
+                                    for m in msgs { send_log(&tx, m); }
+                                    send_result(&tx, &script.name, RemoteScriptStatus::Success);
+                                }
+                                Ok(Err(e)) => {
+                                    send_log(&tx, format!("SAS scan: {e}"));
+                                    send_result(&tx, &script.name, RemoteScriptStatus::Failed);
+                                }
+                                Err(_) => {
+                                    send_log(&tx, "SAS scan worker dropped".into());
+                                    send_result(&tx, &script.name, RemoteScriptStatus::Failed);
+                                }
+                            }
+                        }
+
+                        "Run Webroot Scan" => {
+                            match crate::utilities::scripts::antivirus::start_webroot_scan() {
+                                Ok(msg) => {
+                                    send_log(&tx, msg);
+                                    send_result(&tx, &script.name, RemoteScriptStatus::Success);
+                                }
+                                Err(e) => {
+                                    send_log(&tx, format!("Webroot scan: {e}"));
+                                    send_result(&tx, &script.name, RemoteScriptStatus::Failed);
+                                }
+                            }
+                        }
+
+                        "Disable Startup Apps" => {
+                            let mut ok = true;
+                            match crate::utilities::scripts::disable_hkcu_startup_entries("msedge") {
+                                Ok(msgs) => for m in msgs { send_log(&tx, format!("Edge: {m}")); },
+                                Err(e) => { ok = false; send_log(&tx, format!("Edge startup: {e}")); }
+                            }
+                            if crate::utilities::scripts::onedrive_in_use() {
+                                send_log(&tx, "OneDrive has a signed-in account; leaving its startup entry enabled.".into());
+                            } else {
+                                match crate::utilities::scripts::disable_hkcu_startup_entries("onedrive") {
+                                    Ok(msgs) => for m in msgs { send_log(&tx, format!("OneDrive: {m}")); },
+                                    Err(e) => { ok = false; send_log(&tx, format!("OneDrive startup: {e}")); }
+                                }
+                                use std::os::windows::process::CommandExt;
+                                let _ = std::process::Command::new("taskkill")
+                                    .args(["/F", "/IM", "OneDrive.exe"])
+                                    .creation_flags(0x08000000)
+                                    .output();
+                                send_log(&tx, "OneDrive not signed in: killed OneDrive.exe".into());
+                            }
+                            send_result(&tx, &script.name, if ok { RemoteScriptStatus::Success } else { RemoteScriptStatus::Failed });
+                        }
+
+                        "Disable proxy settings" | "Data Transfer"
                         | "When Was The Last Service Date?"
                         | "Are there scheduled tasks for it?"
                         | "Run Junkware Category" => {
@@ -2563,17 +2643,26 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                                 };
 
                                 let mut success = true;
+                                let mut no_sample_kinds: Vec<String> = Vec::new();
                                 for o in &outcomes {
                                     if o.errors > 0 || o.error.is_some() {
                                         success = false;
                                     }
+                                    if o.status == stress_runner::BenchmarkStatus::NoSamples {
+                                        no_sample_kinds.push(o.kind.clone());
+                                    }
                                     let _ = bench_tx.send(BenchMsg::Log(format!(
-                                        "{}: {:.1} {} (peak {:.1}) errors={}{}{}",
+                                        "{}: {:.1} {} (peak {:.1}) errors={}{}{}{}",
                                         o.kind,
                                         o.score,
                                         o.unit,
                                         o.peak.unwrap_or(o.score),
                                         o.errors,
+                                        if o.status == stress_runner::BenchmarkStatus::NoSamples {
+                                            " — status: no_samples (not scored)"
+                                        } else {
+                                            ""
+                                        },
                                         o.result_id
                                             .as_deref()
                                             .map(|id| format!(" [{id}]"))
@@ -2584,10 +2673,16 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                                             .unwrap_or_default(),
                                     )));
                                 }
+                                let summary = if !success {
+                                    "errors detected".to_string()
+                                } else if no_sample_kinds.is_empty() {
+                                    "all clean".to_string()
+                                } else {
+                                    format!("clean, no samples from: {}", no_sample_kinds.join(", "))
+                                };
                                 let _ = bench_tx.send(BenchMsg::Log(format!(
-                                    "{} benchmark(s) complete, {}",
+                                    "{} benchmark(s) complete, {summary}",
                                     outcomes.len(),
-                                    if success { "all clean" } else { "errors detected" }
                                 )));
                                 let _ = bench_tx.send(BenchMsg::Done(success));
                             });
@@ -2704,6 +2799,19 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                                         }
                                     }
                                     RunUpdate::StageFinished { .. } => {}
+                                    RunUpdate::StageVerdict { index, label: stage_label, pass, violations, .. } => {
+                                        let _ = probe_tx.send(ProbeMsg::Log(format!(
+                                            "{label} stage {} '{stage_label}': {}",
+                                            index + 1,
+                                            if pass { "PASS" } else { "FAIL" }
+                                        )));
+                                        for violation in violations {
+                                            let _ = probe_tx.send(ProbeMsg::Log(format!(
+                                                "{label} stage {} violation: {violation}",
+                                                index + 1
+                                            )));
+                                        }
+                                    }
                                     RunUpdate::Finished(v) => {
                                         success = v.result == RunResult::Pass;
                                         let result_str = match v.result {

@@ -2925,6 +2925,9 @@ impl PluginToolProvider {
             "reboot" => FailureMode::Reboot,
             "timeout" => FailureMode::Timeout,
             "tdr" => FailureMode::Tdr { count: 1 },
+            "gpu_device_lost" => FailureMode::GpuDeviceLost {
+                message: p.notes.clone().unwrap_or_default(),
+            },
             "bsod" => FailureMode::Bsod {
                 code: None,
                 bugcheck_args: None,

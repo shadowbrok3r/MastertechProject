@@ -64,17 +64,26 @@ impl<'a> ScriptsTab<'a> {
             };
 
             let mut success = true;
+            let mut no_sample_kinds: Vec<String> = Vec::new();
             for o in &outcomes {
                 if o.errors > 0 || o.error.is_some() {
                     success = false;
                 }
+                if o.status == stress_runner::BenchmarkStatus::NoSamples {
+                    no_sample_kinds.push(o.kind.clone());
+                }
                 let _ = log_tx.try_send(format!(
-                    "{}: {:.1} {} (peak {:.1}) errors={}{}{}",
+                    "{}: {:.1} {} (peak {:.1}) errors={}{}{}{}",
                     o.kind,
                     o.score,
                     o.unit,
                     o.peak.unwrap_or(o.score),
                     o.errors,
+                    if o.status == stress_runner::BenchmarkStatus::NoSamples {
+                        " — status: no_samples (not scored)"
+                    } else {
+                        ""
+                    },
                     o.result_id
                         .as_deref()
                         .map(|id| format!(" [{id}]"))
@@ -85,10 +94,16 @@ impl<'a> ScriptsTab<'a> {
                         .unwrap_or_default(),
                 ));
             }
+            let summary = if !success {
+                "errors detected".to_string()
+            } else if no_sample_kinds.is_empty() {
+                "all clean".to_string()
+            } else {
+                format!("clean, no samples from: {}", no_sample_kinds.join(", "))
+            };
             let _ = log_tx.try_send(format!(
-                "{name} complete: {} benchmark(s), {}",
+                "{name} complete: {} benchmark(s), {summary}",
                 outcomes.len(),
-                if success { "all clean" } else { "errors detected" }
             ));
             let _ = checklist_tx.try_send((category_clone, item_clone, success));
         });
@@ -181,6 +196,16 @@ impl<'a> ScriptsTab<'a> {
                     }
                 }
                 RunUpdate::StageFinished { .. } => {}
+                RunUpdate::StageVerdict { index, label: stage_label, pass, violations, .. } => {
+                    let _ = log_tx.try_send(format!(
+                        "{label} stage {} '{stage_label}': {}",
+                        index + 1,
+                        if pass { "PASS" } else { "FAIL" }
+                    ));
+                    for violation in violations {
+                        let _ = log_tx.try_send(format!("{label} stage {} violation: {violation}", index + 1));
+                    }
+                }
                 RunUpdate::Finished(v) => {
                     success = v.result == RunResult::Pass;
                     let result_str = match v.result {

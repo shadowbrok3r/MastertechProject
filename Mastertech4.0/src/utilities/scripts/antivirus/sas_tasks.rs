@@ -435,6 +435,20 @@ fn configure_sas_settings_and_tasks() -> anyhow::Result<(String, String)> {
     Ok((tasks[0].guid.clone(), tasks[1].guid.clone()))
 }
 
+/// Reads the active QUICK_SCAN task GUID from SAS_CURRENTUSER.DB3, if any.
+pub fn get_quick_scan_task_guid() -> anyhow::Result<Option<String>> {
+    let db_path = get_sas_currentuser_db_path()?;
+    let conn = Connection::open(&db_path)?;
+    let guid = conn
+        .query_row(
+            "SELECT taskid FROM ScheduledTasks WHERE type = 'QUICK_SCAN' AND disabled = 'no' LIMIT 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .ok();
+    Ok(guid)
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /// Apply the SAS settings reference table to SAS_CURRENTUSER.DB3 and register

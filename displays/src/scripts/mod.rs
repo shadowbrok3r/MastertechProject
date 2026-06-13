@@ -45,7 +45,7 @@ impl Display for ScriptStatus {
 /// Planned wall-clock budget in seconds for one remote script run.
 pub fn default_remote_script_timeout_secs(script_name: &str) -> u64 {
     match script_name {
-        "Run Tron" | "Data Transfer" => 7200,
+        "Data Transfer" => 7200,
         "Install Windows Updates" | "Run SuperAntiSpyware Scan" | "Run Webroot Scan" => 3600,
         "Activate CPS" | "Activate Webroot" | "Activate SuperAnti" | "Activate SEB" => 1800,
         // 12+ benchmarks at ~15 s each plus warmup and persistence.

@@ -1207,6 +1207,23 @@ fn send(tx: &Sender<RunUpdate>, update: RunUpdate) {
 // Summary accumulator
 // ---------------------------------------------------------------------------
 
+/// `Metrics.last_error` strings originating from stress-kit's GPU stressors:
+/// stage prefixes (`gpu:`, `gpu_matmul:`, `gpu_vram:`, `gpu_pcie:`), wgpu
+/// device-loss/removal text, and the psu stressor's GPU-leg warnings.
+fn is_gpu_error_message(msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    m.starts_with("gpu")
+        || m.contains("gpu device failed")
+        || m.contains("device is lost")
+        || m.contains("device lost")
+        || m.contains("device removed")
+        || m.contains("dxgi_error")
+        || m.contains("gpu unavailable")
+        || m.contains("gpu leg stopped")
+        || m.contains("readback map failed")
+        || m.contains("without 'gpu' feature")
+}
+
 #[derive(Default)]
 struct SummaryAccumulator {
     max_temp_c: Option<f32>,
@@ -1226,12 +1243,18 @@ struct SummaryAccumulator {
     tdr_delta_count: u32,
     max_gpu_temp_c: Option<f32>,
     disk_io_errors: u32,
+    /// GPU-classified `last_error` transitions (device lost, acquire failed).
+    gpu_device_errors: u32,
     max_power_w: Option<u32>,
     /// `Metrics.errors` from stages that already reset their counter.
     completed_stage_errors: u64,
     /// Latest cumulative `Metrics.errors` of the in-flight stage.
     current_stage_errors: u64,
     last_error: Option<String>,
+    /// Message of the latest counted GPU-classified error.
+    last_gpu_error: Option<String>,
+    /// Message of the latest counted disk-classified error.
+    last_disk_error: Option<String>,
     scenario_finish: Option<DbFinishReason>,
 }
 
@@ -1273,7 +1296,13 @@ impl SummaryAccumulator {
             // Count message transitions only; `latest_metrics` repeats the
             // same string every tick until the stressor replaces it.
             if metrics.errors == 0 && self.last_error.as_deref() != Some(err.as_str()) {
-                self.disk_io_errors = self.disk_io_errors.saturating_add(1);
+                if is_gpu_error_message(err) {
+                    self.gpu_device_errors = self.gpu_device_errors.saturating_add(1);
+                    self.last_gpu_error = Some(err.clone());
+                } else {
+                    self.disk_io_errors = self.disk_io_errors.saturating_add(1);
+                    self.last_disk_error = Some(err.clone());
+                }
             }
             self.last_error = Some(err.clone());
         }
@@ -1399,6 +1428,7 @@ impl SummaryAccumulator {
             || summary.whea_delta_count > 0
             || summary.test_errors > 0
             || summary.disk_io_errors > 0
+            || self.gpu_device_errors > 0
             || summary.bsod_detected
             || summary.thermal_throttle_detected;
 
@@ -1409,11 +1439,19 @@ impl SummaryAccumulator {
                 }
             } else if let Some(mode) = rules_failure {
                 mode
+            } else if self.gpu_device_errors > 0 {
+                FailureMode::GpuDeviceLost {
+                    message: self.last_gpu_error.clone().unwrap_or_default(),
+                }
             } else if summary.test_errors > 0 {
                 FailureMode::DataMismatch { addresses: None }
             } else if summary.disk_io_errors > 0 {
                 FailureMode::DiskIoError {
-                    message: self.last_error.clone().unwrap_or_default(),
+                    message: self
+                        .last_disk_error
+                        .clone()
+                        .or_else(|| self.last_error.clone())
+                        .unwrap_or_default(),
                 }
             } else {
                 FailureMode::None
@@ -1499,4 +1537,121 @@ fn rules_failure_mode(
     }
 
     tdr.or(temp).or(mismatch).or(collapse).or(unstable)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tick(last_error: Option<&str>, errors: u64) -> Metrics {
+        Metrics {
+            elapsed_secs: 1.0,
+            throughput: 0.0,
+            last_error: last_error.map(|s| s.to_string()),
+            fatal: false,
+            errors,
+        }
+    }
+
+    fn verdict_for(acc: SummaryAccumulator) -> RunVerdict {
+        let run_id = RecordId::new("stress_test_run", "verdict-test");
+        let cancel = Arc::new(AtomicBool::new(false));
+        let tool = TestTool::StressKit {
+            stressor: database::schema::StressKitStressor::GpuMatmul,
+        };
+        acc.into_verdict(&run_id, &cancel, 60.0, &tool, &None, Vec::new())
+    }
+
+    #[test]
+    fn gpu_error_messages_classify_as_gpu() {
+        for msg in [
+            "gpu: GPU device failed (1 error(s)): Unknown: Device is lost",
+            "gpu_matmul: GPU device failed (3 error(s)): Validation Error",
+            "gpu_vram: 3 consecutive readback failures; aborting stage",
+            "gpu_pcie acquire failed: no GPU adapters found",
+            "readback map failed (1/3)",
+            "psu: GPU unavailable, running CPU-only (no GPU adapters found)",
+            "psu: GPU leg stopped (GPU device failed (1 error(s)): Unknown: Device is lost); continuing CPU-only",
+            "stress-kit built without 'gpu' feature",
+        ] {
+            assert!(is_gpu_error_message(msg), "should classify as GPU: {msg}");
+        }
+    }
+
+    #[test]
+    fn disk_error_messages_do_not_classify_as_gpu() {
+        for msg in [
+            "disk thread 0: Access is denied. (os error 5)",
+            "disk thread 3: The device is not ready. (os error 21)",
+        ] {
+            assert!(!is_gpu_error_message(msg), "should not classify as GPU: {msg}");
+        }
+    }
+
+    #[test]
+    fn gpu_device_lost_maps_to_gpu_failure_kind() {
+        let mut acc = SummaryAccumulator::default();
+        let snapshot = TelemetrySnapshot::default();
+        let msg = "gpu: GPU device failed (1 error(s)): Unknown: Device is lost";
+        for _ in 0..3 {
+            acc.absorb(&tick(Some(msg), 0), &snapshot, "GFLOPS");
+        }
+        assert_eq!(acc.gpu_device_errors, 1, "repeated message counts once");
+        assert_eq!(acc.disk_io_errors, 0);
+
+        let verdict = verdict_for(acc);
+        assert_eq!(verdict.result, RunResult::Fail);
+        assert_eq!(verdict.failure_mode.kind(), "gpu_device_lost");
+        assert_eq!(
+            verdict.failure_mode,
+            FailureMode::GpuDeviceLost { message: msg.to_string() }
+        );
+    }
+
+    #[test]
+    fn disk_errors_still_map_to_disk_io_error() {
+        let mut acc = SummaryAccumulator::default();
+        let snapshot = TelemetrySnapshot::default();
+        let msg = "disk thread 0: Access is denied. (os error 5)";
+        acc.absorb(&tick(Some(msg), 0), &snapshot, "MiB/s");
+        assert_eq!(acc.disk_io_errors, 1);
+        assert_eq!(acc.gpu_device_errors, 0);
+
+        let verdict = verdict_for(acc);
+        assert_eq!(verdict.result, RunResult::Fail);
+        assert_eq!(
+            verdict.failure_mode,
+            FailureMode::DiskIoError { message: msg.to_string() }
+        );
+    }
+
+    #[test]
+    fn gpu_failure_outranks_disk_error_and_keeps_gpu_message() {
+        let mut acc = SummaryAccumulator::default();
+        let snapshot = TelemetrySnapshot::default();
+        let disk_msg = "disk thread 1: write failed";
+        let gpu_msg = "gpu_matmul: GPU device failed (1 error(s)): Unknown: Device is lost";
+        acc.absorb(&tick(Some(disk_msg), 0), &snapshot, "MiB/s");
+        acc.absorb(&tick(Some(gpu_msg), 0), &snapshot, "GFLOPS");
+        assert_eq!(acc.disk_io_errors, 1);
+        assert_eq!(acc.gpu_device_errors, 1);
+
+        let verdict = verdict_for(acc);
+        assert_eq!(verdict.failure_mode.kind(), "gpu_device_lost");
+        assert_eq!(
+            verdict.failure_mode,
+            FailureMode::GpuDeviceLost { message: gpu_msg.to_string() }
+        );
+    }
+
+    #[test]
+    fn clean_run_still_passes() {
+        let mut acc = SummaryAccumulator::default();
+        let snapshot = TelemetrySnapshot::default();
+        acc.absorb(&tick(None, 0), &snapshot, "GFLOPS");
+
+        let verdict = verdict_for(acc);
+        assert_eq!(verdict.result, RunResult::Pass);
+        assert_eq!(verdict.failure_mode, FailureMode::None);
+    }
 }
