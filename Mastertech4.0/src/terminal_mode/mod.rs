@@ -23,6 +23,7 @@ pub mod data;
 pub mod context;
 pub mod websockets;
 pub mod modals;
+pub mod embedded;
 
 static SPLASH_CONFIG: SplashConfig = SplashConfig {
     image_data: include_bytes!("../assets/masterlogoV3.png"),
@@ -92,8 +93,14 @@ pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
     Ok(())
 }
 
-impl Default for TerminalApp <'_>{
+impl Default for TerminalApp<'_> {
     fn default() -> Self {
+        Self::build(EventHandler::new())
+    }
+}
+
+impl<'a> TerminalApp<'a> {
+    fn build(event_handler: EventHandler) -> Self {
         let client = Client::new();
         // Create channels explicitly for communication between Data and Render systems
         let (data_to_render_tx, data_to_render_rx) = unbounded::<Box<dyn Message>>();
@@ -155,7 +162,7 @@ impl Default for TerminalApp <'_>{
             render_system,
             event_manager,
             logger: Logger::new(),
-            event_handler: EventHandler::new(),
+            event_handler,
             manual_connect_rx,
             plugin_manager,
         }
@@ -174,8 +181,6 @@ impl <'a>TerminalApp<'a> {
         // render splash screen
         let mut splash_screen = SplashScreen::new(SPLASH_CONFIG)?;
 
-        let notifications: Arc<Mutex<Vec<Notification>>> = self.render_system.notifications.clone();
-        let ui_messages: Arc<Mutex<Vec<Box<dyn Message>>>> = self.render_system.ui_messages.clone();
         // Create a shutdown channel
         let (shutdown_tx, _) = tokio::sync::broadcast::channel(1);
 
@@ -303,46 +308,78 @@ impl <'a>TerminalApp<'a> {
                         }
                     }
 
-                    let page_state = &mut Tab::default();
-                    
-                    if let Ok(mut menu) = self.menu_bar.try_borrow_mut() {
-                        menu.check_active_tab();
-                        *page_state = menu.current_tab.borrow().clone();
-                    }
-
-                    match *page_state {
-                        Tab::TurSheet => self.event_manager.process_events(),
-                        Tab::Scripts => self.event_manager.process_events(),
-                        Tab::Tasks => self.event_manager.process_events(),
-                        Tab::Ncdu => self.event_manager.process_events(),
-                        Tab::SystemInfo => self.event_manager.process_events(),
-                        Tab::Logs => self.event_manager.process_events(),
-                        Tab::Login => self.event_manager.process_events(),
-                        Tab::Webconsole => self.event_manager.process_events(),
-                    }
-
-                    self.tasks_tab.borrow_mut().check_tasks();
-                    let layout = Layout::default()
-                        .direction(Direction::Vertical)
-                        .constraints([
-                            Constraint::Length(4), // tab row: fixed 4 lines so it doesn't grow
-                            Constraint::Fill(1),  // content: takes the rest
-                        ]);
-
-                    let outer_chunks = layout.split(area);
-
-                    let tab_layout = Layout::default()
-                        .direction(Direction::Horizontal)
-                        .constraints([Constraint::Percentage(100)])
-                        .split(outer_chunks[0]);
-            
-                    let _ = self.menu_bar::<B>(f, tab_layout, outer_chunks);
-                    self.render_systems::<B>(f, notifications.clone(), ui_messages.clone());
+                    self.render_frame::<B>(f);
                     Self::send_buffer(f, last_sent, send_interval, can_start, buffer_tx.clone());
                 }
             })?;
         }
         Ok(())
+    }
+
+    /// Construct a `TerminalApp` for rendering inside egui through a
+    /// `RataguiBackend`. Uses an inert event handler since input is injected
+    /// via `handle_events`, skipping the crossterm/raw-mode terminal.
+    pub fn new_embedded() -> Self {
+        Self::build(EventHandler::new_inert())
+    }
+
+    /// Mark the embedded terminal as logged in using the egui process's already
+    /// authenticated session. Seeds the user so `RenderSystem` fetches data over
+    /// the shared global database; no new `Database::new()` connection is made.
+    pub fn seed_authenticated_user(&self, user: database::schema::User) {
+        if let Ok(ctx) = self.ctx.lock() {
+            let _ = ctx
+                .data_sender
+                .send(Box::new(systems::communication_system::DataMessage(user)));
+            let _ = ctx
+                .app_state_tx
+                .try_send(crate::AppState::Authenticated(displays::app_state::MainPages::Tasks));
+        }
+    }
+
+    /// Spawn the data and render background systems against `shutdown_tx`.
+    /// Omits the websocket sender and direct-TCP listener that the GUI process
+    /// already owns.
+    pub fn spawn_core_systems(
+        &self,
+        shutdown_tx: &tokio::sync::broadcast::Sender<()>,
+    ) -> Vec<tokio::task::JoinHandle<()>> {
+        let data_system = self.data_system.clone();
+        let data_shutdown = shutdown_tx.subscribe();
+        let render_system = self.render_system.clone();
+        let render_shutdown = shutdown_tx.subscribe();
+        vec![
+            tokio::spawn(async move { data_system.run(data_shutdown).await; }),
+            tokio::spawn(async move { render_system.run(render_shutdown).await; }),
+        ]
+    }
+
+    /// Render one frame of the TUI into `f`: menu bar, active tab content, and
+    /// notification/message overlays. Shared by the standalone loop and the
+    /// embedded egui driver.
+    pub fn render_frame<B: Backend>(&mut self, f: &mut Frame) {
+        let area = f.area();
+        f.buffer_mut().set_style(area, Style::new().bg(APP_BACKGROUND));
+
+        if let Ok(mut menu) = self.menu_bar.try_borrow_mut() {
+            menu.check_active_tab();
+        }
+        self.event_manager.process_events();
+        self.tasks_tab.borrow_mut().check_tasks();
+
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(4), Constraint::Fill(1)]);
+        let outer_chunks = layout.split(area);
+        let tab_layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(100)])
+            .split(outer_chunks[0]);
+
+        let _ = self.menu_bar::<B>(f, tab_layout, outer_chunks);
+        let notifications = self.render_system.notifications.clone();
+        let ui_messages = self.render_system.ui_messages.clone();
+        self.render_systems::<B>(f, notifications, ui_messages);
     }
 
     fn menu_bar<B: Backend>(&mut self, f: &mut Frame, tab_layout: Rc<[Rect]>, outer_chunks: Rc<[Rect]>) -> anyhow::Result<(), anyhow::Error> {

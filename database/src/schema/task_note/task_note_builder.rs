@@ -366,7 +366,7 @@ impl TaskNote {
                         .request_subresources_by_id_wasm("employees", "employee", &customer_message.id_employee)
                         .await?;
 
-                    let user = User::query_user_from_email(employee.email.clone()).await?;
+                    let user = User::query_user_or_employee_from_email(employee.email.clone()).await?;
                     let task_note = TaskNote {
                         id: RecordId::new(TASK_NOTE_TABLE, customer_message.id.clone()),
                         task_id: task_id.clone().ok_or_else(|| {

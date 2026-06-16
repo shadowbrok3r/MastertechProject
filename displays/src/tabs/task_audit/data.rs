@@ -232,6 +232,7 @@ impl TaskRowViewer {
             draft.task_notes,
             false,
             false,
+            None,
         )
         .await;
 

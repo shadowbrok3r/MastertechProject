@@ -1,6 +1,7 @@
-use eframe::egui::{Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Popup, PopupCloseBehavior, RectAlign, Response, RichText, ScrollArea, Shadow, Style, TextEdit, Ui, Widget};
+use eframe::egui::{Align, Button, CentralPanel, Color32, Direction, Frame, Label, Layout, Margin, Popup, PopupCloseBehavior, RectAlign, Response, RichText, ScrollArea, Shadow, Style, TextEdit, Ui, Widget};
 use database::{live_data::handle_live_delete, schema::{random_record_id, RecordIdExt, TaskNotePayload, User, TASK_NOTE_TABLE}};
-use super::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
+use super::markdown_editor::SHORTCUT_ENTER;
+use crate::ui_tools::mention_handler::{mention_label_job, MentionHandler};
 use std::{collections::{BTreeSet, HashMap, HashSet}, f32, sync::Arc};
 use crate::{get_current_user_from_auth, get_toast_sender, ui_tools::theme, PlatformSpawner, Spawner, ToastMessage};
 use crossbeam::channel::{Receiver, Sender};
@@ -18,7 +19,7 @@ pub struct ChatView{
     pub messages: Vec<TaskNotePayload>,
     pub current_user: User,
     #[serde(skip)]
-    markdown_editor: EasyMarkEditor,
+    mention_handler: MentionHandler,
     delete: Option<TaskNotePayload>,
     users: BTreeSet<String>,
     edit_text: HashMap<String, TaskNotePayload>,
@@ -59,7 +60,7 @@ impl Default for ChatView {
             title: "Chat".to_string(), 
             messages: Vec::new(),
             current_user,
-            markdown_editor: EasyMarkEditor::default(),
+            mention_handler: MentionHandler::default(),
             delete: None,
             users: BTreeSet::new(),
             edit_text: HashMap::new(),
@@ -119,7 +120,7 @@ impl ChatView {
             },
             messages: vec![],
             title: "Chat".to_string(),
-            markdown_editor: EasyMarkEditor::new(),
+            mention_handler: MentionHandler::new(),
             delete: None,
             users: users_set,
             edit_text: HashMap::new(),
@@ -391,15 +392,15 @@ impl ChatView {
             ui.style_mut().visuals.widgets.inactive.bg_fill = Color32::BLACK;
             let enter_pressed = ui.input_mut(|i| i.consume_shortcut(&SHORTCUT_ENTER));
             
-            let markdown_editor = &mut self.markdown_editor;
-            markdown_editor.inputs = self.users.clone();
-            markdown_editor.allow_private = !self.prestashop_only;
+            let mention_handler = &mut self.mention_handler;
+            mention_handler.inputs = self.users.clone();
+            mention_handler.allow_private = !self.prestashop_only;
 
-            if let Some(response) = markdown_editor.ui(ui) {
+            if let Some(response) = mention_handler.ui(ui) {
                 if response.clicked() || enter_pressed {
-                    let txt = markdown_editor.submit();
+                    let txt = mention_handler.submit();
                     info!("chats/mod.rs -> Txt: {txt}");
-                    markdown_editor.clear();
+                    mention_handler.clear();
 
                     let usr = &mut self.current_user.clone();
                     if usr.get_email().is_empty() {
@@ -428,7 +429,7 @@ impl ChatView {
                                 id_employee: Some(id_employee.to_string()),
                                 id_customer_thread,
                                 service_number: self.service_number.clone(),
-                                private: markdown_editor.private_note.clone(),
+                                private: mention_handler.private_note.clone(),
                                 id: random_record_id(TASK_NOTE_TABLE),
                                 created_at: Utc::now().into(),
                                 id_customer_message: None,
@@ -730,7 +731,9 @@ impl ChatView {
                                             .show(ui);
                                     }
                                 } else {
-                                    viewer::easy_mark(ui, &item.note);
+                                    let wrap_width = ui.available_width();
+                                    let job = mention_label_job(ui, &item.note, wrap_width);
+                                    ui.add(Label::new(job).selectable(true));
                                 }
                             });
                         }).response;

@@ -87,6 +87,13 @@ impl EventHandler {
         Self { rx }
     }
 
+    /// Event handler with no crossterm reader. Embedded (egui) mode injects
+    /// input through `TerminalApp::handle_events` instead of a TTY.
+    pub fn new_inert() -> Self {
+        let (_tx, rx) = unbounded();
+        Self { rx }
+    }
+
     pub fn next(&mut self) -> anyhow::Result<Event, TryRecvError>{
         self.rx.try_recv()
     }

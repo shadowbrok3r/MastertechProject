@@ -1,5 +1,5 @@
 use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TaskCreationResult, TicketData, User, prestashop::OrderType, entity_link::computer_has_minimal_hardware},DATABASE};
-use crate::{get_current_user_from_auth, get_toast_sender, ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, PlatformSpawner, Spawner, ToastMessage};
+use crate::{get_current_user_from_auth, get_toast_sender, ui_tools::autocomplete::AutoCompleteTextEdit, ui_tools::icons, DisplayModal, PlatformSpawner, Spawner, ToastMessage};
 use eframe::egui::{Align, Button, Color32, ComboBox, Frame, RichText, Spinner, Stroke, TextEdit, Ui, Vec2, Widget, vec2};
 use database::schema::utilities::create_full_task_payload;
 use database::schema::{fetch_prestashop_order, OrderLookup};
@@ -11,6 +11,16 @@ use crossbeam::channel::{Sender, Receiver};
 use std::collections::BTreeSet;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
+
+/// Whether `assignee` maps to a real `user` record.
+#[derive(Serialize, Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssigneeVerification {
+    #[default]
+    Unverified,
+    Pending,
+    Verified,
+    NotFound,
+}
 
 #[derive(Serialize, Default, Debug, Clone)]
 pub struct CreateTaskModal {
@@ -40,6 +50,14 @@ pub struct CreateTaskModal {
     pub creation_result_rx: Option<Receiver<TaskCreationResult>>,
     /// Text to copy to clipboard after successful creation
     pub clipboard_text: Option<String>,
+    /// Verification state of `assignee` against the `user` table.
+    pub assignee_status: AssigneeVerification,
+    /// The `assignee` value that `assignee_status` refers to.
+    pub verified_assignee: String,
+    #[serde(skip)]
+    pub assignee_verify_tx: Option<Sender<(String, bool)>>,
+    #[serde(skip)]
+    pub assignee_verify_rx: Option<Receiver<(String, bool)>>,
 }
 
 // TODO This is an ugly implementation
@@ -62,6 +80,7 @@ impl CreateTaskModal {
         prestashop_api_tx: Sender<PrestashopPayload>,
     ) -> Self {
         let (creation_result_tx, creation_result_rx) = crossbeam::channel::unbounded();
+        let (assignee_verify_tx, assignee_verify_rx) = crossbeam::channel::unbounded();
         Self {
             title: title.to_owned(),
             min_width: Some(500.0),
@@ -82,6 +101,8 @@ impl CreateTaskModal {
             creation_result_tx: Some(creation_result_tx),
             creation_result_rx: Some(creation_result_rx),
             clipboard_text: None,
+            assignee_verify_tx: Some(assignee_verify_tx),
+            assignee_verify_rx: Some(assignee_verify_rx),
             ..Default::default()
         }
     }
@@ -255,6 +276,22 @@ impl CreateTaskModal {
         ui: &mut Ui,
         prestashop_api_tx: Sender<PrestashopPayload>,
     ) -> ModalAction {
+        if let Some(rx) = &self.assignee_verify_rx {
+            while let Ok((checked, exists)) = rx.try_recv() {
+                if checked == self.assignee {
+                    self.assignee_status = if exists {
+                        AssigneeVerification::Verified
+                    } else {
+                        AssigneeVerification::NotFound
+                    };
+                    self.verified_assignee = checked;
+                }
+            }
+        }
+        if self.assignee_status == AssigneeVerification::Pending {
+            ui.ctx().request_repaint();
+        }
+
         ui.vertical_centered(|ui| {
             let mut lost_focus = false;
             self.tur.tur_sheet(ui, prestashop_api_tx.clone());
@@ -292,6 +329,42 @@ impl CreateTaskModal {
         
             if r.lost_focus() {
                 lost_focus = true;
+            }
+
+            if self.assignee != self.verified_assignee {
+                self.assignee_status = AssigneeVerification::Unverified;
+            }
+
+            let exact_match = self.store_users.iter().any(|u| u.get_username() == self.assignee);
+            if !self.assignee.is_empty()
+                && self.assignee_status == AssigneeVerification::Unverified
+                && (lost_focus || exact_match)
+            {
+                self.assignee_status = AssigneeVerification::Pending;
+                self.verified_assignee = self.assignee.clone();
+                if let Some(tx) = self.assignee_verify_tx.clone() {
+                    let assignee = self.assignee.clone();
+                    PlatformSpawner::spawn(async move {
+                        let exists = User::username_exists(assignee.clone()).await.unwrap_or(false);
+                        let _ = tx.try_send((assignee, exists));
+                    });
+                }
+            }
+
+            match self.assignee_status {
+                AssigneeVerification::Pending => {
+                    Spinner::new().size(14.0).ui(ui);
+                    ui.label(RichText::new("Verifying assignee...").color(Color32::LIGHT_BLUE));
+                }
+                AssigneeVerification::NotFound => {
+                    let color = ui.visuals().error_fg_color;
+                    ui.label(RichText::new(format!("{}  No such user - pick a valid assignee", icons::STATUS_ERR)).color(color));
+                }
+                AssigneeVerification::Verified => {
+                    let color = Color32::from_rgb(120, 200, 120);
+                    ui.label(RichText::new(format!("{}  Assignee verified", icons::STATUS_READY)).color(color));
+                }
+                AssigneeVerification::Unverified => {}
             }
         
             ui.add_space(15.0);
@@ -351,7 +424,9 @@ impl CreateTaskModal {
             let check = !self.task_name.is_empty() && !self.description.is_empty() && !self.assignee.is_empty();
 
             let enabled = if (pulling_ticket && check) || (check) { true } else { false };
-            let enabled = enabled && !self.creating_task;
+            let assignee_verified = self.assignee_status == AssigneeVerification::Verified
+                && self.assignee == self.verified_assignee;
+            let enabled = enabled && !self.creating_task && assignee_verified;
 
             // Show spinner when creating task
             if self.creating_task {
@@ -494,6 +569,14 @@ impl CreateTaskModal {
                         }
                         
                         let send_specs = computer_has_minimal_hardware(&payload.computer_data);
+                        // Honor the verified assignee field; fall back to salesman/creator if it can't resolve.
+                        let assignee_override = match User::query_user_from_email(assignee.clone()).await {
+                            Ok(user) => Some(user.get_id()),
+                            Err(e) => {
+                                log::warn!("Assignee '{assignee}' did not resolve ({e:?}); deferring to salesman/creator fallback");
+                                None
+                            }
+                        };
                         let create_task_result = create_full_task_payload(
                             payload.ticket_data.into(),
                             payload.customer_data.clone(),
@@ -502,6 +585,7 @@ impl CreateTaskModal {
                             payload.task_notes,
                             send_specs,
                             false,
+                            assignee_override,
                         ).await;
                         info!("create_task_result: {create_task_result:?}");
 

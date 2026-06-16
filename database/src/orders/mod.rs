@@ -244,6 +244,75 @@ pub struct PhotoCheck {
     pub count: usize,
 }
 
+/// Backend-neutral federated serial history (Shopify + Odoo + PrestaShop),
+/// flattened to what a bench tech needs: where the part lives now, its Odoo
+/// lot state, prior allocations, and recall/RMA red flags.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SerialHistorySummary {
+    pub serial: String,
+    pub found: bool,
+    pub active_recall: bool,
+    pub batch_rma_count: i64,
+    /// Current Shopify install, e.g. `"#1003 (Jane Doe)"`.
+    pub current_order: Option<String>,
+    pub disposition: Option<String>,
+    /// Odoo lot one-liner: `"name — product"`.
+    pub odoo_lot: Option<String>,
+    /// Count of prior PrestaShop order allocations for this serial.
+    pub prestashop_allocations: usize,
+    /// Human-readable flags worth surfacing in red (recall, double-alloc, …).
+    pub flags: Vec<String>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl From<crate::xbm::SerialHistory> for SerialHistorySummary {
+    fn from(h: crate::xbm::SerialHistory) -> Self {
+        let mut flags = Vec::new();
+        if h.active_recall {
+            flags.push("ACTIVE RECALL on this part".to_string());
+        }
+        if h.batch_rma_count > 0 {
+            flags.push(format!("{} batch-RMA sibling(s)", h.batch_rma_count));
+        }
+        let current_order = h.shopify.as_ref().and_then(|s| s.order.as_ref()).map(|o| {
+            match o.customer.as_deref() {
+                Some(c) if !c.is_empty() => format!("{} ({c})", o.name.clone().unwrap_or_default()),
+                _ => o.name.clone().unwrap_or_default(),
+            }
+        });
+        let disposition = h
+            .shopify
+            .as_ref()
+            .and_then(|s| s.disposition.clone())
+            .filter(|d| !d.trim().is_empty());
+        if let Some(d) = disposition.as_deref() {
+            if matches!(d, "qc_reject" | "rma_bin") {
+                flags.push(format!("previously dispositioned: {d}"));
+            }
+        }
+        let odoo_lot = h.odoo.as_ref().map(|l| match l.product_name.as_deref() {
+            Some(p) if !p.is_empty() => format!("{} — {p}", l.name),
+            _ => l.name.clone(),
+        });
+        // A serial live on a Shopify order AND carrying prior PS allocations is
+        // a double-allocation smell worth flagging.
+        if h.shopify.is_some() && !h.prestashop.is_empty() {
+            flags.push("also allocated in PrestaShop — verify not double-installed".to_string());
+        }
+        Self {
+            serial: h.serial,
+            found: h.found,
+            active_recall: h.active_recall,
+            batch_rma_count: h.batch_rma_count,
+            current_order,
+            disposition,
+            odoo_lot,
+            prestashop_allocations: h.prestashop.len(),
+            flags,
+        }
+    }
+}
+
 /// QC sign-off checklist (ported from `qc_wizard.qc_sign_off` columns).
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, SurrealValue)]
 pub struct QcChecklist {
@@ -539,6 +608,17 @@ impl QcBackend {
         match self {
             Self::Prestashop(b) => b.check_build_photos(order).await,
             Self::Shopify(b) => b.check_build_photos(order).await,
+        }
+    }
+
+    /// Federated serial history. Shopify routes through the XBM
+    /// `/serials/{serial}` endpoint; PrestaShop has no equivalent wired here.
+    pub async fn serial_history(&self, serial: &str) -> anyhow::Result<SerialHistorySummary> {
+        match self {
+            Self::Shopify(b) => b.serial_history(serial).await,
+            Self::Prestashop(_) => Err(anyhow::anyhow!(
+                "Serial federation for PCL runs through xidax-lookup, not the bench order backend."
+            )),
         }
     }
 }

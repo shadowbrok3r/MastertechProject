@@ -24,13 +24,14 @@ pub const SALES_QC_TARGET: i64 = 71;
 /// Repair advance target on gate pass: Service Begun.
 pub const REPAIR_QC_TARGET: i64 = 26;
 
-/// Xidax bench flow statuses: planned W7 ids (109 In QC / 43 Burn-in) plus
-/// 71 "QC & Burn-in" — the id the live store actually carries (2026-06
-/// `/statuses` capture; 109 absent there and 43 is a repair status).
-pub const XIDAX_BENCH_STATUSES: &[i64] = &[109, 43, 71];
+/// Xidax bench flow status: 71 "QC & Burn-in" (live `/statuses` capture
+/// 2026-06). The plan's 109 In QC / 43 Burn-in don't exist on the store —
+/// 109 is absent and 43 is "Replacement Part Received - Repair Underway".
+pub const XIDAX_BENCH_STATUSES: &[i64] = &[71];
 
-/// Xidax bench advance target on verdict pass: Preparing to Ship.
-pub const XIDAX_BENCH_TARGET: i64 = 76;
+/// Xidax bench advance target on verdict pass: 67 "Preparing to Ship".
+/// (The plan's 76 is absent on the live store.)
+pub const XIDAX_BENCH_TARGET: i64 = 67;
 
 /// Display names for the legacy ids this module references.
 pub fn status_name(legacy_id: i64) -> &'static str {
@@ -48,7 +49,7 @@ pub fn status_name(legacy_id: i64) -> &'static str {
         30 => "In Repair",
         31 => "In Repair - Remote",
         40 => "Done Shelf",
-        43 => "Burn-in",
+        43 => "Replacement Part Received - Repair Underway (Remote)",
         45 => "Pending Payment",
         57 => "Build Pending",
         58 => "Pending Review",
@@ -57,7 +58,6 @@ pub fn status_name(legacy_id: i64) -> &'static str {
         70 => "Pre-Pulled",
         71 => "QC & Burn-in",
         73 => "Order Placed",
-        76 => "Preparing to Ship",
         80 => "Pulled",
         82 => "Ready to Pull",
         84 => "Returned",
@@ -79,12 +79,15 @@ pub fn status_name(legacy_id: i64) -> &'static str {
     }
 }
 
-pub fn status_display(legacy_id: i64, fallback: &str) -> String {
+/// `live_name` (from the backend payload) is authoritative; the static map is
+/// the fallback for callers that only have a legacy id (PCL gate evaluation).
+pub fn status_display(legacy_id: i64, live_name: &str) -> String {
+    if !live_name.is_empty() {
+        return live_name.to_string();
+    }
     let name = status_name(legacy_id);
     if !name.is_empty() {
         name.to_string()
-    } else if !fallback.is_empty() {
-        fallback.to_string()
     } else {
         format!("Status {legacy_id}")
     }
@@ -229,10 +232,22 @@ mod tests {
 
     #[test]
     fn xidax_bench_gate() {
-        assert_eq!(evaluate_shopify(109, "In QC").advance_target(), Some(76));
-        assert_eq!(evaluate_shopify(43, "Burn-in").advance_target(), Some(76));
+        // 71 "QC & Burn-in" is the live bench status; pass advances to 67.
+        assert_eq!(evaluate_shopify(71, "QC & Burn-in").advance_target(), Some(67));
+        // 43 is a repair-remote status on the live store, NOT a bench status.
+        assert_eq!(evaluate_shopify(43, "Replacement Part Received").outcome, GateOutcome::Neutral);
         assert!(evaluate_shopify(4, "Shipped").is_refused());
         assert_eq!(evaluate_shopify(73, "Order Placed").outcome, GateOutcome::Neutral);
+    }
+
+    #[test]
+    fn live_name_overrides_static_map() {
+        // The backend's authoritative name wins over the fallback map.
+        assert_eq!(status_display(43, "Replacement Part Received - Repair Underway (Remote)"),
+                   "Replacement Part Received - Repair Underway (Remote)");
+        // With no live name, the map is the fallback (PCL gate path).
+        assert_eq!(status_display(73, ""), "Order Placed");
+        assert_eq!(status_display(99999, ""), "Status 99999");
     }
 
     #[test]
