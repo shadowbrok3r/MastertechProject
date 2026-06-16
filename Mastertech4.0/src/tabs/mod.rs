@@ -42,6 +42,34 @@ impl MastertechContext {
                 .store(new_state, Ordering::Relaxed);
         }
     }
+
+    pub fn terminal_tab(&mut self, ui: &mut Ui) {
+        // While detached, the viewport window owns the render; show a stub here.
+        if self.show_terminal_viewport.load(Ordering::Relaxed) {
+            ui.vertical_centered(|ui| {
+                ui.add_space(40.0);
+                ui.label("Terminal detached to a separate window.");
+                if ui.button("Re-attach").clicked() {
+                    self.show_terminal_viewport.store(false, Ordering::Relaxed);
+                }
+            });
+            return;
+        }
+        let user = self.shared_ctx.current_user.clone();
+        self.embedded_terminal
+            .get_or_insert_with(|| crate::terminal_mode::embedded::EmbeddedTerminal::new(user))
+            .ui(ui);
+    }
+
+    pub fn terminal_popup(&mut self, ui: &mut Ui) {
+        if self.show_terminal_viewport.load(Ordering::Relaxed) {
+            if ui.button("Attach Terminal").clicked() {
+                self.show_terminal_viewport.store(false, Ordering::Relaxed);
+            }
+        } else if ui.button("Detach Terminal").clicked() {
+            self.show_terminal_viewport.store(true, Ordering::Relaxed);
+        }
+    }
 }
 
 impl TabViewer for MastertechContext {
@@ -112,6 +140,7 @@ impl TabViewer for MastertechContext {
             TabId::Plugins => {
                 displays::tabs::plugins_tab::plugins_tab_ui(ui, &self.plugin_manager)
             }
+            TabId::Terminal => self.terminal_tab(ui),
             _ => {}
         }
     }
@@ -129,6 +158,7 @@ impl TabViewer for MastertechContext {
     ) {
         match *tab {
             TabId::FileBrowser => self.file_browser_popup(ui),
+            TabId::Terminal => self.terminal_popup(ui),
             _ => {
                 ui.label(tab.title(self.tab_context()));
                 ui.label("This is a context menu");

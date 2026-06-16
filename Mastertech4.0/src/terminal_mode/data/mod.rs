@@ -175,6 +175,7 @@ impl ServiceData {
                 task_notes,
                 send_specs,
                 false,
+                None,
             )
             .await;
             log::info!("send_payload_result: {send_payload_result:?}");
@@ -452,17 +453,20 @@ impl TryFrom<LocalTermEvent> for MouseEvent {
     type Error = anyhow::Error;
     
     fn try_from(value: LocalTermEvent) -> Result<Self, Self::Error> {
-        if let TerminalEvent::MouseClick { x, y } = value.0 {
-            Ok(
-                MouseEvent {
-                    kind: MouseEventKind::Down(MouseButton::Left),
-                    column: x,
-                    row: y,
-                    modifiers: KeyModifiers::NONE,
-                }
-            )
-        } else {
-            return Err(anyhow::anyhow!("Error converting TerminalEvent to MouseEvent"));
+        match value.0 {
+            TerminalEvent::MouseClick { x, y } => Ok(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: x,
+                row: y,
+                modifiers: KeyModifiers::NONE,
+            }),
+            TerminalEvent::MouseMove { x, y } => Ok(MouseEvent {
+                kind: MouseEventKind::Moved,
+                column: x,
+                row: y,
+                modifiers: KeyModifiers::NONE,
+            }),
+            _ => Err(anyhow::anyhow!("Error converting TerminalEvent to MouseEvent")),
         }
     }
 }
@@ -472,6 +476,7 @@ impl Into<TerminalEvent> for LocalTermEvent {
         match self.0 {
             TerminalEvent::MouseClick { x, y } => TerminalEvent::MouseClick { x, y },
             TerminalEvent::KeyPress { code, modifiers } => TerminalEvent::KeyPress { code, modifiers },
+            TerminalEvent::MouseMove { x, y } => TerminalEvent::MouseMove { x, y },
         }
     }
 }
@@ -481,6 +486,7 @@ impl Into<LocalTermEvent> for TerminalEvent {
         match self {
             TerminalEvent::MouseClick { x, y } => LocalTermEvent(TerminalEvent::MouseClick { x, y }),
             TerminalEvent::KeyPress { code, modifiers } => LocalTermEvent(TerminalEvent::KeyPress { code, modifiers }),
+            TerminalEvent::MouseMove { x, y } => LocalTermEvent(TerminalEvent::MouseMove { x, y }),
         }
     }
 }

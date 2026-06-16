@@ -32,6 +32,7 @@ pub enum TabId {
     DatabaseEditor,
     FleetDashboard,
     StressLab,
+    Terminal,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -111,6 +112,7 @@ const MT_NATIVE: &[TabId] = &[
     TabId::DatabaseEditor,
     TabId::FleetDashboard,
     TabId::StressLab,
+    TabId::Terminal,
 ];
 
 const WH_WASM: &[TabId] = &[
@@ -167,6 +169,7 @@ impl TabId {
             Self::DatabaseEditor => "database_editor",
             Self::FleetDashboard => "fleet_dashboard",
             Self::StressLab => "stress_lab",
+            Self::Terminal => "terminal",
         }
     }
 
@@ -204,6 +207,7 @@ impl TabId {
             Self::DatabaseEditor => "Database Editor",
             Self::FleetDashboard => "Fleet Dashboard",
             Self::StressLab => "Stress Lab",
+            Self::Terminal => "Terminal",
         }
     }
 
@@ -251,6 +255,7 @@ impl TabId {
             "Database Editor" | "Database" => Some(Self::DatabaseEditor),
             "Fleet Dashboard" => Some(Self::FleetDashboard),
             "Stress Lab" => Some(Self::StressLab),
+            "Terminal" => Some(Self::Terminal),
             _ => None,
         }
     }
@@ -287,6 +292,7 @@ impl TabId {
             "database_editor" => Some(Self::DatabaseEditor),
             "fleet_dashboard" => Some(Self::FleetDashboard),
             "stress_lab" => Some(Self::StressLab),
+            "terminal" => Some(Self::Terminal),
             _ => None,
         }
     }

@@ -11,6 +11,22 @@ use database::live_data::Action;
 impl SharedContext {
     pub fn receive_notification(&mut self, ctx: &eframe::egui::Context) {
         if let Ok((action, notification)) = self.live_notification_rx.try_recv() {
+            // Live-query canary: confirm the notification stream is alive and
+            // never surface it as a real notification.
+            if notification.notification_type == "live_query_check" {
+                if matches!(action, Action::Create | Action::Update)
+                    && self.canary_nonce.as_deref()
+                        == Some(notification.notification_description.as_str())
+                {
+                    self.canary_nonce = None;
+                    self.canary_sent_at = None;
+                    self.reconnect_attempts = 0;
+                    self.needs_reconnect = false;
+                    self.show_reload_prompt = false;
+                }
+                return;
+            }
+
             // Test text
             let mut inputs = BTreeSet::new();
             for task in self.tasks.iter() {
@@ -85,6 +101,10 @@ impl SharedContext {
         }
 
         if let Ok(notifications) = self.notification_rx.try_recv() {
+            let notifications: Vec<_> = notifications
+                .into_iter()
+                .filter(|n| n.notification_type != "live_query_check")
+                .collect();
             self.notification_center.set_notifications(notifications);
         }
     }

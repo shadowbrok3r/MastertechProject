@@ -1,0 +1,1244 @@
+{
+  "ok": true,
+  "data": {
+    "order": {
+      "id": "gid://shopify/Order/6955440373986",
+      "name": "#1003",
+      "customer": {
+        "name": "tyson@frawstedcreations.com",
+        "email": "tyson@frawstedcreations.com",
+        "phone": null
+      },
+      "shippingAddress": null,
+      "note": "SEED: X-6 Performance Build (config_id=967041)",
+      "cancelledAt": null,
+      "cancelReason": null,
+      "financialStatus": "PENDING",
+      "fulfillmentStatus": "UNFULFILLED",
+      "pullPriority": 1,
+      "clientIp": "66.85.16.74",
+      "salesRep": null
+    },
+    "config": {
+      "buildSerial": "",
+      "buildName": "X-6 Performance Build",
+      "buildTemplate": "X-6",
+      "systemType": "desktop",
+      "cec": {},
+      "notes": [],
+      "customerNotes": "",
+      "estimatedShipDate": "",
+      "selection": [
+        {
+          "slot_handle": "case",
+          "variant_id": "gid://shopify/ProductVariant/47813460885730",
+          "quantity": 1,
+          "role": "base",
+          "slot": "case",
+          "product_name": "GAMMA DARK",
+          "sku": "CASE/500DX/B"
+        },
+        {
+          "slot_handle": "processors",
+          "variant_id": "gid://shopify/ProductVariant/47813523210466",
+          "quantity": 1,
+          "role": "upgrade",
+          "slot": "processors",
+          "product_name": "INTEL CORE I7 13700KF 16C 5.4GHZ",
+          "sku": "CPU/I7/13700KF"
+        },
+        {
+          "slot_handle": "motherboards",
+          "variant_id": "gid://shopify/ProductVariant/47813458624738",
+          "quantity": 1,
+          "role": "upgrade",
+          "slot": "motherboards",
+          "product_name": "MSI MEG X670E GODLIKE",
+          "sku": "MB/X670/GODLIKE"
+        },
+        {
+          "slot_handle": "memory",
+          "variant_id": "gid://shopify/ProductVariant/47813457772770",
+          "quantity": 1,
+          "role": "upgrade",
+          "slot": "memory",
+          "product_name": "G.SKILL Trident Z Neo DDR4 3600MHz 32GB",
+          "sku": "DDR4/D32G3600RG"
+        },
+        {
+          "slot_handle": "graphics-cards",
+          "variant_id": "gid://shopify/ProductVariant/47813474484450",
+          "quantity": 1,
+          "role": "upgrade",
+          "slot": "graphics-cards",
+          "product_name": "MSI RTX 5090 32G GAMING TRIO OC",
+          "sku": "GPU/RTX5090GT"
+        },
+        {
+          "slot_handle": "cpu-cooling",
+          "variant_id": "gid://shopify/ProductVariant/47813408293090",
+          "quantity": 1,
+          "role": "upgrade",
+          "slot": "cpu-cooling",
+          "product_name": "TRYX TURRIS 620 CPU AIR COOLER WHITE",
+          "sku": "COOL/TURRIS/W"
+        },
+        {
+          "slot_handle": "ssd-m2-nvme",
+          "variant_id": "gid://shopify/ProductVariant/47813476581602",
+          "quantity": 1,
+          "role": "upgrade",
+          "slot": "ssd-m2-nvme",
+          "product_name": "MSI SPATIUM M460 PRO PCIe 4.0 NVMe M.2",
+          "sku": "M.2/M460/1TB"
+        },
+        {
+          "slot_handle": "power-supplies",
+          "variant_id": "gid://shopify/ProductVariant/47813537431778",
+          "quantity": 1,
+          "role": "upgrade",
+          "slot": "power-supplies",
+          "product_name": "PC LAPTOPS 1650W TITANIUM POWER SUPPLY",
+          "sku": "PSU/ASROCK/1650"
+        },
+        {
+          "slot_handle": "operating-systems",
+          "variant_id": "gid://shopify/ProductVariant/47816368816354",
+          "quantity": 1,
+          "role": "upgrade",
+          "slot": "operating-systems",
+          "product_name": "Windows 11",
+          "sku": "SW/WIN11HMA/OA3"
+        }
+      ]
+    },
+    "lineItems": [
+      {
+        "id": "gid://shopify/LineItem/16177677467874",
+        "title": "GAMMA DARK",
+        "originalTitle": null,
+        "qty": 1,
+        "slot": "case",
+        "sku": "CASE/500DX/B",
+        "image": "https://cdn.shopify.com/s/files/1/0814/0079/1266/files/gamma-dark.jpg?v=1779223592",
+        "imageAlt": "GAMMA DARK",
+        "productHandle": "gamma-dark",
+        "isPoolProduct": false,
+        "expectedSerials": 1,
+        "serials": [],
+        "requiredForBuild": false,
+        "slotHandle": "case",
+        "substitution": null,
+        "kind": "original"
+      },
+      {
+        "id": "gid://shopify/LineItem/16177677500642",
+        "title": "INTEL CORE I7 13700KF 16C 5.4GHZ",
+        "originalTitle": null,
+        "qty": 1,
+        "slot": "processor",
+        "sku": "CPU/I7/13700KF",
+        "image": "https://cdn.shopify.com/s/files/1/0814/0079/1266/files/intel-core-i7-13700kf-16c-5-4ghz.jpg?v=1779223621",
+        "imageAlt": "INTEL CORE I7 13700KF 16C 5.4GHZ",
+        "productHandle": "intel-core-i7-13700kf-16c-5-4ghz",
+        "isPoolProduct": false,
+        "expectedSerials": 1,
+        "serials": [],
+        "requiredForBuild": true,
+        "slotHandle": "processors",
+        "substitution": null,
+        "kind": "original"
+      },
+      {
+        "id": "gid://shopify/LineItem/16177677533410",
+        "title": "MSI MEG X670E GODLIKE",
+        "originalTitle": null,
+        "qty": 1,
+        "slot": "motherboard",
+        "sku": "MB/X670/GODLIKE",
+        "image": "https://cdn.shopify.com/s/files/1/0814/0079/1266/files/msi-meg-x670e-godlike-1.jpg?v=1779223589",
+        "imageAlt": "MSI MEG X670E GODLIKE",
+        "productHandle": "msi-meg-x670e-godlike-1",
+        "isPoolProduct": false,
+        "expectedSerials": 1,
+        "serials": [
+          {
+            "metaobjectGid": "gid://shopify/Metaobject/190283612386",
+            "serial": "MB-967041-234410",
+            "scannedAt": "2026-05-26T11:05:45-06:00",
+            "reservationStatus": "unknown",
+            "odooLotId": null
+          }
+        ],
+        "requiredForBuild": true,
+        "slotHandle": "motherboards",
+        "substitution": null,
+        "kind": "original"
+      },
+      {
+        "id": "gid://shopify/LineItem/16177677566178",
+        "title": "G.SKILL Trident Z Neo DDR4 3600MHz 32GB",
+        "originalTitle": null,
+        "qty": 1,
+        "slot": "ram",
+        "sku": "DDR4/D32G3600RG",
+        "image": "https://cdn.shopify.com/s/files/1/0814/0079/1266/files/g-skill-trident-z-neo-ddr4-3600mhz-32gb.jpg?v=1779213442",
+        "imageAlt": "G.SKILL Trident Z Neo DDR4 3600MHz 32GB",
+        "productHandle": "g-skill-trident-z-neo-ddr4-3600mhz-32gb",
+        "isPoolProduct": false,
+        "expectedSerials": 1,
+        "serials": [
+          {
+            "metaobjectGid": "gid://shopify/Metaobject/190283645154",
+            "serial": "RAM-967041-286946",
+            "scannedAt": "2026-05-26T11:05:45-06:00",
+            "reservationStatus": "unknown",
+            "odooLotId": null
+          }
+        ],
+        "requiredForBuild": true,
+        "slotHandle": "memory",
+        "substitution": null,
+        "kind": "original"
+      },
+      {
+        "id": "gid://shopify/LineItem/16177677598946",
+        "title": "MSI RTX 5090 32G GAMING TRIO OC",
+        "originalTitle": null,
+        "qty": 1,
+        "slot": "graphics-cards",
+        "sku": "GPU/RTX5090GT",
+        "image": "https://cdn.shopify.com/s/files/1/0814/0079/1266/files/msi-rtx-5090-32g-gaming-trio-oc.jpg?v=1779223597",
+        "imageAlt": "MSI RTX 5090 32G GAMING TRIO OC",
+        "productHandle": "msi-rtx-5090-32g-gaming-trio-oc",
+        "isPoolProduct": false,
+        "expectedSerials": 1,
+        "serials": [
+          {
+            "metaobjectGid": "gid://shopify/Metaobject/190283677922",
+            "serial": "GPU-967041-656994",
+            "scannedAt": "2026-05-26T11:05:45-06:00",
+            "reservationStatus": "unknown",
+            "odooLotId": null
+          }
+        ],
+        "requiredForBuild": true,
+        "slotHandle": "graphics-cards",
+        "substitution": null,
+        "kind": "original"
+      },
+      {
+        "id": "gid://shopify/LineItem/16177677631714",
+        "title": "TRYX TURRIS 620 CPU AIR COOLER WHITE",
+        "originalTitle": null,
+        "qty": 1,
+        "slot": "cooler",
+        "sku": "COOL/TURRIS/W",
+        "image": "https://cdn.shopify.com/s/files/1/0814/0079/1266/files/tryx-turris-620-cpu-air-cooler-white.jpg?v=1779213443",
+        "imageAlt": "TRYX TURRIS 620 CPU AIR COOLER WHITE",
+        "productHandle": "tryx-turris-620-cpu-air-cooler-white",
+        "isPoolProduct": false,
+        "expectedSerials": 1,
+        "serials": [
+          {
+            "metaobjectGid": "gid://shopify/Metaobject/190283710690",
+            "serial": "COOL-967041-493970",
+            "scannedAt": "2026-05-26T11:05:46-06:00",
+            "reservationStatus": "unknown",
+            "odooLotId": null
+          }
+        ],
+        "requiredForBuild": true,
+        "slotHandle": "cpu-cooling",
+        "substitution": null,
+        "kind": "original"
+      },
+      {
+        "id": "gid://shopify/LineItem/16177677664482",
+        "title": "MSI SPATIUM M460 PRO PCIe 4.0 NVMe M.2",
+        "originalTitle": null,
+        "qty": 1,
+        "slot": "storage-m2",
+        "sku": "M.2/M460/1TB",
+        "image": "https://cdn.shopify.com/s/files/1/0814/0079/1266/files/msi-spatium-m460-pro-pcie-4-0-nvme-m-2.jpg?v=1779213419",
+        "imageAlt": "MSI SPATIUM M460 PRO PCIe 4.0 NVMe M.2",
+        "productHandle": "msi-spatium-m460-pro-pcie-4-0-nvme-m-2",
+        "isPoolProduct": false,
+        "expectedSerials": 1,
+        "serials": [
+          {
+            "metaobjectGid": "gid://shopify/Metaobject/190283743458",
+            "serial": "SSD-967041-580095",
+            "scannedAt": "2026-05-26T11:05:46-06:00",
+            "reservationStatus": "unknown",
+            "odooLotId": null
+          }
+        ],
+        "requiredForBuild": true,
+        "slotHandle": "ssd-m2-nvme",
+        "substitution": null,
+        "kind": "original"
+      },
+      {
+        "id": "gid://shopify/LineItem/16177677697250",
+        "title": "PC LAPTOPS 1650W TITANIUM POWER SUPPLY",
+        "originalTitle": null,
+        "qty": 1,
+        "slot": "psu",
+        "sku": "PSU/ASROCK/1650",
+        "image": "https://cdn.shopify.com/s/files/1/0814/0079/1266/files/pc-laptops-1650w-titanium-power-supply.jpg?v=1779223633",
+        "imageAlt": "PC LAPTOPS 1650W TITANIUM POWER SUPPLY",
+        "productHandle": "pc-laptops-1650w-titanium-power-supply",
+        "isPoolProduct": false,
+        "expectedSerials": 1,
+        "serials": [
+          {
+            "metaobjectGid": "gid://shopify/Metaobject/190283776226",
+            "serial": "PSU-967041-590221",
+            "scannedAt": "2026-05-26T11:05:46-06:00",
+            "reservationStatus": "unknown",
+            "odooLotId": null
+          }
+        ],
+        "requiredForBuild": true,
+        "slotHandle": "power-supplies",
+        "substitution": null,
+        "kind": "original"
+      },
+      {
+        "id": "gid://shopify/LineItem/16177677730018",
+        "title": "Windows 11",
+        "originalTitle": null,
+        "qty": 1,
+        "slot": "os",
+        "sku": "SW/WIN11HMA/OA3",
+        "image": "https://cdn.shopify.com/s/files/1/0814/0079/1266/files/windows-13.jpg?v=1779213222",
+        "imageAlt": "Windows 11",
+        "productHandle": "windows-13",
+        "isPoolProduct": false,
+        "expectedSerials": 0,
+        "serials": [
+          {
+            "metaobjectGid": "gid://shopify/Metaobject/190283808994",
+            "serial": "WIN-967041-645574",
+            "scannedAt": "2026-05-26T11:05:46-06:00",
+            "reservationStatus": "unknown",
+            "odooLotId": null
+          }
+        ],
+        "requiredForBuild": false,
+        "slotHandle": "operating-systems",
+        "substitution": null,
+        "kind": "original"
+      }
+    ],
+    "currentStatus": {
+      "gid": "gid://shopify/Metaobject/188541370594",
+      "legacyId": 4,
+      "name": "Shipped",
+      "color": "#8A2BE2",
+      "bucket": "",
+      "productionLocked": true,
+      "editLocked": true,
+      "shipped": true,
+      "paid": true
+    },
+    "legalTransitions": [],
+    "prechecks": [
+      {
+        "name": "serials_attached",
+        "ok": false,
+        "missing": "7 of 8 serials attached"
+      }
+    ],
+    "buildPhotos": [
+      {
+        "gid": "gid://shopify/MediaImage/38213639602402",
+        "url": "https://cdn.shopify.com/s/files/1/0814/0079/1266/files/image_a31063e1-c12f-4269-89ff-5c8741445a74.jpg?v=1779908820",
+        "width": 3024,
+        "height": 4032,
+        "createdAt": "2026-05-27T19:06:59Z"
+      },
+      {
+        "gid": "gid://shopify/MediaImage/38213640323298",
+        "url": "https://cdn.shopify.com/s/files/1/0814/0079/1266/files/image_6f8556f0-c952-4e68-82c0-53d0be407305.jpg?v=1779908832",
+        "width": 3024,
+        "height": 4032,
+        "createdAt": "2026-05-27T19:07:10Z"
+      }
+    ],
+    "timer": {
+      "pullStartedAt": "2026-05-27T18:03:03Z",
+      "pullPausedAt": "2026-05-27T18:03:38Z",
+      "pullCompletedAt": "2026-05-27T20:00:08Z",
+      "pullByStaff": "offline_37rkv3-nc.myshopify.com",
+      "buildStartedAt": null,
+      "buildPausedAt": null,
+      "buildCompletedAt": null,
+      "buildByStaff": null
+    },
+    "allStatuses": [
+      {
+        "gid": "gid://shopify/Metaobject/188541272290",
+        "name": "Awaiting check payment",
+        "color": "#4169E1",
+        "legacyId": 1,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188541305058",
+        "name": "Payment accepted",
+        "color": "#32CD32",
+        "legacyId": 2,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188541337826",
+        "name": "Processing in progress",
+        "color": "#FF8C00",
+        "legacyId": 3,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188541370594",
+        "name": "Shipped",
+        "color": "#8A2BE2",
+        "legacyId": 4,
+        "locked": true
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188541403362",
+        "name": "Delivered",
+        "color": "#108510",
+        "legacyId": 5,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188541436130",
+        "name": "Canceled",
+        "color": "#DC143C",
+        "legacyId": 6,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188541468898",
+        "name": "Refunded",
+        "color": "#ec2e15",
+        "legacyId": 7,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188541501666",
+        "name": "Payment error",
+        "color": "#8f0621",
+        "legacyId": 8,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188541534434",
+        "name": "On backorder (paid)",
+        "color": "#FF69B4",
+        "legacyId": 9,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188541567202",
+        "name": "Awaiting bank wire payment",
+        "color": "#4169E1",
+        "legacyId": 10,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188541599970",
+        "name": "Remote payment accepted",
+        "color": "#32CD32",
+        "legacyId": 11,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188541632738",
+        "name": "On backorder (not paid)",
+        "color": "#FF69B4",
+        "legacyId": 12,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188541665506",
+        "name": "Awaiting Cash On Delivery validation",
+        "color": "#4169E1",
+        "legacyId": 13,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188541698274",
+        "name": "Amazon Pay - Authorized",
+        "color": "RoyalBlue",
+        "legacyId": 14,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188541731042",
+        "name": "Amazon Pay - Payment received",
+        "color": "RoyalBlue",
+        "legacyId": 15,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188541763810",
+        "name": "Quote",
+        "color": "#61ffff",
+        "legacyId": 16,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188541796578",
+        "name": "Authorization accepted from PayPal",
+        "color": "#DDEEFF",
+        "legacyId": 17,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188541829346",
+        "name": "RMA Created",
+        "color": "#8491ff",
+        "legacyId": 19,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188541862114",
+        "name": "Completed",
+        "color": "#ffffff",
+        "legacyId": 22,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188541927650",
+        "name": "Pending Terms and Conditions Approval",
+        "color": "#ff483c",
+        "legacyId": 23,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542091490",
+        "name": "Awaiting Goods",
+        "color": "#ffffff",
+        "legacyId": 24,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542124258",
+        "name": "System Received",
+        "color": "#ffffff",
+        "legacyId": 25,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542157026",
+        "name": "Service Begun",
+        "color": "#ffffff",
+        "legacyId": 26,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542189794",
+        "name": "Service Finished",
+        "color": "#ffffff",
+        "legacyId": 27,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542222562",
+        "name": "Pending",
+        "color": "#ffa718",
+        "legacyId": 28,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542255330",
+        "name": "Check-in Shelf",
+        "color": "#ff9924",
+        "legacyId": 29,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542288098",
+        "name": "In Repair",
+        "color": "#fdffa0",
+        "legacyId": 30,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542320866",
+        "name": "In Repair - Remote",
+        "color": "#e3ab00",
+        "legacyId": 31,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542353634",
+        "name": "Pending AC Port Repair",
+        "color": "#00a5c3",
+        "legacyId": 32,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542386402",
+        "name": "Pending Data Recovery",
+        "color": "#00cacf",
+        "legacyId": 33,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542419170",
+        "name": "Pending Customer Callback",
+        "color": "#00b4b3",
+        "legacyId": 34,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542451938",
+        "name": "Replacement Part Ordered (Pending SPO)",
+        "color": "#00059b",
+        "legacyId": 35,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542484706",
+        "name": "Pending SPO Payment",
+        "color": "#ffffff",
+        "legacyId": 36,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542517474",
+        "name": "Pending RMA",
+        "color": "#af0063",
+        "legacyId": 37,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542550242",
+        "name": "Pending Repo",
+        "color": "#f0ff00",
+        "legacyId": 38,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542583010",
+        "name": "Pending Trade-In",
+        "color": "#ff6f0c",
+        "legacyId": 39,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542615778",
+        "name": "Done Shelf (Ready for Pickup)",
+        "color": "#00af06",
+        "legacyId": 40,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542648546",
+        "name": "Sent for Repair",
+        "color": "#ff3cdb",
+        "legacyId": 42,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542681314",
+        "name": "Replacement Part Received - Repair Underway (Remote)",
+        "color": "#ff7944",
+        "legacyId": 43,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542714082",
+        "name": "Repair Complete - Sent to Store",
+        "color": "#19c300",
+        "legacyId": 44,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542746850",
+        "name": "Pending Payment",
+        "color": "#ffffff",
+        "legacyId": 45,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542779618",
+        "name": "Locating Part Info",
+        "color": "#ffff00",
+        "legacyId": 47,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542812386",
+        "name": "Part found",
+        "color": "#00ff00",
+        "legacyId": 48,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542845154",
+        "name": "Part Quoted",
+        "color": "#00ffff",
+        "legacyId": 49,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542877922",
+        "name": "Part Payment Accepted",
+        "color": "#0000ff",
+        "legacyId": 50,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542910690",
+        "name": "Part Order Declined",
+        "color": "#ff0000",
+        "legacyId": 51,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542943458",
+        "name": "Part Ordered",
+        "color": "#00ff00",
+        "legacyId": 52,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188542976226",
+        "name": "Part Order Received",
+        "color": "#ffff00",
+        "legacyId": 53,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543008994",
+        "name": "Partially Paid",
+        "color": "#9500d8",
+        "legacyId": 55,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543041762",
+        "name": "Pending Financing Review",
+        "color": "#bb0000",
+        "legacyId": 56,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543074530",
+        "name": "Build Pending",
+        "color": "#adfb00",
+        "legacyId": 57,
+        "locked": true
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543107298",
+        "name": "Pending Review",
+        "color": "#ff4045",
+        "legacyId": 58,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543140066",
+        "name": "Invoiced",
+        "color": "#c0ffd0",
+        "legacyId": 59,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543172834",
+        "name": "Building System",
+        "color": "#ffe911",
+        "legacyId": 60,
+        "locked": true
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543205602",
+        "name": "Pending Receipt",
+        "color": "#ffffff",
+        "legacyId": 63,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543238370",
+        "name": "Preparing to Ship",
+        "color": "#644117",
+        "legacyId": 67,
+        "locked": true
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543271138",
+        "name": "Hold Shipping",
+        "color": "#ff8d20",
+        "legacyId": 69,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543303906",
+        "name": "Pre-Pulled",
+        "color": "#0066f3",
+        "legacyId": 70,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543336674",
+        "name": "QC & Burn-in",
+        "color": "#b0ff50",
+        "legacyId": 71,
+        "locked": true
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543369442",
+        "name": "Order Placed",
+        "color": "#139f00",
+        "legacyId": 73,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543402210",
+        "name": "Coinbase awaiting status",
+        "color": "#D0CA64",
+        "legacyId": 74,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543434978",
+        "name": "Coinbase pending status",
+        "color": "#007FFF",
+        "legacyId": 75,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543467746",
+        "name": "Henderson Support",
+        "color": "#ffffff",
+        "legacyId": 78,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543500514",
+        "name": "Everest Import",
+        "color": "#ffffff",
+        "legacyId": 79,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543533282",
+        "name": "Pulled",
+        "color": "#0066f3",
+        "legacyId": 80,
+        "locked": true
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543566050",
+        "name": "Ready to Pull",
+        "color": "#ffffff",
+        "legacyId": 82,
+        "locked": true
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543598818",
+        "name": "Xidax Use/Photo/Demo/Review",
+        "color": "#ffffff",
+        "legacyId": 83,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543631586",
+        "name": "Returned",
+        "color": "#ffffff",
+        "legacyId": 84,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543664354",
+        "name": "Pending Manager Approval",
+        "color": "#ffffff",
+        "legacyId": 85,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543697122",
+        "name": "Awaiting Terms and Conditions Acceptance",
+        "color": "#ffffff",
+        "legacyId": 86,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543729890",
+        "name": "Hardware Received",
+        "color": "#ffffff",
+        "legacyId": 88,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543762658",
+        "name": "Hardware Sent (Customer)",
+        "color": "#ffffff",
+        "legacyId": 89,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543795426",
+        "name": "Replacement Hardware Sent",
+        "color": "#ffffff",
+        "legacyId": 90,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543828194",
+        "name": "Payment Due",
+        "color": "#ffffff",
+        "legacyId": 91,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543860962",
+        "name": "Sent to Manufacturer",
+        "color": "#ffffff",
+        "legacyId": 92,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543893730",
+        "name": "Awaiting Customer Hardware",
+        "color": "#ffba71",
+        "legacyId": 93,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543926498",
+        "name": "Parts Requested",
+        "color": "#ffffff",
+        "legacyId": 94,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543959266",
+        "name": "RMA Pending Terms",
+        "color": "#ff8f51",
+        "legacyId": 96,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188543992034",
+        "name": "Awaiting Payment",
+        "color": "#ffffff",
+        "legacyId": 97,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544024802",
+        "name": "Online Customer Payment Received",
+        "color": "#64ffb5",
+        "legacyId": 98,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544057570",
+        "name": "Pending Lease Acceptance",
+        "color": "#ffffff",
+        "legacyId": 99,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544090338",
+        "name": "Lease Accepted",
+        "color": "#ffffff",
+        "legacyId": 100,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544123106",
+        "name": "Closed",
+        "color": "#ffffff",
+        "legacyId": 101,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544155874",
+        "name": "Partially Shipped",
+        "color": "#ffffff",
+        "legacyId": 102,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544188642",
+        "name": "X-10 Build Pending",
+        "color": "#58b400",
+        "legacyId": 103,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544221410",
+        "name": "Fraud Flagged",
+        "color": "#ff1948",
+        "legacyId": 104,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544254178",
+        "name": "Coinbase timeout",
+        "color": "#ff7584",
+        "legacyId": 105,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544286946",
+        "name": "Awaiting for PayPal payment",
+        "color": "#4169E1",
+        "legacyId": 214,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544319714",
+        "name": "Call Customer",
+        "color": "#ffa538",
+        "legacyId": 218,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544352482",
+        "name": "Pending Shipping Info",
+        "color": "#ffffff",
+        "legacyId": 219,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544385250",
+        "name": "Call for Upgrades",
+        "color": "#ffffff",
+        "legacyId": 220,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544418018",
+        "name": "Ready for Repair",
+        "color": "#ffffff",
+        "legacyId": 221,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544483554",
+        "name": "Continue Repair",
+        "color": "#ffffff",
+        "legacyId": 222,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544516322",
+        "name": "Ready to Build (On Warehouse Floor)",
+        "color": "#00a039",
+        "legacyId": 224,
+        "locked": true
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544549090",
+        "name": "Pulled - Don't Build (On Warehouse Floor)",
+        "color": "#ffcc55",
+        "legacyId": 227,
+        "locked": true
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544581858",
+        "name": "Debuild",
+        "color": "#ff7919",
+        "legacyId": 228,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544614626",
+        "name": "Order Placed (re-queued)",
+        "color": "#139f00",
+        "legacyId": 229,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544647394",
+        "name": "Pre Ordered",
+        "color": "#bd7c00",
+        "legacyId": 230,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544680162",
+        "name": "Build Change Request",
+        "color": "#ffffff",
+        "legacyId": 232,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544712930",
+        "name": "In Stock For Sale",
+        "color": "#8fff81",
+        "legacyId": 233,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544745698",
+        "name": "Sold",
+        "color": "#0000ff",
+        "legacyId": 234,
+        "locked": true
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544778466",
+        "name": "Ship To Store",
+        "color": "#8eff71",
+        "legacyId": 236,
+        "locked": true
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544811234",
+        "name": "Part Requested",
+        "color": "#ffff00",
+        "legacyId": 237,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544844002",
+        "name": "Delivered To Store",
+        "color": "#4abc00",
+        "legacyId": 238,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544876770",
+        "name": "Accepted By Odoo",
+        "color": "#09b0ff",
+        "legacyId": 239,
+        "locked": true
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544909538",
+        "name": "Crossship Received ",
+        "color": "#4c2b11",
+        "legacyId": 240,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544942306",
+        "name": "Out of Stock",
+        "color": "#ff080d",
+        "legacyId": 241,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188544975074",
+        "name": "Odoo Pending Review",
+        "color": "#dc0300",
+        "legacyId": 242,
+        "locked": true
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188545007842",
+        "name": "Partial Return",
+        "color": "#ffff00",
+        "legacyId": 243,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188545040610",
+        "name": "Pending Address Verification (Mismatch)",
+        "color": "#0039bc",
+        "legacyId": 244,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188545073378",
+        "name": "Waiting for Stripe capture",
+        "color": "#03befc",
+        "legacyId": 245,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188545106146",
+        "name": "Waiting for SEPA payment",
+        "color": "#fcba03",
+        "legacyId": 246,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188545138914",
+        "name": "SEPA dispute",
+        "color": "#e3e1dc",
+        "legacyId": 247,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188545171682",
+        "name": "Waiting for OXXO payment confirmation",
+        "color": "#C23416",
+        "legacyId": 248,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188545204450",
+        "name": "Awaiting for payment confirmation",
+        "color": "#c7ff49",
+        "legacyId": 249,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188545237218",
+        "name": "Partial Refund",
+        "color": "#01B887",
+        "legacyId": 250,
+        "locked": false
+      },
+      {
+        "gid": "gid://shopify/Metaobject/188545269986",
+        "name": "Hold For Etail",
+        "color": "#c9fff0",
+        "legacyId": 251,
+        "locked": false
+      }
+    ],
+    "orderType": {
+      "gid": "gid://shopify/Metaobject/188539470050",
+      "handle": "type-1",
+      "legacyId": 1,
+      "name": "Sales Order",
+      "prefix": "SA",
+      "isDefault": true,
+      "flags": {
+        "serviceDetails": false,
+        "partSwap": false,
+        "salesRep": true,
+        "splitRep": true,
+        "enforcePricing": true,
+        "reasonCode": false,
+        "rmaType": false,
+        "claimStatus": false,
+        "parentOrder": false,
+        "shippingDamageReported": false,
+        "debuild": true,
+        "emailBuildPhoto": true
+      }
+    },
+    "orderReference": "SA000001003",
+    "shippingDamageReported": false,
+    "poolUnit": null,
+    "installedSerials": [
+      "gid://shopify/Metaobject/190283612386",
+      "gid://shopify/Metaobject/190283645154",
+      "gid://shopify/Metaobject/190283677922",
+      "gid://shopify/Metaobject/190283710690",
+      "gid://shopify/Metaobject/190283743458",
+      "gid://shopify/Metaobject/190283776226",
+      "gid://shopify/Metaobject/190283808994"
+    ],
+    "serviceDetails": {},
+    "orderDetails": {
+      "customerReference": "",
+      "externalPoNumber": "",
+      "storeId": "",
+      "salesRep": null,
+      "splitReps": []
+    }
+  }
+}

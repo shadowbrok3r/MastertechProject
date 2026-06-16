@@ -21,7 +21,7 @@ impl CustomerMessage {
     pub async fn into_task_note(&self, service_number: &str) -> anyhow::Result<TaskNotePayload, anyhow::Error> {
         match Employee::default().get_employee_from_id(&self.id_employee).await {
             Ok(employee) => {
-                match User::query_user_from_email(employee.email.clone()).await {
+                match User::query_user_or_employee_from_email(employee.email.clone()).await {
                     Ok(user) => { 
                         log::warn!("Pulled user: {}", user.get_name());
                         return Ok(TaskNotePayload {

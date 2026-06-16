@@ -29,6 +29,30 @@ impl MasterTechApp{
             });
         }
 
+        if self.context.show_terminal_viewport.load(Ordering::Relaxed) {
+            // EmbeddedTerminal holds Rc/RefCell state and is not Send, so it
+            // renders through an immediate viewport rather than a deferred one.
+            let viewport_id = ViewportId::from_hash_of("deferred_viewport_terminal");
+            let viewport_builder = ViewportBuilder::default()
+                .with_title("Terminal")
+                .with_inner_size([1000.0, 700.0]);
+            let show_terminal_viewport = self.context.show_terminal_viewport.clone();
+            let user = self.context.shared_ctx.current_user.clone();
+            ctx.show_viewport_immediate(viewport_id, viewport_builder, |ctx, _class| {
+                CentralPanel::default().show(ctx, |ui| {
+                    self.context
+                        .embedded_terminal
+                        .get_or_insert_with(|| {
+                            crate::terminal_mode::embedded::EmbeddedTerminal::new(user.clone())
+                        })
+                        .ui(ui);
+                });
+                if ctx.input(|i| i.viewport().close_requested()) {
+                    show_terminal_viewport.store(false, Ordering::Relaxed);
+                }
+            });
+        }
+
         // The detached "Websocket Connection" viewport was tied to the
         // GUI-side WS-relay (`tabs/websockets/mod.rs`).  That relay is
         // gone — the direct-TCP `tcp_listener` does not need an

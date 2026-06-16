@@ -87,9 +87,16 @@ async fn main() -> eframe::Result<()> {
         options,
         Box::new(|cc| {
             let ctx = &cc.egui_ctx;
-            // Phosphor icon glyphs merged into the default fonts.
+            // Phosphor icon glyphs merged into the default fonts. add_to_fonts
+            // only registers phosphor under Proportional; the style forces
+            // Monospace everywhere, so register it there too or icons tofu.
             let mut fonts = egui::FontDefinitions::default();
             egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+            if let Some(keys) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+                if !keys.iter().any(|k| k == "phosphor") {
+                    keys.insert(1.min(keys.len()), "phosphor".into());
+                }
+            }
             ctx.set_fonts(fonts);
             match serde_json::from_str::<Style>(STYLE) {
                 Ok(theme) => {

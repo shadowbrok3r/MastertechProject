@@ -319,8 +319,15 @@ impl LiveTaskPayload {
     ) -> anyhow::Result<(), anyhow::Error> {
         // let mut task_data = self;
         log::info!("schema/utilities.rs -> Send_Payload");
-        let queried_salesman = User::query_user_from_email(ticket_data.salesman.clone()).await.unwrap_or_default();
-        let _queried_tech = User::query_user_from_email(ticket_data.tech.clone()).await.unwrap_or_default();
+        let queried_salesman = match User::query_user_from_email(ticket_data.salesman.clone()).await {
+            Ok(user) => user,
+            Err(e) => {
+                log::warn!("schema/task -> salesman '{}' has no user record ({e:?}); assigning to current user", ticket_data.salesman);
+                User::get_current_user_from_auth()
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("No authenticated user to assign task to"))?
+            }
+        };
         
         
         // let task_id = task_data.id.clone();

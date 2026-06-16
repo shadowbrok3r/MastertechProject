@@ -49,7 +49,7 @@ pub struct TaskNotePayload {
     /// Username of the user who created the note. 
     /// * This is always required, and should not be empty.
     /// * If the user is not in my database, then I can get their email address via
-    ///     prestashop API, and use my User::query_user_from_email(employee.email)
+    ///     prestashop API, and use my User::query_user_or_employee_from_email(employee.email)
     ///     method to give a username.
     pub username: String,
     /// Optional. 
@@ -869,7 +869,7 @@ impl TaskNotePayload {
                             log::info!("task_note/mod.rs -> get_prestashop_notes_from_service -> Employee: {:?}", employee.firstname);
 
                             log::info!("task_note/mod.rs -> get_prestashop_notes_from_service -> Creating new note");
-                            let user = User::query_user_from_email(employee.email.clone()).await?;
+                            let user = User::query_user_or_employee_from_email(employee.email.clone()).await?;
                             let mut task_note = TaskNotePayload {
                                 id: RecordId::new(TASK_NOTE_TABLE, customer_message.id.clone()),
                                 id_customer_message: Some(customer_message.id.clone()),

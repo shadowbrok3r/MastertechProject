@@ -13,7 +13,8 @@ struct InstantWrapper(Instant);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TerminalEvent {
     MouseClick { x: u16, y: u16 },
-    KeyPress { code: Key, modifiers: Modifiers }
+    KeyPress { code: Key, modifiers: Modifiers },
+    MouseMove { x: u16, y: u16 },
     // KeyPress { code: KeyCode, modifiers: KeyModifiers }
 }
 
@@ -55,6 +56,8 @@ pub struct RataguiBackend {
     // cached_job: Option<LayoutJob>, // Cache the rendered buffer
     frame_index: u64,              // New: Track frame index
     buffer_changed: bool, // New: Track buffer content changes
+    #[serde(skip)]
+    hover_events: bool,
     #[serde(skip)]
     event_tx: Sender<TerminalEvent>,
 }
@@ -149,6 +152,12 @@ impl Widget for &mut RataguiBackend {
                         log::warn!("Failed to send mouse event");
                     }
                 }
+                if self.hover_events {
+                    if let Some(pos) = r.hover_pos() {
+                        let x = ((pos.x - r.rect.min.x) / char_width).floor().max(0.0) as u16;
+                        let _ = self.event_tx.send(TerminalEvent::MouseMove { x, y: i as u16 });
+                    }
+                }
                 if i == 0 {
                     combined_response = Some(r);
                 }
@@ -187,6 +196,7 @@ impl RataguiBackend {
             cached_job: None,
             frame_index: 0,
             buffer_changed: false,
+            hover_events: false,
             event_tx
         }
     }
@@ -217,12 +227,19 @@ impl RataguiBackend {
             cached_job: None,
             frame_index: 0,
             buffer_changed: false,
+            hover_events: false,
             event_tx
         }
     }
 
     pub fn set_frame_index(&mut self, index: u64) {
         self.frame_index = index; // Don’t invalidate cache here
+    }
+
+    /// Emit `TerminalEvent::MouseMove` while the pointer hovers a row. Off by
+    /// default so the remote viewer's event channel stays click-only.
+    pub fn set_hover_events(&mut self, enabled: bool) {
+        self.hover_events = enabled;
     }
 
     pub fn frame_index(&self) -> u64 {

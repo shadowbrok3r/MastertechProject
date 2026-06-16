@@ -767,7 +767,7 @@ impl From<PrestashopPayload> for TaskPayload {
                 for emp in employees.iter() {
                     let employee = Employee::default().get_employee_from_id(emp).await?;
                     let emp = User::default().set_email(&employee.email).find_employee_by_email().await?;
-                    tx.try_send(User::query_user_from_email(emp.email.clone()).await?)?;
+                    tx.try_send(User::query_user_or_employee_from_email(emp.email.clone()).await?)?;
                 }
                 
                 Ok::<(), anyhow::Error>(())

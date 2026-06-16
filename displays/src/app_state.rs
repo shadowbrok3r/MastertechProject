@@ -445,6 +445,18 @@ pub struct SharedContext {
 
     #[serde(skip)]
     pub last_live_respawn_at: Option<web_time::Instant>,
+
+    /// Live-query health-probe (canary) state. A periodic `live_query_check`
+    /// notification is written to the DB and is expected to round-trip back
+    /// through the `notification` live stream within a timeout.
+    #[serde(skip)]
+    pub canary_seq: u64,
+    #[serde(skip)]
+    pub canary_nonce: Option<String>,
+    #[serde(skip)]
+    pub canary_sent_at: Option<web_time::Instant>,
+    #[serde(skip)]
+    pub last_canary_at: Option<web_time::Instant>,
     /// Wall-clock instant of the last `refresh_client_list()` call.
     /// The admin's connected-client UI is normally driven by the
     /// `LIVE SELECT * FROM connected_client` subscription, but a
@@ -648,6 +660,10 @@ impl SharedContext {
             fleet_poller_running: false,
             live_queries_active: false,
             last_live_respawn_at: None,
+            canary_seq: 0,
+            canary_nonce: None,
+            canary_sent_at: None,
+            last_canary_at: None,
             last_client_list_refresh: None,
             clients_for_prober: Arc::new(std::sync::Mutex::new(Vec::new())),
         }

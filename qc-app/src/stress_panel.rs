@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use eframe::egui;
+use egui_phosphor::regular as p;
 use stress_kit::telemetry::TelemetrySnapshot;
 use stress_runner::{
     RunController, RunPlan, RunSpec, RunStage, RunUpdate, RunVerdict, Stressor, TelemetryAgent,
@@ -875,12 +876,12 @@ impl StressPanel {
                 let is_editing = self.editing_stage == Some(i);
                 ui.horizontal(|ui| {
                     ui.add_enabled_ui(!running && i > 0, |ui| {
-                        if ui.small_button("▲").clicked() {
+                        if ui.small_button(p::CARET_UP).clicked() {
                             swap = Some((i - 1, i));
                         }
                     });
                     ui.add_enabled_ui(!running && i + 1 < n, |ui| {
-                        if ui.small_button("▼").clicked() {
+                        if ui.small_button(p::CARET_DOWN).clicked() {
                             swap = Some((i, i + 1));
                         }
                     });
@@ -917,13 +918,13 @@ impl StressPanel {
                             .suffix(" s"),
                     );
 
-                    let btn_label = if is_editing { "▾" } else { "▸" };
+                    let btn_label = if is_editing { p::CARET_DOWN } else { p::CARET_RIGHT };
                     if ui.small_button(btn_label).clicked() {
                         self.editing_stage = if is_editing { None } else { Some(i) };
                     }
 
                     ui.add_enabled_ui(!running && n > 1, |ui| {
-                        if ui.small_button("✕").on_hover_text("Remove stage").clicked() {
+                        if ui.small_button(p::X).on_hover_text("Remove stage").clicked() {
                             remove = Some(i);
                         }
                     });
@@ -1277,7 +1278,6 @@ impl StressPanel {
         if self.stage_verdicts.is_empty() {
             return;
         }
-        use egui_phosphor::regular as p;
         ui.add_space(6.0);
         ui.group(|ui| {
             ui.label(egui::RichText::new("Stage verdicts").strong());
@@ -1375,7 +1375,7 @@ impl StressPanel {
         ui.horizontal(|ui| {
             if running {
                 if ui
-                    .add(egui::Button::new("⏹  Stop").fill(egui::Color32::from_rgb(180, 60, 60)))
+                    .add(egui::Button::new(format!("{}  Stop", p::STOP)).fill(egui::Color32::from_rgb(180, 60, 60)))
                     .clicked()
                 {
                     self.stop();
@@ -1384,7 +1384,7 @@ impl StressPanel {
                 ui.label("Running…");
             } else {
                 if ui
-                    .add(egui::Button::new("▶  Start").fill(egui::Color32::from_rgb(50, 140, 80)))
+                    .add(egui::Button::new(format!("{}  Start", p::PLAY)).fill(egui::Color32::from_rgb(50, 140, 80)))
                     .clicked()
                 {
                     start_fn(self);

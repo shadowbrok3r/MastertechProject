@@ -251,59 +251,36 @@ impl crate::app_state::SharedContext {
                 || error_msg.contains("ConnectionFailed")
                 || error_msg.contains("stream terminated");
             if looks_transient {
-                // Cooldown swallows the burst of 5 identical errors from one blip.
-                const RESPAWN_COOLDOWN: web_time::Duration =
-                    web_time::Duration::from_secs(10);
-                // Quiet period after which the auto-reconnect budget refills.
-                const ATTEMPT_RESET_WINDOW: web_time::Duration =
-                    web_time::Duration::from_secs(60);
-                const MAX_AUTO_RECONNECT_ATTEMPTS: u32 = 2;
-                let now = web_time::Instant::now();
-                let in_cooldown = self
-                    .last_live_respawn_at
-                    .map(|t| now.duration_since(t) < RESPAWN_COOLDOWN)
-                    .unwrap_or(false);
-                if in_cooldown {
-                    log::debug!(
-                        "Live query banner skipped — within cooldown window \
-                         (last fired {:?} ago)",
-                        now.duration_since(self.last_live_respawn_at.unwrap())
-                    );
-                } else {
-                    if self
-                        .last_live_respawn_at
-                        .map(|t| now.duration_since(t) >= ATTEMPT_RESET_WINDOW)
-                        .unwrap_or(false)
-                    {
-                        self.reconnect_attempts = 0;
-                    }
-                    self.live_queries_active = false;
-                    self.last_live_respawn_at = Some(now);
+                self.trigger_live_reconnect(ctx);
+            }
+        }
 
-                    let user = self.current_user.clone();
-                    if self.reconnect_attempts < MAX_AUTO_RECONNECT_ATTEMPTS
-                        && user.is_some()
-                    {
-                        self.reconnect_attempts += 1;
-                        log::warn!(
-                            "Stream-terminated error — auto-reconnect attempt {} of {}",
-                            self.reconnect_attempts,
-                            MAX_AUTO_RECONNECT_ATTEMPTS
-                        );
-                        self.needs_reconnect = true;
-                        let user = user.unwrap();
+        // ensure_db_connected finished (spawned by trigger_live_reconnect):
+        // on success re-issue the LIVE SELECTs and force an immediate canary
+        // re-probe to confirm the new subscriptions actually deliver.
+        if let Ok(result) = self.reconnect_result_rx.try_recv() {
+            self.reconnect_in_progress = false;
+            match result {
+                Ok(()) => {
+                    log::info!("Reconnect OK — re-issuing live queries and re-probing");
+                    self.live_queries_active = false;
+                    if let Some(user) = self.current_user.clone() {
                         self.load_data(ctx, &user);
-                    } else {
-                        log::warn!(
-                            "Auto-reconnect exhausted (attempts={}) — prompting operator",
-                            self.reconnect_attempts
-                        );
-                        self.needs_reconnect = true;
+                    }
+                    self.last_canary_at = None;
+                    self.canary_sent_at = None;
+                    self.canary_nonce = None;
+                }
+                Err(e) => {
+                    log::warn!("ensure_db_connected failed: {e}");
+                    if self.reconnect_attempts >= 3 {
                         self.show_reload_prompt = true;
                     }
                 }
             }
         }
+
+        self.tick_live_query_health(ctx);
 
         // `document.visibilitychange` is no longer treated as evidence of
         // a broken connection — the SurrealDB WS survives short hides and
@@ -447,6 +424,104 @@ impl crate::app_state::SharedContext {
             self.ai_playground.selected_thread = thread_obj.id;
             self.ai_playground.set_threads(thread_map);
         }
+    }
+
+    /// Rebuilds the DB connection off-thread; on success the
+    /// `reconnect_result_rx` drain re-issues the LIVE SELECTs and re-probes.
+    /// A cooldown swallows error bursts, the attempt budget refills after a
+    /// quiet period, and a single reconnect runs at a time.
+    fn trigger_live_reconnect(&mut self, _ctx: &eframe::egui::Context) {
+        const RECONNECT_COOLDOWN: web_time::Duration = web_time::Duration::from_secs(10);
+        const ATTEMPT_RESET_WINDOW: web_time::Duration = web_time::Duration::from_secs(60);
+        const MAX_RECONNECT_ATTEMPTS: u32 = 3;
+
+        if self.reconnect_in_progress {
+            return;
+        }
+        let now = web_time::Instant::now();
+        if let Some(t) = self.last_live_respawn_at {
+            if now.duration_since(t) < RECONNECT_COOLDOWN {
+                return;
+            }
+            if now.duration_since(t) >= ATTEMPT_RESET_WINDOW {
+                self.reconnect_attempts = 0;
+            }
+        }
+        if self.reconnect_attempts >= MAX_RECONNECT_ATTEMPTS {
+            log::warn!("Live reconnect budget exhausted — prompting operator");
+            self.show_reload_prompt = true;
+            return;
+        }
+
+        self.reconnect_attempts += 1;
+        self.reconnect_in_progress = true;
+        self.needs_reconnect = true;
+        self.last_live_respawn_at = Some(now);
+        log::warn!(
+            "Live-query reconnect attempt {}/{}",
+            self.reconnect_attempts, MAX_RECONNECT_ATTEMPTS
+        );
+
+        let tx = self.reconnect_result_tx.clone();
+        PlatformSpawner::spawn(async move {
+            let res = database::ensure_db_connected().await.map_err(|e| e.to_string());
+            let _ = tx.try_send(res);
+        });
+    }
+
+    /// Periodic + post-reconnect live-query health probe. Writes a
+    /// `live_query_check` canary notification and expects it back through the
+    /// `notification` live stream within `CANARY_TIMEOUT`; a miss means the
+    /// subscription is dead and triggers a reconnect.
+    fn tick_live_query_health(&mut self, ctx: &eframe::egui::Context) {
+        const PROBE_INTERVAL: web_time::Duration = web_time::Duration::from_secs(45);
+        const CANARY_TIMEOUT: web_time::Duration = web_time::Duration::from_secs(5);
+
+        let Some(user) = self.current_user.clone() else {
+            return;
+        };
+        if !self.live_queries_active || self.reconnect_in_progress {
+            return;
+        }
+        #[cfg(target_arch = "wasm32")]
+        if self.tab_hidden_at.is_some() {
+            return;
+        }
+
+        let now = web_time::Instant::now();
+
+        if let Some(sent) = self.canary_sent_at {
+            if now.duration_since(sent) >= CANARY_TIMEOUT {
+                log::warn!("Live-query canary timed out — subscription appears dead");
+                self.canary_sent_at = None;
+                self.canary_nonce = None;
+                self.trigger_live_reconnect(ctx);
+            }
+            return;
+        }
+
+        let due = self
+            .last_canary_at
+            .map(|t| now.duration_since(t) >= PROBE_INTERVAL)
+            .unwrap_or(true);
+        if !due {
+            return;
+        }
+
+        self.canary_seq = self.canary_seq.wrapping_add(1);
+        let nonce = format!("{}:{}", user.get_id().key_string(), self.canary_seq);
+        self.canary_nonce = Some(nonce.clone());
+        self.canary_sent_at = Some(now);
+        self.last_canary_at = Some(now);
+        let uid = user.get_id();
+        PlatformSpawner::spawn(async move {
+            if let Err(e) =
+                database::schema::Notification::send_live_query_canary(uid, nonce).await
+            {
+                log::warn!("send_live_query_canary failed: {e:?}");
+            }
+        });
+        ctx.request_repaint_after(CANARY_TIMEOUT + web_time::Duration::from_millis(250));
     }
 
     /// UI rendering only -- toasts, modals, viewports, admin notifications.

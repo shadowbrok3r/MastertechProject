@@ -298,6 +298,16 @@ impl ShopifyBackend {
         needles.iter().any(|n| lower.contains(n))
     }
 
+    /// `GET /serials/{serial}` — federated history flattened for the bench.
+    pub async fn serial_history(&self, serial: &str) -> anyhow::Result<super::SerialHistorySummary> {
+        let xbm = self.xbm()?;
+        let history = xbm
+            .serial_history(serial)
+            .await
+            .context("Build Management serial lookup failed")?;
+        Ok(history.into())
+    }
+
     /// Queue match by order name (`#N`) or build serial, then full detail.
     async fn find_order_xbm(&self, key: &OrderKey) -> anyhow::Result<QcOrder> {
         let xbm = self.xbm()?;
@@ -328,7 +338,13 @@ impl ShopifyBackend {
             .order_detail(&hit.id)
             .await
             .context("Build Management order detail fetch failed")?;
-        Ok(Self::order_from_detail(&detail, key, &hit.id))
+        let mut order = Self::order_from_detail(&detail, key, &hit.id);
+        // Build detail's config.buildSerial is often empty; the queue payload
+        // carries it.
+        if order.build_serial.as_deref().unwrap_or("").is_empty() {
+            order.build_serial = hit.build_serial.clone().filter(|s| !s.trim().is_empty());
+        }
+        Ok(order)
     }
 
     /// Map a Build Management detail payload onto the backend-neutral order.
@@ -457,13 +473,19 @@ fn apply_selection(spec: &mut BuildSpec, selection: &Value) {
         if name.trim().is_empty() {
             continue;
         }
-        if ShopifyBackend::slot_matches(&slot, &["processor", "cpu"]) && spec.cpu.is_empty() {
+        let slot_l = slot.to_lowercase();
+        // "cpu-cooling" contains "cpu"; coolers/fans/cases/PSUs are accessories.
+        let is_accessory = slot_l.contains("cool") || slot_l.contains("fan");
+        let is_cpu = !is_accessory && (slot_l.contains("processor") || slot_l.contains("cpu"));
+        if is_cpu && spec.cpu.is_empty() {
             spec.cpu = name;
         } else if ShopifyBackend::slot_matches(&slot, &["gpu", "graphics", "video"]) && spec.gpu.is_empty() {
             spec.gpu = name;
         } else if ShopifyBackend::slot_matches(&slot, &["memory", "ram"]) && spec.ram.is_empty() {
             spec.ram = name;
-        } else if ShopifyBackend::slot_matches(&slot, &["storage", "ssd", "hdd", "drive", "nvme", "m.2"]) {
+        } else if !is_accessory
+            && ShopifyBackend::slot_matches(&slot, &["storage", "ssd", "hdd", "drive", "nvme", "m.2"])
+        {
             let kind = if name.to_lowercase().contains("hdd") { "HDD" } else { "SSD" };
             spec.drives.push(DriveSpec { name, kind: kind.into() });
         } else if ShopifyBackend::slot_matches(&slot, &["motherboard", "mainboard"]) && spec.motherboard.is_none() {
@@ -717,11 +739,15 @@ mod tests {
                 "buildSerial": "XBS-1020",
                 "buildName": "Apex X-10",
                 "selection": [
-                    { "slot": "processor", "product_name": "Ryzen 9 9950X" },
-                    { "slot": "gpu", "product_name": "RTX 5080" },
-                    { "slot": "ram", "product_name": "64GB DDR5-6000" },
-                    { "slot": "storage-m2", "product_name": "2TB NVMe SSD" },
-                    { "slot": "case-fans", "product_name": "RGB fan kit" }
+                    { "slot": "cpu-cooling", "product_name": "TRYX TURRIS 620 COOLER" },
+                    { "slot": "processors", "product_name": "Ryzen 9 9950X" },
+                    { "slot": "graphics-cards", "product_name": "RTX 5080" },
+                    { "slot": "memory", "product_name": "64GB DDR5-6000" },
+                    { "slot": "ssd-m2-nvme", "product_name": "2TB NVMe SSD" },
+                    { "slot": "motherboards", "product_name": "MSI MEG X670E" },
+                    { "slot": "operating-systems", "product_name": "Windows 11" },
+                    { "slot": "power-supplies", "product_name": "1650W TITANIUM PSU" },
+                    { "slot": "case", "product_name": "GAMMA DARK" }
                 ]
             },
             "lineItems": [{
@@ -780,13 +806,19 @@ mod tests {
         let backend = ShopifyBackend::default();
         let spec = backend.build_spec(&order).await.unwrap();
         assert_eq!(spec.model, "Apex X-10");
+        // cpu-cooling precedes processors yet must NOT capture the CPU field.
         assert_eq!(spec.cpu, "Ryzen 9 9950X");
         assert_eq!(spec.gpu, "RTX 5080");
         assert_eq!(spec.ram, "64GB DDR5-6000");
         assert_eq!(spec.drives.len(), 1);
         assert_eq!(spec.drives[0].kind, "SSD");
-        assert_eq!(spec.extra.len(), 1);
-        assert_eq!(spec.extra[0].slot, "case-fans");
+        assert_eq!(spec.motherboard.as_deref(), Some("MSI MEG X670E"));
+        assert_eq!(spec.os.as_deref(), Some("Windows 11"));
+        // cpu-cooling, power-supplies, case land in extras.
+        let extra_slots: Vec<&str> = spec.extra.iter().map(|e| e.slot.as_str()).collect();
+        assert!(extra_slots.contains(&"cpu-cooling"), "got {extra_slots:?}");
+        assert!(extra_slots.contains(&"power-supplies"));
+        assert!(extra_slots.contains(&"case"));
         assert_eq!(spec.device_serial, "XBS-1020");
     }
 }

@@ -493,39 +493,83 @@ impl User {
         Ok(user_records)
     }
 
+    /// Resolves an email to an existing `user` record. A `checkinshelf` or empty
+    /// email resolves to the authenticated user. Returns `Err` on a miss; never
+    /// falls back to PrestaShop, so `get_id()` is always a real `user` reference
+    /// safe to persist. For note authors who may lack an account, use
+    /// [`User::query_user_or_employee_from_email`].
     pub async fn query_user_from_email(email: String) -> anyhow::Result<Self, anyhow::Error> {
-        let query = if email.contains("checkinshelf") || email.is_empty() {
-            "RETURN (SELECT * FROM user WHERE id == $auth.id)"
-        } else { "SELECT * FROM user WHERE email == $email" };
+        if email.contains("checkinshelf") || email.is_empty() {
+            let user: Option<Self> = DATABASE
+                .query("SELECT * FROM user WHERE id == $auth.id")
+                .await?
+                .take(0)?;
+            return user.ok_or_else(|| anyhow::anyhow!("No authenticated user"));
+        }
 
         let full_email = if email.ends_with("@pclaptops.com") {
-            email.clone()
+            email
         } else {
-            format!("{}@pclaptops.com", email.clone())
+            format!("{email}@pclaptops.com")
         };
 
-        log::info!("schema/utilities.rs -> Full Email: {full_email}");
+        let user: Option<Self> = DATABASE
+            .query("SELECT * FROM user WHERE email == $email")
+            .bind(("email", full_email.clone()))
+            .await?
+            .take(0)?;
 
-        DATABASE.set("email", full_email.clone()).await?;
-        let user: Option<Self> = DATABASE.query(query).await?.take(0)?;
+        user.ok_or_else(|| anyhow::anyhow!("No user record for {full_email}"))
+    }
 
-        if let Some(usr) = user {
-            Ok(usr)
-        } else {
-            let mut usr = Self::default();
-            usr.email = full_email;
-            let emp = usr.find_employee_by_email().await?;
-            Ok(Self {
-                id: RecordId::new(USER_TABLE, emp.id.clone()),
-                name: format!("{} {}", emp.firstname, emp.lastname),
-                everest_initials: emp.initials,
-                email: usr.email,
-                store: Store::from_presta_store_id(&emp.id_store),
-                id_prestashop: Some(emp.id.parse::<u64>()?),
-                id_store: Some(emp.id_store),
-                ..Default::default()
-            })
+    /// Resolves an email to a `user` record, falling back to a synthesized,
+    /// non-persisted `User` built from the PrestaShop employee on a miss. The
+    /// synthesized `id` is `user:<id_prestashop>` and does NOT exist in the
+    /// `user` table: use it for display only (`get_username`/`get_name`) and
+    /// never persist `get_id()` as a `user` reference. A real row is not
+    /// provisioned because the `user.email` UNIQUE index would then collide with
+    /// the employee's later auth signup.
+    pub async fn query_user_or_employee_from_email(email: String) -> anyhow::Result<Self, anyhow::Error> {
+        if let Ok(user) = Self::query_user_from_email(email.clone()).await {
+            return Ok(user);
         }
+
+        let full_email = if email.ends_with("@pclaptops.com") {
+            email
+        } else {
+            format!("{email}@pclaptops.com")
+        };
+
+        let mut usr = Self::default();
+        usr.email = full_email;
+        let emp = usr.find_employee_by_email().await?;
+        Ok(Self {
+            id: RecordId::new(USER_TABLE, emp.id.clone()),
+            name: format!("{} {}", emp.firstname, emp.lastname),
+            everest_initials: emp.initials,
+            email: usr.email,
+            store: Store::from_presta_store_id(&emp.id_store),
+            id_prestashop: Some(emp.id.parse::<u64>()?),
+            id_store: Some(emp.id_store),
+            ..Default::default()
+        })
+    }
+
+    /// True if a `user` record exists for this username's email; no PrestaShop fallback.
+    pub async fn username_exists(username: String) -> anyhow::Result<bool, anyhow::Error> {
+        let full_email = if username.ends_with("@pclaptops.com") {
+            username
+        } else {
+            format!("{username}@pclaptops.com")
+        };
+
+        let emails: Vec<String> = DATABASE
+            .query("RETURN (SELECT VALUE email FROM user WHERE email == $email)")
+            .bind(("email", full_email))
+            .await?
+            .take(0)?;
+
+        Ok(!emails.is_empty())
     }
 
     pub async fn add_custom_status(status: &str) -> anyhow::Result<(), anyhow::Error> {

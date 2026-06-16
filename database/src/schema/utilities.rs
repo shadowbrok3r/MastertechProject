@@ -437,6 +437,7 @@ pub async fn create_full_task_payload(
     mut task_notes: Vec<TaskNotePayload>,
     send_specs: bool,
     allow_placeholder_computer: bool,
+    assignee_override: Option<RecordId>,
 ) -> TaskCreationResult {
     info!("schema/utilities.rs -> Send_Payload");
     if send_specs
@@ -449,16 +450,28 @@ pub async fn create_full_task_payload(
                 .into(),
         };
     }
-    let queried_salesman = match User::query_user_from_email(ticket_data.salesman.clone()).await {
-        Ok(user) => user,
-        Err(e) => {
-            warn!("Could not query salesman, using default: {e:?}");
-            User::default()
-        }
+    // Honor an explicit assignee override (the create-task modal's verified
+    // pick); otherwise derive from the ticket salesman, falling back to the
+    // authenticated creator only as a last resort.
+    let assignee_id = if let Some(id) = assignee_override {
+        log::info!("schema/utilities.rs -> using assignee override: {id:?}");
+        id
+    } else {
+        let queried_salesman = match User::query_user_from_email(ticket_data.salesman.clone()).await {
+            Ok(user) => user,
+            Err(e) => {
+                warn!("Could not resolve salesman '{}' to a user ({e:?}); assigning to current user", ticket_data.salesman);
+                match User::get_current_user_from_auth().await {
+                    Ok(Some(user)) => user,
+                    _ => return TaskCreationResult::Error {
+                        message: "Could not resolve task assignee: salesman has no user record and no authenticated user is available.".into(),
+                    },
+                }
+            }
+        };
+        log::error!("schema/utilities.rs -> Queried Salesman (Which will be assignee): {:?}", queried_salesman);
+        queried_salesman.get_id()
     };
-    let _queried_tech = User::query_user_from_email(ticket_data.tech.clone()).await.unwrap_or_default();
-    
-    log::error!("schema/utilities.rs -> Queried Salesman (Which will be assignee): {:?}", queried_salesman);
     
     // let task_id = task_data.id.clone();
     let ticket_id = ticket_data.id.clone();
@@ -473,7 +486,7 @@ pub async fn create_full_task_payload(
     task_data.service_ticket = Some(ticket_id.clone());
     task_data.service_number = Some(service_number.clone());
     task_data.priority = Priority::Normal;
-    task_data.assignee = queried_salesman.get_id();
+    task_data.assignee = assignee_id;
 
     // if ticket_data.computer.is_none() {
     //     ticket_data.computer = Some(computer_data.id.clone());
@@ -785,6 +798,7 @@ pub async fn create_resolved_task_payload(
         task_notes,
         send_specs,
         false,
+        None,
     )
     .await
 }

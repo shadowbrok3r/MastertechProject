@@ -7,7 +7,7 @@ use surrealdb_types::Datetime;
 
 use crate::DATABASE;
 
-use super::{random_record_id, RecordId, SurrealValue, NOTIFICATION_TABLE, USER_TABLE};
+use super::{random_record_id, RecordId, RecordIdExt, SurrealValue, NOTIFICATION_TABLE, USER_TABLE};
 
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Difference, SurrealValue)]
@@ -87,6 +87,20 @@ impl Notification {
 
         log::info!("Created notification: {notif:?}");
 
+        Ok(())
+    }
+
+    /// Upserts this user's live-query canary (fixed record id, so it never
+    /// accumulates) stamped with `nonce`. The `live_query_check` type tells the
+    /// client to confirm live-stream liveness without surfacing a toast.
+    pub async fn send_live_query_canary(user: RecordId, nonce: String) -> anyhow::Result<()> {
+        let id = RecordId::new(NOTIFICATION_TABLE, format!("canary_{}", user.key_string()));
+        DATABASE
+            .query("UPSERT $id SET user = $user, notification_type = 'live_query_check', notification_description = $nonce, status = 'Read', created_at = time::now()")
+            .bind(("id", id))
+            .bind(("user", user))
+            .bind(("nonce", nonce))
+            .await?;
         Ok(())
     }
 }

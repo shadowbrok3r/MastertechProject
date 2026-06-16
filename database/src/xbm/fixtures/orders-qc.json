@@ -1,0 +1,440 @@
+{
+  "ok": true,
+  "data": {
+    "orders": [
+      {
+        "id": "gid://shopify/Order/6955440373986",
+        "name": "#1003",
+        "createdAt": "2026-05-26T15:56:35Z",
+        "customer": {
+          "name": "tyson@frawstedcreations.com",
+          "email": "tyson@frawstedcreations.com"
+        },
+        "buildName": "X-6 Performance Build",
+        "buildSerial": "SEED-967041",
+        "status": {
+          "gid": "gid://shopify/Metaobject/188541370594",
+          "name": "Shipped",
+          "color": "#8A2BE2"
+        },
+        "expectedSerials": 9,
+        "attachedSerials": 7,
+        "etaDate": null,
+        "salesRep": null,
+        "salesRepCode": null,
+        "pullPriority": 1,
+        "awaitingParts": false,
+        "orderType": "custom"
+      },
+      {
+        "id": "gid://shopify/Order/6960322642146",
+        "name": "#1022",
+        "createdAt": "2026-05-28T15:36:03Z",
+        "customer": {
+          "name": "Ryan Test",
+          "email": "ryan@xidax.com"
+        },
+        "buildName": "X-6 Performance Build",
+        "buildSerial": "SEED-964563",
+        "status": {
+          "gid": "gid://shopify/Metaobject/188544516322",
+          "name": "Ready to Build (On Warehouse Floor)",
+          "color": "#00a039"
+        },
+        "expectedSerials": 9,
+        "attachedSerials": 8,
+        "etaDate": null,
+        "salesRep": null,
+        "salesRepCode": null,
+        "pullPriority": 1,
+        "awaitingParts": false,
+        "orderType": "custom"
+      },
+      {
+        "id": "gid://shopify/Order/6955440701666",
+        "name": "#1004",
+        "createdAt": "2026-05-26T15:56:40Z",
+        "customer": {
+          "name": "tyson@frawstedcreations.com",
+          "email": "tyson@frawstedcreations.com"
+        },
+        "buildName": "X-2 Entry Build",
+        "buildSerial": "SEED-900808",
+        "status": {
+          "gid": "gid://shopify/Metaobject/188543369442",
+          "name": "Order Placed",
+          "color": "#139f00"
+        },
+        "expectedSerials": 8,
+        "attachedSerials": 8,
+        "etaDate": null,
+        "salesRep": null,
+        "salesRepCode": null,
+        "pullPriority": 3,
+        "awaitingParts": false,
+        "orderType": "custom"
+      },
+      {
+        "id": "gid://shopify/Order/6955440832738",
+        "name": "#1005",
+        "createdAt": "2026-05-26T15:56:45Z",
+        "customer": {
+          "name": "tyson@frawstedcreations.com",
+          "email": "tyson@frawstedcreations.com"
+        },
+        "buildName": "X-10 Flagship Build",
+        "buildSerial": "SEED-963132",
+        "status": {
+          "gid": "gid://shopify/Metaobject/188543369442",
+          "name": "Order Placed",
+          "color": "#139f00"
+        },
+        "expectedSerials": 12,
+        "attachedSerials": 12,
+        "etaDate": null,
+        "salesRep": null,
+        "salesRepCode": null,
+        "pullPriority": 3,
+        "awaitingParts": false,
+        "orderType": "custom"
+      },
+      {
+        "id": "gid://shopify/Order/6955923374306",
+        "name": "#1014",
+        "createdAt": "2026-05-26T21:17:23Z",
+        "customer": {
+          "name": "Reid Laitinen TEST",
+          "email": "REIDLAITINEN@GMAIL.COM"
+        },
+        "buildName": "X-6 RX 9060XT + RYZEN 7 7700X TENRAI WHITE",
+        "buildSerial": "2144370",
+        "status": {
+          "gid": "gid://shopify/Metaobject/188543369442",
+          "name": "Order Placed",
+          "color": "#139f00"
+        },
+        "expectedSerials": 23,
+        "attachedSerials": 0,
+        "etaDate": null,
+        "salesRep": null,
+        "salesRepCode": null,
+        "pullPriority": 3,
+        "awaitingParts": false,
+        "orderType": "custom"
+      },
+      {
+        "id": "gid://shopify/Order/6956117721314",
+        "name": "#1016",
+        "createdAt": "2026-05-27T00:04:47Z",
+        "customer": {
+          "name": "Native Test",
+          "email": "native-test@xidax.com"
+        },
+        "buildName": "—",
+        "buildSerial": "101601",
+        "status": {
+          "gid": "gid://shopify/Metaobject/188543303906",
+          "name": "Pre-Pulled",
+          "color": "#0066f3"
+        },
+        "expectedSerials": 9,
+        "attachedSerials": 9,
+        "etaDate": null,
+        "salesRep": null,
+        "salesRepCode": null,
+        "pullPriority": 3,
+        "awaitingParts": false,
+        "orderType": "other"
+      },
+      {
+        "id": "gid://shopify/Order/6958438088930",
+        "name": "#1018",
+        "createdAt": "2026-05-27T16:27:34Z",
+        "customer": {
+          "name": "Native Test",
+          "email": "native-test@xidax.com"
+        },
+        "buildName": "X-6 Performance Build",
+        "buildSerial": "SEED-960838",
+        "status": {
+          "gid": "gid://shopify/Metaobject/188543369442",
+          "name": "Order Placed",
+          "color": "#139f00"
+        },
+        "expectedSerials": 9,
+        "attachedSerials": 0,
+        "etaDate": null,
+        "salesRep": null,
+        "salesRepCode": null,
+        "pullPriority": 3,
+        "awaitingParts": false,
+        "orderType": "custom"
+      },
+      {
+        "id": "gid://shopify/Order/6958438252770",
+        "name": "#1019",
+        "createdAt": "2026-05-27T16:27:40Z",
+        "customer": {
+          "name": "Native Test",
+          "email": "native-test@xidax.com"
+        },
+        "buildName": "X-2 Entry Build",
+        "buildSerial": "SEED-957601",
+        "status": {
+          "gid": "gid://shopify/Metaobject/188543369442",
+          "name": "Order Placed",
+          "color": "#139f00"
+        },
+        "expectedSerials": 8,
+        "attachedSerials": 0,
+        "etaDate": null,
+        "salesRep": null,
+        "salesRepCode": null,
+        "pullPriority": 3,
+        "awaitingParts": false,
+        "orderType": "custom"
+      },
+      {
+        "id": "gid://shopify/Order/6958438318306",
+        "name": "#1020",
+        "createdAt": "2026-05-27T16:27:45Z",
+        "customer": {
+          "name": "Native Test",
+          "email": "native-test@xidax.com"
+        },
+        "buildName": "X-10 Flagship Build",
+        "buildSerial": "SEED-989631",
+        "status": {
+          "gid": "gid://shopify/Metaobject/188543369442",
+          "name": "Order Placed",
+          "color": "#139f00"
+        },
+        "expectedSerials": 12,
+        "attachedSerials": 1,
+        "etaDate": null,
+        "salesRep": null,
+        "salesRepCode": null,
+        "pullPriority": 3,
+        "awaitingParts": false,
+        "orderType": "custom"
+      },
+      {
+        "id": "gid://shopify/Order/6958550974690",
+        "name": "#1021",
+        "createdAt": "2026-05-27T17:40:47Z",
+        "customer": {
+          "name": "Ryan Test",
+          "email": "ryan@xidax.com"
+        },
+        "buildName": "X-6 Performance Build",
+        "buildSerial": "SEED-951030",
+        "status": {
+          "gid": "gid://shopify/Metaobject/188543369442",
+          "name": "Order Placed",
+          "color": "#139f00"
+        },
+        "expectedSerials": 9,
+        "attachedSerials": 0,
+        "etaDate": null,
+        "salesRep": null,
+        "salesRepCode": null,
+        "pullPriority": 3,
+        "awaitingParts": false,
+        "orderType": "custom"
+      },
+      {
+        "id": "gid://shopify/Order/6974509449442",
+        "name": "#1024",
+        "createdAt": "2026-06-04T13:52:15Z",
+        "customer": {
+          "name": "Native Test",
+          "email": "native-test@xidax.com"
+        },
+        "buildName": "—",
+        "buildSerial": "XBS-001024",
+        "status": {
+          "gid": "gid://shopify/Metaobject/188543369442",
+          "name": "Order Placed",
+          "color": "#139f00"
+        },
+        "expectedSerials": 1,
+        "attachedSerials": 0,
+        "etaDate": null,
+        "salesRep": null,
+        "salesRepCode": null,
+        "pullPriority": 3,
+        "awaitingParts": false,
+        "orderType": "prebuilt"
+      },
+      {
+        "id": "gid://shopify/Order/6974687150306",
+        "name": "#1026",
+        "createdAt": "2026-06-04T15:45:25Z",
+        "customer": {
+          "name": "Native Test",
+          "email": "native-test@xidax.com"
+        },
+        "buildName": "—",
+        "buildSerial": "XBS-001026",
+        "status": {
+          "gid": "gid://shopify/Metaobject/188543369442",
+          "name": "Order Placed",
+          "color": "#139f00"
+        },
+        "expectedSerials": 1,
+        "attachedSerials": 0,
+        "etaDate": null,
+        "salesRep": null,
+        "salesRepCode": null,
+        "pullPriority": 3,
+        "awaitingParts": false,
+        "orderType": "prebuilt"
+      },
+      {
+        "id": "gid://shopify/Order/6975170445538",
+        "name": "#1027",
+        "createdAt": "2026-06-04T20:44:09Z",
+        "customer": {
+          "name": "Native Test",
+          "email": "native-test@xidax.com"
+        },
+        "buildName": "X-6 Performance Build",
+        "buildSerial": "XBS-001027",
+        "status": {
+          "gid": "gid://shopify/Metaobject/188543369442",
+          "name": "Order Placed",
+          "color": "#139f00"
+        },
+        "expectedSerials": 9,
+        "attachedSerials": 0,
+        "etaDate": null,
+        "salesRep": null,
+        "salesRepCode": null,
+        "pullPriority": 3,
+        "awaitingParts": false,
+        "orderType": "custom"
+      },
+      {
+        "id": "gid://shopify/Order/6975170576610",
+        "name": "#1028",
+        "createdAt": "2026-06-04T20:44:14Z",
+        "customer": {
+          "name": "Native Test",
+          "email": "native-test@xidax.com"
+        },
+        "buildName": "X-2 Entry Build",
+        "buildSerial": "XBS-001028",
+        "status": {
+          "gid": "gid://shopify/Metaobject/188543369442",
+          "name": "Order Placed",
+          "color": "#139f00"
+        },
+        "expectedSerials": 8,
+        "attachedSerials": 0,
+        "etaDate": null,
+        "salesRep": null,
+        "salesRepCode": null,
+        "pullPriority": 3,
+        "awaitingParts": false,
+        "orderType": "custom"
+      },
+      {
+        "id": "gid://shopify/Order/6975170838754",
+        "name": "#1029",
+        "createdAt": "2026-06-04T20:44:21Z",
+        "customer": {
+          "name": "Native Test",
+          "email": "native-test@xidax.com"
+        },
+        "buildName": "X-10 Flagship Build",
+        "buildSerial": "XBS-001029",
+        "status": {
+          "gid": "gid://shopify/Metaobject/188543369442",
+          "name": "Order Placed",
+          "color": "#139f00"
+        },
+        "expectedSerials": 12,
+        "attachedSerials": 0,
+        "etaDate": null,
+        "salesRep": null,
+        "salesRepCode": null,
+        "pullPriority": 3,
+        "awaitingParts": false,
+        "orderType": "custom"
+      },
+      {
+        "id": "gid://shopify/Order/6982640435426",
+        "name": "#1030",
+        "createdAt": "2026-06-08T18:10:16Z",
+        "customer": {
+          "name": "Compliance Surveillance",
+          "email": "james.payne1@syf.com"
+        },
+        "buildName": "—",
+        "buildSerial": "XBS-001030",
+        "status": {
+          "gid": "gid://shopify/Metaobject/188543369442",
+          "name": "Order Placed",
+          "color": "#139f00"
+        },
+        "expectedSerials": 1,
+        "attachedSerials": 0,
+        "etaDate": null,
+        "salesRep": null,
+        "salesRepCode": null,
+        "pullPriority": 3,
+        "awaitingParts": false,
+        "orderType": "other"
+      },
+      {
+        "id": "gid://shopify/Order/6993760452834",
+        "name": "#1031",
+        "createdAt": "2026-06-12T20:39:37Z",
+        "customer": {
+          "name": "Timothy Koptan (cash_4_gpu)",
+          "email": "bounce-c19-wrttty@mail.codisto.com"
+        },
+        "buildName": "—",
+        "buildSerial": "XBS-001031",
+        "status": {
+          "gid": "gid://shopify/Metaobject/188543369442",
+          "name": "Order Placed",
+          "color": "#139f00"
+        },
+        "expectedSerials": 2,
+        "attachedSerials": 0,
+        "etaDate": null,
+        "salesRep": null,
+        "salesRepCode": null,
+        "pullPriority": 3,
+        "awaitingParts": false,
+        "orderType": "other"
+      },
+      {
+        "id": "gid://shopify/Order/6999396417762",
+        "name": "#1032",
+        "createdAt": "2026-06-15T17:54:35Z",
+        "customer": {
+          "name": "Ryan Test",
+          "email": "ryan@xidax.com"
+        },
+        "buildName": "—",
+        "buildSerial": "XBS-001032",
+        "status": {
+          "gid": "gid://shopify/Metaobject/188543369442",
+          "name": "Order Placed",
+          "color": "#139f00"
+        },
+        "expectedSerials": 1,
+        "attachedSerials": 0,
+        "etaDate": null,
+        "salesRep": null,
+        "salesRepCode": null,
+        "pullPriority": 3,
+        "awaitingParts": false,
+        "orderType": "other"
+      }
+    ],
+    "reps": []
+  }
+}
