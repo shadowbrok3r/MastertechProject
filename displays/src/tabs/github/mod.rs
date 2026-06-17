@@ -25,62 +25,7 @@ fn proxied_github_asset_url(asset_api_url: &str) -> String {
     asset_api_url.replace("api.github.com", "git.master-tech.app")
 }
 
-/// GitHub issue `body` max length (characters).
-/// See <https://docs.github.com/rest/issues/issues#create-an-issue>
-pub const GITHUB_ISSUE_BODY_CHAR_LIMIT: usize = 65_536;
-
-/// Space reserved for log lines after worst-case description trim.
-const GITHUB_ISSUE_MIN_LOG_CHARS: usize = 4_096;
-
-#[inline]
-fn truncate_issue_chars(s: &str, max_chars: usize) -> String {
-    s.chars().take(max_chars).collect()
-}
-
-/// User description + metadata + collapsible logs, trimmed to GitHub's body limit.
-/// Truncates **logs** to fit; if the user's description is still too large, truncates it while reserving space for a minimum log tail.
-#[must_use]
-pub fn build_github_issue_body(
-    user_description: &str,
-    user_name: &str,
-    user_email: &str,
-    logs: &str,
-) -> String {
-    let mid = format!(
-        "\n\n**User:** {} - {}\n\n<details>\n<summary>Application Logs (last 50 entries)</summary>\n\n```\n",
-        user_name, user_email
-    );
-    let end = "\n```\n</details>";
-
-    let mid_n = mid.chars().count();
-    let end_n = end.chars().count();
-
-    let mut desc = user_description.to_string();
-    let max_desc =
-        GITHUB_ISSUE_BODY_CHAR_LIMIT.saturating_sub(mid_n + end_n + GITHUB_ISSUE_MIN_LOG_CHARS);
-    if desc.chars().count() > max_desc {
-        let note = "\n\n_(Description truncated: GitHub issue body limit is 65536 characters.)_";
-        let budget = max_desc.saturating_sub(note.chars().count());
-        desc = truncate_issue_chars(&desc, budget);
-        desc.push_str(note);
-    }
-
-    let max_logs =
-        GITHUB_ISSUE_BODY_CHAR_LIMIT.saturating_sub(desc.chars().count() + mid_n + end_n);
-    let logs_part = if logs.chars().count() > max_logs {
-        let note = "\n… _(logs truncated: GitHub issue body limit)_";
-        let budget = max_logs.saturating_sub(note.chars().count());
-        format!(
-            "{}{}",
-            truncate_issue_chars(logs, budget.max(1)),
-            note
-        )
-    } else {
-        logs.to_string()
-    };
-
-    format!("{}{}{}{}", desc, mid, logs_part, end)
-}
+pub use mtech_ui::github::{build_github_issue_body, create_new_issue, GITHUB_ISSUE_BODY_CHAR_LIMIT};
 
 pub struct GithubIssue {
     pub github_issue_descript: String,
@@ -185,32 +130,6 @@ impl GithubIssue {
             }
         });
     }
-}
-
-/// Create an issue via GitHub REST API (no auth token — enabled for this public repo).
-pub async fn create_new_issue(
-    title: String,
-    body: String,
-    client: Client,
-) -> anyhow::Result<String, anyhow::Error> {
-    let params = serde_json::json!({
-        "title": title,
-        "body": body,
-        "assignees": ["shadowbrok3r"],
-        "labels": ["bug"],
-    });
-    let res = client
-        .post(format!("{GIT_MASTER_TECH_REPO_BASE}/issues"))
-        .header(ACCEPT, "application/vnd.github+json")
-        .header(USER_AGENT, "MtechServer")
-        .header(HeaderName::from_str("X-GitHub-Api-Version").unwrap(), "2022-11-28")
-        .json(&params)
-        .send()
-        .await?
-        .text()
-        .await?;
-
-    Ok(res)
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]

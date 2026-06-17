@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 use egui::containers::menu::MenuConfig;
 use egui::{Align, Layout, PopupCloseBehavior};
+use egui_dock::{DockArea, DockState};
 
 use crate::db;
 use crate::fleet_client::{FleetClient, InboundCommandKind};
@@ -50,6 +51,48 @@ fn init_hw_monitor() -> Arc<Mutex<HwMonitor>> {
     Arc::new(Mutex::new(HwMonitor::default()))
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
+pub enum QcTab {
+    OrderQc,
+    SwiftDb,
+    Oa3,
+    Stress,
+    Settings,
+    Logs,
+    BugReport,
+    HardwareMonitor,
+}
+
+impl QcTab {
+    const ALL: [QcTab; 8] = [
+        QcTab::OrderQc,
+        QcTab::SwiftDb,
+        QcTab::Oa3,
+        QcTab::Stress,
+        QcTab::Settings,
+        QcTab::Logs,
+        QcTab::BugReport,
+        QcTab::HardwareMonitor,
+    ];
+
+    fn title(self) -> &'static str {
+        match self {
+            QcTab::OrderQc => "Order QC",
+            QcTab::SwiftDb => "Swift DB",
+            QcTab::Oa3 => "OA3 Sager",
+            QcTab::Stress => "Stress Test",
+            QcTab::Settings => "Settings",
+            QcTab::Logs => "Logs",
+            QcTab::BugReport => "Bug Report",
+            QcTab::HardwareMonitor => "Hardware",
+        }
+    }
+}
+
+fn default_dock() -> DockState<QcTab> {
+    DockState::new(QcTab::ALL.to_vec())
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct QcApp {
     pub github_owner: String,
@@ -62,7 +105,8 @@ pub struct QcApp {
     /// `.bin` passed to H2OOAE `-W` in inject preview.
     pub oa3_bin_path: String,
     pub h2o_generation: H2oGeneration,
-    pub selected_tab: u8,
+    #[serde(default = "default_dock")]
+    dock: DockState<QcTab>,
     /// Persisted stress panel config.
     pub stress_cfg: StressPanelConfig,
 
@@ -102,6 +146,8 @@ pub struct QcApp {
     /// Run report window (fresh verdicts + past runs).
     #[serde(skip)]
     report_view: crate::report_view::ReportView,
+    #[serde(skip)]
+    bug_report: crate::bug_report::BugReportPanel,
 }
 
 impl Default for QcApp {
@@ -114,7 +160,7 @@ impl Default for QcApp {
             oa3_wrapper_path: String::new(),
             oa3_bin_path: String::new(),
             h2o_generation: H2oGeneration::H2O14,
-            selected_tab: 0,
+            dock: default_dock(),
             stress_cfg: StressPanelConfig::default(),
             status_line: init_arc_mutex_string(),
             github_in_flight: init_arc_atomic_bool(),
@@ -129,6 +175,7 @@ impl Default for QcApp {
             last_heartbeat: None,
             mcp_state: None,
             report_view: crate::report_view::ReportView::default(),
+            bug_report: crate::bug_report::BugReportPanel::default(),
         }
     }
 }
@@ -368,6 +415,18 @@ impl QcApp {
             }
         });
     }
+
+    fn ui_logs(ui: &mut egui::Ui) {
+        mtech_ui::egui_logger::logger_ui()
+            .log_levels([true, true, true, false, false])
+            .enable_category("eframe".to_string(), false)
+            .enable_category("eframe::native::glow_integration".to_string(), false)
+            .enable_category("egui_glow::shader_version".to_string(), false)
+            .enable_category("egui_glow::painter".to_string(), false)
+            .enable_category("evtx::evtx_chunk".to_string(), false)
+            .enable_category("evtx::evtx_parser".to_string(), false)
+            .show(ui);
+    }
 }
 
 impl eframe::App for QcApp {
@@ -504,82 +563,110 @@ impl eframe::App for QcApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        eframe::egui::Panel::top("egui_dock::MenuBar").show_inside(ui, |ui| {
-            eframe::egui::MenuBar::new()
-            .config(
-                MenuConfig::default().close_behavior(PopupCloseBehavior::CloseOnClickOutside),
-            )
-            .ui(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.selected_tab, 4u8, "Order QC");
-                    ui.separator();
-                    ui.selectable_value(&mut self.selected_tab, 0u8, "Swift DB");
-                    ui.separator();
-                    ui.selectable_value(&mut self.selected_tab, 1u8, "OA3 Sager");
-                    ui.separator();
-                    ui.selectable_value(&mut self.selected_tab, 2u8, "Stress Test");
-                    ui.separator();
-                    ui.selectable_value(&mut self.selected_tab, 3u8, "Settings");
+        let mut tree = std::mem::replace(&mut self.dock, DockState::new(Vec::new()));
 
+        egui::Panel::top("qc_menu_bar").show_inside(ui, |ui| {
+            egui::MenuBar::new()
+                .config(
+                    MenuConfig::default().close_behavior(PopupCloseBehavior::CloseOnClickOutside),
+                )
+                .ui(ui, |ui| {
+                    ui.menu_button("View", |ui| {
+                        for tab in QcTab::ALL {
+                            let open = tree.find_tab(&tab).is_some();
+                            if ui.selectable_label(open, tab.title()).clicked() {
+                                match tree.find_tab(&tab) {
+                                    Some(idx) => {
+                                        tree.remove_tab(idx);
+                                    }
+                                    None => tree.push_to_focused_leaf(tab),
+                                }
+                            }
+                        }
+                    });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(format!(" Mastertech QC - {}", database::version_with_build!()));
                     });
                 });
-            });
         });
-        match self.selected_tab {
-            0 => {
-                egui::CentralPanel::default().show_inside(ui, |ui| self.ui_database(ui));
-            }
-            1 => {
-                egui::CentralPanel::default().show_inside(ui, |ui| self.ui_oa3(ui));
-            }
-            3 => {
-                egui::CentralPanel::default().show_inside(ui, |ui| self.ui_settings(ui));
-            }
-            4 => {
-                let snapshot = self.hw_sampler.as_ref().map(|s| s.agent().snapshot());
-                let last_verdict = self.stress_panel.last_verdict_ref().cloned();
-                let last_preset = self.stress_panel.last_preset();
-                egui::CentralPanel::default().show_inside(ui, |ui| {
-                    self.order_panel
-                        .ui(ui, snapshot.as_ref(), last_verdict.as_ref(), last_preset)
-                });
-            }
-            _ => {
-                // Stress test tab. `stress_panel.ui` lays out its own
-                // Panel::top (mode buttons + Hardware Monitor) +
-                // Panel::bottom (live charts) + CentralPanel (mode content),
-                // so we hand it the raw parent `ui` rather than wrapping in
-                // another CentralPanel here.
-                let mut open_hw = false;
-                let telemetry = self.hw_sampler.as_ref().map(|s| s.agent());
-                if let Some(telemetry) = telemetry {
-                    let computer = local_computer_record();
-                    self.stress_panel.ui(
-                        ui,
-                        &mut self.stress_cfg,
-                        &mut open_hw,
-                        telemetry,
-                        computer,
-                    );
-                    if open_hw {
-                        self.show_hw_monitor.store(true, Ordering::Relaxed);
-                    }
-                } else {
-                    egui::CentralPanel::default().show_inside(ui, |ui| {
-                        ui.colored_label(
-                            egui::Color32::from_rgb(180, 140, 50),
-                            "Telemetry sampler not initialized — open the Hardware Monitor first.",
-                        );
-                    });
-                }
-            }
-        }
+
+        let style = mtech_ui::dock_style::style(ui.ctx());
+        DockArea::new(&mut tree)
+            .style(style)
+            .show_close_buttons(true)
+            .draggable_tabs(true)
+            .show_inside(ui, self);
+
+        self.dock = tree;
     }
 
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
+    }
+}
+
+impl egui_dock::TabViewer for QcApp {
+    type Tab = QcTab;
+
+    fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
+        tab.title().into()
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
+        match tab {
+            QcTab::SwiftDb => self.ui_database(ui),
+            QcTab::Oa3 => self.ui_oa3(ui),
+            QcTab::Settings => self.ui_settings(ui),
+            QcTab::Logs => Self::ui_logs(ui),
+            QcTab::BugReport => self.bug_report.ui(ui),
+            QcTab::HardwareMonitor => {
+                let undocked = self.show_hw_monitor.load(Ordering::Relaxed);
+                ui.horizontal(|ui| {
+                    if ui
+                        .selectable_label(undocked, "Undock to window")
+                        .on_hover_text("Show the hardware monitor in its own resizable window")
+                        .clicked()
+                    {
+                        self.show_hw_monitor.store(!undocked, Ordering::Relaxed);
+                    }
+                });
+                ui.separator();
+                if undocked {
+                    ui.add_space(8.0);
+                    ui.colored_label(
+                        egui::Color32::GRAY,
+                        "Hardware monitor is shown in a separate window — untoggle \
+                         \"Undock to window\" or close that window to dock it here.",
+                    );
+                } else if let Ok(mut monitor) = self.hw_monitor.lock() {
+                    monitor.show(ui);
+                }
+            }
+            QcTab::OrderQc => {
+                let snapshot = self.hw_sampler.as_ref().map(|s| s.agent().snapshot());
+                let last_verdict = self.stress_panel.last_verdict_ref().cloned();
+                let last_preset = self.stress_panel.last_preset();
+                self.order_panel
+                    .ui(ui, snapshot.as_ref(), last_verdict.as_ref(), last_preset);
+            }
+            QcTab::Stress => {
+                let mut open_hw = false;
+                let telemetry = self.hw_sampler.as_ref().map(|s| s.agent());
+                if let Some(telemetry) = telemetry {
+                    let computer = local_computer_record();
+                    self.stress_panel
+                        .ui(ui, &mut self.stress_cfg, &mut open_hw, telemetry, computer);
+                    if open_hw {
+                        self.show_hw_monitor.store(true, Ordering::Relaxed);
+                    }
+                } else {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(180, 140, 50),
+                        "Telemetry sampler not initialized — open the Hardware Monitor first.",
+                    );
+                }
+            }
+        }
     }
 }

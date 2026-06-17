@@ -14,11 +14,13 @@ eframe = { version = "0.34", features = ["persistence", "serde", "default_fonts"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 egui_plot = { workspace = true }
 web-time = { workspace = true }
-stress-kit.workspace = true
+stress-kit = { workspace = true, features = ["winring0-thermal"] }
 stress-runner.workspace = true
+mtech-ui.workspace = true
 database.workspace = true
 egui-data-table.workspace = true
 egui_extras.workspace = true
+egui_dock.workspace = true
 egui-phosphor = { version = "0.12.0", default-features = false, features = ["regular"] }
 sysinfo = { version = "0.39", features = ["serde", "multithread"] }
 log.workspace = true
@@ -32,7 +34,6 @@ axum.workspace = true
 crossbeam.workspace = true
 once_cell.workspace = true
 directories = "6.0.0"
-env_logger = "*"
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "rustls"] }
 rusqlite = { version = "0.39.0", features = ["bundled"] }
 image = "0.25"

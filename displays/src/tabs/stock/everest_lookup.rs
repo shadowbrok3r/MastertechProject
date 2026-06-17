@@ -732,18 +732,31 @@ pub struct EverestItemViewer {
     pub filter: String,
     #[serde(skip)]
     pub serial_click_tx: Option<Sender<String>>,
+    /// Keys of the currently highlighted rows (for selection stats).
+    #[serde(skip)]
+    pub selected: std::collections::HashSet<String>,
 }
 
 impl Default for EverestItemViewer {
     fn default() -> Self {
-        Self { filter: String::new(), serial_click_tx: None }
+        Self { filter: String::new(), serial_click_tx: None, selected: std::collections::HashSet::new() }
     }
+}
+
+/// Stable selection key for an Everest line row.
+pub fn everest_row_key(r: &EverestItemRow) -> String {
+    format!("{}|{}|{}", r.sequence, r.item_code, r.stock_serial)
 }
 
 impl RowViewer<EverestItemRow> for EverestItemViewer {
     fn try_create_codec(&mut self, _: bool) -> Option<impl RowCodec<EverestItemRow>> { Some(EverestItemCodec) }
 
     fn num_columns(&mut self) -> usize { 7 }
+
+    fn on_highlight_change(&mut self, highlighted: &[&EverestItemRow], unhighlighted: &[&EverestItemRow]) {
+        for r in unhighlighted.iter() { self.selected.remove(&everest_row_key(r)); }
+        for r in highlighted.iter() { self.selected.insert(everest_row_key(r)); }
+    }
 
     fn column_name(&mut self, column: usize) -> std::borrow::Cow<'static, str> {
         ["#", "Item Code", "Qty", "Unit Price", "Stock Serial", "MFG Serial", "Kit"][column].into()

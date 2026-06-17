@@ -228,15 +228,70 @@ fn snapshot_to_datetime(unix_ms: u64) -> database::schema::Datetime {
         .into()
 }
 
-/// `hostname-cpu-PROCESSOR_IDENTIFIER` → SHA-256 hex. Matches Mastertech
-/// `filesystem::system_info::generate_client_id` and qc-app `reporting`.
-pub fn generate_client_hash(hostname: &str, cpu_brand: &str) -> String {
+/// Pure SHA-256 of `hostname-cpu-PROCESSOR_IDENTIFIER`. Seed for `stable_machine_hash`.
+pub fn hardware_hash(hostname: &str, cpu_brand: &str) -> String {
     use sha2::{Digest, Sha256};
     let cpu_id = std::env::var("PROCESSOR_IDENTIFIER").unwrap_or_else(|_| "unknown-cpu".to_string());
     let combined = format!("{}-{}-{}", hostname, cpu_brand.trim(), cpu_id);
     let mut hasher = Sha256::new();
     hasher.update(combined.as_bytes());
     hex::encode(hasher.finalize())
+}
+
+/// Frozen identity hash for this host; args ignored, value from `stable_machine_hash`.
+pub fn generate_client_hash(_hostname: &str, _cpu_brand: &str) -> String {
+    stable_machine_hash()
+}
+
+/// Persisted machine-id file path (`machine_id.txt`).
+fn machine_id_path() -> Option<std::path::PathBuf> {
+    directories::ProjectDirs::from("com", "Mastertech", "MastertechQC")
+        .map(|p| p.data_local_dir().join("machine_id.txt"))
+}
+
+/// Live hardware hash for this host.
+fn hardware_hash_local() -> String {
+    use sysinfo::{CpuRefreshKind, RefreshKind, System};
+    let hostname = System::host_name().unwrap_or_default();
+    let mut sys =
+        System::new_with_specifics(RefreshKind::nothing().with_cpu(CpuRefreshKind::everything()));
+    sys.refresh_cpu_list(CpuRefreshKind::everything());
+    let cpu = sys
+        .cpus()
+        .first()
+        .map(|c| c.brand().trim().to_string())
+        .unwrap_or_default();
+    hardware_hash(&hostname, &cpu)
+}
+
+/// This machine's frozen identity hash; seeds from hardware once, then reads `machine_id.txt`.
+pub fn stable_machine_hash() -> String {
+    use std::sync::OnceLock;
+    static CACHED: OnceLock<String> = OnceLock::new();
+    CACHED
+        .get_or_init(|| {
+            let path = machine_id_path();
+            if let Some(p) = &path {
+                if let Ok(existing) = std::fs::read_to_string(p) {
+                    let trimmed = existing.trim();
+                    if trimmed.len() >= 32 && trimmed.bytes().all(|b| b.is_ascii_hexdigit()) {
+                        log::info!("stable_machine_hash: loaded {} = {trimmed}", p.display());
+                        return trimmed.to_string();
+                    }
+                }
+            }
+            let seed = hardware_hash_local();
+            if let Some(p) = &path {
+                if let Some(parent) = p.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if std::fs::write(p, &seed).is_ok() {
+                    log::info!("stable_machine_hash: seeded {} = {seed}", p.display());
+                }
+            }
+            seed
+        })
+        .clone()
 }
 
 /// Record key for `computer` / `connected_client` (`HOSTNAME:hash_prefix`).

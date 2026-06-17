@@ -9,6 +9,8 @@ use std::time::{Duration, Instant};
 use crate::Metrics;
 
 const TICK: Duration = Duration::from_millis(500);
+// Per-worker I/O buffer size; the file is read/written in chunks of this.
+const IO_CHUNK_BYTES: usize = 16 * 1024 * 1024;
 
 pub(crate) fn run(
     thread_count: usize,
@@ -72,19 +74,19 @@ fn disk_worker(
     error_slot: Arc<std::sync::Mutex<Option<String>>>,
 ) {
     let file_bytes = (file_mb as usize).max(1) * 1024 * 1024;
-    let write_buf: Vec<u8> = (0..file_bytes)
-        .map(|i| (i & 0xFF) as u8 ^ 0x5A)
-        .collect();
-    let mut read_buf = vec![0u8; file_bytes];
+    let chunk_bytes = IO_CHUNK_BYTES.min(file_bytes);
+    let mut write_buf = vec![0u8; chunk_bytes];
+    for (i, b) in write_buf.iter_mut().enumerate() {
+        *b = (i & 0xFF) as u8 ^ 0x5A;
+    }
+    let mut read_buf = vec![0u8; chunk_bytes];
 
     let path = std::env::temp_dir().join(format!("stress-kit-{id}-{}.tmp", std::process::id()));
 
-    loop {
-        if cancel.load(Ordering::Relaxed) {
-            break;
-        }
-
-        if let Err(e) = write_and_read(&path, &write_buf, &mut read_buf, &bytes_counter) {
+    while !cancel.load(Ordering::Relaxed) {
+        if let Err(e) =
+            write_and_read(&path, file_bytes, &write_buf, &mut read_buf, &cancel, &bytes_counter)
+        {
             if let Ok(mut slot) = error_slot.lock() {
                 *slot = Some(format!("disk thread {id}: {e}"));
             }
@@ -97,22 +99,40 @@ fn disk_worker(
 
 fn write_and_read(
     path: &std::path::Path,
+    file_bytes: usize,
     write_buf: &[u8],
     read_buf: &mut [u8],
+    cancel: &AtomicBool,
     bytes_counter: &AtomicU64,
 ) -> io::Result<()> {
     {
         let mut f = std::fs::File::create(path)?;
-        f.write_all(write_buf)?;
+        let mut remaining = file_bytes;
+        while remaining > 0 {
+            if cancel.load(Ordering::Relaxed) {
+                return Ok(());
+            }
+            let n = remaining.min(write_buf.len());
+            f.write_all(&write_buf[..n])?;
+            bytes_counter.fetch_add(n as u64, Ordering::Relaxed);
+            remaining -= n;
+        }
         f.sync_data()?;
     }
-    bytes_counter.fetch_add(write_buf.len() as u64, Ordering::Relaxed);
 
     {
         let mut f = std::fs::File::open(path)?;
-        f.read_exact(read_buf)?;
+        let mut remaining = file_bytes;
+        while remaining > 0 {
+            if cancel.load(Ordering::Relaxed) {
+                return Ok(());
+            }
+            let n = remaining.min(read_buf.len());
+            f.read_exact(&mut read_buf[..n])?;
+            bytes_counter.fetch_add(n as u64, Ordering::Relaxed);
+            remaining -= n;
+        }
     }
-    bytes_counter.fetch_add(read_buf.len() as u64, Ordering::Relaxed);
 
     std::fs::remove_file(path)?;
     Ok(())

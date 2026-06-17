@@ -1,0 +1,18 @@
+[package]
+name = "mtech-ui"
+version = "0.1.0"
+edition = "2024"
+description = "Shared egui UI helpers (theme, dock chrome, in-app logger) for Mastertech apps"
+
+[features]
+puffin = []
+
+[dependencies]
+eframe.workspace = true
+egui_dock.workspace = true
+regex.workspace = true
+chrono.workspace = true
+log.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+reqwest = { version = "0.13", default-features = false, features = ["json"] }

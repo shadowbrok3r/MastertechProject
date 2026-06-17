@@ -9,9 +9,12 @@ use crate::tabs::stock::inventory_audit::{
 use crate::channel_manager::ChannelManager;
 use crossbeam::channel::{Receiver, Sender};
 use crate::{PlatformSpawner, Spawner, TaskUiActions, get_current_user_from_auth};
-use database::schema::{RecordId, Store, prestashop::{Customer, Address, xml::{modify_xml, remove_xml_tag}}};
+use database::schema::{RecordId, Store, prestashop::{Customer, Address, OrderType, xml::{modify_xml, remove_xml_tag}}};
 use database::xidax_order_url;
 use egui_data_table::Renderer;
+use egui_extras::DatePickerButton;
+use chrono::{DateTime, Duration, Utc};
+use crate::ui_tools::selection_stats::{render_selection_stats, selection_stats};
 use log::info;
 use std::collections::HashMap;
 
@@ -88,6 +91,24 @@ pub struct StockTable {
     cost_order_id: String,
     cost_loading: bool,
     cost_summary: Option<CostBreakdownSummary>,
+    // Bulk cost breakdown
+    bulk_from: DateTime<Utc>,
+    bulk_to: DateTime<Utc>,
+    bulk_order_type: OrderType,
+    bulk_store: Option<u64>,
+    bulk_state_filter: BulkStateFilter,
+    bulk_view_mode: BulkViewMode,
+    bulk_loading: bool,
+    bulk_progress: (usize, usize),
+    bulk_summary: Option<BulkCostSummary>,
+    bulk_orders_table: egui_data_table::DataTable<BulkOrderData>,
+    bulk_orders_viewer: BulkOrderViewer,
+    bulk_products_table: egui_data_table::DataTable<BulkProductData>,
+    bulk_products_viewer: BulkProductViewer,
+    pub bulk_orders_channel: (Sender<Vec<BulkOrderData>>, Receiver<Vec<BulkOrderData>>),
+    pub bulk_products_channel: (Sender<Vec<BulkProductData>>, Receiver<Vec<BulkProductData>>),
+    pub bulk_summary_channel: (Sender<BulkCostSummary>, Receiver<BulkCostSummary>),
+    pub bulk_progress_channel: (Sender<(usize, usize)>, Receiver<(usize, usize)>),
     // Systems In-Store
     systems_in_store_viewer: SystemInStoreViewer,
     systems_in_store_table: egui_data_table::DataTable<SystemInStoreData>,
@@ -238,6 +259,7 @@ pub enum StockSelection {
     CompanyStock,
     StoreInventory,
     CostBreakdown,
+    BulkCostBreakdown,
     SystemsInStore,
     Everest,
 }
@@ -248,9 +270,29 @@ impl StockSelection {
             StockSelection::CompanyStock => "Company Stock",
             StockSelection::StoreInventory => "Store Inventory",
             StockSelection::CostBreakdown => "Cost Breakdown",
+            StockSelection::BulkCostBreakdown => "Bulk Cost Breakdown",
             StockSelection::SystemsInStore => "Systems In-Store",
             StockSelection::Everest => "Everest",
         }
+    }
+}
+
+/// Which table the Bulk Cost Breakdown view shows.
+#[derive(Default, PartialEq, Clone, Copy)]
+enum BulkViewMode {
+    #[default]
+    Orders,
+    Products,
+}
+
+/// Display label for an order type in the bulk picker.
+fn order_type_label(t: &OrderType) -> &'static str {
+    match t {
+        OrderType::SalesOrder => "Sales Order",
+        OrderType::ServiceOrder => "Service Order",
+        OrderType::ReadyToRoll => "Ready To Roll",
+        OrderType::Bsd => "BSD",
+        OrderType::Rci => "RCI",
     }
 }
 
@@ -261,6 +303,10 @@ impl Default for StockTable {
         let extra_stock_channel = <Vec<ExtraInventoryData>>::create_unbounded_channel();
         let cost_channel = <Vec<CostBreakdownData>>::create_unbounded_channel();
         let cost_summary_channel = <CostBreakdownSummary>::create_unbounded_channel();
+        let bulk_orders_channel: (Sender<Vec<BulkOrderData>>, Receiver<Vec<BulkOrderData>>) = crossbeam::channel::unbounded();
+        let bulk_products_channel: (Sender<Vec<BulkProductData>>, Receiver<Vec<BulkProductData>>) = crossbeam::channel::unbounded();
+        let bulk_summary_channel: (Sender<BulkCostSummary>, Receiver<BulkCostSummary>) = crossbeam::channel::unbounded();
+        let bulk_progress_channel: (Sender<(usize, usize)>, Receiver<(usize, usize)>) = crossbeam::channel::unbounded();
         let systems_channel = <Vec<SystemInStoreData>>::create_unbounded_channel();
         let systems_add_channel = <SystemInStoreData>::create_unbounded_channel();
         let systems_task_channel = <SystemInStoreData>::create_unbounded_channel();
@@ -311,6 +357,23 @@ impl Default for StockTable {
             cost_order_id: String::new(),
             cost_loading: false,
             cost_summary: None,
+            bulk_from: Utc::now() - Duration::days(30),
+            bulk_to: Utc::now(),
+            bulk_order_type: OrderType::SalesOrder,
+            bulk_store: None,
+            bulk_state_filter: BulkStateFilter::Completed,
+            bulk_view_mode: BulkViewMode::Orders,
+            bulk_loading: false,
+            bulk_progress: (0, 0),
+            bulk_summary: None,
+            bulk_orders_table: egui_data_table::DataTable::<BulkOrderData>::default(),
+            bulk_orders_viewer: BulkOrderViewer::default(),
+            bulk_products_table: egui_data_table::DataTable::<BulkProductData>::default(),
+            bulk_products_viewer: BulkProductViewer::default(),
+            bulk_orders_channel,
+            bulk_products_channel,
+            bulk_summary_channel,
+            bulk_progress_channel,
             systems_in_store_viewer,
             systems_in_store_table: egui_data_table::DataTable::<SystemInStoreData>::default(),
             systems_order_id: String::new(),
@@ -416,6 +479,11 @@ impl StockTable {
                                 selected,
                                 StockSelection::CostBreakdown,
                                 StockSelection::CostBreakdown.as_str()
+                            );
+                            ui.selectable_value(
+                                selected,
+                                StockSelection::BulkCostBreakdown,
+                                StockSelection::BulkCostBreakdown.as_str()
                             );
                             ui.selectable_value(
                                 selected,
@@ -682,6 +750,119 @@ impl StockTable {
                                 .hint_text("Filter results")
                                 .ui(ui);
                         },
+                        StockSelection::BulkCostBreakdown => {
+                            ui.label("From");
+                            let mut from_d = crate::to_jiff_date(&self.bulk_from);
+                            if DatePickerButton::new(&mut from_d)
+                                .id_salt("bulk_from")
+                                .format("%m/%d/%y")
+                                .show_icon(true)
+                                .ui(ui)
+                                .changed()
+                            {
+                                self.bulk_from = crate::apply_jiff_date(&self.bulk_from, &from_d);
+                            }
+
+                            ui.label("To");
+                            let mut to_d = crate::to_jiff_date(&self.bulk_to);
+                            if DatePickerButton::new(&mut to_d)
+                                .id_salt("bulk_to")
+                                .format("%m/%d/%y")
+                                .show_icon(true)
+                                .ui(ui)
+                                .changed()
+                            {
+                                self.bulk_to = crate::apply_jiff_date(&self.bulk_to, &to_d);
+                            }
+
+                            ui.add_space(8.);
+
+                            ComboBox::new("bulk_order_type", "")
+                                .selected_text(order_type_label(&self.bulk_order_type))
+                                .show_ui(ui, |ui| {
+                                    for t in [OrderType::SalesOrder, OrderType::ServiceOrder, OrderType::ReadyToRoll, OrderType::Bsd, OrderType::Rci] {
+                                        let label = order_type_label(&t);
+                                        ui.selectable_value(&mut self.bulk_order_type, t, label);
+                                    }
+                                });
+
+                            let store_text = match self.bulk_store {
+                                None => "All Stores".to_string(),
+                                Some(id) => Store::from_presta_store_id(&id.to_string()).as_str().to_string(),
+                            };
+                            ComboBox::new("bulk_store", "")
+                                .selected_text(store_text)
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut self.bulk_store, None, "All Stores");
+                                    ui.selectable_value(&mut self.bulk_store, Some(Store::RIV.into_store_id() as u64), Store::RIV.as_str());
+                                    ui.selectable_value(&mut self.bulk_store, Some(Store::LTN.into_store_id() as u64), Store::LTN.as_str());
+                                    ui.selectable_value(&mut self.bulk_store, Some(Store::MUR.into_store_id() as u64), Store::MUR.as_str());
+                                    ui.selectable_value(&mut self.bulk_store, Some(Store::ORE.into_store_id() as u64), Store::ORE.as_str());
+                                    ui.selectable_value(&mut self.bulk_store, Some(Store::SAN.into_store_id() as u64), Store::SAN.as_str());
+                                });
+
+                            ComboBox::new("bulk_state", "")
+                                .selected_text(self.bulk_state_filter.as_str())
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut self.bulk_state_filter, BulkStateFilter::Completed, BulkStateFilter::Completed.as_str());
+                                    ui.selectable_value(&mut self.bulk_state_filter, BulkStateFilter::ExcludeReturned, BulkStateFilter::ExcludeReturned.as_str());
+                                    ui.selectable_value(&mut self.bulk_state_filter, BulkStateFilter::Any, BulkStateFilter::Any.as_str());
+                                });
+
+                            ui.add_space(8.);
+
+                            let can_run = !self.bulk_loading;
+                            if ui.add_enabled(can_run, Button::new("Run")).clicked() {
+                                let from = self.bulk_from.date_naive().format("%Y-%m-%d").to_string();
+                                let to = self.bulk_to.date_naive().format("%Y-%m-%d").to_string();
+                                let ot_id = self.bulk_order_type.to_id_str().to_string();
+                                let store = self.bulk_store;
+                                let states = bulk_included_state_ids(&self.bulk_order_type, self.bulk_state_filter);
+                                let o_tx = self.bulk_orders_channel.0.clone();
+                                let p_tx = self.bulk_products_channel.0.clone();
+                                let s_tx = self.bulk_summary_channel.0.clone();
+                                let pr_tx = self.bulk_progress_channel.0.clone();
+                                self.bulk_loading = true;
+                                self.bulk_summary = None;
+                                self.bulk_progress = (0, 0);
+                                self.bulk_orders_table.replace(Vec::new());
+                                self.bulk_products_table.replace(Vec::new());
+                                PlatformSpawner::spawn(async move {
+                                    if let Err(e) = get_bulk_cost_breakdown(from, to, ot_id, store, states, o_tx, p_tx, s_tx, pr_tx).await {
+                                        log::error!("bulk cost breakdown error: {e:?}");
+                                    }
+                                });
+                            }
+
+                            if self.bulk_loading {
+                                ui.add_space(5.);
+                                Spinner::new().size(18.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
+                                let (done, total) = self.bulk_progress;
+                                if total > 0 {
+                                    ui.label(format!("{done}/{total}"));
+                                } else {
+                                    ui.label("Collecting orders…");
+                                }
+                            }
+
+                            ui.add_space(10.);
+                            ui.separator();
+                            ui.add_space(10.);
+
+                            ui.selectable_value(&mut self.bulk_view_mode, BulkViewMode::Orders, "By Order");
+                            ui.selectable_value(&mut self.bulk_view_mode, BulkViewMode::Products, "By Product");
+
+                            ui.add_space(8.);
+
+                            let filter = match self.bulk_view_mode {
+                                BulkViewMode::Orders => &mut self.bulk_orders_viewer.filter,
+                                BulkViewMode::Products => &mut self.bulk_products_viewer.filter,
+                            };
+                            TextEdit::singleline(filter)
+                                .desired_width(180.)
+                                .hint_text("Filter results")
+                                .ui(ui);
+                        },
                         StockSelection::SystemsInStore => {
                             // Store selection for Systems In-Store
                             let selected = &mut self.store_selection;
@@ -847,21 +1028,6 @@ impl StockTable {
 
         // Bottom panel for Cost Breakdown summary
         if self.stock_selection == StockSelection::CostBreakdown {
-            // Calculate selection sums
-            let selected_products = &self.cost_breakdown_viewer.selected_products;
-            let (selected_unit_price_sum, selected_cost_sum): (f64, f64) = if !selected_products.is_empty() {
-                self.cost_breakdown_table
-                    .iter()
-                    .filter(|row| selected_products.contains(&format!("{}:{}", row.0, row.1)))
-                    .fold((0.0, 0.0), |(price_acc, cost_acc), row| {
-                        // row.4 = unit_price, row.5 = cost, row.3 = quantity
-                        (price_acc + (row.4 * row.3), cost_acc + (row.5 * row.3))
-                    })
-            } else {
-                (0.0, 0.0)
-            };
-            let selection_count = selected_products.len();
-            
             if let Some(ref summary) = self.cost_summary {
                 eframe::egui::Panel::bottom("CostBreakdownBottom")
                     .exact_size(30.)
@@ -896,31 +1062,55 @@ impl StockTable {
                                 profit_color,
                                 format!("Gross Profit: ${:.2}", summary.profit)
                             );
-                            
-                            // Show selection sum if any items are selected
-                            if selection_count > 0 {
+                        });
+                    });
+            }
+        }
+
+        // Bottom panel for Bulk Cost Breakdown summary.
+        if self.stock_selection == StockSelection::BulkCostBreakdown {
+            if let Some(ref s) = self.bulk_summary {
+                eframe::egui::Panel::bottom("BulkCostBreakdownBottom")
+                    .exact_size(30.)
+                    .show_inside(ui, |ui| {
+                        ui.horizontal_centered(|ui| {
+                            ui.spacing_mut().item_spacing.x = 22.0;
+                            ui.colored_label(Color32::LIGHT_BLUE, format!("Orders: {}", s.order_count));
+                            ui.label(format!("Items: {:.0}", s.item_count));
+                            ui.label(format!("Revenue: ${:.2}", s.total_revenue));
+                            ui.colored_label(Color32::from_rgb(200, 100, 100), format!("Cost: ${:.2}", s.total_cost));
+                            let profit_color = if s.total_profit >= 0.0 {
+                                Color32::LIGHT_GREEN
+                            } else {
+                                ui.global_style().visuals.error_fg_color
+                            };
+                            ui.colored_label(profit_color, format!("Profit: ${:.2} ({:.1}%)", s.total_profit, s.margin_pct));
+
+                            ui.separator();
+                            ui.colored_label(Color32::GOLD, "Avg / Order:");
+                            ui.label(format!("Rev ${:.2}", s.avg_revenue));
+                            ui.colored_label(Color32::from_rgb(200, 100, 100), format!("Cost ${:.2}", s.avg_cost));
+                            let avg_profit_color = if s.avg_profit >= 0.0 {
+                                Color32::LIGHT_GREEN
+                            } else {
+                                ui.global_style().visuals.error_fg_color
+                            };
+                            ui.colored_label(avg_profit_color, format!("Profit ${:.2}", s.avg_profit));
+
+                            if s.truncated {
                                 ui.separator();
                                 ui.colored_label(
-                                    Color32::GOLD,
-                                    format!("Selected ({}):", selection_count)
+                                    Color32::from_rgb(255, 180, 80),
+                                    format!("Capped at {} orders (range has more)", s.order_count),
                                 );
-                                ui.label(format!("Price: ${:.2}", selected_unit_price_sum));
-                                ui.colored_label(
-                                    Color32::from_rgb(200, 100, 100),
-                                    format!("Cost: ${:.2}", selected_cost_sum)
-                                );
-                                let sel_profit = selected_unit_price_sum - selected_cost_sum;
-                                let sel_profit_color = if sel_profit >= 0.0 {
-                                    Color32::LIGHT_GREEN
-                                } else {
-                                    ui.global_style().visuals.error_fg_color
-                                };
-                                ui.colored_label(sel_profit_color, format!("Profit: ${:.2}", sel_profit));
                             }
                         });
                     });
             }
         }
+
+        // Excel-style selection stats strip (Cost Breakdown / Bulk tables).
+        self.render_selection_strips(ui);
 
         // Floating Odoo-history windows (Store Inventory clicks land here).
         // Rendered against the root context so they aren't clipped to the
@@ -1017,6 +1207,52 @@ impl StockTable {
                         .ui(ui);
                     }
                 },
+                StockSelection::BulkCostBreakdown => {
+                    if self.bulk_loading {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(50.);
+                            let (done, total) = self.bulk_progress;
+                            if total > 0 {
+                                ui.label(format!("Processing orders… {done}/{total}"));
+                            } else {
+                                ui.label("Collecting orders in range…");
+                            }
+                            Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
+                        });
+                    } else {
+                        let empty = match self.bulk_view_mode {
+                            BulkViewMode::Orders => self.bulk_orders_table.len() < 1,
+                            BulkViewMode::Products => self.bulk_products_table.len() < 1,
+                        };
+                        if empty {
+                            ui.vertical_centered(|ui| {
+                                ui.add_space(50.);
+                                ui.label("Choose a date range, order type, and store, then click Run.");
+                            });
+                        } else {
+                            match self.bulk_view_mode {
+                                BulkViewMode::Orders => {
+                                    Renderer::new(&mut self.bulk_orders_table, &mut self.bulk_orders_viewer)
+                                        .with_style_modify(|s| {
+                                            s.scroll_bar_visibility = scroll_area::ScrollBarVisibility::AlwaysVisible;
+                                            s.single_click_edit_mode = true;
+                                            s.auto_shrink = [false, false].into();
+                                        })
+                                        .ui(ui);
+                                }
+                                BulkViewMode::Products => {
+                                    Renderer::new(&mut self.bulk_products_table, &mut self.bulk_products_viewer)
+                                        .with_style_modify(|s| {
+                                            s.scroll_bar_visibility = scroll_area::ScrollBarVisibility::AlwaysVisible;
+                                            s.single_click_edit_mode = true;
+                                            s.auto_shrink = [false, false].into();
+                                        })
+                                        .ui(ui);
+                                }
+                            }
+                        }
+                    }
+                },
                 StockSelection::SystemsInStore => {
                     if self.systems_loading {
                         ui.vertical_centered(|ui| {
@@ -1047,6 +1283,113 @@ impl StockTable {
                 StockSelection::Everest => self.show_everest(ui),
             }
         });
+    }
+
+    /// Excel-style selection stats strip for tables that track row
+    /// highlighting. Renders a bottom panel only when rows are selected.
+    fn render_selection_strips(&mut self, ui: &mut Ui) {
+        let computed = match self.stock_selection {
+            StockSelection::CostBreakdown => Some((
+                "CostSelStrip",
+                selection_stats(
+                    self.cost_breakdown_table
+                        .iter()
+                        .filter(|r| self.cost_breakdown_viewer.selected_products.contains(&format!("{}:{}", r.0, r.1))),
+                    &[
+                        ("Ext. Price", |r: &CostBreakdownData| r.4 * r.3, true),
+                        ("Ext. Cost", |r| r.5 * r.3, true),
+                        ("Profit", |r| (r.4 - r.5) * r.3, true),
+                        ("Qty", |r| r.3, false),
+                    ],
+                ),
+            )),
+            StockSelection::BulkCostBreakdown => match self.bulk_view_mode {
+                BulkViewMode::Orders => Some((
+                    "BulkOrderSelStrip",
+                    selection_stats(
+                        self.bulk_orders_table
+                            .iter()
+                            .filter(|r| self.bulk_orders_viewer.selected.contains(&r.0)),
+                        &[
+                            ("Revenue", |r: &BulkOrderData| r.3, true),
+                            ("Cost", |r| r.4, true),
+                            ("Profit", |r| r.5, true),
+                            ("Items", |r| r.2, false),
+                        ],
+                    ),
+                )),
+                BulkViewMode::Products => Some((
+                    "BulkProductSelStrip",
+                    selection_stats(
+                        self.bulk_products_table
+                            .iter()
+                            .filter(|r| self.bulk_products_viewer.selected.contains(&r.0)),
+                        &[
+                            ("Cost", |r: &BulkProductData| r.3, true),
+                            ("Revenue", |r| r.4, true),
+                            ("Profit", |r| r.5, true),
+                            ("Qty", |r| r.2, false),
+                        ],
+                    ),
+                )),
+            },
+            StockSelection::StoreInventory => Some((
+                "StoreInvSelStrip",
+                selection_stats(
+                    self.inventory_serials_table
+                        .iter()
+                        .filter(|r| self.inventory_serials_viewer.selected.contains(&r.4)),
+                    &[
+                        ("Std Price", |r: &SerialsData| r.1, true),
+                        ("List Price", |r| r.2, true),
+                        ("Qty", |r| r.3 as f64, false),
+                    ],
+                ),
+            )),
+            StockSelection::SystemsInStore => Some((
+                "SystemsSelStrip",
+                selection_stats(
+                    self.systems_in_store_table
+                        .iter()
+                        .filter(|r| self.systems_in_store_viewer.selected.contains(&r.order_id)),
+                    &[
+                        ("Price", |r: &SystemInStoreData| r.price, true),
+                        ("Cost", |r| r.cost, true),
+                        ("Revenue", |r| r.revenue, true),
+                        ("Spiff", |r| r.spiff, true),
+                    ],
+                ),
+            )),
+            StockSelection::Everest => Some((
+                "EverestSelStrip",
+                selection_stats(
+                    self.everest_items_table
+                        .iter()
+                        .filter(|r| self.everest_items_viewer.selected.contains(&everest_lookup::everest_row_key(r))),
+                    &[
+                        ("Qty", |r: &EverestItemRow| r.qty, false),
+                        ("Unit Price", |r| r.unit_price, true),
+                        ("Ext. Price", |r| r.qty * r.unit_price, true),
+                    ],
+                ),
+            )),
+            _ => None,
+        };
+
+        if let Some((id, (count, stats))) = computed {
+            if count > 0 {
+                Panel::bottom(id)
+                    .resizable(true)
+                    .default_size(46.)
+                    .min_size(30.)
+                    .show_inside(ui, |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing.x = 12.0;
+                            render_selection_stats(ui, count, &stats);
+                        });
+                    });
+            }
+        }
     }
 
     /// Kick off an audit import (the Odoo lookup phase). The save-and-swap
@@ -2021,9 +2364,26 @@ impl StockTable {
 
         // Handle cost breakdown summary
         if let Ok(summary) = self.cost_summary_channel.1.try_recv() {
-            log::info!("Received cost summary: customer={}, total=${:.2}, cost=${:.2}, profit=${:.2}", 
+            log::info!("Received cost summary: customer={}, total=${:.2}, cost=${:.2}, profit=${:.2}",
                       summary.customer_name, summary.order_total, summary.total_cost, summary.profit);
             self.cost_summary = Some(summary);
+        }
+
+        // Handle bulk cost breakdown results
+        if let Ok(rows) = self.bulk_orders_channel.1.try_recv() {
+            log::info!("Received bulk order rows: {}", rows.len());
+            self.bulk_loading = false;
+            self.bulk_orders_table.replace(rows);
+        }
+        if let Ok(rows) = self.bulk_products_channel.1.try_recv() {
+            self.bulk_products_table.replace(rows);
+        }
+        if let Ok(summary) = self.bulk_summary_channel.1.try_recv() {
+            self.bulk_loading = false;
+            self.bulk_summary = Some(summary);
+        }
+        if let Ok(progress) = self.bulk_progress_channel.1.try_recv() {
+            self.bulk_progress = progress;
         }
 
         // Handle systems in-store data

@@ -111,7 +111,8 @@ pub use script_catalog::{
 };
 pub use mapping::{
     compute_machine_id, computer_record_key, default_target_kind, generate_client_hash,
-    local_computer_record, metric_from_snapshot, stressor_from_db, stressor_to_db,
+    hardware_hash, local_computer_record, metric_from_snapshot, stable_machine_hash,
+    stressor_from_db, stressor_to_db,
 };
 pub use runtime::set_runtime_handle;
 

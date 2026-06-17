@@ -116,7 +116,7 @@ fn read_zones(wmi: &WMIConnection) -> Vec<ThermalReading> {
     let zones: Vec<MsAcpiThermalZone> = match wmi.query() {
         Ok(z) => z,
         Err(e) => {
-            log::debug!("stress-kit/thermal: WMI query failed: {e}");
+            log::trace!("stress-kit/thermal: WMI query failed: {e}");
             return Vec::new();
         }
     };

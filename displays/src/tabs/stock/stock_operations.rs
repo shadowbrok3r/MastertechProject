@@ -1,6 +1,6 @@
 use super::store_inventory_viewer::ExtraInventoryData;
-use super::row_viewer::{RawStockData, SerialData, StockData, CostBreakdownData, SystemInStoreData, SystemType};
-use database::{DATABASE, ODOO_JSONRPC_URL, schema::{Store, ComputerData, prestashop::{Customer, Order, OrderDetail, OrderState, Prestashop}}};
+use super::row_viewer::{RawStockData, SerialData, StockData, CostBreakdownData, SystemInStoreData, SystemType, BulkOrderData, BulkProductData};
+use database::{DATABASE, ODOO_JSONRPC_URL, schema::{Store, ComputerData, prestashop::{Customer, Order, OrderDetail, OrderState, OrderType, Prestashop, PrestashopId}}};
 use crossbeam::channel::Sender;
 use anyhow::{Error, Result};
 use serde::Deserialize;
@@ -322,13 +322,309 @@ pub async fn get_cost_breakdown(
     });
     
     cost_tx.try_send(cost_data)?;
-    
+
+    Ok(())
+}
+
+/* ------------------------------------ Bulk Cost Breakdown API ------------------------------------ */
+
+/// Date window pulled per PrestaShop query (days).
+const BULK_WINDOW_DAYS: i64 = 7;
+/// Page size for the paginated order-ID pull within a window.
+const BULK_PAGE: i32 = 100;
+/// Hard cap on orders processed in one bulk run.
+const MAX_BULK_ORDERS: usize = 1500;
+
+/// Aggregate result for a bulk cost breakdown run.
+#[derive(Debug, Clone, Default)]
+pub struct BulkCostSummary {
+    pub order_count: usize,
+    pub item_count: f64,
+    pub total_revenue: f64,
+    pub total_cost: f64,
+    pub total_profit: f64,
+    pub avg_revenue: f64,
+    pub avg_cost: f64,
+    pub avg_profit: f64,
+    pub margin_pct: f64,
+    pub truncated: bool,
+}
+
+/// Order-state preset applied to the bulk pull.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum BulkStateFilter {
+    /// Delivered / done states only (revenue realized).
+    Completed,
+    /// All applicable states for the type except Returned.
+    ExcludeReturned,
+    /// No `current_state` filter.
+    Any,
+}
+
+impl BulkStateFilter {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Completed => "Completed / Delivered",
+            Self::ExcludeReturned => "Exclude Returned",
+            Self::Any => "Any State",
+        }
+    }
+}
+
+/// PrestaShop `current_state` ids to include for an order type + filter preset.
+/// An empty vec means no state filter.
+pub fn bulk_included_state_ids(order_type: &OrderType, filter: BulkStateFilter) -> Vec<String> {
+    let states: Vec<OrderState> = match filter {
+        BulkStateFilter::Any => Vec::new(),
+        BulkStateFilter::Completed => match order_type {
+            OrderType::SalesOrder => vec![OrderState::Shipped, OrderState::DeliveredToStore],
+            OrderType::ServiceOrder => vec![OrderState::DoneShelf],
+            _ => Vec::new(),
+        },
+        BulkStateFilter::ExcludeReturned => order_type
+            .applicable_states()
+            .into_iter()
+            .filter(|s| !matches!(s, OrderState::Returned))
+            .collect(),
+    };
+    states.iter().map(|s| s.to_id_str().to_string()).collect()
+}
+
+/// Bulk cost breakdown over a date range for a given order type.
+/// Pulls order ids in `BULK_WINDOW_DAYS` windows (paginated), then computes
+/// per-order revenue/cost/profit reusing a per-reference Odoo cost cache, and
+/// aggregates into per-order rows, a per-product rollup, and a summary.
+pub async fn get_bulk_cost_breakdown(
+    from: String,
+    to: String,
+    order_type_id: String,
+    store_id: Option<u64>,
+    state_ids: Vec<String>,
+    orders_tx: Sender<Vec<BulkOrderData>>,
+    products_tx: Sender<Vec<BulkProductData>>,
+    summary_tx: Sender<BulkCostSummary>,
+    progress_tx: Sender<(usize, usize)>,
+) -> Result<(), Error> {
+    use std::collections::HashSet;
+    use chrono::{Duration, NaiveDate};
+
+    let start = NaiveDate::parse_from_str(&from, "%Y-%m-%d")?;
+    let end = NaiveDate::parse_from_str(&to, "%Y-%m-%d")?;
+    let (start, end) = if start <= end { (start, end) } else { (end, start) };
+
+    let states_filter = (!state_ids.is_empty()).then(|| format!("[{}]", state_ids.join("|")));
+    let store_str = store_id.map(|s| s.to_string());
+
+    let mut id_api = Prestashop::default();
+    id_api.display = "[id]";
+
+    let mut order_ids: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut capped = false;
+
+    let mut win_start = start;
+    'windows: while win_start <= end {
+        let win_end = (win_start + Duration::days(BULK_WINDOW_DAYS - 1)).min(end);
+        let date_range = format!(
+            "[{} 00:00:00,{} 23:59:59]",
+            win_start.format("%Y-%m-%d"),
+            win_end.format("%Y-%m-%d")
+        );
+
+        let mut page_start = 0i32;
+        loop {
+            let pagination = format!("{},{}", page_start, BULK_PAGE);
+            let mut query: HashMap<&str, &str> = HashMap::new();
+            query.insert("filter[id_order_type]", order_type_id.as_str());
+            query.insert("filter[date_add]", date_range.as_str());
+            query.insert("date", "1");
+            if let Some(ref s) = store_str {
+                query.insert("filter[id_store]", s.as_str());
+            }
+            if let Some(ref st) = states_filter {
+                query.insert("filter[current_state]", st.as_str());
+            }
+            query.insert("sort", "[id_DESC]");
+            query.insert("limit", pagination.as_str());
+            query.insert("output_format", "JSON");
+
+            let page: Vec<PrestashopId> = id_api
+                .request_resources_wasm("orders", query)
+                .await
+                .unwrap_or_default();
+            let real: Vec<String> = page
+                .into_iter()
+                .map(|p| p.id)
+                .filter(|id| !id.is_empty() && id != "0")
+                .collect();
+            let n = real.len();
+
+            for id in real {
+                if seen.insert(id.clone()) {
+                    order_ids.push(id);
+                    if order_ids.len() >= MAX_BULK_ORDERS {
+                        capped = true;
+                        break 'windows;
+                    }
+                }
+            }
+
+            if n < BULK_PAGE as usize {
+                break;
+            }
+            page_start += BULK_PAGE;
+        }
+
+        win_start = win_end + Duration::days(1);
+    }
+
+    let total = order_ids.len();
+    info!("bulk cost: collected {total} order ids ({from}..{to}) capped={capped}");
+    let _ = progress_tx.try_send((0, total));
+
+    let order_api = Prestashop::default();
+    // reference (upper) -> unit cost from Odoo
+    let mut cost_cache: HashMap<String, f64> = HashMap::new();
+    // reference -> (name, qty, total_cost, total_revenue)
+    let mut rollup: HashMap<String, (String, f64, f64, f64)> = HashMap::new();
+
+    let mut order_rows: Vec<BulkOrderData> = Vec::new();
+    let mut grand_revenue = 0.0;
+    let mut grand_cost = 0.0;
+    let mut grand_items = 0.0;
+
+    for (i, oid) in order_ids.iter().enumerate() {
+        let full: Order = match order_api
+            .request_subresources_by_id_wasm("orders", "order", oid)
+            .await
+        {
+            Ok(o) => o,
+            Err(e) => {
+                log::error!("bulk cost: order {oid} fetch failed: {e:?}");
+                let _ = progress_tx.try_send((i + 1, total));
+                continue;
+            }
+        };
+        if full.id.is_empty() {
+            let _ = progress_tx.try_send((i + 1, total));
+            continue;
+        }
+
+        // Defensive date guard in case the server-side date filter is loose.
+        let date_short = full.date_add.split_whitespace().next().unwrap_or("").to_string();
+        if let Ok(od) = NaiveDate::parse_from_str(&date_short, "%Y-%m-%d") {
+            if od < start || od > end {
+                let _ = progress_tx.try_send((i + 1, total));
+                continue;
+            }
+        }
+
+        let revenue = full.total_products.parse::<f64>().unwrap_or(0.0)
+            - full.total_discounts_tax_excl.parse::<f64>().unwrap_or(0.0);
+        let mut order_cost = 0.0;
+        let mut order_items = 0.0;
+
+        for row in full.associations.order_rows.iter() {
+            let qty = row.product_quantity.parse::<f64>().unwrap_or(0.0);
+            let unit_price = row.product_price.parse::<f64>().unwrap_or(0.0);
+            order_items += qty;
+
+            let cost = if row.product_reference.is_empty() {
+                0.0
+            } else {
+                let key = row.product_reference.to_uppercase();
+                if let Some(c) = cost_cache.get(&key) {
+                    *c
+                } else {
+                    let c = get_product_cost_from_odoo(&row.product_reference)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|r| r.cost)
+                        .unwrap_or(0.0);
+                    cost_cache.insert(key, c);
+                    c
+                }
+            };
+
+            order_cost += cost * qty;
+
+            let entry = rollup
+                .entry(row.product_reference.clone())
+                .or_insert_with(|| (row.product_name.clone(), 0.0, 0.0, 0.0));
+            if entry.0.is_empty() {
+                entry.0 = row.product_name.clone();
+            }
+            entry.1 += qty;
+            entry.2 += cost * qty;
+            entry.3 += unit_price * qty;
+        }
+
+        let profit = revenue - order_cost;
+        let margin = if revenue != 0.0 { profit / revenue * 100.0 } else { 0.0 };
+
+        order_rows.push(BulkOrderData(
+            full.id.clone(),
+            date_short,
+            order_items,
+            revenue,
+            order_cost,
+            profit,
+            margin,
+        ));
+        grand_revenue += revenue;
+        grand_cost += order_cost;
+        grand_items += order_items;
+
+        let _ = progress_tx.try_send((i + 1, total));
+    }
+
+    let mut product_rows: Vec<BulkProductData> = rollup
+        .into_iter()
+        .map(|(reference, (name, qty, tcost, trev))| {
+            let profit = trev - tcost;
+            let margin = if trev != 0.0 { profit / trev * 100.0 } else { 0.0 };
+            BulkProductData(reference, name, qty, tcost, trev, profit, margin)
+        })
+        .collect();
+    product_rows.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
+
+    let order_count = order_rows.len();
+    let total_profit = grand_revenue - grand_cost;
+    let margin_pct = if grand_revenue != 0.0 { total_profit / grand_revenue * 100.0 } else { 0.0 };
+    let (avg_revenue, avg_cost, avg_profit) = if order_count > 0 {
+        let n = order_count as f64;
+        (grand_revenue / n, grand_cost / n, total_profit / n)
+    } else {
+        (0.0, 0.0, 0.0)
+    };
+
+    let summary = BulkCostSummary {
+        order_count,
+        item_count: grand_items,
+        total_revenue: grand_revenue,
+        total_cost: grand_cost,
+        total_profit,
+        avg_revenue,
+        avg_cost,
+        avg_profit,
+        margin_pct,
+        truncated: capped,
+    };
+    info!(
+        "bulk cost: {order_count} orders, revenue ${:.2}, cost ${:.2}, profit ${:.2}",
+        grand_revenue, grand_cost, total_profit
+    );
+
+    let _ = products_tx.try_send(product_rows);
+    let _ = summary_tx.try_send(summary);
+    orders_tx.try_send(order_rows)?;
+
     Ok(())
 }
 
 /* ------------------------------------ Systems In-Store API ------------------------------------ */
 
-use database::schema::prestashop::OrderType;
 use std::collections::HashMap;
 
 /// Customer IDs for in-store systems (R2R inventory accounts)

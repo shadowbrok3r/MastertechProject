@@ -10,12 +10,14 @@ members = [ "database", "displays",#  "MtechServer2.0" ]
     "tcp_protocol", 
     "websocket_server2", 
     "database-tools",
-    "uefi"
-] 
+    "uefi",
+    "mtech-ui"
+]
 
 [workspace.dependencies]
 stress-kit = { path = "stress-kit" }
 stress-runner = { path = "stress-runner" }
+mtech-ui = { path = "mtech-ui" }
 database = { path = "database" }
 tcp_protocol = { path = "tcp_protocol" }
 eframe = { version="0.34", features=["serde",  "default_fonts", "glow"], default-features=false } 

@@ -1,6 +1,8 @@
 use crate::{channel_manager::ChannelManager, chats::ChatView, Spawner};
+use crate::ui_tools::{icons, theme};
 use eframe::egui::{Color32, ComboBox, Hyperlink, Id, Label, Widget};
-use database::schema::{Store, TaskNotePayload, User, helper_traits::parse_email_user, prestashop::{Prestashop, OrderState}, prestashop_schema::{Employee, MissedCallOrder, PrestashopPayload}};
+use database::schema::{Store, TaskNotePayload, User, LiveTaskPayload, helper_traits::parse_email_user, prestashop::{Prestashop, OrderState}, prestashop_schema::{Employee, MissedCallOrder, PrestashopPayload}};
+use std::collections::HashMap;
 use database::schema::prestashop::xml::{modify_xml, remove_xml_tag};
 use database::xidax_order_url;
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -41,6 +43,10 @@ pub struct TaskRowViewer {
     pub store_selection: u64,
     #[serde(skip)]
     pub users: Vec<User>,
+    #[serde(skip)]
+    pub existing_tasks: HashMap<String, LiveTaskPayload>,
+    #[serde(skip)]
+    pub open_task_channel: (Sender<LiveTaskPayload>, Receiver<LiveTaskPayload>),
     pub first_run: bool,
 }
 
@@ -51,12 +57,15 @@ impl Default for TaskRowViewer {
         let create_task_channel = PrestashopPayload::create_unbounded_channel();
         let field_update_channel = crossbeam::channel::unbounded();
         let note_created_channel = crossbeam::channel::unbounded();
+        let open_task_channel = crossbeam::channel::unbounded();
         Self {
             notes_channel,
             tur_channel,
             create_task_channel,
             field_update_channel,
             note_created_channel,
+            open_task_channel,
+            existing_tasks: HashMap::new(),
             filter: Default::default(),
             row_protection: Default::default(),
             selected: Default::default(),
@@ -66,6 +75,20 @@ impl Default for TaskRowViewer {
             store_selection: Store::RIV.into_store_id() as u64,
             users: Vec::new(),
             first_run: true,
+        }
+    }
+}
+
+impl TaskRowViewer {
+    /// Rebuilds the service-number to task lookup from the task list.
+    pub fn sync_existing_tasks(&mut self, tasks: &[LiveTaskPayload]) {
+        self.existing_tasks.clear();
+        for task in tasks {
+            if let Some(service_number) = &task.service_number {
+                if !service_number.is_empty() {
+                    self.existing_tasks.insert(service_number.clone(), task.clone());
+                }
+            }
         }
     }
 }
@@ -320,12 +343,21 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
             8 => { ui.label(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_model)); },
             9 => { Label::new(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes.clone())).wrap().ui(ui); },
             10 => {
-                // Create Task button
-                let row_clone = row.clone();
-                let create_task_tx = self.create_task_channel.0.clone();
-                if ui.button("📋").on_hover_text("Create Task").clicked() {
-                    info!("Creating task for order: {}", row.order.id);
-                    let _ = create_task_tx.try_send(row_clone);
+                let order_id = row.order.id.clone();
+                if let Some(task) = self.existing_tasks.get(&order_id).cloned() {
+                    let open_task_tx = self.open_task_channel.0.clone();
+                    let color = theme::success(ui);
+                    if ui.button(icons::icon_colored(icons::TASK_EXISTS, color)).on_hover_text("Open Task").clicked() {
+                        info!("Opening existing task for order: {order_id}");
+                        let _ = open_task_tx.try_send(task);
+                    }
+                } else {
+                    let row_clone = row.clone();
+                    let create_task_tx = self.create_task_channel.0.clone();
+                    if ui.button(icons::icon(icons::TASK_CREATE)).on_hover_text("Create Task").clicked() {
+                        info!("Creating task for order: {}", row.order.id);
+                        let _ = create_task_tx.try_send(row_clone);
+                    }
                 }
             },
             _ => {},
