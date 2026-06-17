@@ -32,6 +32,12 @@ impl TaskAuditViewer {
             // Send the order to the task creation modal
             let _ = ui_actions_tx.try_send(TaskUiActions::OpenCreateTaskModalFromOrder(order_payload));
         }
+
+        // Handle open existing task channel
+        if let Ok(task) = self.services_viewer.open_task_channel.1.try_recv() {
+            info!("Received open task request for task: {}", task.task_name);
+            let _ = ui_actions_tx.try_send(TaskUiActions::OpenTaskModal(task));
+        }
         
         if let Some(order) = self.services_viewer.selected.clone() {
             let header = &format!("{} - {}", order.customer.name, order.order.id);

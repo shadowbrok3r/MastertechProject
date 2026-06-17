@@ -80,7 +80,7 @@ rusqlite = { version = "0.39.0", features = ["bundled"] }
 
 # nvme = "0.2.2"
 
-stress-kit.workspace = true
+stress-kit = { workspace = true, features = ["winring0-thermal"] }
 stress-runner.workspace = true
 tcp_protocol = { workspace = true }
 surrealdb.workspace = true

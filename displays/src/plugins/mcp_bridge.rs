@@ -764,6 +764,16 @@ pub struct RepairEntityLinksParams {
 }
 
 #[derive(Deserialize, Debug, Clone, Serialize, JsonSchema)]
+pub struct LinkConnectedClientParams {
+    #[schemars(description = "connected_client.connection_string (HOST:hash9) to link")]
+    pub connection_string: String,
+    #[schemars(description = "Customer id to link. Accepts `customer:key`, bare key, or SurrealQL `customer:`key``.")]
+    pub customer_id: String,
+    #[schemars(description = "Optional friendly_name for the client row (e.g. 'Kellie Boisse - 2147807'). Omit to leave any existing name unchanged.")]
+    pub friendly_name: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Clone, Serialize, JsonSchema)]
 pub struct CreateDiagnosticSessionParams {
     #[schemars(description = "Web Console connection_string of the client being diagnosed")]
     pub connection_string: String,
@@ -2742,6 +2752,24 @@ impl PluginToolProvider {
         let report = repair_connection_links(&p.connection_string)
             .await
             .map_err(|e| ErrorData::invalid_params(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![Content::json(report).map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "link_connected_client",
+        description = "Link a connected client to a customer and its canonical computer:HOST:hash9 record, creating the computer row when missing. Use for the hardware-swap case: a machine reconnects under a new disk-persistent client id with null customer/computer (repair_entity_links can't fix that — it only repoints existing links). Upserts the computer (sets customer + hostname only; never clobbers existing specs), then sets connected_client.customer/computer and optionally friendly_name. Component specs repopulate from the client's own check-in."
+    )]
+    async fn link_connected_client(
+        &self,
+        Parameters(p): Parameters<LinkConnectedClientParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let report = database::schema::entity_link::link_connected_client_record(
+            &p.connection_string,
+            &p.customer_id,
+            p.friendly_name.as_deref(),
+        )
+        .await
+        .map_err(|e| ErrorData::invalid_params(e.to_string(), None))?;
         Ok(CallToolResult::success(vec![Content::json(report).map_err(to_internal)?]))
     }
 

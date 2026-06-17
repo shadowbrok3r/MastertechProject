@@ -34,6 +34,8 @@ pub struct ChartBoard {
     top_disk_mb_s: LineChart,
     top_net_mbps: LineChart,
     process_count: LineChart,
+    cpu_temp_c: LineChart,
+    gpu_temp_c: LineChart,
 }
 
 impl ChartBoard {
@@ -85,10 +87,30 @@ impl ChartBoard {
         self.top_disk_mb_s.push(t, top_disk as f64);
         self.top_net_mbps.push(t, top_net as f64);
         self.process_count.push(t, snap.processes.len() as f64);
+
+        // Device temps: hottest CPU sensor (Package/Core/Tctl) and hottest GPU.
+        let cpu_temp = snap
+            .thermals
+            .iter()
+            .filter(|s| s.label.starts_with("CPU"))
+            .map(|s| s.temp_c)
+            .fold(f32::NEG_INFINITY, f32::max);
+        if cpu_temp.is_finite() {
+            self.cpu_temp_c.push(t, cpu_temp as f64);
+        }
+        let gpu_temp = snap
+            .gpus
+            .iter()
+            .filter_map(|g| g.temp_c)
+            .fold(f32::NEG_INFINITY, f32::max);
+        if gpu_temp.is_finite() {
+            self.gpu_temp_c.push(t, gpu_temp as f64);
+        }
     }
 
+    /// Render the chart grid directly on `ui`. The caller supplies any
+    /// scroll area (the stress panel wraps temps + charts in one).
     pub fn show(&mut self, ui: &mut egui::Ui) {
-        egui::ScrollArea::vertical().show(ui, |ui| {
             ui.add_space(4.0);
             ui.columns(2, |cols| {
                 self.avg_cpu_pct.show(
@@ -106,6 +128,25 @@ impl ChartBoard {
                     "%",
                     Color32::from_rgb(220, 100, 100),
                     Some((0.0, 100.0)),
+                );
+            });
+            ui.add_space(6.0);
+            ui.columns(2, |cols| {
+                self.cpu_temp_c.show(
+                    &mut cols[0],
+                    "cpu_temp",
+                    "CPU temp",
+                    "°C",
+                    Color32::from_rgb(230, 140, 90),
+                    Some((20.0, 100.0)),
+                );
+                self.gpu_temp_c.show(
+                    &mut cols[1],
+                    "gpu_temp",
+                    "GPU temp",
+                    "°C",
+                    Color32::from_rgb(230, 180, 90),
+                    Some((20.0, 100.0)),
                 );
             });
             ui.add_space(6.0);
@@ -174,7 +215,6 @@ impl ChartBoard {
                 .small()
                 .weak(),
             );
-        });
     }
 }
 

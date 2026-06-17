@@ -21,6 +21,10 @@ mod whea_windows;
 mod tdr_windows;
 #[cfg(target_os = "windows")]
 mod thermal_windows;
+#[cfg(all(target_os = "windows", feature = "winring0-thermal"))]
+mod cpu_thermal_windows;
+#[cfg(target_os = "windows")]
+mod storage_thermal_windows;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -203,6 +207,12 @@ fn sampler_loop(
     #[cfg(not(target_os = "windows"))]
     let thermal: Option<()> = None;
 
+    #[cfg(all(target_os = "windows", feature = "winring0-thermal"))]
+    let mut cpu_thermal = cpu_thermal_windows::CpuThermalMonitor::open();
+
+    #[cfg(target_os = "windows")]
+    let mut storage_thermal = storage_thermal_windows::StorageThermalMonitor::open();
+
     // First refresh seeds counters; the next tick yields usable rates.
     sys.refresh_cpu_all();
     thread::sleep(interval);
@@ -248,7 +258,17 @@ fn sampler_loop(
                 None
             },
             #[cfg(target_os = "windows")]
-            thermals: thermal.as_mut().map(|t| t.poll()).unwrap_or_default(),
+            thermals: {
+                let mut v = thermal.as_mut().map(|t| t.poll()).unwrap_or_default();
+                #[cfg(feature = "winring0-thermal")]
+                if let Some(c) = cpu_thermal.as_mut() {
+                    v.extend(c.poll());
+                }
+                if let Some(s) = storage_thermal.as_mut() {
+                    v.extend(s.poll());
+                }
+                v
+            },
             #[cfg(not(target_os = "windows"))]
             thermals: {
                 let _ = thermal;

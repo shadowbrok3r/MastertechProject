@@ -7,7 +7,7 @@ use crossbeam::channel::Sender;
 use database::SurrealValue;
 use database::{xidax_order_url, xidax_product_url};
 use regex::Regex;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Extract only relevant RAM info: DDR type (DDR4/DDR5), speed (MHz), and capacity (GB)
 fn format_ram_display(ram: &str) -> String {
@@ -103,6 +103,9 @@ pub struct SerialsData(
 pub struct SerialsViewer {
     pub filter: String,
     pub row_protection: bool,
+    /// Serial numbers of the currently highlighted rows (for selection stats).
+    #[serde(skip)]
+    pub selected: HashSet<String>,
     #[serde(skip)]
     pub hotkeys: Vec<(KeyboardShortcut, UiAction)>,
     #[serde(skip)]
@@ -145,6 +148,11 @@ impl RowViewer<SerialsData> for SerialsViewer {
     fn try_create_codec(&mut self, _: bool) -> Option<impl RowCodec<SerialsData>> { Some(Codec) }
 
     fn num_columns(&mut self) -> usize { 8 }
+
+    fn on_highlight_change(&mut self, highlighted: &[&SerialsData], unhighlighted: &[&SerialsData]) {
+        for r in unhighlighted.iter() { self.selected.remove(&r.4); }
+        for r in highlighted.iter() { self.selected.insert(r.4.clone()); }
+    }
 
     fn column_name(&mut self, column: usize) -> std::borrow::Cow<'static, str> {
         [
@@ -869,6 +877,313 @@ impl RowCodec<CostBreakdownData> for CostBreakdownCodec {
     }
 }
 
+/* ---------------------------------------- Bulk Cost Breakdown ---------------------------------------- */
+
+/// Per-order row for the bulk cost breakdown table.
+/// (Order ID, Date, Items, Revenue, Cost, Profit, Margin %)
+#[derive(Default, Serialize, Clone, Debug)]
+pub struct BulkOrderData(pub String, pub String, pub f64, pub f64, pub f64, pub f64, pub f64);
+
+/// Per-product rollup row for the bulk cost breakdown table.
+/// (Reference, Product Name, Qty, Cost, Revenue, Profit, Margin %)
+#[derive(Default, Serialize, Clone, Debug)]
+pub struct BulkProductData(pub String, pub String, pub f64, pub f64, pub f64, pub f64, pub f64);
+
+#[derive(Default, Serialize)]
+pub struct BulkOrderViewer {
+    pub filter: String,
+    /// Order ids of the currently highlighted rows (for selection stats).
+    #[serde(skip)]
+    pub selected: HashSet<String>,
+}
+
+#[derive(Default, Serialize)]
+pub struct BulkProductViewer {
+    pub filter: String,
+    /// Product references of the currently highlighted rows (for selection stats).
+    #[serde(skip)]
+    pub selected: HashSet<String>,
+}
+
+fn profit_color(v: f64) -> Color32 {
+    if v >= 0.0 { Color32::LIGHT_GREEN } else { Color32::from_rgb(220, 120, 120) }
+}
+
+impl RowViewer<BulkOrderData> for BulkOrderViewer {
+    fn try_create_codec(&mut self, _: bool) -> Option<impl RowCodec<BulkOrderData>> {
+        Some(BulkOrderCodec)
+    }
+
+    fn num_columns(&mut self) -> usize { 7 }
+
+    fn column_name(&mut self, column: usize) -> std::borrow::Cow<'static, str> {
+        ["Order", "Date", "Items", "Revenue", "Cost", "Profit", "Margin %"][column].into()
+    }
+
+    fn is_sortable_column(&mut self, _column: usize) -> bool { true }
+
+    fn is_editable_cell(&mut self, _: usize, _row: usize, _row_value: &BulkOrderData) -> bool { false }
+
+    fn row_filter_hash(&mut self) -> &impl std::hash::Hash { &self.filter }
+
+    fn filter_row(&mut self, row: &BulkOrderData) -> bool {
+        let filter = self.filter.to_uppercase();
+        row.0.to_uppercase().contains(&filter) || row.1.to_uppercase().contains(&filter)
+    }
+
+    fn show_cell_view(&mut self, ui: &mut Ui, row: &BulkOrderData, column: usize) {
+        let style = ui.style_mut();
+        style.interaction.multi_widget_text_select = false;
+        style.interaction.selectable_labels = false;
+
+        let _ = match column {
+            0 => {
+                if row.0.is_empty() || row.0 == "0" {
+                    ui.label(RichText::new("-").color(Color32::GRAY))
+                } else {
+                    Hyperlink::from_label_and_url(
+                        RichText::new(&row.0).color(Color32::from_rgb(255, 165, 0)),
+                        xidax_order_url(&row.0),
+                    )
+                    .open_in_new_tab(true)
+                    .ui(ui)
+                }
+            }
+            1 => ui.label(&row.1),
+            2 => ui.label(format!("{:.0}", row.2)),
+            3 => ui.label(format!("$ {:.2}", row.3)),
+            4 => ui.colored_label(Color32::from_rgb(200, 100, 100), format!("$ {:.2}", row.4)),
+            5 => ui.colored_label(profit_color(row.5), format!("$ {:.2}", row.5)),
+            6 => ui.colored_label(profit_color(row.5), format!("{:.1}%", row.6)),
+            _ => unreachable!(),
+        };
+    }
+
+    fn show_cell_editor(&mut self, ui: &mut Ui, row: &mut BulkOrderData, column: usize) -> Option<Response> {
+        Some(ui.label(match column {
+            0 => row.0.clone(),
+            1 => row.1.clone(),
+            2 => format!("{:.0}", row.2),
+            3 => format!("$ {:.2}", row.3),
+            4 => format!("$ {:.2}", row.4),
+            5 => format!("$ {:.2}", row.5),
+            6 => format!("{:.1}%", row.6),
+            _ => unreachable!(),
+        }))
+    }
+
+    fn set_cell_value(&mut self, src: &BulkOrderData, dst: &mut BulkOrderData, column: usize) {
+        match column {
+            0 => dst.0 = src.0.clone(),
+            1 => dst.1 = src.1.clone(),
+            2 => dst.2 = src.2,
+            3 => dst.3 = src.3,
+            4 => dst.4 = src.4,
+            5 => dst.5 = src.5,
+            6 => dst.6 = src.6,
+            _ => unreachable!(),
+        }
+    }
+
+    fn compare_cell(&self, l: &BulkOrderData, r: &BulkOrderData, column: usize) -> std::cmp::Ordering {
+        let eq = std::cmp::Ordering::Equal;
+        match column {
+            0 => l.0.cmp(&r.0),
+            1 => l.1.cmp(&r.1),
+            2 => l.2.partial_cmp(&r.2).unwrap_or(eq),
+            3 => l.3.partial_cmp(&r.3).unwrap_or(eq),
+            4 => l.4.partial_cmp(&r.4).unwrap_or(eq),
+            5 => l.5.partial_cmp(&r.5).unwrap_or(eq),
+            6 => l.6.partial_cmp(&r.6).unwrap_or(eq),
+            _ => unreachable!(),
+        }
+    }
+
+    fn new_empty_row(&mut self) -> BulkOrderData { BulkOrderData::default() }
+
+    fn on_highlight_change(&mut self, highlighted: &[&BulkOrderData], unhighlighted: &[&BulkOrderData]) {
+        for r in unhighlighted.iter() { self.selected.remove(&r.0); }
+        for r in highlighted.iter() { self.selected.insert(r.0.clone()); }
+    }
+
+    fn column_render_config(&mut self, column: usize, _is_last_visible_column: bool) -> TableColumnConfig {
+        let c = TableColumnConfig::auto();
+        match column {
+            0 => c.resizable(true).at_least(80.).at_most(120.),
+            1 => c.resizable(true).at_least(90.).at_most(120.),
+            2 => c.resizable(true).at_least(50.).at_most(70.),
+            _ => c.resizable(true).at_least(80.).at_most(130.),
+        }
+    }
+}
+
+struct BulkOrderCodec;
+
+impl RowCodec<BulkOrderData> for BulkOrderCodec {
+    type DeserializeError = &'static str;
+
+    fn encode_column(&mut self, src: &BulkOrderData, column: usize, dst: &mut String) {
+        match column {
+            0 => dst.push_str(&src.0),
+            1 => dst.push_str(&src.1),
+            2 => dst.push_str(&src.2.to_string()),
+            3 => dst.push_str(&src.3.to_string()),
+            4 => dst.push_str(&src.4.to_string()),
+            5 => dst.push_str(&src.5.to_string()),
+            6 => dst.push_str(&src.6.to_string()),
+            _ => unreachable!(),
+        }
+    }
+
+    fn decode_column(&mut self, src: &str, column: usize, dst: &mut BulkOrderData) -> Result<(), DecodeErrorBehavior> {
+        match column {
+            0 => dst.0 = src.to_string(),
+            1 => dst.1 = src.to_string(),
+            2 => dst.2 = src.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            3 => dst.3 = src.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            4 => dst.4 = src.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            5 => dst.5 = src.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            6 => dst.6 = src.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            _ => unreachable!(),
+        }
+        Ok(())
+    }
+
+    fn create_empty_decoded_row(&mut self) -> BulkOrderData { BulkOrderData::default() }
+}
+
+impl RowViewer<BulkProductData> for BulkProductViewer {
+    fn try_create_codec(&mut self, _: bool) -> Option<impl RowCodec<BulkProductData>> {
+        Some(BulkProductCodec)
+    }
+
+    fn num_columns(&mut self) -> usize { 7 }
+
+    fn column_name(&mut self, column: usize) -> std::borrow::Cow<'static, str> {
+        ["Reference", "Product Name", "Qty", "Cost", "Revenue", "Profit", "Margin %"][column].into()
+    }
+
+    fn is_sortable_column(&mut self, _column: usize) -> bool { true }
+
+    fn is_editable_cell(&mut self, _: usize, _row: usize, _row_value: &BulkProductData) -> bool { false }
+
+    fn row_filter_hash(&mut self) -> &impl std::hash::Hash { &self.filter }
+
+    fn filter_row(&mut self, row: &BulkProductData) -> bool {
+        let filter = self.filter.to_uppercase();
+        row.0.to_uppercase().contains(&filter) || row.1.to_uppercase().contains(&filter)
+    }
+
+    fn show_cell_view(&mut self, ui: &mut Ui, row: &BulkProductData, column: usize) {
+        let style = ui.style_mut();
+        style.interaction.multi_widget_text_select = false;
+        style.interaction.selectable_labels = false;
+
+        let _ = match column {
+            0 => ui.label(RichText::new(&row.0).color(Color32::from_rgb(42, 195, 222))),
+            1 => ui.label(&row.1),
+            2 => ui.label(format!("{:.0}", row.2)),
+            3 => ui.colored_label(Color32::from_rgb(200, 100, 100), format!("$ {:.2}", row.3)),
+            4 => ui.label(format!("$ {:.2}", row.4)),
+            5 => ui.colored_label(profit_color(row.5), format!("$ {:.2}", row.5)),
+            6 => ui.colored_label(profit_color(row.5), format!("{:.1}%", row.6)),
+            _ => unreachable!(),
+        };
+    }
+
+    fn show_cell_editor(&mut self, ui: &mut Ui, row: &mut BulkProductData, column: usize) -> Option<Response> {
+        Some(ui.label(match column {
+            0 => row.0.clone(),
+            1 => row.1.clone(),
+            2 => format!("{:.0}", row.2),
+            3 => format!("$ {:.2}", row.3),
+            4 => format!("$ {:.2}", row.4),
+            5 => format!("$ {:.2}", row.5),
+            6 => format!("{:.1}%", row.6),
+            _ => unreachable!(),
+        }))
+    }
+
+    fn set_cell_value(&mut self, src: &BulkProductData, dst: &mut BulkProductData, column: usize) {
+        match column {
+            0 => dst.0 = src.0.clone(),
+            1 => dst.1 = src.1.clone(),
+            2 => dst.2 = src.2,
+            3 => dst.3 = src.3,
+            4 => dst.4 = src.4,
+            5 => dst.5 = src.5,
+            6 => dst.6 = src.6,
+            _ => unreachable!(),
+        }
+    }
+
+    fn compare_cell(&self, l: &BulkProductData, r: &BulkProductData, column: usize) -> std::cmp::Ordering {
+        let eq = std::cmp::Ordering::Equal;
+        match column {
+            0 => l.0.cmp(&r.0),
+            1 => l.1.cmp(&r.1),
+            2 => l.2.partial_cmp(&r.2).unwrap_or(eq),
+            3 => l.3.partial_cmp(&r.3).unwrap_or(eq),
+            4 => l.4.partial_cmp(&r.4).unwrap_or(eq),
+            5 => l.5.partial_cmp(&r.5).unwrap_or(eq),
+            6 => l.6.partial_cmp(&r.6).unwrap_or(eq),
+            _ => unreachable!(),
+        }
+    }
+
+    fn new_empty_row(&mut self) -> BulkProductData { BulkProductData::default() }
+
+    fn on_highlight_change(&mut self, highlighted: &[&BulkProductData], unhighlighted: &[&BulkProductData]) {
+        for r in unhighlighted.iter() { self.selected.remove(&r.0); }
+        for r in highlighted.iter() { self.selected.insert(r.0.clone()); }
+    }
+
+    fn column_render_config(&mut self, column: usize, _is_last_visible_column: bool) -> TableColumnConfig {
+        let c = TableColumnConfig::auto();
+        match column {
+            0 => c.resizable(true).at_least(90.).at_most(160.),
+            1 => c.resizable(true).at_least(150.).at_most(280.),
+            2 => c.resizable(true).at_least(50.).at_most(70.),
+            _ => c.resizable(true).at_least(80.).at_most(130.),
+        }
+    }
+}
+
+struct BulkProductCodec;
+
+impl RowCodec<BulkProductData> for BulkProductCodec {
+    type DeserializeError = &'static str;
+
+    fn encode_column(&mut self, src: &BulkProductData, column: usize, dst: &mut String) {
+        match column {
+            0 => dst.push_str(&src.0),
+            1 => dst.push_str(&src.1),
+            2 => dst.push_str(&src.2.to_string()),
+            3 => dst.push_str(&src.3.to_string()),
+            4 => dst.push_str(&src.4.to_string()),
+            5 => dst.push_str(&src.5.to_string()),
+            6 => dst.push_str(&src.6.to_string()),
+            _ => unreachable!(),
+        }
+    }
+
+    fn decode_column(&mut self, src: &str, column: usize, dst: &mut BulkProductData) -> Result<(), DecodeErrorBehavior> {
+        match column {
+            0 => dst.0 = src.to_string(),
+            1 => dst.1 = src.to_string(),
+            2 => dst.2 = src.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            3 => dst.3 = src.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            4 => dst.4 = src.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            5 => dst.5 = src.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            6 => dst.6 = src.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            _ => unreachable!(),
+        }
+        Ok(())
+    }
+
+    fn create_empty_decoded_row(&mut self) -> BulkProductData { BulkProductData::default() }
+}
+
 /* ---------------------------------------- Systems In-Store ---------------------------------------- */
 
 /// System type classification
@@ -936,6 +1251,9 @@ pub struct CustomerChangeRequest {
 pub struct SystemInStoreViewer {
     pub filter: String,
     pub row_protection: bool,
+    /// Order ids of the currently highlighted rows (for selection stats).
+    #[serde(skip)]
+    pub selected: HashSet<String>,
     /// Callback sender for creating tasks
     #[serde(skip)]
     pub task_create_tx: Sender<SystemInStoreData>,
@@ -952,6 +1270,7 @@ impl SystemInStoreViewer {
         Self {
             filter: Default::default(),
             row_protection: Default::default(),
+            selected: Default::default(),
             task_create_tx,
             customer_change_tx,
         }
@@ -964,6 +1283,11 @@ impl RowViewer<SystemInStoreData> for SystemInStoreViewer {
     }
 
     fn num_columns(&mut self) -> usize { 13 }
+
+    fn on_highlight_change(&mut self, highlighted: &[&SystemInStoreData], unhighlighted: &[&SystemInStoreData]) {
+        for r in unhighlighted.iter() { self.selected.remove(&r.order_id); }
+        for r in highlighted.iter() { self.selected.insert(r.order_id.clone()); }
+    }
 
     fn column_name(&mut self, column: usize) -> std::borrow::Cow<'static, str> {
         [

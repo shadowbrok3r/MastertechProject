@@ -534,6 +534,11 @@ pub enum QcBackend {
 }
 
 impl QcBackend {
+    /// Standalone Shopify backend for staff-roster lookups without an order key.
+    pub fn shopify() -> Self {
+        Self::Shopify(ShopifyBackend::from_env())
+    }
+
     pub fn for_key(key: &OrderKey) -> Self {
         match key.backend() {
             BackendKind::Prestashop => Self::Prestashop(PrestashopBackend::new()),

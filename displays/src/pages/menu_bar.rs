@@ -176,7 +176,14 @@ impl SharedContext {
                             ui.set_height(800.);
 
                             ui.vertical_centered_justified(|ui| {
-                                
+                                // Visible frame at rest + brighter hover fill for the account-menu buttons.
+                                let accent = ui.global_style().visuals.error_fg_color;
+                                ui.style_mut().visuals.widgets.inactive.weak_bg_fill = Color32::from_gray(30);
+                                ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_gray(72));
+                                ui.style_mut().visuals.widgets.hovered.weak_bg_fill = Color32::from_gray(52);
+                                ui.style_mut().visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, accent);
+                                ui.style_mut().visuals.widgets.active.weak_bg_fill = Color32::from_gray(64);
+
                                 if ui.add(Button::new("Preferences")).clicked() {
                                     self.state = AppState::Authenticated(MainPages::UserPreferences);
                                     match self.app_state_tx.try_send(

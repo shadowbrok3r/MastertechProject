@@ -12,6 +12,7 @@
 //!   * **WHEA**    — Windows machine-check counters (when readable).
 //!   * **Processes** — top-N by CPU% then RAM.
 //!   * **GPUs**    — vendor / name / temp; vendor-specific live usage TBD.
+//!   * **Temps**   — CPU (MSR/SMU via WinRing0) + NVMe/SATA disk temps.
 //!
 //! The widget is `Sync + Send`-free by design (egui ownership) but its
 //! internal history buffer is updated in place from [`HwMonitor::update`],
@@ -22,58 +23,13 @@ use stress_kit::telemetry::TelemetrySnapshot;
 
 mod tables;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum HwView {
-    Cores,
-    Memory,
-    Disks,
-    Networks,
-    Whea,
-    Processes,
-    Gpus,
-}
-
-impl Default for HwView {
-    fn default() -> Self {
-        Self::Cores
-    }
-}
-
-impl HwView {
-    pub const ALL: [Self; 7] = [
-        Self::Cores,
-        Self::Memory,
-        Self::Disks,
-        Self::Networks,
-        Self::Whea,
-        Self::Processes,
-        Self::Gpus,
-    ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Cores => "CPU cores",
-            Self::Memory => "Memory",
-            Self::Disks => "Disks",
-            Self::Networks => "Networks",
-            Self::Whea => "WHEA",
-            Self::Processes => "Processes",
-            Self::Gpus => "GPUs",
-        }
-    }
-}
-
 pub struct HwMonitor {
-    view: HwView,
-    filter: String,
     snapshot: TelemetrySnapshot,
 }
 
 impl Default for HwMonitor {
     fn default() -> Self {
         Self {
-            view: HwView::default(),
-            filter: String::new(),
             snapshot: TelemetrySnapshot::default(),
         }
     }
@@ -85,70 +41,73 @@ impl HwMonitor {
         self.snapshot = snapshot;
     }
 
-    /// Draw the full monitor UI inside the caller's `ui`.
+    /// Draw every section at once: a global grid of tables, no view selector.
+    /// Wide tables (cores, processes) span full width; the compact ones pair up.
     pub fn show(&mut self, ui: &mut egui::Ui) {
-        #[allow(deprecated)]
-        egui::TopBottomPanel::top("hw_monitor_top")
-            .exact_size(34.0)
-            .show_inside(ui, |ui| {
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    egui::ComboBox::from_id_salt("hw_monitor_view")
-                        .selected_text(self.view.label())
-                        .show_ui(ui, |ui| {
-                            for v in HwView::ALL {
-                                ui.selectable_value(&mut self.view, v, v.label());
-                            }
-                        });
+        let snap = &self.snapshot;
 
-                    ui.add_space(8.0);
-
-                    if matches!(
-                        self.view,
-                        HwView::Cores | HwView::Processes | HwView::Disks | HwView::Networks
-                    ) {
-                        let _ = ui.add(
-                            egui::TextEdit::singleline(&mut self.filter)
-                                .hint_text("Filter…")
-                                .desired_width(200.0),
-                        );
-                    }
-
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            ui.label(
-                                RichText::new(format!(
-                                    "captured @ {}",
-                                    fmt_unix_ms(self.snapshot.captured_at_unix_ms)
-                                ))
-                                .small()
-                                .weak(),
-                            );
-                        },
-                    );
-                });
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Hardware monitor").strong().size(15.0));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(
+                    RichText::new(format!(
+                        "captured @ {}",
+                        fmt_unix_ms(snap.captured_at_unix_ms)
+                    ))
+                    .small()
+                    .weak(),
+                );
             });
+        });
+        ui.separator();
+        // Drive a redraw so live data flows without user interaction.
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {
-            // Drive a redraw so live data flows without user interaction.
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
-
-            match self.view {
-                HwView::Cores => tables::show_cores(ui, &self.snapshot, &self.filter),
-                HwView::Memory => tables::show_memory(ui, &self.snapshot.memory),
-                HwView::Disks => tables::show_disks(ui, &self.snapshot.disks, &self.filter),
-                HwView::Networks => {
-                    tables::show_networks(ui, &self.snapshot.networks, &self.filter)
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            section(ui, "CPU cores", |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("hw_all_cores")
+                    .max_height(240.0)
+                    .show(ui, |ui| tables::show_cores(ui, snap, ""));
+            });
+            ui.columns(2, |cols| {
+                {
+                    let ui = &mut cols[0];
+                    section(ui, "Memory", |ui| tables::show_memory(ui, &snap.memory));
+                    section(ui, "Disks", |ui| tables::show_disks(ui, &snap.disks, ""));
+                    section(ui, "GPUs", |ui| tables::show_gpus(ui, &snap.gpus));
                 }
-                HwView::Whea => tables::show_whea(ui, &self.snapshot.whea),
-                HwView::Processes => {
-                    tables::show_processes(ui, &self.snapshot.processes, &self.filter)
+                {
+                    let ui = &mut cols[1];
+                    section(ui, "Temperatures", |ui| {
+                        tables::show_thermals(ui, &snap.thermals, "")
+                    });
+                    section(ui, "Networks", |ui| {
+                        tables::show_networks(ui, &snap.networks, "")
+                    });
+                    section(ui, "WHEA", |ui| tables::show_whea(ui, &snap.whea));
                 }
-                HwView::Gpus => tables::show_gpus(ui, &self.snapshot.gpus),
-            }
+            });
+            section(ui, "Processes", |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("hw_all_procs")
+                    .max_height(260.0)
+                    .show(ui, |ui| tables::show_processes(ui, &snap.processes, ""));
+            });
         });
     }
+}
+
+/// One titled section box for the all-in-one grid.
+fn section(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
+    ui.group(|ui| {
+        ui.set_width(ui.available_width());
+        ui.label(RichText::new(title).strong());
+        ui.separator();
+        add(ui);
+    });
+    ui.add_space(6.0);
 }
 
 pub(crate) fn usage_color(pct: f32) -> Color32 {

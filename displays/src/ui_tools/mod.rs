@@ -13,13 +13,13 @@ pub mod mention_handler;
 pub mod toasts;
 pub mod tokyo_dark;
 pub mod rerun_mtech;
-pub mod theme;
 pub mod theme_chrome;
 pub mod theme_config;
-pub mod dock_style;
 pub mod notification_center;
-pub mod egui_logger;
 pub mod icons;
+pub mod selection_stats;
+
+pub use mtech_ui::{dock_style, egui_logger, theme};
 
 const ZSTD_LEVEL: i32 = 9;
 

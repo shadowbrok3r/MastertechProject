@@ -1029,7 +1029,9 @@ async fn fetch_active_runs(computer: &RecordId) -> Result<Vec<ActiveRun>, String
             ActiveRun {
                 run_id,
                 tool_label,
-                started_at: now_inst - Duration::from_millis(elapsed_ms),
+                started_at: now_inst
+                    .checked_sub(Duration::from_millis(elapsed_ms))
+                    .unwrap_or(now_inst),
                 duration_planned_secs,
                 source: ActiveRunSource::Database,
                 target_component,

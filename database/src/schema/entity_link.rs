@@ -503,6 +503,70 @@ pub async fn repair_connection_links(
     Ok(report)
 }
 
+/// Link a connected client to a customer and its canonical computer record,
+/// creating the `computer:HOST:hash9` row when missing. Built for the
+/// hardware-swap case where a machine reconnects under a new persistent
+/// client id with null customer/computer (which `repair_connection_links`
+/// can't fix — it only repoints existing links and never mints the row).
+///
+/// Upserts the computer (sets customer + hostname only — never clobbers
+/// existing specs), then links `connected_client.customer/computer` and,
+/// when supplied, `friendly_name`. Component specs (CPU/GPU/RAM) are left to
+/// the client's own check-in to populate, since on a part swap they differ
+/// from any record carried forward.
+pub async fn link_connected_client_record(
+    connection_string: &str,
+    customer_id: &str,
+    friendly_name: Option<&str>,
+) -> Result<serde_json::Value, anyhow::Error> {
+    let cs = connection_string.trim();
+    let customer = resolve_customer_id(customer_id)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let canonical = canonical_computer_id(cs);
+    let hostname = cs.split(':').next().unwrap_or(cs).to_string();
+
+    let graph = load_connected_client_graph(cs)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    if graph.client.is_none() {
+        anyhow::bail!("connected_client not found for {cs}");
+    }
+    let computer_existed = graph.computer.is_some();
+
+    DATABASE
+        .query("UPSERT $cid SET customer = $cust, hostname = $host")
+        .bind(("cid", canonical.clone()))
+        .bind(("cust", customer.clone()))
+        .bind(("host", hostname))
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+        .take::<Option<ComputerData>>(0)?;
+
+    DATABASE
+        .query(
+            "UPDATE connected_client \
+             SET customer = $cust, computer = $cid, friendly_name = $fname ?? friendly_name \
+             WHERE connection_string == $cs RETURN AFTER",
+        )
+        .bind(("cust", customer.clone()))
+        .bind(("cid", canonical.clone()))
+        .bind(("fname", friendly_name.map(|s| s.to_string())))
+        .bind(("cs", cs.to_string()))
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+        .take::<Option<ConnectedClient>>(0)?;
+
+    Ok(serde_json::json!({
+        "connection_string": cs,
+        "customer": customer.key_string(),
+        "computer": canonical.key_string(),
+        "computer_created": !computer_existed,
+        "friendly_name": friendly_name,
+        "linked": true,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

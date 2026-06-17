@@ -8,7 +8,8 @@
 use eframe::egui::{self, Color32, RichText};
 use egui_extras::{Column, TableBuilder};
 use stress_kit::telemetry::{
-    DiskRateSample, GpuSample, MemorySample, NetworkRateSample, ProcessSample, WheaCounters,
+    DiskRateSample, GpuSample, MemorySample, NetworkRateSample, ProcessSample, ThermalReading,
+    WheaCounters,
 };
 
 use super::{temp_color, usage_color};
@@ -78,12 +79,24 @@ pub fn show_cores(
                     r.col(|ui| {
                         ui.label(format!("{} MHz", c.freq_mhz));
                     });
-                    r.col(|ui| match c.temp_c {
-                        Some(t) => {
-                            ui.colored_label(temp_color(t), format!("{t:.1} °C"));
-                        }
-                        None => {
-                            ui.colored_label(Color32::GRAY, "N/A");
+                    r.col(|ui| {
+                        // sysinfo has no per-core temp on Windows; fall back to the
+                        // WinRing0 `CPU Core N` reading from the thermals list.
+                        let temp = c.temp_c.or_else(|| {
+                            let want = format!("CPU Core {}", c.index);
+                            snapshot
+                                .thermals
+                                .iter()
+                                .find(|t| t.label == want)
+                                .map(|t| t.temp_c)
+                        });
+                        match temp {
+                            Some(t) => {
+                                ui.colored_label(temp_color(t), format!("{t:.1} °C"));
+                            }
+                            None => {
+                                ui.colored_label(Color32::GRAY, "N/A");
+                            }
                         }
                     });
                 });
@@ -401,6 +414,47 @@ pub fn show_gpus(ui: &mut egui::Ui, gpus: &[GpuSample]) {
                                 ui.colored_label(Color32::GRAY, "—");
                             }
                         }
+                    });
+                });
+            }
+        });
+}
+
+pub fn show_thermals(ui: &mut egui::Ui, thermals: &[ThermalReading], filter: &str) {
+    let filter_lower = filter.to_lowercase();
+    let visible: Vec<&ThermalReading> = thermals
+        .iter()
+        .filter(|t| filter.is_empty() || t.label.to_lowercase().contains(&filter_lower))
+        .collect();
+
+    if visible.is_empty() {
+        empty_state(
+            ui,
+            "No temperature sensors in the latest snapshot. CPU/board temps need the WinRing0 \
+             driver loaded — run elevated and lower Memory Integrity + the vulnerable-driver \
+             blocklist; NVMe/SATA disk temps need no driver. See the Logs tab for the reason.",
+        );
+        return;
+    }
+
+    TableBuilder::new(ui)
+        .striped(true)
+        .resizable(true)
+        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+        .column(Column::initial(220.0).at_least(140.0)) // sensor
+        .column(Column::auto().at_least(90.0)) // temp
+        .header(20.0, |mut h| {
+            h.col(|ui| header_label(ui, "Sensor"));
+            h.col(|ui| header_label(ui, "Temp"));
+        })
+        .body(|mut body| {
+            for t in visible {
+                body.row(ROW_HEIGHT, |mut r| {
+                    r.col(|ui| {
+                        ui.label(&t.label);
+                    });
+                    r.col(|ui| {
+                        ui.colored_label(temp_color(t.temp_c), format!("{:.1} °C", t.temp_c));
                     });
                 });
             }

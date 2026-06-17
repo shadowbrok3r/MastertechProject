@@ -258,9 +258,9 @@ impl LoggerUi {
     pub(crate) fn ui(&mut self, ui: &mut eframe::egui::Ui) {
         #[cfg(feature = "puffin")]
         puffin::profile_scope!("render logger UI");
-        self.style.warn_color = crate::ui_tools::theme::warn(ui);
-        self.style.error_color = crate::ui_tools::theme::error(ui);
-        self.style.highlight_color = crate::ui_tools::theme::weak_text(ui);
+        self.style.warn_color = crate::theme::warn(ui);
+        self.style.error_color = crate::theme::error(ui);
+        self.style.highlight_color = crate::theme::weak_text(ui);
         let Ok(ref mut logger) = LOGGER.lock() else {
             return;
         };
@@ -711,8 +711,18 @@ impl Builder {
 
 impl log::Log for EguiLogger {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
-        metadata.level() <= self.max_level
-            && !self.blacklisted.contains(&metadata.target().to_string())
+        if metadata.level() > self.max_level {
+            return false;
+        }
+        // Blacklist entries match the exact target or any `target::sub` module,
+        // so `"evtx"` silences the whole `evtx::*` crate.
+        let target = metadata.target();
+        !self.blacklisted.iter().any(|b| {
+            target == b.as_str()
+                || target
+                    .strip_prefix(b.as_str())
+                    .is_some_and(|rest| rest.starts_with("::"))
+        })
     }
 
     fn log(&self, record: &log::Record) {

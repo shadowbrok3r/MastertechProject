@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use eframe::egui;
 use egui_phosphor::regular as p;
-use stress_kit::telemetry::TelemetrySnapshot;
+use stress_kit::telemetry::{TelemetrySnapshot, ThermalReading};
 use stress_runner::{
     RunController, RunPlan, RunSpec, RunStage, RunUpdate, RunVerdict, Stressor, TelemetryAgent,
     TestTool,
@@ -330,6 +330,12 @@ pub struct StressPanel {
     cert_error: Option<String>,
     /// Run the operator asked to open in the report view.
     report_request: Option<RecordId>,
+    /// Collapsible right-hand temperature panel toggle.
+    temps_open: bool,
+    /// Latest device temps for the side panel (CPU/board + storage).
+    latest_thermals: Vec<ThermalReading>,
+    /// Latest per-GPU temps `(name, °C)` for the side panel.
+    latest_gpu_temps: Vec<(String, f32)>,
 }
 
 /// One row of the per-stage verdict table.
@@ -339,6 +345,14 @@ pub struct StageVerdictRow {
     pub pass: bool,
     pub violations: Vec<String>,
     pub peak_throughput: Option<f64>,
+}
+
+/// Per-stage progress state for the live stage grid.
+#[derive(Clone, Copy)]
+enum StageProg {
+    Pending,
+    Running(f32),
+    Done { pass: Option<bool> },
 }
 
 impl Default for StressPanel {
@@ -360,6 +374,9 @@ impl Default for StressPanel {
             cert_preview: None,
             cert_error: None,
             report_request: None,
+            temps_open: true,
+            latest_thermals: Vec::new(),
+            latest_gpu_temps: Vec::new(),
         }
     }
 }
@@ -370,6 +387,12 @@ impl StressPanel {
     /// populated even when the user hasn't started a stress run.
     pub fn push_telemetry(&mut self, snapshot: &TelemetrySnapshot) {
         self.charts.push(snapshot);
+        self.latest_thermals = snapshot.thermals.clone();
+        self.latest_gpu_temps = snapshot
+            .gpus
+            .iter()
+            .filter_map(|g| g.temp_c.map(|t| (g.name.clone(), t)))
+            .collect();
     }
 
     /// Bind/unbind the order context stamped onto new runs.
@@ -667,16 +690,13 @@ impl StressPanel {
     /// Stress tab UI.
     ///
     /// Lays out as:
-    ///   * `Panel::top`    — mode selector (Single / Scenario / QC Benchmark)
-    ///                       plus the Hardware Monitor button.
-    ///   * `Panel::bottom` — live system telemetry charts (relocated from
-    ///                       the hardware monitor's old `Charts` view).
-    ///   * `CentralPanel`  — the mode-specific configuration + run controls
-    ///                       + metrics + verdict banner.
+    ///   * `Panel::top`       — mode selector + Hardware Monitor + Temps toggle,
+    ///                          with the Start/Stop control right-aligned.
+    ///   * `Panel::bottom`    — live system telemetry charts (incl. temps).
+    ///   * `SidePanel::right` — collapsible, scrollable device-temperature list.
+    ///   * `CentralPanel`     — mode-specific config + stage grid + metrics.
     ///
-    /// `telemetry` is the shared `TelemetryAgent` (typically from `HwSampler::agent()`).
-    /// `computer` is the `RecordId` the run will be persisted against — qc-app
-    /// computes this from `reporting::machine_id()`.
+    /// `telemetry` is the shared `TelemetryAgent`; `computer` is the run's owner.
     pub fn ui(
         &mut self,
         ui: &mut egui::Ui,
@@ -700,8 +720,8 @@ impl StressPanel {
                 if ui.button("Hardware Monitor").clicked() {
                     *open_hw_monitor = true;
                 }
+                ui.toggle_value(&mut self.temps_open, "Telemetry");
                 if let Some(id) = &self.last_run_id {
-                    ui.add_space(8.0);
                     ui.label(
                         egui::RichText::new(format!("run: {}", id.key_string_pretty()))
                             .weak()
@@ -709,39 +729,27 @@ impl StressPanel {
                             .monospace(),
                     );
                 }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    self.ui_top_start_stop(ui, running, cfg, &telemetry, &computer);
+                });
             });
             ui.add_space(4.0);
         });
 
-        egui::Panel::bottom("stress_panel_bottom")
+        egui::SidePanel::right("stress_panel_side")
             .resizable(true)
-            .default_size(300.0)
-            .show_inside(ui, |ui| {
-                self.charts.show(ui);
+            .default_width(440.0)
+            .show_animated_inside(ui, self.temps_open, |ui| {
+                self.ui_side_panel(ui);
             });
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 match cfg.mode {
-                    PanelMode::Single => {
-                        self.ui_single(ui, cfg, running, telemetry.clone(), computer.clone())
-                    }
-                    PanelMode::Scenario => {
-                        self.ui_scenario(ui, cfg, running, telemetry.clone(), computer.clone())
-                    }
-                    PanelMode::QcBenchmark => {
-                        self.ui_qc_benchmark(ui, cfg, running, telemetry, computer)
-                    }
-                    PanelMode::Certification => {
-                        self.ui_certification(ui, cfg, running, telemetry, computer)
-                    }
-                }
-
-                if matches!(
-                    cfg.mode,
-                    PanelMode::Scenario | PanelMode::QcBenchmark | PanelMode::Certification
-                ) {
-                    self.ui_stage_verdicts(ui);
+                    PanelMode::Single => self.ui_single(ui, cfg, running),
+                    PanelMode::Scenario => self.ui_scenario(ui, cfg, running),
+                    PanelMode::QcBenchmark => self.ui_qc_benchmark(ui, cfg, running),
+                    PanelMode::Certification => self.ui_certification(ui, cfg, running),
                 }
 
                 if self.show_verdict {
@@ -753,14 +761,7 @@ impl StressPanel {
         });
     }
 
-    fn ui_single(
-        &mut self,
-        ui: &mut egui::Ui,
-        cfg: &mut StressPanelConfig,
-        running: bool,
-        telemetry: Arc<TelemetryAgent>,
-        computer: RecordId,
-    ) {
+    fn ui_single(&mut self, ui: &mut egui::Ui, cfg: &mut StressPanelConfig, running: bool) {
         let s = &mut cfg.single;
 
         ui.group(|ui| {
@@ -845,211 +846,10 @@ impl StressPanel {
             });
         });
 
-        // Clone before moving into the start closure so we can still use
-        // `cfg` afterwards for the metric header label.
-        let single_clone = cfg.single.clone();
-        let computer_clone = computer.clone();
-        self.ui_start_stop(ui, running, move |panel| {
-            panel.start_single(&single_clone, telemetry, computer_clone);
-        });
-
         self.ui_metrics(ui, cfg.single.stressor.throughput_unit());
     }
 
-    fn ui_scenario(
-        &mut self,
-        ui: &mut egui::Ui,
-        cfg: &mut StressPanelConfig,
-        running: bool,
-        telemetry: Arc<TelemetryAgent>,
-        computer: RecordId,
-    ) {
-        ui.group(|ui| {
-            ui.label(egui::RichText::new("Stages (run in order)").strong());
-            ui.add_space(4.0);
-
-            let mut swap: Option<(usize, usize)> = None;
-            let mut remove: Option<usize> = None;
-            let n = cfg.scenario.stages.len();
-
-            for i in 0..n {
-                let is_editing = self.editing_stage == Some(i);
-                ui.horizontal(|ui| {
-                    ui.add_enabled_ui(!running && i > 0, |ui| {
-                        if ui.small_button(p::CARET_UP).clicked() {
-                            swap = Some((i - 1, i));
-                        }
-                    });
-                    ui.add_enabled_ui(!running && i + 1 < n, |ui| {
-                        if ui.small_button(p::CARET_DOWN).clicked() {
-                            swap = Some((i, i + 1));
-                        }
-                    });
-
-                    ui.add_space(4.0);
-
-                    ui.add_enabled_ui(!running, |ui| {
-                        let selected = cfg.scenario.stages[i].stressor.label();
-                        egui::ComboBox::from_id_salt(format!("stage_stressor_{i}"))
-                            .selected_text(selected)
-                            .width(90.0)
-                            .show_ui(ui, |ui| {
-                                for choice in StressorChoice::ALL {
-                                    ui.selectable_value(
-                                        &mut cfg.scenario.stages[i].stressor,
-                                        choice,
-                                        choice.label(),
-                                    );
-                                }
-                            });
-                    });
-
-                    ui.add_enabled(
-                        !running,
-                        egui::TextEdit::singleline(&mut cfg.scenario.stages[i].label)
-                            .desired_width(100.0),
-                    );
-
-                    ui.label("for");
-                    ui.add_enabled(
-                        !running,
-                        egui::DragValue::new(&mut cfg.scenario.stages[i].duration_secs)
-                            .range(1..=3600)
-                            .suffix(" s"),
-                    );
-
-                    let btn_label = if is_editing { p::CARET_DOWN } else { p::CARET_RIGHT };
-                    if ui.small_button(btn_label).clicked() {
-                        self.editing_stage = if is_editing { None } else { Some(i) };
-                    }
-
-                    ui.add_enabled_ui(!running && n > 1, |ui| {
-                        if ui.small_button(p::X).on_hover_text("Remove stage").clicked() {
-                            remove = Some(i);
-                        }
-                    });
-                });
-
-                if is_editing {
-                    ui.indent(format!("stage_opts_{i}"), |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label("Threads");
-                            let suffix = if cfg.scenario.stages[i].threads == 0 { " (auto)" } else { "" };
-                            ui.add_enabled(
-                                !running,
-                                egui::DragValue::new(&mut cfg.scenario.stages[i].threads)
-                                    .range(0..=64)
-                                    .suffix(suffix),
-                            );
-                        });
-                        match cfg.scenario.stages[i].stressor {
-                            StressorChoice::Memory | StressorChoice::Memcpy | StressorChoice::Vm => {
-                                ui.horizontal(|ui| {
-                                    ui.label("Memory cap (MiB)");
-                                    ui.add_enabled(
-                                        !running,
-                                        egui::DragValue::new(
-                                            &mut cfg.scenario.stages[i].memory_cap_mb,
-                                        )
-                                        .range(16..=32768),
-                                    );
-                                });
-                            }
-                            StressorChoice::Disk => {
-                                ui.horizontal(|ui| {
-                                    ui.label("File size (MiB)");
-                                    ui.add_enabled(
-                                        !running,
-                                        egui::DragValue::new(
-                                            &mut cfg.scenario.stages[i].disk_file_mb,
-                                        )
-                                        .range(1..=512),
-                                    );
-                                });
-                            }
-                            _ => {}
-                        }
-                    });
-                }
-            }
-
-            if let Some((a, b)) = swap {
-                cfg.scenario.stages.swap(a, b);
-            }
-            if let Some(idx) = remove {
-                cfg.scenario.stages.remove(idx);
-                if self.editing_stage == Some(idx) {
-                    self.editing_stage = None;
-                }
-            }
-
-            ui.add_space(4.0);
-            if !running {
-                ui.horizontal(|ui| {
-                    ui.label("Add stage");
-                    egui::ComboBox::from_id_salt("scenario_add_stage")
-                        .selected_text(self.pending_stage_pick.label())
-                        .show_ui(ui, |ui| {
-                            for choice in StressorChoice::ALL {
-                                ui.selectable_value(
-                                    &mut self.pending_stage_pick,
-                                    choice,
-                                    choice.label(),
-                                );
-                            }
-                        });
-                    if ui.button("+ Add").clicked() {
-                        let stage = match self.pending_stage_pick {
-                            StressorChoice::Cpu => ScenarioStageConfig::default_cpu(),
-                            StressorChoice::Memory => ScenarioStageConfig::default_memory(),
-                            StressorChoice::Disk => ScenarioStageConfig::default_disk(),
-                            other => ScenarioStageConfig {
-                                label: other.label().into(),
-                                stressor: other,
-                                threads: 0,
-                                duration_secs: 60,
-                                memory_cap_mb: 256,
-                                disk_file_mb: 16,
-                            },
-                        };
-                        cfg.scenario.stages.push(stage);
-                    }
-                });
-            }
-        });
-
-        ui.group(|ui| {
-            ui.horizontal(|ui| {
-                ui.add_enabled(!running, |ui: &mut egui::Ui| {
-                    ui.checkbox(&mut cfg.scenario.use_total, "Total wall time")
-                });
-                if cfg.scenario.use_total {
-                    ui.add_enabled(
-                        !running,
-                        egui::DragValue::new(&mut cfg.scenario.total_wall_secs)
-                            .range(1..=86400)
-                            .suffix(" s"),
-                    );
-                    ui.add_space(8.0);
-                    ui.add_enabled(!running, |ui: &mut egui::Ui| {
-                        ui.checkbox(&mut cfg.scenario.repeat_until_total, "Repeat until total")
-                    });
-                }
-            });
-        });
-
-        // Clone before moving into the start closure so we can still read
-        // `cfg` afterwards for the progress + metrics rendering.
-        let scenario_clone = cfg.scenario.clone();
-        let computer_clone = computer.clone();
-        self.ui_start_stop(ui, running, move |panel| {
-            panel.start_scenario(&scenario_clone, telemetry, computer_clone);
-        });
-
-        if running || (self.has_run() && cfg.mode == PanelMode::Scenario) {
-            self.ui_scenario_progress(ui, cfg);
-        }
-
+    fn ui_scenario(&mut self, ui: &mut egui::Ui, cfg: &mut StressPanelConfig, running: bool) {
         let stage_idx = self.scenario_state.current_stage_index;
         let unit = cfg
             .scenario
@@ -1057,33 +857,244 @@ impl StressPanel {
             .get(stage_idx)
             .map(|s| s.stressor.throughput_unit())
             .unwrap_or("ops/s");
-        self.ui_metrics(ui, unit);
+
+        ui.columns(2, |cols| {
+            {
+                let ui = &mut cols[0];
+                ui.group(|ui| {
+                    ui.label(egui::RichText::new("Stages (run in order)").strong());
+                    ui.add_space(4.0);
+
+                    let mut swap: Option<(usize, usize)> = None;
+                    let mut remove: Option<usize> = None;
+                    let n = cfg.scenario.stages.len();
+
+                    for i in 0..n {
+                        let is_editing = self.editing_stage == Some(i);
+                        let prog =
+                            self.stage_progress_for(i, cfg.scenario.stages[i].duration_secs as f64);
+                        ui.horizontal(|ui| {
+                            ui.add_enabled_ui(!running && i > 0, |ui| {
+                                if ui.small_button(p::CARET_UP).clicked() {
+                                    swap = Some((i - 1, i));
+                                }
+                            });
+                            ui.add_enabled_ui(!running && i + 1 < n, |ui| {
+                                if ui.small_button(p::CARET_DOWN).clicked() {
+                                    swap = Some((i, i + 1));
+                                }
+                            });
+
+                            ui.add_enabled_ui(!running, |ui| {
+                                let selected = cfg.scenario.stages[i].stressor.label();
+                                egui::ComboBox::from_id_salt(format!("stage_stressor_{i}"))
+                                    .selected_text(selected)
+                                    .width(80.0)
+                                    .show_ui(ui, |ui| {
+                                        for choice in StressorChoice::ALL {
+                                            ui.selectable_value(
+                                                &mut cfg.scenario.stages[i].stressor,
+                                                choice,
+                                                choice.label(),
+                                            );
+                                        }
+                                    });
+                            });
+
+                            ui.add_enabled(
+                                !running,
+                                egui::TextEdit::singleline(&mut cfg.scenario.stages[i].label)
+                                    .desired_width(80.0),
+                            );
+
+                            ui.add_enabled(
+                                !running,
+                                egui::DragValue::new(&mut cfg.scenario.stages[i].duration_secs)
+                                    .range(1..=3600)
+                                    .suffix(" s"),
+                            );
+
+                            let btn_label =
+                                if is_editing { p::CARET_DOWN } else { p::CARET_RIGHT };
+                            if ui.small_button(btn_label).clicked() {
+                                self.editing_stage = if is_editing { None } else { Some(i) };
+                            }
+
+                            ui.add_enabled_ui(!running && n > 1, |ui| {
+                                if ui.small_button(p::X).on_hover_text("Remove stage").clicked() {
+                                    remove = Some(i);
+                                }
+                            });
+
+                            Self::stage_progress_cell(ui, prog);
+                        });
+
+                        if is_editing {
+                            ui.indent(format!("stage_opts_{i}"), |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label("Threads");
+                                    let suffix = if cfg.scenario.stages[i].threads == 0 {
+                                        " (auto)"
+                                    } else {
+                                        ""
+                                    };
+                                    ui.add_enabled(
+                                        !running,
+                                        egui::DragValue::new(&mut cfg.scenario.stages[i].threads)
+                                            .range(0..=64)
+                                            .suffix(suffix),
+                                    );
+                                });
+                                match cfg.scenario.stages[i].stressor {
+                                    StressorChoice::Memory
+                                    | StressorChoice::Memcpy
+                                    | StressorChoice::Vm => {
+                                        ui.horizontal(|ui| {
+                                            ui.label("Memory cap (MiB)");
+                                            ui.add_enabled(
+                                                !running,
+                                                egui::DragValue::new(
+                                                    &mut cfg.scenario.stages[i].memory_cap_mb,
+                                                )
+                                                .range(16..=32768),
+                                            );
+                                        });
+                                    }
+                                    StressorChoice::Disk => {
+                                        ui.horizontal(|ui| {
+                                            ui.label("File size (MiB)");
+                                            ui.add_enabled(
+                                                !running,
+                                                egui::DragValue::new(
+                                                    &mut cfg.scenario.stages[i].disk_file_mb,
+                                                )
+                                                .range(1..=512),
+                                            );
+                                        });
+                                    }
+                                    _ => {}
+                                }
+                            });
+                        }
+                    }
+
+                    if let Some((a, b)) = swap {
+                        cfg.scenario.stages.swap(a, b);
+                    }
+                    if let Some(idx) = remove {
+                        cfg.scenario.stages.remove(idx);
+                        if self.editing_stage == Some(idx) {
+                            self.editing_stage = None;
+                        }
+                    }
+
+                    ui.add_space(4.0);
+                    if !running {
+                        ui.horizontal(|ui| {
+                            ui.label("Add stage");
+                            egui::ComboBox::from_id_salt("scenario_add_stage")
+                                .selected_text(self.pending_stage_pick.label())
+                                .show_ui(ui, |ui| {
+                                    for choice in StressorChoice::ALL {
+                                        ui.selectable_value(
+                                            &mut self.pending_stage_pick,
+                                            choice,
+                                            choice.label(),
+                                        );
+                                    }
+                                });
+                            if ui.button("+ Add").clicked() {
+                                let stage = match self.pending_stage_pick {
+                                    StressorChoice::Cpu => ScenarioStageConfig::default_cpu(),
+                                    StressorChoice::Memory => ScenarioStageConfig::default_memory(),
+                                    StressorChoice::Disk => ScenarioStageConfig::default_disk(),
+                                    other => ScenarioStageConfig {
+                                        label: other.label().into(),
+                                        stressor: other,
+                                        threads: 0,
+                                        duration_secs: 60,
+                                        memory_cap_mb: 256,
+                                        disk_file_mb: 16,
+                                    },
+                                };
+                                cfg.scenario.stages.push(stage);
+                            }
+                        });
+                    }
+                });
+
+                ui.group(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.add_enabled(!running, |ui: &mut egui::Ui| {
+                            ui.checkbox(&mut cfg.scenario.use_total, "Total wall time")
+                        });
+                        if cfg.scenario.use_total {
+                            ui.add_enabled(
+                                !running,
+                                egui::DragValue::new(&mut cfg.scenario.total_wall_secs)
+                                    .range(1..=86400)
+                                    .suffix(" s"),
+                            );
+                            ui.add_space(8.0);
+                            ui.add_enabled(!running, |ui: &mut egui::Ui| {
+                                ui.checkbox(
+                                    &mut cfg.scenario.repeat_until_total,
+                                    "Repeat until total",
+                                )
+                            });
+                        }
+                    });
+                });
+
+                if running && cfg.scenario.use_total && cfg.scenario.total_wall_secs > 0 {
+                    let overall = (self.scenario_state.total_elapsed_secs
+                        / cfg.scenario.total_wall_secs as f64)
+                        .clamp(0.0, 1.0) as f32;
+                    ui.add(
+                        egui::ProgressBar::new(overall)
+                            .text(format!(
+                                "Overall  {:.0}/{} s",
+                                self.scenario_state.total_elapsed_secs,
+                                cfg.scenario.total_wall_secs
+                            ))
+                            .animate(true),
+                    );
+                }
+            }
+            {
+                let ui = &mut cols[1];
+                self.ui_run_status_column(ui, unit);
+            }
+        });
     }
 
     /// QC Benchmark mode. Just the duration multiplier slider + a Start
     /// button — every stage is hard-coded by the shared `qc_benchmark` recipe.
-    fn ui_qc_benchmark(
-        &mut self,
-        ui: &mut egui::Ui,
-        cfg: &mut StressPanelConfig,
-        running: bool,
-        telemetry: Arc<TelemetryAgent>,
-        computer: RecordId,
-    ) {
+    fn ui_qc_benchmark(&mut self, ui: &mut egui::Ui, cfg: &mut StressPanelConfig, running: bool) {
         let mult = cfg.qc_benchmark.duration_multiplier.clamp(0.1, 10.0);
         let total_secs = (mult * 20.0 * 8.0).round() as u64;
 
+        let stages = crate::qc_benchmark::qc_benchmark_stages(mult);
+        let stage_rows: Vec<(String, &'static str, f64)> = stages
+            .iter()
+            .map(|s| (s.label.clone(), s.stressor.label(), (s.duration_secs as f64).max(1.0)))
+            .collect();
+        let unit = stages
+            .get(self.scenario_state.current_stage_index)
+            .map(|s| s.stressor.throughput_unit())
+            .unwrap_or("ops/s");
+
         ui.group(|ui| {
-            ui.label(egui::RichText::new("QC Benchmark v1").strong());
-            ui.label(
-                egui::RichText::new(
-                    "8-stage burn-in: cpu, matrix, fp, stream, cache, branch, memory, vm. \
-                     Shared with the MCP `run_qc_benchmark` tool — same recipe, same persistence.",
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("QC Benchmark v1").strong());
+                ui.label(
+                    egui::RichText::new("cpu · matrix · fp · stream · cache · branch · memory · vm")
+                        .small()
+                        .weak(),
                 )
-                .small()
-                .weak(),
-            );
-            ui.add_space(6.0);
+                .on_hover_text("8-stage burn-in shared with the MCP `run_qc_benchmark` tool.");
+            });
+            ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.label("Duration multiplier");
                 ui.add_enabled(
@@ -1098,303 +1109,313 @@ impl StressPanel {
                         .weak(),
                 );
             });
-            ui.label(
-                egui::RichText::new(
-                    "1.0× ≈ 20 s/stage (~2.7 min). 0.25× ≈ 40 s smoke. 4.0× ≈ 11 min.",
-                )
-                .small()
-                .weak(),
-            );
         });
-
-        let bench_clone = cfg.qc_benchmark.clone();
-        let computer_clone = computer.clone();
-        self.ui_start_stop(ui, running, move |panel| {
-            panel.start_qc_benchmark(&bench_clone, telemetry, computer_clone);
-        });
-
-        if running || (self.has_run() && cfg.mode == PanelMode::QcBenchmark) {
-            self.ui_scenario_progress(ui, cfg);
-        }
-
-        let stage_idx = self.scenario_state.current_stage_index;
-        let unit = crate::qc_benchmark::qc_benchmark_stages(mult)
-            .get(stage_idx)
-            .map(|s| s.stressor.throughput_unit())
-            .unwrap_or("ops/s");
-        self.ui_metrics(ui, unit);
+        ui.add_space(6.0);
+        self.ui_stage_grid(ui, "qc_bench_stage_grid", &stage_rows);
+        ui.add_space(6.0);
+        self.ui_run_status_column(ui, unit);
     }
 
-    fn ui_certification(
-        &mut self,
-        ui: &mut egui::Ui,
-        cfg: &mut StressPanelConfig,
-        running: bool,
-        telemetry: Arc<TelemetryAgent>,
-        computer: RecordId,
-    ) {
-        let cert = &mut cfg.certification;
-        let mult = cert.duration_multiplier.clamp(0.001, 1.0);
+    fn ui_certification(&mut self, ui: &mut egui::Ui, cfg: &mut StressPanelConfig, running: bool) {
+        let mult = cfg.certification.duration_multiplier.clamp(0.001, 1.0);
 
         // Re-parse the preview only when the selection changes.
-        if self.cert_preview.as_ref().map(|p| p.name.as_str()) != Some(cert.preset_name.as_str()) {
-            self.cert_preview = stress_runner::load_cert_preset(&cert.preset_name).ok();
+        if self.cert_preview.as_ref().map(|p| p.name.as_str())
+            != Some(cfg.certification.preset_name.as_str())
+        {
+            self.cert_preview = stress_runner::load_cert_preset(&cfg.certification.preset_name).ok();
         }
-
-        ui.group(|ui| {
-            ui.horizontal(|ui| {
-                ui.label("Preset");
-                ui.add_enabled_ui(!running, |ui| {
-                    egui::ComboBox::from_id_salt("cert_preset")
-                        .selected_text(&cert.preset_name)
-                        .show_ui(ui, |ui| {
-                            for name in stress_runner::CERT_PRESET_NAMES {
-                                ui.selectable_value(
-                                    &mut cert.preset_name,
-                                    name.to_string(),
-                                    *name,
-                                );
-                            }
-                        });
-                });
-            });
-
-            if let Some(preset) = &self.cert_preview {
-                ui.label(egui::RichText::new(&preset.description).small().weak());
-                let total = (preset.total_secs() as f64 * mult as f64).round() as u64;
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ui.label("Duration multiplier");
-                    ui.add_enabled(
-                        !running,
-                        egui::Slider::new(&mut cert.duration_multiplier, 0.001..=1.0)
-                            .logarithmic(true)
-                            .suffix("×"),
-                    );
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "≈ {:.1} min total{}",
-                            total as f64 / 60.0,
-                            if mult < 1.0 { "  (dev smoke below 1.0×)" } else { "" }
-                        ))
-                        .small()
-                        .weak(),
-                    );
-                });
-
-                ui.add_space(6.0);
-                egui::Grid::new("cert_stage_preview")
-                    .num_columns(3)
-                    .spacing([16.0, 2.0])
-                    .striped(true)
-                    .show(ui, |ui| {
-                        ui.label(egui::RichText::new("Stage").small().strong());
-                        ui.label(egui::RichText::new("Stressor").small().strong());
-                        ui.label(egui::RichText::new("Duration").small().strong());
-                        ui.end_row();
-                        for s in &preset.stages {
-                            let secs =
-                                ((s.duration_secs as f64 * mult as f64).round() as u64).max(1);
-                            ui.label(egui::RichText::new(&s.label).small());
-                            ui.label(egui::RichText::new(s.stressor.label()).small());
-                            ui.label(
-                                egui::RichText::new(format!("{:.1} min", secs as f64 / 60.0))
-                                    .small()
-                                    .monospace(),
-                            );
-                            ui.end_row();
-                        }
-                    });
-            } else {
-                ui.colored_label(
-                    egui::Color32::from_rgb(200, 60, 60),
-                    format!("preset '{}' failed to load", cert.preset_name),
-                );
-            }
-        });
 
         if let Some(err) = self.cert_error.clone() {
             ui.colored_label(egui::Color32::from_rgb(200, 60, 60), err);
         }
 
-        let cert_clone = cfg.certification.clone();
-        let computer_clone = computer.clone();
-        self.ui_start_stop(ui, running, move |panel| {
-            panel.start_certification(&cert_clone, telemetry, computer_clone);
-        });
-
-        if running || (self.has_run() && cfg.mode == PanelMode::Certification) {
-            self.ui_cert_progress(ui, mult);
-        }
-
+        let stage_rows: Vec<(String, &'static str, f64)> = self
+            .cert_preview
+            .as_ref()
+            .map(|p| {
+                p.stages
+                    .iter()
+                    .map(|s| {
+                        (
+                            s.label.clone(),
+                            s.stressor.label(),
+                            (s.duration_secs as f64 * mult as f64).max(1.0),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let description = self.cert_preview.as_ref().map(|p| p.description.clone());
+        let total_secs = self
+            .cert_preview
+            .as_ref()
+            .map(|p| (p.total_secs() as f64 * mult as f64).round() as u64)
+            .unwrap_or(0);
         let unit = self
             .cert_preview
             .as_ref()
             .and_then(|p| p.stages.get(self.scenario_state.current_stage_index))
             .map(|s| s.stressor.throughput_unit())
             .unwrap_or("ops/s");
-        self.ui_metrics(ui, unit);
-    }
 
-    /// Stage progress bar against the preset's scaled stage durations.
-    fn ui_cert_progress(&self, ui: &mut egui::Ui, mult: f32) {
-        let ss = &self.scenario_state;
-        if ss.finished {
-            let label = ss.finish_label.clone().unwrap_or_else(|| "done".to_string());
-            ui.label(
-                egui::RichText::new(format!("{label}  —  {:.1} s total", ss.total_elapsed_secs))
-                    .strong(),
-            );
-            return;
-        }
-        if ss.stage_count == 0 {
-            return;
-        }
-        let stage_elapsed = ss.total_elapsed_secs - ss.stage_started_at_elapsed;
-        let stage_dur = self
-            .cert_preview
-            .as_ref()
-            .and_then(|p| p.stages.get(ss.current_stage_index))
-            .map(|s| (s.duration_secs as f64 * mult as f64).max(1.0))
-            .unwrap_or(1.0);
-        let progress = (stage_elapsed / stage_dur).clamp(0.0, 1.0) as f32;
-        ui.add(
-            egui::ProgressBar::new(progress)
-                .text(format!(
-                    "Stage {}/{}: {}  ({:.0} / {:.0} s)",
-                    ss.current_stage_index + 1,
-                    ss.stage_count,
-                    ss.current_stage_label,
-                    stage_elapsed,
-                    stage_dur,
-                ))
-                .animate(true),
-        );
-    }
-
-    /// Per-stage rules verdict table; empty until a rules-carrying run
-    /// finishes its first stage.
-    fn ui_stage_verdicts(&self, ui: &mut egui::Ui) {
-        if self.stage_verdicts.is_empty() {
-            return;
-        }
-        ui.add_space(6.0);
         ui.group(|ui| {
-            ui.label(egui::RichText::new("Stage verdicts").strong());
-            egui::Grid::new("stage_verdicts_grid")
-                .num_columns(3)
-                .spacing([14.0, 2.0])
-                .striped(true)
-                .show(ui, |ui| {
-                    for row in &self.stage_verdicts {
-                        if row.pass {
-                            ui.colored_label(
-                                egui::Color32::from_rgb(50, 160, 90),
-                                format!("{} pass", p::CHECK_CIRCLE),
-                            );
-                        } else {
-                            ui.colored_label(
-                                egui::Color32::from_rgb(200, 60, 60),
-                                format!("{} fail", p::X_CIRCLE),
-                            );
-                        }
-                        ui.label(&row.label);
-                        let detail = if row.violations.is_empty() {
-                            row.peak_throughput
-                                .map(|t| format!("peak {t:.1}"))
-                                .unwrap_or_default()
-                        } else {
-                            row.violations.join("; ")
-                        };
-                        ui.label(egui::RichText::new(detail).small().weak());
-                        ui.end_row();
+            ui.horizontal(|ui| {
+                ui.label("Preset");
+                ui.add_enabled_ui(!running, |ui| {
+                    let combo = egui::ComboBox::from_id_salt("cert_preset")
+                        .selected_text(&cfg.certification.preset_name)
+                        .show_ui(ui, |ui| {
+                            for name in stress_runner::CERT_PRESET_NAMES {
+                                ui.selectable_value(
+                                    &mut cfg.certification.preset_name,
+                                    name.to_string(),
+                                    *name,
+                                );
+                            }
+                        });
+                    if let Some(desc) = &description {
+                        combo.response.on_hover_text(desc.as_str());
                     }
                 });
+                ui.separator();
+                ui.label("Duration");
+                ui.add_enabled(
+                    !running,
+                    egui::Slider::new(&mut cfg.certification.duration_multiplier, 0.001..=1.0)
+                        .logarithmic(true)
+                        .suffix("×"),
+                );
+                ui.label(
+                    egui::RichText::new(format!("≈ {:.1} min", total_secs as f64 / 60.0))
+                        .small()
+                        .weak(),
+                );
+            });
         });
+
+        if stage_rows.is_empty() {
+            ui.colored_label(
+                egui::Color32::from_rgb(200, 60, 60),
+                format!("preset '{}' failed to load", cfg.certification.preset_name),
+            );
+        } else {
+            ui.add_space(6.0);
+            self.ui_stage_grid(ui, "cert_stage_grid", &stage_rows);
+            ui.add_space(6.0);
+            self.ui_run_status_column(ui, unit);
+        }
     }
 
-    fn ui_scenario_progress(&self, ui: &mut egui::Ui, cfg: &StressPanelConfig) {
+    /// Per-stage progress derived from the live scenario state + verdicts.
+    fn stage_progress_for(&self, index: usize, stage_dur_secs: f64) -> StageProg {
+        let ss = &self.scenario_state;
+        if ss.finished || index < ss.current_stage_index {
+            return StageProg::Done {
+                pass: self.stage_verdicts.get(index).map(|v| v.pass),
+            };
+        }
+        if self.is_running() && index == ss.current_stage_index && ss.stage_count > 0 {
+            let elapsed = (ss.total_elapsed_secs - ss.stage_started_at_elapsed).max(0.0);
+            let frac = (elapsed / stage_dur_secs.max(1.0)).clamp(0.0, 1.0) as f32;
+            return StageProg::Running(frac);
+        }
+        StageProg::Pending
+    }
+
+    /// Render one stage's progress cell.
+    fn stage_progress_cell(ui: &mut egui::Ui, prog: StageProg) {
+        match prog {
+            StageProg::Done { pass } => match pass {
+                Some(true) => {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(50, 160, 90),
+                        format!("{} pass", p::CHECK_CIRCLE),
+                    );
+                }
+                Some(false) => {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(200, 60, 60),
+                        format!("{} fail", p::X_CIRCLE),
+                    );
+                }
+                None => {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(120, 160, 120),
+                        format!("{} done", p::CHECK),
+                    );
+                }
+            },
+            StageProg::Running(frac) => {
+                ui.add(
+                    egui::ProgressBar::new(frac)
+                        .desired_width(130.0)
+                        .animate(true)
+                        .text(format!("{:.0}%", frac * 100.0)),
+                );
+            }
+            StageProg::Pending => {
+                ui.label(egui::RichText::new("—").weak());
+            }
+        }
+    }
+
+    /// Read-only stage list with a per-stage progress column.
+    fn ui_stage_grid(
+        &self,
+        ui: &mut egui::Ui,
+        grid_id: &str,
+        stages: &[(String, &'static str, f64)],
+    ) {
+        egui::Grid::new(grid_id)
+            .num_columns(5)
+            .spacing([14.0, 3.0])
+            .striped(true)
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new("Stage").small().strong());
+                ui.label(egui::RichText::new("Stressor").small().strong());
+                ui.label(egui::RichText::new("Duration").small().strong());
+                ui.label(egui::RichText::new("Progress").small().strong());
+                ui.label(egui::RichText::new("Peak").small().strong());
+                ui.end_row();
+                for (i, (label, stressor, dur)) in stages.iter().enumerate() {
+                    ui.label(egui::RichText::new(label).small());
+                    ui.label(egui::RichText::new(*stressor).small());
+                    ui.label(
+                        egui::RichText::new(format!("{:.1} min", dur / 60.0))
+                            .small()
+                            .monospace(),
+                    );
+                    let prog = self.stage_progress_for(i, *dur);
+                    let resp = ui.scope(|ui| Self::stage_progress_cell(ui, prog)).response;
+                    if let Some(v) = self.stage_verdicts.get(i) {
+                        if !v.pass && !v.violations.is_empty() {
+                            resp.on_hover_text(v.violations.join("\n"));
+                        }
+                    }
+                    match self.stage_verdicts.get(i).and_then(|v| v.peak_throughput) {
+                        Some(peak) => {
+                            ui.label(egui::RichText::new(format!("{peak:.1}")).small().monospace());
+                        }
+                        None => {
+                            ui.label(egui::RichText::new("—").small().weak());
+                        }
+                    }
+                    ui.end_row();
+                }
+            });
+    }
+
+    /// Right column: run status, live throughput metrics, per-stage verdicts.
+    fn ui_run_status_column(&self, ui: &mut egui::Ui, unit: &str) {
         let ss = &self.scenario_state;
         if ss.finished {
-            let label = ss.finish_label.clone().unwrap_or_else(|| "done".to_string());
+            if let Some(label) = &ss.finish_label {
+                ui.label(
+                    egui::RichText::new(format!("{label}  —  {:.1} s total", ss.total_elapsed_secs))
+                        .strong(),
+                );
+            }
+        } else if self.is_running() && ss.stage_count > 0 {
             ui.label(
                 egui::RichText::new(format!(
-                    "{label}  —  {:.1} s total",
-                    ss.total_elapsed_secs
+                    "Stage {}/{}: {}",
+                    ss.current_stage_index + 1,
+                    ss.stage_count,
+                    ss.current_stage_label
                 ))
                 .strong(),
             );
-            return;
         }
+        self.ui_metrics(ui, unit);
+    }
 
-        if ss.stage_count == 0 {
-            return;
-        }
-
-        let stage_elapsed = ss.total_elapsed_secs - ss.stage_started_at_elapsed;
-        let stage_dur = cfg
-            .scenario
-            .stages
-            .get(ss.current_stage_index)
-            .map(|s| s.duration_secs as f64)
-            .unwrap_or(1.0)
-            .max(1.0);
-        let stage_progress = (stage_elapsed / stage_dur).clamp(0.0, 1.0) as f32;
-
-        let label = format!(
-            "Stage {}/{}: {}  ({:.0} / {:.0} s)",
-            ss.current_stage_index + 1,
-            ss.stage_count,
-            ss.current_stage_label,
-            stage_elapsed,
-            stage_dur,
-        );
-
-        ui.add(
-            egui::ProgressBar::new(stage_progress)
-                .text(label)
-                .animate(true),
-        );
-
-        if cfg.scenario.use_total && cfg.scenario.total_wall_secs > 0 {
-            let overall = (ss.total_elapsed_secs / cfg.scenario.total_wall_secs as f64)
-                .clamp(0.0, 1.0) as f32;
-            ui.add(
-                egui::ProgressBar::new(overall)
-                    .text(format!(
-                        "Overall  {:.0}/{} s",
-                        ss.total_elapsed_secs, cfg.scenario.total_wall_secs
-                    ))
-                    .desired_width(ui.available_width()),
-            );
+    /// Start/Stop control rendered right-aligned in the top bar; dispatches the
+    /// start by the active mode.
+    fn ui_top_start_stop(
+        &mut self,
+        ui: &mut egui::Ui,
+        running: bool,
+        cfg: &StressPanelConfig,
+        telemetry: &Arc<TelemetryAgent>,
+        computer: &RecordId,
+    ) {
+        if running {
+            if ui
+                .add(egui::Button::new(format!("{}  Stop", p::STOP)).fill(egui::Color32::from_rgb(180, 60, 60)))
+                .clicked()
+            {
+                self.stop();
+            }
+            ui.add(egui::Spinner::new());
+            ui.label("Running…");
+        } else {
+            if ui
+                .add(egui::Button::new(format!("{}  Start", p::PLAY)).fill(egui::Color32::from_rgb(50, 140, 80)))
+                .clicked()
+            {
+                match cfg.mode {
+                    PanelMode::Single => {
+                        self.start_single(&cfg.single, telemetry.clone(), computer.clone())
+                    }
+                    PanelMode::Scenario => {
+                        self.start_scenario(&cfg.scenario, telemetry.clone(), computer.clone())
+                    }
+                    PanelMode::QcBenchmark => {
+                        self.start_qc_benchmark(&cfg.qc_benchmark, telemetry.clone(), computer.clone())
+                    }
+                    PanelMode::Certification => {
+                        self.start_certification(&cfg.certification, telemetry.clone(), computer.clone())
+                    }
+                }
+            }
+            if self.has_run() {
+                ui.label(egui::RichText::new("Stopped").weak());
+            }
         }
     }
 
-    fn ui_start_stop(&mut self, ui: &mut egui::Ui, running: bool, start_fn: impl FnOnce(&mut Self)) {
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            if running {
-                if ui
-                    .add(egui::Button::new(format!("{}  Stop", p::STOP)).fill(egui::Color32::from_rgb(180, 60, 60)))
-                    .clicked()
-                {
-                    self.stop();
-                }
-                ui.add(egui::Spinner::new());
-                ui.label("Running…");
+    /// Collapsible right panel: live device temps + telemetry charts, stacked
+    /// in one scroll area.
+    fn ui_side_panel(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("Temperatures").strong());
+            ui.separator();
+            if self.latest_thermals.is_empty() && self.latest_gpu_temps.is_empty() {
+                ui.add_space(2.0);
+                ui.colored_label(
+                    egui::Color32::GRAY,
+                    "No sensors yet. CPU/board temps need WinRing0 loaded (run elevated; \
+                     lower Memory Integrity + the vulnerable-driver blocklist). NVMe/SATA \
+                     need no driver. See the Logs tab.",
+                );
             } else {
-                if ui
-                    .add(egui::Button::new(format!("{}  Start", p::PLAY)).fill(egui::Color32::from_rgb(50, 140, 80)))
-                    .clicked()
-                {
-                    start_fn(self);
+                for t in &self.latest_thermals {
+                    Self::temp_row(ui, &t.label, t.temp_c);
                 }
-                if self.has_run() && !running {
-                    ui.label(egui::RichText::new("Stopped").weak());
+                for (name, t) in &self.latest_gpu_temps {
+                    Self::temp_row(ui, name, *t);
                 }
             }
+            ui.add_space(10.0);
+            ui.label(egui::RichText::new("Live charts").strong());
+            ui.separator();
+            self.charts.show(ui);
         });
-        ui.add_space(4.0);
+    }
+
+    /// One stacked temp row: label left, colored value right.
+    fn temp_row(ui: &mut egui::Ui, label: &str, temp_c: f32) {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(label).small());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.colored_label(
+                    crate::hw_monitor::temp_color(temp_c),
+                    egui::RichText::new(format!("{temp_c:.1} °C")).monospace(),
+                );
+            });
+        });
     }
 
     fn ui_metrics(&self, ui: &mut egui::Ui, unit: &str) {

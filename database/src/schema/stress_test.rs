@@ -1152,7 +1152,7 @@ impl StressTestRun {
     pub async fn list_for_computer(computer: &RecordId) -> anyhow::Result<Vec<Self>> {
         let runs: Vec<Self> = DATABASE
             .query(
-                "SELECT *, <float> duration_actual_secs AS duration_actual_secs \
+                "SELECT *, (IF duration_actual_secs != NONE THEN <float> duration_actual_secs END) AS duration_actual_secs \
                  FROM stress_test_run \
                  WHERE computer = $c ORDER BY started_at DESC LIMIT 200",
             )
@@ -1167,7 +1167,7 @@ impl StressTestRun {
     pub async fn list_for_component(component: &RecordId) -> anyhow::Result<Vec<Self>> {
         let runs: Vec<Self> = DATABASE
             .query(
-                "SELECT *, <float> duration_actual_secs AS duration_actual_secs \
+                "SELECT *, (IF duration_actual_secs != NONE THEN <float> duration_actual_secs END) AS duration_actual_secs \
                  FROM stress_test_run \
                  WHERE target_component = $c OR touched_components CONTAINS $c \
                  ORDER BY started_at DESC LIMIT 500",

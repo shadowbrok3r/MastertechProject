@@ -40,6 +40,7 @@ mime_guess.workspace = true
 crossbeam.workspace = true
 surrealdb.workspace = true
 egui_dock.workspace = true
+mtech-ui.workspace = true
 once_cell.workspace = true
 database = { workspace=true, features = ["desktop"] }
 tcp_protocol = { workspace = true }
