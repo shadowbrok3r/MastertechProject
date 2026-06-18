@@ -14,6 +14,7 @@
 //! | POST   | `/api/build/jobs`                   | Create a pending job (returns `job_id`). |
 //! | GET    | `/api/build/jobs/{job_id}`          | Poll a job's current state. `done` jobs return wasm bytes as base64. |
 //! | GET    | `/api/build/workers`                | List `connected_client` rows with `client_kind = 'build_worker'`. Stale-pruned by `last_update`. |
+//! | POST   | `/api/build/publish`                | Copy a `done` job's wasm into the `plugins` bucket and upsert its `plugin_registry` row. |
 //!
 //! Errors map to `500` with the SurrealDB error string in the body so
 //! the agent can debug schema/binding issues without a separate log
@@ -25,7 +26,8 @@ use axum::response::Json;
 use axum::{Router, routing};
 use base64::Engine as _;
 use database::schema::{
-    BuildJob, ClientKind, ConnectedClient, RecordId, RecordIdExt, BUILD_JOB_TABLE,
+    BuildJob, ClientKind, ConnectedClient, PluginRegistryEntry, PluginToolInfo, RecordId,
+    RecordIdExt, BUILD_JOB_TABLE,
 };
 use serde::{Deserialize, Serialize};
 
@@ -84,6 +86,44 @@ pub struct WorkerSummary {
     pub last_update_iso: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct PublishToolInfo {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PublishRequest {
+    /// `build_job` id (`table:key` or bare key) whose compiled
+    /// `wasm_bytes` become the published artifact. Must be a `done` job.
+    pub job_id: String,
+    /// Registry key (e.g. `com.mastertech.secure-boot-diag`). Must match
+    /// the build job's `plugin_id`.
+    pub plugin_id: String,
+    pub name: String,
+    pub version: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub tools: Vec<PublishToolInfo>,
+    #[serde(default)]
+    pub author: Option<String>,
+    #[serde(default)]
+    pub source_code: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PublishResponse {
+    pub plugin_id: String,
+    pub published: bool,
+    pub version: String,
+    pub wasm_bucket_path: String,
+    pub source_stored: bool,
+}
+
 // ── Routing helper ─────────────────────────────────────────────────
 
 pub fn build_routes() -> Router<AppState> {
@@ -91,6 +131,7 @@ pub fn build_routes() -> Router<AppState> {
         .route("/api/build/jobs", routing::post(create_job))
         .route("/api/build/jobs/{job_id}", routing::get(get_job))
         .route("/api/build/workers", routing::get(list_workers))
+        .route("/api/build/publish", routing::post(publish_job))
 }
 
 // ── Handlers ───────────────────────────────────────────────────────
@@ -127,7 +168,7 @@ async fn create_job(
 async fn get_job(
     Path(job_id): Path<String>,
 ) -> Result<Json<JobStatusResponse>, (StatusCode, String)> {
-    let rid = RecordId::new(BUILD_JOB_TABLE, job_id.as_str());
+    let rid = parse_build_job_id(&job_id);
     let row = BuildJob::get(&rid).await.map_err(internal)?;
     let row = row.ok_or((StatusCode::NOT_FOUND, format!("no job '{}'", job_id)))?;
     let wasm_base64 = row.wasm_bytes.as_ref().map(|b| {
@@ -177,6 +218,80 @@ async fn list_workers() -> Result<Json<Vec<WorkerSummary>>, (StatusCode, String)
     ))
 }
 
+/// Copy a finished build job's wasm into the `plugins` bucket and upsert
+/// its `plugin_registry` row — the headless equivalent of the desktop
+/// app's `publish_plugin`, so automation can publish without it running.
+async fn publish_job(
+    Json(req): Json<PublishRequest>,
+) -> Result<Json<PublishResponse>, (StatusCode, String)> {
+    let rid = parse_build_job_id(&req.job_id);
+    let job = BuildJob::get(&rid)
+        .await
+        .map_err(internal)?
+        .ok_or((StatusCode::NOT_FOUND, format!("no job '{}'", req.job_id)))?;
+
+    if job.status != "done" {
+        return Err((
+            StatusCode::CONFLICT,
+            format!("job '{}' status is '{}', not 'done'", req.job_id, job.status),
+        ));
+    }
+    if job.plugin_id != req.plugin_id {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "plugin_id mismatch: job built '{}', request asked to publish '{}'",
+                job.plugin_id, req.plugin_id
+            ),
+        ));
+    }
+    let bytes: Vec<u8> = job
+        .wasm_bytes
+        .as_ref()
+        .map(|b| b[..].to_vec())
+        .ok_or((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("job '{}' is done but carries no wasm_bytes", req.job_id),
+        ))?;
+
+    let bucket_path = format!("/{}/{}.wasm", sanitize_id(&req.plugin_id), req.version);
+    database::schema::put_file("plugins", &bucket_path, bytes)
+        .await
+        .map_err(internal)?;
+
+    let tools = req
+        .tools
+        .into_iter()
+        .map(|t| PluginToolInfo {
+            name: t.name,
+            description: t.description,
+        })
+        .collect();
+
+    let entry = PluginRegistryEntry {
+        plugin_id: req.plugin_id.clone(),
+        name: req.name,
+        description: req.description,
+        version: req.version.clone(),
+        author: req.author,
+        tools,
+        tags: req.tags,
+        wasm_bucket_path: Some(bucket_path.clone()),
+        source_code: req.source_code,
+        ..Default::default()
+    };
+    let source_stored = entry.source_code.is_some();
+    PluginRegistryEntry::upsert(&entry).await.map_err(internal)?;
+
+    Ok(Json(PublishResponse {
+        plugin_id: req.plugin_id,
+        published: true,
+        version: req.version,
+        wasm_bucket_path: bucket_path,
+        source_stored,
+    }))
+}
+
 // ── Helpers ────────────────────────────────────────────────────────
 
 fn internal<E: std::fmt::Display>(e: E) -> (StatusCode, String) {
@@ -190,6 +305,22 @@ fn parse_record_id_loose(s: &str) -> RecordId {
     } else {
         RecordId::new("connected_client", s)
     }
+}
+
+/// Accept either `build_job:key` (the form `create`/`get` return) or a bare key.
+fn parse_build_job_id(s: &str) -> RecordId {
+    match s.split_once(':') {
+        Some((table, key)) => RecordId::new(table, key),
+        None => RecordId::new(BUILD_JOB_TABLE, s),
+    }
+}
+
+/// Path-safe bucket segment — matches the desktop app's `publish_plugin`
+/// so artifacts land at the path `fetch_plugin` reads.
+fn sanitize_id(id: &str) -> String {
+    id.chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect()
 }
 
 fn record_id_to_string(rid: &RecordId) -> String {

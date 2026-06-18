@@ -33,6 +33,7 @@ pub enum TabId {
     FleetDashboard,
     StressLab,
     Terminal,
+    ShopifyOrders,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -107,6 +108,7 @@ const MT_NATIVE: &[TabId] = &[
     TabId::WebConsole,
     TabId::QueryEditor,
     TabId::CreatePrestashopOrder,
+    TabId::ShopifyOrders,
     TabId::Threads,
     TabId::Plugins,
     TabId::DatabaseEditor,
@@ -170,6 +172,7 @@ impl TabId {
             Self::FleetDashboard => "fleet_dashboard",
             Self::StressLab => "stress_lab",
             Self::Terminal => "terminal",
+            Self::ShopifyOrders => "shopify_orders",
         }
     }
 
@@ -208,6 +211,7 @@ impl TabId {
             Self::FleetDashboard => "Fleet Dashboard",
             Self::StressLab => "Stress Lab",
             Self::Terminal => "Terminal",
+            Self::ShopifyOrders => "Shopify Orders",
         }
     }
 
@@ -256,6 +260,7 @@ impl TabId {
             "Fleet Dashboard" => Some(Self::FleetDashboard),
             "Stress Lab" => Some(Self::StressLab),
             "Terminal" => Some(Self::Terminal),
+            "Shopify Orders" => Some(Self::ShopifyOrders),
             _ => None,
         }
     }
@@ -293,6 +298,7 @@ impl TabId {
             "fleet_dashboard" => Some(Self::FleetDashboard),
             "stress_lab" => Some(Self::StressLab),
             "terminal" => Some(Self::Terminal),
+            "shopify_orders" => Some(Self::ShopifyOrders),
             _ => None,
         }
     }

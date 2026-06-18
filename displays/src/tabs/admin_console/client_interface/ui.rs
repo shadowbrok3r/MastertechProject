@@ -30,6 +30,10 @@ pub enum WsDisplayState {
     /// Per-client log of MCP tool calls proxied through the admin
     /// Web Console (read from the global `mcp_tool_log` store).
     McpToolLog,
+    /// Customer service record for the machine linked to this client:
+    /// the matched task's ticket, check-in notes, recommendations, task
+    /// notes, diagnostic sessions, and history.
+    ServiceRecord,
 }
 
 impl WebSocketClient {
@@ -115,6 +119,16 @@ impl WebSocketClient {
                     };
                     if ui.button(notifs).clicked() {
                         let _ = self.display_state_channel.0.try_send(WsDisplayState::Shell);
+                        ui.close();
+                    }
+                    if ui
+                        .button(format!("{} Service Record", icons::TASK_EXISTS))
+                        .on_hover_text(
+                            "Service ticket, check-in notes, recommendations, task notes, and diagnostic sessions for the machine linked to this client",
+                        )
+                        .clicked()
+                    {
+                        let _ = self.display_state_channel.0.try_send(WsDisplayState::ServiceRecord);
                         ui.close();
                     }
                     ui.separator();
@@ -363,6 +377,7 @@ impl WebSocketClient {
                     WsDisplayState::Scripts       => "Scripts",
                     WsDisplayState::InstalledPrograms => "Installed Programs",
                     WsDisplayState::McpToolLog    => "MCP Tool Log",
+                    WsDisplayState::ServiceRecord => "Service Record",
                 };
                 ui.label(
                     RichText::new(current_view)
@@ -545,6 +560,10 @@ impl WebSocketClient {
             WsDisplayState::McpToolLog => {
                 let cs = self.client.connection_string.clone();
                 self.mcp_tool_log_viewer.display(ui, &cs);
+            },
+            WsDisplayState::ServiceRecord => {
+                let client = self.client.clone();
+                self.service_record.display(ui, &client);
             },
         };
     }

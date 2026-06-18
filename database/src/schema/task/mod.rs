@@ -308,6 +308,18 @@ impl LiveTaskPayload {
         Ok(tasks)
     }
 
+    /// Fetch all tasks whose linked computer has the given hostname
+    /// (via service_ticket.computer.hostname). Used to match a connected
+    /// client to its service history when no direct computer link exists.
+    pub async fn get_tasks_by_hostname(hostname: &str) -> anyhow::Result<Vec<Self>, anyhow::Error> {
+        let tasks: Vec<Self> = DATABASE
+            .query("SELECT * FROM task WHERE service_ticket.computer.hostname = $hostname ORDER BY due_date DESC LIMIT 50")
+            .bind(("hostname", hostname.to_string()))
+            .await?
+            .take(0)?;
+        Ok(tasks)
+    }
+
     pub async fn create_task_payload(
         mut task_data: Self,
         ticket_data: TicketData,

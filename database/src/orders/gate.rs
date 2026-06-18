@@ -93,6 +93,15 @@ pub fn status_display(legacy_id: i64, live_name: &str) -> String {
     }
 }
 
+/// True for the pre-build intake status *names* the bench pulls from:
+/// "Order Placed" (73) and "Ready to Build" (224 warehouse-floor / 225).
+/// Queue rows carry status names, not legacy ids, so the match is by name.
+pub fn is_build_intake_status(name: &str) -> bool {
+    let trimmed = name.trim();
+    trimmed.eq_ignore_ascii_case("Order Placed")
+        || trimmed.to_ascii_lowercase().starts_with("ready to build")
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GateOutcome {
     /// QC may proceed and the order may advance to `advance_to`.
@@ -248,6 +257,18 @@ mod tests {
         // With no live name, the map is the fallback (PCL gate path).
         assert_eq!(status_display(73, ""), "Order Placed");
         assert_eq!(status_display(99999, ""), "Status 99999");
+    }
+
+    #[test]
+    fn build_intake_status_matches_order_placed_and_ready_to_build() {
+        assert!(is_build_intake_status("Order Placed"));
+        assert!(is_build_intake_status("order placed"));
+        assert!(is_build_intake_status("Ready to Build"));
+        assert!(is_build_intake_status("Ready to Build (On Warehouse Floor)"));
+        // Distinct re-queued status (229) is not bare "Order Placed".
+        assert!(!is_build_intake_status("Order Placed (re-queued)"));
+        assert!(!is_build_intake_status("Shipped"));
+        assert!(!is_build_intake_status("QC & Burn-in"));
     }
 
     #[test]
