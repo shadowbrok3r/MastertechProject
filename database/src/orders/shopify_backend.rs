@@ -308,6 +308,56 @@ impl ShopifyBackend {
         Ok(history.into())
     }
 
+    /// Newest orders sitting in the build-intake statuses (Order Placed /
+    /// Ready to Build), capped at `limit`. Reads the XBM build queue; only
+    /// available when an `xbm_` key is configured (the Admin token exposes no
+    /// queue surface).
+    pub async fn recent_orders(&self, limit: usize) -> anyhow::Result<Vec<super::OrderSummary>> {
+        let xbm = self.xbm()?;
+        let queue = xbm
+            .orders(QUEUE_BUCKETS, None, None)
+            .await
+            .context("Build Management queue fetch failed")?;
+        Ok(Self::summaries_from_queue(queue, limit))
+    }
+
+    /// Filter the queue to build-intake statuses, newest first, capped.
+    fn summaries_from_queue(queue: crate::xbm::QueuePayload, limit: usize) -> Vec<super::OrderSummary> {
+        let mut rows: Vec<super::OrderSummary> = queue
+            .orders
+            .into_iter()
+            .filter(|o| {
+                o.status
+                    .as_ref()
+                    .is_some_and(|s| gate::is_build_intake_status(&s.name))
+            })
+            .map(Self::summary_from_queue_order)
+            .collect();
+        // Fixed-width ISO-8601 UTC timestamps sort lexicographically.
+        rows.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        rows.truncate(limit);
+        rows
+    }
+
+    fn summary_from_queue_order(o: crate::xbm::QueueOrder) -> super::OrderSummary {
+        let id = Self::gid_tail(&o.id).to_string();
+        let status_name = o.status.map(|s| s.name).unwrap_or_default();
+        super::OrderSummary {
+            backend: Some(BackendKind::Shopify),
+            id,
+            gid: Some(o.id),
+            reference: o.name,
+            customer_name: o.customer.name.unwrap_or_default(),
+            status: StatusInfo { legacy_id: 0, name: status_name },
+            model: o.build_name,
+            build_serial: o.build_serial.filter(|s| !s.trim().is_empty()),
+            created_at: o.created_at,
+            order_type: o.order_type,
+            expected_serials: o.expected_serials,
+            attached_serials: o.attached_serials,
+        }
+    }
+
     /// Queue match by order name (`#N`) or build serial, then full detail.
     async fn find_order_xbm(&self, key: &OrderKey) -> anyhow::Result<QcOrder> {
         let xbm = self.xbm()?;
@@ -796,6 +846,30 @@ mod tests {
         assert_eq!(order.items[0].row_id, "456");
         // Detached serials drop out of the QC view.
         assert_eq!(order.items[0].serials, vec!["SN-LIVE".to_string()]);
+    }
+
+    #[test]
+    fn recent_orders_filters_to_build_intake_newest_first() {
+        let env: crate::xbm::Envelope =
+            serde_json::from_str(include_str!("../xbm/fixtures/orders-qc.json")).unwrap();
+        let queue: crate::xbm::QueuePayload = serde_json::from_value(env.data.unwrap()).unwrap();
+        let rows = ShopifyBackend::summaries_from_queue(queue, 10);
+        assert_eq!(rows.len(), 10);
+        // Only Order Placed / Ready to Build survive the filter.
+        assert!(rows
+            .iter()
+            .all(|r| r.status.name == "Order Placed" || r.status.name.starts_with("Ready to Build")));
+        // Shipped + Pre-Pulled rows are dropped.
+        assert!(rows.iter().all(|r| r.status.name != "Shipped" && r.status.name != "Pre-Pulled"));
+        // Newest first.
+        for w in rows.windows(2) {
+            assert!(w[0].created_at >= w[1].created_at);
+        }
+        assert_eq!(rows[0].reference, "#1032");
+        // Both target statuses are represented (a Ready to Build row makes the cut).
+        assert!(rows.iter().any(|r| r.status.name.starts_with("Ready to Build")));
+        // Round-trips back to a Shopify lookup key.
+        assert_eq!(rows[0].lookup_input(), "#1032");
     }
 
     #[tokio::test]

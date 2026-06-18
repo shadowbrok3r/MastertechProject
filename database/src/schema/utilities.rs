@@ -430,7 +430,7 @@ pub fn get_local_seb_data() -> anyhow::Result<LocalSebData, anyhow::Error> {
 }
 
 pub async fn create_full_task_payload(
-    ticket_data: TicketData,
+    mut ticket_data: TicketData,
     customer_data: CustomerData,
     mut computer_data: ComputerData,
     mut task_data: LiveTaskPayload,
@@ -474,10 +474,36 @@ pub async fn create_full_task_payload(
     };
     
     // let task_id = task_data.id.clone();
-    let ticket_id = ticket_data.id.clone();
     let customer_id = customer_data.id.clone();
     let computer_id = computer_data.id.clone();
     let service_number = ticket_data.service_number.clone();
+
+    // A service_order with this service_number may already exist under a
+    // different record id (e.g. a random-id placeholder from a partial
+    // check-in). The service_number_idx UNIQUE index rejects a second row
+    // with the same number, so reuse the existing record's id and turn the
+    // write into an in-place update instead of a conflicting insert.
+    if !service_number.is_empty() {
+        let existing_service_order: Option<RecordId> = match DATABASE
+            .query("SELECT VALUE id FROM service_order WHERE service_number == $service_number LIMIT 1")
+            .bind(("service_number", service_number.clone()))
+            .await
+        {
+            Ok(mut response) => response.take(0).unwrap_or_default(),
+            Err(e) => {
+                warn!("Could not check for existing service_order by number: {e:?}");
+                None
+            }
+        };
+        if let Some(existing_id) = existing_service_order {
+            if existing_id != ticket_data.id {
+                info!("Reusing existing service_order {existing_id:?} for service #{service_number}");
+            }
+            ticket_data.id = existing_id;
+        }
+    }
+    let ticket_id = ticket_data.id.clone();
+
     task_data.task_name = format!(
         "{} - {}",
         &customer_data.name,

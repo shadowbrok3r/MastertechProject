@@ -944,8 +944,10 @@ impl Koth {
         self.all_table.replace(rows);
     }
 
-    pub fn receive(&mut self) {
-        if let Ok(orders) = self.response_rx.try_recv() {
+    pub fn receive(&mut self, ctx: &eframe::egui::Context) {
+        let mut changed = false;
+        while let Ok(orders) = self.response_rx.try_recv() {
+            changed = true;
             match self.koth_selection {
                 KothSelection::Me => {
                     let sort = |a: &Order, b: &Order| {
@@ -1061,7 +1063,10 @@ impl Koth {
             }
         }
         
-        if let Ok(payment) = self.order_payment_rx.try_recv() {
+        let mut got_payment = false;
+        while let Ok(payment) = self.order_payment_rx.try_recv() {
+            got_payment = true;
+            changed = true;
             match self.koth_selection {
                 KothSelection::Me => {
                     let uid = self.user.get_employee_id().map(|id| id.to_string()).unwrap_or_default();
@@ -1093,8 +1098,6 @@ impl Koth {
                             self.payments.entry(uid).or_insert_with(Vec::new).push(payment.clone());
                         }
                     }
-                    // Update table to reflect payment method column
-                    self.rebuild_koth_rows();
                 },
                 KothSelection::AllEmployees => {
                     let order_id = payment.id_order.clone();
@@ -1106,7 +1109,7 @@ impl Koth {
                         .find(|o| o.id == order_id);
 
                     let base_amt = payment.amount.parse::<f64>().unwrap_or(0.0);
-                    if base_amt <= 0.0 { return; }
+                    if base_amt <= 0.0 { continue; }
 
                     if let Some(order) = order_opt {
                         let sales = order.id_employee_sales_rep.clone();
@@ -1155,14 +1158,21 @@ impl Koth {
                                 .push(p);
                         }
                     }
-                    
+                }
+            }
+        }
+        if got_payment {
+            match self.koth_selection {
+                KothSelection::Me => self.rebuild_koth_rows(),
+                KothSelection::AllEmployees => {
                     self.rebuild_koth_rows_all();
                     self.rebuild_all_employees_rows();
                 }
             }
         }
-    
-        if let Ok(mut employees) = self.employee_rx.try_recv() {
+
+        while let Ok(mut employees) = self.employee_rx.try_recv() {
+            changed = true;
             let pay_period = self.pay_period.clone();
             let tx = self.response_tx.clone();
             let emps = employees.clone();
@@ -1192,6 +1202,10 @@ impl Koth {
             self.employees.append(&mut employees);
             self.rebuild_koth_rows_all();
             self.rebuild_all_employees_rows();
+        }
+
+        if changed {
+            ctx.request_repaint();
         }
     }
 

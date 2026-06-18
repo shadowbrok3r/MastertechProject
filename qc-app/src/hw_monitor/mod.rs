@@ -105,7 +105,9 @@ fn section(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
         ui.set_width(ui.available_width());
         ui.label(RichText::new(title).strong());
         ui.separator();
-        add(ui);
+        // Unique id namespace per section: every table/scroll area now renders
+        // in the same frame, so their auto-generated ids would otherwise clash.
+        ui.push_id(title, |ui| add(ui));
     });
     ui.add_space(6.0);
 }

@@ -244,6 +244,42 @@ pub struct PhotoCheck {
     pub count: usize,
 }
 
+/// Lightweight order row for list/picker views. Carries enough to render a
+/// row and reload the full [`QcOrder`] by key via [`OrderSummary::lookup_input`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct OrderSummary {
+    pub backend: Option<BackendKind>,
+    /// PS order id or Shopify `legacyResourceId` (gid tail).
+    pub id: String,
+    pub gid: Option<String>,
+    /// PS `reference` / Shopify `name` (`#1234`).
+    pub reference: String,
+    pub customer_name: String,
+    pub status: StatusInfo,
+    /// Build/config name when known.
+    pub model: String,
+    pub build_serial: Option<String>,
+    /// ISO-8601 creation timestamp (lexicographically sortable).
+    pub created_at: Option<String>,
+    /// Backend order class (`custom`, `prebuilt`, …).
+    pub order_type: String,
+    pub expected_serials: i64,
+    pub attached_serials: i64,
+}
+
+impl OrderSummary {
+    /// Lookup string that round-trips through [`OrderKey::parse`] to reload
+    /// the full order: `#`-prefixed Shopify order number, else build serial.
+    pub fn lookup_input(&self) -> String {
+        let number = self.reference.trim_start_matches('#').trim();
+        if !number.is_empty() {
+            format!("#{number}")
+        } else {
+            self.build_serial.clone().unwrap_or_default()
+        }
+    }
+}
+
 /// Backend-neutral federated serial history (Shopify + Odoo + PrestaShop),
 /// flattened to what a bench tech needs: where the part lives now, its Odoo
 /// lot state, prior allocations, and recall/RMA red flags.
@@ -623,6 +659,18 @@ impl QcBackend {
             Self::Shopify(b) => b.serial_history(serial).await,
             Self::Prestashop(_) => Err(anyhow::anyhow!(
                 "Serial federation for PCL runs through xidax-lookup, not the bench order backend."
+            )),
+        }
+    }
+
+    /// Newest orders in the build-intake statuses (Order Placed / Ready to
+    /// Build), capped at `limit`. Shopify reads the XBM build queue;
+    /// PrestaShop has no equivalent wired here.
+    pub async fn recent_orders(&self, limit: usize) -> anyhow::Result<Vec<OrderSummary>> {
+        match self {
+            Self::Shopify(b) => b.recent_orders(limit).await,
+            Self::Prestashop(_) => Err(anyhow::anyhow!(
+                "Recent-order listing is wired for the Shopify bench queue only."
             )),
         }
     }

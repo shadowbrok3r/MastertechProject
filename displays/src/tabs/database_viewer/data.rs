@@ -4,7 +4,7 @@ use itertools::Itertools;
 use super::DatabaseEditor;
 
 impl DatabaseEditor {
-    pub fn receive(&mut self) {
+    pub fn receive(&mut self, ctx: &eframe::egui::Context) {
         if let Ok(data) = self.data_selection_rx.try_recv() {
             let tx = self.data_tx.clone();
             let start_idx = self.start_idx.clone();
@@ -67,7 +67,9 @@ impl DatabaseEditor {
             });
         }
 
-        if let Ok(data) = self.data_rx.try_recv() {
+        let mut got_row = false;
+        while let Ok(data) = self.data_rx.try_recv() {
+            got_row = true;
             let key = self.database_viewer.selected_table.as_str();
             self.database_viewer.selected = data.clone();
             self.table_map
@@ -79,6 +81,9 @@ impl DatabaseEditor {
                     k.push(data);
                 }
             }
+        }
+        if got_row {
+            ctx.request_repaint();
         }
     }
 }

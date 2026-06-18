@@ -207,7 +207,7 @@ impl SalesTracker {
 		});
 		
 		// receive async events
-		self.receive();
+		self.receive(ui.ctx());
 
 		// data table
 		let date_label = match (self.order_state.clone(), self.pulling_all_orders) {
@@ -458,9 +458,9 @@ impl SalesTracker {
 		}
 	}
 
-	pub fn receive(&mut self) {
+	pub fn receive(&mut self, ctx: &eframe::egui::Context) { let mut changed = false;
 		// Order batches
-		if let Ok(orders) = self.response_rx.try_recv() {
+		while let Ok(orders) = self.response_rx.try_recv() { changed = true;
 			let sort = |a: &Order, b: &Order| {
 				let a_total: f64 = a.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0);
 				let b_total: f64 = b.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0);
@@ -499,7 +499,7 @@ impl SalesTracker {
 		}
 
 		// Payments
-		if let Ok(payment) = self.order_payment_rx.try_recv() {
+		while let Ok(payment) = self.order_payment_rx.try_recv() { changed = true;
 			let uid = self.user.get_employee_id().map(|id| id.to_string()).unwrap_or_default();
 			// find order to determine split
 			let maybe_order = self
@@ -527,7 +527,7 @@ impl SalesTracker {
 		}
 
 		// Note edits from viewer
-		if let Ok((order_id, note)) = self.note_update_rx.try_recv() {
+		while let Ok((order_id, note)) = self.note_update_rx.try_recv() { changed = true;
 			self.notes.insert(order_id.clone(), note.clone());
 			let user = self.user.clone();
 			PlatformSpawner::spawn(async move {
@@ -536,11 +536,15 @@ impl SalesTracker {
 		}
 
 		// Notes fetch results
-		if let Ok(notes) = self.notes_rx.try_recv() {
+		while let Ok(notes) = self.notes_rx.try_recv() { changed = true;
 			for n in notes.into_iter() {
 				self.notes.insert(n.order_id.clone(), n.note.clone());
 			}
 			self.rebuild_rows();
+		}
+
+		if changed {
+			ctx.request_repaint();
 		}
 	}
 }

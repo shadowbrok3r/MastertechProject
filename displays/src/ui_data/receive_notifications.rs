@@ -14,15 +14,21 @@ impl SharedContext {
             // Live-query canary: confirm the notification stream is alive and
             // never surface it as a real notification.
             if notification.notification_type == "live_query_check" {
-                if matches!(action, Action::Create | Action::Update)
+                let matched = matches!(action, Action::Create | Action::Update)
                     && self.canary_nonce.as_deref()
-                        == Some(notification.notification_description.as_str())
-                {
+                        == Some(notification.notification_description.as_str());
+                if matched {
                     self.canary_nonce = None;
                     self.canary_sent_at = None;
                     self.reconnect_attempts = 0;
                     self.needs_reconnect = false;
                     self.show_reload_prompt = false;
+                } else if self.canary_nonce.is_some() {
+                    log::debug!(
+                        "live-query canary unmatched: {} ({action:?}); awaiting {:?}",
+                        notification.notification_description,
+                        self.canary_nonce
+                    );
                 }
                 return;
             }

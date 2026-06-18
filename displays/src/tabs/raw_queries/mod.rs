@@ -53,9 +53,11 @@ impl QueryEditor {
                 if ui.button("Execute Query").clicked() {
                     let tx = self.query_tx.clone();
                     let query = self.query.clone();
+                    let ctx = ui.ctx().clone();
                     PlatformSpawner::spawn(async move {
                         let res = Self::execute_query(tx, query).await;
                         log::info!("Response: {:?}", res);
+                        ctx.request_repaint();
                     });
                 }
             });

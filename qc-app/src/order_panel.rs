@@ -11,8 +11,8 @@ use std::collections::HashMap;
 
 use database::orders::{
     gate::GateOutcome, persist_qc_report, BackendKind, BuildSpec, GateDecision, OrderComment,
-    OrderKey, OrderKind, PhotoCheck, QcBackend, QcChecklist, QcOrder, QcReportPayload,
-    SerialHistorySummary, TechIdentity,
+    OrderKey, OrderKind, OrderSummary, PhotoCheck, QcBackend, QcChecklist, QcOrder,
+    QcReportPayload, SerialHistorySummary, TechIdentity,
 };
 use database::schema::{RecordId, RecordIdExt, RunResult, TICKET_TABLE};
 use eframe::egui::{
@@ -26,6 +26,11 @@ use crate::spec_check::{collect_detected, compare, CheckStatus, SpecCheckReport}
 
 const GOOD: Color32 = Color32::from_rgb(61, 185, 157);
 const CAUTION: Color32 = Color32::from_rgb(180, 140, 50);
+
+/// Date portion of an ISO-8601 timestamp (`2026-06-15T17:54:35Z` → `2026-06-15`).
+fn short_date(iso: Option<&str>) -> String {
+    iso.map(|s| s.split('T').next().unwrap_or(s).to_string()).unwrap_or_default()
+}
 
 pub struct OrderSession {
     pub backend: QcBackend,
@@ -53,6 +58,7 @@ enum PanelMsg {
     Advanced(Result<i64, String>),
     Submitted(Result<String, String>),
     SerialHistory { serial: String, result: Result<SerialHistorySummary, String> },
+    RecentLoaded(Result<Vec<OrderSummary>, String>),
 }
 
 pub struct OrderPanel {
@@ -60,6 +66,10 @@ pub struct OrderPanel {
     busy: bool,
     error: Option<String>,
     session: Option<OrderSession>,
+
+    /// Recent build-intake orders (Order Placed / Ready to Build) for the picker.
+    recent: Option<Result<Vec<OrderSummary>, String>>,
+    recent_busy: bool,
 
     tech_email: String,
     tech_password: String,
@@ -104,6 +114,8 @@ impl Default for OrderPanel {
             busy: false,
             error: None,
             session: None,
+            recent: None,
+            recent_busy: false,
             tech_email: String::new(),
             tech_password: String::new(),
             tech: None,
@@ -244,6 +256,10 @@ impl OrderPanel {
                     }
                     self.serial_history.insert(serial, result);
                 }
+                PanelMsg::RecentLoaded(result) => {
+                    self.recent_busy = false;
+                    self.recent = Some(result);
+                }
             }
         }
     }
@@ -272,6 +288,18 @@ impl OrderPanel {
                 Ok(loaded) => tx.send(PanelMsg::Loaded(Box::new(loaded))),
                 Err(e) => tx.send(PanelMsg::LoadFailed(format!("{e:#}"))),
             };
+            ctx.request_repaint();
+        });
+    }
+
+    fn start_recent(&mut self, ctx: &egui::Context) {
+        self.recent_busy = true;
+        let backend = QcBackend::shopify();
+        let tx = self.tx.clone();
+        let ctx = ctx.clone();
+        tokio::spawn(async move {
+            let result = backend.recent_orders(10).await.map_err(|e| format!("{e:#}"));
+            let _ = tx.send(PanelMsg::RecentLoaded(result));
             ctx.request_repaint();
         });
     }
@@ -503,6 +531,12 @@ impl OrderPanel {
             if self.busy {
                 ui.spinner();
             }
+            if self.session.is_some()
+                && ui.button(format!("{} Back to list", p::ARROW_LEFT)).clicked()
+            {
+                self.session = None;
+                self.error = None;
+            }
             if let Some(tech) = self.tech.as_ref() {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.colored_label(GOOD, format!("{} {}", p::USER, tech.name));
@@ -514,13 +548,18 @@ impl OrderPanel {
         }
 
         if self.session.is_none() {
+            if self.recent.is_none() && !self.recent_busy {
+                self.start_recent(&ctx);
+            }
+            self.ui_recent_orders(ui, &ctx);
             ui.add_space(12.0);
             ui.label(
                 RichText::new(
-                    "Load an order to begin QC: gate check, items + serials, spec verification, \
-                     sign-off, comments, and report submission.",
+                    "Or look up any order above. Loading begins QC: gate check, items + serials, \
+                     spec verification, sign-off, comments, and report submission.",
                 )
-                .weak(),
+                .weak()
+                .small(),
             );
             return;
         }
@@ -560,6 +599,101 @@ impl OrderPanel {
                 ui.add_space(24.0);
             });
         });
+    }
+
+    /// Recent build-intake orders picker shown before an order is loaded.
+    fn ui_recent_orders(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(format!("{} Recent build-intake orders", p::LIST)).strong().size(15.0));
+            if ui
+                .add_enabled(!self.recent_busy, egui::Button::new(format!("{} Refresh", p::ARROW_CLOCKWISE)))
+                .clicked()
+            {
+                self.start_recent(ctx);
+            }
+            if self.recent_busy {
+                ui.spinner();
+            }
+        });
+        ui.label(
+            RichText::new("Last 10 Shopify orders in Order Placed or Ready to Build — click one to load it for QC.")
+                .weak()
+                .small(),
+        );
+        ui.add_space(6.0);
+
+        let mut load: Option<String> = None;
+        match self.recent.as_ref() {
+            None => {
+                if !self.recent_busy {
+                    ui.label(RichText::new("Loading…").weak());
+                }
+            }
+            Some(Err(e)) => {
+                ui.colored_label(ui.visuals().error_fg_color, e);
+            }
+            Some(Ok(orders)) if orders.is_empty() => {
+                ui.label(RichText::new("No orders in Order Placed or Ready to Build right now.").weak());
+            }
+            Some(Ok(orders)) => {
+                egui_extras::TableBuilder::new(ui)
+                    .id_salt("recent_orders_table")
+                    .striped(true)
+                    .column(egui_extras::Column::exact(72.0))
+                    .column(egui_extras::Column::initial(190.0).at_least(120.0).clip(true))
+                    .column(egui_extras::Column::remainder().at_least(120.0).clip(true))
+                    .column(egui_extras::Column::initial(150.0).at_least(90.0).clip(true))
+                    .column(egui_extras::Column::exact(56.0))
+                    .column(egui_extras::Column::exact(92.0))
+                    .header(20.0, |mut header| {
+                        header.col(|ui| { ui.strong("Order"); });
+                        header.col(|ui| { ui.strong("Status"); });
+                        header.col(|ui| { ui.strong("Customer"); });
+                        header.col(|ui| { ui.strong("Build"); });
+                        header.col(|ui| { ui.strong("Serials"); });
+                        header.col(|ui| { ui.strong("Placed"); });
+                    })
+                    .body(|mut body| {
+                        for order in orders {
+                            body.row(22.0, |mut row| {
+                                row.col(|ui| {
+                                    let label =
+                                        if order.reference.is_empty() { &order.id } else { &order.reference };
+                                    if ui
+                                        .add(egui::Button::new(RichText::new(label).monospace()).small())
+                                        .on_hover_text("Load this order for QC")
+                                        .clicked()
+                                    {
+                                        load = Some(order.lookup_input());
+                                    }
+                                });
+                                row.col(|ui| { ui.label(RichText::new(&order.status.name).small()); });
+                                row.col(|ui| { ui.label(RichText::new(&order.customer_name).small()); });
+                                row.col(|ui| { ui.label(RichText::new(&order.model).small()); });
+                                row.col(|ui| {
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "{}/{}",
+                                            order.attached_serials, order.expected_serials
+                                        ))
+                                        .small()
+                                        .monospace(),
+                                    );
+                                });
+                                row.col(|ui| {
+                                    ui.label(RichText::new(short_date(order.created_at.as_deref())).small());
+                                });
+                            });
+                        }
+                    });
+            }
+        }
+
+        if let Some(input) = load {
+            self.key_input = input;
+            self.start_load(ctx);
+        }
     }
 
     fn ui_order_header(&mut self, ui: &mut egui::Ui) {

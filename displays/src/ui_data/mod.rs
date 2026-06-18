@@ -337,7 +337,7 @@ impl crate::app_state::SharedContext {
             ctx.request_repaint();
         }
 
-        self.koth.receive();
+        self.koth.receive(ctx);
         self.query_editor.receive();
         self.receive_ui_action();
         self.receive_read_state();
@@ -346,7 +346,7 @@ impl crate::app_state::SharedContext {
         self.receive_notes();
         self.receive_notification(ctx);
         self.stock_tables.receive(self.ui_actions_tx.clone());
-        self.sales_tracker.receive();
+        self.sales_tracker.receive(ctx);
         self.receive_client();
         self.receive_prestashop();
         self.receive_extracted_specs();

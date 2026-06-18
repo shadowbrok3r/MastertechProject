@@ -19,6 +19,7 @@ pub mod puffin_profiler;
 pub mod quality_check;
 pub mod resource_mon;
 pub mod scripts;
+pub mod shopify_orders;
 pub mod system_information;
 pub mod tur_sheet;
 pub mod egui_file_dialog;
@@ -136,6 +137,7 @@ impl TabViewer for MastertechContext {
                 }
             }
             TabId::CreatePrestashopOrder => self.shared_ctx.prestashop_order_form.ui(ui),
+            TabId::ShopifyOrders => self.shopify_orders(ui),
             TabId::Threads => self.shared_ctx.user_chat.ui(ui),
             TabId::Plugins => {
                 displays::tabs::plugins_tab::plugins_tab_ui(ui, &self.plugin_manager)
