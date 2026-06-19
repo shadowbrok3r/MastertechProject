@@ -5,18 +5,21 @@
 //! PrestaShop-legacy status ids, which the Shopify status metaobjects carry
 //! as `legacy_id` — one gate table works for both backends.
 
+pub mod checklist;
+pub mod checklist_verify;
 pub mod gate;
 pub mod prestashop_backend;
 pub mod shopify_backend;
 pub mod spec_check;
 
+pub use checklist::{ChecklistKind, ChecklistState, ItemStatus, QcFailure};
 pub use gate::{GateDecision, GateOutcome};
 pub use prestashop_backend::PrestashopBackend;
 pub use shopify_backend::ShopifyBackend;
 pub use spec_check::{CheckStatus, DetectedDisk, DetectedHardware, SpecCheckReport, SpecCheckRow};
 
 use crate::SurrealValue;
-use crate::schema::RecordId;
+use crate::schema::{RecordId, RecordIdExt};
 use serde::{Deserialize, Serialize};
 
 pub const QC_REPORT_TABLE: &str = "qc_report";
@@ -226,6 +229,9 @@ pub struct TechIdentity {
     pub id_employee: String,
     pub name: String,
     pub email: String,
+    /// PrestaShop employee profile id (e.g. 26 Marketing / 15 Executive);
+    /// gates the influencer sign-off. Empty on Shopify (no role equivalent).
+    pub id_profile: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -269,8 +275,12 @@ pub struct OrderSummary {
 
 impl OrderSummary {
     /// Lookup string that round-trips through [`OrderKey::parse`] to reload
-    /// the full order: `#`-prefixed Shopify order number, else build serial.
+    /// the full order: bare PS id for PrestaShop, else `#`-prefixed Shopify
+    /// order number, else build serial.
     pub fn lookup_input(&self) -> String {
+        if self.backend == Some(BackendKind::Prestashop) && !self.id.is_empty() {
+            return self.id.clone();
+        }
         let number = self.reference.trim_start_matches('#').trim();
         if !number.is_empty() {
             format!("#{number}")
@@ -349,67 +359,6 @@ impl From<crate::xbm::SerialHistory> for SerialHistorySummary {
     }
 }
 
-/// QC sign-off checklist (ported from `qc_wizard.qc_sign_off` columns).
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, SurrealValue)]
-pub struct QcChecklist {
-    pub bios_updated: bool,
-    pub core_isolation_enabled: bool,
-    pub tpm_enabled: bool,
-    pub physical_inspection_passed: bool,
-    pub power_cable_present: bool,
-    pub rgb_remote_present: bool,
-    pub wifi_antenna_present: bool,
-    pub ordered_parts_installed: bool,
-    pub system_drivers_installed: bool,
-    pub ordered_software_installed: bool,
-    pub cpu_overclock_done: bool,
-    pub gpu_overclock_done: bool,
-    pub ram_timings_configured: bool,
-    pub windows_activation_done: bool,
-    pub restart_test_passed: bool,
-}
-
-impl QcChecklist {
-    pub const LABELS: [(&'static str, &'static str); 15] = [
-        ("bios_updated", "BIOS updated"),
-        ("core_isolation_enabled", "Core isolation enabled"),
-        ("tpm_enabled", "TPM enabled"),
-        ("physical_inspection_passed", "Physical inspection passed"),
-        ("power_cable_present", "Power cable present"),
-        ("rgb_remote_present", "RGB remote present"),
-        ("wifi_antenna_present", "WiFi antenna present"),
-        ("ordered_parts_installed", "Ordered parts installed"),
-        ("system_drivers_installed", "System drivers installed"),
-        ("ordered_software_installed", "Ordered software installed"),
-        ("cpu_overclock_done", "CPU overclock done"),
-        ("gpu_overclock_done", "GPU overclock done"),
-        ("ram_timings_configured", "RAM timings configured"),
-        ("windows_activation_done", "Windows activation done"),
-        ("restart_test_passed", "Restart test passed"),
-    ];
-
-    pub fn field_mut(&mut self, key: &str) -> Option<&mut bool> {
-        Some(match key {
-            "bios_updated" => &mut self.bios_updated,
-            "core_isolation_enabled" => &mut self.core_isolation_enabled,
-            "tpm_enabled" => &mut self.tpm_enabled,
-            "physical_inspection_passed" => &mut self.physical_inspection_passed,
-            "power_cable_present" => &mut self.power_cable_present,
-            "rgb_remote_present" => &mut self.rgb_remote_present,
-            "wifi_antenna_present" => &mut self.wifi_antenna_present,
-            "ordered_parts_installed" => &mut self.ordered_parts_installed,
-            "system_drivers_installed" => &mut self.system_drivers_installed,
-            "ordered_software_installed" => &mut self.ordered_software_installed,
-            "cpu_overclock_done" => &mut self.cpu_overclock_done,
-            "gpu_overclock_done" => &mut self.gpu_overclock_done,
-            "ram_timings_configured" => &mut self.ram_timings_configured,
-            "windows_activation_done" => &mut self.windows_activation_done,
-            "restart_test_passed" => &mut self.restart_test_passed,
-            _ => return None,
-        })
-    }
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize, SurrealValue)]
 pub struct SpecDiffSummary {
     pub component: String,
@@ -458,7 +407,21 @@ pub struct QcReportPayload {
     pub spec_check: Option<SpecCheckSummary>,
     /// `stress_test_run` record backing this verdict.
     pub run_ref: Option<String>,
-    pub checklist: QcChecklist,
+    /// Section-based checklist snapshot.
+    #[serde(default)]
+    pub checklist: ChecklistState,
+    /// `"BuildQC"` / `"Repair"`.
+    #[serde(default)]
+    pub checklist_type: String,
+    #[serde(default)]
+    pub is_influencer: bool,
+    pub marketing_employee_id: Option<String>,
+    pub executive_employee_id: Option<String>,
+    /// One entry per failed checklist item.
+    #[serde(default)]
+    pub failures: Vec<QcFailure>,
+    /// Motherboard/system serial this machine reported, for telemetry backfill.
+    pub board_serial: Option<String>,
     pub notes: String,
     /// Per-stage stress results for the backing run.
     #[serde(default)]
@@ -504,11 +467,20 @@ impl QcReportPayload {
                 }
             }
         }
+        if !self.failures.is_empty() {
+            out.push_str(&format!("Checklist failures ({}):\n", self.failures.len()));
+            for f in &self.failures {
+                out.push_str(&format!("  §{} {}: {}\n", f.section_number, f.item_text, f.note));
+            }
+        }
         if let Some(tech) = &self.tech {
             out.push_str(&format!("Tech: {tech}\n"));
         }
         if let Some(so) = &self.signoff_tech {
             out.push_str(&format!("Sign-off: {so}\n"));
+        }
+        if self.is_influencer {
+            out.push_str("Influencer build — Marketing + Executive sign-off recorded.\n");
         }
         if let Some(run) = &self.run_ref {
             out.push_str(&format!("Run: {run}\n"));
@@ -544,6 +516,42 @@ pub async fn persist_qc_report(report: &QcReportPayload) -> anyhow::Result<Recor
     created
         .map(|r| r.id)
         .ok_or_else(|| anyhow::anyhow!("qc_report insert returned no record"))
+}
+
+pub const QC_REPORT_FAILURE_TABLE: &str = "qc_report_failure";
+
+/// SurrealDB row for one failed checklist item, linked to its report.
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+pub struct QcReportFailureRecord {
+    pub id: RecordId,
+    pub report_ref: String,
+    pub created_at: crate::schema::Datetime,
+    pub failure: QcFailure,
+}
+
+/// Persist one row per failed checklist item, linked to the report record.
+/// Independent of `persist_qc_report` so a failure-row error never loses the
+/// report. Returns the number of rows written.
+pub async fn persist_qc_failures(report_ref: &RecordId, report: &QcReportPayload) -> anyhow::Result<usize> {
+    let now: crate::schema::Datetime = chrono::Utc::now().into();
+    let report_ref = report_ref.key_string();
+    let mut written = 0;
+    for failure in &report.failures {
+        let record = QcReportFailureRecord {
+            id: crate::schema::random_record_id(QC_REPORT_FAILURE_TABLE),
+            report_ref: report_ref.clone(),
+            created_at: now.clone(),
+            failure: failure.clone(),
+        };
+        let created: Option<QcReportFailureRecord> = crate::DATABASE
+            .create(QC_REPORT_FAILURE_TABLE)
+            .content(record)
+            .await?;
+        if created.is_some() {
+            written += 1;
+        }
+    }
+    Ok(written)
 }
 
 /// Backend contract for bench QC (master plan §6.3, extended with the
@@ -674,6 +682,32 @@ impl QcBackend {
             )),
         }
     }
+
+    /// Reverse-lookup the order a serial is installed on (no full fetch).
+    pub async fn resolve_by_serial(&self, serial: &str) -> anyhow::Result<Option<OrderSummary>> {
+        match self {
+            Self::Shopify(b) => b.resolve_by_serial(serial).await,
+            Self::Prestashop(b) => b.resolve_by_serial(serial).await,
+        }
+    }
+}
+
+/// Try a set of hardware serials against both backends (Shopify first), first
+/// hit wins. Each backend yields `None` on miss or when unconfigured, so this
+/// is safe to call on any bench. Used to auto-prefill the order from the
+/// motherboard serial without a manual scan.
+pub async fn resolve_any(serials: &[String]) -> Option<OrderSummary> {
+    let shopify = ShopifyBackend::from_env();
+    let prestashop = PrestashopBackend::new();
+    for serial in serials.iter().filter(|s| !s.trim().is_empty()) {
+        if let Ok(Some(summary)) = shopify.resolve_by_serial(serial).await {
+            return Some(summary);
+        }
+        if let Ok(Some(summary)) = prestashop.resolve_by_serial(serial).await {
+            return Some(summary);
+        }
+    }
+    None
 }
 
 #[cfg(test)]

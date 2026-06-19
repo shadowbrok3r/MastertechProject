@@ -353,6 +353,19 @@ impl QcApp {
             "Reporting will start on next frame".to_string()
         };
         ui.label(egui::RichText::new(status).monospace().small());
+
+        ui.add_space(16.0);
+        ui.separator();
+        ui.add_space(8.0);
+        ui.label(egui::RichText::new("Terminal mode").strong());
+        if ui
+            .button("Launch Terminal Mode")
+            .on_hover_text("Closes the GUI and switches to the keyboard/terminal UI")
+            .clicked()
+        {
+            crate::LAUNCH_TERMINAL.store(true, Ordering::Relaxed);
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        }
     }
 
     fn ui_oa3(&mut self, ui: &mut egui::Ui) {
@@ -427,10 +440,9 @@ impl QcApp {
             .enable_category("evtx::evtx_parser".to_string(), false)
             .show(ui);
     }
-}
 
-impl eframe::App for QcApp {
-    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    /// Per-frame headless logic; Frame-free so the software-render host can drive it.
+    pub fn logic_inner(&mut self, ctx: &egui::Context) {
         if self.github_in_flight.load(Ordering::Relaxed) {
             ctx.request_repaint_after(Duration::from_millis(150));
         }
@@ -562,7 +574,8 @@ impl eframe::App for QcApp {
         }
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    /// Frame-free UI body; the software-render host calls this inside its own CentralPanel.
+    pub fn ui_inner(&mut self, ui: &mut egui::Ui) {
         let mut tree = std::mem::replace(&mut self.dock, DockState::new(Vec::new()));
 
         egui::Panel::top("qc_menu_bar").show_inside(ui, |ui| {
@@ -599,7 +612,16 @@ impl eframe::App for QcApp {
 
         self.dock = tree;
     }
+}
 
+impl eframe::App for QcApp {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.logic_inner(ctx);
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.ui_inner(ui);
+    }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);

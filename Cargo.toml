@@ -11,19 +11,21 @@ members = [ "database", "displays",#  "MtechServer2.0" ]
     "websocket_server2", 
     "database-tools",
     "uefi",
-    "mtech-ui"
+    "mtech-ui",
+    "mtech-tui"
 ]
 
 [workspace.dependencies]
 stress-kit = { path = "stress-kit" }
 stress-runner = { path = "stress-runner" }
 mtech-ui = { path = "mtech-ui" }
+mtech-tui = { path = "mtech-tui" }
 database = { path = "database" }
 tcp_protocol = { path = "tcp_protocol" }
 eframe = { version="0.34", features=["serde",  "default_fonts", "glow"], default-features=false } 
 ratatui = { version = "0.30", default-features = true, features = [ "crossterm", "unstable", "serde", "layout-cache" ]}
-surrealdb = { version = "3.1.3", features = ["protocol-ws"] }
-surrealdb-types = { version = "3.1.3" }
+surrealdb = { version = "3.1.4", features = ["protocol-ws"] }
+surrealdb-types = { version = "3.1.4" }
 egui_extras = { version = "0.34", features = ["datepicker", "syntect", "serde", "image", "all_loaders" ]}
 egui-data-table = { git = "https://github.com/shadowbrok3r/egui-data-table", features = ["persistency"]}
 egui_json_tree = { version = "0.15", features = ["serde_json"] }
@@ -55,19 +57,19 @@ mime_guess = "2"
 crossbeam = "0.8"
 futures = "0.3"
 fuzzy-matcher = "0.3"
-rusty-s3 = "0.9.0"
-wasmtime = "45.0.0"
-wasmtime-wasi = "45.0.0"
+rusty-s3 = "0.10.0"
+wasmtime = "45.0.2"
+wasmtime-wasi = "45.0.2"
 wat = "1.2"
 rfd = "0.17.2"
 regex = "1.12"
 async-trait = "0.1"
 once_cell = "1"
 simplelog = "0.12.2"
-bytes = "1.11"
-brotli = "8.0.3"
+bytes = "1.12.0"
+brotli = "8.0.4"
 base64 = "0.22"
-itertools = "0.14"
+itertools = "0.15.0"
 
 [profile.dev]
 debug = true

@@ -1,0 +1,27 @@
+[package]
+name = "mtech-tui"
+version = "0.1.0"
+edition = "2024"
+description = "Shared ratatui TUI infrastructure: event system, widget toolkit, styling, fx — used by Mastertech terminal modes."
+
+[dependencies]
+ratatui = { workspace = true }
+crossterm = { version = "0.29", features = ["event-stream"] }
+tachyonfx = { version = "0.25.0" }
+unicode-width = "0.2.0"
+unicode-segmentation = "1"
+arboard = "3"
+crossbeam.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+anyhow.workspace = true
+once_cell.workspace = true
+futures.workspace = true
+tokio.workspace = true
+fuzzy-matcher.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["now", "clock"] }
+itertools.workspace = true
+color-eyre = "0.6"
+regex.workspace = true
+image.workspace = true

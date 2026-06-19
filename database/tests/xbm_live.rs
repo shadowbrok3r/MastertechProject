@@ -142,5 +142,15 @@ async fn order_backend_lookup_round_trip() {
             "xbm_live: serial {serial} — found={} current={:?} odoo={:?} ps_allocs={} flags={:?}",
             hist.found, hist.current_order, hist.odoo_lot, hist.prestashop_allocations, hist.flags
         );
+
+        // Reverse-resolve that serial back to this order (Phase 2 auto-resolve).
+        let resolved = database::orders::resolve_any(std::slice::from_ref(serial)).await;
+        let summary = resolved.unwrap_or_else(|| panic!("resolve_any({serial}) found nothing"));
+        assert_eq!(summary.reference, sample.name, "serial should resolve to its order");
+        assert_eq!(summary.lookup_input(), sample.name, "lookup_input round-trips to #N");
+        eprintln!(
+            "xbm_live: resolve_any({serial}) → {} ({}) lookup_input={}",
+            summary.reference, summary.customer_name, summary.lookup_input()
+        );
     }
 }

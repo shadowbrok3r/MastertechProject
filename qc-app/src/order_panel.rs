@@ -9,10 +9,11 @@
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use std::collections::HashMap;
 
+use database::orders::checklist::{ChecklistKind, ItemStatus};
 use database::orders::{
-    gate::GateOutcome, persist_qc_report, BackendKind, BuildSpec, GateDecision, OrderComment,
-    OrderKey, OrderKind, OrderSummary, PhotoCheck, QcBackend, QcChecklist, QcOrder,
-    QcReportPayload, SerialHistorySummary, TechIdentity,
+    gate::GateOutcome, persist_qc_failures, persist_qc_report, BackendKind, BuildSpec,
+    ChecklistState, GateDecision, OrderComment, OrderKey, OrderKind, OrderSummary, PhotoCheck,
+    QcBackend, QcOrder, QcReportPayload, SerialHistorySummary, TechIdentity,
 };
 use database::schema::{RecordId, RecordIdExt, RunResult, TICKET_TABLE};
 use eframe::egui::{
@@ -32,6 +33,11 @@ fn short_date(iso: Option<&str>) -> String {
     iso.map(|s| s.split('T').next().unwrap_or(s).to_string()).unwrap_or_default()
 }
 
+/// One-line summary stored on the signed-off worksheet.
+fn verdict_summary(p: &QcReportPayload) -> String {
+    format!("{} — {} failure(s)", p.verdict, p.failures.len())
+}
+
 pub struct OrderSession {
     pub backend: QcBackend,
     pub order: QcOrder,
@@ -49,16 +55,27 @@ struct LoadedOrder {
     photos: PhotoCheck,
 }
 
+/// Which signature slot an authentication targets.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AuthRole {
+    Tech,
+    Signoff,
+    Marketing,
+    Executive,
+}
+
 enum PanelMsg {
     Loaded(Box<LoadedOrder>),
     LoadFailed(String),
-    Auth { signoff: bool, result: Result<TechIdentity, String> },
+    Auth { role: AuthRole, result: Result<TechIdentity, String> },
     CommentPosted(Box<Result<OrderComment, String>>),
     CommentsRefreshed(Result<Vec<OrderComment>, String>),
     Advanced(Result<i64, String>),
     Submitted(Result<String, String>),
     SerialHistory { serial: String, result: Result<SerialHistorySummary, String> },
     RecentLoaded(Result<Vec<OrderSummary>, String>),
+    SerialResolved(Option<OrderSummary>),
+    ProvDone { step: String, result: Result<String, String> },
 }
 
 pub struct OrderPanel {
@@ -70,6 +87,13 @@ pub struct OrderPanel {
     /// Recent build-intake orders (Order Placed / Ready to Build) for the picker.
     recent: Option<Result<Vec<OrderSummary>, String>>,
     recent_busy: bool,
+
+    /// Order auto-detected from this machine's serial (prefill suggestion).
+    resolved: Option<OrderSummary>,
+    resolve_busy: bool,
+    resolve_attempted: bool,
+    /// First detected hardware serial, stamped onto the QC report for backfill.
+    board_serial: Option<String>,
 
     tech_email: String,
     tech_password: String,
@@ -83,6 +107,19 @@ pub struct OrderPanel {
     signoff_busy: bool,
     signoff_error: Option<String>,
 
+    /// Optional influencer-build second/third signatures (Marketing + Executive).
+    is_influencer: bool,
+    marketing_email: String,
+    marketing_password: String,
+    marketing: Option<TechIdentity>,
+    marketing_busy: bool,
+    marketing_error: Option<String>,
+    executive_email: String,
+    executive_password: String,
+    executive: Option<TechIdentity>,
+    executive_busy: bool,
+    executive_error: Option<String>,
+
     comment_input: String,
     comment_busy: bool,
     comment_error: Option<String>,
@@ -95,12 +132,27 @@ pub struct OrderPanel {
     serial_history: HashMap<String, Result<SerialHistorySummary, String>>,
     serial_busy: Option<String>,
 
-    checklist: QcChecklist,
+    checklist: ChecklistState,
+    checklist_kind: ChecklistKind,
+    /// Runs checklist auto-verify (SMART/OA3/temps) once after an order loads.
+    verify_pending: bool,
+    /// Summary of a prior signed-off worksheet restored for this order, if any.
+    prior_signoff: Option<String>,
+    air_cooled: bool,
+    /// Live items reset by sign-off re-verify that must be re-marked before submit.
+    blocked_keys: Vec<String>,
     report_notes: String,
     submit_busy: bool,
     submit_result: Option<(bool, String)>,
     advance_busy: bool,
     advance_result: Option<(bool, String)>,
+
+    /// Auto-Provision: company override, DMI tool path + confirm, step log.
+    prov_company: Option<crate::provisioning::Company>,
+    prov_busy: bool,
+    prov_dmi_tool: String,
+    prov_dmi_confirm: bool,
+    prov_log: Vec<(String, bool, String)>,
 
     tx: Sender<PanelMsg>,
     rx: Receiver<PanelMsg>,
@@ -116,6 +168,10 @@ impl Default for OrderPanel {
             session: None,
             recent: None,
             recent_busy: false,
+            resolved: None,
+            resolve_busy: false,
+            resolve_attempted: false,
+            board_serial: None,
             tech_email: String::new(),
             tech_password: String::new(),
             tech: None,
@@ -126,6 +182,17 @@ impl Default for OrderPanel {
             signoff: None,
             signoff_busy: false,
             signoff_error: None,
+            is_influencer: false,
+            marketing_email: String::new(),
+            marketing_password: String::new(),
+            marketing: None,
+            marketing_busy: false,
+            marketing_error: None,
+            executive_email: String::new(),
+            executive_password: String::new(),
+            executive: None,
+            executive_busy: false,
+            executive_error: None,
             comment_input: String::new(),
             comment_busy: false,
             comment_error: None,
@@ -133,12 +200,22 @@ impl Default for OrderPanel {
             spec_pending: false,
             serial_history: HashMap::new(),
             serial_busy: None,
-            checklist: QcChecklist::default(),
+            checklist: ChecklistState::from_kind(ChecklistKind::BuildQc),
+            checklist_kind: ChecklistKind::BuildQc,
+            verify_pending: false,
+            prior_signoff: None,
+            air_cooled: false,
+            blocked_keys: Vec::new(),
             report_notes: String::new(),
             submit_busy: false,
             submit_result: None,
             advance_busy: false,
             advance_result: None,
+            prov_company: None,
+            prov_busy: false,
+            prov_dmi_tool: String::new(),
+            prov_dmi_confirm: false,
+            prov_log: Vec::new(),
             tx,
             rx,
         }
@@ -155,6 +232,14 @@ impl OrderPanel {
         Some((service, tech))
     }
 
+    /// Persist the in-progress checklist worksheet for this order + machine.
+    fn save_worksheet(&self) {
+        if let Some(s) = self.session.as_ref() {
+            let machine = crate::reporting::machine_id();
+            crate::checklist_store::save(&s.order.id, &machine, &self.checklist, false, "");
+        }
+    }
+
     fn drain_messages(&mut self) {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
@@ -167,44 +252,79 @@ impl OrderPanel {
                         .as_ref()
                         .map(QcBackend::for_key)
                         .unwrap_or_else(|| QcBackend::for_key(&OrderKey::Prestashop(order.id.clone())));
+                    // Build the order-appropriate checklist and overlay any
+                    // saved per-machine worksheet for this order.
+                    let kind = ChecklistKind::for_order_kind(order.kind);
+                    let mut checklist = ChecklistState::from_kind(kind);
+                    let machine = crate::reporting::machine_id();
+                    let mut prior_signoff = None;
+                    if let Some(restored) = crate::checklist_store::restore(&order.id, &machine) {
+                        checklist.restore_from(&restored.checklist);
+                        if restored.signed_off {
+                            prior_signoff = Some(restored.summary);
+                        }
+                    }
+                    self.prior_signoff = prior_signoff;
+                    self.checklist_kind = kind;
+                    self.air_cooled = checklist
+                        .sections
+                        .iter()
+                        .find(|s| s.title.starts_with("Liquid Cooling"))
+                        .map(|s| !s.applicable)
+                        .unwrap_or(false);
+                    self.checklist = checklist;
                     self.session = Some(OrderSession { backend, order, spec, gate, comments, photos });
                     self.spec_report = None;
                     self.spec_pending = true;
+                    self.verify_pending = true;
                     self.serial_history.clear();
                     self.serial_busy = None;
-                    self.checklist = QcChecklist::default();
+                    self.blocked_keys.clear();
                     self.report_notes.clear();
                     self.submit_result = None;
                     self.advance_result = None;
                     self.signoff = None;
+                    self.is_influencer = false;
+                    self.marketing = None;
+                    self.executive = None;
+                    self.prov_company = None;
+                    self.prov_log.clear();
+                    self.prov_dmi_confirm = false;
                 }
                 PanelMsg::LoadFailed(e) => {
                     self.busy = false;
                     self.error = Some(e);
                 }
-                PanelMsg::Auth { signoff, result } => {
-                    if signoff {
-                        self.signoff_busy = false;
-                        match result {
-                            Ok(t) => {
-                                self.signoff = Some(t);
-                                self.signoff_error = None;
-                                self.signoff_password.clear();
-                            }
-                            Err(e) => self.signoff_error = Some(e),
-                        }
-                    } else {
+                PanelMsg::Auth { role, result } => match role {
+                    AuthRole::Tech => {
                         self.auth_busy = false;
                         match result {
-                            Ok(t) => {
-                                self.tech = Some(t);
-                                self.auth_error = None;
-                                self.tech_password.clear();
-                            }
+                            Ok(t) => { self.tech = Some(t); self.auth_error = None; self.tech_password.clear(); }
                             Err(e) => self.auth_error = Some(e),
                         }
                     }
-                }
+                    AuthRole::Signoff => {
+                        self.signoff_busy = false;
+                        match result {
+                            Ok(t) => { self.signoff = Some(t); self.signoff_error = None; self.signoff_password.clear(); }
+                            Err(e) => self.signoff_error = Some(e),
+                        }
+                    }
+                    AuthRole::Marketing => {
+                        self.marketing_busy = false;
+                        match result {
+                            Ok(t) => self.set_influencer_slot(role, t),
+                            Err(e) => self.marketing_error = Some(e),
+                        }
+                    }
+                    AuthRole::Executive => {
+                        self.executive_busy = false;
+                        match result {
+                            Ok(t) => self.set_influencer_slot(role, t),
+                            Err(e) => self.executive_error = Some(e),
+                        }
+                    }
+                },
                 PanelMsg::CommentPosted(result) => {
                     self.comment_busy = false;
                     match *result {
@@ -260,6 +380,23 @@ impl OrderPanel {
                     self.recent_busy = false;
                     self.recent = Some(result);
                 }
+                PanelMsg::ProvDone { step, result } => {
+                    self.prov_busy = false;
+                    match result {
+                        Ok(msg) => self.prov_log.push((step, true, msg)),
+                        Err(e) => self.prov_log.push((step, false, e)),
+                    }
+                }
+                PanelMsg::SerialResolved(found) => {
+                    self.resolve_busy = false;
+                    if let Some(summary) = found {
+                        // Prefill the lookup field; the tech confirms with Load.
+                        if self.session.is_none() && self.key_input.trim().is_empty() {
+                            self.key_input = summary.lookup_input();
+                        }
+                        self.resolved = Some(summary);
+                    }
+                }
             }
         }
     }
@@ -304,26 +441,117 @@ impl OrderPanel {
         });
     }
 
-    fn start_auth(&mut self, ctx: &egui::Context, signoff: bool) {
-        let Some(session) = self.session.as_ref() else { return };
-        let (email, password) = if signoff {
-            (self.signoff_email.clone(), self.signoff_password.clone())
-        } else {
-            (self.tech_email.clone(), self.tech_password.clone())
+    /// Read this machine's serials (sync, fast) then reverse-lookup the order
+    /// across backends, prefilling the lookup field. Runs once per session.
+    fn start_resolve_from_hardware(&mut self, ctx: &egui::Context) {
+        self.resolve_attempted = true;
+        let serials = crate::hardware_id::read_machine_serials();
+        self.board_serial = serials.first().cloned();
+        if serials.is_empty() {
+            return;
+        }
+        self.resolve_busy = true;
+        let tx = self.tx.clone();
+        let ctx = ctx.clone();
+        tokio::spawn(async move {
+            let found = database::orders::resolve_any(&serials).await;
+            let _ = tx.send(PanelMsg::SerialResolved(found));
+            ctx.request_repaint();
+        });
+    }
+
+    /// Run a blocking provisioning step on a worker thread; result → `prov_log`.
+    fn spawn_prov<F>(&mut self, step: &str, ctx: &egui::Context, f: F)
+    where
+        F: FnOnce() -> anyhow::Result<String> + Send + 'static,
+    {
+        self.prov_busy = true;
+        let step = step.to_string();
+        let tx = self.tx.clone();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let result = f().map_err(|e| format!("{e:#}"));
+            let _ = tx.send(PanelMsg::ProvDone { step, result });
+            ctx.request_repaint();
+        });
+    }
+
+    /// Validate + record an influencer signature, gating on PrestaShop profile
+    /// (26 Marketing / 15 Executive). Shopify staff carry no profile → name-only.
+    fn set_influencer_slot(&mut self, role: AuthRole, identity: TechIdentity) {
+        let required = match role {
+            AuthRole::Marketing => "26",
+            AuthRole::Executive => "15",
+            _ => return,
         };
+        if let Some(profile) = identity.id_profile.as_deref() {
+            if profile != required {
+                let msg = format!("{} is not authorized for this signature (profile {profile}).", identity.name);
+                match role {
+                    AuthRole::Marketing => self.marketing_error = Some(msg),
+                    AuthRole::Executive => self.executive_error = Some(msg),
+                    _ => {}
+                }
+                return;
+            }
+        }
+        match role {
+            AuthRole::Marketing => {
+                self.marketing = Some(identity);
+                self.marketing_error = None;
+                self.marketing_password.clear();
+            }
+            AuthRole::Executive => {
+                self.executive = Some(identity);
+                self.executive_error = None;
+                self.executive_password.clear();
+            }
+            _ => {}
+        }
+    }
+
+    fn auth_inputs(&self, role: AuthRole) -> (String, String) {
+        match role {
+            AuthRole::Tech => (self.tech_email.clone(), self.tech_password.clone()),
+            AuthRole::Signoff => (self.signoff_email.clone(), self.signoff_password.clone()),
+            AuthRole::Marketing => (self.marketing_email.clone(), self.marketing_password.clone()),
+            AuthRole::Executive => (self.executive_email.clone(), self.executive_password.clone()),
+        }
+    }
+
+    fn set_auth_busy(&mut self, role: AuthRole, busy: bool) {
+        match role {
+            AuthRole::Tech => self.auth_busy = busy,
+            AuthRole::Signoff => self.signoff_busy = busy,
+            AuthRole::Marketing => self.marketing_busy = busy,
+            AuthRole::Executive => self.executive_busy = busy,
+        }
+    }
+
+    fn set_auth_error(&mut self, role: AuthRole, err: Option<String>) {
+        match role {
+            AuthRole::Tech => self.auth_error = err,
+            AuthRole::Signoff => self.signoff_error = err,
+            AuthRole::Marketing => self.marketing_error = err,
+            AuthRole::Executive => self.executive_error = err,
+        }
+    }
+
+    fn start_auth(&mut self, ctx: &egui::Context, role: AuthRole) {
+        let Some(backend) = self.session.as_ref().map(|s| s.backend.clone()) else { return };
+        let (email, password) = self.auth_inputs(role);
         // Shopify identity is a roster name match; no PIN verification exists yet.
-        let needs_password = session.backend.backend_kind() == BackendKind::Prestashop;
+        let needs_password = backend.backend_kind() == BackendKind::Prestashop;
         if email.trim().is_empty() || (needs_password && password.is_empty()) {
             let err = Some(if needs_password {
                 "Email and password required.".to_string()
             } else {
-                "Tech name required.".to_string()
+                "Name required.".to_string()
             });
-            if signoff { self.signoff_error = err } else { self.auth_error = err }
+            self.set_auth_error(role, err);
             return;
         }
-        if signoff { self.signoff_busy = true } else { self.auth_busy = true }
-        let backend = session.backend.clone();
+        self.set_auth_busy(role, true);
         let tx = self.tx.clone();
         let ctx = ctx.clone();
         tokio::spawn(async move {
@@ -331,7 +559,7 @@ impl OrderPanel {
                 .authenticate_tech(email.trim(), &password)
                 .await
                 .map_err(|e| format!("{e:#}"));
-            let _ = tx.send(PanelMsg::Auth { signoff, result });
+            let _ = tx.send(PanelMsg::Auth { role, result });
             ctx.request_repaint();
         });
     }
@@ -412,15 +640,48 @@ impl OrderPanel {
     }
 
     fn start_submit(&mut self, ctx: &egui::Context, last_verdict: Option<&RunVerdict>, preset: Option<String>) {
+        // Snapshot session-derived data, then release the borrow for the
+        // mutable re-verify pass below.
         let Some(session) = self.session.as_ref() else { return };
+        let order = session.order.clone();
+        let backend = session.backend.clone();
+        let backend_kind = backend.backend_kind();
+        let order_key = order.key.as_ref().map(|k| k.display().to_string()).unwrap_or_default();
+        let order_kind = order.kind;
+
         let Some(tech) = self.tech.clone() else {
             self.submit_result = Some((false, "Sign in before submitting the QC report.".into()));
             return;
         };
-        if session.order.kind == OrderKind::Repair && self.signoff.is_none() {
+        if order_kind == OrderKind::Repair && self.signoff.is_none() {
             self.submit_result = Some((false, "Repair orders need the second sign-off before submitting.".into()));
             return;
         }
+        if self.is_influencer && (self.marketing.is_none() || self.executive.is_none()) {
+            self.submit_result = Some((false, "Influencer build needs both Marketing and Executive signatures.".into()));
+            return;
+        }
+        if !self.checklist.is_complete() {
+            self.submit_result = Some((false, "Checklist incomplete — every applicable item needs Pass / Fail / N/A (Fails need a note).".into()));
+            return;
+        }
+
+        // Re-verify live auto items; reset any that drifted and block submit.
+        let probe = crate::checklist_verify::WmiProbe::new();
+        let stale = crate::checklist_verify::reverify_at_signoff(&mut self.checklist, &probe);
+        if !stale.is_empty() {
+            self.blocked_keys = stale.clone();
+            self.submit_result = Some((
+                false,
+                format!("Changed since the auto-check — re-mark before sign-off: {}", stale.join(", ")),
+            ));
+            self.save_worksheet();
+            return;
+        }
+        self.blocked_keys.clear();
+
+        let machine = crate::reporting::machine_id();
+        let failures = self.checklist.failures(&order.id);
 
         let verdict = last_verdict
             .map(|v| match v.result {
@@ -434,12 +695,12 @@ impl OrderPanel {
             .to_string();
 
         let payload = QcReportPayload {
-            order_key: session.order.key.as_ref().map(|k| k.display().to_string()).unwrap_or_default(),
-            order_id: session.order.id.clone(),
-            backend: session.backend.backend_kind().as_str().to_string(),
+            order_key,
+            order_id: order.id.clone(),
+            backend: backend_kind.as_str().to_string(),
             verdict,
             preset,
-            machine_id: Some(crate::reporting::machine_id()),
+            machine_id: Some(machine.clone()),
             tech: Some(tech.name.clone()),
             tech_employee_id: Some(tech.id_employee.clone()),
             signoff_tech: self.signoff.as_ref().map(|t| t.name.clone()),
@@ -457,7 +718,13 @@ impl OrderPanel {
             gpu_max_c: last_verdict.and_then(|v| v.summary.max_gpu_temp_c).map(f64::from),
             spec_check: self.spec_report.as_ref().map(|r| r.summary()),
             run_ref: last_verdict.map(|v| format!("stress_test_run:{}", v.run_id.key_string())),
-            checklist: self.checklist,
+            checklist: self.checklist.clone(),
+            checklist_type: self.checklist_kind.as_str().to_string(),
+            is_influencer: self.is_influencer,
+            marketing_employee_id: self.marketing.as_ref().map(|t| t.id_employee.clone()),
+            executive_employee_id: self.executive.as_ref().map(|t| t.id_employee.clone()),
+            failures,
+            board_serial: self.board_serial.clone(),
             notes: self.report_notes.clone(),
             stages: last_verdict
                 .map(|v| {
@@ -479,25 +746,29 @@ impl OrderPanel {
                 .unwrap_or_default(),
         };
 
+        // Persist the signed-off worksheet as the on-machine audit copy.
+        crate::checklist_store::save(&order.id, &machine, &self.checklist, true, &verdict_summary(&payload));
+
         self.submit_busy = true;
         self.submit_result = None;
-        let backend = session.backend.clone();
-        let order = session.order.clone();
         let tx = self.tx.clone();
         let ctx = ctx.clone();
         tokio::spawn(async move {
             let persisted = persist_qc_report(&payload).await;
             let pushed = backend.submit_qc(&order, &payload).await;
             let result = match (persisted, pushed) {
-                (Ok(id), Ok(())) => Ok(format!(
-                    "QC report saved ({}) and pushed to {}.",
-                    id.key_string(),
-                    backend.backend_kind().as_str()
-                )),
-                (Ok(id), Err(e)) => Ok(format!(
-                    "QC report saved ({}); backend push failed: {e:#}",
-                    id.key_string()
-                )),
+                (Ok(id), pushed) => {
+                    let failures_written = persist_qc_failures(&id, &payload).await.unwrap_or(0);
+                    let mut msg = format!(
+                        "QC report saved ({}, {failures_written} failure row(s)).",
+                        id.key_string()
+                    );
+                    match pushed {
+                        Ok(()) => msg.push_str(&format!(" Pushed to {}.", backend_kind.as_str())),
+                        Err(e) => msg.push_str(&format!(" Backend push failed: {e:#}")),
+                    }
+                    Ok(msg)
+                }
                 (Err(db), Ok(())) => Err(format!("Backend push OK but SurrealDB save failed: {db:#}")),
                 (Err(db), Err(push)) => Err(format!("SurrealDB save failed: {db:#}; backend push failed: {push:#}")),
             };
@@ -548,6 +819,41 @@ impl OrderPanel {
         }
 
         if self.session.is_none() {
+            // Auto-resolve the order from this machine's serial, once.
+            if !self.resolve_attempted && !self.resolve_busy {
+                self.start_resolve_from_hardware(&ctx);
+            }
+            if self.resolve_busy {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(RichText::new("Detecting order from machine serial…").weak().small());
+                });
+            }
+            if let Some(s) = self.resolved.clone() {
+                Frame::default()
+                    .fill(GOOD.gamma_multiply(0.12))
+                    .stroke((1.0, GOOD))
+                    .corner_radius(6.0)
+                    .inner_margin(Margin::symmetric(8, 6))
+                    .show(ui, |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.colored_label(GOOD, RichText::new(p::DESKTOP).size(14.0));
+                            ui.label(
+                                RichText::new(format!(
+                                    "Detected on this machine: {} {}",
+                                    s.reference,
+                                    if s.customer_name.is_empty() { String::new() } else { format!("({})", s.customer_name) }
+                                ))
+                                .small(),
+                            );
+                            if ui.button("Load detected").clicked() {
+                                self.key_input = s.lookup_input();
+                                self.start_load(&ctx);
+                            }
+                        });
+                    });
+                ui.add_space(6.0);
+            }
             if self.recent.is_none() && !self.recent_busy {
                 self.start_recent(&ctx);
             }
@@ -596,6 +902,9 @@ impl OrderPanel {
                 CollapsingHeader::new(format!("{} Spec check", p::CPU))
                     .default_open(true)
                     .show(ui, |ui| self.ui_spec_check(ui, snapshot));
+                CollapsingHeader::new(format!("{} Auto-Provision", p::WRENCH))
+                    .default_open(false)
+                    .show(ui, |ui| self.ui_provision(ui, &ctx));
                 ui.add_space(24.0);
             });
         });
@@ -1070,6 +1379,121 @@ impl OrderPanel {
         }
     }
 
+    fn ui_provision(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        use crate::provisioning::{self, Company};
+        let Some((order, spec)) = self.session.as_ref().map(|s| (s.order.clone(), s.spec.clone())) else {
+            return;
+        };
+        let company = self.prov_company.unwrap_or_else(|| Company::from_order(&order));
+        let manifest = provisioning::load_manifest(company);
+        let sqlite = crate::db::default_sqlite_path().to_string_lossy().to_string();
+
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Company").small());
+            egui::ComboBox::from_id_salt("prov_company")
+                .selected_text(company.label())
+                .show_ui(ui, |ui| {
+                    for c in Company::ALL {
+                        if ui.selectable_label(company == c, c.label()).clicked() {
+                            self.prov_company = Some(c);
+                        }
+                    }
+                });
+            if self.prov_busy {
+                ui.spinner();
+            }
+        });
+        ui.label(RichText::new("OS-config steps run on click; DMI writes need the confirm box.").weak().small());
+
+        for step in &manifest.steps {
+            match step.kind.as_str() {
+                "core_isolation" => {
+                    if ui.add_enabled(!self.prov_busy, egui::Button::new(format!("{} Enable core isolation", p::LOCK))).clicked() {
+                        self.spawn_prov("Core isolation", ctx, provisioning::osconfig::enable_core_isolation);
+                    }
+                }
+                "timezone" => {
+                    if ui.add_enabled(!self.prov_busy, egui::Button::new(format!("{} Set timezone (MST)", p::CLOCK))).clicked() {
+                        self.spawn_prov("Timezone", ctx, provisioning::osconfig::set_timezone_mountain);
+                    }
+                }
+                "open_tools" => {
+                    if ui.add_enabled(!self.prov_busy, egui::Button::new(format!("{} Open system tools", p::DESKTOP))).clicked() {
+                        self.spawn_prov("Open tools", ctx, provisioning::osconfig::open_system_tools);
+                    }
+                }
+                "chipset" => {
+                    if ui.add_enabled(!self.prov_busy, egui::Button::new("Install chipset driver")).clicked() {
+                        let path = sqlite.clone();
+                        self.spawn_prov("Chipset driver", ctx, move || provisioning::install_chipset(&path));
+                    }
+                }
+                "display" => {
+                    if ui.add_enabled(!self.prov_busy, egui::Button::new("Install display driver")).clicked() {
+                        let path = sqlite.clone();
+                        self.spawn_prov("Display driver", ctx, move || provisioning::install_display(&path));
+                    }
+                }
+                "dmi" => self.ui_dmi(ui, ctx, &order, &spec, company, &manifest),
+                "branding" => {
+                    ui.label(RichText::new("Branding (.bat) — later phase").weak().small());
+                }
+                _ => {}
+            }
+        }
+
+        if !self.prov_log.is_empty() {
+            ui.add_space(4.0);
+            for (s, ok, msg) in &self.prov_log {
+                let c = if *ok { GOOD } else { ui.visuals().error_fg_color };
+                ui.colored_label(c, RichText::new(format!("{s}: {msg}")).small());
+            }
+        }
+    }
+
+    fn ui_dmi(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        order: &QcOrder,
+        spec: &BuildSpec,
+        company: crate::provisioning::Company,
+        manifest: &crate::provisioning::CompanyManifest,
+    ) {
+        use crate::provisioning::dmi;
+        let board = self.board_serial.clone().unwrap_or_default();
+        let dctx = dmi::DmiContext::build(order, spec, manifest, &board, &board);
+        let cmds = dmi::ami_commands(&dctx);
+
+        CollapsingHeader::new("DMI / SMBIOS write").id_salt("prov_dmi").show(ui, |ui| {
+            if dmi::is_threadripper(spec) {
+                ui.colored_label(CAUTION, "Threadripper board — DMI write skipped (tool rejects it).");
+                return;
+            }
+            if company.dmi_manufacturer().is_none() {
+                ui.label(RichText::new("No manufacturer for this company — DMI skipped.").weak().small());
+                return;
+            }
+            ui.label(RichText::new("Will run:").strong().small());
+            ui.add(egui::Label::new(RichText::new(dmi::preview("AMIDEWIN527", &cmds)).monospace().small()));
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Tool path").small());
+                ui.add(
+                    TextEdit::singleline(&mut self.prov_dmi_tool)
+                        .hint_text(r".\Installs\AMIDEWIN_527\AMIDEWIN527")
+                        .desired_width(f32::INFINITY),
+                );
+            });
+            ui.checkbox(&mut self.prov_dmi_confirm, "I verified this order matches this machine");
+            let can = self.prov_dmi_confirm && !self.prov_dmi_tool.trim().is_empty() && !self.prov_busy;
+            if ui.add_enabled(can, egui::Button::new(format!("{} Write DMI", p::WARNING))).clicked() {
+                let tool = std::path::PathBuf::from(self.prov_dmi_tool.clone());
+                let cmds = cmds.clone();
+                self.spawn_prov("DMI write", ctx, move || dmi::run(&tool, &cmds));
+            }
+        });
+    }
+
     fn ui_sign_off(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let is_repair = self
             .session
@@ -1081,6 +1505,7 @@ impl OrderPanel {
             .as_ref()
             .map(|s| s.backend.backend_kind() == BackendKind::Shopify)
             .unwrap_or(false);
+        let secret_hint = if is_shopify { "PIN (unused)" } else { "password" };
 
         Frame::default()
             .fill(ui.visuals().faint_bg_color)
@@ -1091,89 +1516,52 @@ impl OrderPanel {
                 ui.label(RichText::new(format!("{} Sign-off", p::USER)).strong().size(16.0));
                 ui.add_space(4.0);
 
-                match self.tech.clone() {
-                    Some(tech) => {
-                        ui.horizontal(|ui| {
-                            ui.colored_label(
-                                GOOD,
-                                format!("{} {} ({})", p::CHECK_CIRCLE, tech.name, tech.id_employee),
-                            );
-                            if ui.small_button("Sign out").clicked() {
-                                self.tech = None;
-                            }
-                        });
-                    }
-                    None => {
-                        let (id_hint, secret_hint) = if is_shopify {
-                            ("floor staff name", "PIN (unused)")
+                macro_rules! slot {
+                    ($label:expr, $ident:expr, $email:expr, $pass:expr, $busy:expr, $err:expr, $role:expr, $hint:expr) => {{
+                        ui.label(RichText::new($label).strong().small());
+                        if let Some(t) = $ident.clone() {
+                            ui.horizontal(|ui| {
+                                ui.colored_label(GOOD, format!("{} {} ({})", p::CHECK_CIRCLE, t.name, t.id_employee));
+                                if ui.small_button("Clear").clicked() {
+                                    $ident = None;
+                                }
+                            });
                         } else {
-                            ("employee email", "password")
-                        };
-                        ui.add(
-                            TextEdit::singleline(&mut self.tech_email)
-                                .hint_text(id_hint)
-                                .desired_width(f32::INFINITY),
-                        );
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                TextEdit::singleline(&mut self.tech_password)
-                                    .hint_text(secret_hint)
-                                    .password(true)
-                                    .desired_width(120.0),
-                            );
-                            if ui.add_enabled(!self.auth_busy, egui::Button::new("Sign in")).clicked() {
-                                self.start_auth(ctx, false);
+                            ui.add(TextEdit::singleline($email).hint_text($hint).desired_width(f32::INFINITY));
+                            ui.horizontal(|ui| {
+                                ui.add(TextEdit::singleline($pass).hint_text(secret_hint).password(true).desired_width(120.0));
+                                if ui.add_enabled(!$busy, egui::Button::new("Sign in")).clicked() {
+                                    self.start_auth(ctx, $role);
+                                }
+                                if $busy {
+                                    ui.spinner();
+                                }
+                            });
+                            if let Some(e) = $err.as_ref() {
+                                ui.colored_label(ui.visuals().error_fg_color, RichText::new(e).small());
                             }
-                            if self.auth_busy {
-                                ui.spinner();
-                            }
-                        });
-                        if let Some(e) = self.auth_error.as_ref() {
-                            ui.colored_label(ui.visuals().error_fg_color, RichText::new(e).small());
                         }
-                    }
+                    }};
                 }
+
+                let tech_hint = if is_shopify { "floor staff name" } else { "employee email" };
+                slot!("QC technician", self.tech, &mut self.tech_email, &mut self.tech_password,
+                    self.auth_busy, self.auth_error, AuthRole::Tech, tech_hint);
 
                 if is_repair {
                     ui.add_space(6.0);
                     ui.label(RichText::new("2nd sign-off (repair)").small().color(CAUTION));
-                    match self.signoff.clone() {
-                        Some(tech) => {
-                            ui.horizontal(|ui| {
-                                ui.colored_label(
-                                    GOOD,
-                                    format!("{} {} ({})", p::CHECK_CIRCLE, tech.name, tech.id_employee),
-                                );
-                                if ui.small_button("Clear").clicked() {
-                                    self.signoff = None;
-                                }
-                            });
-                        }
-                        None => {
-                            ui.add(
-                                TextEdit::singleline(&mut self.signoff_email)
-                                    .hint_text("sign-off email")
-                                    .desired_width(f32::INFINITY),
-                            );
-                            ui.horizontal(|ui| {
-                                ui.add(
-                                    TextEdit::singleline(&mut self.signoff_password)
-                                        .hint_text("password")
-                                        .password(true)
-                                        .desired_width(120.0),
-                                );
-                                if ui.add_enabled(!self.signoff_busy, egui::Button::new("Sign off")).clicked() {
-                                    self.start_auth(ctx, true);
-                                }
-                                if self.signoff_busy {
-                                    ui.spinner();
-                                }
-                            });
-                            if let Some(e) = self.signoff_error.as_ref() {
-                                ui.colored_label(ui.visuals().error_fg_color, RichText::new(e).small());
-                            }
-                        }
-                    }
+                    slot!("Repair sign-off", self.signoff, &mut self.signoff_email, &mut self.signoff_password,
+                        self.signoff_busy, self.signoff_error, AuthRole::Signoff, "sign-off email");
+                }
+
+                ui.add_space(6.0);
+                ui.checkbox(&mut self.is_influencer, "Influencer build");
+                if self.is_influencer {
+                    slot!("Marketing", self.marketing, &mut self.marketing_email, &mut self.marketing_password,
+                        self.marketing_busy, self.marketing_error, AuthRole::Marketing, "marketing email");
+                    slot!("Executive", self.executive, &mut self.executive_email, &mut self.executive_password,
+                        self.executive_busy, self.executive_error, AuthRole::Executive, "executive email");
                 }
             });
     }
@@ -1277,6 +1665,41 @@ impl OrderPanel {
         last_verdict: Option<&RunVerdict>,
         last_preset: Option<String>,
     ) {
+        // Auto-verify provable items once after load (SMART/OA3/stress temps).
+        if self.verify_pending {
+            let probe = crate::checklist_verify::WmiProbe::new();
+            let cpu = last_verdict.and_then(|v| v.summary.max_temp_c).map(f64::from);
+            let gpu = last_verdict.and_then(|v| v.summary.max_gpu_temp_c).map(f64::from);
+            crate::checklist_verify::apply(&mut self.checklist, &probe, cpu, gpu);
+            self.verify_pending = false;
+            self.save_worksheet();
+        }
+
+        // This order was already signed off on this machine — offer a fresh start.
+        if let Some(summary) = self.prior_signoff.clone() {
+            Frame::default()
+                .fill(GOOD.gamma_multiply(0.12))
+                .stroke((1.0, GOOD))
+                .corner_radius(6.0)
+                .inner_margin(Margin::symmetric(8, 6))
+                .show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.colored_label(GOOD, format!("{} Already signed off — {summary}", p::CHECK_CIRCLE));
+                    });
+                    if ui.button(format!("{} Start new sign-off", p::ARROW_CLOCKWISE)).clicked() {
+                        if let Some(s) = self.session.as_ref() {
+                            let machine = crate::reporting::machine_id();
+                            crate::checklist_store::clear(&s.order.id, &machine);
+                        }
+                        self.checklist = ChecklistState::from_kind(self.checklist_kind);
+                        self.prior_signoff = None;
+                        self.verify_pending = true;
+                        self.submit_result = None;
+                    }
+                });
+            ui.add_space(6.0);
+        }
+
         match last_verdict {
             Some(v) => {
                 let (color, label) = match v.result {
@@ -1310,19 +1733,113 @@ impl OrderPanel {
         }
 
         ui.add_space(6.0);
-        egui::Grid::new("qc_checklist_grid")
-            .num_columns(2)
-            .spacing([18.0, 4.0])
-            .show(ui, |ui| {
-                for pair in QcChecklist::LABELS.chunks(2) {
-                    for (key, label) in pair {
-                        if let Some(value) = self.checklist.field_mut(key) {
-                            ui.checkbox(value, *label);
+
+        // Deferred edits so the render loop holds only an immutable borrow.
+        enum CkEdit {
+            Status(String, ItemStatus),
+            Note(String, String),
+            Value(String, String),
+        }
+        let mut edits: Vec<CkEdit> = Vec::new();
+        let mut air_toggle: Option<bool> = None;
+        let blocked: std::collections::HashSet<String> = self.blocked_keys.iter().cloned().collect();
+
+        let (resolved, total) = self.checklist.open_count();
+        ui.horizontal(|ui| {
+            let mut air = self.air_cooled;
+            if ui.checkbox(&mut air, "Air-cooled (skip Liquid Cooling)").changed() {
+                air_toggle = Some(air);
+            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let c = if resolved == total { GOOD } else { CAUTION };
+                ui.colored_label(c, RichText::new(format!("{resolved}/{total}")).small());
+            });
+        });
+
+        let active = self.checklist.first_incomplete();
+        for (idx, sec) in self.checklist.sections.iter().enumerate() {
+            let header = format!("§{} {}  ({})", sec.number, sec.title, sec.progress_text());
+            let locked = active.map(|a| idx > a).unwrap_or(false);
+            if locked {
+                ui.label(RichText::new(format!("{} {header}", p::LOCK)).weak().small());
+                continue;
+            }
+            let mut ch = CollapsingHeader::new(RichText::new(header).strong())
+                .id_salt(format!("ck_sec_{}", sec.number));
+            if active == Some(idx) {
+                ch = ch.open(Some(true));
+            }
+            ch.show(ui, |ui| {
+                if !sec.applicable {
+                    ui.label(RichText::new("Section marked N/A (air-cooled).").weak().small());
+                    return;
+                }
+                if !sec.notes.is_empty() {
+                    ui.label(RichText::new(&sec.notes).weak().small());
+                }
+                for item in &sec.items {
+                    let status = item.status();
+                    ui.horizontal_wrapped(|ui| {
+                        let pass = ui.selectable_label(status == ItemStatus::Pass, RichText::new("Pass").color(GOOD).small());
+                        if pass.clicked() {
+                            edits.push(CkEdit::Status(item.key.clone(), ItemStatus::Pass));
+                        }
+                        let fail = ui.selectable_label(status == ItemStatus::Fail, RichText::new("Fail").color(ui.visuals().error_fg_color).small());
+                        if fail.clicked() {
+                            edits.push(CkEdit::Status(item.key.clone(), ItemStatus::Fail));
+                        }
+                        let na = ui.selectable_label(status == ItemStatus::Na, RichText::new("N/A").weak().small());
+                        if na.clicked() {
+                            edits.push(CkEdit::Status(item.key.clone(), ItemStatus::Na));
+                        }
+                        let label_color = if blocked.contains(&item.key) {
+                            CAUTION
+                        } else {
+                            ui.visuals().text_color()
+                        };
+                        ui.label(RichText::new(&item.text).small().color(label_color));
+                        if item.auto_verified() {
+                            ui.label(RichText::new(format!("{} auto", p::CHECK_CIRCLE)).color(GOOD).small())
+                                .on_hover_text(&item.evidence);
+                        }
+                    });
+                    if item.show_note() {
+                        let mut note = item.note.clone();
+                        if ui
+                            .add(TextEdit::singleline(&mut note).hint_text("note (required for Fail)").desired_width(f32::INFINITY))
+                            .changed()
+                        {
+                            edits.push(CkEdit::Note(item.key.clone(), note));
                         }
                     }
-                    ui.end_row();
+                    if item.captures_value {
+                        let mut value = item.value.clone();
+                        if ui
+                            .add(TextEdit::singleline(&mut value).hint_text("recorded value").desired_width(f32::INFINITY))
+                            .changed()
+                        {
+                            edits.push(CkEdit::Value(item.key.clone(), value));
+                        }
+                    }
                 }
             });
+        }
+
+        let changed = air_toggle.is_some() || !edits.is_empty();
+        if let Some(a) = air_toggle {
+            self.air_cooled = a;
+            self.checklist.set_air_cooled(a);
+        }
+        for e in edits {
+            match e {
+                CkEdit::Status(k, s) => self.checklist.set_status(&k, s),
+                CkEdit::Note(k, n) => self.checklist.set_note(&k, &n),
+                CkEdit::Value(k, v) => self.checklist.set_value(&k, &v),
+            }
+        }
+        if changed {
+            self.save_worksheet();
+        }
 
         ui.add_space(6.0);
         ui.add(
@@ -1333,8 +1850,9 @@ impl OrderPanel {
         );
 
         ui.add_space(6.0);
+        let complete = self.checklist.is_complete();
         ui.horizontal(|ui| {
-            let can_submit = !self.submit_busy && self.tech.is_some();
+            let can_submit = !self.submit_busy && self.tech.is_some() && complete;
             if ui
                 .add_enabled(can_submit, egui::Button::new(format!("{} Submit QC report", p::CLIPBOARD_TEXT)))
                 .clicked()
@@ -1347,6 +1865,8 @@ impl OrderPanel {
         });
         if self.tech.is_none() {
             ui.label(RichText::new("Sign in to submit.").weak().small());
+        } else if !complete {
+            ui.label(RichText::new("Finish every applicable item to submit.").weak().small());
         }
         if let Some((ok, msg)) = self.submit_result.as_ref() {
             let c = if *ok { GOOD } else { ui.visuals().error_fg_color };

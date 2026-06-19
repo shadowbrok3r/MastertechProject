@@ -560,6 +560,8 @@ pub struct Employee {
     pub firstname: String,
     pub email: String,
     pub initials: String,
+    #[serde(default)]
+    pub id_profile: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
