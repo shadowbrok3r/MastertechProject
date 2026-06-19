@@ -599,6 +599,14 @@ impl QcApp {
                     });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(format!(" Mastertech QC - {}", database::version_with_build!()));
+                        if ui
+                            .button(format!("{} Terminal Mode", egui_phosphor::regular::TERMINAL_WINDOW))
+                            .on_hover_text("Close the GUI and switch to the keyboard/terminal UI")
+                            .clicked()
+                        {
+                            crate::LAUNCH_TERMINAL.store(true, Ordering::Relaxed);
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
                     });
                 });
         });

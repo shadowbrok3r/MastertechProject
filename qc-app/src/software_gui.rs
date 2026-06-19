@@ -7,7 +7,7 @@ use egui_skia::EguiSkiaWinit;
 use skia_safe::{surfaces, AlphaType, Color, ColorType, ImageInfo, Surface};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
@@ -24,6 +24,9 @@ struct SoftwareApp {
     skia_surface: Option<Surface>,
     egui_skia: Option<EguiSkiaWinit>,
     qc: QcApp,
+    /// Left button held; suppresses CursorLeft so egui keeps the pointer pos
+    /// (and the release) when a drag crosses the window edge.
+    left_down: bool,
 }
 
 impl SoftwareApp {
@@ -34,7 +37,19 @@ impl SoftwareApp {
             skia_surface: None,
             egui_skia: None,
             qc: QcApp::default(),
+            left_down: false,
         }
+    }
+
+    /// Hide + drop the window so it's gone before terminal mode takes over.
+    fn shutdown_window(&mut self) {
+        if let Some(window) = self.window.as_ref() {
+            window.set_visible(false);
+        }
+        self.egui_skia = None;
+        self.softbuffer_surface = None;
+        self.skia_surface = None;
+        self.window = None;
     }
 
     fn recreate_skia_surface(&mut self, width: i32, height: i32) {
@@ -73,10 +88,19 @@ impl ApplicationHandler for SoftwareApp {
             return;
         };
 
-        if let Some(egui_skia) = self.egui_skia.as_mut() {
-            let response = egui_skia.on_window_event(&window, &event);
-            if response.repaint {
-                window.request_redraw();
+        if let WindowEvent::MouseInput { state, button: MouseButton::Left, .. } = &event {
+            self.left_down = *state == ElementState::Pressed;
+        }
+        // While the left button is held, drop CursorLeft so egui keeps a valid
+        // pointer position and doesn't discard the eventual release (winit
+        // captures the mouse, so positions keep arriving past the window edge).
+        let suppress = self.left_down && matches!(event, WindowEvent::CursorLeft { .. });
+        if !suppress {
+            if let Some(egui_skia) = self.egui_skia.as_mut() {
+                let response = egui_skia.on_window_event(&window, &event);
+                if response.repaint {
+                    window.request_redraw();
+                }
             }
         }
 
@@ -112,6 +136,7 @@ impl ApplicationHandler for SoftwareApp {
                 present(skia_surface, softbuffer_surface, width, height);
 
                 if crate::LAUNCH_TERMINAL.load(Ordering::Relaxed) {
+                    self.shutdown_window();
                     event_loop.exit();
                     return;
                 }
@@ -126,6 +151,7 @@ impl ApplicationHandler for SoftwareApp {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if crate::LAUNCH_TERMINAL.load(Ordering::Relaxed) {
+            self.shutdown_window();
             event_loop.exit();
             return;
         }
