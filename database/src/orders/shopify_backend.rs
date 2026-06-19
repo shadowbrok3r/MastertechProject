@@ -298,6 +298,33 @@ impl ShopifyBackend {
         needles.iter().any(|n| lower.contains(n))
     }
 
+    /// Reverse-lookup the Shopify order a serial is installed on, via the XBM
+    /// federated serial endpoint. `None` when unconfigured or not found.
+    pub async fn resolve_by_serial(&self, serial: &str) -> anyhow::Result<Option<super::OrderSummary>> {
+        let Some(xbm) = self.xbm.as_ref() else { return Ok(None) };
+        let history = match xbm.serial_history(serial).await {
+            Ok(h) => h,
+            Err(e) if e.is_not_found() => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+        let Some(order) = history.shopify.and_then(|s| s.order) else {
+            return Ok(None);
+        };
+        let name = order.name.unwrap_or_default();
+        if name.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(super::OrderSummary {
+            backend: Some(BackendKind::Shopify),
+            id: order.gid.rsplit('/').next().unwrap_or("").to_string(),
+            gid: Some(order.gid),
+            reference: name,
+            customer_name: order.customer.unwrap_or_default(),
+            build_serial: Some(serial.to_string()),
+            ..Default::default()
+        }))
+    }
+
     /// `GET /serials/{serial}` — federated history flattened for the bench.
     pub async fn serial_history(&self, serial: &str) -> anyhow::Result<super::SerialHistorySummary> {
         let xbm = self.xbm()?;
@@ -714,6 +741,7 @@ impl OrderBackend for ShopifyBackend {
             id_employee: staff.id.clone(),
             name: staff.name.clone(),
             email: String::new(),
+            id_profile: None,
         })
     }
 

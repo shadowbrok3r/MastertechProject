@@ -1,0 +1,18 @@
+pub mod bug_report;
+pub mod hardware;
+pub mod logs;
+pub mod oa3;
+pub mod order_qc;
+pub mod placeholder;
+pub mod settings;
+pub mod stress;
+pub mod swift_db;
+
+pub use bug_report::BugReportTab;
+pub use hardware::HardwareTab;
+pub use logs::LogsTab;
+pub use oa3::Oa3Tab;
+pub use order_qc::OrderQcTab;
+pub use settings::SettingsTab;
+pub use stress::StressTab;
+pub use swift_db::SwiftDbTab;

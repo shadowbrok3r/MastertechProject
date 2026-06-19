@@ -331,7 +331,7 @@ fn plugin_cargo_toml(plugin_id: &str) -> String {
         r#"[package]
 name = "{name}"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [lib]
 crate-type = ["cdylib"]

@@ -1,0 +1,47 @@
+# PC Laptops provisioning manifest. Mirrors the QCWizard PCL procedure for the
+# non-destructive P0–P1 slice. Binaries are staged from the \\winbits7 share.
+company = "PC Laptops"
+display_studio = false
+
+[dmi]
+manufacturer = "PCL"
+system_sku = "0001"
+product_template = "{config_name} {baseboard_product}"
+
+[[steps]]
+kind = "branding"
+[[steps]]
+kind = "dmi"
+[[steps]]
+kind = "core_isolation"
+[[steps]]
+kind = "timezone"
+[[steps]]
+kind = "open_tools"
+[[steps]]
+kind = "chipset"
+[[steps]]
+kind = "display"
+
+# Conditional software (G4, later phase) — kept here as the data contract.
+[[software]]
+id = "antivirus"
+installer = "internal"
+when = "always"
+[[software]]
+id = "backup"
+installer = "internal"
+when = "always"
+[[software]]
+id = "msi_afterburner"
+dir = "MSI"
+file = "AfterBurner.exe"
+installer = "exe"
+args = "/S"
+when = "overclock"
+[[software]]
+id = "icue"
+dir = "Corsair"
+file = "iCue.exe"
+installer = "exe"
+when = "fans_contains:Corsair"

@@ -15,6 +15,7 @@ DEFINE INDEX qcrep_order_id   ON qc_report FIELDS report.order_id;
 DEFINE INDEX qcrep_backend    ON qc_report FIELDS report.backend;
 DEFINE INDEX qcrep_machine    ON qc_report FIELDS report.machine_id;
 DEFINE INDEX qcrep_verdict    ON qc_report FIELDS report.verdict;
+DEFINE INDEX qcrep_checktype  ON qc_report FIELDS report.checklist_type;
 DEFINE INDEX qcrep_created_at ON qc_report FIELDS created_at;
 
 DEFINE FIELD created_at ON qc_report TYPE datetime PERMISSIONS FULL;

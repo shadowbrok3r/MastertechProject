@@ -10,15 +10,15 @@ use serde_json::Value;
 use crate::schema::everest::request_everest_header_by_docnum;
 use crate::schema::prestashop::xml::{modify_xml, remove_xml_tag};
 use crate::schema::prestashop::{
-    CustomerMessage, CustomerThread, Employee, Order, Prestashop,
+    CustomerMessage, CustomerThread, Employee, Order, OrderSerial, Prestashop,
 };
 use crate::{PRESTASHOP_API_URL_WASM, PRESTASHOP_AUTH_URL};
 
 use super::gate::{self, GateDecision};
 use super::{
     BackendKind, BuildSpec, DriveSpec, OrderBackend, OrderComment, OrderConfigInfo, OrderKey,
-    OrderKind, PhotoCheck, QcOrder, QcOrderItem, QcReportPayload, ServiceInfo, SlotPick,
-    StatusInfo, TechIdentity,
+    OrderKind, OrderSummary, PhotoCheck, QcOrder, QcOrderItem, QcReportPayload, ServiceInfo,
+    SlotPick, StatusInfo, TechIdentity,
 };
 
 /// Percent-encodes a value for an `application/x-www-form-urlencoded` body.
@@ -41,6 +41,35 @@ pub struct PrestashopBackend;
 impl PrestashopBackend {
     pub fn new() -> Self {
         Self
+    }
+
+    /// Reverse-lookup the PS order a serial is installed on
+    /// (`order_serial?filter[serial_number]=…` → `id_order`).
+    pub async fn resolve_by_serial(&self, serial: &str) -> anyhow::Result<Option<OrderSummary>> {
+        if PRESTASHOP_API_URL_WASM.is_empty() {
+            return Ok(None);
+        }
+        let api = Prestashop::default();
+        let filter = format!("[{serial}]");
+        let mut params = HashMap::new();
+        params.insert("filter[serial_number]", filter.as_str());
+        params.insert("output_format", "JSON");
+        let serials: Vec<OrderSerial> = api
+            .request_resources_wasm("order_serials", params)
+            .await
+            .unwrap_or_default();
+        let id_order = serials
+            .iter()
+            .map(|s| s.id_order.clone())
+            .find(|id| !id.is_empty() && id != "0");
+        let Some(id_order) = id_order else { return Ok(None) };
+        Ok(Some(OrderSummary {
+            backend: Some(BackendKind::Prestashop),
+            id: id_order.clone(),
+            reference: id_order,
+            build_serial: Some(serial.to_string()),
+            ..Default::default()
+        }))
     }
 
     async fn fetch_order(&self, id: &str) -> anyhow::Result<Order> {
@@ -310,6 +339,7 @@ impl OrderBackend for PrestashopBackend {
             id_employee,
             name: report.tech.clone().unwrap_or_default(),
             email: String::new(),
+            id_profile: None,
         };
         self.post_comment(order, &tech, &report.summary_text()).await?;
         Ok(())
@@ -362,6 +392,7 @@ impl OrderBackend for PrestashopBackend {
             id_employee: employee.id,
             name: format!("{} {}", employee.firstname, employee.lastname).trim().to_string(),
             email: employee.email,
+            id_profile: Some(employee.id_profile).filter(|p| !p.is_empty() && p != "0"),
         })
     }
 
