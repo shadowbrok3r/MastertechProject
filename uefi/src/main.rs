@@ -909,11 +909,51 @@ fn collect_pcie_links() -> Vec<PcieLink> {
 /// NIC that isn't in the boot order). It cannot conjure a driver that the
 /// firmware doesn't have (i.e. when the network stack is disabled).
 fn connect_all_controllers() {
-    if let Ok(handles) = uefi::boot::locate_handle_buffer(uefi::boot::SearchType::AllHandles) {
-        for &h in handles.iter() {
-            let _ = uefi::boot::connect_controller(h, None, None, true);
+    // Connecting can create child handles (MNP/IP4 service-binding children)
+    // that themselves need a driver bound; repeat until the handle count stops
+    // growing so the IPv4 stack fully layers up.
+    for _ in 0..4 {
+        let before = uefi::boot::locate_handle_buffer(uefi::boot::SearchType::AllHandles)
+            .map(|b| b.len())
+            .unwrap_or(0);
+        if let Ok(handles) = uefi::boot::locate_handle_buffer(uefi::boot::SearchType::AllHandles) {
+            for &h in handles.iter() {
+                let _ = uefi::boot::connect_controller(h, None, None, true);
+            }
+        }
+        let after = uefi::boot::locate_handle_buffer(uefi::boot::SearchType::AllHandles)
+            .map(|b| b.len())
+            .unwrap_or(0);
+        if after == before {
+            break;
         }
     }
+}
+
+/// Count handles exposing a protocol GUID (0 when none / NOT_FOUND).
+fn count_proto(guid: uefi::Guid) -> usize {
+    uefi::boot::locate_handle_buffer(uefi::boot::SearchType::ByProtocol(&guid))
+        .map(|b| b.len())
+        .unwrap_or(0)
+}
+
+/// Per-layer UEFI network stack handle counts, to pinpoint where a missing
+/// IPv4 stack breaks: SNP up but IP4-Config2 absent ⇒ Ip4Dxe didn't bind
+/// (IPv4 PXE/HTTP support disabled, or the firmware is IPv6-only).
+fn net_stack_summary() -> String {
+    const MNP_SB: uefi::Guid = uefi::guid!("f36ff770-a7e1-42cf-9ed2-56f0f271f44c");
+    const IP4_SB: uefi::Guid = uefi::guid!("c51711e7-b4bf-404a-bfb8-0a048ef1ffe4");
+    const IP4_CFG2: uefi::Guid = uefi::guid!("5b446ed1-e30b-4faa-871a-3654eca36080");
+    const IP6_CFG: uefi::Guid = uefi::guid!("937fe521-95ae-4d1a-8929-48bcd90ad31a");
+    let snp = uefi::boot::find_handles::<SimpleNetwork>().map(|h| h.len()).unwrap_or(0);
+    format!(
+        "SNP={} MNP-SB={} IP4-SB={} IP4-Config2={} IP6-Config={}",
+        snp,
+        count_proto(MNP_SB),
+        count_proto(IP4_SB),
+        count_proto(IP4_CFG2),
+        count_proto(IP6_CFG),
+    )
 }
 
 /// A DHCP/static IPv4 lease on one interface.
@@ -932,11 +972,18 @@ fn ip_str(o: [u8; 4]) -> String {
 /// explicit user action, not part of the passive scan.
 fn run_dhcp() -> (Vec<IfaceIp>, String) {
     let mut out = Vec::new();
+    // BDS only binds the IPv4 stack when a network boot option is active; force-
+    // connect so Ip4Config2 is produced even without one (otherwise NOT_FOUND).
+    connect_all_controllers();
     let handles = match uefi::boot::find_handles::<Ip4Config2>() {
         Ok(h) => h,
         Err(e) => {
-            logln(format!("dhcp: find Ip4Config2 ERR {e:?}"));
-            return (out, format!("no IP4 stack: {e:?}"));
+            let layers = net_stack_summary();
+            logln(format!("dhcp: find Ip4Config2 ERR {e:?} [{layers}]"));
+            return (
+                out,
+                format!("no IPv4 stack — {layers}; need IP4-Config2>=1 (enable IPv4 PXE/HTTP support, not just Network Stack)"),
+            );
         }
     };
     logln(format!("dhcp: Ip4Config2 handles={}", handles.len()));
@@ -3021,6 +3068,10 @@ fn page_network(frame: &mut Frame, area: Rect, app: &App) {
     // IP leases (after DHCP).
     lines.push(Line::from(""));
     lines.push(header("IPv4 (press 'd' for DHCP)"));
+    lines.push(Line::from(Span::styled(
+        format!("stack {}", net_stack_summary()),
+        Style::default().fg(palette::MUTED),
+    )));
     if app.ifaces.is_empty() {
         lines.push(Line::from(Span::styled(
             "no lease yet",
