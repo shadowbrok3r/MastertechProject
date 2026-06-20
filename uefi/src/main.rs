@@ -958,51 +958,65 @@ fn ip_str(o: [u8; 4]) -> String {
 /// explicit user action, not part of the passive scan.
 fn run_dhcp() -> (Vec<IfaceIp>, String) {
     let mut out = Vec::new();
-    // BDS only binds the IPv4 stack when a network boot option is active; force-
-    // connect so Ip4Config2 is produced even without one (otherwise NOT_FOUND).
-    connect_all_controllers();
-    let handles = match uefi::boot::find_handles::<Ip4Config2>() {
-        Ok(h) => h,
-        Err(e) => {
-            let layers = net_stack_summary();
-            logln(format!("dhcp: find Ip4Config2 ERR {e:?} [{layers}]"));
-            return (
-                out,
-                format!("no IPv4 stack — {layers}; need IP4-Config2>=1 (enable IPv4 PXE/HTTP support, not just Network Stack)"),
-            );
-        }
-    };
-    logln(format!("dhcp: Ip4Config2 handles={}", handles.len()));
-    if handles.is_empty() {
-        return (out, "no DHCP-capable interfaces".into());
-    }
-    let mut last_err = String::new();
-    for (i, h) in handles.into_iter().enumerate() {
-        if let Ok(mut cfg) = Ip4Config2::new(h) {
-            logln(format!("dhcp: if{i} ifup..."));
-            if let Err(e) = cfg.ifup() {
-                last_err = format!("{e:?}");
-                logln(format!("dhcp: if{i} ifup ERR {e:?}"));
-            }
-            if let Ok(info) = cfg.get_interface_info() {
-                let ip = ip_str(info.station_addr.0);
-                logln(format!("dhcp: if{i} addr={ip}"));
-                out.push(IfaceIp {
-                    ip,
-                    mask: ip_str(info.subnet_mask.0),
-                });
+
+    // Primary: Ip4Config2 ifup on each interface (press 'c' first to bind drivers).
+    // No connect here — connecting at boot/DHCP can hang on a flaky controller.
+    if let Ok(handles) = uefi::boot::find_handles::<Ip4Config2>() {
+        logln(format!("dhcp: Ip4Config2 handles={}", handles.len()));
+        for (i, h) in handles.into_iter().enumerate() {
+            if let Ok(mut cfg) = Ip4Config2::new(h) {
+                logln(format!("dhcp: if{i} ifup..."));
+                if let Err(e) = cfg.ifup() {
+                    logln(format!("dhcp: if{i} ifup ERR {e:?}"));
+                }
+                if let Ok(info) = cfg.get_interface_info() {
+                    let ip = ip_str(info.station_addr.0);
+                    logln(format!("dhcp: if{i} addr={ip}"));
+                    out.push(IfaceIp { ip, mask: ip_str(info.subnet_mask.0) });
+                }
             }
         }
+        if out.iter().any(|i| i.ip != "0.0.0.0") {
+            return (out, "DHCP: lease acquired".into());
+        }
     }
-    let got = out.iter().any(|i| i.ip != "0.0.0.0");
-    let status = if got {
-        "DHCP: lease acquired".into()
-    } else if last_err.is_empty() {
-        "DHCP: no address".into()
-    } else {
-        format!("DHCP: {last_err}")
-    };
-    (out, status)
+
+    // Fallback: PXE Base Code DHCP — exposed when IPv4 PXE is enabled, and works
+    // even when Ip4Config2 is absent (e.g. the firmware only brings the IP4 stack
+    // up under PXE).
+    {
+        use uefi::proto::network::pxe::BaseCode;
+        if let Ok(handles) = uefi::boot::find_handles::<BaseCode>() {
+            for h in handles {
+                let Ok(mut bc) = (unsafe {
+                    uefi::boot::open_protocol::<BaseCode>(
+                        OpenProtocolParams {
+                            handle: h,
+                            agent: uefi::boot::image_handle(),
+                            controller: None,
+                        },
+                        OpenProtocolAttributes::GetProtocol,
+                    )
+                }) else {
+                    continue;
+                };
+                let _ = bc.start(false);
+                if bc.dhcp(false).is_ok() {
+                    if let core::net::IpAddr::V4(v4) = bc.mode().station_ip() {
+                        if !v4.is_unspecified() {
+                            out.push(IfaceIp { ip: ip_str(v4.octets()), mask: String::new() });
+                        }
+                    }
+                }
+            }
+        }
+        if out.iter().any(|i| i.ip != "0.0.0.0") {
+            logln(format!("dhcp: PXE base code lease {}", out[0].ip));
+            return (out, "DHCP: lease via PXE base code".into());
+        }
+    }
+
+    (out, format!("no IPv4 lease — {} (tried Ip4Config2 + PXE base code)", net_stack_summary()))
 }
 
 fn jq(s: &str) -> String {
@@ -3054,10 +3068,6 @@ fn page_network(frame: &mut Frame, area: Rect, app: &App) {
     // IP leases (after DHCP).
     lines.push(Line::from(""));
     lines.push(header("IPv4 (press 'd' for DHCP)"));
-    lines.push(Line::from(Span::styled(
-        format!("stack {}", net_stack_summary()),
-        Style::default().fg(palette::MUTED),
-    )));
     if app.ifaces.is_empty() {
         lines.push(Line::from(Span::styled(
             "no lease yet",
@@ -3819,22 +3829,9 @@ fn run() -> Result<()> {
 
     terminal.clear()?;
 
-    // Auto-acquire DHCP on boot if a NIC with link (or unknown link state) is
-    // present. Skips interfaces reporting link-down so a disconnected Wi-Fi NIC
-    // doesn't stall boot on the 30s ifup timeout.
-    if app
-        .info
-        .nics
-        .iter()
-        .any(|n| !n.media_supported || n.media_present)
-    {
-        app.status = "boot: acquiring DHCP...".into();
-        terminal.draw(|frame| render(frame, &app))?;
-        let (ifaces, status) = run_dhcp();
-        app.ifaces = ifaces;
-        app.status = format!("boot DHCP: {status}");
-        logln(format!("boot DHCP: {status}"));
-    }
+    // No network at boot: DHCP/connect are explicit ('d'/'c') so a flaky NIC or
+    // a hanging driver bind can never stall or freeze startup.
+    app.status = "ready - 'c' connect drivers, 'd' DHCP".into();
 
     loop {
         app.stress.tick();
