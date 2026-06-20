@@ -137,6 +137,8 @@ pub struct OrderQcTab<'a> {
     recent: Option<Result<Vec<OrderSummary>, String>>,
     recent_busy: bool,
     pub(crate) recent_sel: usize,
+    /// How many recent orders to fetch; grows by 10 via "Load +10".
+    recent_limit: usize,
 
     resolved: Option<OrderSummary>,
     resolve_busy: bool,
@@ -245,6 +247,7 @@ impl<'a> OrderQcTab<'a> {
             recent: None,
             recent_busy: false,
             recent_sel: 0,
+            recent_limit: 10,
             resolved: None,
             resolve_busy: false,
             resolve_attempted: false,
@@ -499,6 +502,7 @@ impl<'a> OrderQcTab<'a> {
         self.prov_company = None;
         self.prov_log.clear();
         self.prov_dmi_confirm = false;
+        self.recent_limit = 10;
         self.view = View::Order;
         self.focus = 0;
         self.active_field = None;
@@ -616,9 +620,10 @@ impl<'a> OrderQcTab<'a> {
     fn start_recent(&mut self) {
         self.recent_busy = true;
         let backend = QcBackend::shopify();
+        let limit = self.recent_limit;
         let tx = self.tx.clone();
         tokio::spawn(async move {
-            let result = backend.recent_orders(10).await.map_err(|e| format!("{e:#}"));
+            let result = backend.recent_orders(limit).await.map_err(|e| format!("{e:#}"));
             let _ = tx.send(PanelMsg::RecentLoaded(result));
         });
     }
@@ -998,6 +1003,16 @@ impl<'a> OrderQcTab<'a> {
         self.view = View::List;
         self.focus = 0;
         self.active_field = None;
+        self.recent_limit = 10;
+    }
+
+    /// Grow the recent-orders fetch by 10 and refetch.
+    fn load_more_recent(&mut self) {
+        if self.recent_busy {
+            return;
+        }
+        self.recent_limit += 10;
+        self.start_recent();
     }
 
     fn switch_view(&mut self, delta: i32) {
@@ -1042,6 +1057,8 @@ impl<'a> OrderQcTab<'a> {
 
         if let Some(rest) = id.strip_prefix("view:") {
             self.set_view_by_name(rest);
+        } else if id == "recent:more" {
+            self.load_more_recent();
         } else if let Some(rest) = id.strip_prefix("recent:") {
             if let Ok(i) = rest.parse::<usize>() {
                 self.load_recent(i);

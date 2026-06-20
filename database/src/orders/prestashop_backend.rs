@@ -99,7 +99,7 @@ impl PrestashopBackend {
         let url = format!(
             "{PRESTASHOP_API_URL_WASM}/{resource}?output_format=JSON&display=full&filter[id_order]={id_order}"
         );
-        let response: Value = reqwest::Client::new()
+        let response: Value = crate::xbm::shared_http()
             .get(&url)
             .send()
             .await?
@@ -357,7 +357,7 @@ impl OrderBackend for PrestashopBackend {
             form_urlencode(email),
             form_urlencode(password)
         );
-        let response = reqwest::Client::new()
+        let response = crate::xbm::shared_http()
             .post(PRESTASHOP_AUTH_URL)
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body(body)

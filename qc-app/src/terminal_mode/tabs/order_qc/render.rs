@@ -133,6 +133,7 @@ impl<'a> OrderQcTab<'a> {
                 Constraint::Length(2), // detected banner
                 Constraint::Length(2), // recent header
                 Constraint::Fill(1),   // recent table
+                Constraint::Length(1), // load-more control
                 Constraint::Length(1), // error
             ])
             .split(area);
@@ -268,12 +269,26 @@ impl<'a> OrderQcTab<'a> {
             }
         }
 
+        let more_text = if self.recent_busy {
+            "[+] Loading…".to_string()
+        } else {
+            "[+] Load 10 more  (+/m)".to_string()
+        };
+        self.zones.add(
+            Rect { x: rows[5].x, y: rows[5].y, width: more_text.len() as u16, height: 1 },
+            "recent:more",
+        );
+        f.render_widget(
+            Paragraph::new(more_text).style(Style::default().fg(THEME.tertiary)),
+            rows[5],
+        );
+
         if let Some(e) = self.error.as_ref() {
             f.render_widget(
                 Paragraph::new(e.as_str())
                     .wrap(Wrap { trim: true })
                     .style(Style::default().fg(THEME.error)),
-                rows[5],
+                rows[6],
             );
         }
     }
@@ -1301,6 +1316,7 @@ impl<'a> OrderQcTab<'a> {
                 }
             }
             KeyCode::Char('e') => self.focus_field(super::LOOKUP_ID),
+            KeyCode::Char('+') | KeyCode::Char('m') => self.load_more_recent(),
             _ => {}
         }
     }

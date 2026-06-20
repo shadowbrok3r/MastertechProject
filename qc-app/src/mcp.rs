@@ -1350,6 +1350,112 @@ impl QcToolProvider {
             .map_err(|e| to_internal(e.to_string()))?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
+
+    #[tool(
+        name = "get_system_identity",
+        description = "Stable machine identity: machine_id, system + board serials, baseboard product, BIOS version, OA3 OEM key, GPU PCI device codes (WMI/SMBIOS, Windows)."
+    )]
+    async fn get_system_identity(
+        &self,
+        Parameters(_p): Parameters<NoArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let id = tokio::task::spawn_blocking(crate::diagnostics::system_identity)
+            .await
+            .map_err(|e| to_internal(format!("identity task join: {e}")))?;
+        let json = serde_json::to_string_pretty(&id).map_err(|e| to_internal(e.to_string()))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "get_smbios",
+        description = "Parsed SMBIOS type 0/1/2 fields (system/board/BIOS manufacturer, product, serial, version) read natively via GetSystemFirmwareTable. Windows."
+    )]
+    async fn get_smbios(
+        &self,
+        Parameters(_p): Parameters<NoArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let res = tokio::task::spawn_blocking(crate::provisioning::dmi::read_smbios)
+            .await
+            .map_err(|e| to_internal(format!("smbios task join: {e}")))?
+            .map_err(|e| to_internal(e.to_string()))?;
+        let json = serde_json::to_string_pretty(&res).map_err(|e| to_internal(e.to_string()))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "get_firmware_security",
+        description = "Secure Boot enabled, boot mode (UEFI/Legacy), TPM presence/version/manufacturer, and Windows activation status. Windows."
+    )]
+    async fn get_firmware_security(
+        &self,
+        Parameters(_p): Parameters<NoArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let fs = tokio::task::spawn_blocking(crate::diagnostics::firmware_security)
+            .await
+            .map_err(|e| to_internal(format!("firmware task join: {e}")))?;
+        let json = serde_json::to_string_pretty(&fs).map_err(|e| to_internal(e.to_string()))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "get_storage_health",
+        description = "Per-physical-disk health: friendly name, serial, size, media type (HDD/SSD), bus (SATA/NVMe/USB), and HealthStatus (Healthy/Warning/Unhealthy). Windows Storage WMI."
+    )]
+    async fn get_storage_health(
+        &self,
+        Parameters(_p): Parameters<NoArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let disks = tokio::task::spawn_blocking(crate::diagnostics::storage_health)
+            .await
+            .map_err(|e| to_internal(format!("storage task join: {e}")))?;
+        let json = serde_json::to_string_pretty(&disks).map_err(|e| to_internal(e.to_string()))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "get_preboot_fingerprint",
+        description = "Fetch the pre-boot UEFI hardware fingerprint the orchestrator stored for a serial (defaults to this machine's detected serial). Returns the stored fingerprint JSON, or an error if none/unconfigured."
+    )]
+    async fn get_preboot_fingerprint(
+        &self,
+        Parameters(args): Parameters<PrebootArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let base = database::orchestrator_url().to_string();
+        if base.is_empty() {
+            return Err(to_internal("no orchestrator URL configured"));
+        }
+        let serial = match args.serial {
+            Some(s) if !s.trim().is_empty() => s.trim().to_string(),
+            _ => {
+                let id = tokio::task::spawn_blocking(crate::diagnostics::system_identity)
+                    .await
+                    .map_err(|e| to_internal(format!("identity task join: {e}")))?;
+                id.system_serial
+                    .or(id.board_serial)
+                    .ok_or_else(|| to_internal("no machine serial detected; pass `serial`"))?
+            }
+        };
+        let url = format!("{base}/api/v1/qc/fingerprint/{serial}");
+        let resp = reqwest::Client::new()
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| to_internal(format!("fetch {url}: {e}")))?;
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(to_internal(format!("orchestrator returned {status} for serial {serial}")));
+        }
+        Ok(CallToolResult::success(vec![Content::text(body)]))
+    }
+}
+
+/// `get_preboot_fingerprint` arguments.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct PrebootArgs {
+    /// Machine serial to look up; omit to use this machine's detected serial.
+    #[serde(default)]
+    pub serial: Option<String>,
 }
 
 /// `run_qc_benchmark` arguments. Both fields optional — defaults give a ~2.7-minute

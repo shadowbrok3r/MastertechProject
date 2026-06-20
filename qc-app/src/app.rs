@@ -148,6 +148,21 @@ pub struct QcApp {
     report_view: crate::report_view::ReportView,
     #[serde(skip)]
     bug_report: crate::bug_report::BugReportPanel,
+    /// Result of the last "Dump logs to file" action.
+    #[serde(skip)]
+    log_dump_status: Option<String>,
+    /// Polls the share for a newer published build.
+    #[serde(skip)]
+    update_checker: crate::update_check::UpdateChecker,
+    #[serde(skip)]
+    update_available: Option<String>,
+    #[serde(skip)]
+    update_dismissed: bool,
+    /// Crash reports captured on a previous run, pending user action.
+    #[serde(skip)]
+    crashes: Vec<(std::path::PathBuf, crate::crash_report::CrashInfo)>,
+    #[serde(skip)]
+    crashes_scanned: bool,
 }
 
 impl Default for QcApp {
@@ -176,6 +191,12 @@ impl Default for QcApp {
             mcp_state: None,
             report_view: crate::report_view::ReportView::default(),
             bug_report: crate::bug_report::BugReportPanel::default(),
+            log_dump_status: None,
+            update_checker: crate::update_check::UpdateChecker::new(),
+            update_available: None,
+            update_dismissed: false,
+            crashes: Vec::new(),
+            crashes_scanned: false,
         }
     }
 }
@@ -429,9 +450,22 @@ impl QcApp {
         });
     }
 
-    fn ui_logs(ui: &mut egui::Ui) {
+    fn ui_logs(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            if ui
+                .button(format!("{} Dump logs to file", egui_phosphor::regular::FLOPPY_DISK))
+                .clicked()
+            {
+                self.log_dump_status = Some(Self::dump_logs_to_file());
+            }
+            if let Some(status) = self.log_dump_status.as_ref() {
+                ui.label(egui::RichText::new(status).weak().small());
+            }
+        });
         mtech_ui::egui_logger::logger_ui()
             .log_levels([true, true, true, false, false])
+            .enable_copy_button(true)
+            .enable_levels_button(true)
             .enable_category("eframe".to_string(), false)
             .enable_category("eframe::native::glow_integration".to_string(), false)
             .enable_category("egui_glow::shader_version".to_string(), false)
@@ -439,6 +473,18 @@ impl QcApp {
             .enable_category("evtx::evtx_chunk".to_string(), false)
             .enable_category("evtx::evtx_parser".to_string(), false)
             .show(ui);
+    }
+
+    /// Write all retained logs to `qc-app-log-<unix_secs>.txt` in the cwd.
+    fn dump_logs_to_file() -> String {
+        let secs = chrono::Utc::now().timestamp();
+        let name = format!("qc-app-log-{secs}.txt");
+        let path = std::env::current_dir().unwrap_or_default().join(&name);
+        let body = mtech_ui::egui_logger::get_logs_as_string(None, true, true);
+        match std::fs::write(&path, body) {
+            Ok(()) => format!("Wrote {}", path.display()),
+            Err(e) => format!("Failed to write {}: {e}", path.display()),
+        }
     }
 
     /// Per-frame headless logic; Frame-free so the software-render host can drive it.
@@ -572,11 +618,84 @@ impl QcApp {
                 },
             );
         }
+
+        self.update_available = self.update_checker.poll();
+        if !self.crashes_scanned {
+            self.crashes_scanned = true;
+            self.crashes = crate::crash_report::scan_pending();
+        }
+        self.show_crash_modal(ctx);
+    }
+
+    /// Prompt to report crash reports captured on a previous run.
+    fn show_crash_modal(&mut self, ctx: &egui::Context) {
+        if self.crashes.is_empty() {
+            return;
+        }
+        let mut report = false;
+        let mut dismiss = false;
+        egui::Window::new("Crash detected")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(format!("{} crash report(s) from a previous session.", self.crashes.len()));
+                if let Some((_, c)) = self.crashes.first() {
+                    ui.label(egui::RichText::new(&c.message).strong());
+                    ui.label(egui::RichText::new(format!("{} · {}", c.timestamp, c.location)).weak().small());
+                }
+                ui.horizontal(|ui| {
+                    if ui.button("Copy details & open Bug Report").clicked() {
+                        report = true;
+                    }
+                    if ui.button("Dismiss").clicked() {
+                        dismiss = true;
+                    }
+                });
+            });
+        if report {
+            let detail = self
+                .crashes
+                .iter()
+                .map(|(_, c)| {
+                    format!("{} v{} {}\n{}\n{}", c.timestamp, c.version, c.location, c.message, c.backtrace)
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            ctx.copy_text(detail);
+            if self.dock.find_tab(&QcTab::BugReport).is_none() {
+                self.dock.push_to_focused_leaf(QcTab::BugReport);
+            }
+        }
+        if report || dismiss {
+            for (path, _) in self.crashes.drain(..) {
+                let _ = crate::crash_report::delete(&path);
+            }
+        }
     }
 
     /// Frame-free UI body; the software-render host calls this inside its own CentralPanel.
     pub fn ui_inner(&mut self, ui: &mut egui::Ui) {
         let mut tree = std::mem::replace(&mut self.dock, DockState::new(Vec::new()));
+
+        if let Some(ver) = self.update_available.clone() {
+            if !self.update_dismissed {
+                egui::Panel::top("qc_update_banner").show_inside(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(80, 160, 220),
+                            format!("{} Update available: {ver}", egui_phosphor::regular::ARROW_CIRCLE_UP),
+                        );
+                        ui.label(egui::RichText::new("Pick up the new build from the install share.").small().weak());
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui.small_button("Dismiss").clicked() {
+                                self.update_dismissed = true;
+                            }
+                        });
+                    });
+                });
+            }
+        }
 
         egui::Panel::top("qc_menu_bar").show_inside(ui, |ui| {
             egui::MenuBar::new()
@@ -648,7 +767,7 @@ impl egui_dock::TabViewer for QcApp {
             QcTab::SwiftDb => self.ui_database(ui),
             QcTab::Oa3 => self.ui_oa3(ui),
             QcTab::Settings => self.ui_settings(ui),
-            QcTab::Logs => Self::ui_logs(ui),
+            QcTab::Logs => self.ui_logs(ui),
             QcTab::BugReport => self.bug_report.ui(ui),
             QcTab::HardwareMonitor => {
                 let undocked = self.show_hw_monitor.load(Ordering::Relaxed);

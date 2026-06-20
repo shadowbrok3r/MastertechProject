@@ -50,6 +50,23 @@ pub fn driver_by_id(conn: &Connection, id: i64) -> rusqlite::Result<Option<Drive
     conn.query_row(&sql, [id], map_row).optional()
 }
 
+/// Latest BIOS file + release page for a motherboard product.
+#[derive(Debug, Clone)]
+pub struct BiosInfo {
+    pub file_name: Option<String>,
+    pub url_webpage: String,
+}
+
+/// BIOS row for a motherboard product: baseboard.id_bios → bios.
+pub fn bios_info_for_baseboard(conn: &Connection, product: &str) -> rusqlite::Result<Option<BiosInfo>> {
+    let sql = "SELECT b.file_name, b.url_webpage FROM bios b \
+               JOIN baseboard bb ON bb.id_bios = b.id WHERE bb.product = ?1";
+    conn.query_row(sql, [product], |row| {
+        Ok(BiosInfo { file_name: row.get(0)?, url_webpage: row.get(1)? })
+    })
+    .optional()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

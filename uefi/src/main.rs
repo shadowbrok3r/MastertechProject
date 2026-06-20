@@ -60,6 +60,9 @@ const TABS: [&str; 10] = [
 const TAB_STRESS: usize = 6;
 const TAB_ORDER: usize = 7;
 
+/// Idle ticks (~33 ms each) between command polls while agent mode is on (~5 s).
+const AGENT_POLL_TICKS: u32 = 150;
+
 /// In-memory ring log. Single-threaded app, but a Mutex keeps it simple and
 /// also lets us back the `log` facade (so the uefi crate's own debug!/trace!
 /// messages land here too).
@@ -352,6 +355,24 @@ fn parse_structures(table: &[u8]) -> Vec<SmbiosStruct> {
         i = j;
     }
     out
+}
+
+/// (total, in_use) expansion slots from SMBIOS type 9 (Current Usage 4 = In Use).
+fn collect_slots() -> (usize, usize) {
+    let Some(table) = read_table_bytes() else {
+        return (0, 0);
+    };
+    let mut total = 0;
+    let mut used = 0;
+    for s in parse_structures(&table) {
+        if s.ty == 9 {
+            total += 1;
+            if s.u8_at(0x07) == 4 {
+                used += 1;
+            }
+        }
+    }
+    (total, used)
 }
 
 fn mem_type_name(code: u8) -> &'static str {
@@ -741,6 +762,96 @@ fn collect_gpus() -> Vec<Gpu> {
     out
 }
 
+/// Negotiated vs capable PCIe link for downstream GPU/storage/network devices.
+/// A GPU at x4/Gen3 instead of x16/Gen5 (or a reseated-but-loose NVMe) shows here.
+struct PcieLink {
+    loc: String,
+    class_label: &'static str,
+    max_width: u8,
+    max_speed: u8,
+    cur_width: u8,
+    cur_speed: u8,
+}
+
+fn collect_pcie_links() -> Vec<PcieLink> {
+    let mut out = Vec::new();
+    let Ok(handles) = uefi::boot::find_handles::<PciRootBridgeIo>() else {
+        return out;
+    };
+    for h in handles {
+        let params = OpenProtocolParams {
+            handle: h,
+            agent: uefi::boot::image_handle(),
+            controller: None,
+        };
+        let mut root = match unsafe {
+            uefi::boot::open_protocol::<PciRootBridgeIo>(params, OpenProtocolAttributes::GetProtocol)
+        } {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        let Ok(tree) = root.enumerate() else {
+            continue;
+        };
+        for addr in tree.iter() {
+            macro_rules! rd {
+                ($reg:expr) => {{
+                    let mut a = *addr;
+                    a.reg = $reg as _;
+                    root.pci().read_one::<u32>(a).ok()
+                }};
+            }
+            let Some(id) = rd!(0x00) else { continue };
+            if (id & 0xFFFF) == 0xFFFF || (id & 0xFFFF) == 0 {
+                continue;
+            }
+            let Some(cls) = rd!(0x08) else { continue };
+            let base = ((cls >> 24) & 0xFF) as u8;
+            let sub = ((cls >> 16) & 0xFF) as u8;
+            let class_label = match base {
+                0x03 => "GPU",
+                0x02 => "Network",
+                0x01 if sub == 0x08 => "NVMe",
+                0x01 => "Storage",
+                _ => continue,
+            };
+            let Some(cmd_status) = rd!(0x04) else { continue };
+            if (cmd_status >> 16) & 0x10 == 0 {
+                continue; // no capability list
+            }
+            let Some(cap_ptr) = rd!(0x34) else { continue };
+            let mut ptr = (cap_ptr & 0xFF) as u64;
+            let mut pcie_cap = None;
+            let mut guard = 0;
+            while (0x40..0x100).contains(&ptr) && guard < 48 {
+                guard += 1;
+                let Some(cap) = rd!(ptr & 0xFC) else { break };
+                if (cap & 0xFF) as u8 == 0x10 {
+                    pcie_cap = Some(ptr);
+                    break;
+                }
+                let next = ((cap >> 8) & 0xFF) as u64;
+                if next == 0 || next == ptr {
+                    break;
+                }
+                ptr = next;
+            }
+            let Some(cap) = pcie_cap else { continue };
+            let Some(linkcap) = rd!(cap + 0x0C) else { continue };
+            let Some(linksts) = rd!(cap + 0x10) else { continue };
+            out.push(PcieLink {
+                loc: format!("{:02x}:{:02x}.{}", addr.bus, addr.dev, addr.fun),
+                class_label,
+                max_speed: (linkcap & 0xF) as u8,
+                max_width: ((linkcap >> 4) & 0x3F) as u8,
+                cur_speed: ((linksts >> 16) & 0xF) as u8,
+                cur_width: ((linksts >> 20) & 0x3F) as u8,
+            });
+        }
+    }
+    out
+}
+
 /// Ask the firmware to (re)bind drivers to every controller, recursively. This
 /// is the equivalent of the UEFI shell's `connect -r`, and can make SNP appear
 /// for a NIC that has a UEFI driver which BDS simply hadn't connected (e.g. a
@@ -873,11 +984,25 @@ fn fingerprint_json(info: &SysInfo) -> String {
         if i > 0 {
             nvme.push(',');
         }
+        let smart = match &d.smart {
+            Some(s) => format!(
+                ",\"smart\":{{\"critical_warning\":{},\"temp_c\":{},\"percentage_used\":{},\"available_spare\":{},\"power_on_hours\":{},\"data_units_written\":{},\"media_errors\":{}}}",
+                s.critical_warning,
+                s.temp_c,
+                s.percentage_used,
+                s.available_spare,
+                s.power_on_hours,
+                s.data_units_written,
+                s.media_errors
+            ),
+            None => String::new(),
+        };
         nvme.push_str(&format!(
-            "{{\"model\":{},\"serial\":{},\"firmware\":{}}}",
+            "{{\"model\":{},\"serial\":{},\"firmware\":{}{}}}",
             jq(&d.model),
             jq(&d.serial),
-            jq(&d.firmware)
+            jq(&d.firmware),
+            smart
         ));
     }
     let feats = info
@@ -894,7 +1019,7 @@ fn fingerprint_json(info: &SysInfo) -> String {
     let sb_enabled = info.secure_boot.unwrap_or(false);
     let win11 = win11_readiness(info).ready;
 
-    format!(
+    let mut out = format!(
         concat!(
             "{{\"system\":{{\"manufacturer\":{},\"product\":{},\"version\":{},\"serial\":{},",
             "\"uuid\":{},\"sku\":{},\"family\":{}}},",
@@ -948,7 +1073,41 @@ fn fingerprint_json(info: &SysInfo) -> String {
         jq(&info.msdm_key),
         win11,
         macs
-    )
+    );
+    out.truncate(out.len() - 1);
+    out.push_str(&format!(
+        ",\"firmware_vars\":{{\"boot_entries\":{},\"pk_enrolled\":{},\"kek_enrolled\":{},\"setup_mode\":{},\"microcode\":{},\"pci_slots_total\":{},\"pci_slots_used\":{}}}",
+        info.boot_entries,
+        info.pk_enrolled,
+        info.kek_enrolled,
+        match info.setup_mode {
+            Some(b) => b.to_string(),
+            None => "null".to_string(),
+        },
+        match info.microcode {
+            Some(m) => format!("\"0x{m:08X}\""),
+            None => "null".to_string(),
+        },
+        info.pci_slots_total,
+        info.pci_slots_used,
+    ));
+    out.push_str(",\"pcie\":[");
+    for (i, l) in info.pcie.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!(
+            "{{\"loc\":{},\"class\":{},\"max_width\":{},\"max_gen\":{},\"cur_width\":{},\"cur_gen\":{}}}",
+            jq(&l.loc),
+            jq(l.class_label),
+            l.max_width,
+            l.max_speed,
+            l.cur_width,
+            l.cur_speed
+        ));
+    }
+    out.push_str("]}");
+    out
 }
 
 /// Fingerprint JSON with the stress summary spliced in when a run exists.
@@ -1039,6 +1198,24 @@ fn http_get_json(target: &str, path: &str) -> Result<(u16, Vec<u8>), String> {
         return http_efi::get(&format!("{}://{}{}", u.scheme, u.host_port, path));
     }
     net_tcp::get(&u.host_port, path)
+}
+
+/// POST `body` to `path` on the upload target's host, picking the transport like
+/// [`http_get_json`]. `tcp://` targets redirect to the axum HTTP port.
+fn http_post_json(target: &str, path: &str, body: &[u8]) -> Result<String, String> {
+    let u = parse_upload_url(target);
+    if u.is_qc_tcp {
+        let host = u
+            .host_port
+            .rsplit_once(':')
+            .map(|(h, _)| h.to_string())
+            .unwrap_or_else(|| u.host_port.clone());
+        return net_tcp::post(&format!("{host}:8082"), path, body);
+    }
+    if u.needs_efi_http {
+        return http_efi::post(&format!("{}://{}{}", u.scheme, u.host_port, path), body);
+    }
+    net_tcp::post(&u.host_port, path, body)
 }
 
 /// HTTP(S) POST via the EFI HTTP protocol — used for `https://` (TLS) and for
@@ -1808,10 +1985,31 @@ struct NvmeDrive {
     model: String,
     serial: String,
     firmware: String,
+    smart: Option<NvmeSmart>,
+}
+
+/// NVMe SMART / Health Information (Get Log Page 0x02).
+struct NvmeSmart {
+    critical_warning: u8,
+    temp_c: i32,
+    percentage_used: u8,
+    available_spare: u8,
+    power_on_hours: u64,
+    data_units_written: u64,
+    media_errors: u64,
 }
 
 fn ascii_field(b: &[u8]) -> String {
     String::from_utf8_lossy(b).trim().to_string()
+}
+
+/// Little-endian u64 at `off`, or 0 when out of range.
+fn le64(buf: &[u8], off: usize) -> u64 {
+    if off + 8 <= buf.len() {
+        u64::from_le_bytes(buf[off..off + 8].try_into().unwrap())
+    } else {
+        0
+    }
 }
 
 /// Query each NVMe controller's IDENTIFY CONTROLLER data for model/serial/fw.
@@ -1841,30 +2039,57 @@ fn collect_nvme() -> Vec<NvmeDrive> {
             Ok(p) => p,
             Err(_) => continue,
         };
+        let align = pt.io_align();
         // Identify Controller: admin opcode 0x06, CNS=1 in CDW10, 4 KiB result.
-        let builder =
-            NvmeRequestBuilder::new(pt.io_align(), 0x06, NvmeQueueType::ADMIN).with_cdw10(1);
-        let req = match builder.with_transfer_buffer(4096) {
+        let id_req = match NvmeRequestBuilder::new(align, 0x06, NvmeQueueType::ADMIN)
+            .with_cdw10(1)
+            .with_transfer_buffer(4096)
+        {
             Ok(b) => b.build(),
             Err(_) => continue,
         };
         let mut ns = pt.controller();
-        let resp = match ns.execute_command(req) {
-            Ok(r) => r,
+        let (mut model, mut serial, mut firmware) = (String::new(), String::new(), String::new());
+        match ns.execute_command(id_req) {
+            Ok(resp) => {
+                if let Some(buf) = resp.transfer_buffer() {
+                    if buf.len() >= 72 {
+                        serial = ascii_field(&buf[4..24]);
+                        model = ascii_field(&buf[24..64]);
+                        firmware = ascii_field(&buf[64..72]);
+                    }
+                }
+            }
             Err(e) => {
                 logln(format!("nvme: IDENTIFY ERR {e:?}"));
                 continue;
             }
-        };
-        if let Some(buf) = resp.transfer_buffer() {
-            if buf.len() >= 72 {
-                out.push(NvmeDrive {
-                    serial: ascii_field(&buf[4..24]),
-                    model: ascii_field(&buf[24..64]),
-                    firmware: ascii_field(&buf[64..72]),
-                });
-            }
         }
+        // SMART / Health log: Get Log Page (opcode 0x02), LID 0x02, 512 bytes
+        // (NUMDL = 127 dwords, 0-based, in CDW10[27:16]).
+        let smart = (|| {
+            let cdw10 = (127u32 << 16) | 0x02;
+            let req = NvmeRequestBuilder::new(align, 0x02, NvmeQueueType::ADMIN)
+                .with_cdw10(cdw10)
+                .with_transfer_buffer(512)
+                .ok()?
+                .build();
+            let resp = ns.execute_command(req).ok()?;
+            let buf = resp.transfer_buffer()?;
+            if buf.len() < 168 {
+                return None;
+            }
+            Some(NvmeSmart {
+                critical_warning: buf[0],
+                temp_c: u16::from_le_bytes([buf[1], buf[2]]) as i32 - 273,
+                available_spare: buf[3],
+                percentage_used: buf[5],
+                data_units_written: le64(buf, 48),
+                power_on_hours: le64(buf, 128),
+                media_errors: le64(buf, 160),
+            })
+        })();
+        out.push(NvmeDrive { model, serial, firmware, smart });
     }
     out
 }
@@ -1875,6 +2100,41 @@ fn secure_boot() -> Option<bool> {
     let mut buf = [0u8; 1];
     match uefi::runtime::get_variable(
         uefi::cstr16!("SecureBoot"),
+        &uefi::runtime::VariableVendor::GLOBAL_VARIABLE,
+        &mut buf,
+    ) {
+        Ok((data, _)) => data.first().map(|&b| b == 1),
+        Err(_) => None,
+    }
+}
+
+/// Count of UEFI boot entries (`BootOrder` is a u16 array).
+fn boot_entry_count() -> usize {
+    let mut buf = [0u8; 512];
+    match uefi::runtime::get_variable(
+        uefi::cstr16!("BootOrder"),
+        &uefi::runtime::VariableVendor::GLOBAL_VARIABLE,
+        &mut buf,
+    ) {
+        Ok((data, _)) => data.len() / 2,
+        Err(_) => 0,
+    }
+}
+
+/// True when a global UEFI variable exists (present even if larger than the probe).
+fn global_var_present(name: &uefi::CStr16) -> bool {
+    let mut buf = [0u8; 4096];
+    match uefi::runtime::get_variable(name, &uefi::runtime::VariableVendor::GLOBAL_VARIABLE, &mut buf) {
+        Ok(_) => true,
+        Err(e) => e.status() == uefi::Status::BUFFER_TOO_SMALL,
+    }
+}
+
+/// `SetupMode` global variable: Some(true) = Setup Mode (no platform key enrolled).
+fn setup_mode() -> Option<bool> {
+    let mut buf = [0u8; 1];
+    match uefi::runtime::get_variable(
+        uefi::cstr16!("SetupMode"),
         &uefi::runtime::VariableVendor::GLOBAL_VARIABLE,
         &mut buf,
     ) {
@@ -2062,6 +2322,14 @@ struct SysInfo {
     cpu_feats: Vec<&'static str>,
     msdm: bool,
     msdm_key: String,
+    boot_entries: usize,
+    pk_enrolled: bool,
+    kek_enrolled: bool,
+    setup_mode: Option<bool>,
+    microcode: Option<u32>,
+    pci_slots_total: usize,
+    pci_slots_used: usize,
+    pcie: Vec<PcieLink>,
 }
 
 fn is_ram(ty: MemoryType) -> bool {
@@ -2174,6 +2442,15 @@ impl SysInfo {
         let (msdm, key) = collect_msdm();
         info.msdm = msdm;
         info.msdm_key = key;
+        info.boot_entries = boot_entry_count();
+        info.pk_enrolled = global_var_present(uefi::cstr16!("PK"));
+        info.kek_enrolled = global_var_present(uefi::cstr16!("KEK"));
+        info.setup_mode = setup_mode();
+        info.microcode = stress::cpu_microcode();
+        let (slots_total, slots_used) = collect_slots();
+        info.pci_slots_total = slots_total;
+        info.pci_slots_used = slots_used;
+        info.pcie = collect_pcie_links();
         info
     }
 }
@@ -2408,6 +2685,36 @@ fn page_firmware(frame: &mut Frame, area: Rect, info: &SysInfo) {
         Span::styled(format!("{:<10}", "SMBIOS"), Style::default().fg(palette::LABEL)),
         yn(info.smbios),
     ]));
+
+    lines.push(Line::from(""));
+    lines.push(header("Secure Boot & firmware variables"));
+    lines.push(Line::from(vec![
+        Span::styled(format!("{:<14}", "PK enrolled"), Style::default().fg(palette::LABEL)),
+        yn(info.pk_enrolled),
+        Span::raw("    "),
+        Span::styled(format!("{:<10}", "KEK"), Style::default().fg(palette::LABEL)),
+        yn(info.kek_enrolled),
+    ]));
+    lines.push(kv(
+        "Setup mode",
+        match info.setup_mode {
+            Some(true) => "yes (no PK)".to_string(),
+            Some(false) => "no (user mode)".to_string(),
+            None => "unknown".to_string(),
+        },
+    ));
+    lines.push(kv("Boot entries", format!("{}", info.boot_entries)));
+    lines.push(kv(
+        "Microcode",
+        match info.microcode {
+            Some(m) => format!("0x{m:08X}"),
+            None => "n/a".to_string(),
+        },
+    ));
+    lines.push(kv(
+        "PCI slots",
+        format!("{} total, {} in use", info.pci_slots_total, info.pci_slots_used),
+    ));
     frame.render_widget(para(lines, "Firmware & Tables"), area);
 }
 
@@ -2596,6 +2903,44 @@ fn page_storage(frame: &mut Frame, area: Rect, info: &SysInfo) {
                 Span::styled(format!("{:<24}", d.model), Style::default().fg(palette::ACCENT)),
                 Span::styled(format!("SN {:<22}", d.serial), Style::default().fg(palette::TEXT)),
                 Span::styled(format!("fw {}", d.firmware), Style::default().fg(palette::MUTED)),
+            ]));
+            if let Some(s) = &d.smart {
+                let warn_color = if s.critical_warning != 0 { palette::ERR } else { palette::GOOD };
+                lines.push(Line::from(vec![
+                    Span::styled("  SMART  ", Style::default().fg(palette::LABEL)),
+                    Span::styled(format!("{}C  ", s.temp_c), Style::default().fg(palette::TEXT)),
+                    Span::styled(format!("used {}%  ", s.percentage_used), Style::default().fg(palette::TEXT)),
+                    Span::styled(format!("spare {}%  ", s.available_spare), Style::default().fg(palette::TEXT)),
+                    Span::styled(format!("POH {}h  ", s.power_on_hours), Style::default().fg(palette::MUTED)),
+                    Span::styled(
+                        format!("media_err {}  ", s.media_errors),
+                        Style::default().fg(if s.media_errors > 0 { palette::ERR } else { palette::MUTED }),
+                    ),
+                    Span::styled(format!("warn 0x{:02x}", s.critical_warning), Style::default().fg(warn_color)),
+                ]));
+            }
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(header("PCIe links (negotiated vs max)"));
+    if info.pcie.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "no PCIe GPU/storage/network devices reported",
+            Style::default().fg(palette::MUTED),
+        )));
+    } else {
+        for l in &info.pcie {
+            let degraded = l.max_width > 0 && (l.cur_width < l.max_width || l.cur_speed < l.max_speed);
+            let color = if degraded { palette::ERR } else { palette::GOOD };
+            lines.push(Line::from(vec![
+                Span::styled(format!("{:<9}", l.loc), Style::default().fg(palette::ACCENT)),
+                Span::styled(format!("{:<9}", l.class_label), Style::default().fg(palette::LABEL)),
+                Span::styled(format!("x{} Gen{}", l.cur_width, l.cur_speed), Style::default().fg(color)),
+                Span::styled(
+                    format!("   (max x{} Gen{})", l.max_width, l.max_speed),
+                    Style::default().fg(palette::MUTED),
+                ),
             ]));
         }
     }
@@ -3104,11 +3449,11 @@ fn render(frame: &mut Frame, app: &App) {
         _ => &[
             ("Tab/->", "next"),
             ("<-", "prev"),
-            ("1-9,0", "jump"),
             ("r", "refresh"),
             ("c", "connect"),
             ("d", "dhcp"),
             ("e/p", "target/post"),
+            ("a/A", "agent/auto"),
             ("q", "quit"),
         ],
     };
@@ -3146,6 +3491,10 @@ struct App {
     status: String,
     stress: stress::StressEngine,
     order: order::OrderPanel,
+    /// Autonomous fleet-command polling enabled.
+    agent: bool,
+    /// Idle-tick counter toward the next command poll.
+    agent_tick: u32,
 }
 
 impl App {
@@ -3178,6 +3527,8 @@ fn run() -> Result<()> {
         status: String::new(),
         stress: stress::StressEngine::new(),
         order: order::OrderPanel::new(default_serial),
+        agent: false,
+        agent_tick: 0,
     };
 
     terminal.clear()?;
@@ -3205,10 +3556,17 @@ fn run() -> Result<()> {
 
         // Blocking input when idle; poll + frame ticks while a stress run
         // needs the charts and counters refreshed.
-        let event = if app.stress.is_active() {
+        let event = if app.stress.is_active() || app.agent {
             let ev = input_reader.poll_event()?;
             if ev.is_none() {
                 uefi::boot::stall(core::time::Duration::from_millis(33));
+                if app.agent {
+                    app.agent_tick = app.agent_tick.saturating_add(1);
+                    if app.agent_tick >= AGENT_POLL_TICKS {
+                        app.agent_tick = 0;
+                        agent_poll(&mut app, &mut terminal)?;
+                    }
+                }
                 continue;
             }
             ev
@@ -3302,6 +3660,18 @@ fn run() -> Result<()> {
                     };
                 }
             }
+            terminput::KeyCode::Char('a') => {
+                agent_poll(&mut app, &mut terminal)?;
+            }
+            terminput::KeyCode::Char('A') => {
+                app.agent = !app.agent;
+                app.agent_tick = 0;
+                app.status = if app.agent {
+                    "agent mode ON - auto-polling commands".into()
+                } else {
+                    "agent mode off".into()
+                };
+            }
             // Stress tab controls.
             terminput::KeyCode::Up if app.tab == TAB_STRESS => {
                 app.stress.selected = app.stress.selected.saturating_sub(1);
@@ -3377,6 +3747,117 @@ fn do_order_lookup(
         Err(e) => order::LookupState::Failed(e),
     };
     Ok(())
+}
+
+/// One register + poll + execute + ack cycle against the orchestrator command
+/// queue, keyed by this machine's SMBIOS serial (mirrors qc-app's fleet client).
+fn agent_poll(
+    app: &mut App,
+    terminal: &mut Terminal<ratatui_uefi::UefiOutputBackend>,
+) -> Result<()> {
+    let serial = app.info.dmi.sys_serial.trim().to_string();
+    if serial.is_empty() || serial == "-" {
+        app.status = "agent: no usable serial".into();
+        return Ok(());
+    }
+    if app.target.is_empty() {
+        app.status = "agent: set a target first ('e')".into();
+        return Ok(());
+    }
+    let mid = order::encode_path_segment(&serial);
+    app.status = "agent: registering + polling...".into();
+    terminal.draw(|frame| render(frame, app))?;
+
+    let reg = format!(
+        "{{\"machine_id\":{},\"agent_version\":{}}}",
+        jq(&serial),
+        jq(env!("CARGO_PKG_VERSION"))
+    );
+    let _ = http_post_json(&app.target, "/api/v1/qc/register", reg.as_bytes());
+
+    let cmds = match http_get_json(&app.target, &format!("/api/v1/qc/agents/{mid}/commands")) {
+        Ok((200, body)) => parse_commands(&body),
+        Ok((code, _)) => {
+            app.status = format!("agent: poll HTTP {code}");
+            return Ok(());
+        }
+        Err(e) => {
+            app.status = format!("agent: poll failed: {e}");
+            return Ok(());
+        }
+    };
+    if cmds.is_empty() {
+        app.status = "agent: no pending commands".into();
+        return Ok(());
+    }
+
+    let mut ran = 0usize;
+    for cmd in &cmds {
+        execute_command(app, cmd, terminal)?;
+        let ack = format!("{{\"command_id\":{}}}", jq(&cmd.id));
+        let _ = http_post_json(&app.target, &format!("/api/v1/qc/agents/{mid}/ack"), ack.as_bytes());
+        ran += 1;
+    }
+    app.status = format!("agent: executed {ran} command(s)");
+    Ok(())
+}
+
+/// One pending fleet command. `kind` is `"send_report"` or `{"custom":{"payload":…}}`.
+#[derive(serde::Deserialize)]
+struct AgentCommand {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    kind: serde_json::Value,
+}
+
+fn parse_commands(body: &[u8]) -> Vec<AgentCommand> {
+    serde_json::from_slice(body).unwrap_or_default()
+}
+
+/// Execute one fleet command: `send_report` re-uploads the fingerprint; custom
+/// ops drive a fingerprint refresh or a stress run.
+fn execute_command(
+    app: &mut App,
+    cmd: &AgentCommand,
+    terminal: &mut Terminal<ratatui_uefi::UefiOutputBackend>,
+) -> Result<()> {
+    if cmd.kind.as_str() == Some("send_report") {
+        let _ = upload_fingerprint(app);
+        return Ok(());
+    }
+    match cmd.kind.pointer("/custom/payload/op").and_then(|v| v.as_str()) {
+        Some("fingerprint") | Some("send_report") => {
+            let _ = upload_fingerprint(app);
+        }
+        Some("run_stress_preset") => {
+            app.stress.start_preset();
+            terminal.draw(|frame| render(frame, app))?;
+        }
+        Some("run_stress_stage") => {
+            if let Some(idx) = cmd.kind.pointer("/custom/payload/stage").and_then(|v| v.as_u64()) {
+                if let Some(stage) = stress::STAGES.get(idx as usize) {
+                    app.stress.start_single(*stage);
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Send the current fingerprint (with stress summary) to the upload target,
+/// picking the transport like the `p` action.
+fn upload_fingerprint(app: &App) -> Result<String, String> {
+    let u = parse_upload_url(&app.target);
+    let json = fingerprint_with_stress(&app.info, app.stress.summary_json());
+    if u.is_qc_tcp {
+        net_tcp::send_qc(&u.host_port, json.as_bytes())
+    } else if u.needs_efi_http {
+        http_efi::post(&u.full, json.as_bytes())
+    } else {
+        net_tcp::post(&u.host_port, &u.path, json.as_bytes())
+    }
 }
 
 fn pause() {

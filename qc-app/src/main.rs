@@ -5,13 +5,16 @@ mod bug_report;
 mod charts;
 mod checklist_store;
 mod checklist_verify;
+mod crash_report;
 mod db;
+mod diagnostics;
 mod fleet_client;
 mod hardware_id;
 mod hw_monitor;
 mod hw_sampler;
 mod mcp;
 mod order_panel;
+mod pending_results;
 mod provisioning;
 mod qc_benchmark;
 mod oa3_sager;
@@ -23,6 +26,7 @@ mod spec_check;
 mod stress_panel;
 mod telemetry;
 mod terminal_mode;
+mod update_check;
 
 pub(crate) static LAUNCH_TERMINAL: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
@@ -52,6 +56,7 @@ async fn main() -> eframe::Result<()> {
         .add_blacklist("wgpu_core")
         .add_blacklist("naga")
         .init();
+    crate::crash_report::install_panic_hook();
     log::info!(
         "qc-app: starting v{} (pid={})",
         env!("CARGO_PKG_VERSION"),
