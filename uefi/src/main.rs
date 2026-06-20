@@ -375,6 +375,57 @@ fn collect_slots() -> (usize, usize) {
     (total, used)
 }
 
+/// SMBIOS memory error type (type 18/33 offset 0x04).
+fn mem_err_type(c: u8) -> &'static str {
+    match c {
+        1 => "Other",
+        2 => "Unknown",
+        3 => "OK",
+        4 => "Bad read",
+        5 => "Parity",
+        6 => "Single-bit",
+        7 => "Double-bit",
+        8 => "Multi-bit",
+        9 => "Nibble",
+        0x0A => "Checksum",
+        0x0B => "CRC",
+        0x0C => "Corrected single-bit",
+        0x0D => "Corrected",
+        0x0E => "Uncorrectable",
+        _ => "?",
+    }
+}
+
+/// One logged memory error from SMBIOS type 18 (32-bit) / 33 (64-bit).
+struct MemError {
+    kind: &'static str,
+    addr: u64,
+}
+
+/// Logged memory errors (type 18/33), excluding OK/Unknown no-error entries.
+fn collect_mem_errors() -> Vec<MemError> {
+    let Some(table) = read_table_bytes() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for s in parse_structures(&table) {
+        let t = match s.ty {
+            18 | 33 => s.u8_at(0x04),
+            _ => continue,
+        };
+        if t == 0x02 || t == 0x03 {
+            continue;
+        }
+        let addr = if s.ty == 18 {
+            s.u32_at(0x0B) as u64
+        } else {
+            (s.u32_at(0x0B) as u64) | ((s.u32_at(0x0F) as u64) << 32)
+        };
+        out.push(MemError { kind: mem_err_type(t), addr });
+    }
+    out
+}
+
 fn mem_type_name(code: u8) -> &'static str {
     match code {
         0x03 => "DRAM",
@@ -1106,7 +1157,46 @@ fn fingerprint_json(info: &SysInfo) -> String {
             l.cur_speed
         ));
     }
-    out.push_str("]}");
+    out.push(']');
+
+    let mca = info
+        .mca
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            format!(
+                "{}{{\"bank\":{},\"status\":\"0x{:016x}\",\"addr\":\"0x{:016x}\"}}",
+                if i > 0 { "," } else { "" },
+                m.bank,
+                m.status,
+                m.addr
+            )
+        })
+        .collect::<String>();
+    let mem_errors = info
+        .mem_errors
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            format!(
+                "{}{{\"kind\":{},\"addr\":\"0x{:x}\"}}",
+                if i > 0 { "," } else { "" },
+                jq(e.kind),
+                e.addr
+            )
+        })
+        .collect::<String>();
+    out.push_str(&format!(
+        ",\"diagnostics\":{{\"rtc_suspect\":{},\"bert\":{{\"present\":{},\"error\":{},\"severity\":{},\"entries\":{}}},\"mca\":[{}],\"mem_errors\":[{}]}}",
+        info.rtc_suspect,
+        info.bert.present,
+        info.bert.error_present,
+        jq(&info.bert.severity),
+        info.bert.entry_count,
+        mca,
+        mem_errors,
+    ));
+    out.push('}');
     out
 }
 
@@ -2267,6 +2357,104 @@ fn collect_msdm() -> (bool, String) {
     (false, String::new())
 }
 
+/// Physical address of the ACPI table with signature `want`, if present.
+fn find_acpi_table(want: &[u8; 4]) -> Option<usize> {
+    let mut acpi2 = 0usize;
+    let mut acpi1 = 0usize;
+    uefi::system::with_config_table(|entries| {
+        for e in entries {
+            if e.guid == ConfigTableEntry::ACPI2_GUID {
+                acpi2 = e.address as usize;
+            } else if e.guid == ConfigTableEntry::ACPI_GUID {
+                acpi1 = e.address as usize;
+            }
+        }
+    });
+    unsafe {
+        let rd_u32 = |p: usize| -> u32 {
+            u32::from_le_bytes(core::slice::from_raw_parts(p as *const u8, 4).try_into().unwrap())
+        };
+        let rd_u64 = |p: usize| -> u64 {
+            u64::from_le_bytes(core::slice::from_raw_parts(p as *const u8, 8).try_into().unwrap())
+        };
+        let sig4 = |p: usize| -> [u8; 4] {
+            core::slice::from_raw_parts(p as *const u8, 4).try_into().unwrap()
+        };
+        let (base, count, ps) = if acpi2 != 0 && &sig4(acpi2) == b"RSD " {
+            let xsdt = rd_u64(acpi2 + 24) as usize;
+            if xsdt == 0 {
+                return None;
+            }
+            let len = rd_u32(xsdt + 4) as usize;
+            (xsdt + 36, len.saturating_sub(36) / 8, 8usize)
+        } else if acpi1 != 0 {
+            let rsdt = rd_u32(acpi1 + 16) as usize;
+            if rsdt == 0 {
+                return None;
+            }
+            let len = rd_u32(rsdt + 4) as usize;
+            (rsdt + 36, len.saturating_sub(36) / 4, 4usize)
+        } else {
+            return None;
+        };
+        if count > 1024 {
+            return None;
+        }
+        for i in 0..count {
+            let ep = base + i * ps;
+            let t = if ps == 8 { rd_u64(ep) as usize } else { rd_u32(ep) as usize };
+            if t != 0 && &sig4(t) == want {
+                return Some(t);
+            }
+        }
+        None
+    }
+}
+
+/// ACPI Boot Error Record Table — the firmware's record of the last fatal
+/// hardware error, persisted across reset.
+#[derive(Default)]
+struct BertInfo {
+    present: bool,
+    error_present: bool,
+    severity: String,
+    entry_count: u32,
+}
+
+fn collect_bert() -> BertInfo {
+    let Some(bert) = find_acpi_table(b"BERT") else {
+        return BertInfo::default();
+    };
+    unsafe {
+        let rd_u32 = |p: usize| -> u32 {
+            u32::from_le_bytes(core::slice::from_raw_parts(p as *const u8, 4).try_into().unwrap())
+        };
+        let rd_u64 = |p: usize| -> u64 {
+            u64::from_le_bytes(core::slice::from_raw_parts(p as *const u8, 8).try_into().unwrap())
+        };
+        let region_len = rd_u32(bert + 36);
+        let region = rd_u64(bert + 40) as usize;
+        if region == 0 || region_len < 20 {
+            return BertInfo { present: true, ..Default::default() };
+        }
+        let block_status = rd_u32(region);
+        let severity = rd_u32(region + 16);
+        BertInfo {
+            present: true,
+            error_present: block_status & 0xF != 0,
+            severity: match severity {
+                0 => "recoverable",
+                1 => "fatal",
+                2 => "corrected",
+                3 => "none",
+                _ => "unknown",
+            }
+            .to_string(),
+            entry_count: (block_status >> 4) & 0x3FF,
+        }
+    }
+}
+
 struct Win11 {
     ready: bool,
     checks: Vec<(&'static str, bool)>,
@@ -2330,6 +2518,10 @@ struct SysInfo {
     pci_slots_total: usize,
     pci_slots_used: usize,
     pcie: Vec<PcieLink>,
+    rtc_suspect: bool,
+    bert: BertInfo,
+    mca: Vec<stress::McaBank>,
+    mem_errors: Vec<MemError>,
 }
 
 fn is_ram(ty: MemoryType) -> bool {
@@ -2376,8 +2568,10 @@ impl SysInfo {
                 t.minute(),
                 t.second()
             );
+            info.rtc_suspect = t.year() < 2024;
         } else {
             info.rtc = "unavailable".into();
+            info.rtc_suspect = true;
         }
 
         if let Ok(mm) = uefi::boot::memory_map(MemoryType::LOADER_DATA) {
@@ -2451,6 +2645,9 @@ impl SysInfo {
         info.pci_slots_total = slots_total;
         info.pci_slots_used = slots_used;
         info.pcie = collect_pcie_links();
+        info.bert = collect_bert();
+        info.mca = stress::cpu_mca();
+        info.mem_errors = collect_mem_errors();
         info
     }
 }
@@ -2715,6 +2912,52 @@ fn page_firmware(frame: &mut Frame, area: Rect, info: &SysInfo) {
         "PCI slots",
         format!("{} total, {} in use", info.pci_slots_total, info.pci_slots_used),
     ));
+
+    lines.push(Line::from(""));
+    lines.push(header("Hardware error logs (intermittent-fault triage)"));
+    lines.push(Line::from(vec![
+        Span::styled(format!("{:<14}", "RTC battery"), Style::default().fg(palette::LABEL)),
+        if info.rtc_suspect {
+            Span::styled("SUSPECT - implausible clock (check coin cell)", Style::default().fg(palette::ERR))
+        } else {
+            Span::styled("ok", Style::default().fg(palette::GOOD))
+        },
+    ]));
+    if info.bert.present {
+        let c = if info.bert.error_present { palette::ERR } else { palette::GOOD };
+        lines.push(Line::from(vec![
+            Span::styled(format!("{:<14}", "ACPI BERT"), Style::default().fg(palette::LABEL)),
+            Span::styled(
+                if info.bert.error_present {
+                    format!("{} ({} entries)", info.bert.severity, info.bert.entry_count)
+                } else {
+                    "no boot error recorded".to_string()
+                },
+                Style::default().fg(c),
+            ),
+        ]));
+    } else {
+        lines.push(kv("ACPI BERT", "not present".to_string()));
+    }
+    if info.mca.is_empty() {
+        lines.push(kv("MCA banks", "no logged machine checks".to_string()));
+    } else {
+        for m in &info.mca {
+            lines.push(Line::from(vec![
+                Span::styled(format!("MCA bank {:<2} ", m.bank), Style::default().fg(palette::ERR)),
+                Span::styled(
+                    format!("status 0x{:016x}  addr 0x{:x}", m.status, m.addr),
+                    Style::default().fg(palette::TEXT),
+                ),
+            ]));
+        }
+    }
+    for e in &info.mem_errors {
+        lines.push(Line::from(vec![
+            Span::styled(format!("{:<14}", "Mem error"), Style::default().fg(palette::ERR)),
+            Span::styled(format!("{} @ 0x{:x}", e.kind, e.addr), Style::default().fg(palette::TEXT)),
+        ]));
+    }
     frame.render_widget(para(lines, "Firmware & Tables"), area);
 }
 
@@ -3033,6 +3276,12 @@ fn page_stress(frame: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(if errs == 0 { palette::GOOD } else { palette::ERR }),
         ),
     ]));
+    if let Some(addr) = eng.memtest_fail_addr() {
+        lines.push(Line::from(vec![
+            Span::styled(format!("{:<14}", "1st fail addr"), Style::default().fg(palette::LABEL)),
+            Span::styled(format!("0x{addr:x}"), Style::default().fg(palette::ERR)),
+        ]));
+    }
     if !eng.status.is_empty() {
         lines.push(kv("Status", eng.status.clone()));
     }

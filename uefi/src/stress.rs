@@ -321,6 +321,9 @@ fn memcpy_kernel(sh: &Shared, slot: usize, deadline: Option<u64>) {
     }
 }
 
+/// First failing memtest cell address (0 = none); CAS-set once by any core.
+static FIRST_FAIL_ADDR: AtomicU64 = AtomicU64::new(0);
+
 const MEMTEST_PATTERNS: [u64; 8] = [
     0x0000_0000_0000_0000,
     0xFFFF_FFFF_FFFF_FFFF,
@@ -361,6 +364,12 @@ fn memtest_kernel(sh: &Shared, slot: usize, deadline: Option<u64>) {
                 let p = base.add(i);
                 if p.read_volatile() != pattern ^ (p as u64) {
                     bad += 1;
+                    let _ = FIRST_FAIL_ADDR.compare_exchange(
+                        0,
+                        p as u64,
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    );
                 }
                 if i & 0x1FFF == 0
                     && (sh.cancel.load(Ordering::Relaxed) || expired(deadline))
@@ -440,6 +449,42 @@ pub fn cpu_microcode() -> Option<u32> {
     }
     #[cfg(not(target_arch = "x86_64"))]
     None
+}
+
+/// One machine-check bank with a logged error.
+pub struct McaBank {
+    pub bank: u8,
+    pub status: u64,
+    pub addr: u64,
+}
+
+/// Machine-check banks with a logged error (IA32_MCi_STATUS bit 63). Firmware
+/// may clear these during POST. Empty on non-x86 / unrecognized vendor.
+pub fn cpu_mca() -> Vec<McaBank> {
+    let mut out = Vec::new();
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        use core::arch::x86_64::__cpuid;
+        let v = __cpuid(0);
+        let intel = v.ebx == 0x756e_6547 && v.edx == 0x4965_6e69 && v.ecx == 0x6c65_746e;
+        let amd = v.ebx == 0x6874_7541 && v.edx == 0x6974_6e65 && v.ecx == 0x444d_4163;
+        if !intel && !amd {
+            return out;
+        }
+        let count = (rdmsr(0x179) & 0xFF) as u8; // IA32_MCG_CAP.Count
+        for i in 0..count.min(64) {
+            let status = rdmsr(0x401 + (i as u32) * 4); // IA32_MCi_STATUS
+            if status & (1 << 63) != 0 {
+                let addr = if status & (1 << 58) != 0 {
+                    rdmsr(0x402 + (i as u32) * 4) // IA32_MCi_ADDR
+                } else {
+                    0
+                };
+                out.push(McaBank { bank: i, status, addr });
+            }
+        }
+    }
+    out
 }
 
 impl TempSensor {
@@ -663,6 +708,7 @@ impl StressEngine {
             c.ops.store(0, Ordering::Relaxed);
             c.errors.store(0, Ordering::Relaxed);
         }
+        FIRST_FAIL_ADDR.store(0, Ordering::Relaxed);
         let workers = self.workers.clamp(0, MAX_CORES);
         if stage == Stage::CpuAlu {
             sh.region_ptr.store(0, Ordering::Release);
@@ -860,6 +906,14 @@ impl StressEngine {
 
     pub fn memtest_errors(&self) -> u64 {
         self.totals().1
+    }
+
+    /// First failing memtest cell address this/last run, if any.
+    pub fn memtest_fail_addr(&self) -> Option<u64> {
+        match FIRST_FAIL_ADDR.load(Ordering::Relaxed) {
+            0 => None,
+            a => Some(a),
+        }
     }
 
     /// `"stress"` payload appended to the fingerprint upload.

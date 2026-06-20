@@ -500,6 +500,7 @@ pub fn qc_fleet_routes() -> Router<AppState> {
         .route("/api/v1/qc/audit",                   axum::routing::get(audit_log))
         .route("/api/v1/qc/fingerprint",             axum::routing::post(ingest_fingerprint))
         .route("/api/v1/qc/fingerprint/{serial}",    axum::routing::get(get_fingerprint))
+        .route("/api/v1/qc/fingerprint/{serial}/history", axum::routing::get(get_fingerprint_history))
 }
 
 /// `POST /api/v1/qc/fingerprint` — pre-OS hardware fingerprint from the
@@ -531,6 +532,75 @@ pub async fn get_fingerprint(Path(serial): Path<String>) -> impl IntoResponse {
             Json(serde_json::json!({ "error": e.to_string() })),
         ),
     }
+}
+
+/// `GET /api/v1/qc/fingerprint/{serial}/history` — per-boot fingerprint samples
+/// for a serial (from the `fleet_event` report log) plus boot-to-boot variance
+/// flags. An intermittent fault often shows as RAM/DIMM/disk count changing
+/// between boots, or `pcie_degraded`/`bert_error`/`mca`/`mem_errors` appearing.
+pub async fn get_fingerprint_history(Path(serial): Path<String>) -> impl IntoResponse {
+    use database::schema::fleet::{FleetEvent, FleetEventKind};
+    let rows: Vec<FleetEvent> = match DATABASE.select(FLEET_EVENT_TABLE).await {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            );
+        }
+    };
+
+    let mut samples: Vec<serde_json::Value> = Vec::new();
+    let (mut rams, mut dimms, mut disks): (Vec<u64>, Vec<usize>, Vec<usize>) =
+        (Vec::new(), Vec::new(), Vec::new());
+    for ev in rows
+        .into_iter()
+        .filter(|e| e.machine_id == serial && e.kind == FleetEventKind::Report)
+    {
+        let Some(p) = ev.payload else { continue };
+        let arr_len = |ptr: &str| {
+            p.pointer(ptr).and_then(|v| v.as_array()).map_or(0, |a| a.len())
+        };
+        let ram = p.pointer("/memory/total_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
+        let dimm = arr_len("/memory/dimms");
+        let disk = arr_len("/storage");
+        let pcie_degraded = p
+            .pointer("/pcie")
+            .and_then(|v| v.as_array())
+            .map_or(0, |arr| {
+                arr.iter()
+                    .filter(|l| {
+                        let g = |k: &str| l.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+                        g("max_width") > 0 && (g("cur_width") < g("max_width") || g("cur_gen") < g("max_gen"))
+                    })
+                    .count()
+            });
+        rams.push(ram);
+        dimms.push(dimm);
+        disks.push(disk);
+        samples.push(serde_json::json!({
+            "ram_bytes": ram,
+            "dimm_count": dimm,
+            "disk_count": disk,
+            "pcie_degraded": pcie_degraded,
+            "rtc_suspect": p.pointer("/diagnostics/rtc_suspect").and_then(|v| v.as_bool()).unwrap_or(false),
+            "bert_error": p.pointer("/diagnostics/bert/error").and_then(|v| v.as_bool()).unwrap_or(false),
+            "mca": arr_len("/diagnostics/mca"),
+            "mem_errors": arr_len("/diagnostics/mem_errors"),
+        }));
+    }
+
+    let body = serde_json::json!({
+        "serial": serial,
+        "boots": samples.len(),
+        "variance": {
+            "ram_bytes": rams.iter().min() != rams.iter().max(),
+            "dimm_count": dimms.iter().min() != dimms.iter().max(),
+            "disk_count": disks.iter().min() != disks.iter().max(),
+        },
+        "samples": samples,
+    });
+    (StatusCode::OK, Json(body))
 }
 
 /// Persist a posted fingerprint: upsert `qc_fingerprint:<serial>`, project the

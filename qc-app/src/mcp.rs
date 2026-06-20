@@ -1448,6 +1448,43 @@ impl QcToolProvider {
         }
         Ok(CallToolResult::success(vec![Content::text(body)]))
     }
+
+    #[tool(
+        name = "get_preboot_history",
+        description = "Per-boot UEFI fingerprint history + boot-to-boot variance for a serial (defaults to this machine's serial). Flags RAM/DIMM/disk counts changing between boots and any pcie_degraded / bert_error / mca / mem_errors — the key signal for an intermittent hardware fault."
+    )]
+    async fn get_preboot_history(
+        &self,
+        Parameters(args): Parameters<PrebootArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let base = database::orchestrator_url().to_string();
+        if base.is_empty() {
+            return Err(to_internal("no orchestrator URL configured"));
+        }
+        let serial = match args.serial {
+            Some(s) if !s.trim().is_empty() => s.trim().to_string(),
+            _ => {
+                let id = tokio::task::spawn_blocking(crate::diagnostics::system_identity)
+                    .await
+                    .map_err(|e| to_internal(format!("identity task join: {e}")))?;
+                id.system_serial
+                    .or(id.board_serial)
+                    .ok_or_else(|| to_internal("no machine serial detected; pass `serial`"))?
+            }
+        };
+        let url = format!("{base}/api/v1/qc/fingerprint/{serial}/history");
+        let resp = reqwest::Client::new()
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| to_internal(format!("fetch {url}: {e}")))?;
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(to_internal(format!("orchestrator returned {status} for serial {serial}")));
+        }
+        Ok(CallToolResult::success(vec![Content::text(body)]))
+    }
 }
 
 /// `get_preboot_fingerprint` arguments.
