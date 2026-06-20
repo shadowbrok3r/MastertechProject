@@ -76,6 +76,9 @@ enum PanelMsg {
     RecentLoaded(Result<Vec<OrderSummary>, String>),
     SerialResolved(Option<OrderSummary>),
     ProvDone { step: String, result: Result<String, String> },
+    ProcStep { label: String, result: Result<String, String> },
+    ProcDone,
+    DmiRead(Result<crate::provisioning::dmi::DmiReadResult, String>),
 }
 
 pub struct OrderPanel {
@@ -87,6 +90,8 @@ pub struct OrderPanel {
     /// Recent build-intake orders (Order Placed / Ready to Build) for the picker.
     recent: Option<Result<Vec<OrderSummary>, String>>,
     recent_busy: bool,
+    /// How many recent orders to fetch; grows by 10 via "Load +10".
+    recent_limit: usize,
 
     /// Order auto-detected from this machine's serial (prefill suggestion).
     resolved: Option<OrderSummary>,
@@ -153,6 +158,18 @@ pub struct OrderPanel {
     prov_dmi_tool: String,
     prov_dmi_confirm: bool,
     prov_log: Vec<(String, bool, String)>,
+    /// Procedure runner: selected kind, run-in-flight flag, VRChat asset tag.
+    proc_kind: crate::provisioning::procedure::ProcedureKind,
+    proc_running: bool,
+    prov_asset_tag: String,
+    cleanup_confirm: bool,
+    /// Native SMBIOS read result for display.
+    dmi_read: Option<crate::provisioning::dmi::DmiReadResult>,
+    /// BIOS + OA3 key, read once per load.
+    hw_info_pending: bool,
+    bios_installed: Option<String>,
+    bios_latest: Option<crate::provisioning::catalog_query::BiosInfo>,
+    oa3_key: Option<String>,
 
     tx: Sender<PanelMsg>,
     rx: Receiver<PanelMsg>,
@@ -168,6 +185,7 @@ impl Default for OrderPanel {
             session: None,
             recent: None,
             recent_busy: false,
+            recent_limit: 10,
             resolved: None,
             resolve_busy: false,
             resolve_attempted: false,
@@ -216,6 +234,15 @@ impl Default for OrderPanel {
             prov_dmi_tool: String::new(),
             prov_dmi_confirm: false,
             prov_log: Vec::new(),
+            proc_kind: crate::provisioning::procedure::ProcedureKind::NewBuild,
+            proc_running: false,
+            prov_asset_tag: String::new(),
+            cleanup_confirm: false,
+            dmi_read: None,
+            hw_info_pending: false,
+            bios_installed: None,
+            bios_latest: None,
+            oa3_key: None,
             tx,
             rx,
         }
@@ -290,6 +317,15 @@ impl OrderPanel {
                     self.prov_company = None;
                     self.prov_log.clear();
                     self.prov_dmi_confirm = false;
+                    self.prov_asset_tag.clear();
+                    self.cleanup_confirm = false;
+                    self.proc_running = false;
+                    self.dmi_read = None;
+                    self.hw_info_pending = true;
+                    self.bios_installed = None;
+                    self.bios_latest = None;
+                    self.oa3_key = None;
+                    self.recent_limit = 10;
                 }
                 PanelMsg::LoadFailed(e) => {
                     self.busy = false;
@@ -387,6 +423,15 @@ impl OrderPanel {
                         Err(e) => self.prov_log.push((step, false, e)),
                     }
                 }
+                PanelMsg::ProcStep { label, result } => match result {
+                    Ok(msg) => self.prov_log.push((label, true, msg)),
+                    Err(e) => self.prov_log.push((label, false, e)),
+                },
+                PanelMsg::ProcDone => self.proc_running = false,
+                PanelMsg::DmiRead(result) => match result {
+                    Ok(r) => self.dmi_read = Some(r),
+                    Err(e) => self.prov_log.push(("DMI read".into(), false, e)),
+                },
                 PanelMsg::SerialResolved(found) => {
                     self.resolve_busy = false;
                     if let Some(summary) = found {
@@ -432,10 +477,11 @@ impl OrderPanel {
     fn start_recent(&mut self, ctx: &egui::Context) {
         self.recent_busy = true;
         let backend = QcBackend::shopify();
+        let limit = self.recent_limit;
         let tx = self.tx.clone();
         let ctx = ctx.clone();
         tokio::spawn(async move {
-            let result = backend.recent_orders(10).await.map_err(|e| format!("{e:#}"));
+            let result = backend.recent_orders(limit).await.map_err(|e| format!("{e:#}"));
             let _ = tx.send(PanelMsg::RecentLoaded(result));
             ctx.request_repaint();
         });
@@ -474,6 +520,82 @@ impl OrderPanel {
             let _ = tx.send(PanelMsg::ProvDone { step, result });
             ctx.request_repaint();
         });
+    }
+
+    /// Run a resolved procedure step-by-step on a worker thread; each result → `prov_log`.
+    fn spawn_procedure(
+        &mut self,
+        ctx: &egui::Context,
+        steps: Vec<crate::provisioning::procedure::ResolvedStep>,
+        sqlite: String,
+    ) {
+        self.proc_running = true;
+        let tx = self.tx.clone();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            for step in steps {
+                let label = step.label();
+                let result = step.run(&sqlite).map_err(|e| format!("{e:#}"));
+                let _ = tx.send(PanelMsg::ProcStep { label, result });
+                ctx.request_repaint();
+            }
+            let _ = tx.send(PanelMsg::ProcDone);
+            ctx.request_repaint();
+        });
+    }
+
+    /// DMI step inputs for a procedure run, gated on manufacturer + confirm + tool path.
+    fn build_dmi_inputs(
+        &self,
+        order: &QcOrder,
+        spec: &BuildSpec,
+        company: crate::provisioning::Company,
+        manifest: &crate::provisioning::CompanyManifest,
+    ) -> Option<crate::provisioning::procedure::DmiInputs> {
+        use crate::provisioning::dmi;
+        if company.dmi_manufacturer().is_none() || dmi::is_threadripper(spec) {
+            return None;
+        }
+        if !self.prov_dmi_confirm || self.prov_dmi_tool.trim().is_empty() {
+            return None;
+        }
+        let serial = self.board_serial.clone().unwrap_or_default();
+        let dctx = dmi::DmiContext::build(order, spec, manifest, "", &serial);
+        Some(crate::provisioning::procedure::DmiInputs {
+            tool: std::path::PathBuf::from(self.prov_dmi_tool.clone()),
+            cmds: dmi::ami_commands(&dctx),
+        })
+    }
+
+    /// Installed vs latest BIOS, with a link to the manufacturer page.
+    fn ui_bios(&mut self, ui: &mut egui::Ui) {
+        match self.bios_installed.as_deref() {
+            Some(v) => {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Installed").strong().small());
+                    ui.label(RichText::new(v).monospace().small());
+                });
+            }
+            None => {
+                ui.label(RichText::new("Installed BIOS version unavailable.").weak().small());
+            }
+        }
+        match self.bios_latest.as_ref() {
+            Some(bios) => {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("Latest").strong().small());
+                    if let Some(f) = bios.file_name.as_ref() {
+                        ui.label(RichText::new(f).monospace().small());
+                    }
+                    if !bios.url_webpage.is_empty() {
+                        ui.hyperlink_to("manufacturer page", &bios.url_webpage);
+                    }
+                });
+            }
+            None => {
+                ui.label(RichText::new("No catalog BIOS entry for this board.").weak().small());
+            }
+        }
     }
 
     /// Validate + record an influencer signature, gating on PrestaShop profile
@@ -622,6 +744,26 @@ impl OrderPanel {
                 .map(|_| to)
                 .map_err(|e| format!("{e:#}"));
             let _ = tx.send(PanelMsg::Advanced(result));
+            ctx.request_repaint();
+        });
+    }
+
+    /// Run SysPrep file cleanup then advance the order to Ready to Ship.
+    fn start_sysprep_cleanup(&mut self, ctx: &egui::Context) {
+        let Some(session) = self.session.as_ref() else { return };
+        self.prov_busy = true;
+        let backend = session.backend.clone();
+        let order = session.order.clone();
+        let tx = self.tx.clone();
+        let ctx = ctx.clone();
+        tokio::spawn(async move {
+            let result = crate::provisioning::cleanup::sysprep_cleanup(&order, &backend)
+                .await
+                .map_err(|e| format!("{e:#}"));
+            let _ = tx.send(PanelMsg::ProvDone {
+                step: "SysPrep cleanup + Ready to Ship".into(),
+                result,
+            });
             ctx.request_repaint();
         });
     }
@@ -807,6 +949,7 @@ impl OrderPanel {
             {
                 self.session = None;
                 self.error = None;
+                self.recent_limit = 10;
             }
             if let Some(tech) = self.tech.as_ref() {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -870,6 +1013,28 @@ impl OrderPanel {
             return;
         }
 
+        // BIOS + OA3 key, read once per load.
+        if self.hw_info_pending {
+            self.hw_info_pending = false;
+            self.bios_installed = crate::hardware_id::read_bios_version();
+            self.oa3_key = crate::hardware_id::read_oa3_product_key();
+            let product = self
+                .session
+                .as_ref()
+                .and_then(|s| s.spec.motherboard.clone())
+                .or_else(crate::hardware_id::read_baseboard_product)
+                .unwrap_or_default();
+            if !product.is_empty() {
+                let path = crate::db::default_sqlite_path();
+                if let Ok(conn) = crate::db::open_or_create(&path) {
+                    self.bios_latest =
+                        crate::provisioning::catalog_query::bios_info_for_baseboard(&conn, &product)
+                            .ok()
+                            .flatten();
+                }
+            }
+        }
+
         // Order comments (top) + QC report (bottom) live in a right side panel.
         egui::Panel::right("qc_side_panel")
             .resizable(true)
@@ -902,6 +1067,9 @@ impl OrderPanel {
                 CollapsingHeader::new(format!("{} Spec check", p::CPU))
                     .default_open(true)
                     .show(ui, |ui| self.ui_spec_check(ui, snapshot));
+                CollapsingHeader::new(format!("{} BIOS", p::CPU))
+                    .default_open(false)
+                    .show(ui, |ui| self.ui_bios(ui));
                 CollapsingHeader::new(format!("{} Auto-Provision", p::WRENCH))
                     .default_open(false)
                     .show(ui, |ui| self.ui_provision(ui, &ctx));
@@ -919,6 +1087,13 @@ impl OrderPanel {
                 .add_enabled(!self.recent_busy, egui::Button::new(format!("{} Refresh", p::ARROW_CLOCKWISE)))
                 .clicked()
             {
+                self.start_recent(ctx);
+            }
+            if ui
+                .add_enabled(!self.recent_busy, egui::Button::new(format!("{} Load +10", p::PLUS)))
+                .clicked()
+            {
+                self.recent_limit += 10;
                 self.start_recent(ctx);
             }
             if self.recent_busy {
@@ -1064,6 +1239,12 @@ impl OrderPanel {
                         );
                     });
                 }
+                if let Some(key) = self.oa3_key.as_ref() {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new("OA3 key").weak().small());
+                        ui.label(RichText::new(key).monospace().small());
+                    });
+                }
                 ui.horizontal(|ui| {
                     // Build-photo presence check (PS order_image / Shopify build_photos).
                     if photos.present {
@@ -1148,6 +1329,31 @@ impl OrderPanel {
                 .small()
                 .weak(),
         );
+
+        let unattached: Vec<_> = items.iter().filter(|i| !i.serial_attached()).collect();
+        if !unattached.is_empty() {
+            Frame::default()
+                .fill(CAUTION.gamma_multiply(0.12))
+                .stroke((1.0, CAUTION))
+                .corner_radius(6.0)
+                .inner_margin(Margin::symmetric(8, 6))
+                .show(ui, |ui| {
+                    ui.colored_label(
+                        CAUTION,
+                        RichText::new(format!(
+                            "{} {} item(s) not yet committed (no serial)",
+                            p::WARNING,
+                            unattached.len()
+                        ))
+                        .strong()
+                        .small(),
+                    );
+                    for it in &unattached {
+                        ui.label(RichText::new(format!("• {} ({})", it.name, it.reference)).small());
+                    }
+                });
+            ui.add_space(4.0);
+        }
 
         let mut lookup: Option<Vec<String>> = None;
         egui_extras::TableBuilder::new(ui)
@@ -1405,6 +1611,55 @@ impl OrderPanel {
         });
         ui.label(RichText::new("OS-config steps run on click; DMI writes need the confirm box.").weak().small());
 
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Procedure").small());
+            egui::ComboBox::from_id_salt("proc_kind")
+                .selected_text(self.proc_kind.label())
+                .show_ui(ui, |ui| {
+                    for k in crate::provisioning::procedure::ProcedureKind::ALL {
+                        if ui.selectable_label(self.proc_kind == k, k.label()).clicked() {
+                            self.proc_kind = k;
+                        }
+                    }
+                });
+            let can_run = !self.proc_running && !self.prov_busy;
+            if ui
+                .add_enabled(can_run, egui::Button::new(format!("{} Run full procedure", p::PLAY)))
+                .clicked()
+            {
+                let dmi_inputs = self.build_dmi_inputs(&order, &spec, company, &manifest);
+                if dmi_inputs.is_none()
+                    && company.dmi_manufacturer().is_some()
+                    && !crate::provisioning::dmi::is_threadripper(&spec)
+                {
+                    self.prov_log.push((
+                        "DMI".into(),
+                        false,
+                        "skipped — tick the confirm box and set the tool path to include DMI".into(),
+                    ));
+                }
+                let steps = crate::provisioning::procedure::resolve(
+                    self.proc_kind, &manifest, company, &spec, dmi_inputs, &self.prov_asset_tag,
+                );
+                self.spawn_procedure(ctx, steps, sqlite.clone());
+            }
+            if self.proc_running {
+                ui.spinner();
+            }
+        });
+        if company == Company::VrChat {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Asset tag").small());
+                ui.add(
+                    TextEdit::singleline(&mut self.prov_asset_tag)
+                        .hint_text("VRChat asset tag")
+                        .desired_width(160.0),
+                );
+            });
+        }
+        ui.separator();
+
         for step in &manifest.steps {
             match step.kind.as_str() {
                 "core_isolation" => {
@@ -1442,6 +1697,91 @@ impl OrderPanel {
             }
         }
 
+        // Conditional software (manifest `when` DSL).
+        let applicable: Vec<provisioning::manifest::SoftwareSpec> =
+            provisioning::software::plan(&manifest, &spec).into_iter().cloned().collect();
+        if !applicable.is_empty() {
+            CollapsingHeader::new("Conditional software").id_salt("prov_software").show(ui, |ui| {
+                if ui
+                    .add_enabled(!self.proc_running && !self.prov_busy, egui::Button::new("Install all applicable"))
+                    .clicked()
+                {
+                    let steps = applicable
+                        .iter()
+                        .cloned()
+                        .map(crate::provisioning::procedure::ResolvedStep::Software)
+                        .collect();
+                    self.spawn_procedure(ctx, steps, sqlite.clone());
+                }
+                for s in &applicable {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(&s.id).small());
+                        ui.label(RichText::new(format!("when: {}", s.when)).weak().small());
+                        if ui.add_enabled(!self.prov_busy, egui::Button::new("Install")).clicked() {
+                            let spec_c = s.clone();
+                            self.spawn_prov(&format!("Software: {}", s.id), ctx, move || {
+                                provisioning::software::install(&spec_c)
+                            });
+                        }
+                    });
+                }
+            });
+        }
+
+        // Vendor-specific + cleanup actions.
+        CollapsingHeader::new("Vendor & cleanup").id_salt("prov_vendor").show(ui, |ui| {
+            if matches!(company, Company::Bimbox) {
+                if ui.add_enabled(!self.prov_busy, egui::Button::new("Remove At-Home Support")).clicked() {
+                    self.spawn_prov("Remove At-Home Support", ctx, provisioning::vendor_steps::remove_at_home_support);
+                }
+                if ui.add_enabled(!self.prov_busy, egui::Button::new("Remove Edge favorites")).clicked() {
+                    self.spawn_prov("Remove Edge favorites", ctx, provisioning::vendor_steps::remove_edge_favorites);
+                }
+            }
+            if matches!(company, Company::VrChat) {
+                let tag = self.prov_asset_tag.clone();
+                let can = !self.prov_busy && !tag.trim().is_empty();
+                if ui.add_enabled(can, egui::Button::new("Run VRChat installer")).clicked() {
+                    self.spawn_prov("VRChat installer", ctx, move || {
+                        provisioning::vendor_steps::install_vrchat_custom(&tag)
+                    });
+                }
+            }
+            ui.separator();
+            ui.checkbox(&mut self.cleanup_confirm, "I'm ready to clean up this machine");
+            let can_clean = self.cleanup_confirm && !self.prov_busy;
+            if ui
+                .add_enabled(can_clean, egui::Button::new(format!("{} SysPrep cleanup + Ready to Ship", p::WARNING)))
+                .clicked()
+            {
+                self.start_sysprep_cleanup(ctx);
+            }
+            if ui.add_enabled(can_clean, egui::Button::new(format!("{} SysPrep cleanup (files)", p::WARNING))).clicked() {
+                self.spawn_prov("SysPrep cleanup", ctx, provisioning::cleanup::sysprep_files_only);
+            }
+            if ui.add_enabled(can_clean, egui::Button::new(format!("{} Service cleanup", p::WARNING))).clicked() {
+                self.spawn_prov("Service cleanup", ctx, provisioning::cleanup::service_cleanup);
+            }
+        });
+
+        // System utilities.
+        CollapsingHeader::new("Utilities").id_salt("prov_utils").show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Wi-Fi settings").clicked() {
+                    self.spawn_prov("Wi-Fi settings", ctx, provisioning::osconfig::open_wifi_settings);
+                }
+                if ui.button("Install share").clicked() {
+                    self.spawn_prov("Install share", ctx, provisioning::osconfig::open_share_browser);
+                }
+                if ui.button("Windows Update").clicked() {
+                    self.spawn_prov("Windows Update", ctx, provisioning::osconfig::open_windows_update);
+                }
+                if ui.button("Start menu fix").clicked() {
+                    self.spawn_prov("Start menu fix", ctx, provisioning::osconfig::fix_start_menu);
+                }
+            });
+        });
+
         if !self.prov_log.is_empty() {
             ui.add_space(4.0);
             for (s, ok, msg) in &self.prov_log {
@@ -1461,8 +1801,8 @@ impl OrderPanel {
         manifest: &crate::provisioning::CompanyManifest,
     ) {
         use crate::provisioning::dmi;
-        let board = self.board_serial.clone().unwrap_or_default();
-        let dctx = dmi::DmiContext::build(order, spec, manifest, &board, &board);
+        let serial = self.board_serial.clone().unwrap_or_default();
+        let dctx = dmi::DmiContext::build(order, spec, manifest, "", &serial);
         let cmds = dmi::ami_commands(&dctx);
 
         CollapsingHeader::new("DMI / SMBIOS write").id_salt("prov_dmi").show(ui, |ui| {
@@ -1490,6 +1830,32 @@ impl OrderPanel {
                 let tool = std::path::PathBuf::from(self.prov_dmi_tool.clone());
                 let cmds = cmds.clone();
                 self.spawn_prov("DMI write", ctx, move || dmi::run(&tool, &cmds));
+            }
+            ui.separator();
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(!self.prov_busy, egui::Button::new(format!("{} Read SMBIOS", p::MAGNIFYING_GLASS)))
+                    .clicked()
+                {
+                    let tx = self.tx.clone();
+                    let ctx2 = ctx.clone();
+                    std::thread::spawn(move || {
+                        let result = dmi::read_smbios().map_err(|e| format!("{e:#}"));
+                        let _ = tx.send(PanelMsg::DmiRead(result));
+                        ctx2.request_repaint();
+                    });
+                }
+                let can_clear =
+                    self.prov_dmi_confirm && !self.prov_dmi_tool.trim().is_empty() && !self.prov_busy;
+                if ui.add_enabled(can_clear, egui::Button::new(format!("{} Clear SMBIOS", p::WARNING))).clicked() {
+                    let tool = std::path::PathBuf::from(self.prov_dmi_tool.clone());
+                    let clear = dmi::ami_clear_commands();
+                    self.spawn_prov("DMI clear", ctx, move || dmi::run(&tool, &clear));
+                }
+            });
+            if let Some(r) = self.dmi_read.as_ref() {
+                ui.add_space(2.0);
+                ui.add(egui::Label::new(RichText::new(r.summary()).monospace().small()));
             }
         });
     }

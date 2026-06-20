@@ -98,6 +98,140 @@ fn push_if(out: &mut Vec<(&'static str, String)>, switch: &'static str, value: &
     }
 }
 
+/// AMIDEWIN switch/value pairs that wipe the written SMBIOS fields (empty values).
+pub fn ami_clear_commands() -> Vec<(&'static str, String)> {
+    ["/SS", "/BS", "/BT", "/SP", "/SF"]
+        .into_iter()
+        .map(|s| (s, String::new()))
+        .collect()
+}
+
+/// SMBIOS fields read natively (no AMIDEWIN) from the firmware table.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct DmiReadResult {
+    pub system_manufacturer: String,
+    pub system_product: String,
+    pub system_serial: String,
+    pub baseboard_manufacturer: String,
+    pub baseboard_product: String,
+    pub baseboard_serial: String,
+    pub bios_vendor: String,
+    pub bios_version: String,
+}
+
+impl DmiReadResult {
+    /// Multi-line summary of the populated fields.
+    pub fn summary(&self) -> String {
+        let rows = [
+            ("System mfr", &self.system_manufacturer),
+            ("System product", &self.system_product),
+            ("System serial", &self.system_serial),
+            ("Board mfr", &self.baseboard_manufacturer),
+            ("Board product", &self.baseboard_product),
+            ("Board serial", &self.baseboard_serial),
+            ("BIOS vendor", &self.bios_vendor),
+            ("BIOS version", &self.bios_version),
+        ];
+        rows.iter()
+            .filter(|(_, v)| !v.trim().is_empty())
+            .map(|(k, v)| format!("{k}: {v}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// Read SMBIOS type 0/1/2 fields via `GetSystemFirmwareTable('RSMB')`.
+#[cfg(windows)]
+pub fn read_smbios() -> anyhow::Result<DmiReadResult> {
+    use windows::Win32::System::SystemInformation::{FIRMWARE_TABLE_PROVIDER, GetSystemFirmwareTable};
+    const RSMB: FIRMWARE_TABLE_PROVIDER = FIRMWARE_TABLE_PROVIDER(u32::from_be_bytes(*b"RSMB"));
+    let size = unsafe { GetSystemFirmwareTable(RSMB, 0, None) };
+    if size == 0 {
+        return Err(anyhow::anyhow!("GetSystemFirmwareTable size probe returned 0"));
+    }
+    let mut buf = vec![0u8; size as usize];
+    let written = unsafe { GetSystemFirmwareTable(RSMB, 0, Some(&mut buf)) };
+    if written == 0 || written as usize > buf.len() {
+        return Err(anyhow::anyhow!("GetSystemFirmwareTable read failed (got {written}, cap {})", buf.len()));
+    }
+    buf.truncate(written as usize);
+    Ok(parse_smbios(&buf))
+}
+
+#[cfg(not(windows))]
+pub fn read_smbios() -> anyhow::Result<DmiReadResult> {
+    Err(anyhow::anyhow!("SMBIOS read is Windows-only"))
+}
+
+/// 1-based SMBIOS string lookup; index 0 is "no string".
+fn smbios_string(strings: &[String], idx: u8) -> String {
+    if idx == 0 {
+        return String::new();
+    }
+    strings.get((idx - 1) as usize).cloned().unwrap_or_default()
+}
+
+/// Parse a `RawSMBIOSData` blob into type 0/1/2 fields.
+fn parse_smbios(raw: &[u8]) -> DmiReadResult {
+    let mut out = DmiReadResult::default();
+    if raw.len() < 8 {
+        return out;
+    }
+    let length = u32::from_le_bytes([raw[4], raw[5], raw[6], raw[7]]) as usize;
+    let data_end = (8 + length).min(raw.len());
+    let data = &raw[8..data_end];
+
+    let mut i = 0usize;
+    while i + 4 <= data.len() {
+        let typ = data[i];
+        let len = data[i + 1] as usize;
+        if len < 4 {
+            break;
+        }
+        let formatted_end = i + len;
+        if formatted_end > data.len() {
+            break;
+        }
+        let mut s = formatted_end;
+        while s + 1 < data.len() && !(data[s] == 0 && data[s + 1] == 0) {
+            s += 1;
+        }
+        let strings_end = if s + 1 < data.len() { s } else { data.len() };
+        let strings: Vec<String> = data[formatted_end..strings_end]
+            .split(|b| *b == 0)
+            .filter(|seg| !seg.is_empty())
+            .map(|seg| String::from_utf8_lossy(seg).trim().to_string())
+            .collect();
+        let field = |off: usize| -> String {
+            if off < len {
+                smbios_string(&strings, data[i + off])
+            } else {
+                String::new()
+            }
+        };
+        match typ {
+            0 => {
+                out.bios_vendor = field(0x04);
+                out.bios_version = field(0x05);
+            }
+            1 => {
+                out.system_manufacturer = field(0x04);
+                out.system_product = field(0x05);
+                out.system_serial = field(0x07);
+            }
+            2 => {
+                out.baseboard_manufacturer = field(0x04);
+                out.baseboard_product = field(0x05);
+                out.baseboard_serial = field(0x07);
+            }
+            127 => break,
+            _ => {}
+        }
+        i = s + 2;
+    }
+    out
+}
+
 /// Human-readable preview of the exact commands that would run.
 pub fn preview(tool_exe: &str, cmds: &[(&'static str, String)]) -> String {
     cmds.iter()
@@ -192,5 +326,29 @@ mod tests {
     fn preview_quotes_values() {
         let cmds = vec![("/SM", "PCL".to_string())];
         assert_eq!(preview("AMIDEWIN527", &cmds), "\"AMIDEWIN527\" /SM \"PCL\"");
+    }
+
+    #[test]
+    fn clear_commands_wipe_fields() {
+        let cmds = ami_clear_commands();
+        assert!(cmds.iter().all(|(_, v)| v.is_empty()));
+        assert!(cmds.iter().any(|(s, _)| *s == "/SS"));
+    }
+
+    #[test]
+    fn parse_smbios_reads_type1() {
+        let mut table: Vec<u8> = Vec::new();
+        table.extend_from_slice(&[1, 8, 0x01, 0x00, 1, 2, 3, 4]);
+        table.extend_from_slice(b"ACME\0Box\01.0\0SER123\0\0");
+        table.extend_from_slice(&[127, 4, 0x02, 0x00, 0, 0]);
+
+        let mut raw: Vec<u8> = vec![0, 2, 8, 0];
+        raw.extend_from_slice(&(table.len() as u32).to_le_bytes());
+        raw.extend_from_slice(&table);
+
+        let r = parse_smbios(&raw);
+        assert_eq!(r.system_manufacturer, "ACME");
+        assert_eq!(r.system_product, "Box");
+        assert_eq!(r.system_serial, "SER123");
     }
 }

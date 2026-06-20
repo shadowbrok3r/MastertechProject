@@ -42,6 +42,28 @@ mod imp {
         let _ = Command::new("mmc").arg("devmgmt.msc").spawn();
         Ok("Opened Disk Management, About, and Device Manager.".into())
     }
+
+    pub fn open_wifi_settings() -> anyhow::Result<String> {
+        Command::new("explorer").arg("ms-settings:network-wifi").spawn().context("spawn explorer")?;
+        Ok("Opened Wi-Fi settings.".into())
+    }
+
+    pub fn open_share_browser() -> anyhow::Result<String> {
+        Command::new("explorer").arg(r"\\winbits7\copyfolder").spawn().context("spawn explorer")?;
+        Ok("Opened install share.".into())
+    }
+
+    pub fn open_windows_update() -> anyhow::Result<String> {
+        Command::new("explorer").arg("ms-settings:windowsupdate").spawn().context("spawn explorer")?;
+        Ok("Opened Windows Update.".into())
+    }
+
+    /// Restart Explorer to refresh the Start menu.
+    pub fn fix_start_menu() -> anyhow::Result<String> {
+        let _ = Command::new("taskkill").args(["/f", "/im", "explorer.exe"]).output();
+        Command::new("explorer.exe").spawn().context("spawn explorer")?;
+        Ok("Restarted Explorer (Start menu refresh).".into())
+    }
 }
 
 #[cfg(not(windows))]
@@ -55,6 +77,21 @@ mod imp {
     pub fn open_system_tools() -> anyhow::Result<String> {
         Err(anyhow::anyhow!("system tools are Windows-only"))
     }
+    pub fn open_wifi_settings() -> anyhow::Result<String> {
+        Err(anyhow::anyhow!("Wi-Fi settings are Windows-only"))
+    }
+    pub fn open_share_browser() -> anyhow::Result<String> {
+        Err(anyhow::anyhow!("share browser is Windows-only"))
+    }
+    pub fn open_windows_update() -> anyhow::Result<String> {
+        Err(anyhow::anyhow!("Windows Update is Windows-only"))
+    }
+    pub fn fix_start_menu() -> anyhow::Result<String> {
+        Err(anyhow::anyhow!("Start menu fix is Windows-only"))
+    }
 }
 
-pub use imp::{enable_core_isolation, open_system_tools, set_timezone_mountain};
+pub use imp::{
+    enable_core_isolation, fix_start_menu, open_share_browser, open_system_tools,
+    open_wifi_settings, open_windows_update, set_timezone_mountain,
+};

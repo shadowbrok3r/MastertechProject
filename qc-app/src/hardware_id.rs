@@ -36,12 +36,12 @@ pub fn read_machine_serials() -> Vec<String> {
     use serde::Deserialize;
 
     #[derive(Deserialize)]
-    #[serde(rename_all = "PascalCase")]
+    #[serde(rename = "Win32_Bios", rename_all = "PascalCase")]
     struct Bios {
         serial_number: Option<String>,
     }
     #[derive(Deserialize)]
-    #[serde(rename_all = "PascalCase")]
+    #[serde(rename = "Win32_BaseBoard", rename_all = "PascalCase")]
     struct BaseBoard {
         serial_number: Option<String>,
     }
@@ -77,7 +77,7 @@ pub fn read_machine_serials() -> Vec<String> {
 pub fn read_baseboard_product() -> Option<String> {
     use serde::Deserialize;
     #[derive(Deserialize)]
-    #[serde(rename_all = "PascalCase")]
+    #[serde(rename = "Win32_BaseBoard", rename_all = "PascalCase")]
     struct BaseBoard {
         product: Option<String>,
     }
@@ -91,7 +91,7 @@ pub fn read_baseboard_product() -> Option<String> {
 pub fn read_gpu_device_codes() -> Vec<String> {
     use serde::Deserialize;
     #[derive(Deserialize)]
-    #[serde(rename_all = "PascalCase")]
+    #[serde(rename = "Win32_VideoController", rename_all = "PascalCase")]
     struct VideoController {
         #[serde(rename = "PNPDeviceID")]
         pnp_device_id: Option<String>,
@@ -112,9 +112,49 @@ pub fn read_gpu_device_codes() -> Vec<String> {
         .collect()
 }
 
+/// Installed BIOS version string (Win32_Bios.SMBIOSBIOSVersion).
+#[cfg(windows)]
+pub fn read_bios_version() -> Option<String> {
+    use serde::Deserialize;
+    #[derive(Deserialize)]
+    #[serde(rename = "Win32_Bios", rename_all = "PascalCase")]
+    struct Bios {
+        #[serde(rename = "SMBIOSBIOSVersion")]
+        smbios_bios_version: Option<String>,
+    }
+    let wmi = wmi::WMIConnection::with_namespace_path("ROOT\\CIMV2").ok()?;
+    let rows: Vec<Bios> = wmi.query().ok()?;
+    rows.into_iter().find_map(|r| r.smbios_bios_version.filter(|s| !s.trim().is_empty()))
+}
+
+/// OEM product key from firmware (SoftwareLicensingService.OA3xOriginalProductKey).
+#[cfg(windows)]
+pub fn read_oa3_product_key() -> Option<String> {
+    use serde::Deserialize;
+    #[derive(Deserialize)]
+    #[serde(rename = "SoftwareLicensingService", rename_all = "PascalCase")]
+    struct SoftwareLicensingService {
+        #[serde(rename = "OA3xOriginalProductKey")]
+        oa3x_original_product_key: Option<String>,
+    }
+    let wmi = wmi::WMIConnection::with_namespace_path("ROOT\\CIMV2").ok()?;
+    let rows: Vec<SoftwareLicensingService> = wmi.query().ok()?;
+    rows.into_iter().find_map(|r| r.oa3x_original_product_key.filter(|s| !s.trim().is_empty()))
+}
+
 #[cfg(not(windows))]
 pub fn read_machine_serials() -> Vec<String> {
     Vec::new()
+}
+
+#[cfg(not(windows))]
+pub fn read_bios_version() -> Option<String> {
+    None
+}
+
+#[cfg(not(windows))]
+pub fn read_oa3_product_key() -> Option<String> {
+    None
 }
 
 #[cfg(not(windows))]

@@ -406,6 +406,42 @@ unsafe fn rdmsr(msr: u32) -> u64 {
     ((hi as u64) << 32) | lo as u64
 }
 
+#[cfg(target_arch = "x86_64")]
+unsafe fn wrmsr(msr: u32, val: u64) {
+    unsafe {
+        core::arch::asm!(
+            "wrmsr",
+            in("ecx") msr,
+            in("eax") val as u32,
+            in("edx") (val >> 32) as u32,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+}
+
+/// CPU microcode revision. Intel: write 0 to IA32_BIOS_SIGN_ID, CPUID, read EDX.
+/// AMD: low dword of MSR 0x8B. None on non-x86 or an unrecognized vendor.
+pub fn cpu_microcode() -> Option<u32> {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        use core::arch::x86_64::__cpuid;
+        let v = __cpuid(0);
+        let intel = v.ebx == 0x756e_6547 && v.edx == 0x4965_6e69 && v.ecx == 0x6c65_746e;
+        let amd = v.ebx == 0x6874_7541 && v.edx == 0x6974_6e65 && v.ecx == 0x444d_4163;
+        if intel {
+            wrmsr(0x8B, 0);
+            let _ = __cpuid(1);
+            return Some((rdmsr(0x8B) >> 32) as u32);
+        }
+        if amd {
+            return Some((rdmsr(0x8B) & 0xFFFF_FFFF) as u32);
+        }
+        None
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    None
+}
+
 impl TempSensor {
     /// GenuineIntel with a digital thermal sensor (CPUID.06H:EAX[0]) only;
     /// AMD needs family-specific SMN access and reports None for now.

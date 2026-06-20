@@ -499,6 +499,7 @@ pub fn qc_fleet_routes() -> Router<AppState> {
         .route("/api/v1/qc/agents/{machine_id}/ack",      axum::routing::post(ack_command))
         .route("/api/v1/qc/audit",                   axum::routing::get(audit_log))
         .route("/api/v1/qc/fingerprint",             axum::routing::post(ingest_fingerprint))
+        .route("/api/v1/qc/fingerprint/{serial}",    axum::routing::get(get_fingerprint))
 }
 
 /// `POST /api/v1/qc/fingerprint` — pre-OS hardware fingerprint from the
@@ -512,6 +513,24 @@ pub async fn ingest_fingerprint(Json(payload): Json<serde_json::Value>) -> impl 
         StatusCode::INTERNAL_SERVER_ERROR
     };
     (code, Json(resp))
+}
+
+/// `GET /api/v1/qc/fingerprint/{serial}` — the stored pre-boot fingerprint for a serial.
+pub async fn get_fingerprint(Path(serial): Path<String>) -> impl IntoResponse {
+    use database::schema::qc_fingerprint::{fingerprint_record_id, HardwareFingerprint};
+    let res: Result<Option<HardwareFingerprint>, _> =
+        DATABASE.select(fingerprint_record_id(&serial)).await;
+    match res {
+        Ok(Some(fp)) => (StatusCode::OK, Json(serde_json::to_value(&fp).unwrap_or_default())),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "no fingerprint for serial", "serial": serial })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
 }
 
 /// Persist a posted fingerprint: upsert `qc_fingerprint:<serial>`, project the

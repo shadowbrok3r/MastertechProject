@@ -5,12 +5,16 @@
 //! deferred to a later phase.
 
 pub mod catalog_query;
+pub mod cleanup;
 pub mod company;
 pub mod dmi;
 pub mod download;
 pub mod drivers;
 pub mod manifest;
 pub mod osconfig;
+pub mod procedure;
+pub mod software;
+pub mod vendor_steps;
 
 pub use company::Company;
 pub use manifest::{load as load_manifest, CompanyManifest};

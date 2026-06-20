@@ -20,6 +20,12 @@ pub fn install_driver(row: &DriverRow) -> anyhow::Result<String> {
     Ok(format!("Installed {}", row.file_name))
 }
 
+/// Stage a share-relative installer and silently run it (.msi via msiexec).
+pub fn install_relative(relative: &str, args: &str) -> anyhow::Result<()> {
+    let staged = download::stage_from_share(relative)?;
+    run_installer(&staged, args)
+}
+
 /// Run a staged installer: `.msi` via msiexec, otherwise the exe with its args.
 #[cfg(windows)]
 fn run_installer(path: &Path, args: &str) -> anyhow::Result<()> {

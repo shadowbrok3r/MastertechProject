@@ -118,7 +118,7 @@ impl ShopifyBackend {
             "{}/admin/api/{}/graphql.json",
             self.store_url, self.api_version
         );
-        let response: Value = reqwest::Client::new()
+        let response: Value = crate::xbm::shared_http()
             .post(&url)
             .header("X-Shopify-Access-Token", &self.token)
             .json(&json!({ "query": query, "variables": variables }))

@@ -336,6 +336,12 @@ pub struct StressPanel {
     latest_thermals: Vec<ThermalReading>,
     /// Latest per-GPU temps `(name, °C)` for the side panel.
     latest_gpu_temps: Vec<(String, f32)>,
+    /// Pre-run connectivity gate state.
+    start_requested: bool,
+    pending_start: bool,
+    conn_prompt: bool,
+    run_offline: bool,
+    conn_probe: Option<crossbeam::channel::Receiver<bool>>,
 }
 
 /// One row of the per-stage verdict table.
@@ -377,6 +383,11 @@ impl Default for StressPanel {
             temps_open: true,
             latest_thermals: Vec::new(),
             latest_gpu_temps: Vec::new(),
+            start_requested: false,
+            pending_start: false,
+            conn_prompt: false,
+            run_offline: false,
+            conn_probe: None,
         }
     }
 }
@@ -499,6 +510,9 @@ impl StressPanel {
                 self.scenario_state.finished = true;
                 self.scenario_state.finish_label = Some(verdict_label(&verdict));
                 self.scenario_state.total_elapsed_secs = verdict.duration_secs;
+                if self.run_offline {
+                    self.queue_offline_result(&verdict);
+                }
                 self.last_verdict = Some(verdict);
                 self.show_verdict = true;
             }
@@ -687,6 +701,136 @@ impl StressPanel {
         self.report_request.take()
     }
 
+    /// Probe orchestrator reachability; result drives the pre-run gate.
+    fn start_probe(&mut self) {
+        let (tx, rx) = crossbeam::channel::bounded::<bool>(1);
+        self.conn_probe = Some(rx);
+        let url = database::orchestrator_url().to_string();
+        tokio::spawn(async move {
+            let ok = if url.is_empty() {
+                false
+            } else {
+                match reqwest::Client::builder().timeout(Duration::from_secs(3)).build() {
+                    Ok(c) => c.get(&url).send().await.is_ok(),
+                    Err(_) => false,
+                }
+            };
+            let _ = tx.send(ok);
+        });
+    }
+
+    /// Start the run for the active mode.
+    fn dispatch_start(
+        &mut self,
+        cfg: &StressPanelConfig,
+        telemetry: Arc<TelemetryAgent>,
+        computer: RecordId,
+    ) {
+        if self.is_running() {
+            return;
+        }
+        match cfg.mode {
+            PanelMode::Single => self.start_single(&cfg.single, telemetry, computer),
+            PanelMode::Scenario => self.start_scenario(&cfg.scenario, telemetry, computer),
+            PanelMode::QcBenchmark => self.start_qc_benchmark(&cfg.qc_benchmark, telemetry, computer),
+            PanelMode::Certification => self.start_certification(&cfg.certification, telemetry, computer),
+        }
+    }
+
+    /// Poll the connectivity probe and render the offline prompt; dispatches a
+    /// pending start once the gate resolves.
+    fn drive_conn_gate(
+        &mut self,
+        ui: &mut egui::Ui,
+        cfg: &StressPanelConfig,
+        telemetry: &Arc<TelemetryAgent>,
+        computer: &RecordId,
+    ) {
+        if let Some(rx) = self.conn_probe.as_ref() {
+            if let Ok(online) = rx.try_recv() {
+                self.conn_probe = None;
+                if online {
+                    self.run_offline = false;
+                    if self.pending_start {
+                        self.pending_start = false;
+                        self.dispatch_start(cfg, telemetry.clone(), computer.clone());
+                    }
+                } else {
+                    self.conn_prompt = true;
+                }
+            }
+        }
+        if !self.conn_prompt {
+            return;
+        }
+        let ctx = ui.ctx().clone();
+        let mut decision: Option<u8> = None;
+        egui::Window::new("Not connected")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(&ctx, |ui| {
+                ui.label("The orchestrator/database is unreachable. Results can't be uploaded right now.");
+                ui.horizontal(|ui| {
+                    if ui.button("Connect to Wi-Fi").clicked() {
+                        decision = Some(0);
+                    }
+                    if ui.button("Continue offline (save to disk)").clicked() {
+                        decision = Some(1);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        decision = Some(2);
+                    }
+                });
+            });
+        match decision {
+            Some(0) => {
+                let _ = crate::provisioning::osconfig::open_wifi_settings();
+                self.conn_prompt = false;
+                self.start_probe();
+            }
+            Some(1) => {
+                self.run_offline = true;
+                self.conn_prompt = false;
+                if self.pending_start {
+                    self.pending_start = false;
+                    self.dispatch_start(cfg, telemetry.clone(), computer.clone());
+                }
+            }
+            Some(2) => {
+                self.conn_prompt = false;
+                self.pending_start = false;
+            }
+            _ => {}
+        }
+    }
+
+    /// Queue a completed run's result to disk for later upload.
+    fn queue_offline_result(&self, verdict: &RunVerdict) {
+        let result = crate::telemetry::StressResult {
+            scenario: crate::telemetry::StressScenario::Custom(
+                self.last_preset.clone().unwrap_or_else(|| "stress".into()),
+            ),
+            duration_secs: verdict.duration_secs as u64,
+            peak_usage_pct: 0.0,
+            peak_temp_c: verdict.summary.max_temp_c,
+            passed: Some(matches!(verdict.result, stress_runner::RunResult::Pass)),
+            notes: Some(format!("offline-queued; mode={}", verdict.failure_mode_label())),
+        };
+        let mut report = crate::telemetry::QcReport::new(
+            crate::reporting::machine_id(),
+            crate::telemetry::HwSnapshot::default(),
+        );
+        report.last_stress = Some(result);
+        match serde_json::to_value(&report) {
+            Ok(v) => match crate::pending_results::save(&v) {
+                Ok(path) => log::info!("stress: offline result queued at {}", path.display()),
+                Err(e) => log::error!("stress: failed to queue offline result: {e}"),
+            },
+            Err(e) => log::error!("stress: serialize offline result: {e}"),
+        }
+    }
+
     /// Stress tab UI.
     ///
     /// Lays out as:
@@ -730,7 +874,7 @@ impl StressPanel {
                     );
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    self.ui_top_start_stop(ui, running, cfg, &telemetry, &computer);
+                    self.ui_top_start_stop(ui, running);
                 });
             });
             ui.add_space(4.0);
@@ -759,6 +903,19 @@ impl StressPanel {
                 }
             });
         });
+
+        // Pre-run connectivity gate (probe → prompt → dispatch).
+        if self.start_requested {
+            self.start_requested = false;
+            if database::orchestrator_url().is_empty() {
+                self.pending_start = true;
+                self.conn_prompt = true;
+            } else if self.conn_probe.is_none() {
+                self.pending_start = true;
+                self.start_probe();
+            }
+        }
+        self.drive_conn_gate(ui, cfg, &telemetry, &computer);
     }
 
     fn ui_single(&mut self, ui: &mut egui::Ui, cfg: &mut StressPanelConfig, running: bool) {
@@ -1332,14 +1489,7 @@ impl StressPanel {
 
     /// Start/Stop control rendered right-aligned in the top bar; dispatches the
     /// start by the active mode.
-    fn ui_top_start_stop(
-        &mut self,
-        ui: &mut egui::Ui,
-        running: bool,
-        cfg: &StressPanelConfig,
-        telemetry: &Arc<TelemetryAgent>,
-        computer: &RecordId,
-    ) {
+    fn ui_top_start_stop(&mut self, ui: &mut egui::Ui, running: bool) {
         if running {
             if ui
                 .add(egui::Button::new(format!("{}  Stop", p::STOP)).fill(egui::Color32::from_rgb(180, 60, 60)))
@@ -1350,27 +1500,26 @@ impl StressPanel {
             ui.add(egui::Spinner::new());
             ui.label("Running…");
         } else {
+            let probing = self.conn_probe.is_some();
             if ui
-                .add(egui::Button::new(format!("{}  Start", p::PLAY)).fill(egui::Color32::from_rgb(50, 140, 80)))
+                .add_enabled(
+                    !probing,
+                    egui::Button::new(format!("{}  Start", p::PLAY)).fill(egui::Color32::from_rgb(50, 140, 80)),
+                )
                 .clicked()
             {
-                match cfg.mode {
-                    PanelMode::Single => {
-                        self.start_single(&cfg.single, telemetry.clone(), computer.clone())
-                    }
-                    PanelMode::Scenario => {
-                        self.start_scenario(&cfg.scenario, telemetry.clone(), computer.clone())
-                    }
-                    PanelMode::QcBenchmark => {
-                        self.start_qc_benchmark(&cfg.qc_benchmark, telemetry.clone(), computer.clone())
-                    }
-                    PanelMode::Certification => {
-                        self.start_certification(&cfg.certification, telemetry.clone(), computer.clone())
-                    }
-                }
+                self.start_requested = true;
             }
-            if self.has_run() {
-                ui.label(egui::RichText::new("Stopped").weak());
+            if probing {
+                ui.add(egui::Spinner::new());
+                ui.label("Checking connection…");
+            } else {
+                let queued = crate::pending_results::pending_count();
+                if queued > 0 {
+                    ui.label(egui::RichText::new(format!("{queued} result(s) queued offline")).weak());
+                } else if self.has_run() {
+                    ui.label(egui::RichText::new("Stopped").weak());
+                }
             }
         }
     }

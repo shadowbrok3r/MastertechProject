@@ -30,8 +30,8 @@ impl ReportSink {
         let base_url = orchestrator_base_url.unwrap_or_default();
         let machine_id = Arc::new(machine_id);
 
-        let machine_id_clone = machine_id.clone();
-        tokio::spawn(sink_task(rx, base_url, machine_id_clone));
+        tokio::spawn(sink_task(rx, base_url.clone(), machine_id.clone()));
+        tokio::spawn(pending_upload_task(base_url, machine_id.clone()));
 
         Self { tx, machine_id }
     }
@@ -133,6 +133,41 @@ async fn sink_task(rx: Receiver<SinkItem>, base_url: String, machine_id: Arc<Str
     }
 
     log::info!("[reporting] sink task exiting");
+}
+
+/// Drains disk-queued offline results to the orchestrator on startup and every 5 minutes.
+async fn pending_upload_task(base_url: String, machine_id: Arc<String>) {
+    if base_url.is_empty() {
+        return;
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .expect("reqwest client build failed");
+    let url = format!("{base_url}/api/v1/qc/report");
+    loop {
+        let queued = tokio::task::spawn_blocking(crate::pending_results::load_all)
+            .await
+            .unwrap_or_default();
+        for (path, value) in queued {
+            match client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .header("X-Machine-Id", machine_id.as_str())
+                .json(&value)
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    let _ = crate::pending_results::delete(&path);
+                    log::info!("[reporting] uploaded queued result {}", path.display());
+                }
+                Ok(resp) => log::warn!("[reporting] queued upload {} → HTTP {}", path.display(), resp.status()),
+                Err(e) => log::debug!("[reporting] queued upload {} failed: {e}", path.display()),
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(300)).await;
+    }
 }
 
 // Machine id: same string as Mastertech `generate_client_id` (SHA-256 hex).
