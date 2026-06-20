@@ -909,23 +909,9 @@ fn collect_pcie_links() -> Vec<PcieLink> {
 /// NIC that isn't in the boot order). It cannot conjure a driver that the
 /// firmware doesn't have (i.e. when the network stack is disabled).
 fn connect_all_controllers() {
-    // Connecting can create child handles (MNP/IP4 service-binding children)
-    // that themselves need a driver bound; repeat until the handle count stops
-    // growing so the IPv4 stack fully layers up.
-    for _ in 0..4 {
-        let before = uefi::boot::locate_handle_buffer(uefi::boot::SearchType::AllHandles)
-            .map(|b| b.len())
-            .unwrap_or(0);
-        if let Ok(handles) = uefi::boot::locate_handle_buffer(uefi::boot::SearchType::AllHandles) {
-            for &h in handles.iter() {
-                let _ = uefi::boot::connect_controller(h, None, None, true);
-            }
-        }
-        let after = uefi::boot::locate_handle_buffer(uefi::boot::SearchType::AllHandles)
-            .map(|b| b.len())
-            .unwrap_or(0);
-        if after == before {
-            break;
+    if let Ok(handles) = uefi::boot::locate_handle_buffer(uefi::boot::SearchType::AllHandles) {
+        for &h in handles.iter() {
+            let _ = uefi::boot::connect_controller(h, None, None, true);
         }
     }
 }
