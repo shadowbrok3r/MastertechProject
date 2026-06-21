@@ -85,6 +85,9 @@ async fn main() -> anyhow::Result<()> {
     // TLS). Runs alongside the HTTP server; best-effort (logs + disables itself
     // if the port can't bind).
     tokio::spawn(routes::api::qc_tcp::serve());
+    // Raw-UDP fingerprint listener for UEFI agents whose firmware won't bind an
+    // IPv4 stack (no Tcp4/Http); reassembles chunked datagrams.
+    tokio::spawn(routes::api::qc_udp::serve());
 
     let app = Router::new()
         .merge(routes(app_state.clone()))

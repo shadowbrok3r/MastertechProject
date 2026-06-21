@@ -20,6 +20,7 @@ use uefi::proto::pci::root_bridge::PciRootBridgeIo;
 use uefi::table::cfg::ConfigTableEntry;
 
 mod charts;
+mod netraw;
 mod order;
 mod stress;
 mod styling;
@@ -958,7 +959,7 @@ fn ip_str(o: [u8; 4]) -> String {
 /// the resulting addresses. NOTE: `ifup` blocks up to 30s per interface that
 /// fails to get a lease (e.g. an unassociated Wi-Fi NIC), so this is an
 /// explicit user action, not part of the passive scan.
-fn run_dhcp() -> (Vec<IfaceIp>, String) {
+fn run_dhcp() -> (Vec<IfaceIp>, Option<netraw::RawNet>, String) {
     let mut out = Vec::new();
     // Bind the MNP→IP4 stack onto the NICs only (skips unrelated controllers that
     // could hang). This is what produces Ip4Config2 / the IP4 service binding.
@@ -981,7 +982,7 @@ fn run_dhcp() -> (Vec<IfaceIp>, String) {
             }
         }
         if out.iter().any(|i| i.ip != "0.0.0.0") {
-            return (out, "DHCP: lease acquired".into());
+            return (out, None, "DHCP: lease acquired".into());
         }
     }
 
@@ -1016,11 +1017,27 @@ fn run_dhcp() -> (Vec<IfaceIp>, String) {
         }
         if out.iter().any(|i| i.ip != "0.0.0.0") {
             logln(format!("dhcp: PXE base code lease {}", out[0].ip));
-            return (out, "DHCP: lease via PXE base code".into());
+            return (out, None, "DHCP: lease via PXE base code".into());
         }
     }
 
-    (out, format!("no IPv4 lease — {} (tried Ip4Config2 + PXE base code)", net_stack_summary()))
+    // Final fallback: raw DHCP over SimpleNetwork (no firmware IPv4 stack needed).
+    match netraw::dhcp() {
+        Ok(rn) => {
+            out.push(IfaceIp { ip: netraw::ip_str(rn.ip), mask: netraw::ip_str(rn.mask) });
+            let status = format!(
+                "DHCP: lease via raw SNP {} (gw {}) - press 'p' to UDP-upload",
+                netraw::ip_str(rn.ip),
+                netraw::ip_str(rn.gateway)
+            );
+            (out, Some(rn), status)
+        }
+        Err(e) => (
+            out,
+            None,
+            format!("no IPv4 lease — {} (Ip4Config2 + PXE + raw SNP: {e})", net_stack_summary()),
+        ),
+    }
 }
 
 fn jq(s: &str) -> String {
@@ -3795,6 +3812,8 @@ struct App {
     agent: bool,
     /// Idle-tick counter toward the next command poll.
     agent_tick: u32,
+    /// Raw SimpleNetwork lease (set when DHCP succeeded only via the SNP path).
+    raw_net: Option<netraw::RawNet>,
 }
 
 impl App {
@@ -3829,6 +3848,7 @@ fn run() -> Result<()> {
         order: order::OrderPanel::new(default_serial),
         agent: false,
         agent_tick: 0,
+        raw_net: None,
     };
 
     terminal.clear()?;
@@ -3906,8 +3926,9 @@ fn run() -> Result<()> {
             terminput::KeyCode::Char('d') => {
                 app.status = "DHCP: working (up to 30s)...".into();
                 terminal.draw(|frame| render(frame, &app))?;
-                let (ifaces, status) = run_dhcp();
+                let (ifaces, raw, status) = run_dhcp();
                 app.ifaces = ifaces;
+                app.raw_net = raw;
                 app.status = status;
             }
             terminput::KeyCode::Char('e') => {
@@ -3921,6 +3942,21 @@ fn run() -> Result<()> {
                 logln(format!("POST key: target='{}'", app.target));
                 if app.target.is_empty() {
                     app.status = "set a target first (press 'e')".into();
+                } else if let Some(rn) = app.raw_net {
+                    // Raw SNP lease active (firmware IPv4 stack unavailable): UDP upload.
+                    let host = parse_upload_url(&app.target).host_port;
+                    match netraw::parse_ipv4(&host) {
+                        Some(ip) => {
+                            app.status = format!("POST: raw UDP -> {}:{} ...", netraw::ip_str(ip), netraw::UDP_PORT);
+                            terminal.draw(|frame| render(frame, &app))?;
+                            let json = fingerprint_with_stress(&app.info, app.stress.summary_json());
+                            app.status = match rn.send_udp(ip, netraw::UDP_PORT, json.as_bytes()) {
+                                Ok(n) => format!("OK: sent {n} UDP chunk(s) to {}:{}", netraw::ip_str(ip), netraw::UDP_PORT),
+                                Err(e) => format!("raw upload failed: {e}"),
+                            };
+                        }
+                        None => app.status = "raw upload needs an IPv4 target (set host to a.b.c.d)".into(),
+                    }
                 } else {
                     let u = parse_upload_url(&app.target);
                     let transport = if u.is_qc_tcp {
