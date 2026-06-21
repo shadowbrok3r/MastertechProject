@@ -4,6 +4,7 @@ pub mod order_lookup;
 pub mod parts;
 pub mod qc_fleet;
 pub mod qc_tcp;
+pub mod qc_udp;
 pub mod scheduled;
 pub mod build;
 
