@@ -908,9 +908,11 @@ fn collect_pcie_links() -> Vec<PcieLink> {
 /// for a NIC that has a UEFI driver which BDS simply hadn't connected (e.g. a
 /// NIC that isn't in the boot order). It cannot conjure a driver that the
 /// firmware doesn't have (i.e. when the network stack is disabled).
-fn connect_all_controllers() {
-    if let Ok(handles) = uefi::boot::locate_handle_buffer(uefi::boot::SearchType::AllHandles) {
-        for &h in handles.iter() {
+/// Connect drivers onto the NIC handles only (recursive), binding the MNP→IP4
+/// stack without touching unrelated controllers that can hang on a flaky unit.
+fn connect_network_stack() {
+    if let Ok(handles) = uefi::boot::find_handles::<SimpleNetwork>() {
+        for h in handles {
             let _ = uefi::boot::connect_controller(h, None, None, true);
         }
     }
@@ -958,9 +960,11 @@ fn ip_str(o: [u8; 4]) -> String {
 /// explicit user action, not part of the passive scan.
 fn run_dhcp() -> (Vec<IfaceIp>, String) {
     let mut out = Vec::new();
+    // Bind the MNP→IP4 stack onto the NICs only (skips unrelated controllers that
+    // could hang). This is what produces Ip4Config2 / the IP4 service binding.
+    connect_network_stack();
 
-    // Primary: Ip4Config2 ifup on each interface (press 'c' first to bind drivers).
-    // No connect here — connecting at boot/DHCP can hang on a flaky controller.
+    // Primary: Ip4Config2 ifup on each interface.
     if let Ok(handles) = uefi::boot::find_handles::<Ip4Config2>() {
         logln(format!("dhcp: Ip4Config2 handles={}", handles.len()));
         for (i, h) in handles.into_iter().enumerate() {
@@ -3895,9 +3899,9 @@ fn run() -> Result<()> {
             }
             terminput::KeyCode::Char('r') => app.info = SysInfo::collect(),
             terminput::KeyCode::Char('c') => {
-                connect_all_controllers();
+                connect_network_stack();
                 app.info = SysInfo::collect();
-                app.status = "connect: rescanned controllers".into();
+                app.status = "connect: bound network stack + rescanned".into();
             }
             terminput::KeyCode::Char('d') => {
                 app.status = "DHCP: working (up to 30s)...".into();
