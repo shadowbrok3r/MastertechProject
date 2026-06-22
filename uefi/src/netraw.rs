@@ -34,7 +34,7 @@ pub fn ip_str(o: [u8; 4]) -> String {
     format!("{}.{}.{}.{}", o[0], o[1], o[2], o[3])
 }
 
-fn open_snp() -> Result<ScopedProtocol<SimpleNetwork>, String> {
+pub(crate) fn open_snp() -> Result<ScopedProtocol<SimpleNetwork>, String> {
     let handle = boot::find_handles::<SimpleNetwork>()
         .map_err(|e| format!("no SNP: {e:?}"))?
         .into_iter()
