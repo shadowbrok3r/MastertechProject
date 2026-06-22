@@ -22,6 +22,7 @@ use uefi::table::cfg::ConfigTableEntry;
 mod charts;
 mod netraw;
 mod order;
+mod smolnet;
 mod stress;
 mod styling;
 
@@ -1657,8 +1658,16 @@ mod net_tcp {
         v
     }
 
-    /// HTTP POST to `http://target/path` over raw TCP4.
+    /// True when the firmware exposes no TCP4 service binding (Ip4Dxe/Tcp4 absent).
+    fn tcp4_absent() -> bool {
+        boot::find_handles::<Tcp4Sb>().map(|h| h.is_empty()).unwrap_or(true)
+    }
+
+    /// HTTP POST over raw TCP4, or smoltcp-over-SNP when no TCP4 stack exists.
     pub fn post(target: &str, path: &str, body: &[u8]) -> Result<String, String> {
+        if tcp4_absent() {
+            return crate::smolnet::post(target, path, body);
+        }
         run(target, path, body, false)
     }
 
@@ -1680,6 +1689,9 @@ mod net_tcp {
     /// HTTP GET over raw TCP4 returning (status code, body). Reads until
     /// Content-Length is satisfied or the peer closes (Connection: close).
     pub fn get(target: &str, path: &str) -> Result<(u16, Vec<u8>), String> {
+        if tcp4_absent() {
+            return crate::smolnet::get(target, path);
+        }
         let (rip, rport) =
             parse_target(target).ok_or_else(|| "bad target (use a.b.c.d or a.b.c.d:port)".to_string())?;
         logln(format!("tcp: GET {target}{path}"));
@@ -3221,6 +3233,15 @@ fn header(s: &str) -> Line<'static> {
     ))
 }
 
+/// Truncate to `w` chars (trailing `~` when clipped) so table columns don't bleed.
+fn fit(s: &str, w: usize) -> String {
+    if s.chars().count() > w {
+        s.chars().take(w.saturating_sub(1)).collect::<String>() + "~"
+    } else {
+        s.to_string()
+    }
+}
+
 fn para(lines: Vec<Line<'static>>, title: &str) -> Paragraph<'static> {
     Paragraph::new(lines)
         .style(base_style())
@@ -3349,21 +3370,30 @@ fn page_memory(frame: &mut Frame, area: Rect, info: &SysInfo) {
     } else {
         lines.push(Line::from(Span::styled(
             format!(
-                "{:<12}{:<11}{:<11}{:<8}{:<18}{:<20}{}",
-                "Slot", "Size", "Speed", "Type", "Manufacturer", "Part #", "Serial"
+                "{:<18}{:<11}{:<11}{:<7}{:<7}{:<16}{:<18}{}",
+                "Slot", "Size", "Speed", "Temp", "Type", "Manufacturer", "Part #", "Serial"
             ),
             Style::default().fg(palette::LABEL),
         )));
-        for m in &info.dmi.dimms {
+        let temps_aligned = info.spd.len() == info.dmi.dimms.len();
+        for (i, m) in info.dmi.dimms.iter().enumerate() {
             let speed = if m.speed == 0 {
                 "?".to_string()
             } else {
                 format!("{} MT/s", m.speed)
             };
+            let temp = if temps_aligned { info.spd[i].temp_c } else { None };
+            let (temp_str, temp_col) = match temp {
+                Some(t) if t >= 85.0 => (format!("{t:.0}C"), palette::ERR),
+                Some(t) => (format!("{t:.0}C"), palette::GOOD),
+                None => ("-".to_string(), palette::MUTED),
+            };
             lines.push(Line::from(vec![
-                Span::styled(format!("{:<12}", m.locator), Style::default().fg(palette::ACCENT)),
+                Span::styled(format!("{:<18}", fit(&m.locator, 17)), Style::default().fg(palette::ACCENT)),
+                Span::styled(format!("{:<11}{:<11}", fit(&m.size, 10), speed), Style::default().fg(palette::TEXT)),
+                Span::styled(format!("{temp_str:<7}"), Style::default().fg(temp_col)),
                 Span::styled(
-                    format!("{:<11}{:<11}{:<8}{:<18}{:<20}{}", m.size, speed, m.mtype, m.mfr, m.part, m.serial),
+                    format!("{:<7}{:<16}{:<18}{}", fit(&m.mtype, 6), fit(&m.mfr, 15), fit(&m.part, 17), m.serial),
                     Style::default().fg(palette::TEXT),
                 ),
             ]));
