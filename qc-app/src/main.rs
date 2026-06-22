@@ -8,6 +8,7 @@ mod checklist_verify;
 mod crash_report;
 mod db;
 mod diagnostics;
+mod driver_check;
 mod fleet_client;
 mod hardware_id;
 mod hw_monitor;

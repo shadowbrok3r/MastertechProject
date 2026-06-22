@@ -12,9 +12,11 @@ pub struct DriverRow {
     pub url_download: Option<String>,
     pub argument_string: Option<String>,
     pub id_file_type: i64,
+    pub version: Option<String>,
 }
 
-const SELECT: &str = "SELECT id, file_name, url_download, id_file_type, argument_string FROM driver";
+const SELECT: &str =
+    "SELECT id, file_name, url_download, id_file_type, argument_string, version FROM driver";
 
 fn map_row(row: &rusqlite::Row) -> rusqlite::Result<DriverRow> {
     Ok(DriverRow {
@@ -23,6 +25,7 @@ fn map_row(row: &rusqlite::Row) -> rusqlite::Result<DriverRow> {
         url_download: row.get(2)?,
         id_file_type: row.get(3)?,
         argument_string: row.get(4)?,
+        version: row.get(5)?,
     })
 }
 
@@ -63,6 +66,65 @@ pub fn bios_info_for_baseboard(conn: &Connection, product: &str) -> rusqlite::Re
                JOIN baseboard bb ON bb.id_bios = b.id WHERE bb.product = ?1";
     conn.query_row(sql, [product], |row| {
         Ok(BiosInfo { file_name: row.get(0)?, url_webpage: row.get(1)? })
+    })
+    .optional()
+}
+
+/// A catalog target driver: install file + optional version string.
+#[derive(Debug, Clone, Default)]
+pub struct TargetDriver {
+    pub file: String,
+    pub version: Option<String>,
+}
+
+/// Catalog target driver per package category for a board.
+#[derive(Debug, Clone, Default)]
+pub struct PackageDrivers {
+    pub chipset: Option<TargetDriver>,
+    pub me: Option<TargetDriver>,
+    pub graphics: Option<TargetDriver>,
+    pub audio: Option<TargetDriver>,
+    pub lan: Option<TargetDriver>,
+    pub bluetooth: Option<TargetDriver>,
+    pub wifi: Option<TargetDriver>,
+    pub raid: Option<TargetDriver>,
+    pub control_center: Option<TargetDriver>,
+}
+
+/// Every catalog target driver mapped to a board's package, by category.
+pub fn package_drivers_for_baseboard(
+    conn: &Connection,
+    product: &str,
+) -> rusqlite::Result<Option<PackageDrivers>> {
+    let sql = "SELECT cd.file_name, cd.version, me.file_name, me.version, gd.file_name, gd.version, \
+               ad.file_name, ad.version, ld.file_name, ld.version, bt.file_name, bt.version, \
+               wf.file_name, wf.version, rd.file_name, rd.version, cc.file_name, cc.version \
+               FROM baseboard b JOIN package p ON p.id = b.id_package \
+               LEFT JOIN driver cd ON cd.id = p.id_chipset_driver \
+               LEFT JOIN driver me ON me.id = p.id_me_driver \
+               LEFT JOIN driver gd ON gd.id = p.id_graphics_driver \
+               LEFT JOIN driver ad ON ad.id = p.id_audio_driver \
+               LEFT JOIN driver ld ON ld.id = p.id_lan_driver \
+               LEFT JOIN driver bt ON bt.id = p.id_bluetooth_driver \
+               LEFT JOIN driver wf ON wf.id = p.id_wifi_driver \
+               LEFT JOIN driver rd ON rd.id = p.id_raid_driver \
+               LEFT JOIN driver cc ON cc.id = p.id_control_center_driver \
+               WHERE b.product = ?1";
+    conn.query_row(sql, [product], |row| {
+        let mk = |file: Option<String>, version: Option<String>| {
+            file.map(|f| TargetDriver { file: f, version })
+        };
+        Ok(PackageDrivers {
+            chipset: mk(row.get(0)?, row.get(1)?),
+            me: mk(row.get(2)?, row.get(3)?),
+            graphics: mk(row.get(4)?, row.get(5)?),
+            audio: mk(row.get(6)?, row.get(7)?),
+            lan: mk(row.get(8)?, row.get(9)?),
+            bluetooth: mk(row.get(10)?, row.get(11)?),
+            wifi: mk(row.get(12)?, row.get(13)?),
+            raid: mk(row.get(14)?, row.get(15)?),
+            control_center: mk(row.get(16)?, row.get(17)?),
+        })
     })
     .optional()
 }
@@ -117,5 +179,18 @@ mod tests {
         let conn = seed();
         assert_eq!(driver_by_id(&conn, 1).unwrap().unwrap().file_name, "nvidia_desktop.exe");
         assert!(driver_by_id(&conn, 999).unwrap().is_none());
+    }
+
+    #[test]
+    fn package_drivers_maps_categories() {
+        let conn = seed();
+        let p = package_drivers_for_baseboard(&conn, "MSI MEG X670E GODLIKE").unwrap().unwrap();
+        assert_eq!(p.chipset.as_ref().map(|t| t.file.as_str()), Some("intel_chipset.exe"));
+        assert_eq!(p.audio.as_ref().map(|t| t.file.as_str()), Some("intel_chipset.exe"));
+        assert_eq!(p.lan.as_ref().map(|t| t.file.as_str()), Some("intel_chipset.exe"));
+        assert_eq!(p.raid.as_ref().map(|t| t.file.as_str()), Some("intel_chipset.exe"));
+        assert!(p.wifi.is_none());
+        assert!(p.bluetooth.is_none());
+        assert!(package_drivers_for_baseboard(&conn, "UNKNOWN").unwrap().is_none());
     }
 }
