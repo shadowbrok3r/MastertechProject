@@ -45,7 +45,7 @@ mod palette {
 /// build time (see build.rs). Falls back to the production URL.
 const DEFAULT_URL: &str = env!("ORCHESTRATOR_URL");
 
-const TABS: [&str; 10] = [
+const TABS: [&str; 11] = [
     "Overview",
     "System",
     "Memory",
@@ -55,6 +55,7 @@ const TABS: [&str; 10] = [
     "Stress",
     "Order",
     "Readiness",
+    "Diag",
     "Log",
 ];
 
@@ -4156,6 +4157,214 @@ fn page_readiness(frame: &mut Frame, area: Rect, info: &SysInfo) {
     frame.render_widget(para(lines, "Readiness"), area);
 }
 
+const DEV_ERR_BITS: [(u32, &str); 4] =
+    [(0, "CorrErr"), (1, "NonFatalErr"), (2, "FatalErr"), (3, "UnsuppReq")];
+const AER_CORR_BITS: [(u32, &str); 8] = [
+    (0, "RxErr"),
+    (6, "BadTLP"),
+    (7, "BadDLLP"),
+    (8, "ReplayRollover"),
+    (12, "ReplayTimeout"),
+    (13, "AdvisoryNonFatal"),
+    (14, "CorrInternal"),
+    (15, "HdrLogOverflow"),
+];
+const AER_UNCORR_BITS: [(u32, &str); 13] = [
+    (4, "DataLinkProto"),
+    (5, "SurpriseDown"),
+    (12, "PoisonedTLP"),
+    (13, "FlowCtlProto"),
+    (14, "CompTimeout"),
+    (15, "CompAbort"),
+    (16, "UnexpCompletion"),
+    (17, "RxOverflow"),
+    (18, "MalformedTLP"),
+    (19, "ECRC"),
+    (20, "UnsuppReq"),
+    (21, "ACSViolation"),
+    (22, "UncorrInternal"),
+];
+
+fn aer_names(val: u32, defs: &[(u32, &'static str)]) -> String {
+    defs.iter()
+        .filter(|(b, _)| val & (1u32 << *b) != 0)
+        .map(|(_, n)| *n)
+        .collect::<Vec<&str>>()
+        .join(", ")
+}
+
+fn page_diag(frame: &mut Frame, area: Rect, info: &SysInfo) {
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(area);
+
+    let mut left = Vec::new();
+    left.push(header("Boot timing (ACPI FPDT)"));
+    if info.fpdt.present {
+        left.push(kv("Firmware", format!("{} ms", info.fpdt.fw_boot_ms)));
+        left.push(kv("To OS loader", format!("{} ms", info.fpdt.os_loader_ms)));
+        left.push(Line::from(Span::styled(
+            "  (a boot that retrains RAM runs longer)",
+            Style::default().fg(palette::MUTED),
+        )));
+    } else {
+        left.push(kv("FPDT", "absent"));
+    }
+    left.push(Line::from(""));
+    left.push(header("RTC / CMOS"));
+    left.push(Line::from(vec![
+        Span::styled(format!("{:<14}", "RTC suspect"), Style::default().fg(palette::LABEL)),
+        yn(info.rtc_suspect),
+    ]));
+    if info.cmos.present {
+        left.push(Line::from(vec![
+            Span::styled(format!("{:<14}", "Battery lost"), Style::default().fg(palette::LABEL)),
+            yn(info.cmos.rtc_power_lost),
+        ]));
+        left.push(Line::from(vec![
+            Span::styled(format!("{:<14}", "CMOS checksum"), Style::default().fg(palette::LABEL)),
+            if info.cmos.checksum_bad {
+                Span::styled("bad", Style::default().fg(palette::ERR))
+            } else {
+                Span::styled("ok", Style::default().fg(palette::GOOD))
+            },
+        ]));
+        left.push(kv("CMOS diag", format!("0x{:02x}", info.cmos.diag)));
+    } else {
+        left.push(kv("CMOS", "unreadable"));
+    }
+    left.push(Line::from(""));
+    left.push(header("ACPI BERT (last fatal error)"));
+    if info.bert.present {
+        if info.bert.error_present {
+            left.push(Line::from(Span::styled(
+                format!("{} ({} entries)", info.bert.severity, info.bert.entry_count),
+                Style::default().fg(palette::ERR),
+            )));
+        } else {
+            left.push(Line::from(Span::styled(
+                "present, no error logged",
+                Style::default().fg(palette::GOOD),
+            )));
+        }
+    } else {
+        left.push(Line::from(Span::styled(
+            "absent (no persisted record)",
+            Style::default().fg(palette::MUTED),
+        )));
+    }
+    left.push(Line::from(""));
+    left.push(header("Machine-check banks (MCA)"));
+    if info.mca.is_empty() {
+        left.push(Line::from(Span::styled("none logged", Style::default().fg(palette::GOOD))));
+    } else {
+        for b in &info.mca {
+            left.push(Line::from(Span::styled(
+                format!("bank {}: status 0x{:016x} addr 0x{:016x}", b.bank, b.status, b.addr),
+                Style::default().fg(palette::ERR),
+            )));
+        }
+    }
+    left.push(Line::from(""));
+    left.push(header("SMBIOS memory errors"));
+    if info.mem_errors.is_empty() {
+        left.push(Line::from(Span::styled("none", Style::default().fg(palette::GOOD))));
+    } else {
+        for e in &info.mem_errors {
+            left.push(Line::from(Span::styled(
+                format!("{} @ 0x{:x}", e.kind, e.addr),
+                Style::default().fg(palette::ERR),
+            )));
+        }
+    }
+    frame.render_widget(para(left, "Diagnostics - boot & errors"), cols[0]);
+
+    let mut right = Vec::new();
+    right.push(header("DIMM SPD / temperature (SMBus)"));
+    if info.spd.is_empty() {
+        right.push(Line::from(Span::styled(
+            "no SMBus SPD (non-Intel host or none read)",
+            Style::default().fg(palette::MUTED),
+        )));
+    } else {
+        for d in &info.spd {
+            let mut spans = vec![
+                Span::styled(format!("0x{:02x} ", d.addr), Style::default().fg(palette::ACCENT)),
+                Span::styled(format!("{:<6}", d.type_name), Style::default().fg(palette::LABEL)),
+            ];
+            match d.temp_c {
+                Some(t) => {
+                    let c = if t >= 85.0 { palette::ERR } else { palette::GOOD };
+                    spans.push(Span::styled(format!("{t:.1} C"), Style::default().fg(c)));
+                }
+                None => spans.push(Span::styled("temp n/a", Style::default().fg(palette::MUTED))),
+            }
+            if let Some(pa) = d.pmic_addr {
+                if d.pmic_fault {
+                    spans.push(Span::styled(
+                        format!("  PMIC 0x{pa:02x} FAULT (r04=0x{:02x} r08=0x{:02x})", d.pmic_r04, d.pmic_r08),
+                        Style::default().fg(palette::ERR),
+                    ));
+                } else {
+                    spans.push(Span::styled("  PMIC ok", Style::default().fg(palette::GOOD)));
+                }
+            }
+            right.push(Line::from(spans));
+        }
+    }
+    right.push(Line::from(""));
+    right.push(header("Memory controller (MCHBAR)"));
+    match info.mchbar.vendor {
+        "intel" if info.mchbar.enabled => {
+            right.push(kv("MCHBAR", format!("0x{:x}", info.mchbar.base)));
+            let hex: Vec<String> = info.mchbar.window.iter().map(|w| format!("{w:08x}")).collect();
+            right.push(Line::from(Span::styled(hex.join(" "), Style::default().fg(palette::TEXT))));
+            right.push(Line::from(Span::styled(
+                "  (window changing across boots = RAM retrained)",
+                Style::default().fg(palette::MUTED),
+            )));
+        }
+        "intel" => right.push(kv("MCHBAR", "present, disabled")),
+        "amd" => right.push(Line::from(Span::styled(
+            "AMD UMC (base-detect only)",
+            Style::default().fg(palette::MUTED),
+        ))),
+        _ => right.push(Line::from(Span::styled("not available", Style::default().fg(palette::MUTED)))),
+    }
+    right.push(Line::from(""));
+    right.push(header("PCIe link errors (AER / Device Status)"));
+    let mut any_aer = false;
+    for l in &info.pcie {
+        if l.dev_err == 0 && l.aer_corr == 0 && l.aer_uncorr == 0 {
+            continue;
+        }
+        any_aer = true;
+        let concerning = l.aer_uncorr != 0 || l.aer_corr & 0x11C1 != 0;
+        let col = if concerning { palette::ERR } else { palette::MUTED };
+        right.push(Line::from(Span::styled(
+            format!("{} {}", l.class_label, l.loc),
+            Style::default().fg(palette::ACCENT),
+        )));
+        let dev = aer_names(l.dev_err as u32, &DEV_ERR_BITS);
+        if !dev.is_empty() {
+            right.push(Line::from(Span::styled(format!("  dev: {dev}"), Style::default().fg(col))));
+        }
+        let cor = aer_names(l.aer_corr, &AER_CORR_BITS);
+        if !cor.is_empty() {
+            right.push(Line::from(Span::styled(format!("  corr: {cor}"), Style::default().fg(col))));
+        }
+        let unc = aer_names(l.aer_uncorr, &AER_UNCORR_BITS);
+        if !unc.is_empty() {
+            right.push(Line::from(Span::styled(format!("  uncorr: {unc}"), Style::default().fg(palette::ERR))));
+        }
+    }
+    if !any_aer {
+        right.push(Line::from(Span::styled("no PCIe errors logged", Style::default().fg(palette::GOOD))));
+    }
+    frame.render_widget(para(right, "Diagnostics - memory & links"), cols[1]);
+}
+
 fn page_log(frame: &mut Frame, area: Rect) {
     let logs = log_snapshot();
     // Show only the tail that fits inside the panel borders.
@@ -4207,6 +4416,7 @@ fn render(frame: &mut Frame, app: &App) {
         6 => page_stress(frame, root[1], app),
         7 => page_order(frame, root[1], app),
         8 => page_readiness(frame, root[1], &app.info),
+        9 => page_diag(frame, root[1], &app.info),
         _ => page_log(frame, root[1]),
     }
 
