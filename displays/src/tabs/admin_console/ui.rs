@@ -464,7 +464,10 @@ impl AdminConsole {
     pub fn right_panel_ui(&mut self, ui: &mut Ui) {
         match self.right_panel {
             Some(RightPanel::ScriptEditor) => self.script_editor.ui(ui),
-            Some(RightPanel::Chat) => self.ai_playground.enhanced_ai_playground(ui),
+            Some(RightPanel::Chat) => {
+                self.ai_playground.focused_client = self.focused_client.clone();
+                self.ai_playground.enhanced_ai_playground(ui);
+            }
             None => {}
         }
     }

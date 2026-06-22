@@ -21,6 +21,8 @@ pub fn open_or_create(path: &Path) -> anyhow::Result<Connection> {
     let conn = Connection::open(path).with_context(|| format!("open sqlite {}", path.display()))?;
     conn.execute_batch(SQLITE_SCHEMA)
         .context("apply qc_app schema")?;
+    // Additive column on pre-existing DBs; ignores the duplicate-column error.
+    let _ = conn.execute("ALTER TABLE driver ADD COLUMN version TEXT", []);
     Ok(conn)
 }
 

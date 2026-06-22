@@ -42,6 +42,17 @@ pub struct FirmwareSecurity {
     pub windows_activated: Option<bool>,
 }
 
+/// One installed device driver from `Win32_PnPSignedDriver`.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct InstalledDriver {
+    pub class: String,
+    pub device_name: String,
+    pub version: String,
+    pub date: String,
+    pub provider: String,
+    pub manufacturer: String,
+}
+
 /// One physical disk's health from the Storage Management WMI provider.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct StorageDisk {
@@ -55,8 +66,199 @@ pub struct StorageDisk {
 
 #[cfg(windows)]
 mod imp {
-    use super::{FirmwareSecurity, StorageDisk};
+    use super::{FirmwareSecurity, InstalledDriver, StorageDisk};
     use serde::Deserialize;
+    use windows::Win32::Devices::DeviceAndDriverInstallation::{HDEVINFO, SP_DEVINFO_DATA};
+    use windows::Win32::Foundation::DEVPROPKEY;
+
+    /// Installed drivers, preferring SetupAPI (Device Manager's source); falls back
+    /// to WMI `Win32_PnPSignedDriver` if SetupAPI yields nothing.
+    pub fn installed_drivers() -> Vec<InstalledDriver> {
+        let native = installed_drivers_native();
+        if native.is_empty() {
+            installed_drivers_wmi()
+        } else {
+            native
+        }
+    }
+
+    /// Enumerate present devices via SetupAPI and read driver version/provider/date.
+    fn installed_drivers_native() -> Vec<InstalledDriver> {
+        use windows::Win32::Devices::DeviceAndDriverInstallation::{
+            DIGCF_ALLCLASSES, DIGCF_PRESENT, SETUP_DI_GET_CLASS_DEVS_FLAGS, SetupDiDestroyDeviceInfoList,
+            SetupDiEnumDeviceInfo, SetupDiGetClassDevsW,
+        };
+        use windows::Win32::Devices::Properties::{
+            DEVPKEY_Device_Class, DEVPKEY_Device_DeviceDesc, DEVPKEY_Device_DriverDate,
+            DEVPKEY_Device_DriverProvider, DEVPKEY_Device_DriverVersion, DEVPKEY_Device_Manufacturer,
+            DEVPKEY_NAME,
+        };
+        use windows::core::PCWSTR;
+
+        let flags = SETUP_DI_GET_CLASS_DEVS_FLAGS(DIGCF_PRESENT.0 | DIGCF_ALLCLASSES.0);
+        let set = match unsafe { SetupDiGetClassDevsW(None, PCWSTR::null(), None, flags) } {
+            Ok(h) => h,
+            Err(_) => return Vec::new(),
+        };
+
+        let mut out = Vec::new();
+        let mut index = 0u32;
+        loop {
+            let mut data = SP_DEVINFO_DATA {
+                cbSize: core::mem::size_of::<SP_DEVINFO_DATA>() as u32,
+                ..Default::default()
+            };
+            if unsafe { SetupDiEnumDeviceInfo(set, index, &mut data) }.is_err() {
+                break;
+            }
+            index += 1;
+
+            let class = dev_prop_string(set, &data, &DEVPKEY_Device_Class).unwrap_or_default();
+            if !relevant_class(&class) {
+                continue;
+            }
+            let name = dev_prop_string(set, &data, &DEVPKEY_NAME)
+                .or_else(|| dev_prop_string(set, &data, &DEVPKEY_Device_DeviceDesc))
+                .unwrap_or_default();
+            if name.trim().is_empty() {
+                continue;
+            }
+            out.push(InstalledDriver {
+                class,
+                device_name: name,
+                version: dev_prop_string(set, &data, &DEVPKEY_Device_DriverVersion).unwrap_or_default(),
+                date: dev_prop_filetime(set, &data, &DEVPKEY_Device_DriverDate),
+                provider: dev_prop_string(set, &data, &DEVPKEY_Device_DriverProvider).unwrap_or_default(),
+                manufacturer: dev_prop_string(set, &data, &DEVPKEY_Device_Manufacturer).unwrap_or_default(),
+            });
+        }
+        let _ = unsafe { SetupDiDestroyDeviceInfoList(set) };
+        out
+    }
+
+    fn relevant_class(class: &str) -> bool {
+        matches!(
+            class.to_ascii_lowercase().as_str(),
+            "display" | "net" | "media" | "bluetooth" | "system" | "hdc" | "scsiadapter"
+        )
+    }
+
+    /// Read a string device property (size probe, then fetch).
+    fn dev_prop_string(set: HDEVINFO, data: &SP_DEVINFO_DATA, key: &DEVPROPKEY) -> Option<String> {
+        use windows::Win32::Devices::DeviceAndDriverInstallation::SetupDiGetDevicePropertyW;
+        use windows::Win32::Devices::Properties::{DEVPROP_TYPE_STRING, DEVPROPTYPE};
+        let mut ptype = DEVPROPTYPE(0);
+        let mut required: u32 = 0;
+        let _ = unsafe {
+            SetupDiGetDevicePropertyW(set, data, key, &mut ptype, None, Some(&mut required as *mut u32), 0)
+        };
+        if required == 0 || ptype != DEVPROP_TYPE_STRING {
+            return None;
+        }
+        let mut buf = vec![0u8; required as usize];
+        unsafe {
+            SetupDiGetDevicePropertyW(set, data, key, &mut ptype, Some(buf.as_mut_slice()), None, 0).ok()?
+        };
+        let u16s: Vec<u16> = buf.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let s = String::from_utf16_lossy(&u16s);
+        let s = s.trim_end_matches('\0').trim().to_string();
+        (!s.is_empty()).then_some(s)
+    }
+
+    /// Read a FILETIME device property as a `YYYY-MM-DD` string.
+    fn dev_prop_filetime(set: HDEVINFO, data: &SP_DEVINFO_DATA, key: &DEVPROPKEY) -> String {
+        use windows::Win32::Devices::DeviceAndDriverInstallation::SetupDiGetDevicePropertyW;
+        use windows::Win32::Devices::Properties::{DEVPROP_TYPE_FILETIME, DEVPROPTYPE};
+        let mut ptype = DEVPROPTYPE(0);
+        let mut buf = [0u8; 8];
+        if unsafe {
+            SetupDiGetDevicePropertyW(set, data, key, &mut ptype, Some(buf.as_mut_slice()), None, 0)
+        }
+        .is_err()
+            || ptype != DEVPROP_TYPE_FILETIME
+        {
+            return String::new();
+        }
+        let low = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+        let high = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
+        filetime_to_date(low, high)
+    }
+
+    /// 100ns-since-1601 FILETIME → `YYYY-MM-DD` (Howard Hinnant civil-from-days).
+    fn filetime_to_date(low: u32, high: u32) -> String {
+        let ft = (((high as u64) << 32) | low as u64) as i64;
+        if ft <= 0 {
+            return String::new();
+        }
+        let unix = (ft - 116_444_736_000_000_000) / 10_000_000;
+        if unix < 0 {
+            return String::new();
+        }
+        let z = unix.div_euclid(86_400) + 719_468;
+        let era = z.div_euclid(146_097);
+        let doe = z - era * 146_097;
+        let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        let y = yoe + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = if mp < 10 { mp + 3 } else { mp - 9 };
+        let y = if m <= 2 { y + 1 } else { y };
+        format!("{y:04}-{m:02}-{d:02}")
+    }
+
+    /// Installed drivers in the QC-relevant device classes (Win32_PnPSignedDriver).
+    fn installed_drivers_wmi() -> Vec<InstalledDriver> {
+        #[derive(Deserialize)]
+        struct Row {
+            #[serde(rename = "DeviceClass")]
+            device_class: Option<String>,
+            #[serde(rename = "DeviceName")]
+            device_name: Option<String>,
+            #[serde(rename = "DriverVersion")]
+            driver_version: Option<String>,
+            #[serde(rename = "DriverDate")]
+            driver_date: Option<String>,
+            #[serde(rename = "DriverProviderName")]
+            driver_provider_name: Option<String>,
+            #[serde(rename = "Manufacturer")]
+            manufacturer: Option<String>,
+        }
+        let Ok(wmi) = wmi::WMIConnection::with_namespace_path("ROOT\\CIMV2") else {
+            return Vec::new();
+        };
+        let rows: Vec<Row> = wmi
+            .raw_query(
+                "SELECT DeviceClass, DeviceName, DriverVersion, DriverDate, DriverProviderName, Manufacturer \
+                 FROM Win32_PnPSignedDriver WHERE DeviceClass='DISPLAY' OR DeviceClass='NET' \
+                 OR DeviceClass='MEDIA' OR DeviceClass='BLUETOOTH' OR DeviceClass='SYSTEM' OR DeviceClass='HDC'",
+            )
+            .unwrap_or_default();
+        rows.into_iter()
+            .filter_map(|r| {
+                let name = r.device_name.unwrap_or_default();
+                if name.trim().is_empty() {
+                    return None;
+                }
+                Some(InstalledDriver {
+                    class: r.device_class.unwrap_or_default(),
+                    device_name: name,
+                    version: r.driver_version.unwrap_or_default(),
+                    date: fmt_cim_date(r.driver_date.as_deref()),
+                    provider: r.driver_provider_name.unwrap_or_default(),
+                    manufacturer: r.manufacturer.unwrap_or_default(),
+                })
+            })
+            .collect()
+    }
+
+    /// CIM datetime ("YYYYMMDDhhmmss.……") → "YYYY-MM-DD".
+    fn fmt_cim_date(d: Option<&str>) -> String {
+        match d {
+            Some(s) if s.len() >= 8 => format!("{}-{}-{}", &s[0..4], &s[4..6], &s[6..8]),
+            _ => String::new(),
+        }
+    }
 
     pub fn firmware_security() -> FirmwareSecurity {
         let (boot_mode, secure_boot_enabled) = read_secure_boot();
@@ -219,7 +421,7 @@ mod imp {
 }
 
 #[cfg(windows)]
-pub use imp::{firmware_security, storage_health};
+pub use imp::{firmware_security, installed_drivers, storage_health};
 
 #[cfg(not(windows))]
 pub fn firmware_security() -> FirmwareSecurity {
@@ -228,5 +430,10 @@ pub fn firmware_security() -> FirmwareSecurity {
 
 #[cfg(not(windows))]
 pub fn storage_health() -> Vec<StorageDisk> {
+    Vec::new()
+}
+
+#[cfg(not(windows))]
+pub fn installed_drivers() -> Vec<InstalledDriver> {
     Vec::new()
 }

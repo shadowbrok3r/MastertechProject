@@ -37,6 +37,9 @@ pub struct EnhancedAiPlayground {
     pub open_modal: bool,
     /// Expose the Mastertech MCP tools to the model (native only).
     pub use_mcp_tools: bool,
+    /// Connection string of the connected client the admin console is focused on; seeds Claude Code diagnostics.
+    #[serde(skip)]
+    pub focused_client: Option<String>,
     /// Set when the panel's close button is clicked; the host reads + clears it.
     #[serde(skip)]
     close_requested: bool,
@@ -64,6 +67,7 @@ impl Default for EnhancedAiPlayground {
             image_id: String::new(),
             open_modal: false,
             use_mcp_tools: true,
+            focused_client: None,
             close_requested: false,
             loaded: false,
             load_tx,
@@ -76,6 +80,48 @@ impl EnhancedAiPlayground {
     /// Returns and clears the "close panel" request raised by the top-bar ✕.
     pub fn take_close_request(&mut self) -> bool {
         std::mem::take(&mut self.close_requested)
+    }
+
+    /// Start a Claude Code (subscription) diagnostic in a fresh thread, seeded with the focused
+    /// connected client. Claude Code runs its own loop against the Mastertech MCP.
+    pub fn start_claude_diagnosis(&mut self, connection_string: Option<String>) {
+        let thread_id = uuid::Uuid::new_v4().to_string();
+        self.selected_thread = thread_id.clone();
+        self.threads.insert(
+            thread_id.clone(),
+            ChatThread { id: thread_id.clone(), messages: Vec::new(), images: Vec::new(), input: String::new() },
+        );
+        let label = match &connection_string {
+            Some(cs) => format!("Diagnose {cs} with Claude Code"),
+            None => "Diagnose with Claude Code".to_string(),
+        };
+        let _ = self.response_tx.try_send(ChatMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            thread_id: thread_id.clone(),
+            ts: 0,
+            from: SentFrom::Me,
+            content: ChatMessageType::Text(label),
+        });
+        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        {
+            let prompt = match &connection_string {
+                Some(cs) => format!(
+                    "Diagnose the connected client with connection_string '{cs}'. Pull its prior history \
+                     and run an initial triage using the Mastertech tools (remote tools act on that client)."
+                ),
+                None => "Run an initial diagnostic using the Mastertech tools.".to_string(),
+            };
+            let tx = self.response_tx.clone();
+            PlatformSpawner::spawn(async move {
+                if let Err(e) = crate::ai::mcp_chat::stream_claude_code(prompt, thread_id, tx).await {
+                    log::error!("stream_claude_code error: {e:?}");
+                }
+            });
+        }
+        #[cfg(not(all(not(target_arch = "wasm32"), feature = "tokio")))]
+        {
+            let _ = connection_string;
+        }
     }
 
     pub fn enhanced_ai_playground(&mut self, ui: &mut Ui) {
@@ -186,6 +232,15 @@ impl EnhancedAiPlayground {
                     .clicked()
                 {
                     self.use_mcp_tools = !self.use_mcp_tools;
+                }
+                #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+                if ui
+                    .button(RichText::new(icons::ROBOT))
+                    .on_hover_text("Diagnose with Claude Code (subscription)")
+                    .clicked()
+                {
+                    let cs = self.focused_client.clone();
+                    self.start_claude_diagnosis(cs);
                 }
                 let model = crate::ai::effective_model(crate::ai::gpts::MODEL);
                 ui.label(RichText::new(model).weak().small());
