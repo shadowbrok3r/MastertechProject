@@ -1413,6 +1413,48 @@ impl QcToolProvider {
     }
 
     #[tool(
+        name = "get_driver_check",
+        description = "Per-part driver comparison for this machine: installed driver (name + version) vs the catalog's expected/target driver for each part (chipset, GPU, audio, LAN, WiFi, Bluetooth, RAID), plus the list of expected drivers that are missing. Windows."
+    )]
+    async fn get_driver_check(
+        &self,
+        Parameters(_p): Parameters<NoArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let rows = tokio::task::spawn_blocking(
+            || -> Result<Vec<crate::driver_check::DriverCheckRow>, String> {
+                let installed = crate::diagnostics::installed_drivers();
+                let path = crate::db::default_sqlite_path();
+                let conn = crate::db::open_or_create(&path).map_err(|e| e.to_string())?;
+                let product = crate::hardware_id::read_baseboard_product().unwrap_or_default();
+                let package = if product.is_empty() {
+                    None
+                } else {
+                    crate::provisioning::catalog_query::package_drivers_for_baseboard(&conn, &product)
+                        .map_err(|e| e.to_string())?
+                }
+                .unwrap_or_default();
+                let mut gpu_targets = Vec::new();
+                for code in crate::hardware_id::read_gpu_device_codes() {
+                    if let Ok(Some(r)) =
+                        crate::provisioning::catalog_query::gpu_driver_for_device(&conn, &code)
+                    {
+                        gpu_targets.push(crate::provisioning::catalog_query::TargetDriver {
+                            file: r.file_name,
+                            version: r.version,
+                        });
+                    }
+                }
+                Ok(crate::driver_check::build_driver_check(&installed, &package, &gpu_targets))
+            },
+        )
+        .await
+        .map_err(|e| to_internal(format!("driver check task join: {e}")))?
+        .map_err(|e| to_internal(e))?;
+        let json = serde_json::to_string_pretty(&rows).map_err(|e| to_internal(e.to_string()))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
         name = "get_preboot_fingerprint",
         description = "Fetch the pre-boot UEFI hardware fingerprint the orchestrator stored for a serial (defaults to this machine's detected serial). Returns the stored fingerprint JSON, or an error if none/unconfigured."
     )]

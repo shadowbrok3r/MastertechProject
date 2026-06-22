@@ -1,5 +1,4 @@
 use ratatui::{prelude::*, widgets::{Block, Borders, Paragraph}};
-use itertools::{Itertools, Position};
 use serde_json::{Map, Number, Value};
 use color_eyre::eyre::Context;
 use std::io;
@@ -245,8 +244,8 @@ impl Visit for TextVisitor<'_> {
         if !arr.is_empty() {
             self.push_line("");
         }
-        for (pos, value) in arr.iter().with_position() {
-            if pos != Position::First {
+        for (i, value) in arr.iter().enumerate() {
+            if i != 0 {
                 self.push_punctuation(",");
                 self.push_line("");
             }
@@ -265,8 +264,8 @@ impl Visit for TextVisitor<'_> {
         if !map.is_empty() {
             self.push_line("");
         }
-        for (pos, (key, value)) in map.iter().with_position() {
-            if pos != Position::First {
+        for (i, (key, value)) in map.iter().enumerate() {
+            if i != 0 {
                 self.push_punctuation(",");
                 self.push_line("");
             }

@@ -23,6 +23,7 @@ use egui_phosphor::regular as p;
 use stress_runner::RunVerdict;
 use stress_kit::telemetry::TelemetrySnapshot;
 
+use crate::driver_check::{DriverCheckRow, DriverStatus};
 use crate::spec_check::{collect_detected, compare, CheckStatus, SpecCheckReport};
 
 const GOOD: Color32 = Color32::from_rgb(61, 185, 157);
@@ -79,6 +80,7 @@ enum PanelMsg {
     ProcStep { label: String, result: Result<String, String> },
     ProcDone,
     DmiRead(Result<crate::provisioning::dmi::DmiReadResult, String>),
+    DriverCheck(Result<Vec<DriverCheckRow>, String>),
 }
 
 pub struct OrderPanel {
@@ -170,6 +172,9 @@ pub struct OrderPanel {
     bios_installed: Option<String>,
     bios_latest: Option<crate::provisioning::catalog_query::BiosInfo>,
     oa3_key: Option<String>,
+    /// Per-part driver comparison (installed vs catalog target).
+    driver_check: Option<Result<Vec<DriverCheckRow>, String>>,
+    driver_check_busy: bool,
 
     tx: Sender<PanelMsg>,
     rx: Receiver<PanelMsg>,
@@ -243,6 +248,8 @@ impl Default for OrderPanel {
             bios_installed: None,
             bios_latest: None,
             oa3_key: None,
+            driver_check: None,
+            driver_check_busy: false,
             tx,
             rx,
         }
@@ -321,6 +328,8 @@ impl OrderPanel {
                     self.cleanup_confirm = false;
                     self.proc_running = false;
                     self.dmi_read = None;
+                    self.driver_check = None;
+                    self.driver_check_busy = false;
                     self.hw_info_pending = true;
                     self.bios_installed = None;
                     self.bios_latest = None;
@@ -432,6 +441,10 @@ impl OrderPanel {
                     Ok(r) => self.dmi_read = Some(r),
                     Err(e) => self.prov_log.push(("DMI read".into(), false, e)),
                 },
+                PanelMsg::DriverCheck(result) => {
+                    self.driver_check_busy = false;
+                    self.driver_check = Some(result);
+                }
                 PanelMsg::SerialResolved(found) => {
                     self.resolve_busy = false;
                     if let Some(summary) = found {
@@ -596,6 +609,159 @@ impl OrderPanel {
                 ui.label(RichText::new("No catalog BIOS entry for this board.").weak().small());
             }
         }
+    }
+
+    /// Per-part driver comparison: installed (WMI) vs catalog target + missing list.
+    fn ui_driver_check(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        if self.driver_check.is_none() && !self.driver_check_busy {
+            self.start_driver_check(ctx);
+        }
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(
+                    !self.driver_check_busy,
+                    egui::Button::new(format!("{} Re-check drivers", p::ARROW_CLOCKWISE)),
+                )
+                .clicked()
+            {
+                self.driver_check = None;
+                self.start_driver_check(ctx);
+            }
+            if self.driver_check_busy {
+                ui.spinner();
+                ui.label(RichText::new("scanning installed drivers…").weak().small());
+            }
+        });
+
+        match self.driver_check.as_ref() {
+            None => {}
+            Some(Err(e)) => {
+                ui.colored_label(ui.visuals().error_fg_color, e);
+            }
+            Some(Ok(rows)) if rows.is_empty() => {
+                ui.label(RichText::new("No catalog driver mapping for this board.").weak().small());
+            }
+            Some(Ok(rows)) => {
+                let missing: Vec<&str> = rows
+                    .iter()
+                    .filter(|r| r.status == DriverStatus::Missing)
+                    .map(|r| r.category.as_str())
+                    .collect();
+                let outdated: Vec<&str> = rows
+                    .iter()
+                    .filter(|r| r.status == DriverStatus::Outdated)
+                    .map(|r| r.category.as_str())
+                    .collect();
+                if missing.is_empty() && outdated.is_empty() {
+                    ui.colored_label(GOOD, format!("{} All drivers present and current", p::CHECK_CIRCLE));
+                } else {
+                    if !missing.is_empty() {
+                        ui.colored_label(
+                            ui.visuals().error_fg_color,
+                            format!("{} Missing: {}", p::X_CIRCLE, missing.join(", ")),
+                        );
+                    }
+                    if !outdated.is_empty() {
+                        ui.colored_label(
+                            CAUTION,
+                            format!("{} Outdated: {}", p::WARNING, outdated.join(", ")),
+                        );
+                    }
+                }
+                ui.add_space(4.0);
+                egui_extras::TableBuilder::new(ui)
+                    .id_salt("driver_check_table")
+                    .striped(true)
+                    .column(egui_extras::Column::initial(120.0).at_least(70.0).clip(true))
+                    .column(egui_extras::Column::remainder().at_least(150.0).clip(true))
+                    .column(egui_extras::Column::initial(150.0).at_least(90.0).clip(true))
+                    .column(egui_extras::Column::exact(70.0))
+                    .header(20.0, |mut h| {
+                        h.col(|ui| { ui.strong("Part"); });
+                        h.col(|ui| { ui.strong("Installed"); });
+                        h.col(|ui| { ui.strong("Catalog target"); });
+                        h.col(|ui| { ui.strong("Status"); });
+                    })
+                    .body(|mut body| {
+                        for r in rows {
+                            body.row(20.0, |mut row| {
+                                row.col(|ui| {
+                                    ui.label(RichText::new(&r.category).strong().small());
+                                });
+                                row.col(|ui| {
+                                    let txt = match (&r.installed_name, &r.installed_version) {
+                                        (Some(n), Some(v)) => format!("{n}  v{v}"),
+                                        (Some(n), None) => n.clone(),
+                                        _ => "—".to_string(),
+                                    };
+                                    ui.label(RichText::new(txt).small());
+                                });
+                                row.col(|ui| {
+                                    let tgt = match (r.target_file.as_deref(), r.target_version.as_deref()) {
+                                        (Some(f), Some(v)) => format!("{f}  (v{v})"),
+                                        (Some(f), None) => f.to_string(),
+                                        _ => "—".to_string(),
+                                    };
+                                    ui.label(RichText::new(tgt).monospace().small());
+                                });
+                                row.col(|ui| {
+                                    let (c, t) = match r.status {
+                                        DriverStatus::Installed => (GOOD, "installed"),
+                                        DriverStatus::Outdated => (CAUTION, "OUTDATED"),
+                                        DriverStatus::Missing => (ui.visuals().error_fg_color, "MISSING"),
+                                        DriverStatus::NoTarget => (CAUTION, "info"),
+                                    };
+                                    ui.colored_label(c, RichText::new(t).small());
+                                });
+                            });
+                        }
+                    });
+            }
+        }
+    }
+
+    /// Gather installed drivers (WMI) + catalog targets (SQLite) on a worker thread.
+    fn start_driver_check(&mut self, ctx: &egui::Context) {
+        let product = {
+            let Some(session) = self.session.as_ref() else { return };
+            session
+                .spec
+                .motherboard
+                .clone()
+                .or_else(crate::hardware_id::read_baseboard_product)
+                .unwrap_or_default()
+        };
+        self.driver_check_busy = true;
+        let sqlite = crate::db::default_sqlite_path();
+        let tx = self.tx.clone();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let result = (|| -> Result<Vec<DriverCheckRow>, String> {
+                let installed = crate::diagnostics::installed_drivers();
+                let conn = crate::db::open_or_create(&sqlite).map_err(|e| format!("{e:#}"))?;
+                let package = if product.is_empty() {
+                    None
+                } else {
+                    crate::provisioning::catalog_query::package_drivers_for_baseboard(&conn, &product)
+                        .map_err(|e| format!("{e:#}"))?
+                }
+                .unwrap_or_default();
+                let mut gpu_targets = Vec::new();
+                for code in crate::hardware_id::read_gpu_device_codes() {
+                    if let Ok(Some(row)) =
+                        crate::provisioning::catalog_query::gpu_driver_for_device(&conn, &code)
+                    {
+                        gpu_targets.push(crate::provisioning::catalog_query::TargetDriver {
+                            file: row.file_name,
+                            version: row.version,
+                        });
+                    }
+                }
+                Ok(crate::driver_check::build_driver_check(&installed, &package, &gpu_targets))
+            })();
+            let _ = tx.send(PanelMsg::DriverCheck(result));
+            ctx.request_repaint();
+        });
     }
 
     /// Validate + record an influencer signature, gating on PrestaShop profile
@@ -1070,6 +1236,9 @@ impl OrderPanel {
                 CollapsingHeader::new(format!("{} BIOS", p::CPU))
                     .default_open(false)
                     .show(ui, |ui| self.ui_bios(ui));
+                CollapsingHeader::new(format!("{} Driver check", p::DOWNLOAD_SIMPLE))
+                    .default_open(false)
+                    .show(ui, |ui| self.ui_driver_check(ui, &ctx));
                 CollapsingHeader::new(format!("{} Auto-Provision", p::WRENCH))
                     .default_open(false)
                     .show(ui, |ui| self.ui_provision(ui, &ctx));

@@ -4911,15 +4911,10 @@ pub async fn run_plugin_mcp_server_http(manager: Arc<RwLock<PluginManager>>) -> 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let mgr = manager.clone();
 
-    // rmcp's LocalSessionManager defaults to a 5-minute idle keep-alive that
-    // fatally kills the session worker as soon as no events flow. Streamable-HTTP
-    // clients that speak the protocol natively (Cursor, web) just re-handshake,
-    // but stdio shims like `uvx mcp-proxy` retry the SSE GET against the dead
-    // session id forever and never re-`initialize`. Stretching the idle window
-    // to 30 minutes keeps long-lived diagnostic sessions alive without giving
-    // up the zombie-session safety net entirely.
+    // Idle keep-alive before a Streamable-HTTP MCP session is evicted (rmcp default 5min).
+    // 8h so multi-hour Claude Code / Cursor diagnostic sessions aren't dropped mid-call.
     let mut session_manager = LocalSessionManager::default();
-    session_manager.session_config.keep_alive = Some(Duration::from_secs(1800));
+    session_manager.session_config.keep_alive = Some(Duration::from_secs(28_800));
 
     let service = StreamableHttpService::new(
         move || Ok(PluginToolProvider::new(mgr.clone())),
