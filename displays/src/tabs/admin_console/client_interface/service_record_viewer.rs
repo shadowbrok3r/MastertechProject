@@ -7,6 +7,8 @@ use crate::modals::task_modal::{ModalAction, TaskModal};
 use crate::ui_tools::icons;
 use crate::{get_database_users, DisplayModal, PlatformSpawner, Spawner};
 
+use super::ui::WsDisplayState;
+
 /// Per-client "Service Record" page. Resolves the task whose computer
 /// record matches the connected client (by linked computer RecordId, or
 /// by hostname parsed from the connection string) and embeds the full
@@ -119,7 +121,12 @@ impl ServiceRecordViewer {
         self.modal = Some(TaskModal::new(chat, task));
     }
 
-    pub fn display(&mut self, ui: &mut Ui, client: &ConnectedClient) {
+    pub fn display(
+        &mut self,
+        ui: &mut Ui,
+        client: &ConnectedClient,
+        state_tx: &Sender<WsDisplayState>,
+    ) {
         self.ensure_loaded(client);
         self.receive(ui.ctx());
 
@@ -143,6 +150,16 @@ impl ServiceRecordViewer {
                     });
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui
+                    .button(
+                        RichText::new(format!("{} Close", icons::CLOSE))
+                            .color(Color32::from_rgb(255, 150, 120)),
+                    )
+                    .on_hover_text("Close the service record and return to the Home view")
+                    .clicked()
+                {
+                    let _ = state_tx.try_send(WsDisplayState::Home);
+                }
                 if ui
                     .button(format!("{} Refresh", icons::REFRESH))
                     .on_hover_text("Re-check for the service task linked to this machine")
@@ -194,6 +211,7 @@ impl ServiceRecordViewer {
                 self.modal = None;
                 self.modal_task_id = None;
                 self.invalidate();
+                let _ = state_tx.try_send(WsDisplayState::Home);
             }
         }
     }

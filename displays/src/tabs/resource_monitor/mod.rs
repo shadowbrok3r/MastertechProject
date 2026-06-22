@@ -290,15 +290,10 @@ impl ResourceMonitor {
         self.receive();
     }
 
-    /// Combobox-free overview suitable for the Home page: live chart
-    /// grid (the standard `chart_board` 2-col layout) followed by
-    /// CollapsingHeaders for every per-section table — cores, memory,
-    /// disks, networks, GPUs, WHEA/TDR counters, machine info.
-    ///
-    /// The headers default to collapsed for the verbose ones (cores,
-    /// disks, networks) and expanded for the high-signal small-volume
-    /// ones (machine info, WHEA/TDR, GPUs) so the page opens with
-    /// useful detail visible without scrolling forever.
+    /// Combobox-free overview for the Home page: live charts stacked in
+    /// one column and the per-section hardware tables (machine, GPUs,
+    /// WHEA, memory, cores, disks, networks) in the other. Falls back to
+    /// charts-over-tables stacking when the page is too narrow.
     pub fn show_compact_overview(&mut self, ui: &mut Ui) {
         self.receive();
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
@@ -329,36 +324,17 @@ impl ResourceMonitor {
                     }
                 });
             });
-            // 4 × 2 compact grid, no axis labels — fits the RMM-style
-            // "see everything at a glance" goal of the Home page.
-            self.chart_board.show_compact(ui);
-            ui.add_space(8.0);
-
-            ui.collapsing(HwView::Machine.label(), |ui| {
-                if let Some(info) = self.machine_info.clone() {
-                    info.show(ui);
-                } else {
-                    ui.colored_label(theme::weak_text(ui), "Machine info not available yet.");
-                }
-            });
-            ui.collapsing(HwView::Gpus.label(), |ui| {
-                hw_tables::show_gpus(ui, &self.telemetry.gpus);
-            });
-            ui.collapsing(HwView::Whea.label(), |ui| {
-                hw_tables::show_whea(ui, &self.telemetry.whea);
-            });
-            ui.collapsing(HwView::Memory.label(), |ui| {
-                hw_tables::show_memory(ui, &self.telemetry.memory);
-            });
-            ui.collapsing(HwView::Cores.label(), |ui| {
-                hw_tables::show_cores(ui, &self.telemetry, "");
-            });
-            ui.collapsing(HwView::Disks.label(), |ui| {
-                hw_tables::show_disks(ui, &self.telemetry.disks, "");
-            });
-            ui.collapsing(HwView::Networks.label(), |ui| {
-                hw_tables::show_networks(ui, &self.telemetry.networks, "");
-            });
+            // Charts in one column, hardware tables in the other; stacked when too narrow.
+            if ui.available_width() >= 760.0 {
+                ui.columns(2, |cols| {
+                    self.chart_board.show_compact_column(&mut cols[0]);
+                    self.show_hw_sections(&mut cols[1]);
+                });
+            } else {
+                self.chart_board.show_compact(ui);
+                ui.add_space(8.0);
+                self.show_hw_sections(ui);
+            }
         }
 
         #[cfg(not(feature = "native-telemetry"))]
@@ -368,6 +344,36 @@ impl ResourceMonitor {
                 "Live telemetry requires the native build with stress-kit.",
             );
         }
+    }
+
+    /// Collapsing hardware sections: machine, GPUs, WHEA, memory, cores, disks, networks.
+    #[cfg(feature = "native-telemetry")]
+    fn show_hw_sections(&self, ui: &mut Ui) {
+        ui.collapsing(HwView::Machine.label(), |ui| {
+            if let Some(info) = self.machine_info.clone() {
+                info.show(ui);
+            } else {
+                ui.colored_label(theme::weak_text(ui), "Machine info not available yet.");
+            }
+        });
+        ui.collapsing(HwView::Gpus.label(), |ui| {
+            hw_tables::show_gpus(ui, &self.telemetry.gpus);
+        });
+        ui.collapsing(HwView::Whea.label(), |ui| {
+            hw_tables::show_whea(ui, &self.telemetry.whea);
+        });
+        ui.collapsing(HwView::Memory.label(), |ui| {
+            hw_tables::show_memory(ui, &self.telemetry.memory);
+        });
+        ui.collapsing(HwView::Cores.label(), |ui| {
+            hw_tables::show_cores(ui, &self.telemetry, "");
+        });
+        ui.collapsing(HwView::Disks.label(), |ui| {
+            hw_tables::show_disks(ui, &self.telemetry.disks, "");
+        });
+        ui.collapsing(HwView::Networks.label(), |ui| {
+            hw_tables::show_networks(ui, &self.telemetry.networks, "");
+        });
     }
 
     fn show_all_charts(&mut self, ui: &mut Ui) {

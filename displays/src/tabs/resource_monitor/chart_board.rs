@@ -161,6 +161,43 @@ impl ChartBoard {
         });
     }
 
+    /// Every chart stacked in a single vertical column.
+    pub fn show_compact_column(&self, ui: &mut Ui) {
+        let palette = chart_palette(ui);
+        const H: f32 = 88.0;
+        self.cpu_usage_pct.show_with(
+            ui, "cpu_usage_col", "CPU usage", "%", Some((0.0, 100.0)), H, true, &palette,
+        );
+        ui.add_space(4.0);
+        self.cpu_freq_mhz.show_with(
+            ui, "cpu_freq_col", "CPU clock", "MHz", None, H, true, &palette,
+        );
+        ui.add_space(4.0);
+        self.cpu_temp_c.show_with(
+            ui, "cpu_temp_col", "CPU temp", "°C", None, H, true, &palette,
+        );
+        ui.add_space(4.0);
+        self.ram_used_pct.show_with(
+            ui, "ram_pct_col", "RAM used", "%", palette.memory, Some((0.0, 100.0)), H, true,
+        );
+        ui.add_space(4.0);
+        self.page_file_used_pct.show_with(
+            ui, "pf_pct_col", "Page file", "%", palette.page_file, Some((0.0, 100.0)), H, true,
+        );
+        ui.add_space(4.0);
+        self.top_disk_mb_s.show_with(
+            ui, "top_disk_col", "Top disk", "MB/s", palette.disk, None, H, true,
+        );
+        ui.add_space(4.0);
+        self.top_net_mbps.show_with(
+            ui, "top_net_col", "Top adapter", "Mbps", palette.network, None, H, true,
+        );
+        ui.add_space(4.0);
+        self.process_count.show_with(
+            ui, "proc_col", "Processes", "count", palette.process_count, None, H, true,
+        );
+    }
+
     pub fn show(&self, ui: &mut Ui) {
         let palette = chart_palette(ui);
         egui::ScrollArea::vertical().show(ui, |ui| {
