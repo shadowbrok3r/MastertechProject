@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS driver (
     url_download TEXT,
     id_file_type INTEGER NOT NULL DEFAULT 1,
     argument_string TEXT,
+    version TEXT,
     date_created TEXT NOT NULL DEFAULT (datetime('now')),
     last_upd TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (id_file_type) REFERENCES file_type(id)

@@ -139,7 +139,7 @@ impl MasterTechApp {
                         let txt = RichText::new(usr.get_username()).underline().color(theme::accent(ui));
 
                         MenuButton::new(txt).config(
-                            MenuConfig::new().style(StyleModifier::new(|s| s.visuals.button_frame = false))
+                            MenuConfig::new().style(StyleModifier::new(|s| s.visuals.button_frame = true))
                                 .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
                         ).ui(ui, |ui| {
                             ui.set_width(300.0);
@@ -229,7 +229,7 @@ impl MasterTechApp {
                                     });
                                 });
 
-                                if ui.add(Button::new("Preferences")).clicked() {
+                                if ui.add(Button::new("Preferences").frame(true).frame_when_inactive(true)).clicked() {
                                     self.context.shared_ctx.state =
                                         AppState::Authenticated(MainPages::UserPreferences);
                                     match self.context.shared_ctx.app_state_tx.try_send(
@@ -240,7 +240,7 @@ impl MasterTechApp {
                                     }
                                 }
                                 
-                                if ui.add(Button::new("Downloads")).clicked() {
+                                if ui.add(Button::new("Downloads").frame(true).frame_when_inactive(true)).clicked() {
                                     self.context.shared_ctx.state = AppState::Authenticated(MainPages::Downloads);
                                     let github_releases_tx = self.context.github_releases_channel.0.clone();
                                     let client = self.context.client.clone();
@@ -259,16 +259,16 @@ impl MasterTechApp {
                                     }
                                 }
                     
-                                if ui.add(Button::new("Modify Theme")).clicked() {
+                                if ui.add(Button::new("Modify Theme").frame(true).frame_when_inactive(true)).clicked() {
                                     self.context.shared_ctx.modify_theme = true;
                                     ui.close_kind(UiKind::Menu);
                                 }
                     
-                                if ui.add(Button::new("Refresh Data")).clicked() {
+                                if ui.add(Button::new("Refresh Data").frame(true).frame_when_inactive(true)).clicked() {
                                     self.context.shared_ctx.first_run = true;
                                 }
                     
-                                if ui.add(Button::new("Logout")).clicked() {
+                                if ui.add(Button::new("Logout").frame(true).frame_when_inactive(true)).clicked() {
                                     let file_path = "data.enc";
                                     match std::fs::exists(file_path){
                                         Ok(exists) => {
