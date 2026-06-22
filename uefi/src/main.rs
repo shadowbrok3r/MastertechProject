@@ -10,7 +10,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Tabs, Wrap},
 };
 use uefi::Identify;
-use uefi::boot::{MemoryType, OpenProtocolAttributes, OpenProtocolParams};
+use uefi::boot::{MemoryType, OpenProtocolAttributes, OpenProtocolParams, ScopedProtocol};
 use uefi::mem::memory_map::MemoryMap;
 use uefi::proto::console;
 use uefi::proto::console::gop::GraphicsOutput;
@@ -823,6 +823,12 @@ struct PcieLink {
     max_speed: u8,
     cur_width: u8,
     cur_speed: u8,
+    /// Device Status error-detected bits [3:0]: corr/non-fatal/fatal/unsupported.
+    dev_err: u8,
+    /// AER Correctable Error Status bitmask (0 = AER absent or clean).
+    aer_corr: u32,
+    /// AER Uncorrectable Error Status bitmask (0 = AER absent or clean).
+    aer_uncorr: u32,
 }
 
 fn collect_pcie_links() -> Vec<PcieLink> {
@@ -847,9 +853,16 @@ fn collect_pcie_links() -> Vec<PcieLink> {
         };
         for addr in tree.iter() {
             macro_rules! rd {
-                ($reg:expr) => {{
+                ($off:expr) => {{
+                    let off = $off as u64;
                     let mut a = *addr;
-                    a.reg = $reg as _;
+                    if off < 0x100 {
+                        a.reg = off as u8;
+                        a.ext_reg = 0;
+                    } else {
+                        a.reg = 0;
+                        a.ext_reg = off as u32;
+                    }
                     root.pci().read_one::<u32>(a).ok()
                 }};
             }
@@ -891,6 +904,29 @@ fn collect_pcie_links() -> Vec<PcieLink> {
             let Some(cap) = pcie_cap else { continue };
             let Some(linkcap) = rd!(cap + 0x0C) else { continue };
             let Some(linksts) = rd!(cap + 0x10) else { continue };
+            // Device Status error-detected bits [3:0] (upper half of cap+0x08 dword).
+            let dev_err = rd!(cap + 0x08).map(|d| ((d >> 16) & 0xF) as u8).unwrap_or(0);
+            // Walk extended caps (>= 0x100) for AER (ext cap id 0x0001).
+            let (mut aer_corr, mut aer_uncorr) = (0u32, 0u32);
+            let mut eptr = 0x100u64;
+            let mut eguard = 0;
+            while (0x100..0x1000).contains(&eptr) && eguard < 64 {
+                eguard += 1;
+                let Some(hdr) = rd!(eptr) else { break };
+                if hdr == 0 || hdr == 0xFFFF_FFFF {
+                    break;
+                }
+                if (hdr & 0xFFFF) == 0x0001 {
+                    aer_uncorr = rd!(eptr + 0x04).unwrap_or(0);
+                    aer_corr = rd!(eptr + 0x10).unwrap_or(0);
+                    break;
+                }
+                let next = ((hdr >> 20) & 0xFFF) as u64;
+                if next == 0 || next == eptr {
+                    break;
+                }
+                eptr = next;
+            }
             out.push(PcieLink {
                 loc: format!("{:02x}:{:02x}.{}", addr.bus, addr.dev, addr.fun),
                 class_label,
@@ -898,6 +934,9 @@ fn collect_pcie_links() -> Vec<PcieLink> {
                 max_width: ((linkcap >> 4) & 0x3F) as u8,
                 cur_speed: ((linksts >> 16) & 0xF) as u8,
                 cur_width: ((linksts >> 20) & 0x3F) as u8,
+                dev_err,
+                aer_corr,
+                aer_uncorr,
             });
         }
     }
@@ -914,7 +953,7 @@ fn collect_pcie_links() -> Vec<PcieLink> {
 fn connect_network_stack() {
     if let Ok(handles) = uefi::boot::find_handles::<SimpleNetwork>() {
         for h in handles {
-            let _ = uefi::boot::connect_controller(h, None, None, true);
+            let _ = uefi::boot::connect_controller(h, &[], None, true);
         }
     }
 }
@@ -1216,13 +1255,16 @@ fn fingerprint_json(info: &SysInfo) -> String {
             out.push(',');
         }
         out.push_str(&format!(
-            "{{\"loc\":{},\"class\":{},\"max_width\":{},\"max_gen\":{},\"cur_width\":{},\"cur_gen\":{}}}",
+            "{{\"loc\":{},\"class\":{},\"max_width\":{},\"max_gen\":{},\"cur_width\":{},\"cur_gen\":{},\"dev_err\":{},\"aer_corr\":\"0x{:08x}\",\"aer_uncorr\":\"0x{:08x}\"}}",
             jq(&l.loc),
             jq(l.class_label),
             l.max_width,
             l.max_speed,
             l.cur_width,
-            l.cur_speed
+            l.cur_speed,
+            l.dev_err,
+            l.aer_corr,
+            l.aer_uncorr
         ));
     }
     out.push(']');
@@ -1254,13 +1296,60 @@ fn fingerprint_json(info: &SysInfo) -> String {
             )
         })
         .collect::<String>();
+    let spd = info
+        .spd
+        .iter()
+        .enumerate()
+        .map(|(i, d)| {
+            let pmic = match d.pmic_addr {
+                Some(pa) => format!(
+                    ",\"pmic\":{{\"addr\":\"0x{pa:02x}\",\"r04\":\"0x{:02x}\",\"r08\":\"0x{:02x}\",\"fault\":{}}}",
+                    d.pmic_r04, d.pmic_r08, d.pmic_fault
+                ),
+                None => String::new(),
+            };
+            let temp = match d.temp_c {
+                Some(t) => format!("{t:.1}"),
+                None => "null".to_string(),
+            };
+            format!(
+                "{}{{\"addr\":\"0x{:02x}\",\"type\":{},\"temp_c\":{}{}}}",
+                if i > 0 { "," } else { "" },
+                d.addr,
+                jq(d.type_name),
+                temp,
+                pmic
+            )
+        })
+        .collect::<String>();
+    let mch_window = info
+        .mchbar
+        .window
+        .iter()
+        .map(|w| format!("\"0x{w:08x}\""))
+        .collect::<Vec<_>>()
+        .join(",");
     out.push_str(&format!(
-        ",\"diagnostics\":{{\"rtc_suspect\":{},\"bert\":{{\"present\":{},\"error\":{},\"severity\":{},\"entries\":{}}},\"mca\":[{}],\"mem_errors\":[{}]}}",
+        ",\"diagnostics\":{{\"rtc_suspect\":{},\"bert\":{{\"present\":{},\"error\":{},\"severity\":{},\"entries\":{}}},\"fpdt\":{{\"present\":{},\"fw_boot_ms\":{},\"os_loader_ms\":{}}},\"cmos\":{{\"present\":{},\"rtc_power_lost\":{},\"checksum_bad\":{},\"diag\":\"0x{:02x}\",\"dump\":{}}},\"spd\":[{}],\"mchbar\":{{\"vendor\":{},\"present\":{},\"enabled\":{},\"base\":\"0x{:x}\",\"window\":[{}]}},\"mca\":[{}],\"mem_errors\":[{}]}}",
         info.rtc_suspect,
         info.bert.present,
         info.bert.error_present,
         jq(&info.bert.severity),
         info.bert.entry_count,
+        info.fpdt.present,
+        info.fpdt.fw_boot_ms,
+        info.fpdt.os_loader_ms,
+        info.cmos.present,
+        info.cmos.rtc_power_lost,
+        info.cmos.checksum_bad,
+        info.cmos.diag,
+        jq(&info.cmos.dump),
+        spd,
+        jq(info.mchbar.vendor),
+        info.mchbar.present,
+        info.mchbar.enabled,
+        info.mchbar.base,
+        mch_window,
         mca,
         mem_errors,
     ));
@@ -2324,7 +2413,7 @@ fn tpm_version() -> Option<String> {
 fn cpu_features() -> Vec<&'static str> {
     let mut f = Vec::new();
     #[cfg(target_arch = "x86_64")]
-    unsafe {
+    {
         use core::arch::x86_64::{__cpuid, __cpuid_count};
         let c1 = __cpuid(1);
         if c1.ecx & (1 << 25) != 0 {
@@ -2523,6 +2612,364 @@ fn collect_bert() -> BertInfo {
     }
 }
 
+/// ACPI Firmware Performance Data Table — firmware boot-phase timings. A boot
+/// that ran a full memory retrain shows a longer `fw_boot_ms` than a cached one.
+#[derive(Default)]
+struct FpdtInfo {
+    present: bool,
+    /// Reset → ExitBootServices-exit duration, ms.
+    fw_boot_ms: u64,
+    /// Reset → OS-loader StartImage duration, ms.
+    os_loader_ms: u64,
+}
+
+fn collect_fpdt() -> FpdtInfo {
+    let Some(fpdt) = find_acpi_table(b"FPDT") else {
+        return FpdtInfo::default();
+    };
+    unsafe {
+        let rd_u8 = |p: usize| -> u8 { *(p as *const u8) };
+        let rd_u16 = |p: usize| -> u16 {
+            u16::from_le_bytes(core::slice::from_raw_parts(p as *const u8, 2).try_into().unwrap())
+        };
+        let rd_u32 = |p: usize| -> u32 {
+            u32::from_le_bytes(core::slice::from_raw_parts(p as *const u8, 4).try_into().unwrap())
+        };
+        let rd_u64 = |p: usize| -> u64 {
+            u64::from_le_bytes(core::slice::from_raw_parts(p as *const u8, 8).try_into().unwrap())
+        };
+        let sig4 = |p: usize| -> [u8; 4] {
+            core::slice::from_raw_parts(p as *const u8, 4).try_into().unwrap()
+        };
+
+        // Basic Boot Performance Pointer record (type 0) → FBPT physical address.
+        let tlen = rd_u32(fpdt + 4) as usize;
+        let mut off = fpdt + 36;
+        let mut fbpt = 0usize;
+        let mut guard = 0;
+        while off + 4 <= fpdt + tlen && guard < 64 {
+            guard += 1;
+            let rtype = rd_u16(off);
+            let rlen = rd_u8(off + 2) as usize;
+            if rlen < 4 {
+                break;
+            }
+            if rtype == 0x0000 && rlen >= 16 {
+                fbpt = rd_u64(off + 8) as usize;
+                break;
+            }
+            off += rlen;
+        }
+        if fbpt == 0 || &sig4(fbpt) != b"FBPT" {
+            return FpdtInfo { present: true, ..Default::default() };
+        }
+
+        // Basic Boot Performance Data record (type 2): ns timestamps from reset.
+        let flen = rd_u32(fbpt + 4) as usize;
+        let mut foff = fbpt + 8;
+        let mut guard = 0;
+        while foff + 4 <= fbpt + flen && guard < 64 {
+            guard += 1;
+            let rtype = rd_u16(foff);
+            let rlen = rd_u8(foff + 2) as usize;
+            if rlen < 4 {
+                break;
+            }
+            if rtype == 0x0002 && rlen >= 48 {
+                let reset_end = rd_u64(foff + 8);
+                let os_loader_start = rd_u64(foff + 24);
+                let exit_bs_exit = rd_u64(foff + 40);
+                return FpdtInfo {
+                    present: true,
+                    fw_boot_ms: exit_bs_exit.saturating_sub(reset_end) / 1_000_000,
+                    os_loader_ms: os_loader_start.saturating_sub(reset_end) / 1_000_000,
+                };
+            }
+            foff += rlen;
+        }
+        FpdtInfo { present: true, ..Default::default() }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Root-bridge I/O (CMOS via .Io, SPD/PMIC via i801 SMBus, MCHBAR via .Mem)
+// ---------------------------------------------------------------------------
+
+fn rb_open() -> Option<ScopedProtocol<PciRootBridgeIo>> {
+    for h in uefi::boot::find_handles::<PciRootBridgeIo>().ok()? {
+        if let Ok(r) = unsafe {
+            uefi::boot::open_protocol::<PciRootBridgeIo>(
+                OpenProtocolParams { handle: h, agent: uefi::boot::image_handle(), controller: None },
+                OpenProtocolAttributes::GetProtocol,
+            )
+        } {
+            return Some(r);
+        }
+    }
+    None
+}
+
+fn cfg_rd32(root: &mut ScopedProtocol<PciRootBridgeIo>, bus: u8, dev: u8, fun: u8, reg: u8) -> Option<u32> {
+    let a = uefi::proto::pci::PciIoAddress::new(bus, dev, fun).with_register(reg);
+    root.pci().read_one::<u32>(a).ok()
+}
+
+fn cfg_wr16(root: &mut ScopedProtocol<PciRootBridgeIo>, bus: u8, dev: u8, fun: u8, reg: u8, v: u16) {
+    let a = uefi::proto::pci::PciIoAddress::new(bus, dev, fun).with_register(reg);
+    let _ = root.pci().write_one::<u16>(a, v);
+}
+
+fn cfg_wr8(root: &mut ScopedProtocol<PciRootBridgeIo>, bus: u8, dev: u8, fun: u8, reg: u8, v: u8) {
+    let a = uefi::proto::pci::PciIoAddress::new(bus, dev, fun).with_register(reg);
+    let _ = root.pci().write_one::<u8>(a, v);
+}
+
+fn io_r(root: &mut ScopedProtocol<PciRootBridgeIo>, port: u16) -> Option<u8> {
+    root.io().read_one::<u8>(port as u32).ok()
+}
+
+fn io_w(root: &mut ScopedProtocol<PciRootBridgeIo>, port: u16, v: u8) {
+    let _ = root.io().write_one::<u8>(port as u32, v);
+}
+
+fn mem_r32(root: &mut ScopedProtocol<PciRootBridgeIo>, addr: u64) -> Option<u32> {
+    root.memory().read_one::<u32>(addr).ok()
+}
+
+/// CMOS/RTC config-status region read over the legacy 0x70/0x71 ports.
+#[derive(Default)]
+struct CmosInfo {
+    present: bool,
+    rtc_power_lost: bool,
+    checksum_bad: bool,
+    diag: u8,
+    dump: String,
+}
+
+fn cmos_read(root: &mut ScopedProtocol<PciRootBridgeIo>, idx: u8) -> Option<u8> {
+    io_w(root, 0x70, idx & 0x7F);
+    io_r(root, 0x71)
+}
+
+fn collect_cmos() -> CmosInfo {
+    let Some(mut root) = rb_open() else {
+        return CmosInfo::default();
+    };
+    let Some(diag) = cmos_read(&mut root, 0x0E) else {
+        return CmosInfo::default();
+    };
+    let mut dump = String::new();
+    for idx in 0x0Eu8..0x40 {
+        dump.push_str(&format!("{:02x}", cmos_read(&mut root, idx).unwrap_or(0)));
+    }
+    CmosInfo {
+        present: true,
+        rtc_power_lost: diag & 0x80 != 0,
+        checksum_bad: diag & 0x40 != 0,
+        diag,
+        dump,
+    }
+}
+
+/// Run one i801 transaction (cnt = protocol | START); returns final status on
+/// INTR, None on error/timeout. Clears status before start, leaves INUSE held.
+fn smb_run(
+    root: &mut ScopedProtocol<PciRootBridgeIo>,
+    base: u16,
+    add: u8,
+    cmd: u8,
+    dat0: Option<u8>,
+    cnt: u8,
+) -> Option<u8> {
+    for _ in 0..40 {
+        if io_r(root, base)? & 0x01 == 0 {
+            break;
+        }
+        uefi::boot::stall(core::time::Duration::from_micros(250));
+    }
+    io_w(root, base, 0x9E);
+    io_w(root, base + 4, add);
+    io_w(root, base + 3, cmd);
+    if let Some(d) = dat0 {
+        io_w(root, base + 5, d);
+    }
+    io_w(root, base + 2, cnt);
+    for _ in 0..400 {
+        let s = io_r(root, base)?;
+        if s & 0x1C != 0 {
+            io_w(root, base + 2, 0x02);
+            io_w(root, base, 0x9E);
+            return None;
+        }
+        if s & 0x02 != 0 {
+            return Some(s);
+        }
+        uefi::boot::stall(core::time::Duration::from_micros(250));
+    }
+    io_w(root, base + 2, 0x02);
+    io_w(root, base, 0x9E);
+    None
+}
+
+fn smb_read_byte(root: &mut ScopedProtocol<PciRootBridgeIo>, base: u16, addr7: u8, reg: u8) -> Option<u8> {
+    smb_run(root, base, (addr7 << 1) | 1, reg, None, 0x48)?;
+    let v = io_r(root, base + 5);
+    io_w(root, base, 0x9E);
+    v
+}
+
+/// SMBus Read-Word, byte-swapped to JEDEC MSB:LSB (matches i2c_smbus_read_word_swapped).
+fn smb_read_word(root: &mut ScopedProtocol<PciRootBridgeIo>, base: u16, addr7: u8, reg: u8) -> Option<u16> {
+    smb_run(root, base, (addr7 << 1) | 1, reg, None, 0x4C)?;
+    let lo = io_r(root, base + 5)?;
+    let hi = io_r(root, base + 6)?;
+    io_w(root, base, 0x9E);
+    Some(((lo as u16) << 8) | hi as u16)
+}
+
+/// Per-DIMM SPD/temperature/PMIC over SMBus (Intel i801 only).
+struct SpdDimm {
+    addr: u8,
+    type_name: &'static str,
+    temp_c: Option<f64>,
+    pmic_addr: Option<u8>,
+    pmic_r04: u8,
+    pmic_r08: u8,
+    pmic_fault: bool,
+}
+
+/// Locate the Intel SMBus controller at 00:1f.x, enable I/O + host, return SMB_BASE.
+fn smbus_base(root: &mut ScopedProtocol<PciRootBridgeIo>) -> Option<u16> {
+    for fun in 0u8..8 {
+        let id = cfg_rd32(root, 0, 0x1f, fun, 0x00)?;
+        if id & 0xFFFF != 0x8086 {
+            continue;
+        }
+        let Some(cls) = cfg_rd32(root, 0, 0x1f, fun, 0x08) else { continue };
+        if cls >> 8 != 0x0C0500 {
+            continue;
+        }
+        if let Some(cmd) = cfg_rd32(root, 0, 0x1f, fun, 0x04) {
+            cfg_wr16(root, 0, 0x1f, fun, 0x04, (cmd as u16) | 0x0001);
+        }
+        if let Some(hcfg) = cfg_rd32(root, 0, 0x1f, fun, 0x40) {
+            cfg_wr8(root, 0, 0x1f, fun, 0x40, (hcfg as u8 | 0x01) & !0x04);
+        }
+        let bar = cfg_rd32(root, 0, 0x1f, fun, 0x20)?;
+        if bar & 1 == 0 {
+            continue;
+        }
+        return Some((bar & 0xFFFE) as u16);
+    }
+    None
+}
+
+fn collect_spd() -> Vec<SpdDimm> {
+    let mut out = Vec::new();
+    let Some(mut root) = rb_open() else {
+        return out;
+    };
+    let Some(base) = smbus_base(&mut root) else {
+        return out;
+    };
+    // Acquire INUSE (single read; the act of reading sets the semaphore).
+    let _ = io_r(&mut root, base);
+    for slot in 0u8..8 {
+        let addr = 0x50 + slot;
+        if smb_read_word(&mut root, base, addr, 0x00) == Some(0x5118) {
+            let mut temp = None;
+            if let Some(cap) = smb_read_byte(&mut root, base, addr, 0x05) {
+                if cap & 0x02 != 0 {
+                    if let Some(raw) = smb_read_word(&mut root, base, addr, 0x31) {
+                        let v = (raw >> 2) & 0x7FF;
+                        let v = if v & 0x400 != 0 { v as i32 - 0x800 } else { v as i32 };
+                        temp = Some(v as f64 * 0.25);
+                    }
+                }
+            }
+            let paddr = 0x48 + slot;
+            let (mut pmic_addr, mut r04, mut r08, mut fault) = (None, 0u8, 0u8, false);
+            if smb_read_byte(&mut root, base, paddr, 0x3B).is_some() {
+                r04 = smb_read_byte(&mut root, base, paddr, 0x04).unwrap_or(0);
+                r08 = smb_read_byte(&mut root, base, paddr, 0x08).unwrap_or(0);
+                pmic_addr = Some(paddr);
+                fault = r04 & 0x70 != 0 || r08 & 0x6D != 0;
+            }
+            out.push(SpdDimm {
+                addr,
+                type_name: "DDR5",
+                temp_c: temp,
+                pmic_addr,
+                pmic_r04: r04,
+                pmic_r08: r08,
+                pmic_fault: fault,
+            });
+            continue;
+        }
+        let Some(t) = smb_read_byte(&mut root, base, addr, 0x02) else { continue };
+        let type_name = match t {
+            0x0C => "DDR4",
+            0x0B => "DDR3",
+            0x10 => "LPDDR4",
+            _ => "RAM",
+        };
+        let mut temp = None;
+        if let Some(raw) = smb_read_word(&mut root, base, 0x18 + slot, 0x05) {
+            let mag = (raw & 0x1FFF) as i32;
+            let v = if mag & 0x1000 != 0 { mag - 0x2000 } else { mag };
+            temp = Some(v as f64 * 0.0625);
+        }
+        out.push(SpdDimm {
+            addr,
+            type_name,
+            temp_c: temp,
+            pmic_addr: None,
+            pmic_r04: 0,
+            pmic_r08: 0,
+            pmic_fault: false,
+        });
+    }
+    // Release INUSE (bit6) and clear status.
+    io_w(&mut root, base, 0xDE);
+    out
+}
+
+/// Memory-controller base discovery + a bounded raw timing-window snapshot.
+#[derive(Default)]
+struct MchbarInfo {
+    vendor: &'static str,
+    present: bool,
+    enabled: bool,
+    base: u64,
+    window: Vec<u32>,
+}
+
+fn collect_mchbar() -> MchbarInfo {
+    let Some(mut root) = rb_open() else {
+        return MchbarInfo::default();
+    };
+    let Some(id) = cfg_rd32(&mut root, 0, 0, 0, 0x00) else {
+        return MchbarInfo::default();
+    };
+    if id & 0xFFFF == 0x8086 {
+        let lo = cfg_rd32(&mut root, 0, 0, 0, 0x48).unwrap_or(0);
+        let hi = cfg_rd32(&mut root, 0, 0, 0, 0x4C).unwrap_or(0);
+        let enabled = lo & 1 != 0;
+        let base = ((hi as u64) << 32) | (lo & 0xFFFF_FFFE) as u64;
+        let mut window = Vec::new();
+        if enabled && base != 0 {
+            for i in 0..16u64 {
+                window.push(mem_r32(&mut root, base + 0x4000 + i * 4).unwrap_or(0));
+            }
+        }
+        return MchbarInfo { vendor: "intel", present: true, enabled, base, window };
+    }
+    if cfg_rd32(&mut root, 0, 0x18, 0, 0x00).is_some_and(|df| df & 0xFFFF == 0x1022) {
+        return MchbarInfo { vendor: "amd", present: true, ..Default::default() };
+    }
+    MchbarInfo::default()
+}
+
 struct Win11 {
     ready: bool,
     checks: Vec<(&'static str, bool)>,
@@ -2588,6 +3035,10 @@ struct SysInfo {
     pcie: Vec<PcieLink>,
     rtc_suspect: bool,
     bert: BertInfo,
+    fpdt: FpdtInfo,
+    cmos: CmosInfo,
+    spd: Vec<SpdDimm>,
+    mchbar: MchbarInfo,
     mca: Vec<stress::McaBank>,
     mem_errors: Vec<MemError>,
 }
@@ -2714,6 +3165,10 @@ impl SysInfo {
         info.pci_slots_used = slots_used;
         info.pcie = collect_pcie_links();
         info.bert = collect_bert();
+        info.fpdt = collect_fpdt();
+        info.cmos = collect_cmos();
+        info.spd = collect_spd();
+        info.mchbar = collect_mchbar();
         info.mca = stress::cpu_mca();
         info.mem_errors = collect_mem_errors();
         info
@@ -3243,8 +3698,9 @@ fn page_storage(frame: &mut Frame, area: Rect, info: &SysInfo) {
     } else {
         for l in &info.pcie {
             let degraded = l.max_width > 0 && (l.cur_width < l.max_width || l.cur_speed < l.max_speed);
-            let color = if degraded { palette::ERR } else { palette::GOOD };
-            lines.push(Line::from(vec![
+            let errored = l.dev_err != 0 || l.aer_corr != 0 || l.aer_uncorr != 0;
+            let color = if degraded || errored { palette::ERR } else { palette::GOOD };
+            let mut spans = vec![
                 Span::styled(format!("{:<9}", l.loc), Style::default().fg(palette::ACCENT)),
                 Span::styled(format!("{:<9}", l.class_label), Style::default().fg(palette::LABEL)),
                 Span::styled(format!("x{} Gen{}", l.cur_width, l.cur_speed), Style::default().fg(color)),
@@ -3252,7 +3708,14 @@ fn page_storage(frame: &mut Frame, area: Rect, info: &SysInfo) {
                     format!("   (max x{} Gen{})", l.max_width, l.max_speed),
                     Style::default().fg(palette::MUTED),
                 ),
-            ]));
+            ];
+            if errored {
+                spans.push(Span::styled(
+                    format!("  AER c=0x{:x} u=0x{:x} dev=0x{:x}", l.aer_corr, l.aer_uncorr, l.dev_err),
+                    Style::default().fg(palette::ERR),
+                ));
+            }
+            lines.push(Line::from(spans));
         }
     }
     frame.render_widget(para(lines, "Storage"), area);

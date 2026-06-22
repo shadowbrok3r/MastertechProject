@@ -563,7 +563,8 @@ impl WebSocketClient {
             },
             WsDisplayState::ServiceRecord => {
                 let client = self.client.clone();
-                self.service_record.display(ui, &client);
+                let state_tx = self.display_state_channel.0.clone();
+                self.service_record.display(ui, &client, &state_tx);
             },
         };
     }
