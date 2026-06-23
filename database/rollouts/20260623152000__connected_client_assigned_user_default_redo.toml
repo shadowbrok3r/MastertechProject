@@ -1,0 +1,22 @@
+id = "20260623152000__connected_client_assigned_user_default_redo"
+name = "connected_client_assigned_user_default_redo"
+state = "planned"
+# Re-applies 20260528150000__connected_client_assigned_user_default, which was
+# recorded `completed` but used the non-executing `[complete] ddl=` format, so
+# production's assigned_user has no DEFAULT. Adds DEFAULT $auth.id back.
+# The `update` event gates created_at backfill + the 'Client Connected'
+# notification on `assigned_user == $auth.id`, so rows created without an
+# explicit assigned_user currently stay NONE and never fire that logic.
+# Existing rows are unchanged; the default applies on CREATE only.
+source_schema_hash = "b03f5a199deae5c42dc890f8114a74e1ba72f530709b4bc503b002b7b30346fe"
+target_schema_hash = "b03f5a199deae5c42dc890f8114a74e1ba72f530709b4bc503b002b7b30346fe"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "set_assigned_user_default"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE assigned_user ON connected_client TYPE none | record<user> DEFAULT $auth.id PERMISSIONS FULL;
+"""

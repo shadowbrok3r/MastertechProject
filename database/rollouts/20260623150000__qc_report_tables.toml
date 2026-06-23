@@ -1,0 +1,46 @@
+id = "20260623150000__qc_report_tables"
+name = "qc_report_tables"
+state = "planned"
+# Additive: creates qc_report + qc_report_failure from database/schema/*.surql.
+# Both files already carry the desired state, so source == target (this rollout
+# only applies them to the DB). Run `surrealkit rollout lint` to confirm the hash.
+source_schema_hash = "b03f5a199deae5c42dc890f8114a74e1ba72f530709b4bc503b002b7b30346fe"
+target_schema_hash = "b03f5a199deae5c42dc890f8114a74e1ba72f530709b4bc503b002b7b30346fe"
+compatibility = "phased"
+renames = []
+
+# run_sql (NOT `[complete] ddl=`): surrealkit 0.7.0 only executes `[[steps]]`
+# blocks. OVERWRITE on every DEFINE per MIGRATIONS.md so a re-run is idempotent.
+[[steps]]
+id = "create_qc_report_tables"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE qc_report TYPE ANY SCHEMALESS CHANGEFEED 30d PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE qcrep_order_id   ON qc_report FIELDS report.order_id;
+DEFINE INDEX OVERWRITE qcrep_backend    ON qc_report FIELDS report.backend;
+DEFINE INDEX OVERWRITE qcrep_machine    ON qc_report FIELDS report.machine_id;
+DEFINE INDEX OVERWRITE qcrep_verdict    ON qc_report FIELDS report.verdict;
+DEFINE INDEX OVERWRITE qcrep_checktype  ON qc_report FIELDS report.checklist_type;
+DEFINE INDEX OVERWRITE qcrep_created_at ON qc_report FIELDS created_at;
+DEFINE FIELD OVERWRITE created_at ON qc_report TYPE datetime PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE report     ON qc_report TYPE object   PERMISSIONS FULL;
+
+DEFINE TABLE OVERWRITE qc_report_failure TYPE ANY SCHEMALESS CHANGEFEED 30d PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE qcfail_order_id   ON qc_report_failure FIELDS failure.order_id;
+DEFINE INDEX OVERWRITE qcfail_item_key   ON qc_report_failure FIELDS failure.item_key;
+DEFINE INDEX OVERWRITE qcfail_report_ref ON qc_report_failure FIELDS report_ref;
+DEFINE INDEX OVERWRITE qcfail_created_at ON qc_report_failure FIELDS created_at;
+DEFINE FIELD OVERWRITE report_ref ON qc_report_failure TYPE string   PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE created_at ON qc_report_failure TYPE datetime PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE failure    ON qc_report_failure TYPE object   PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "drop_qc_report_tables"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE TABLE IF EXISTS qc_report_failure;
+REMOVE TABLE IF EXISTS qc_report;
+"""

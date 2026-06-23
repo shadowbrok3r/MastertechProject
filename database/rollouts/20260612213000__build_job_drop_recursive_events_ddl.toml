@@ -1,6 +1,6 @@
 id = "20260612213000__build_job_drop_recursive_events_ddl"
 name = "build_job_drop_recursive_events_ddl"
-state = "planned"
+state = "completed"
 # Schema files unchanged by this rollout (DDL aligns the live DB with what
 # database/schema/build_job.surql already says), so source == target.
 source_schema_hash = "51d290a8adee55292b0b3ddd7dba9ab270bbb9cc8653e58276a75a46d35617d6"
