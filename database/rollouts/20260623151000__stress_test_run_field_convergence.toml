@@ -1,0 +1,33 @@
+id = "20260623151000__stress_test_run_field_convergence"
+name = "stress_test_run_field_convergence"
+state = "planned"
+# Re-applies slice6 + slice10 + slice11, which were recorded `completed` but
+# used the non-executing `[complete] ddl=` format (surrealkit 0.7.0 runs only
+# [[steps]] blocks), so production never received them. Converges
+# stress_test_run to database/schema/stress_test_run.surql:
+#   slice6  bios_settings / driver_versions -> none | object
+#   slice10 embedding                       -> none | array<float>
+#   slice11 duration_planned_secs -> none|int ; duration_actual_secs -> none|float
+# source == target: the schema file already carries these; this applies them.
+source_schema_hash = "b03f5a199deae5c42dc890f8114a74e1ba72f530709b4bc503b002b7b30346fe"
+target_schema_hash = "b03f5a199deae5c42dc890f8114a74e1ba72f530709b4bc503b002b7b30346fe"
+compatibility = "phased"
+renames = []
+
+# Rollback (run by hand if needed): loosen durations back to `none | number`,
+# bios_settings/driver_versions back to `object`, embedding to `array<float>`.
+# No backfill: existing rows are already correctly typed (int/float) and Rust
+# read-sites cast legacy values; DEFINE FIELD type changes are not retroactive,
+# so the OVERWRITEs below converge the schema without rejecting stored rows.
+[[steps]]
+id = "converge_stress_test_run_fields"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE bios_settings         ON stress_test_run TYPE none | object        PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE driver_versions       ON stress_test_run TYPE none | object        PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE embedding             ON stress_test_run TYPE none | array<float>  PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE embedding.*           ON stress_test_run TYPE float                PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE duration_planned_secs ON stress_test_run TYPE none | int           PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE duration_actual_secs  ON stress_test_run TYPE none | float          PERMISSIONS FULL;
+"""

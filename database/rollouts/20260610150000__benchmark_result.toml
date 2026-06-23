@@ -1,6 +1,6 @@
 id = "20260610150000__benchmark_result"
 name = "benchmark_result"
-state = "planned"
+state = "completed"
 # Source: target asserted by the last completed rollout (ai_chat).
 source_schema_hash = "47492ad4fc251319fecf6c6c7d1491461567648e77a2bf6c200a974db7e39bcd"
 # Target: on-disk hash after adding benchmark_result.surql. Run

@@ -1,6 +1,6 @@
 id = "20260530140000__ai_chat"
 name = "ai_chat"
-state = "planned"
+state = "completed"
 # Source: target asserted by the last completed rollout (user_mcp_settings).
 source_schema_hash = "ac96b6967da3848d696ba8a12c9acc0c429441e9661fbc20baf5c66ab3be92c9"
 # Target: on-disk hash after adding ai_chat.surql. Run

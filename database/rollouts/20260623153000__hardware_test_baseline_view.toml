@@ -1,0 +1,54 @@
+id = "20260623153000__hardware_test_baseline_view"
+name = "hardware_test_baseline_view"
+state = "planned"
+# Creates the hardware_test_baseline view defined in stress_test_run.surql
+# (folded in 2026-06-12, never applied anywhere). Its original definition
+# errored at runtime — math::sum/mean over NONE summary subfields — so the
+# aggregations now coalesce missing telemetry to 0 (`?? 0`): sums/counts are
+# exact; means treat absent telemetry as 0 (understate when telemetry is sparse).
+# SurrealDB auto-refreshes the view on every write to stress_test_run.
+source_schema_hash = "9bb1e6369ad812a7b0be9a291ffbfc2fa119f707c5e71f8de86cd67273f463eb"
+target_schema_hash = "9bb1e6369ad812a7b0be9a291ffbfc2fa119f707c5e71f8de86cd67273f463eb"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "create_hardware_test_baseline_view"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE hardware_test_baseline TYPE NORMAL AS
+    SELECT
+        target_component                                  AS component,
+        tool_label                                        AS tool,
+        count()                                           AS run_count,
+        math::sum(IF result = 'pass'         THEN 1 ELSE 0 END) AS pass_count,
+        math::sum(IF result = 'fail'         THEN 1 ELSE 0 END) AS fail_count,
+        math::sum(IF result = 'aborted'      THEN 1 ELSE 0 END) AS abort_count,
+        math::sum(IF result = 'inconclusive' THEN 1 ELSE 0 END) AS inconclusive_count,
+        math::mean(summary.max_temp_c ?? 0)               AS avg_max_temp_c,
+        math::max(summary.max_temp_c ?? 0)                AS peak_max_temp_c,
+        math::mean(summary.avg_temp_c ?? 0)               AS avg_temp_c,
+        math::mean(summary.max_clock_mhz ?? 0)            AS avg_max_clock_mhz,
+        math::mean(summary.avg_clock_mhz ?? 0)            AS avg_clock_mhz,
+        math::mean(summary.max_power_w ?? 0)              AS avg_max_power_w,
+        math::mean(summary.peak_throughput ?? 0)          AS avg_peak_throughput,
+        math::mean(summary.whea_delta_count ?? 0)         AS avg_whea_delta,
+        math::sum(summary.whea_delta_count ?? 0)          AS total_whea_delta,
+        math::sum(summary.disk_io_errors ?? 0)            AS total_disk_io_errors,
+        math::sum(summary.memory_errors ?? 0)             AS total_memory_errors,
+        math::sum(IF summary.thermal_throttle_detected = true THEN 1 ELSE 0 END) AS throttle_count,
+        math::sum(IF summary.bsod_detected = true             THEN 1 ELSE 0 END) AS bsod_count
+    FROM stress_test_run
+    WHERE target_component != NONE
+        AND result != 'in_progress'
+    GROUP BY component, tool;
+"""
+
+[[steps]]
+id = "drop_hardware_test_baseline_view"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE TABLE IF EXISTS hardware_test_baseline;
+"""

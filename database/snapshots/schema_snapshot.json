@@ -2,8 +2,24 @@
   "version": 1,
   "files": [
     {
+      "path": "database/schema/ai_chat.surql",
+      "hash": "98ede12a6e909104f31512e42b89610824537fb22cbdb32956fbd99703bf975b"
+    },
+    {
+      "path": "database/schema/audit_log.surql",
+      "hash": "2d09b2230f0770a63b1383a44047d98a0b9389e00d79cc3453bbc5db503ddaa0"
+    },
+    {
+      "path": "database/schema/benchmark_result.surql",
+      "hash": "bd6f4eff6a6faa5d076968425ab2aeeb3de3f4fda3abd4b4aa1e5541029b116a"
+    },
+    {
       "path": "database/schema/build_job.surql",
-      "hash": "9deef2070696e90405a4ed78499fc1c9464f1ed04a52313bcfee9e099ab62a1a"
+      "hash": "3f7b515ca17e23ab2f73a549e6ceee5d4a89d55ca73ef247b67481a58978b0cd"
+    },
+    {
+      "path": "database/schema/chat_thread.surql",
+      "hash": "78ffc84469abf4a8934afd796de88e01514171e3dad3eaa4314df082ddfbf6c6"
     },
     {
       "path": "database/schema/computer.surql",
@@ -11,15 +27,67 @@
     },
     {
       "path": "database/schema/connected_client.surql",
-      "hash": "686a73d55d28bad9e4a9c0dbc6ab55ed82b8eccba530bbb32365dc46edf489ab"
+      "hash": "efba2b8192ab28ca1d4c2d00991181f97a9a2ebf69df04654a770436c92124a7"
+    },
+    {
+      "path": "database/schema/customer.surql",
+      "hash": "0bba0576753ccde3f5abd0e879f0637b718fd9d67e724f751f0bf179222a3d1b"
+    },
+    {
+      "path": "database/schema/diagnostic_entry.surql",
+      "hash": "10251dce2d8687ce12e2a5ff4b56fb736e336538ce3faadb643ae8484dca9a4d"
+    },
+    {
+      "path": "database/schema/diagnostic_session.surql",
+      "hash": "4d12ea34784813957837185c3127045875eeffda6f9dcb5c207e917c6610b3d5"
+    },
+    {
+      "path": "database/schema/fleet_agent.surql",
+      "hash": "4633c47a566a2606a04030f454929a0340ba20d2e893493e210c21704fdc1088"
+    },
+    {
+      "path": "database/schema/fleet_command.surql",
+      "hash": "5cb1c920c6ad10e9345b9d382a451ccc4610789024c812c958998c9efca77f59"
+    },
+    {
+      "path": "database/schema/fleet_event.surql",
+      "hash": "752fbfba5b6117c293b19e114a1325aac46dd47f71333ca4989781320bbc8b69"
+    },
+    {
+      "path": "database/schema/guest.surql",
+      "hash": "1e3bd44390dfb6de76dc7fa880e9b17f82fb8daaac8ce6cbcba40580acd81920"
     },
     {
       "path": "database/schema/hardware_component.surql",
-      "hash": "a175d4b2576acfc98a56c58ac404e83225679d527f64d0c2c9be2a5d41df296b"
+      "hash": "4bc677b11ab15478ccd84dfa0324f4f78cc6869c74e1a348c99846b04b21c3f3"
     },
     {
-      "path": "database/schema/hardware_test_baseline.surql",
-      "hash": "93ebdcfc1ab1457ceb606f9a4c1ccba9cca6a2354e25f7e2f7351582c131931a"
+      "path": "database/schema/inventory_audit.surql",
+      "hash": "4179c2527ec2abc25389d871421b4c05776ecd8a101cbf97eac18149027f919e"
+    },
+    {
+      "path": "database/schema/job.surql",
+      "hash": "cd1c67baca734cf6d1b0b35a01946cc7642ff5ae56b7ab0ee45d0a147649f26e"
+    },
+    {
+      "path": "database/schema/notification.surql",
+      "hash": "4f1095f47412d80cee5fcf3a0ee9c9294b73d495efa222f6d8f602e54d728b7f"
+    },
+    {
+      "path": "database/schema/plugin_registry.surql",
+      "hash": "3ff298509762fbbb4fc719d9a2857079f58846fc3fc9247f048930bf7e4ea103"
+    },
+    {
+      "path": "database/schema/qc_report_failure.surql",
+      "hash": "451ca94315da50303b144179a5dcdd4e40d07713e8333ca3028ec7934b87a3a5"
+    },
+    {
+      "path": "database/schema/qc_report.surql",
+      "hash": "59e733499ea505741e76bff3ba632dec50661e754e3f04cd86df71238fcc8398"
+    },
+    {
+      "path": "database/schema/qc.surql",
+      "hash": "0a08e2558c5aeb17b2e04857afc0df3cb53da6a94595fb095a6deb2132cf4948"
     },
     {
       "path": "database/schema/service_order.surql",
@@ -35,11 +103,35 @@
     },
     {
       "path": "database/schema/stress_test_run.surql",
-      "hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+      "hash": "82edf66c6ec4e8865ada775070c3da461a519010338667a751dab0c70a1f82fa"
+    },
+    {
+      "path": "database/schema/task_history.surql",
+      "hash": "852325a9b21a8799df66fd0addf53aaf9ee597a1f2139fdd1298f06e0931ba8b"
+    },
+    {
+      "path": "database/schema/task_note_read.surql",
+      "hash": "9f52ad7e4ee4b52d99d4c496bc09e6052a301dc2b827f85c760451e9aafbe6ba"
+    },
+    {
+      "path": "database/schema/task_note.surql",
+      "hash": "d0899ce1c40d7160751aab70ec64e0acf66afde1b393973d2122c3b70988a374"
     },
     {
       "path": "database/schema/task.surql",
       "hash": "814faebf577c6666d4aaa4968b3a3b6971ef613c468f173fa479e9bcf368eaff"
+    },
+    {
+      "path": "database/schema/transfers.surql",
+      "hash": "9489078a1ce05e57c3c169144b3b444c690ca1d9145abd99d3cd09bf68be9659"
+    },
+    {
+      "path": "database/schema/user_message.surql",
+      "hash": "13e3016799479838bc92b224018d928b986003f5d3d565b00597d76ffef77ae6"
+    },
+    {
+      "path": "database/schema/user.surql",
+      "hash": "81f5b150fdd362a4e2dcfc70a39f70466b2530d78bf2da193b8b3c8cac11da64"
     }
   ]
 }
