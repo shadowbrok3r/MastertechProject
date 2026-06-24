@@ -15,6 +15,12 @@ on:
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+# Cancel superseded runs on the same branch/PR, but never cancel tag (release)
+# runs partway through.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
   create-release:
     name: Create GitHub Release
@@ -93,13 +99,21 @@ jobs:
           sudo apt-get install -y libpipewire-0.3-dev pkg-config libegl1-mesa-dev libgbm-dev
 
       - name: Install Rust Toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          profile: minimal
-          toolchain: stable
-          target: ${{ matrix.target }}
-          override: true
+          targets: ${{ matrix.target }}
 
+      # Cache must come BEFORE the build step that consumes it, otherwise it
+      # never speeds anything up.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-mastertech"
+          shared-key: "native-${{ matrix.target }}"
+
+      # The action builds `cargo build --release --bin <bin>` itself and uploads
+      # the resulting binary (the .exe on windows-msvc). tar:none/zip:none =
+      # upload the raw binary, not an archive. No `asset:` — that pointed at an
+      # extension-less path that doesn't exist for the Windows .exe builds.
       - name: Upload Binary to GitHub Release
         uses: taiki-e/upload-rust-binary-action@v1.27.0
         with:
@@ -108,12 +122,6 @@ jobs:
           tar: none
           zip: none
           token: ${{ secrets.GITHUB_TOKEN }}
-          asset: target/${{ matrix.target }}/release/${{ matrix.bin }}
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: "v1-mastertech"
-          shared-key: "native-${{ matrix.target }}"
 
   trunk:
     name: Build WASM frontend (Trunk)
@@ -149,12 +157,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust Toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@nightly
         with:
-          profile: minimal
-          toolchain: nightly
-          target: wasm32-unknown-unknown
-          override: true
+          targets: wasm32-unknown-unknown
           components: rust-src
 
       - uses: Swatinem/rust-cache@v2
@@ -230,6 +235,8 @@ jobs:
             shadowbrok3r/mtechserver:beta
             shadowbrok3r/mtechserver:beta-${{ github.sha }}
           outputs: type=registry,push=true
+          cache-from: type=gha,scope=mtechserver
+          cache-to: type=gha,mode=max,scope=mtechserver
 
   docker-services-beta:
     name: Build and Push service images (:beta)
@@ -308,6 +315,8 @@ jobs:
             ${{ matrix.image }}:beta
             ${{ matrix.image }}:beta-${{ github.sha }}
           outputs: type=registry,push=true
+          cache-from: type=gha,scope=${{ matrix.name }}-beta
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}-beta
 
   docker-servers:
     name: Build and Push server images (:latest)
@@ -382,6 +391,8 @@ jobs:
           tags: |
             ${{ matrix.image }}:latest
             ${{ matrix.image }}:${{ github.ref_name }}
+          cache-from: type=gha,scope=${{ matrix.name }}-release
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}-release
 
   # deploy:
   #   name: Deploy to Kubernetes

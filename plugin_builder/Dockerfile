@@ -1,42 +1,36 @@
-# syntax=docker/dockerfile:1.6
+# syntax=docker/dockerfile:1.7
+# plugin_builder worker image. Build from the repo root:
+#   docker build -f plugin_builder/Dockerfile -t mtech-plugin-builder .
 #
-# `plugin_builder` worker image. Built from the repo root:
-#     docker build -f plugin_builder/Dockerfile -t mtech-plugin-builder .
-#
-# Two-stage so the runtime image is just `rust:1-slim` (we still need
-# cargo + the wasm32-wasip1 toolchain at runtime — the *point* of this
-# service is to compile plugins on demand).
+# Whole-repo context + cargo-chef. The runtime keeps cargo + the wasm32-wasip1
+# toolchain because the service compiles plugins on demand.
 
-# ── build stage ─────────────────────────────────────────────────────
-FROM rust:1-slim AS build
-
+# ── chef base: toolchain, build deps, cargo-chef ──────────────────────
+FROM rust:1-slim AS chef
 RUN apt-get update \
- && apt-get install -y --no-install-recommends pkg-config libssl-dev ca-certificates \
+ && apt-get install -y --no-install-recommends pkg-config libssl-dev gcc ca-certificates \
  && rm -rf /var/lib/apt/lists/*
-
 RUN rustup target add wasm32-wasip1
-
+RUN cargo install cargo-chef --locked
 WORKDIR /src
 
-# Trim the workspace to the two crates we need (matches the pattern
-# the axum_server Dockerfile uses). Without this, cargo metadata has
-# to parse every member's Cargo.toml — including UI-only crates like
-# `displays` and `Mastertech4.0` that bring in native-only deps (winit,
-# eframe, etc.) which can fail to resolve in this slim build image.
-COPY Cargo.toml .
-COPY build_hash.rs .
+# ── planner: derive the dependency recipe from the full workspace ─────
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# ── builder: cook deps into a cached layer, then build only this crate ──
+FROM chef AS build
+# database/build.rs runs during `cook`; it include!()s ../build_hash.rs and reads ../.env.
+COPY build_hash.rs build_hash.rs
 COPY .env .env
-# Range-replace: the members array spans multiple lines.
-RUN sed -i '/^members = \[/,/^\]/c\members = [ "database", "plugin_builder" ]' Cargo.toml
+COPY --from=planner /src/recipe.json recipe.json
+RUN cargo chef cook --release -p plugin_builder --recipe-path recipe.json
+COPY . .
+RUN cargo build --release -p plugin_builder --locked
 
-COPY database/ ./database/
-COPY plugin_builder/ ./plugin_builder/
-
-RUN cargo build -p plugin_builder --release
-
-# ── runtime stage ──────────────────────────────────────────────────
+# ── runtime ───────────────────────────────────────────────────────────
 FROM rust:1-slim AS runtime
-
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
@@ -44,9 +38,8 @@ RUN apt-get update \
 
 COPY --from=build /src/target/release/plugin_builder /usr/local/bin/plugin_builder
 
-# Persistent caches mounted as volumes by compose. CARGO_TARGET_DIR is
-# set per-build inside the worker, but a shared $CARGO_HOME means the
-# registry/git index cache survives across builds and plugins.
+# Persistent caches mounted as volumes by compose; shared CARGO_HOME keeps the
+# registry/git index warm across plugin builds.
 ENV CARGO_HOME=/var/cache/cargo \
     BUILD_WORKER_SCRATCH_ROOT=/tmp/mtech-builder \
     BUILD_WORKER_TARGET_CACHE_ROOT=/var/cache/mtech-builder \

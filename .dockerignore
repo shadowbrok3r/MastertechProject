@@ -1,7 +1,24 @@
+# Cargo.lock is intentionally NOT ignored — Docker builds use it with `--locked`.
 target/
 **/target/
 MtechServer2.0/dist
-Cargo.lock
+**/dist/
 .git/
 **/.git/
 *.log
+**/*.log
+
+# Excluded crates (own toolchain/target, never built in these images).
+uefi/
+MastertechMobile/
+
+# Editor/agent/tooling dirs and large docs not needed by any build.
+.claude/
+.cursor/
+.vscode/
+.VSCodeCounter/
+.rust-analyzer/
+docs/
+Documentation/
+dev-audit.json
+*.enc

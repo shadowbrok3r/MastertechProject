@@ -5,5 +5,8 @@
     "diffEditor.experimental.showEmptyDecorations": false,
     "diffEditor.codeLens": false,
     "rust-analyzer.cargo.allTargets": true,
+    // mtechserver is wasm-only; exclude it from the host-target check so it
+    // doesn't show spurious native errors. Build it with trunk.
+    "rust-analyzer.check.extraArgs": ["--exclude", "mtechserver"],
     // "rust-analyzer.cargo.target": "wasm32-unknown-unknown"
 }
