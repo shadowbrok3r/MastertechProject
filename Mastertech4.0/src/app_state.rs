@@ -152,6 +152,12 @@ pub struct PendingTurData {
 }
 
 impl MasterTechApp {
+    /// Construct against a bare egui context for the egui_skia software renderer,
+    /// which has no eframe backend or storage.
+    pub fn new_software(ctx: &eframe::egui::Context) -> Self {
+        Self::new(&eframe::CreationContext::_new_kittest(ctx.clone()))
+    }
+
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         displays::ui_tools::theme_config::bootstrap_startup_theme(&cc.egui_ctx);
         let dock = default_tree();

@@ -1,5 +1,4 @@
-pub(crate) const GEMINI_API_KEY: &str = env!("GEMINI_API_KEY");
-pub(crate) const GEMINI_API_BASE: &str = "https://openrouter.ai/api/v1";
+pub(crate) const DEFAULT_API_BASE: &str = "https://openrouter.ai/api/v1";
 
 use std::sync::RwLock;
 
@@ -29,21 +28,17 @@ fn mcp_override(pick: impl Fn(&McpOverride) -> Option<String>) -> Option<String>
     MCP_OVERRIDE.read().ok().and_then(|g| g.as_ref().and_then(&pick))
 }
 
-/// API key for OpenAI-compatible calls: user override, then GEMINI_API_KEY env, then compiled default.
+/// API key for OpenAI-compatible calls, from the current user's mcp_settings.
 pub fn effective_api_key() -> String {
-    mcp_override(|o| o.api_key.clone())
-        .or_else(|| std::env::var("GEMINI_API_KEY").ok())
-        .unwrap_or_else(|| GEMINI_API_KEY.to_string())
+    mcp_override(|o| o.api_key.clone()).unwrap_or_default()
 }
 
-/// API base URL: user override, then GEMINI_API_BASE env, then compiled default.
+/// API base URL: the user's mcp_settings endpoint, else the default.
 pub fn effective_api_base() -> String {
-    mcp_override(|o| o.endpoint.clone())
-        .or_else(|| std::env::var("GEMINI_API_BASE").ok())
-        .unwrap_or_else(|| GEMINI_API_BASE.to_string())
+    mcp_override(|o| o.endpoint.clone()).unwrap_or_else(|| DEFAULT_API_BASE.to_string())
 }
 
-/// Model name: user override, else the supplied default.
+/// Model name: the user's mcp_settings model, else the supplied default.
 pub fn effective_model(default: &str) -> String {
     mcp_override(|o| o.model.clone()).unwrap_or_else(|| default.to_string())
 }

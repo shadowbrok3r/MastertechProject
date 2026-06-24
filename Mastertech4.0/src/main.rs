@@ -6,6 +6,7 @@ use log::{error, info};
 extern crate winapi;
 
 mod terminal_mode;
+mod software_gui;
 pub mod app_state;
 mod filesystem;
 pub mod pages;
@@ -153,6 +154,27 @@ impl eframe::App for app_state::MasterTechApp {
     }
 }
 
+impl app_state::MasterTechApp {
+    // Mirrors the eframe `logic` call with a storage-less stub frame.
+    pub fn logic_inner(&mut self, ctx: &egui::Context) {
+        let mut frame = eframe::Frame::_new_kittest();
+        <Self as eframe::App>::logic(self, ctx, &mut frame);
+    }
+
+    // Rebuilds eframe's background root Ui so panels render on `ctx` as under the eframe backend.
+    pub fn ui_inner(&mut self, ctx: &egui::Context) {
+        let mut frame = eframe::Frame::_new_kittest();
+        let mut root_ui = egui::Ui::new(
+            ctx.clone(),
+            egui::Id::new((ctx.viewport_id(), "__mastertech_software_root")),
+            egui::UiBuilder::new()
+                .layer_id(egui::LayerId::background())
+                .max_rect(ctx.available_rect()),
+        );
+        <Self as eframe::App>::ui(self, &mut root_ui, &mut frame);
+    }
+}
+
 fn env_logger_with_dependency_filters() -> env_logger::Builder {
     let mut builder = env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info,evtx=warn"),
@@ -248,7 +270,7 @@ fn init_terminal_mode_logging(log_to_file: bool) {
     }
 }
 
-async fn run_gui(log_to_file: bool) -> eframe::Result<()> {
+async fn run_gui(log_to_file: bool, force_cpu: bool) -> eframe::Result<()> {
     let egui_logger = Box::new(
         displays::ui_tools::egui_logger::builder()
             .add_blacklist("evtx::evtx_chunk")
@@ -271,32 +293,51 @@ async fn run_gui(log_to_file: bool) -> eframe::Result<()> {
         utilities::ai::run_mcp_server_tcp().await?;
         Ok::<(), anyhow::Error>(())
     });
-    let eframe_app = eframe::run_native(
-        format!("Mastertech-{}", database::version_with_build!()).as_str(),
-        eframe::NativeOptions {
-            viewport: eframe::egui::ViewportBuilder::default()
-                .with_inner_size([1000.0, 750.0])
-                .with_drag_and_drop(true)
-                .with_icon(load_icon()),
-            ..Default::default()
-        },
-        Box::new(|cc| {
-            egui_extras::install_image_loaders(&cc.egui_ctx);
-            Ok(Box::new(app_state::MasterTechApp::new(cc)))
-        }),
-    );
-
-    if let Err(e) = eframe_app {
-        error!("Error running eframe_native: {e:?} \nswitching to secondary application");
-        let res = terminal_mode::run_terminal_mode().await;
-        if let Err(e) = res {
-            error!("Error running terminal app: {e:?}");
+    // GPU (glow) first, then the egui_skia software renderer, then terminal mode.
+    let mut gui_ok = false;
+    if force_cpu {
+        log::info!("--cpu/--software set; forcing the egui_skia software renderer");
+        match software_gui::run() {
+            Ok(()) => gui_ok = true,
+            Err(e) => error!("software renderer failed: {e:?}"),
         }
     } else {
+        let eframe_app = eframe::run_native(
+            format!("Mastertech-{}", database::version_with_build!()).as_str(),
+            eframe::NativeOptions {
+                viewport: eframe::egui::ViewportBuilder::default()
+                    .with_inner_size([1000.0, 750.0])
+                    .with_drag_and_drop(true)
+                    .with_icon(load_icon()),
+                ..Default::default()
+            },
+            Box::new(|cc| {
+                egui_extras::install_image_loaders(&cc.egui_ctx);
+                Ok(Box::new(app_state::MasterTechApp::new(cc)))
+            }),
+        );
+        match eframe_app {
+            Ok(()) => gui_ok = true,
+            Err(e) => {
+                error!("eframe glow init failed: {e:?}; trying egui_skia software renderer");
+                match software_gui::run() {
+                    Ok(()) => gui_ok = true,
+                    Err(e2) => error!("software renderer failed: {e2:?}"),
+                }
+            }
+        }
+    }
+
+    if gui_ok {
         displays::signal_shutdown();
         tokio::time::sleep(std::time::Duration::from_millis(750)).await;
-        log::info!("main -> egui closed; forcing process exit to release the launching terminal");
+        log::info!("main -> GUI closed; forcing process exit to release the launching terminal");
         std::process::exit(0);
+    } else {
+        error!("no GUI could start; switching to terminal mode");
+        if let Err(e) = terminal_mode::run_terminal_mode().await {
+            error!("Error running terminal app: {e:?}");
+        }
     }
     Ok(())
 }
@@ -304,6 +345,12 @@ async fn run_gui(log_to_file: bool) -> eframe::Result<()> {
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
+
+    // Correct a stale clock (Windows PE boots ~years in the past) before any TLS
+    // handshake, or rustls rejects valid certs as "not valid yet".
+    if let Err(e) = database::clock_sync::ensure_system_clock_sane() {
+        log::warn!("clock sync failed ({e:?}); TLS may fail if the system clock is wrong");
+    }
 
     #[cfg(target_os = "windows")]
     {
@@ -343,6 +390,13 @@ async fn main() -> eframe::Result<()> {
             clap::Arg::new("mcp-stdio")
                 .long("mcp-stdio")
                 .help("Run only the plugin MCP server over stdin/stdout (for Claude Desktop). Skips the GUI entirely; logs go to stderr.")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            clap::Arg::new("cpu")
+                .long("cpu")
+                .visible_alias("software")
+                .help("Force the egui_skia software (CPU) renderer, skipping the GPU attempt")
                 .action(clap::ArgAction::SetTrue),
         )
         .get_matches();
@@ -405,7 +459,7 @@ async fn main() -> eframe::Result<()> {
         let res = terminal_mode::run_terminal_mode().await;
         log::info!("TERM MODE: {res:?}");
     } else {
-        run_gui(log_to_file).await?;
+        run_gui(log_to_file, matches.get_flag("cpu")).await?;
     }
     
     Ok(())

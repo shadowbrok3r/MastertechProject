@@ -13,6 +13,9 @@ use schema::User;
 use log::info;
 
 pub mod live_data;
+// SNTP-based startup clock correction; UdpSocket/SetSystemTime are native-only.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod clock_sync;
 // Native-only HTTP order backends; their futures require Send, unavailable on wasm reqwest.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod orders;
