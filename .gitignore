@@ -33,9 +33,7 @@ output.log
 .rust-analyzer/*
 .VSCodeCounter/*
 .VSCodeCounter
-./Cargo.lock
 websocket_server2/.env
-Cargo.lock
 data.enc
 *.log*
 Mastertech4.0\terminal_output.log

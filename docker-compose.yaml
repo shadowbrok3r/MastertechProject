@@ -8,7 +8,7 @@ services:
       watch:
         - action: sync+restart
           path: ./MtechServer2.0
-          target: /MtechServer2.0
+          target: /app/MtechServer2.0
           # ignore:
           #   - target/
         - action: rebuild

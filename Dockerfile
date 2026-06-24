@@ -1,44 +1,33 @@
+# syntax=docker/dockerfile:1.7
+# MtechServer2.0 WASM frontend image. Build from the repo root:
+#   docker build -t mtechserver .
+#
+# Whole-repo context: every workspace member is present so `cargo metadata`
+# and trunk resolve cleanly. No manifest edits. wasm build flags + build-std
+# come from the committed MtechServer2.0/.cargo/config.toml.
+
 FROM --platform=$BUILDPLATFORM rustlang/rust:nightly
-WORKDIR /
+WORKDIR /app
 
-RUN rustup target add wasm32-unknown-unknown && \
-    rustup target add wasm32-wasip1 && \
-    rustup component add rust-src && \
-    apt-get update && apt-get install -y clang gcc build-essential libclang-dev openssl wget && \
-    update-ca-certificates
+RUN rustup target add wasm32-unknown-unknown \
+ && rustup target add wasm32-wasip1 \
+ && rustup component add rust-src \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends clang gcc build-essential libclang-dev openssl wget ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && update-ca-certificates
 
-COPY Cargo.toml Cargo.toml
-COPY build_hash.rs build_hash.rs
-COPY MtechServer2.0 MtechServer2.0
-COPY mtech-ui mtech-ui
-COPY displays displays
-COPY database database
-COPY tcp_protocol tcp_protocol
-COPY plugin_builder plugin_builder
-COPY .env .env
+# Trunk version pinned to match the CI `trunk` job.
+RUN wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.22.0-beta.1/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf- \
+ && mv trunk /usr/local/bin/trunk
 
-# Wasm-only workspace: trim members and strip native path deps that are not
-# copied into this context (stress-kit, stress-runner). plugin_builder stays
-# because displays references it in Cargo.toml for manifest resolution.
-RUN sed -i '/^members = \[/,/^\]/c\members = ["database", "displays", "MtechServer2.0", "tcp_protocol"]' Cargo.toml && \
-    sed -i '/stress-kit/d; /stress-runner/d' Cargo.toml && \
-    sed -i '/stress-kit/d; /stress-runner/d; /native-telemetry/d' displays/Cargo.toml
+COPY . .
 
-ENV RUSTFLAGS="-C target-feature=+bulk-memory,+mutable-globals --cfg getrandom_backend=\"wasm_js\""
-
-RUN wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf- && \
-    mv trunk /usr/local/bin/trunk
-
-WORKDIR /MtechServer2.0
+WORKDIR /app/MtechServer2.0
 EXPOSE 8080
 ENTRYPOINT ["trunk"]
 CMD ["serve", "--release", "--address", "0.0.0.0"]
 
-# Build locally, use pre-built dist folder:
+# Build locally with a pre-built dist folder:
 #   trunk build --release
-#   docker build -f MtechServer2.0/Dockerfile.prod -t mtechserver .
-#
-# Build in container (CI/CD):
 #   docker build -t mtechserver .
-
-

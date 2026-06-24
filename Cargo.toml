@@ -1,18 +1,48 @@
 [workspace]
 resolver = "3"
-members = [ "database", "displays", # "MtechServer2.0", # ]
-    # "Mastertech4.0", 
-    "axum_server", 
-    # "plugin_builder", 
-    # "qc-app", 
-    # "stress-kit", 
-    # "stress-runner", 
-    "tcp_protocol", 
-    # "websocket_server2", 
-    # "database-tools",
-    # "uefi",
+# All buildable crates are permanent members. Do NOT comment entries in/out to
+# scope a build — select packages with `cargo build -p <crate>` instead.
+members = [
+    "database",
+    "displays",
     "mtech-ui",
-    # "mtech-tui"
+    "mtech-tui",
+    "tcp_protocol",
+    "stress-kit",
+    "stress-runner",
+    "axum_server",
+    "plugin_builder",
+    "websocket_server2",
+    "database-tools",
+    "Mastertech4.0",
+    "qc-app",
+    "MtechServer2.0",
+]
+# Targets of bare `cargo build`/`check`/`test` and rust-analyzer. Excludes the
+# wasm-only MtechServer2.0 (cdylib) so native commands don't try to compile it;
+# build it with trunk or `cargo build -p mtechserver --target wasm32-unknown-unknown`.
+default-members = [
+    "database",
+    "displays",
+    "mtech-ui",
+    "mtech-tui",
+    "tcp_protocol",
+    "stress-kit",
+    "stress-runner",
+    "axum_server",
+    "plugin_builder",
+    "websocket_server2",
+    "database-tools",
+    "Mastertech4.0",
+    "qc-app",
+]
+# Standalone crates with their own toolchain/target; never part of this resolve.
+# uefi has its own [workspace] and builds standalone. MastertechMobile still
+# inherits workspace deps (incl. database) and needs its own [workspace.dependencies]
+# before it builds outside this workspace.
+exclude = [
+    "uefi",
+    "MastertechMobile",
 ]
 
 [workspace.dependencies]
@@ -41,8 +71,8 @@ bincode = { version="2", features = ["serde", "derive"] }
 serde = { version = "1", features = ["derive"] }
 uuid = { version = "1", features = ["v4"] }
 
-wasm-bindgen-futures = "0.4"
-wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4.75"
+wasm-bindgen = "0.2.125"
 # 0.4 requires js-sys ^0.3.91; surrealdb 3.1.0-beta.2 pins wasm-bindgen-futures 0.4.58 → js-sys 0.3.85.
 gloo-console = "0.3"
 wasm-cookies = "0.2"
@@ -58,8 +88,8 @@ crossbeam = "0.8"
 futures = "0.3"
 fuzzy-matcher = "0.3"
 rusty-s3 = "0.10.0"
-wasmtime = "45.0.2"
-wasmtime-wasi = "45.0.2"
+wasmtime = "46.0.1"
+wasmtime-wasi = "46.0.1"
 wat = "1.2"
 rfd = "0.17.2"
 regex = "1.12"
