@@ -74,6 +74,12 @@ async fn main() -> eframe::Result<()> {
         log::debug!("qc-app: rustls CryptoProvider already installed");
     }
 
+    // Correct a stale clock (Windows PE boots ~years in the past) before the
+    // first TLS handshake, or rustls rejects valid certs as "not valid yet".
+    if let Err(e) = database::clock_sync::ensure_system_clock_sane() {
+        log::warn!("qc-app: clock sync failed ({e:?}); TLS may fail if the system clock is wrong");
+    }
+
     // Establish the SurrealDB connection + guest signin once at startup so
     // stress-runner can persist `stress_test_run` / metric / event rows.  The
     // guest access has just enough permission to write to the stress test

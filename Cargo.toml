@@ -72,7 +72,9 @@ serde = { version = "1", features = ["derive"] }
 uuid = { version = "1", features = ["v4"] }
 
 wasm-bindgen-futures = "0.4.75"
-wasm-bindgen = "0.2.125"
+# Exact pin: trunk selects wasm-bindgen-cli from the locked version; a caret
+# would float to 0.2.126+ whose CLI release artifact 404s until it's published.
+wasm-bindgen = "=0.2.125"
 # 0.4 requires js-sys ^0.3.91; surrealdb 3.1.0-beta.2 pins wasm-bindgen-futures 0.4.58 → js-sys 0.3.85.
 gloo-console = "0.3"
 wasm-cookies = "0.2"

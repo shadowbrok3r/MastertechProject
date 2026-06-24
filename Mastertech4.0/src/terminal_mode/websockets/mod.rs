@@ -315,12 +315,20 @@ impl TerminalWebsocketClient {
         );
 
         // After a drop (e.g. network driver during Windows Update), reconnect instead of spinning on a dead sender.
-        const RECONNECT_DELAY: Duration = Duration::from_secs(2);
+        const RECONNECT_DELAY: Duration = Duration::from_secs(5);
         // Keepalive: ping cadence and the silence window after which the socket is presumed dead.
         const PING_INTERVAL: Duration = Duration::from_secs(10);
         const LIVENESS_TIMEOUT: Duration = Duration::from_secs(45);
+        // Stop after this many consecutive reconnects; reset on a successful Open.
+        const MAX_RECONNECT_ATTEMPTS: u32 = 5;
+        let mut reconnect_attempts: u32 = 0;
 
         'ws_session: loop {
+            if reconnect_attempts > MAX_RECONNECT_ATTEMPTS {
+                log::error!("start_websocket_sender -> giving up after {MAX_RECONNECT_ATTEMPTS} reconnect attempts");
+                let _ = connection_state_tx.send((false, format!("Disconnected — gave up after {MAX_RECONNECT_ATTEMPTS} reconnect attempts")));
+                return Ok(());
+            }
             let connection = ewebsock::connect(connection_url.clone(), ewebsock::Options::default());
 
             match connection {
@@ -344,12 +352,13 @@ impl TerminalWebsocketClient {
                         // update client to connected = false in db
                         last_event_at = Instant::now();
                         match event {
-                            WsEvent::Opened => { 
+                            WsEvent::Opened => {
                                 log::info!("start_websocket_sender -> Connection Opened");
-                                let _ = connection_state_tx.send((true, "Connected".to_string())); 
+                                reconnect_attempts = 0;
+                                let _ = connection_state_tx.send((true, "Connected".to_string()));
                             },
                             WsEvent::Error(e) => { 
-                                log::info!("start_websocket_sender -> Error: {e:?}");
+                                log::error!("start_websocket_sender -> Error: {e:?}");
                                 let _ = connection_state_tx.send((false, format!("{e:?}"))); 
                                 let _ = start_tx.send(false);
                                 *ready = false;
@@ -474,7 +483,8 @@ impl TerminalWebsocketClient {
                     }
 
                     if socket_lost {
-                        log::info!("start_websocket_sender -> reconnecting after {:?}...", RECONNECT_DELAY);
+                        reconnect_attempts += 1;
+                        log::info!("start_websocket_sender -> reconnecting (attempt {reconnect_attempts}/{MAX_RECONNECT_ATTEMPTS}) after {RECONNECT_DELAY:?}...");
                         tokio::time::sleep(RECONNECT_DELAY).await;
                         continue 'ws_session;
                     }
@@ -507,7 +517,8 @@ impl TerminalWebsocketClient {
                         last_ping_at = Instant::now();
                     }
                     if last_event_at.elapsed() >= LIVENESS_TIMEOUT {
-                        log::warn!("start_websocket_sender -> no socket events for {LIVENESS_TIMEOUT:?}; reconnecting");
+                        reconnect_attempts += 1;
+                        log::warn!("start_websocket_sender -> no socket events for {LIVENESS_TIMEOUT:?}; reconnecting (attempt {reconnect_attempts}/{MAX_RECONNECT_ATTEMPTS})");
                         let _ = connection_state_tx.send((false, "Connection silent — reconnecting".to_string()));
                         let _ = start_tx.send(false);
                         *ready = false;
@@ -524,7 +535,8 @@ impl TerminalWebsocketClient {
                     }
                 }
                 Err(e) => {
-                    log::error!("Failed to establish WebSocket connection: {e:?}");
+                    reconnect_attempts += 1;
+                    log::error!("Failed to establish WebSocket connection (attempt {reconnect_attempts}/{MAX_RECONNECT_ATTEMPTS}): {e:?}");
                     let _ = connection_state_tx.send((false, format!("Connect failed: {e:?}")));
                     let _ = start_tx.send(false);
                     tokio::time::sleep(RECONNECT_DELAY).await;
