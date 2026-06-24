@@ -37,8 +37,9 @@ RUN mkdir -p /app/.cargo && \
 # Slim the workspace to the two crates we need so cargo metadata doesn't
 # error on missing native-only members (Mastertech4.0, displays, etc.).
 COPY Cargo.toml .
+COPY build_hash.rs build_hash.rs
 COPY .env .env
-RUN sed -i 's/members = \[.*\]/members = [ "database", "axum_server" ]/' Cargo.toml
+RUN sed -i '/^members = \[/,/^\]/c\members = [ "database", "axum_server" ]' Cargo.toml
 
 COPY database/ ./database/
 COPY axum_server/ ./axum_server/

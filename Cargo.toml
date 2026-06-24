@@ -1,18 +1,18 @@
 [workspace]
 resolver = "3"
-members = [ "database", "displays",#  "MtechServer2.0" ]
-    "Mastertech4.0", 
-    # "axum_server", 
+members = [ "database", "displays", # "MtechServer2.0", # ]
+    # "Mastertech4.0", 
+    "axum_server", 
     # "plugin_builder", 
-    "qc-app", 
-    "stress-kit", 
-    "stress-runner", 
+    # "qc-app", 
+    # "stress-kit", 
+    # "stress-runner", 
     "tcp_protocol", 
     # "websocket_server2", 
     # "database-tools",
     # "uefi",
     "mtech-ui",
-    "mtech-tui"
+    # "mtech-tui"
 ]
 
 [workspace.dependencies]
@@ -24,8 +24,8 @@ database = { path = "database" }
 tcp_protocol = { path = "tcp_protocol" }
 eframe = { version="0.34", features=["serde",  "default_fonts", "glow"], default-features=false } 
 ratatui = { version = "0.30", default-features = true, features = [ "crossterm", "unstable", "serde", "layout-cache" ]}
-surrealdb = { version = "3.1.5", features = ["protocol-ws"] }
-surrealdb-types = { version = "3.1.5" }
+surrealdb = { version = "3.2.0-beta.1", features = ["protocol-ws"] }
+surrealdb-types = { version = "3.2.0-beta.1" }
 egui_extras = { version = "0.34", features = ["datepicker", "syntect", "serde", "image", "all_loaders" ]}
 egui-data-table = { git = "https://github.com/shadowbrok3r/egui-data-table", features = ["persistency"]}
 egui_json_tree = { version = "0.15", features = ["serde_json"] }
