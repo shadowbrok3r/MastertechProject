@@ -28,7 +28,7 @@ COPY database database
 COPY tcp_protocol tcp_protocol
 COPY plugin_builder plugin_builder
 
-RUN sed -i 's|^members = .*|members = ["database", "displays", "MtechServer2.0", "tcp_protocol"]|' Cargo.toml && \
+RUN sed -i '/^members = \[/,/^\]/c\members = ["database", "displays", "MtechServer2.0", "tcp_protocol"]' Cargo.toml && \
     sed -i '/stress-kit/d; /stress-runner/d' Cargo.toml && \
     sed -i '/stress-kit/d; /stress-runner/d; /native-telemetry/d' displays/Cargo.toml
 

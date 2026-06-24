@@ -13,8 +13,11 @@ use schema::User;
 use log::info;
 
 pub mod live_data;
+// Native-only HTTP order backends; their futures require Send, unavailable on wasm reqwest.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod orders;
 pub mod schema;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod xbm;
 
 pub use platform::PlatformSpawner;

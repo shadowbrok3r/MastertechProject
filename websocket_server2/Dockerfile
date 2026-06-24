@@ -40,8 +40,9 @@ RUN mkdir -p /app/.cargo && \
 
 # Copy workspace Cargo.toml and modify it to exclude GUI crates
 COPY Cargo.toml .
+COPY build_hash.rs build_hash.rs
 COPY .env .env
-RUN sed -i 's/members = \[.*\]/members = [ "database", "websocket_server2" ]/' Cargo.toml
+RUN sed -i '/^members = \[/,/^\]/c\members = [ "database", "websocket_server2" ]' Cargo.toml
 
 # Copy workspace members needed for build
 COPY database/ ./database/
