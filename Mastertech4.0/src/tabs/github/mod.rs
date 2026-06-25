@@ -147,11 +147,20 @@ impl MastertechContext {
                                 });
                             })
                             .body(|mut body| {
-                                let assets: Vec<Asset> = releases
-                                    .iter()
-                                    .flat_map(|r| r.assets.iter().cloned())
-                                    .collect();
-                                for (release, asset) in releases.iter().zip(assets.iter()) {
+                                // One row per release; offer the OS-appropriate
+                                // MasterTech asset (Windows = `.exe`, others =
+                                // the extension-less binary) so a multi-asset
+                                // release never pairs the wrong file.
+                                let want_exe = cfg!(target_os = "windows");
+                                let bin_prefix = env!("CARGO_PKG_NAME").to_ascii_lowercase();
+                                for release in releases.iter() {
+                                    let Some(asset) = release.assets.iter().find(|a| {
+                                        let name = a.name.to_ascii_lowercase();
+                                        name.starts_with(&bin_prefix)
+                                            && name.ends_with(".exe") == want_exe
+                                    }) else {
+                                        continue;
+                                    };
                                     body.row(100.0, |mut row| {
                                         row.col(|ui| {
                                             ui.add_space(5.0);

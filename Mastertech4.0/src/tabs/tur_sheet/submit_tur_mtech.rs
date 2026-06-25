@@ -377,7 +377,11 @@ impl MastertechContext {
         }
 
         let task_notes = pending.task_notes;
-        let send_specs = pending.send_specs;
+        // Only persist hardware specs when the computer actually has them; without
+        // real hardware, create_full_task_payload refuses to write a Presta-only
+        // placeholder computer and the whole task creation errors out.
+        let send_specs = pending.send_specs
+            && database::schema::entity_link::computer_has_minimal_hardware(&computer_data);
 
         // Get current user info for task history
         let current_user = self.shared_ctx.current_user.clone();

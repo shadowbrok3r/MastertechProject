@@ -160,7 +160,11 @@ impl ServiceData {
         let computer_data = self.computer_data.clone();
         let task_notes = self.task_notes.clone();
         task_data.due_date = Utc::now().into();
-        let send_specs = self.send_specs;
+        // Only persist hardware specs when the computer actually has them; without
+        // real hardware, create_full_task_payload refuses to write a Presta-only
+        // placeholder computer and the whole task creation errors out.
+        let send_specs = self.send_specs
+            && database::schema::entity_link::computer_has_minimal_hardware(&computer_data);
 
         let tx = get_event_sender();
 
