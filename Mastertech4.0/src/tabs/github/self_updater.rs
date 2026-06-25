@@ -55,7 +55,20 @@ pub async fn run(client: Client, tx: Sender<(u64, u64)>) -> anyhow::Result<(), a
 
     let releases = response.get("assets").and_then(|a| a.as_array());
     if let Some(assets) = releases {
-        let Some(asset0) = assets.first() else {
+        // Pick the asset for this OS: Windows takes the `.exe`, others the
+        // extension-less binary. Match the package bin name so a sibling asset
+        // (e.g. `qc_app.exe`) is never selected when multiple assets exist.
+        let want_exe = cfg!(target_os = "windows");
+        let bin_prefix = env!("CARGO_PKG_NAME").to_ascii_lowercase();
+        let Some(asset0) = assets.iter().find(|a| {
+            let name = a
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            name.starts_with(&bin_prefix) && name.ends_with(".exe") == want_exe
+        }) else {
+            error!("self_updater: no release asset matched this OS (want_exe={want_exe}, bin={bin_prefix})");
             return Ok(());
         };
         let Some(url) = asset0

@@ -14,6 +14,9 @@ on:
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  # Force cargo's downloader onto HTTP/1.1; HTTP/2 multiplexing intermittently
+  # fails crates.io downloads on the runners ("[16] Error in the HTTP2 framing layer").
+  CARGO_HTTP_MULTIPLEXING: "false"
 
 # Cancel superseded runs on the same branch/PR, but never cancel tag (release)
 # runs partway through.
@@ -96,7 +99,7 @@ jobs:
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libpipewire-0.3-dev pkg-config libegl1-mesa-dev libgbm-dev
+          sudo apt-get install -y libpipewire-0.3-dev pkg-config libegl1-mesa-dev libgbm-dev libfreetype6-dev libfontconfig1-dev
 
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -110,10 +113,10 @@ jobs:
           prefix-key: "v1-mastertech"
           shared-key: "native-${{ matrix.target }}"
 
-      # The action builds `cargo build --release --bin <bin>` itself and uploads
-      # the resulting binary (the .exe on windows-msvc). tar:none/zip:none =
-      # upload the raw binary, not an archive. No `asset:` — that pointed at an
-      # extension-less path that doesn't exist for the Windows .exe builds.
+      # tar:none/zip:none uploads the raw binary, not an archive. `asset:` names
+      # the built binary to upload; the action appends the platform extension, so
+      # windows uploads `MasterTech.exe`. Without `asset:` the action uploads
+      # nothing and `gh release upload` fails with "requires at least 2 args".
       - name: Upload Binary to GitHub Release
         uses: taiki-e/upload-rust-binary-action@v1.27.0
         with:
@@ -121,6 +124,7 @@ jobs:
           target: ${{ matrix.target }}
           tar: none
           zip: none
+          asset: target/${{ matrix.target }}/release/${{ matrix.bin }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
   trunk:
