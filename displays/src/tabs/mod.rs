@@ -115,6 +115,14 @@ impl egui_dock::TabViewer for SharedContext {
                 .show(ui),
             TabId::AdminConsole => self.admin_console(ui),
             TabId::WebConsole => self.web_console.ui(ui),
+            TabId::Ai => {
+                // Local self-diagnosis: chat about THIS machine via the
+                // in-process Mastertech MCP tools, no remote client.
+                self.enhanced_ai_playground.self_diagnosis = true;
+                self.enhanced_ai_playground.focused_client = None;
+                self.enhanced_ai_playground.enhanced_ai_playground(ui);
+                let _ = self.enhanced_ai_playground.take_close_request();
+            }
             TabId::DatabaseEditor => self.database_viewer.ui(ui, self.current_user.clone()),
             TabId::QueryEditor => {
                 if is_admin {

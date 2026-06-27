@@ -2,6 +2,7 @@
 //! GUI. Launched in Windows PE where no graphics driver is available. Built on
 //! the shared `mtech-tui` infrastructure.
 
+pub mod ai_backend;
 pub mod charts;
 pub mod context;
 pub mod menu_bar;
@@ -41,7 +42,8 @@ use context::QcContext;
 use menu_bar::{MenuBar, Tab};
 use modals::ReportModal;
 use tabs::{
-    BugReportTab, HardwareTab, LogsTab, Oa3Tab, OrderQcTab, SettingsTab, StressTab, SwiftDbTab,
+    AiTab, BugReportTab, HardwareTab, LogsTab, Oa3Tab, OrderQcTab, SettingsTab, StressTab,
+    SwiftDbTab,
 };
 
 /// Owns every tab, the input source, the shared context, and the background
@@ -58,6 +60,7 @@ pub struct QcTerminalApp {
     hardware: HardwareTab,
     settings: SettingsTab,
     logs: LogsTab,
+    ai: AiTab<'static>,
     swift_db: Rc<RefCell<SwiftDbTab<'static>>>,
     oa3: Rc<RefCell<Oa3Tab<'static>>>,
     bug_report: Rc<RefCell<BugReportTab<'static>>>,
@@ -99,6 +102,7 @@ impl QcTerminalApp {
             hardware: HardwareTab::new(ctx.clone()),
             settings: SettingsTab,
             logs: LogsTab::default(),
+            ai: AiTab::new(),
             swift_db,
             oa3,
             bug_report,
@@ -315,6 +319,7 @@ impl QcTerminalApp {
             Tab::Settings => self.settings.draw::<B>(f, content),
             Tab::Logs => self.logs.draw::<B>(f, content),
             Tab::BugReport => self.bug_report.borrow_mut().draw::<B>(f, content),
+            Tab::Ai => self.ai.draw::<B>(f, content),
         }
 
         self.menu_bar.draw_overlay(f);
@@ -335,6 +340,7 @@ impl QcTerminalApp {
             Tab::Settings => self.settings.handle_key_event(key),
             Tab::Logs => self.logs.handle_key_event(key),
             Tab::BugReport => self.bug_report.borrow_mut().handle_key_event(key),
+            Tab::Ai => self.ai.handle_key_event(key),
         };
     }
 
@@ -348,6 +354,7 @@ impl QcTerminalApp {
             Tab::Settings => self.settings.handle_mouse_event(ev),
             Tab::Logs => self.logs.handle_mouse_event(ev),
             Tab::BugReport => self.bug_report.borrow().handle_mouse_event(ev),
+            Tab::Ai => self.ai.handle_mouse_event(ev),
         }
     }
 

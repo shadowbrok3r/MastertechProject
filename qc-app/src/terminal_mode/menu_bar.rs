@@ -27,10 +27,11 @@ pub enum Tab {
     Settings,
     Logs,
     BugReport,
+    Ai,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 8] = [
+    pub const ALL: [Tab; 9] = [
         Tab::OrderQc,
         Tab::Stress,
         Tab::Hardware,
@@ -39,6 +40,7 @@ impl Tab {
         Tab::Settings,
         Tab::Logs,
         Tab::BugReport,
+        Tab::Ai,
     ];
 
     pub fn label(self) -> &'static str {
@@ -51,6 +53,7 @@ impl Tab {
             Tab::Settings => "Settings",
             Tab::Logs => "Logs",
             Tab::BugReport => "Bug Report",
+            Tab::Ai => "Diagnose",
         }
     }
 }
@@ -85,7 +88,7 @@ impl MenuGroup {
         match self {
             MenuGroup::Order => &[Tab::OrderQc],
             MenuGroup::Test => &[Tab::Stress, Tab::Hardware],
-            MenuGroup::Tools => &[Tab::SwiftDb, Tab::Oa3],
+            MenuGroup::Tools => &[Tab::SwiftDb, Tab::Oa3, Tab::Ai],
             MenuGroup::System => &[Tab::Settings, Tab::Logs, Tab::BugReport],
         }
     }

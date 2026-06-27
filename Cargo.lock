@@ -411,9 +411,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.102"
+version = "1.0.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
+checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
 name = "approx"
@@ -3778,9 +3778,9 @@ dependencies = [
 
 [[package]]
 name = "env_filter"
-version = "1.0.1"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32e90c2accc4b07a8456ea0debdc2e7587bdd890680d71173a15d4ae604f6eef"
+checksum = "900d271a03799a1ee8d1ca9b19893b48ca674a9284fefcfb85f05e74ed314217"
 dependencies = [
  "log",
  "regex",
@@ -3788,13 +3788,13 @@ dependencies = [
 
 [[package]]
 name = "env_logger"
-version = "0.11.10"
+version = "0.11.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0621c04f2196ac3f488dd583365b9c09be011a4ab8b9f37248ffcc8f6198b56a"
+checksum = "de671bd27a75a797dc9ae289ba1e77276e75e2026408aab65185384e2d5cd3f6"
 dependencies = [
  "anstream",
  "anstyle",
- "env_filter 1.0.1",
+ "env_filter 2.0.0",
  "jiff",
  "log",
 ]
@@ -8696,6 +8696,7 @@ dependencies = [
  "egui_plot",
  "egui_skia",
  "embed-resource",
+ "futures",
  "hex",
  "image",
  "log",
@@ -8773,9 +8774,9 @@ dependencies = [
 
 [[package]]
 name = "quick_cache"
-version = "0.6.23"
+version = "0.6.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a3db184a8b66cfe87f0263a1de147a6b554c864d1767c6f7fa4eb0e5497b565"
+checksum = "b9c6658afe513a3b484e3abfdaa0d03ef3c0bbf017542c178dd55f94eb3051f9"
 dependencies = [
  "ahash 0.8.12",
  "equivalent",
@@ -11114,9 +11115,9 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "surrealdb"
-version = "3.2.0-beta.1"
+version = "3.2.0-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6b03fa3fa394e19432e45cf962a0cda02c159b3bf12a4c6355445ed32ccf35e"
+checksum = "9623d3026857cb44619b41dbba39a29a8feb77b0fb82fde5f95414e866713dc1"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -11152,9 +11153,9 @@ dependencies = [
 
 [[package]]
 name = "surrealdb-collections"
-version = "3.2.0-beta.1"
+version = "3.2.0-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "165a720f39ec95a69c083b1e568ae11d6db4a501bf03fa8cf5865d113db266a9"
+checksum = "a7e49cb0246e2bc005175936d40e1f83dcbc072cd2765252832facb9f6ec16b9"
 dependencies = [
  "revision",
  "storekey",
@@ -11162,9 +11163,9 @@ dependencies = [
 
 [[package]]
 name = "surrealdb-core"
-version = "3.2.0-beta.1"
+version = "3.2.0-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b243460bffd99477bfa9e9c6978ee27b09820f9cde009f7c1f811a580eb07a41"
+checksum = "029bf4d0514e5cf5622c5c09a36a4888c7ed0e98ace5d7d90482f4da4340d385"
 dependencies = [
  "addr",
  "affinitypool",
@@ -11282,9 +11283,9 @@ dependencies = [
 
 [[package]]
 name = "surrealdb-strand"
-version = "3.2.0-beta.1"
+version = "3.2.0-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c060e81260995f7b4e7a3246c8512b7c776019c2ea9940eda1b1a537357d7e35"
+checksum = "e217f93d4ba3f781a2030bb2bad17ee2332c3abef8d641e63c88fc88d4f27e87"
 dependencies = [
  "revision",
  "serde",
@@ -11293,9 +11294,9 @@ dependencies = [
 
 [[package]]
 name = "surrealdb-types"
-version = "3.2.0-beta.1"
+version = "3.2.0-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae4cdc582e989da47c4a40a39fd814be8436a26d1d66f295a1fd25a7fb73f069"
+checksum = "923d511f5eff57ddd454c9f88fffb7981b024a9667e574b784e7a50688bfb5ac"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -11323,9 +11324,9 @@ dependencies = [
 
 [[package]]
 name = "surrealdb-types-derive"
-version = "3.2.0-beta.1"
+version = "3.2.0-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80bb3999e12641ca22c5e23b05af5d40d226e33d8a47f770056aa342549e488b"
+checksum = "4607fb08b3326de6a5056d1a1c1d81e312c7ff9f989db956fdda2775a2ea7837"
 dependencies = [
  "heck 0.4.1",
  "proc-macro2",

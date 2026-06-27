@@ -1,3 +1,4 @@
+pub mod ai;
 pub mod bug_report;
 pub mod hardware;
 pub mod logs;
@@ -8,6 +9,7 @@ pub mod settings;
 pub mod stress;
 pub mod swift_db;
 
+pub use ai::AiTab;
 pub use bug_report::BugReportTab;
 pub use hardware::HardwareTab;
 pub use logs::LogsTab;

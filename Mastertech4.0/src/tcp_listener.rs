@@ -591,6 +591,43 @@ async fn writer_task(
     let _ = write_half.shutdown().await;
 }
 
+/// Create-or-update this machine's `connected_client` row with the identity
+/// fields the typed read path requires (`client_hash`, `computer`,
+/// `connection_string`, `connected`, `assigned_user`). Refuses to write when
+/// `client_hash` or `computer` is missing. A row missing `client_hash` fails
+/// SurrealValue deserialization and terminates the store-wide admin LIVE
+/// query for every client, so every create path funnels through here.
+pub async fn upsert_self_identity(connected: bool) {
+    use database::DATABASE;
+
+    let identity = get_client_hash();
+    if identity.client_hash.is_empty() {
+        log::error!("upsert_self_identity -> refusing to write connected_client without client_hash");
+        return;
+    }
+    let Some(computer) = identity.computer.clone() else {
+        log::error!("upsert_self_identity -> refusing to write connected_client without computer");
+        return;
+    };
+
+    let res = DATABASE
+        .query(
+            "UPSERT $id SET client_hash = $client_hash, \
+             connection_string = $cs, computer = $computer, \
+             connected = $connected, assigned_user = $auth.id, \
+             last_update = time::now()",
+        )
+        .bind(("id", identity.id.clone()))
+        .bind(("client_hash", identity.client_hash.clone()))
+        .bind(("cs", identity.connection_string.clone()))
+        .bind(("computer", computer))
+        .bind(("connected", connected))
+        .await;
+    if let Err(e) = res {
+        log::warn!("upsert_self_identity -> upsert failed: {e:?}");
+    }
+}
+
 /// Bind the direct-TCP admin listener, add a firewall rule, and publish the
 /// address to this client's `connected_client` row so admins can dial
 /// directly without going through the WS relay.
@@ -664,6 +701,7 @@ pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) 
     let identity = get_client_hash();
     let connection_string = identity.connection_string;
     let client_hash = identity.client_hash;
+    let computer = identity.computer;
     tokio::spawn(async move {
         let ip_string = local_ip.to_string();
         for attempt in 0..5u32 {
@@ -673,6 +711,7 @@ pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) 
                 .query(
                     "UPSERT $client SET local_ip = $ip, tcp_port = $port, \
                      connection_string = $cs, client_hash = $client_hash, \
+                     computer = $computer, \
                      connected = true, assigned_user = $auth.id, \
                      last_update = time::now()",
                 )
@@ -681,6 +720,7 @@ pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) 
                 .bind(("port", port))
                 .bind(("cs", connection_string.clone()))
                 .bind(("client_hash", client_hash.clone()))
+                .bind(("computer", computer.clone()))
                 .await;
             match res {
                 Ok(_) => {
