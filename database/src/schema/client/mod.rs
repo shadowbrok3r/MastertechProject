@@ -45,11 +45,16 @@ impl ClientKind {
 pub struct ConnectedClient {
     pub id: RecordId,
     pub assigned_user: Option<RecordId>,
+    // SurrealValue read path ignores serde(default); surreal(default) supplies the default when the field is absent.
     #[serde(default)]
+    #[surreal(default)]
     pub client_hash: String,
     #[serde(default)]
+    #[surreal(default)]
     pub connection_string: String,
     pub command_history: Option<Vec<String>>,
+    #[serde(default)]
+    #[surreal(default)]
     pub connected: bool,
     pub friendly_name: Option<String>,
     pub customer: Option<RecordId>,
@@ -75,11 +80,13 @@ pub struct ConnectedClient {
     /// `friendly_name` or `customer` from any auto-lookup; admins may
     /// clear the flag to opt back into auto-detection.
     #[serde(default)]
+    #[surreal(default)]
     pub customer_locked: bool,
     /// Distinguishes a customer-machine client from a Rust-toolchain
     /// `plugin_builder` worker. Default `Machine` so pre-existing rows
     /// deserialize cleanly without a migration backfill.
     #[serde(default)]
+    #[surreal(default)]
     pub client_kind: ClientKind,
 }
 
@@ -192,5 +199,122 @@ impl FilterClients for Vec<ConnectedClient> {
                 .collect();
         }
         self.to_vec()
+    }
+}
+
+#[cfg(test)]
+mod deser_tests {
+    use super::*;
+    use crate::schema::COMPUTER_TABLE;
+    use surrealdb::types::Value;
+
+    fn sample() -> ConnectedClient {
+        ConnectedClient {
+            id: RecordId::new(CONNECTED_CLIENT_TABLE, "DeWittHome:0419a2598"),
+            client_hash: "0419a2598deadbeefcafef00d".to_string(),
+            connection_string: "DeWittHome:0419a2598".to_string(),
+            connected: true,
+            computer: Some(RecordId::new(COMPUTER_TABLE, "DeWittHome:0419a2598")),
+            ..Default::default()
+        }
+    }
+
+    fn sample_without(field: &str) -> Value {
+        let mut v = sample().into_value();
+        match &mut v {
+            Value::Object(obj) => {
+                obj.remove(field);
+            }
+            other => panic!("ConnectedClient should serialize to an object, got {other:?}"),
+        }
+        v
+    }
+
+    #[test]
+    fn missing_client_hash_defaults_to_empty() {
+        let parsed = ConnectedClient::from_value(sample_without("client_hash"))
+            .expect("missing client_hash must not fail to deserialize");
+        assert_eq!(parsed.client_hash, "");
+    }
+
+    #[test]
+    fn missing_connection_string_defaults_to_empty() {
+        let parsed = ConnectedClient::from_value(sample_without("connection_string"))
+            .expect("missing connection_string must not fail to deserialize");
+        assert_eq!(parsed.connection_string, "");
+    }
+
+    #[test]
+    fn missing_connected_defaults_to_false() {
+        let parsed = ConnectedClient::from_value(sample_without("connected"))
+            .expect("missing connected must not fail to deserialize");
+        assert!(!parsed.connected);
+    }
+
+    #[test]
+    fn missing_all_undeclared_fields_deserializes() {
+        let mut v = sample().into_value();
+        if let Value::Object(obj) = &mut v {
+            obj.remove("client_hash");
+            obj.remove("connection_string");
+            obj.remove("connected");
+            obj.remove("computer");
+        }
+        let parsed = ConnectedClient::from_value(v)
+            .expect("a row missing every undeclared field must still deserialize");
+        assert_eq!(parsed.client_hash, "");
+        assert_eq!(parsed.connection_string, "");
+        assert!(!parsed.connected);
+        assert!(parsed.computer.is_none());
+    }
+
+    #[test]
+    fn reported_production_record_deserializes() {
+        // The exact reported row: connection_string present, client_hash and
+        // computer absent.
+        let mut v = sample().into_value();
+        if let Value::Object(obj) = &mut v {
+            obj.remove("client_hash");
+            obj.remove("computer");
+        }
+        let parsed =
+            ConnectedClient::from_value(v).expect("the reported production record must deserialize");
+        assert_eq!(parsed.client_hash, "");
+        assert_eq!(parsed.connection_string, "DeWittHome:0419a2598");
+        assert!(parsed.connected);
+    }
+
+    #[test]
+    fn row_missing_every_non_option_field_deserializes() {
+        let mut v = sample().into_value();
+        if let Value::Object(obj) = &mut v {
+            for f in [
+                "client_hash",
+                "connection_string",
+                "connected",
+                "customer_locked",
+                "client_kind",
+            ] {
+                obj.remove(f);
+            }
+        }
+        let parsed = ConnectedClient::from_value(v)
+            .expect("a row with only id (plus optional fields) must deserialize");
+        assert_eq!(parsed.client_hash, "");
+        assert_eq!(parsed.connection_string, "");
+        assert!(!parsed.connected);
+        assert!(!parsed.customer_locked);
+        assert_eq!(parsed.client_kind, ClientKind::Machine);
+    }
+
+    #[test]
+    fn full_record_round_trips() {
+        let original = sample();
+        let parsed = ConnectedClient::from_value(original.clone().into_value())
+            .expect("a fully-populated record round-trips");
+        assert_eq!(parsed.client_hash, original.client_hash);
+        assert_eq!(parsed.connection_string, original.connection_string);
+        assert_eq!(parsed.connected, original.connected);
+        assert_eq!(parsed.computer, original.computer);
     }
 }

@@ -109,6 +109,9 @@ impl MasterTechApp {
                         return;
                     }
                 };
+                // Create the row with client_hash + computer set before the
+                // publish or any friendly_name UPSERT can create a partial one.
+                crate::tcp_listener::upsert_self_identity(true).await;
                 // Mirror terminal-mode's brief head-start so the WS sender has
                 // a chance to upsert the connected_client row before we publish
                 // local_ip + tcp_port. The publish step also retries with
@@ -322,6 +325,11 @@ impl MasterTechApp {
                     use database::schema::utilities::query_id;
                     use database::schema::client::ConnectedClient;
                     use database::DATABASE;
+
+                    // Ensure client_hash + computer exist before the
+                    // friendly_name UPSERT below, which would otherwise create
+                    // a row missing both.
+                    crate::tcp_listener::upsert_self_identity(true).await;
 
                     // Skip the PrestaShop/Everest network roundtrip when
                     // the DB already has a cached friendly_name for this

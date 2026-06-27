@@ -40,6 +40,9 @@ pub struct EnhancedAiPlayground {
     /// Connection string of the connected client the admin console is focused on; seeds Claude Code diagnostics.
     #[serde(skip)]
     pub focused_client: Option<String>,
+    /// When true, hides the close ✕ and the external Claude Code button and uses self-diagnosis empty-state copy.
+    #[serde(skip)]
+    pub self_diagnosis: bool,
     /// Set when the panel's close button is clicked; the host reads + clears it.
     #[serde(skip)]
     close_requested: bool,
@@ -68,6 +71,7 @@ impl Default for EnhancedAiPlayground {
             open_modal: false,
             use_mcp_tools: true,
             focused_client: None,
+            self_diagnosis: false,
             close_requested: false,
             loaded: false,
             load_tx,
@@ -222,7 +226,9 @@ impl EnhancedAiPlayground {
 
             // ── Right side: close · tools · model ──
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button(RichText::new(icons::CLOSE)).on_hover_text("Close chat").clicked() {
+                if !self.self_diagnosis
+                    && ui.button(RichText::new(icons::CLOSE)).on_hover_text("Close chat").clicked()
+                {
                     self.close_requested = true;
                 }
                 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
@@ -234,10 +240,11 @@ impl EnhancedAiPlayground {
                     self.use_mcp_tools = !self.use_mcp_tools;
                 }
                 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
-                if ui
-                    .button(RichText::new(icons::ROBOT))
-                    .on_hover_text("Diagnose with Claude Code (subscription)")
-                    .clicked()
+                if !self.self_diagnosis
+                    && ui
+                        .button(RichText::new(icons::ROBOT))
+                        .on_hover_text("Diagnose with Claude Code (subscription)")
+                        .clicked()
                 {
                     let cs = self.focused_client.clone();
                     self.start_claude_diagnosis(cs);
@@ -293,8 +300,16 @@ impl EnhancedAiPlayground {
             ui.vertical_centered(|ui| {
                 ui.add_space(120.);
                 ui.label(RichText::new(format!("{}", icons::CHAT)).size(40.).weak());
-                ui.heading(RichText::new("Mastertech Assistant").strong());
-                ui.label(RichText::new("Ask a question to get started.").weak());
+                if self.self_diagnosis {
+                    ui.heading(RichText::new("Diagnose this computer").strong());
+                    ui.label(
+                        RichText::new("Ask about the PC Mastertech is running on — it inspects this machine with the Mastertech tools.")
+                            .weak(),
+                    );
+                } else {
+                    ui.heading(RichText::new("Mastertech Assistant").strong());
+                    ui.label(RichText::new("Ask a question to get started.").weak());
+                }
             });
             return;
         }

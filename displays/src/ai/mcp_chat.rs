@@ -31,7 +31,9 @@ const PLUGIN_MCP_ADDR: &str = "127.0.0.1:9003";
 const SYSTEM_PROMPT: &str = "You are the Mastertech assistant embedded in the technician app. \
 You can call the provided Mastertech tools (SurrealDB queries, customer/order/computer lookups, \
 diagnostics, plugin and remote-UI control) to answer questions and act on the user's behalf. \
-Prefer a tool over guessing when a question concerns live data. Keep answers concise.";
+Prefer a tool over guessing when a question concerns live data. Keep answers concise. \
+When the user refers to \"this computer\"/\"this PC\" without naming a client, they mean the local \
+machine this app is running on — inspect it with the local system and diagnostic tools.";
 
 /// Builds OpenAI chat history from the tab's prior `ChatMessage`s (Me -> user,
 /// Gpt text -> assistant). Tool-activity lines are skipped. The new user input
