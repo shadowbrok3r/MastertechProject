@@ -3,7 +3,6 @@ use displays::{
     tabs::{
         admin_console::{AdminConsole, SessionLayout},
         admin_console::client_interface::TransportKind,
-        ai_playground::ChatThread,
     },
     ui_tools::{
         encode_style,
@@ -13,7 +12,6 @@ use displays::{
 };
 use eframe::{egui::{Color32, Context, Margin, Stroke, Vec2, Window}, Frame};
 use crate::{app_state::MtechServer, webworker::decode_task_payload};
-use std::collections::HashMap;
 use wasm_bindgen_futures::spawn_local;
 use egui_dock::DockState;
 use database::DATABASE;
@@ -28,16 +26,6 @@ impl MtechServer {
         
         if let Some(storage) = frame.storage_mut() {
             gloo_console::info!("We have Storage Mut Access");
-            // Get existing chats a user has with ChatGPT
-            if let Some(chat_history) = storage.get_string("chat_history") {
-                // info!("chat_history: {chat_history:?}");
-                let chat_threads: HashMap<String, ChatThread> = serde_json::from_str(&chat_history).unwrap_or_default();
-                // info!("chat_threads: {chat_threads:?}");
-                if let Some((nth, _)) = chat_threads.iter().nth(0) {
-                    self.shared_ctx.ai_playground.selected_thread = nth.to_string();
-                }
-                self.shared_ctx.ai_playground.set_threads(chat_threads);
-            }
 
             // if let Some(service_map) = storage.get_string("service_data") {
             //     match serde_json::from_str::<HashMap<String, PrestashopPayload>>(&service_map) {
@@ -586,21 +574,6 @@ impl MtechServer {
                 "user_settings",
                 serde_json::to_string(&self.shared_ctx.user_settings).unwrap(),
             );
-        }
-
-        if self.shared_ctx.ai_playground.save_chats {
-            self.shared_ctx.ai_playground.save_chats = false;
-            if let Some(_usr) = &self.shared_ctx.current_user {
-                let threads = self.shared_ctx.ai_playground.get_threads();
-                // for (id, thread) in threads {
-                    // thread.messages
-                // }
-                // info!("Saving chats: {:?}", threads);
-                frame.storage_mut().unwrap().set_string(
-                    "chat_history",
-                    serde_json::to_string(&threads).unwrap(),
-                );
-            }
         }
     }
 }

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use web_time::Duration;
 use eframe::egui::epaint::RectShape;
 use eframe::egui::{Align2, Area, Context, Direction, Frame, Id, Order, Pos2, Response, CornerRadius, Shape, Stroke, Ui, StrokeKind};
-use eframe::egui::{Color32, WidgetText};
+use eframe::egui::{Color32, Margin, RichText, WidgetText};
 
 pub type ToastContents = dyn Fn(&mut Ui, &mut Toast) -> Response + Send + Sync;
 
@@ -105,6 +105,21 @@ impl Toasts {
         toasts.extend(std::mem::take(&mut self.added_toasts));
         toasts.retain(|toast| toast.options.ttl_sec > 0.0);
 
+        // Collapse identical toasts (same kind + text) into one, accumulating an occurrence count.
+        let mut deduped: Vec<Toast> = Vec::with_capacity(toasts.len());
+        for toast in toasts {
+            if let Some(existing) = deduped
+                .iter_mut()
+                .find(|t| t.kind == toast.kind && t.text.text() == toast.text.text())
+            {
+                existing.options.count = existing.options.count.saturating_add(toast.options.count.max(1));
+                existing.options.ttl_sec = existing.options.ttl_sec.max(toast.options.ttl_sec);
+            } else {
+                deduped.push(toast);
+            }
+        }
+        let mut toasts = deduped;
+
         for (i, toast) in toasts.iter_mut().enumerate() {
             let response = Area::new(id.with("toast").with(i))
                 .anchor(align, offset.to_vec2())
@@ -170,7 +185,23 @@ fn default_toast_contents(ui: &mut Ui, toast: &mut Toast) -> Response {
                         });
                     }
                 };
-                let b = |ui: &mut Ui, toast: &mut Toast| ui.label(toast.text.clone());
+                let b = |ui: &mut Ui, toast: &mut Toast| {
+                    let resp = ui.label(toast.text.clone());
+                    if toast.options.count > 1 {
+                        Frame::new()
+                            .fill(Color32::from_rgb(191, 33, 101))
+                            .corner_radius(CornerRadius::same(8))
+                            .inner_margin(Margin::symmetric(6, 1))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    RichText::new(toast.options.count.to_string())
+                                        .strong()
+                                        .color(Color32::WHITE),
+                                );
+                            });
+                    }
+                    resp
+                };
                 let c = |ui: &mut Ui, toast: &mut Toast| {
                     if ui.button(toast.style.close_button_text.clone()).clicked() {
                         toast.close();
@@ -311,6 +342,8 @@ pub struct ToastOptions {
     pub(crate) ttl_sec: f64,
     /// Initial value of ttl_sec, used for progress
     pub(crate) initial_ttl_sec: f64,
+    /// Number of identical toasts collapsed into this one (shown as a badge when > 1).
+    pub(crate) count: u32,
 }
 
 impl Default for ToastOptions {
@@ -320,6 +353,7 @@ impl Default for ToastOptions {
             show_progress: true,
             ttl_sec: f64::INFINITY,
             initial_ttl_sec: f64::INFINITY,
+            count: 1,
         }
     }
 }

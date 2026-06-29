@@ -1,6 +1,6 @@
 use crate::tabs::egui_file_dialog::{DirectoryEntry, FileDialog, FileSystem, NativeFileSystem};
 use chrono::{DateTime, Local};
-use egui::ahash::{HashMap, HashMapExt};
+use std::collections::HashMap;
 use egui::{Direction, Layout, Ui, Vec2};
 use indexmap::{IndexMap, IndexSet};
 use std::path::{Path, PathBuf};
@@ -255,7 +255,7 @@ impl InformationPanel {
             // show preview of selected item
             self.display_preview(ui, item);
 
-            let spacing = ui.ctx().style().spacing.item_spacing.y * SPACING_MULTIPLIER;
+            let spacing = ui.ctx().global_style().spacing.item_spacing.y * SPACING_MULTIPLIER;
             ui.separator();
 
             ui.add_space(spacing);

@@ -110,10 +110,10 @@ impl Signup {
 }
 
 impl SharedContext {
-    pub fn signup_page(&mut self, ctx: &Context, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>, appstate_tx: Sender<AppState>) {
+    pub fn signup_page(&mut self, ui: &mut eframe::egui::Ui, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>, appstate_tx: Sender<AppState>) {
         CentralPanel::default()
-            .frame(Frame::central_panel(&ctx.style()).inner_margin(1.))
-            .show(ctx, |ui| 
+            .frame(Frame::central_panel(&ui.ctx().global_style()).inner_margin(1.))
+            .show(ui, |ui|
         {
             StripBuilder::new(ui)
                 .cell_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center))

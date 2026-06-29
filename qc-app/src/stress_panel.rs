@@ -880,9 +880,9 @@ impl StressPanel {
             ui.add_space(4.0);
         });
 
-        egui::SidePanel::right("stress_panel_side")
+        egui::Panel::right("stress_panel_side")
             .resizable(true)
-            .default_width(440.0)
+            .default_size(440.0)
             .show_animated_inside(ui, self.temps_open, |ui| {
                 self.ui_side_panel(ui);
             });

@@ -251,14 +251,14 @@ impl Token {
 use eframe::egui::text::LayoutJob;
 
 
-impl<T: Editor> eframe::egui::util::cache::ComputerMut<(&T, &str), LayoutJob> for Token {
+impl<T: Editor> eframe::egui::cache::ComputerMut<(&T, &str), LayoutJob> for Token {
     fn compute(&mut self, (cache, text): (&T, &str)) -> LayoutJob {
         self.highlight(cache, text)
     }
 }
 
 
-pub type HighlightCache = eframe::egui::util::cache::FrameCache<LayoutJob, Token>;
+pub type HighlightCache = eframe::egui::cache::FrameCache<LayoutJob, Token>;
 
 
 pub fn highlight<T: Editor>(ctx: &eframe::egui::Context, cache: &T, text: &str) -> LayoutJob {

@@ -1,5 +1,4 @@
 use eframe::egui::{text::LayoutJob, Button, Color32, FontId, Margin, RichText, Style, TextFormat, Ui, Widget};
-use bincode::{config::standard, serde::{decode_from_slice, encode_to_vec}};
 use database::schema::LiveTaskPayload;
 use std::collections::BTreeSet;
 use anyhow::Context;
@@ -23,28 +22,66 @@ pub use mtech_ui::{dock_style, egui_logger, theme};
 
 const ZSTD_LEVEL: i32 = 9;
 
+/// egui `Style` layout is not stable across egui versions, so persist it as JSON (field-named,
+/// tolerant of added/removed fields) rather than positional bincode. zstd keeps it compact.
 pub fn encode_style(message: &Style) -> anyhow::Result<Vec<u8>> {
-    let bincoded = encode_to_vec(message, standard()).context("Failed to serialize buffer")?;
-    let compressed = zstd::encode_all(std::io::Cursor::new(&bincoded), ZSTD_LEVEL).context("zstd")?;
-    if cfg!(debug_assertions) {
-        log::warn!("Compressed: {compressed:?}");
-    }
-    Ok(compressed.into())
+    let json = serde_json::to_vec(message).context("serialize style to JSON")?;
+    let compressed = zstd::encode_all(std::io::Cursor::new(&json), ZSTD_LEVEL).context("zstd")?;
+    Ok(compressed)
 }
 
 pub fn decode_style(packet: &[u8]) -> anyhow::Result<Style> {
-    if cfg!(debug_assertions) {
-        log::warn!("Got bytes: {packet:?}");
+    let json = zstd::decode_all(packet).context("zstd")?;
+    style_from_json(&json)
+}
+
+/// Deserialize an egui `Style` from JSON, migrating across egui versions. On a strict-decode
+/// failure (egui added/renamed a `Style`/`Visuals`/nested field — e.g. 0.35's
+/// `color_transfer_function`, where one missing field in a non-`#[serde(default)]` struct fails
+/// the whole parse), overlay the stored values onto the current `Style::default()`: new fields
+/// take their default, removed/renamed fields are dropped, and matching values (colors, spacing,
+/// text styles, …) are preserved. This keeps saved themes working across egui upgrades.
+pub fn style_from_json(json: &[u8]) -> anyhow::Result<Style> {
+    match serde_json::from_slice::<Style>(json) {
+        Ok(style) => Ok(style),
+        Err(e) => {
+            log::warn!("theme strict-decode failed ({e}); migrating against egui Style defaults");
+            let stored: serde_json::Value =
+                serde_json::from_slice(json).context("theme is not valid JSON; cannot migrate")?;
+            let default =
+                serde_json::to_value(Style::default()).context("serialize default Style")?;
+            match serde_json::from_value::<Style>(merge_over_default(default, stored)) {
+                Ok(style) => {
+                    log::info!("theme migrated to the current egui Style schema");
+                    Ok(style)
+                }
+                Err(e2) => {
+                    log::error!("theme migration failed ({e2}); using default Style");
+                    Ok(Style::default())
+                }
+            }
+        }
     }
-    let bincoded = zstd::decode_all(packet).context("zstd")?;
-    if cfg!(debug_assertions) {
-        log::warn!("bincoded: {bincoded:?}");
+}
+
+/// Recursively overlay `stored` onto `default`, keyed by the default's structure: objects recurse
+/// over the default's keys (so new fields are kept and removed ones dropped), scalars/arrays take
+/// the stored value, and a shape mismatch keeps the default. Enum-tagged objects stay single-variant
+/// (only the default's keys survive), so the result always re-parses into the current `Style`.
+fn merge_over_default(default: serde_json::Value, stored: serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    match (default, stored) {
+        (Value::Object(mut d), Value::Object(s)) => {
+            for (k, dv) in d.iter_mut() {
+                if let Some(sv) = s.get(k) {
+                    *dv = merge_over_default(dv.take(), sv.clone());
+                }
+            }
+            Value::Object(d)
+        }
+        (Value::Object(d), _) => Value::Object(d),
+        (_, stored) => stored,
     }
-    let (message, _) = decode_from_slice(&bincoded, standard()).context("bincode")?;
-    if cfg!(debug_assertions) {
-        log::warn!("style: {message:?}");
-    }
-    Ok(message)
 }
 
 pub fn find_task_in_description(

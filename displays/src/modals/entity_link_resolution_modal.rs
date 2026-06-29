@@ -401,7 +401,16 @@ impl EntityLinkResolutionModal {
 
         let mut close = false;
         let mut outcome = None;
-        Window::new("Link customer / computer records")
+        let title = match self
+            .request
+            .connection_string
+            .as_deref()
+            .filter(|s| !s.is_empty())
+        {
+            Some(cs) => format!("Link customer / computer records — {cs}"),
+            None => "Link customer / computer records".to_string(),
+        };
+        Window::new(title)
             .collapsible(false)
             .resizable(true)
             .default_size([720.0, 640.0])
@@ -428,6 +437,24 @@ impl EntityLinkResolutionModal {
         self.poll_live_specs();
         self.poll_customer_fetch();
         self.poll_existing_customer_fetch();
+
+        // Connected client this link request targets.
+        let client_label = self
+            .request
+            .connection_string
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("(no connection_string on request)");
+        ui.label(
+            RichText::new(format!("{}  {}", crate::ui_tools::icons::DESKTOP, client_label))
+                .strong()
+                .size(16.0)
+                .color(Color32::LIGHT_BLUE),
+        );
+        if !self.customer.name.trim().is_empty() {
+            ui.label(RichText::new(self.customer.name.trim()).italics());
+        }
+        ui.separator();
 
         ui.label(
             RichText::new("Validation failed — link or create records before continuing.")

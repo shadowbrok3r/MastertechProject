@@ -176,7 +176,7 @@ impl MasterTechApp{
                 .with_title(title)
                 .with_inner_size([960.0, 720.0]);
 
-            ctx.show_viewport_immediate(viewport_id, viewport_builder, |ctx, _class| {
+            ctx.show_viewport_immediate(viewport_id, viewport_builder, |vp_ui, _class| {
                 let layout = &mut self.context.shared_ctx.web_console_layout;
                 if let Some(ws) = layout.ws_clients.get_mut(&conn) {
                     ws.egui_viewer.poll_frames();
@@ -186,19 +186,20 @@ impl MasterTechApp{
                         let key = ((inner_w * 2.0) as u32, (inner_h * 2.0) as u32);
                         if ws.egui_remote_popout_inner_sent != Some(key) {
                             ws.egui_remote_popout_inner_sent = Some(key);
-                            ctx.send_viewport_cmd(ViewportCommand::InnerSize(
+                            vp_ui.ctx().send_viewport_cmd(ViewportCommand::InnerSize(
                                 eframe::egui::vec2(inner_w, inner_h),
                             ));
                         }
                     }
                 }
-                CentralPanel::default().show(ctx, |ui| {
+                CentralPanel::default().show(vp_ui, |ui| {
+                    let vctx = ui.ctx().clone();
                     let layout = &mut self.context.shared_ctx.web_console_layout;
                     if let Some(ws) = layout.ws_clients.get_mut(&conn) {
-                        ws.show_egui_remote_viewport_panel(ui, ctx);
+                        ws.show_egui_remote_viewport_panel(ui, &vctx);
                     }
                 });
-                if ctx.input(|i| i.viewport().close_requested()) {
+                if vp_ui.ctx().input(|i| i.viewport().close_requested()) {
                     if let Some(ws) = self
                         .context
                         .shared_ctx

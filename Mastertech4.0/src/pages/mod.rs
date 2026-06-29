@@ -1,4 +1,4 @@
-use eframe::egui::Context;
+use eframe::egui::Ui;
 use egui_dock::DockArea;
 
 use crate::app_state::MasterTechApp;
@@ -7,8 +7,8 @@ use displays::tabs::TabId;
 pub mod menu_bar;
 
 impl MasterTechApp {
-    pub fn main_page(&mut self, ctx: &Context) {
-        let style = displays::ui_tools::dock_style::style(ctx);
+    pub fn main_page(&mut self, ui: &mut Ui) {
+        let style = displays::ui_tools::dock_style::style(ui.ctx());
 
         let mut tree = std::mem::replace(
             &mut self.dock.tree,
@@ -21,7 +21,7 @@ impl MasterTechApp {
             .show_add_buttons(true)
             .show_add_popup(true)
             .draggable_tabs(true)
-            .show(ctx, &mut self.context);
+            .show_inside(ui, &mut self.context);
 
         if !self.context.pending_tab_removes.is_empty() || !self.context.pending_tab_adds.is_empty()
         {

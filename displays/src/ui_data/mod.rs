@@ -411,19 +411,6 @@ impl crate::app_state::SharedContext {
             ctx.request_repaint();
             ctx.set_global_style(Arc::new(settings));
         }
-
-        if let Ok(thread_obj) = self.ai_thread_channel.1.try_recv() {
-            let mut thread_map = std::collections::HashMap::new();
-            self.ai_playground.save_chats = true;
-            thread_map.insert(thread_obj.id.clone(), crate::tabs::ai_playground::ChatThread {
-                id: thread_obj.id.clone(),
-                messages: Vec::new(),
-                images: Vec::new(),
-                input: String::new(),
-            });
-            self.ai_playground.selected_thread = thread_obj.id;
-            self.ai_playground.set_threads(thread_map);
-        }
     }
 
     /// Rebuilds the DB connection off-thread; on success the

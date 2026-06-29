@@ -354,6 +354,7 @@ impl RataguiBackend {
             halign: Align::LEFT,
             justify: false,
             round_output_to_gui: false,
+            keep_trailing_whitespace: false,
         };
 
         let cur_buf = &self.buffer;

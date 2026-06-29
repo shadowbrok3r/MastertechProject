@@ -116,7 +116,7 @@ impl MastertechContext {
     pub fn downloads_page(&mut self, ui: &mut Ui) {
         CentralPanel::default()
             .frame(
-                Frame::central_panel(&ui.ctx().style())
+                Frame::central_panel(&ui.ctx().global_style())
                     .outer_margin(10.)
                     .inner_margin(10.)
             )

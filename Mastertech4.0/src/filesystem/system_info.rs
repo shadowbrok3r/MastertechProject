@@ -36,8 +36,6 @@ pub trait ComputerInfo {
     async fn get_computer_data_no_gpu(&mut self) -> anyhow::Result<ComputerData, anyhow::Error>;
     #[allow(unused)]
     async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error>;
-    #[cfg(target_os = "windows")]
-    async fn get_antivirus() -> std::io::Result<Vec<(String, Option<bool>)>>;
 }
 
 #[async_trait]
@@ -367,103 +365,6 @@ impl ComputerInfo for ComputerData {
 
     async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
         Ok(get_sysinfo().await?)
-    }
-
-    #[cfg(target_os = "windows")]
-    async fn get_antivirus() -> std::io::Result<Vec<(String, Option<bool>)>> {
-        // Record start time
-        let start_time = Utc::now();
-        // Predefined antivirus search terms and their display names
-        let av_to_search = vec![
-            ("mbam", "Malwarebytes"),
-            ("aswtoolssvc", "Avast"),
-            ("avgToolsSvc", "AVG"),
-            ("mcuicnt", "McAfee"),
-            ("norton", "Norton"),
-            ("wrsa", "Webroot"),
-            ("egui", "ESET"),
-            ("superantispyware", "SuperAntiSpyware"),
-        ];
-
-        // Create an async channel with sufficient buffer
-        let (sender, mut receiver) = tokio::sync::mpsc::channel::<(String, Option<bool>)>(av_to_search.len());
-
-        // Create a shared mapping for antivirus names
-        let antivirus_mapping = Arc::new(
-            av_to_search
-                .iter()
-                .cloned()
-                .collect::<HashMap<&str, &str>>(),
-        );
-
-        // Spawn tasks concurrently
-        let tasks: Vec<_> = av_to_search
-            .clone()
-            .into_iter()
-            .map(|(antivirus, _)| {
-                let sender = sender.clone();
-                let antivirus_mapping = Arc::clone(&antivirus_mapping);
-                tokio::task::spawn(async move {
-                    let where_cmd = ["where", "/r", "C:\\Program Files", antivirus];
-
-                    let output = tokio::process::Command::new("cmd")
-                        .args(&["/C"])
-                        .args(&where_cmd)
-                        .creation_flags(CREATE_NO_WINDOW)
-                        .output()
-                        .await;
-
-                    let result = match output {
-                        Ok(output) => {
-                            let exists = if output.stdout.is_empty() {
-                                None
-                            } else {
-                                Some(true)
-                            };
-                            let name = antivirus_mapping
-                                .get(antivirus)
-                                .unwrap_or(&antivirus)
-                                .to_string();
-                            (name, exists)
-                        }
-                        Err(e) => {
-                            // Log error but don't fail the task
-                            log::error!("Error checking {}: {}", antivirus, e);
-                            (antivirus_mapping.get(antivirus).unwrap_or(&antivirus).to_string(), None)
-                        }
-                    };
-
-                    // Send result, ignore send errors if channel is closed
-                    let _ = sender.send(result).await;
-                })
-            })
-            .collect();
-
-        // Drop the original sender to allow the channel to close when all tasks complete
-        drop(sender);
-
-        // Collect results
-        let mut antivirus_exists = Vec::with_capacity(av_to_search.len());
-        while let Some(result) = receiver.recv().await {
-            antivirus_exists.push(result);
-        }
-
-        // Wait for all tasks to complete
-        for task in tasks {
-            if let Err(e) = task.await {
-                log::error!("Task error: {}", e);
-            }
-        }
-
-        // Record end time and calculate duration
-        let end_time = Utc::now();
-        let duration = end_time - start_time;
-        log::error!(
-            "get_antivirus execution time: {} ms",
-            duration.num_milliseconds()
-        );
-
-        Ok(antivirus_exists)
     }
 }
 

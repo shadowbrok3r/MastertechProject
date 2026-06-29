@@ -212,9 +212,13 @@ impl MasterTechApp {
                                 Ok(data) => { let _ = specs_tx.try_send(data); }
                                 Err(e) => log::error!("Error getting specs: {e:?}"),
                             }
-                            let installed_antivirus = database::schema::ComputerData::get_antivirus().await.unwrap_or_default();
-                            log::info!("installed_antivirus: {installed_antivirus:?}");
-                            let _ = current_antivirus_tx.try_send(installed_antivirus);
+                            let detected_antivirus = tokio::task::spawn_blocking(|| {
+                                crate::utilities::windows::antivirus::check_antivirus().unwrap_or_default()
+                            })
+                            .await
+                            .unwrap_or_default();
+                            log::info!("detected_antivirus: {detected_antivirus:?}");
+                            let _ = current_antivirus_tx.try_send(detected_antivirus);
                         });
                     }
                 }
@@ -467,16 +471,7 @@ impl MasterTechApp {
         }
 
         if let Ok(antivirus) = self.context.current_antivirus_rx.try_recv() {
-            let cps = &mut self.context.current_antivirus.clone();
-            for (name, is_installed) in antivirus {
-                match is_installed {
-                    Some(true) => {
-                        *cps += "\n";
-                        *cps += &format!("{name}");
-                    }
-                    _ => {}
-                }
-            }
+            self.context.current_antivirus = antivirus.join("\n");
         }
 
         if let Ok(keys) = self.context.cps_keys_rx.try_recv() {

@@ -7,7 +7,10 @@ use eframe::egui::{Color32, FontDefinitions, FontFamily, RichText};
 pub fn install_fonts(fonts: &mut FontDefinitions) {
     egui_phosphor::add_to_fonts(fonts, egui_phosphor::Variant::Regular);
 
+    // add_to_fonts only registers phosphor under Proportional; themes force Monospace for most
+    // text, so register it under Monospace (and the named families) too or icons render as tofu.
     for family in [
+        FontFamily::Monospace,
         FontFamily::Name("Regular".into()),
         FontFamily::Name("Bold".into()),
     ] {

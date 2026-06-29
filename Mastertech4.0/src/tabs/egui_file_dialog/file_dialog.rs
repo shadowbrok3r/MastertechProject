@@ -1199,7 +1199,7 @@ impl FileDialog {
                 eframe::egui::Panel::left(self.window_id.with("left_panel"))
                     .resizable(true)
                     .default_size(150.0)
-                    .width_range(90.0..=250.0)
+                    .size_range(90.0..=250.0)
                     .show_inside(ui, |ui| {
                         self.ui_update_left_panel(ui);
                     });
@@ -1415,7 +1415,7 @@ impl FileDialog {
             }
         });
 
-        ui.add_space(ui.ctx().style().spacing.item_spacing.y);
+        ui.add_space(ui.ctx().global_style().spacing.item_spacing.y);
     }
 
     /// Updates the navigation buttons like parent or previous directory
@@ -1468,7 +1468,7 @@ impl FileDialog {
         egui::Frame::default()
             .stroke(egui::Stroke::new(
                 1.0,
-                ui.ctx().style().visuals.window_stroke.color,
+                ui.ctx().global_style().visuals.window_stroke.color,
             ))
             .inner_margin(egui::Margin::from(4))
             .corner_radius(egui::CornerRadius::from(4))
@@ -1650,13 +1650,13 @@ impl FileDialog {
         egui::Frame::default()
             .stroke(egui::Stroke::new(
                 1.0,
-                ui.ctx().style().visuals.window_stroke.color,
+                ui.ctx().global_style().visuals.window_stroke.color,
             ))
             .inner_margin(egui::Margin::symmetric(4, 4))
             .corner_radius(egui::CornerRadius::from(4))
             .show(ui, |ui| {
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
-                    ui.add_space(ui.ctx().style().spacing.item_spacing.y);
+                    ui.add_space(ui.ctx().global_style().spacing.item_spacing.y);
 
                     ui.label(egui::RichText::from("🔍").size(15.0));
 
@@ -1723,12 +1723,12 @@ impl FileDialog {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     // Spacing for the first section in the left sidebar
-                    let mut spacing = ui.ctx().style().spacing.item_spacing.y * 2.0;
+                    let mut spacing = ui.ctx().global_style().spacing.item_spacing.y * 2.0;
 
                     // Update paths pinned to the left sidebar by the user
                     if self.config.show_pinned_folders && self.ui_update_pinned_folders(ui, spacing)
                     {
-                        spacing = ui.ctx().style().spacing.item_spacing.y * SPACING_MULTIPLIER;
+                        spacing = ui.ctx().global_style().spacing.item_spacing.y * SPACING_MULTIPLIER;
                     }
 
                     // Update custom quick access sections
@@ -1737,27 +1737,27 @@ impl FileDialog {
                     for quick_access in &quick_accesses {
                         ui.add_space(spacing);
                         self.ui_update_quick_access(ui, quick_access);
-                        spacing = ui.ctx().style().spacing.item_spacing.y * SPACING_MULTIPLIER;
+                        spacing = ui.ctx().global_style().spacing.item_spacing.y * SPACING_MULTIPLIER;
                     }
 
                     self.config.quick_accesses = quick_accesses;
 
                     // Update native quick access sections
                     if self.config.show_places && self.ui_update_user_directories(ui, spacing) {
-                        spacing = ui.ctx().style().spacing.item_spacing.y * SPACING_MULTIPLIER;
+                        spacing = ui.ctx().global_style().spacing.item_spacing.y * SPACING_MULTIPLIER;
                     }
 
                     let disks = std::mem::take(&mut self.system_disks);
 
                     if self.config.show_devices && self.ui_update_devices(ui, spacing, &disks) {
-                        spacing = ui.ctx().style().spacing.item_spacing.y * SPACING_MULTIPLIER;
+                        spacing = ui.ctx().global_style().spacing.item_spacing.y * SPACING_MULTIPLIER;
                     }
 
                     if self.config.show_removable_devices
                         && self.ui_update_removable_devices(ui, spacing, &disks)
                     {
                         // Add this when we add a new section after removable devices
-                        // spacing = ui.ctx().style().spacing.item_spacing.y * SPACING_MULTIPLIER;
+                        // spacing = ui.ctx().global_style().spacing.item_spacing.y * SPACING_MULTIPLIER;
                     }
 
                     self.system_disks = disks;
@@ -2599,7 +2599,7 @@ impl FileDialog {
                         ui.spacing_mut().item_spacing.x = 0.0;
 
                         ui.colored_label(
-                            ui.ctx().style().visuals.error_fg_color,
+                            ui.ctx().global_style().visuals.error_fg_color,
                             format!("{} ", self.config.err_icon),
                         );
 

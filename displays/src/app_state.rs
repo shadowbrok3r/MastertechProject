@@ -1,4 +1,4 @@
-use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseEditor, dock_session::{default_dock_session_native, default_dock_session_wasm, DockSession}, github::{GithubIssue, GithubRelease}, koth::Koth, presta_order::PrestashopOrderForm, raw_queries::QueryEditor, resource_monitor::ResourceMonitor, sales_tracker::SalesTracker, stock::StockTable, stress_lab::StressLab, task_audit::TaskAuditViewer, tasks::task_layout::{LayoutConfig, TaskLayout}, user_chat::UserChat, web_console::WebConsole, TabId}, ui_tools::{notification_center::NotificationCenter, theme_config::{bootstrap_startup_theme, set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions, Spawner};
+use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, database_viewer::DatabaseEditor, dock_session::{default_dock_session_native, default_dock_session_wasm, DockSession}, github::{GithubIssue, GithubRelease}, koth::Koth, presta_order::PrestashopOrderForm, raw_queries::QueryEditor, resource_monitor::ResourceMonitor, sales_tracker::SalesTracker, stock::StockTable, stress_lab::StressLab, task_audit::TaskAuditViewer, tasks::task_layout::{LayoutConfig, TaskLayout}, user_chat::UserChat, web_console::WebConsole, TabId}, ui_tools::{notification_center::NotificationCenter, theme_config::{bootstrap_startup_theme, set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions, Spawner};
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, TaskNoteRead, User, UserSettings}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use std::{collections::{BTreeMap, HashMap}, sync::Arc};
@@ -124,8 +124,6 @@ pub struct SharedContext {
     #[serde(skip)]
     pub tur_channel: (Sender<PrestashopPayload>, Receiver<PrestashopPayload>),
     #[serde(skip)]
-    pub ai_thread_channel: (Sender<crate::openai::types::assistants::ThreadObject>, Receiver<crate::openai::types::assistants::ThreadObject>),
-    #[serde(skip)]
     pub seb_channel: (Sender<Vec<CarboniteResponse>>, Receiver<Vec<CarboniteResponse>>),
     #[serde(skip)]
     pub specs_channel: (Sender<database::schema::prestashop::order::ExtractedOrderSpecs>, Receiver<database::schema::prestashop::order::ExtractedOrderSpecs>),
@@ -230,9 +228,6 @@ pub struct SharedContext {
     pub task_audit_table: TaskAuditViewer,
     #[serde(skip)]
     pub database_viewer: DatabaseEditor,
-    /// Just some testing for Ai capabilities
-    #[serde(skip)]
-    pub ai_playground: AiPlayground,
     /// Enhanced AI playground with MCP diagnostic capabilities
     #[cfg(not(target_arch = "wasm32"))]
     #[serde(skip)]
@@ -513,7 +508,6 @@ impl SharedContext {
         let (notification_tx, notification_rx) = channel::unbounded::<Vec<Notification>>();
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let tur_channel = PrestashopPayload::create_unbounded_channel();
-        let ai_thread_channel = <crate::openai::types::assistants::ThreadObject>::create_unbounded_channel();
         let (settings_sender, settings_receiver) = crossbeam::channel::bounded::<Style>(1);
         let seb_channel = <Vec<CarboniteResponse>>::create_unbounded_channel();
         let specs_channel = <database::schema::prestashop::order::ExtractedOrderSpecs>::create_unbounded_channel();
@@ -561,7 +555,7 @@ impl SharedContext {
             store_users: Vec::new(),
             task_layouts: HashMap::new(),
             store_selection: 76,
-            toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),
+            toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 45.0)),
             db_tx, db_rx,
             live_tasks_tx, live_tasks_rx,
             ui_actions_tx, ui_actions_rx,
@@ -590,7 +584,6 @@ impl SharedContext {
             settings_sender, settings_receiver,
             bytes_channel,
             tur_channel,
-            ai_thread_channel,
             seb_channel,
             specs_channel,
             clients: Vec::new(),
@@ -600,7 +593,6 @@ impl SharedContext {
             stock_tables: StockTable::default(),
 
             // Other Components
-            ai_playground: AiPlayground::default(),
             #[cfg(not(target_arch = "wasm32"))]
             enhanced_ai_playground: crate::tabs::ai_playground::enhanced::EnhancedAiPlayground::default(),
             task_audit_table: TaskAuditViewer::new(),

@@ -72,7 +72,7 @@ impl ModalWindow for ModalType {
                 .corner_radius(style.menu_corner_radius)
                 .shadow(shadow)
             )
-            .drag_to_scroll(false)
+            .drag_to_scroll(eframe::egui::scroll_area::DragScroll::Never)
             .pivot(Align2::CENTER_CENTER)
             .max_width(750.)
             .default_height(715.)

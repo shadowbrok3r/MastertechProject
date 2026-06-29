@@ -172,7 +172,7 @@ where
 
         if let Some(ccursor_range) = text_edit_state.cursor.char_range() {
             // Get the primary cursor position
-            cursor_char_index = ccursor_range.primary.index;
+            cursor_char_index = ccursor_range.primary.index.0;
 
             // Ensure cursor_char_index is within bounds
             cursor_char_index = cursor_char_index.min(text_field.chars().count());

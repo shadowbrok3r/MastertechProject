@@ -1,6 +1,6 @@
 #[allow(deprecated)]
 use eframe::egui::{
-    collapsing_header::CollapsingState, popup_below_widget, Align, CentralPanel, Color32,
+    collapsing_header::CollapsingState, Popup, Align, CentralPanel, Color32,
     Direction, Frame, Id, Key, Layout, Margin, PopupCloseBehavior::CloseOnClickOutside,
     ProgressBar, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget,
 };
@@ -789,19 +789,9 @@ impl FileSystem {
                                 let _ = tx.try_send(FileSystemAction::EnterDirectory(full_path.clone()));
                             }
 
-                            if selectable_label.secondary_clicked(){
-                                #[allow(deprecated)]
-                                ui.memory_mut(|mem| mem.open_popup(
-                                    ui.make_persistent_id(format!("sub_menu-{:?}", full_path))
-                                ));
-                            }
-
-                            popup_below_widget(
-                                ui, 
-                                ui.make_persistent_id(format!("sub_menu-{:?}", full_path)), 
-                                &selectable_label, 
-                                CloseOnClickOutside, 
-                                |ui| 
+                            Popup::context_menu(&selectable_label)
+                                .close_behavior(CloseOnClickOutside)
+                                .show(|ui|
                             {
                                 ui.vertical_centered_justified(|ui| {
                                     ui.set_width(200.0);
@@ -837,19 +827,9 @@ impl FileSystem {
                             let _ = tx.try_send(FileSystemAction::ExpandDirectory(full_path.clone()));
                         }
 
-                        if res.0.secondary_clicked(){
-                            #[allow(deprecated)]
-                                ui.memory_mut(|mem| mem.open_popup(
-                                ui.make_persistent_id(format!("upload_file_menu"))
-                            ));
-                        }
-
-                        popup_below_widget(
-                            ui, 
-                            ui.make_persistent_id(format!("upload_file_menu")), 
-                            &res.0, 
-                            CloseOnClickOutside, 
-                            |ui| 
+                        Popup::context_menu(&res.0)
+                            .close_behavior(CloseOnClickOutside)
+                            .show(|ui|
                         {
                             ui.vertical_centered_justified(|ui| {
                                 ui.set_width(200.0);
@@ -877,23 +857,13 @@ impl FileSystem {
                             let _ = tx.try_send(FileSystemAction::Select((modifiers, path.clone())));
                         }
 
-                        if selectable_label.secondary_clicked(){
-                            #[allow(deprecated)]
-                                ui.memory_mut(|mem| mem.open_popup(
-                                ui.make_persistent_id(format!("sub_menu-{:?}", full_path))
-                            ));
-                        }
-
                         if selectable_label.double_clicked(){
                             let _ = tx.try_send(FileSystemAction::Execute(full_path.clone()));
                         }
 
-                        popup_below_widget(
-                            ui, 
-                            ui.make_persistent_id(format!("sub_menu-{:?}", full_path)), 
-                            &selectable_label, 
-                            CloseOnClickOutside, 
-                            |ui| 
+                        Popup::context_menu(&selectable_label)
+                            .close_behavior(CloseOnClickOutside)
+                            .show(|ui|
                         {
                             ui.vertical_centered_justified(|ui| {
                                 ui.set_width(200.0);

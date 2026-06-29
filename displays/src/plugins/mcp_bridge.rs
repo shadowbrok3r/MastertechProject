@@ -586,6 +586,39 @@ pub struct RemoteEguiClickParams {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct EguiInspectScreenshotParams {
+    #[schemars(description = "Output resolution in pixels-per-point (default 1.0 = logical-point size).")]
+    #[serde(default)]
+    pub pixels_per_point: Option<f32>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct EguiInspectClickParams {
+    #[schemars(description = "X in logical points (read from a tree node's bounds center).")]
+    pub x: f32,
+    #[schemars(description = "Y in logical points.")]
+    pub y: f32,
+    #[schemars(description = "primary|secondary|middle|extra1|extra2 (default primary).")]
+    #[serde(default)]
+    pub button: Option<String>,
+    #[schemars(description = "Double-click if true.")]
+    #[serde(default)]
+    pub double: bool,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct EguiInspectTypeParams {
+    #[schemars(description = "Text to type into the focused widget.")]
+    pub text: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct EguiInspectKeyParams {
+    #[schemars(description = "egui key name, e.g. Enter, Tab, Escape, ArrowDown, Backspace, A.")]
+    pub key: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct RemoteEguiTypeParams {
     #[schemars(description = "Web Console room id.")]
     pub connection_string: String,
@@ -1130,20 +1163,24 @@ async fn execute_one_remote_script(
         let mut guard = super::remote_script_notify::REMOTE_SCRIPT_PENDING
             .lock()
             .map_err(|_| to_internal("REMOTE_SCRIPT_PENDING poisoned"))?;
-        // Reject instead of clobbering a live waiter; reclaim only if its receiver is gone.
-        if let Some((pending_name, pending_tx)) = guard.take() {
+        // Reject only if THIS client already has a live waiter; reclaim if its receiver is gone.
+        if let Some((pending_name, pending_tx)) = guard.remove(&p.connection_string) {
             if !pending_tx.is_closed() {
                 let busy = format!(
-                    "Remote script '{pending_name}' is still awaiting completion on this admin; remote scripts run one at a time. Retry after it finishes or times out."
+                    "Remote script '{pending_name}' is still awaiting completion on {}; that client runs one script at a time. Retry after it finishes or times out.",
+                    p.connection_string
                 );
-                *guard = Some((pending_name, pending_tx));
+                guard.insert(p.connection_string.clone(), (pending_name, pending_tx));
                 return Err(to_internal(busy));
             }
         }
         if let Ok(mut accum) = super::remote_script_notify::REMOTE_SCRIPT_ACCUM.lock() {
-            *accum = super::remote_script_notify::RemoteScriptSession::default();
+            accum.insert(
+                p.connection_string.clone(),
+                super::remote_script_notify::RemoteScriptSession::default(),
+            );
         }
-        *guard = Some((p.script_name.clone(), tx));
+        guard.insert(p.connection_string.clone(), (p.script_name.clone(), tx));
     }
 
     super::remote_egui_control::hub()
@@ -1156,16 +1193,16 @@ async fn execute_one_remote_script(
     let session = match tokio::time::timeout(timeout, rx).await {
         Ok(Ok(s)) => s,
         Ok(Err(_)) => {
-            let _ = super::remote_script_notify::REMOTE_SCRIPT_PENDING.lock().map(|mut g| g.take());
+            let _ = super::remote_script_notify::REMOTE_SCRIPT_PENDING.lock().map(|mut g| g.remove(&p.connection_string));
             return Err(to_internal("Remote script channel closed unexpectedly"));
         }
         Err(_) => {
-            let _ = super::remote_script_notify::REMOTE_SCRIPT_PENDING.lock().map(|mut g| g.take());
+            let _ = super::remote_script_notify::REMOTE_SCRIPT_PENDING.lock().map(|mut g| g.remove(&p.connection_string));
             if super::stress_test_verify::is_persisted_stress_script(&p.script_name) {
                 let partial_logs = super::remote_script_notify::REMOTE_SCRIPT_ACCUM
                     .lock()
                     .ok()
-                    .map(|a| a.logs.clone())
+                    .and_then(|a| a.get(&p.connection_string).map(|s| s.logs.clone()))
                     .unwrap_or_default();
                 let run_hint = super::stress_test_verify::extract_stress_run_id_from_logs(
                     &partial_logs,
@@ -1860,6 +1897,136 @@ impl PluginToolProvider {
             "x": x,
             "y": y,
             "events_enqueued": seq.len(),
+        }))
+        .map_err(to_internal)?]))
+    }
+
+    // ── egui inspection (native egui 0.35 InspectionPlugin, local app) ───
+
+    #[tool(
+        name = "egui_inspect_status",
+        description = "Check the LOCAL app's native egui inspection server (egui_inspection on 127.0.0.1:5719). Returns app label + egui version when connected."
+    )]
+    async fn egui_inspect_status(&self) -> Result<CallToolResult, ErrorData> {
+        let result = super::egui_inspect::request(egui_inspection::Request::GetInfo).await;
+        let json = match result {
+            Ok(egui_inspection::Response::Info { label, egui_version }) => serde_json::json!({
+                "connected": true, "label": label, "egui_version": egui_version,
+                "addr": super::egui_inspect::INSPECT_ADDR,
+            }),
+            Ok(other) => serde_json::json!({ "connected": true, "unexpected": format!("{other:?}") }),
+            Err(e) => serde_json::json!({ "connected": false, "error": e.to_string() }),
+        };
+        Ok(CallToolResult::success(vec![Content::json(json).map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "egui_inspect_tree",
+        description = "Read the LOCAL app's live AccessKit widget tree (roles, labels, values, bounds in logical points) as JSON. Use a node's bounds to drive egui_inspect_click."
+    )]
+    async fn egui_inspect_tree(&self) -> Result<CallToolResult, ErrorData> {
+        match super::egui_inspect::request(egui_inspection::Request::GetTree)
+            .await
+            .map_err(to_internal)?
+        {
+            egui_inspection::Response::Tree { step, pixels_per_point, accesskit } => {
+                let tree = accesskit
+                    .map(|t| serde_json::to_value(&t).unwrap_or(serde_json::Value::Null));
+                Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+                    "step": step,
+                    "pixels_per_point": pixels_per_point,
+                    "tree": tree,
+                }))
+                .map_err(to_internal)?]))
+            }
+            egui_inspection::Response::Error { message } => Err(to_internal(message)),
+            other => Err(to_internal(format!("unexpected response: {other:?}"))),
+        }
+    }
+
+    #[tool(
+        name = "egui_inspect_screenshot",
+        description = "Capture a PNG screenshot of the LOCAL app as base64. pixels_per_point defaults to 1.0 (logical-point size)."
+    )]
+    async fn egui_inspect_screenshot(
+        &self,
+        Parameters(p): Parameters<EguiInspectScreenshotParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        use base64::Engine;
+        match super::egui_inspect::request(egui_inspection::Request::GetScreenshot {
+            pixels_per_point: p.pixels_per_point,
+        })
+        .await
+        .map_err(to_internal)?
+        {
+            egui_inspection::Response::Screenshot(png) => {
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&png.bytes);
+                Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+                    "width": png.size[0],
+                    "height": png.size[1],
+                    "mime": "image/png",
+                    "base64": b64,
+                }))
+                .map_err(to_internal)?]))
+            }
+            egui_inspection::Response::Error { message } => Err(to_internal(message)),
+            other => Err(to_internal(format!("unexpected response: {other:?}"))),
+        }
+    }
+
+    #[tool(
+        name = "egui_inspect_click",
+        description = "Click at (x,y) in the LOCAL app (logical points; read coords from an egui_inspect_tree node's bounds)."
+    )]
+    async fn egui_inspect_click(
+        &self,
+        Parameters(p): Parameters<EguiInspectClickParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let button = super::egui_inspect::parse_button(p.button.as_deref().unwrap_or("primary"));
+        let events = super::egui_inspect::click_events(p.x, p.y, button, p.double);
+        super::egui_inspect::request(egui_inspection::Request::ApplyEvents { events })
+            .await
+            .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+            "ok": true, "x": p.x, "y": p.y, "double": p.double,
+        }))
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "egui_inspect_type",
+        description = "Type text into the LOCAL app's focused widget (egui Text event). Click/focus the field first."
+    )]
+    async fn egui_inspect_type(
+        &self,
+        Parameters(p): Parameters<EguiInspectTypeParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let events = vec![eframe::egui::Event::Text(p.text.clone())];
+        super::egui_inspect::request(egui_inspection::Request::ApplyEvents { events })
+            .await
+            .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+            "ok": true, "text": p.text,
+        }))
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "egui_inspect_press_key",
+        description = "Press a key in the LOCAL app (down+up). Key name e.g. Enter, Tab, Escape, ArrowDown, Backspace, A."
+    )]
+    async fn egui_inspect_press_key(
+        &self,
+        Parameters(p): Parameters<EguiInspectKeyParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let key = eframe::egui::Key::from_name(&p.key)
+            .ok_or_else(|| to_internal(format!("unknown egui key: {}", p.key)))?;
+        let events = super::egui_inspect::key_events(key);
+        super::egui_inspect::request(egui_inspection::Request::ApplyEvents { events })
+            .await
+            .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+            "ok": true, "key": p.key,
         }))
         .map_err(to_internal)?]))
     }
@@ -4157,6 +4324,17 @@ Always check search_plugins before building new plugins. Current registry (as of
 - **com.mastertech.status-reporter** — status_report (returns UTC clock from remote host, confirms plugin is live). Lightweight connectivity test.
 
 When in doubt, call search_plugins with relevant keywords — the registry is the source of truth.
+
+=== OPK Driver / BIOS Server (PC Laptops internal — QC builds & driver remediation) ===
+The OPK server hosts the canonical drivers + BIOS updates for every laptop/desktop PC Laptops sells.
+Share: \\opk-riv\winbits\Drivers\7\TechDB  (host `opk-riv` = 192.168.22.21, on the 192.168.22.0/24 LAN that all shop machines and connected clients share).
+Layout: one folder per chassis MODEL NUMBER (e.g. `X5KK4NAG`). Each model folder holds component subfolders (1AMDChipset, 2AMDVGA, 3Senary_Audio, 4LAN, 5GL_CardReader, 6WLAN&BT, 7DRTM, 8AMDMEP, 9CameraMEP, Nahimic, RAID, …), the driver payloads as archives (.zip / .7z — extract before installing), an `AMD STP Installation procedure.pdf` (authoritative install order), and a manifest .xlsx. On a freshly-built machine the drivers are staged to D:\Driver.
+Find the model: it is the chassis/barebone model (TongFang/Mechrevo OEM), NOT Win32_ComputerSystem.Model (often reads "Standard"). Read it from Win32_BaseBoard.Product / SMBIOS or the OPK/service record.
+
+Access / auth: the share needs LAN credentials. Domain-joined or authorized shop machines (and the admin host) read it directly; a workgroup service CLIENT logged in as a local account gets "System error 5 — Access is denied" (TCP 445 open + name resolves, so it is purely an auth gate). To pull drivers ONTO a client either (a) `net use \\opk-riv\winbits <pass> /user:<DOMAIN\user>` then `robocopy \\opk-riv\winbits\Drivers\7\TechDB\<MODEL> D:\Driver /E`, or (b) relay from an authorized admin host over the LAN (HTTP/SMB). The Mastertech WS / plugin channel is NOT a bulk file-transfer path (GPU packages are multi-hundred-MB).
+
+Install order (per the PDF): AMD Chipset (.exe) -> AMD VGA (Setup.exe) -> Senary Audio (Install.bat, as admin) -> LAN -> Cardreader (GIPciSD.inf) -> WLAN (.inf) -> Bluetooth (.inf) -> DRTM (amddrtm.inf) -> MEP (AmdMepEnum.inf) -> CameraMEP (Setup.cmd) -> Nahimic -> ControlCenter. INF-only components install non-interactively with `pnputil /add-driver <inf> /install`.
+For BSOD/driver remediation: outdated AMD drivers are a known DRIVER_POWER_STATE_FAILURE (0x9F via pci.sys; the kernel triage bucket names amdhdaudbus) and HYPERVISOR_ERROR (amdppm idle/halt) cause. The AMD VGA package ships amdhdaudbus.sys; the AMD Chipset package covers CPU power management.
 
 === Diagnostic Prior-History Lookup (MUST do before diagnosing) ===
 When performing diagnostics on a machine, ALWAYS gather prior history first.
