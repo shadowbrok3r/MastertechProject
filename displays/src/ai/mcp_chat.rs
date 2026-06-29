@@ -11,18 +11,7 @@ use crossbeam::channel::Sender;
 use futures::StreamExt;
 use rmcp::model::{CallToolRequestParams, RawContent};
 
-use crate::ai::{chat, effective_api_base, effective_api_key, effective_model, gpts};
-use crate::openai::{
-    config::OpenAIConfig,
-    types::chat::{
-        ChatCompletionMessageToolCall, ChatCompletionMessageToolCalls,
-        ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
-        ChatCompletionRequestSystemMessageArgs, ChatCompletionToolChoiceOption,
-        ChatCompletionTools, CreateChatCompletionRequestArgs, FunctionCall,
-        ToolChoiceOptions,
-    },
-    Client,
-};
+use crate::ai::{effective_api_base, effective_api_key, effective_model, gpts};
 use crate::tabs::ai_playground::{ChatMessage, ChatMessageType, SentFrom};
 use crate::ui_tools::icons;
 
@@ -34,34 +23,6 @@ diagnostics, plugin and remote-UI control) to answer questions and act on the us
 Prefer a tool over guessing when a question concerns live data. Keep answers concise. \
 When the user refers to \"this computer\"/\"this PC\" without naming a client, they mean the local \
 machine this app is running on — inspect it with the local system and diagnostic tools.";
-
-/// Builds OpenAI chat history from the tab's prior `ChatMessage`s (Me -> user,
-/// Gpt text -> assistant). Tool-activity lines are skipped. The new user input
-/// is added by `mcp_chat_stream`, not here.
-pub fn history_from_messages(msgs: &[ChatMessage]) -> Vec<ChatCompletionRequestMessage> {
-    let mut out = Vec::new();
-    for m in msgs {
-        let text = match &m.content {
-            ChatMessageType::Text(t) | ChatMessageType::Code(t) => t.clone(),
-            _ => continue,
-        };
-        if text.trim().is_empty() || text.starts_with(icons::WRENCH) {
-            continue;
-        }
-        let built = match m.from {
-            SentFrom::Me => chat::user_msg(text),
-            SentFrom::Gpt => ChatCompletionRequestAssistantMessageArgs::default()
-                .content(text)
-                .build()
-                .map(Into::into)
-                .map_err(Into::into),
-        };
-        if let Ok(msg) = built {
-            out.push(msg);
-        }
-    }
-    out
-}
 
 fn send(tx: &Sender<ChatMessage>, thread_id: &str, id: String, from: SentFrom, content: ChatMessageType) {
     let _ = tx.try_send(ChatMessage { id, thread_id: thread_id.to_string(), ts: 0, from, content });
@@ -86,183 +47,6 @@ fn text_of(result: &rmcp::model::CallToolResult) -> String {
     } else {
         body
     }
-}
-
-pub async fn mcp_chat_stream(
-    input: String,
-    prior: Vec<ChatCompletionRequestMessage>,
-    thread_id: String,
-    response_tx: Sender<ChatMessage>,
-) -> Result<()> {
-    // Connect the rmcp client and enumerate tools. On failure, continue with no
-    // tools so the chat still answers (just without Mastertech actions).
-    let (mcp_client, tool_specs) = match connect_and_list_tools().await {
-        Ok((client, tools)) => {
-            let specs = tools
-                .iter()
-                .filter_map(|t| {
-                    chat::tool_fn(
-                        t.name.to_string(),
-                        t.description.clone().map(|d| d.to_string()).unwrap_or_default(),
-                        t.schema_as_json_value(),
-                    )
-                    .ok()
-                    .map(ChatCompletionTools::Function)
-                })
-                .collect::<Vec<_>>();
-            log::info!("mcp_chat: connected to {PLUGIN_MCP_ADDR}, {} tools advertised", specs.len());
-            (Some(client), specs)
-        }
-        Err(e) => {
-            log::error!("mcp_chat: tool connection failed ({e}); continuing without tools");
-            send(
-                &response_tx,
-                &thread_id,
-                new_id(),
-                SentFrom::Gpt,
-                ChatMessageType::Error(format!("Mastertech tools unavailable: {e}")),
-            );
-            (None, Vec::new())
-        }
-    };
-
-    let oa = Client::with_config(
-        OpenAIConfig::new()
-            .with_api_key(effective_api_key())
-            .with_api_base(effective_api_base()),
-    );
-    let model = effective_model(gpts::MODEL);
-
-    let mut messages: Vec<ChatCompletionRequestMessage> = Vec::new();
-    messages.push(
-        ChatCompletionRequestSystemMessageArgs::default()
-            .content(SYSTEM_PROMPT)
-            .build()?
-            .into(),
-    );
-    messages.extend(prior);
-    messages.push(chat::user_msg(&input)?);
-
-    loop {
-        let mut builder = CreateChatCompletionRequestArgs::default();
-        builder.model(model.as_str()).messages(messages.clone()).stream(true);
-        if !tool_specs.is_empty() {
-            builder
-                .tools(tool_specs.clone())
-                .tool_choice(ChatCompletionToolChoiceOption::Mode(ToolChoiceOptions::Auto));
-        }
-        let request = builder.build()?;
-
-        let mut stream = match oa.chat().create_stream(request).await {
-            Ok(s) => s,
-            Err(e) => {
-                send(
-                    &response_tx,
-                    &thread_id,
-                    new_id(),
-                    SentFrom::Gpt,
-                    ChatMessageType::Error(format!("Chat request failed: {e}")),
-                );
-                send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Done);
-                return Ok(());
-            }
-        };
-
-        let assistant_id = new_id();
-        // index -> (call id, function name, accumulated arguments json)
-        let mut tool_acc: HashMap<u32, (String, String, String)> = HashMap::new();
-
-        while let Some(item) = stream.next().await {
-            let chunk = match item {
-                Ok(c) => c,
-                Err(e) => {
-                    send(
-                        &response_tx,
-                        &thread_id,
-                        new_id(),
-                        SentFrom::Gpt,
-                        ChatMessageType::Error(format!("Stream error: {e}")),
-                    );
-                    break;
-                }
-            };
-            for choice in chunk.choices {
-                if let Some(content) = choice.delta.content {
-                    if !content.is_empty() {
-                        send(
-                            &response_tx,
-                            &thread_id,
-                            assistant_id.clone(),
-                            SentFrom::Gpt,
-                            ChatMessageType::Text(content),
-                        );
-                    }
-                }
-                if let Some(calls) = choice.delta.tool_calls {
-                    for call in calls {
-                        let entry = tool_acc.entry(call.index).or_default();
-                        if let Some(id) = call.id {
-                            if !id.is_empty() {
-                                entry.0 = id;
-                            }
-                        }
-                        if let Some(func) = call.function {
-                            if let Some(name) = func.name {
-                                if !name.is_empty() {
-                                    entry.1 = name;
-                                }
-                            }
-                            if let Some(args) = func.arguments {
-                                entry.2.push_str(&args);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // No tool calls this turn -> the streamed text is the final answer.
-        if tool_acc.is_empty() {
-            send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Done);
-            break;
-        }
-
-        let mut calls: Vec<(u32, (String, String, String))> = tool_acc.into_iter().collect();
-        calls.sort_by_key(|(idx, _)| *idx);
-
-        // Record the assistant's tool-call message in history.
-        let tool_calls_msg = calls
-            .iter()
-            .map(|(_, (id, name, args))| {
-                ChatCompletionMessageToolCalls::Function(ChatCompletionMessageToolCall {
-                    id: id.clone(),
-                    function: FunctionCall { name: name.clone(), arguments: args.clone() },
-                })
-            })
-            .collect::<Vec<_>>();
-        messages.push(chat::tool_calls_msg(tool_calls_msg)?);
-
-        // Execute each call and feed the result back.
-        for (_, (call_id, name, args)) in calls {
-            send(
-                &response_tx,
-                &thread_id,
-                new_id(),
-                SentFrom::Gpt,
-                ChatMessageType::Text(format!("{}  {}({})", icons::WRENCH, name, summarize(&args))),
-            );
-
-            let result_text = match &mcp_client {
-                Some(client) => call_tool(client, &name, &args).await,
-                None => "Mastertech tools are not connected.".to_string(),
-            };
-            messages.push(chat::tool_response_msg(call_id, result_text)?);
-        }
-        // Loop: let the model read the tool results and continue.
-    }
-
-    drop(mcp_client);
-    Ok(())
 }
 
 async fn connect_and_list_tools() -> Result<(
@@ -348,7 +132,9 @@ pub async fn stream_claude_code(
     let allowed = "ToolSearch,mcp__mastertech__query_surrealdb,mcp__mastertech__search_diagnostics,\
 mcp__mastertech__get_diagnostic_session,mcp__mastertech__get_computer_details,\
 mcp__mastertech__search_service_orders,mcp__mastertech__create_diagnostic_session,\
-mcp__mastertech__log_diagnostic_entry";
+mcp__mastertech__log_diagnostic_entry,\
+mcp__mastertech__egui_inspect_status,mcp__mastertech__egui_inspect_tree,\
+mcp__mastertech__egui_inspect_screenshot";
 
     let args = [
         "-p".to_string(), prompt,

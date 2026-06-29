@@ -44,6 +44,19 @@ impl eframe::App for app_state::MasterTechApp {
             );
             ctx.add_plugin(handle);
 
+            // Native egui 0.35 inspection server (loopback) so the in-app MCP egui_inspect_* tools
+            // can read/drive this app. Gated: debug builds or MTECH_EGUI_INSPECT=1.
+            if displays::plugins::egui_inspect::inspection_enabled() {
+                ctx.add_plugin(egui_inspection::InspectionPlugin::new(Some("MasterTech".to_owned())));
+                match egui_inspection::serve(ctx, displays::plugins::egui_inspect::INSPECT_ADDR) {
+                    Ok(()) => log::info!(
+                        "egui_inspection serving on {}",
+                        displays::plugins::egui_inspect::INSPECT_ADDR
+                    ),
+                    Err(e) => log::warn!("egui_inspection serve failed: {e}"),
+                }
+            }
+
             // Plugin MCP: TCP 9003 (raw stream) + HTTP 9004 /mcp (Cursor / Streamable HTTP)
             let mgr_tcp = self.context.plugin_manager.clone();
             tokio::spawn(async move {
@@ -60,6 +73,9 @@ impl eframe::App for app_state::MasterTechApp {
         }
 
         self.receive_logic(ctx, frame);
+
+        // Pump all admin client session transports in the logic phase.
+        self.context.shared_ctx.web_console_layout.pump_sessions(ctx);
 
         self.context.shared_ctx.drain_fleet_updates();
 
@@ -161,17 +177,10 @@ impl app_state::MasterTechApp {
         <Self as eframe::App>::logic(self, ctx, &mut frame);
     }
 
-    // Rebuilds eframe's background root Ui so panels render on `ctx` as under the eframe backend.
-    pub fn ui_inner(&mut self, ctx: &egui::Context) {
+    // Renders the eframe App UI onto the software-backend root Ui.
+    pub fn ui_inner(&mut self, ui: &mut egui::Ui) {
         let mut frame = eframe::Frame::_new_kittest();
-        let mut root_ui = egui::Ui::new(
-            ctx.clone(),
-            egui::Id::new((ctx.viewport_id(), "__mastertech_software_root")),
-            egui::UiBuilder::new()
-                .layer_id(egui::LayerId::background())
-                .max_rect(ctx.available_rect()),
-        );
-        <Self as eframe::App>::ui(self, &mut root_ui, &mut frame);
+        <Self as eframe::App>::ui(self, ui, &mut frame);
     }
 }
 

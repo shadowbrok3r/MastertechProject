@@ -185,7 +185,7 @@ impl FileBrowser {
             copied_items_dest: PathBuf::new(),
             drive_letters: Vec::new(),
             source_dir_size: 0,
-            toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),
+            toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 45.0)),
         }
     }
 

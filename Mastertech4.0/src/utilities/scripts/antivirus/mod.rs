@@ -218,16 +218,14 @@ pub async fn install_webroot(
 
     info!("running install_webroot!");
 
-    // Skip download if Webroot is already installed
+    // Run the installer regardless: fresh install when absent, in-place re-key when present.
     let wrsa_path = PathBuf::from(r"C:\Program Files\Webroot\WRSA.exe");
     let wrsa_x86 = PathBuf::from(r"C:\Program Files (x86)\Webroot\WRSA.exe");
-    if wrsa_path.exists() || wrsa_x86.exists() {
-        info!("Webroot already installed, skipping download");
-        return Ok(());
-    }
+    let already_installed = wrsa_path.exists() || wrsa_x86.exists();
+    info!("install_webroot: already_installed={already_installed}");
 
     let temp_directory = std::env::temp_dir();
-    let wrv_path = format!("{}\\wrv.exe", temp_directory.display());
+    let wrv_path = format!("{}\\wsasme.exe", temp_directory.display());
 
     let need_download = match tokio::fs::metadata(&wrv_path).await {
         Ok(meta) if meta.len() > 500_000 => {
@@ -240,7 +238,7 @@ pub async fn install_webroot(
     if need_download {
         if let Err(e) = download_file(
             &client,
-            "https://anywhere.webrootcloudav.com/zerol/wsainstall.exe",
+            "https://anywhere.webrootcloudav.com/zerol/wsasme.exe",
             &wrv_path,
             &progress_tx,
         ).await {
@@ -248,7 +246,7 @@ pub async fn install_webroot(
             crate::utilities::windows::net_adapter::ensure_internet_connected().await?;
             download_file(
                 &client,
-                "https://anywhere.webrootcloudav.com/zerol/wsainstall.exe",
+                "https://anywhere.webrootcloudav.com/zerol/wsasme.exe",
                 &wrv_path,
                 &progress_tx,
             ).await?;
@@ -263,6 +261,7 @@ pub async fn install_webroot(
             .arg(&wrv_path)
             .arg(format!("/key={activation_key}"))
             .arg("/silent")
+            .arg("-clone")
             .creation_flags(CREATE_NO_WINDOW)
             .output()
             .await?;
@@ -274,7 +273,7 @@ pub async fn install_webroot(
             let _ = tokio::fs::remove_file(&wrv_path).await;
             download_file(
                 &client,
-                "https://anywhere.webrootcloudav.com/zerol/wsainstall.exe",
+                "https://anywhere.webrootcloudav.com/zerol/wsasme.exe",
                 &wrv_path,
                 &progress_tx,
             ).await?;
@@ -284,6 +283,7 @@ pub async fn install_webroot(
                 .arg(&wrv_path)
                 .arg(format!("/key={activation_key}"))
                 .arg("/silent")
+                .arg("-clone")
                 .creation_flags(CREATE_NO_WINDOW)
                 .output()
                 .await?;

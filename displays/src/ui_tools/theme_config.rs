@@ -343,23 +343,19 @@ impl ThemeConfig {
                         .ui(ui);
                     
                     if save.clicked() {
-                        let color_settings = ctx.global_style().clone();
+                        // Persist whatever is currently applied (a preset OR an uploaded scheme),
+                        // not a preset rebuild — else an uploaded theme gets overwritten.
+                        let color_settings = ctx.global_style();
+                        let cs = color_settings.clone();
                         PlatformSpawner::spawn(async move {
                             match User::update_color_scheme(
-                                encode_style(
-                                    &color_settings.clone()
-                                ).unwrap_or_default().into()
+                                encode_style(&cs).unwrap_or_default().into()
                             ).await {
                                 Ok(_) => log::info!("Updated Color Settings"),
                                 Err(e) => log::error!("Error updating color settings: {e:?}"),
                             }
                         });
-                        let style = match self.preset_style {
-                            PresetStyles::Custom => return,
-                            preset => style_for_preset(preset),
-                        };
-
-                        ret = (true, Arc::new(style));
+                        ret = (true, color_settings);
                     }
 
                     ui.add_space(5.);
@@ -409,8 +405,18 @@ impl ThemeConfig {
                                 .pick_file()
                                 .await
                             {
-                                match serde_json::from_slice::<Style>(&file.read().await) {
-                                    Ok(theme) => tx.try_send(theme).unwrap(),
+                                match super::style_from_json(&file.read().await) {
+                                    Ok(theme) => {
+                                        // Persist (JSON) so it replaces any legacy record and
+                                        // survives restart, then apply it for this session.
+                                        match User::update_color_scheme(
+                                            encode_style(&theme).unwrap_or_default().into()
+                                        ).await {
+                                            Ok(_) => log::info!("Imported color scheme saved"),
+                                            Err(e) => log::error!("Error saving imported scheme: {e:?}"),
+                                        }
+                                        let _ = tx.try_send(theme);
+                                    }
                                     Err(e) => log::error!("Error converting bytes to Theme: {e:?}"),
                                 }
                             }

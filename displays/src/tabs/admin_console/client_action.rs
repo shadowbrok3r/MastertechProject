@@ -70,91 +70,22 @@ impl AdminConsole {
                 self.session_layout.remove(&client.connection_string);
                 self.error = format!("WebConsole -> Disconnected from {}", client.connection_string.clone());
             },
-            ClientUiAction::ConnectClient(mut client) => {
+            ClientUiAction::ConnectClient(client) => {
                 self.open_menu = false;
-                log::info!("Received Connection Command for {}", client.connection_string);
+                let cs = client.connection_string.clone();
+                log::info!("Received Connection Command for {cs}");
 
-                // Register a Docked layout for this client if not already present.
-                // Existing sessions keep their current layout (Docked or Floating) so
-                // the operator can open multiple machines simultaneously.
+                // Existing sessions keep their layout so multiple machines can be open at once.
                 self.session_layout
-                    .entry(client.connection_string.clone())
+                    .entry(cs.clone())
                     .or_insert(SessionLayout::Docked);
 
-                // Make this the focused client so commands go to it.
-                self.focused_client = Some(client.connection_string.clone());
+                // Explicit open focuses the client; establishment itself is focus-independent.
+                self.focused_client = Some(cs.clone());
 
-                let connect_via_ws = |this: &mut AdminConsole, client: &mut ConnectedClient| -> Option<AdminTransport> {
-                    let url = websocket_url_with_room(
-                        if cfg!(debug_assertions) {
-                            WS_MASTER_URL_LOCAL
-                        } else {
-                            WS_MASTER_URL
-                        },
-                        &client.connection_string,
-                        "master",
-                    );
-                    log::info!(
-                        "ConnectClient -> using WebSocket relay for {} (no TCP or WASM build)",
-                        client.connection_string
-                    );
-                    match ewebsock::connect(&url, Default::default()) {
-                        Ok((ws_sender, ws_receiver)) => {
-                            Some(AdminTransport::from_ws(ws_sender, ws_receiver))
-                        }
-                        Err(error) => {
-                            client.connected = false;
-                            log::error!("Failed to connect to {:?}: {}", &url, error);
-                            this.error = format!("WebConsole Error -> {error}");
-                            None
-                        }
-                    }
-                };
-
-                // Phase 1 transport selection: prefer direct TCP when the
-                // client has published `local_ip` + `tcp_port` (native only;
-                // WASM admin uses WebSocket relay).
-                #[cfg(not(target_arch = "wasm32"))]
-                let transport = match (client.local_ip.as_deref(), client.tcp_port) {
-                    (Some(ip), Some(port)) if !ip.is_empty() => {
-                        let target = format!("{ip}:{port}");
-                        log::info!(
-                            "ConnectClient -> attempting direct TCP to {target} for {}",
-                            client.connection_string
-                        );
-                        AdminTransport::from_tcp(target, client.connection_string.clone())
-                    }
-                    _ => {
-                        if let Some(t) = connect_via_ws(self, &mut client) {
-                            t
-                        } else {
-                            return;
-                        }
-                    }
-                };
-
-                #[cfg(target_arch = "wasm32")]
-                let transport = if let Some(t) = connect_via_ws(self, &mut client) {
-                    t
-                } else {
-                    return;
-                };
-
-                client.connected = true;
-                let mut ws_client = WebSocketClient::new(
-                    transport,
-                    client.clone(),
-                    self.filesystem.clone(),
-                );
-
-                #[cfg(not(target_arch="wasm32"))]
-                ws_client.start_receiving_buffers();
-
-                self.ws_clients
-                    .entry(client.connection_string.clone())
-                    .or_insert(ws_client);
-
-                self.error = format!("WebConsole -> Connected to {}", client.connection_string);
+                if self.open_session(client) {
+                    self.error = format!("WebConsole -> Connected to {cs}");
+                }
             },
             ClientUiAction::ExportHistory(mut client) => {
                 if let Some(ws_client) = self.ws_clients.get(&client.connection_string) {
@@ -184,6 +115,91 @@ impl AdminConsole {
                     }
                 });
             }
+        }
+    }
+
+    /// Establish (or replace a dead) admin↔client session for `client` without
+    /// changing focus. Prefers direct TCP when local_ip+port are advertised,
+    /// else the relay. Returns true if a session entry is present afterward.
+    pub fn open_session(&mut self, mut client: ConnectedClient) -> bool {
+        use std::collections::hash_map::Entry;
+        if let Some(existing) = self.ws_clients.get(&client.connection_string) {
+            if existing.is_connected {
+                return true;
+            }
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let transport = match (client.local_ip.as_deref(), client.tcp_port) {
+            (Some(ip), Some(port)) if !ip.is_empty() => {
+                let target = format!("{ip}:{port}");
+                log::info!("open_session -> direct TCP to {target} for {}", client.connection_string);
+                AdminTransport::from_tcp(target, client.connection_string.clone())
+            }
+            _ => match Self::dial_ws(&mut client) {
+                Some(t) => t,
+                None => return false,
+            },
+        };
+        #[cfg(target_arch = "wasm32")]
+        let transport = match Self::dial_ws(&mut client) {
+            Some(t) => t,
+            None => return false,
+        };
+
+        client.connected = true;
+        let mut ws_client = WebSocketClient::new(transport, client.clone(), self.filesystem.clone());
+        #[cfg(not(target_arch = "wasm32"))]
+        ws_client.start_receiving_buffers();
+
+        match self.ws_clients.entry(client.connection_string.clone()) {
+            Entry::Occupied(mut e) if !e.get().is_connected => {
+                e.insert(ws_client);
+            }
+            Entry::Vacant(v) => {
+                v.insert(ws_client);
+            }
+            _ => {}
+        }
+        true
+    }
+
+    fn dial_ws(client: &mut ConnectedClient) -> Option<AdminTransport> {
+        let url = websocket_url_with_room(
+            if cfg!(debug_assertions) { WS_MASTER_URL_LOCAL } else { WS_MASTER_URL },
+            &client.connection_string,
+            "master",
+        );
+        match ewebsock::connect(&url, Default::default()) {
+            Ok((ws_sender, ws_receiver)) => Some(AdminTransport::from_ws(ws_sender, ws_receiver)),
+            Err(error) => {
+                client.connected = false;
+                log::error!("dial_ws -> failed to connect to {url:?}: {error}");
+                None
+            }
+        }
+    }
+
+    /// Open a session for every explicitly-opened client (one with a
+    /// `session_layout` entry) that is connected over LAN TCP but has no live
+    /// session yet, regardless of which client is focused. The transport's own
+    /// retry loop keeps each session alive once established.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn ensure_sessions(&mut self) {
+        let want: Vec<ConnectedClient> = self
+            .clients
+            .iter()
+            .filter(|c| {
+                c.connected
+                    && self.session_layout.contains_key(&c.connection_string)
+                    && !self.ws_clients.contains_key(&c.connection_string)
+                    && c.local_ip.as_deref().map(|s| !s.is_empty()).unwrap_or(false)
+                    && c.tcp_port.is_some()
+            })
+            .cloned()
+            .collect();
+        for client in want {
+            self.open_session(client);
         }
     }
 }

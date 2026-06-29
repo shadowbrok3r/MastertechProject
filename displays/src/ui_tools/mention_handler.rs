@@ -147,7 +147,7 @@ impl MentionHandler {
         let mut cursor_char = self.message.chars().count();
 
         if let Some(range) = text_edit_state.cursor.char_range() {
-            cursor_char = range.primary.index.min(self.message.chars().count());
+            cursor_char = range.primary.index.0.min(self.message.chars().count());
             cursor_byte = self
                 .message
                 .char_indices()

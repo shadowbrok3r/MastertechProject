@@ -58,9 +58,9 @@ surrealdb = { version = "3.2.0-beta.2", features = ["protocol-ws"] }
 surrealdb-types = { version = "3.2.0-beta.2" }
 egui_extras = { version = "0.35", features = ["datepicker", "syntect", "serde", "image", "all_loaders" ]}
 egui-data-table = { git = "https://github.com/shadowbrok3r/egui-data-table", features = ["persistency"]}
-egui_json_tree = { version = "0.15", features = ["serde_json"] }
+egui_json_tree = { version = "0.16", features = ["serde_json"] }
 egui_dock = { git = "https://github.com/shadowbrok3r/egui_dock",  features = [ "serde" ] }
-rmcp = { version = "1.8.0", features = ["server", "client", "transport-async-rw", "transport-streamable-http-server"] }
+rmcp = { version = "2", features = ["server", "client", "transport-async-rw", "transport-streamable-http-server"] }
 axum = { version = "0.8", default-features = true, features = ["tokio"] }
 chrono = { version = "0.4", default-features = false, features = ["now"] } 
 tokio = { version = "1", features = ["full", "tracing"] }
@@ -131,3 +131,17 @@ incremental = true     # cache unchanged crates between rebuilds
 # [profile.wasm-release] # trunk build --release --profile wasm-release
 # inherits = "release"
 # strip = false  # Disable strip just for this profile
+
+# egui 0.35 migration: local fork clones bumped to 0.35. Drop these and re-pin
+# the git deps to pushed commits once the workspace builds green.
+[patch."https://github.com/shadowbrok3r/egui_dock"]
+egui_dock = { path = "../egui_dock" }
+
+[patch."https://github.com/shadowbrok3r/egui-data-table"]
+egui-data-table = { path = "../egui-data-table" }
+
+[patch."https://github.com/shadowbrok3r/egui_skia"]
+egui_skia = { path = "../egui_skia" }
+
+[patch.crates-io]
+egui-phosphor = { path = "../egui-phosphor" }

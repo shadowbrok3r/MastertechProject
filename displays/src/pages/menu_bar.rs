@@ -4,8 +4,8 @@ use database::{schema::{utilities::{get_completed_tasks_for_store, get_store_use
 use eframe::egui::{containers::menu::MenuConfig, *};
 
 impl SharedContext {
-    pub fn menu_bar(&mut self, ctx: &Context) {
-        eframe::egui::Panel::top("egui_dock::MenuBar").show(ctx, |ui| {
+    pub fn menu_bar(&mut self, ui: &mut eframe::egui::Ui) {
+        eframe::egui::Panel::top("egui_dock::MenuBar").show(ui, |ui| {
             MenuBar::new()
             .config(
                 MenuConfig::default().close_behavior(PopupCloseBehavior::CloseOnClickOutside),
@@ -446,15 +446,15 @@ impl SharedContext {
                                     self.update_settings = true;
                                 }
                                 if organize.clicked() {
-                                    ctx.memory_mut(|mem| mem.reset_areas());
-                                    ctx.memory_mut(|mem| {
+                                    ui.ctx().memory_mut(|mem| mem.reset_areas());
+                                    ui.ctx().memory_mut(|mem| {
                                         for layer in mem.areas_mut().visible_layer_ids().iter() {
                                             log::info!("Visible layers: {layer:?}");
                                         }
                                     })
                                 }
                                 if reset_mem.clicked() {
-                                    ctx.memory_mut(|mem| *mem = Default::default());
+                                    ui.ctx().memory_mut(|mem| *mem = Default::default());
                                 }
                             });
                         });

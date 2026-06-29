@@ -101,15 +101,15 @@ impl Login {
 impl SharedContext {
     pub fn login_page(
         &mut self,
-        ctx: &Context,
+        ui: &mut eframe::egui::Ui,
         db_tx: Sender<anyhow::Result<Database, anyhow::Error>>,
         appstate_tx: Sender<AppState>,
     ) {
-        eframe::egui::Panel::bottom(Id::new("logger_ui")).exact_width(400.).show(ctx, |ui| crate::ui_tools::egui_logger::logger_ui().show(ui));
+        eframe::egui::Panel::bottom(Id::new("logger_ui")).exact_size(400.).show(ui, |ui| crate::ui_tools::egui_logger::logger_ui().show(ui));
 
         CentralPanel::default()
-            .frame(Frame::central_panel(&ctx.style()).inner_margin(1.))
-            .show(ctx, |ui| {
+            .frame(Frame::central_panel(&ui.ctx().global_style()).inner_margin(1.))
+            .show(ui, |ui| {
                 StripBuilder::new(ui)
                     .cell_layout(Layout::from_main_dir_and_cross_align(
                         Direction::TopDown,

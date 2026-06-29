@@ -152,14 +152,14 @@ pub struct Asset {
 }
 
 impl SharedContext {
-        pub fn downloads_page(&mut self, ctx: &Context) {
+        pub fn downloads_page(&mut self, ui: &mut eframe::egui::Ui) {
         CentralPanel::default()
             .frame(
-                Frame::central_panel(&ctx.style())
+                Frame::central_panel(&ui.ctx().global_style())
                     .outer_margin(10.)
                     .inner_margin(10.),
             )
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
                 ui.with_layout(
                     Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center),
                     |ui| {

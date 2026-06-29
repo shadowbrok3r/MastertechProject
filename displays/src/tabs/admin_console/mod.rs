@@ -189,6 +189,9 @@ impl AdminConsole {
     /// focused docked session, so without this an unfocused (or hidden-tab)
     /// session never drains its channels and remote commands to it stall.
     pub fn pump_sessions(&mut self, ctx: &Context) {
+        // Maintain a live session for every opened client, regardless of focus.
+        #[cfg(not(target_arch = "wasm32"))]
+        self.ensure_sessions();
         for ws in self.ws_clients.values_mut() {
             ws.receive(ctx);
         }

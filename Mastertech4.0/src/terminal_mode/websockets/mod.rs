@@ -2981,25 +2981,22 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
 
                 send_log(sender, format!("Running script: {filename}"));
 
-                let output = match ext.as_str() {
-                    "ps1" => {
-                        std::process::Command::new("powershell")
-                            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &content])
-                            .output()
-                    }
-                    "bat" | "cmd" => {
-                        std::process::Command::new("cmd")
-                            .args(["/C", &content])
-                            .output()
-                    }
-                    _ => {
-                        send_log(sender, format!("Unsupported script type: .{ext}"));
-                        return;
-                    }
-                };
+                if !matches!(ext.as_str(), "ps1" | "bat" | "cmd") {
+                    send_log(sender, format!("Unsupported script type: .{ext}"));
+                    return;
+                }
+                // Run the interpreter on a blocking thread.
+                let ext_for_run = ext.clone();
+                let join = tokio::task::spawn_blocking(move || match ext_for_run.as_str() {
+                    "ps1" => std::process::Command::new("powershell")
+                        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &content])
+                        .output(),
+                    _ => std::process::Command::new("cmd").args(["/C", &content]).output(),
+                })
+                .await;
 
-                match output {
-                    Ok(out) => {
+                match join {
+                    Ok(Ok(out)) => {
                         let stdout = String::from_utf8_lossy(&out.stdout);
                         let stderr = String::from_utf8_lossy(&out.stderr);
                         if !stdout.is_empty() {
@@ -3010,8 +3007,11 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                         }
                         send_log(sender, format!("Script {filename} exited with code: {}", out.status));
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         send_log(sender, format!("Failed to run script {filename}: {e}"));
+                    }
+                    Err(e) => {
+                        send_log(sender, format!("Script {filename} task panicked: {e}"));
                     }
                 }
             }

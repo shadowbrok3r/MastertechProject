@@ -6,7 +6,6 @@ use egui_dock::{NodeIndex, SurfaceIndex};
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::RecordId;
 use chrono::{DateTime, Utc};
-use egui_file::FileDialog;
 use eframe::egui::Align2;
 use serde_json::Value;
 
@@ -42,7 +41,6 @@ pub struct MastertechContext {
     pub current_antivirus: String,
     pub seb_info: Vec<CarboniteResponse>,
     pub opened_file: Option<PathBuf>,
-    pub open_file_dialog: Option<FileDialog>,
     pub ram_test_cbox: HardwareTest, // We just need one of these...
     pub hdd_test_cbox: HardwareTest,
     pub ssd_test_cbox: HardwareTest,
@@ -86,8 +84,8 @@ pub struct MastertechContext {
     pub cps_keys_tx: Sender<Vec<GetKeysResponse>>,
     pub cps_keys_rx: Receiver<Vec<GetKeysResponse>>,
 
-    pub current_antivirus_tx: Sender<Vec<(String, Option<bool>)>>,
-    pub current_antivirus_rx: Receiver<Vec<(String, Option<bool>)>>,
+    pub current_antivirus_tx: Sender<Vec<String>>,
+    pub current_antivirus_rx: Receiver<Vec<String>>,
     pub computer_data_tx: Sender<ComputerData>,
     pub computer_data_rx: Receiver<ComputerData>,
     pub bytes_tx: Sender<(u64, u64)>,
@@ -160,6 +158,17 @@ impl MasterTechApp {
 
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         displays::ui_tools::theme_config::bootstrap_startup_theme(&cc.egui_ctx);
+
+        // Background thread requests a repaint every 250ms to keep the event loop ticking.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let repaint_ctx = cc.egui_ctx.clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+                repaint_ctx.request_repaint();
+            });
+        }
+
         let dock = default_tree();
         let (tx, rx) = crossbeam::channel::bounded::<String>(1);
         let tx_scaffold = tx.clone();
@@ -254,7 +263,6 @@ impl MasterTechApp {
             files_panel_mode: FilesPanelMode::default(),
             current_antivirus: "".to_string(),
             opened_file: None,
-            open_file_dialog: None,
 
             ram_test_cbox: scaffold::HardwareTest::RamNotTested,
             hdd_test_cbox: scaffold::HardwareTest::HddNotTested,
@@ -268,7 +276,7 @@ impl MasterTechApp {
             //////////////////////////////////////////
             /*          Widgets and UI elements     */
             //////////////////////////////////////////
-            toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),
+            toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 45.0)),
             date: chrono::offset::Utc::now(),
 
             send_specs,

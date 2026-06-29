@@ -4,6 +4,7 @@
 //! Desktop `mcp_bridge::scripts_run_remote` shares `REMOTE_SCRIPT_PENDING` + `REMOTE_SCRIPT_ACCUM`.
 
 use once_cell::sync::Lazy;
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 /// Accumulated in-flight log/result data for the active remote-script session.
@@ -15,18 +16,15 @@ pub struct RemoteScriptSession {
     pub complete: bool,
 }
 
-pub static REMOTE_SCRIPT_ACCUM: Lazy<Mutex<RemoteScriptSession>> =
-    Lazy::new(|| Mutex::new(RemoteScriptSession::default()));
+/// Per-client in-flight log/result accumulators, keyed by connection_string.
+pub static REMOTE_SCRIPT_ACCUM: Lazy<Mutex<HashMap<String, RemoteScriptSession>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
+/// Per-client MCP waiters keyed by connection_string; value is (script_name, sender).
 #[cfg(not(target_arch = "wasm32"))]
 pub static REMOTE_SCRIPT_PENDING: Lazy<
-    Mutex<
-        Option<(
-            String,
-            tokio::sync::oneshot::Sender<RemoteScriptSession>,
-        )>,
-    >,
-> = Lazy::new(|| Mutex::new(None));
+    Mutex<HashMap<String, (String, tokio::sync::oneshot::Sender<RemoteScriptSession>)>>,
+> = Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// One-shot waiters fulfilled (with the category count) by the next `RemoteScriptListResponse`.
 #[cfg(not(target_arch = "wasm32"))]
@@ -81,42 +79,48 @@ pub fn notify_deploy_ack(plugin_id: &str, success: bool, message: &str) {
 }
 
 /// Called by the admin console's receive handler when a `RemoteScriptLog` message arrives from a client.
-pub fn notify_remote_script_log(msg: String) {
+pub fn notify_remote_script_log(conn: &str, msg: String) {
     if let Ok(mut accum) = REMOTE_SCRIPT_ACCUM.lock() {
-        accum.logs.push(msg);
+        accum.entry(conn.to_string()).or_default().logs.push(msg);
     }
 }
 
 /// Called by the admin console's receive handler when a `RemoteScriptResult` message arrives.
-pub fn notify_remote_script_result(name: String, status: String) {
+pub fn notify_remote_script_result(conn: &str, name: String, status: String) {
     if let Ok(mut accum) = REMOTE_SCRIPT_ACCUM.lock() {
-        accum.results.push((name, status));
+        accum
+            .entry(conn.to_string())
+            .or_default()
+            .results
+            .push((name, status));
     }
 }
 
 /// Called by the admin console's receive handler when a `RemoteScriptsComplete` message arrives.
-pub fn notify_remote_scripts_complete() {
+pub fn notify_remote_scripts_complete(conn: &str) {
     let session = {
         let mut accum = match REMOTE_SCRIPT_ACCUM.lock() {
             Ok(g) => g,
             Err(_) => return,
         };
-        let mut out = RemoteScriptSession::default();
-        std::mem::swap(&mut *accum, &mut out);
-        out.complete = true;
-        out
+        match accum.remove(conn) {
+            Some(mut out) => {
+                out.complete = true;
+                out
+            }
+            None => return,
+        }
     };
     #[cfg(not(target_arch = "wasm32"))]
     {
         if let Ok(mut guard) = REMOTE_SCRIPT_PENDING.lock() {
-            // Only deliver a completion carrying the awaited script's result;
-            // otherwise it's a stale complete from an older batch — drop it.
+            // Deliver only when this client's awaited script appears in the results.
             let matches_pending = guard
-                .as_ref()
+                .get(conn)
                 .map(|(name, _)| session.results.iter().any(|(n, _)| n == name))
                 .unwrap_or(false);
             if matches_pending {
-                if let Some((_, tx)) = guard.take() {
+                if let Some((_, tx)) = guard.remove(conn) {
                     let _ = tx.send(session);
                 }
             }

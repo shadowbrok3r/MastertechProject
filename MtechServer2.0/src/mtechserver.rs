@@ -30,22 +30,21 @@ impl eframe::App for MtechServer {
             options.max_passes = std::num::NonZeroUsize::new(2).unwrap();
         });
 
-        let ctx = ui.ctx().clone();
-        self.shared_ctx.menu_bar(&ctx);
+        self.shared_ctx.menu_bar(ui);
 
         match &self.shared_ctx.state {
-            AppState::Authenticated(MainPages::Downloads) => self.shared_ctx.downloads_page(&ctx),
-            AppState::Authenticated(MainPages::UserPreferences) => self.shared_ctx.account_settings_page(&ctx, self.shared_ctx.app_state_tx.clone()),
-            AppState::Authenticated(_) => self.shared_ctx.main_page(&ctx),
+            AppState::Authenticated(MainPages::Downloads) => self.shared_ctx.downloads_page(ui),
+            AppState::Authenticated(MainPages::UserPreferences) => self.shared_ctx.account_settings_page(ui, self.shared_ctx.app_state_tx.clone()),
+            AppState::Authenticated(_) => self.shared_ctx.main_page(ui),
             AppState::CreateAccount => self.shared_ctx.signup_page(
-                &ctx,
+                ui,
                 self.shared_ctx.db_tx.clone(),
                 self.shared_ctx.app_state_tx.clone(),
             ),
             AppState::NoAuth(reason) => {
                 if !reason.contains("Already connected") {
                     self.shared_ctx.login_page(
-                        &ctx,
+                        ui,
                         self.shared_ctx.db_tx.clone(),
                         self.shared_ctx.app_state_tx.clone(),
                     )

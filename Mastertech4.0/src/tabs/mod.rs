@@ -94,7 +94,13 @@ impl TabViewer for MastertechContext {
             #[cfg(not(target_os = "windows"))]
             TabId::MinidumpAnalysis => {}
             TabId::Qc => self.quality_check(ui),
-            TabId::Ai => self.shared_ctx.ai_playground(ui),
+            TabId::Ai => {
+                // Self-diagnosis chat about this machine via the in-process Mastertech MCP tools.
+                self.shared_ctx.enhanced_ai_playground.self_diagnosis = true;
+                self.shared_ctx.enhanced_ai_playground.focused_client = None;
+                self.shared_ctx.enhanced_ai_playground.enhanced_ai_playground(ui);
+                let _ = self.shared_ctx.enhanced_ai_playground.take_close_request();
+            }
             TabId::StoreTasks => {
                 self.shared_ctx
                     .render_layout(ui, TabId::StoreTasks.layout_page_name())

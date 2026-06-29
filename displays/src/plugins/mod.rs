@@ -12,6 +12,8 @@ pub mod mcp_bridge;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub mod remote_egui_control;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+pub mod egui_inspect;
+#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub mod builder_transport;
 pub mod remote;
 #[cfg(feature = "wasm-plugins")]
@@ -729,7 +731,7 @@ impl egui::Plugin for PluginManagerHandle {
         // user-frame callback where the egui plugin mutex is NOT held.
     }
 
-    fn input_hook(&mut self, input: &mut egui::RawInput) {
+    fn input_hook(&mut self, _ctx: &egui::Context, input: &mut egui::RawInput) {
         if let Ok(mut guard) = self.0.write() {
             for plugin in &mut guard.plugins {
                 if plugin.enabled() {
@@ -739,7 +741,7 @@ impl egui::Plugin for PluginManagerHandle {
         }
     }
 
-    fn output_hook(&mut self, output: &mut egui::FullOutput) {
+    fn output_hook(&mut self, _ctx: &egui::Context, output: &mut egui::FullOutput) {
         if let Ok(mut guard) = self.0.write() {
             for plugin in &mut guard.plugins {
                 if plugin.enabled() {

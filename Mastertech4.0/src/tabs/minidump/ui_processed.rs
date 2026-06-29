@@ -68,7 +68,7 @@ impl MiniDumpApp {
         // let is_symbolicated = self.cur_status == ProcessingStatus::Done;
         eframe::egui::Panel::top("info")
             .resizable(true)
-            .default_height((ui.available_height() / 2.0).round())
+            .default_size((ui.available_height() / 2.0).round())
             .frame(Frame::new())
             .show_inside(ui, |ui| {
                 self.ui_processed_data(ui, ctx, state);

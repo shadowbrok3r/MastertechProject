@@ -113,9 +113,9 @@ impl ApplicationHandler for SoftwareApp {
                 let canvas = skia_surface.canvas();
                 canvas.clear(Color::from_argb(255, 0, 0, 0));
 
-                let repaint_after = egui_skia.run(&window, |ctx| {
-                    mt.logic_inner(ctx);
-                    mt.ui_inner(ctx);
+                let repaint_after = egui_skia.run(&window, |ui| {
+                    mt.logic_inner(ui.ctx());
+                    mt.ui_inner(ui);
                 });
 
                 egui_skia.paint(canvas);

@@ -125,11 +125,9 @@ impl ApplicationHandler for SoftwareApp {
                 canvas.clear(Color::from_argb(255, 0, 0, 0));
 
                 let qc = &mut self.qc;
-                let repaint_after = egui_skia.run(&window, |ctx| {
-                    qc.logic_inner(ctx);
-                    // Top-level central panel against a bare Context; show_inside needs a Ui we don't have here.
-                    #[allow(deprecated)]
-                    egui::CentralPanel::default().show(ctx, |ui| qc.ui_inner(ui));
+                let repaint_after = egui_skia.run(&window, |ui| {
+                    qc.logic_inner(ui.ctx());
+                    qc.ui_inner(ui);
                 });
 
                 egui_skia.paint(canvas);

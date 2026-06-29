@@ -10,7 +10,7 @@ use tokio::spawn;
 
 
 impl MasterTechApp {
-    pub fn menu_bar(&mut self, ctx: &Context) {
+    pub fn menu_bar(&mut self, ui: &mut eframe::egui::Ui) {
         // Populate inputs with task names and service numbers for search
         let mut inputs = BTreeSet::new();
         for task in self.context.shared_ctx.task_index.values() {
@@ -18,7 +18,7 @@ impl MasterTechApp {
             inputs.insert(format!("{}", task.service_number.clone().unwrap_or_default()));
         }
         
-        eframe::egui::Panel::top("egui_dock::MenuBar").show(ctx, |ui| {
+        eframe::egui::Panel::top("egui_dock::MenuBar").show(ui, |ui| {
             eframe::egui::MenuBar::new()
             .config(
                 MenuConfig::default().close_behavior(PopupCloseBehavior::CloseOnClickOutside),
@@ -175,7 +175,7 @@ impl MasterTechApp {
                                 {
                                     let result = crate::utilities::app_restart::restart_in_terminal_mode();
                                     log::info!("restart_in_terminal_mode: {result:?}");
-                                    ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
+                                    ui.ctx().send_viewport_cmd(eframe::egui::ViewportCommand::Close);
                                 }
                     
                                 ui.add_space(10.0);
@@ -358,15 +358,15 @@ impl MasterTechApp {
                                     });
                                 }
                                 if organize.clicked() {
-                                    ctx.memory_mut(|mem| mem.reset_areas());
-                                    ctx.memory_mut(|mem| {
+                                    ui.ctx().memory_mut(|mem| mem.reset_areas());
+                                    ui.ctx().memory_mut(|mem| {
                                         for layer in mem.areas_mut().visible_layer_ids().iter() {
                                             info!("Visible layers: {layer:?}");
                                         }
                                     })
                                 }
                                 if reset_mem.clicked() {
-                                    ctx.memory_mut(|mem| *mem = Default::default());
+                                    ui.ctx().memory_mut(|mem| *mem = Default::default());
                                 }
                             });
                         });

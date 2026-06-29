@@ -26,12 +26,8 @@ pub fn view_menu(
 }
 
 impl crate::app_state::SharedContext {
-    pub fn main_page(&mut self, ctx: &Context) {
-        // Admin sessions must stay reachable for MCP/remote commands even
-        // when the Admin Console tab is hidden or another client is focused.
-        self.web_console_layout.pump_sessions(ctx);
-
-        let style = crate::ui_tools::dock_style::style(ctx);
+    pub fn main_page(&mut self, ui: &mut Ui) {
+        let style = crate::ui_tools::dock_style::style(ui.ctx());
         let mut tree = std::mem::replace(
             &mut self.dock.tree,
             egui_dock::DockState::new(Vec::<TabId>::new()),
@@ -43,7 +39,7 @@ impl crate::app_state::SharedContext {
             .show_add_buttons(true)
             .show_add_popup(true)
             .draggable_tabs(true)
-            .show(ctx, self);
+            .show_inside(ui, self);
 
         if !self.pending_tab_removes.is_empty() || !self.pending_tab_adds.is_empty() {
             for tab in self.pending_tab_removes.drain(..) {

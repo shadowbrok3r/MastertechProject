@@ -1,6 +1,6 @@
 [package]
 name = "displays"
-version = "4.7.8"
+version = "4.7.9"
 edition = "2024"
 
 [features]
@@ -81,6 +81,8 @@ wat = { workspace = true, optional = true }
 # pulls tokio + tungstenite which don't fit a wasm bundle, so it's
 # scoped to non-wasm targets.
 plugin_builder = { path = "../plugin_builder" }
+# Client for egui 0.35's native inspection protocol (the `protocol` module needs no feature).
+egui_inspection = "0.35"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tls", "rustls_ring"]}

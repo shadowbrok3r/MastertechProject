@@ -1049,31 +1049,27 @@ pub async fn get_prestashop_payload_from_phone(phone: &str) -> anyhow::Result<Pr
     info!("schema/utilities.rs -> order: {potential_order:#?}");
 
     let sales_rep: Option<Employee> = if !potential_order.id_employee_sales_rep.eq("0") {
-        let employee: Employee = api_call
+        api_call
             .request_subresources_by_id_wasm(
                 "employees",
                 "employee",
                 &potential_order.id_employee_sales_rep,
             )
-            .await?;
-
-        info!("schema/utilities.rs -> employee: {employee:#?}");
-        Some(employee)
+            .await
+            .ok()
     } else {
         None
     };
 
     let split_rep: Option<Employee> = if !potential_order.id_employee_split_rep.eq("0") {
-        let employee_2: Employee = api_call
+        api_call
             .request_subresources_by_id_wasm(
                 "employees",
                 "employee",
                 &potential_order.id_employee_split_rep,
             )
-            .await?;
-
-        info!("schema/utilities.rs -> employee: {sales_rep:#?}");
-        Some(employee_2)
+            .await
+            .ok()
     } else {
         None
     };
@@ -1173,31 +1169,27 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
     // }
 
     let sales_rep: Option<Employee> = if !order.id_employee_sales_rep.eq("0") && !order.id_employee_sales_rep.eq("1347") {
-        let employee: Employee = api_call
+        api_call
             .request_subresources_by_id_wasm(
                 "employees",
                 "employee",
                 &order.id_employee_sales_rep,
             )
-            .await?;
-
-        info!("schema/utilities.rs -> employee: {employee:#?}");
-        Some(employee)
+            .await
+            .ok()
     } else {
         None
     };
 
     let split_rep: Option<Employee> = if !order.id_employee_split_rep.eq("0") {
-        let employee_2: Employee = api_call
+        api_call
             .request_subresources_by_id_wasm(
                 "employees",
                 "employee",
                 &order.id_employee_split_rep,
             )
-            .await?;
-
-        info!("schema/utilities.rs -> employee: {sales_rep:#?}");
-        Some(employee_2)
+            .await
+            .ok()
     } else {
         None
     };

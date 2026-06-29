@@ -402,14 +402,13 @@ impl EmployeeHelper for Employee {
             new_query.clear();
             new_query.insert("filter[id]", &order.id_employee_sales_rep);
             new_query.insert("output_format", "JSON");
-            Some(
-                api_call
+            api_call
                 .find_resource_wasm(
                     "employees",
                     new_query
                 )
-                .await.context("Pulling employee")?
-            )
+                .await
+                .ok()
         } else {
             let mut emp = Employee::default();
             emp.firstname = "CheckInShelf".to_string();
@@ -421,16 +420,15 @@ impl EmployeeHelper for Employee {
             new_query.clear();
             new_query.insert("filter[id]", &order.id_employee_split_rep);
             new_query.insert("output_format", "JSON");
-            let employee_2: Employee = api_call
+            let employee_2: Option<Employee> = api_call
                 .find_resource_wasm(
                     "employees",
                     new_query
                 )
                 .await
-                .context("Pulling split rep")?;
+                .ok();
 
-            info!("helper_traits -> employee: {sales_rep:#?}");
-            Some(employee_2)
+            employee_2
         } else {
             None
         };
@@ -636,16 +634,16 @@ impl <'a>PrestashopPayloadHelper<'a> for PrestashopPayload {
     async fn get_employee(&mut self, prestashop_api: &Prestashop) -> Result<(), Error> {
         let sales_rep: Option<Employee> = if !self.order.id_employee_sales_rep.eq("checkinshelf") && !self.order.id_employee_sales_rep.eq("0") {
             //|| order.id_employee_sales_rep.len() != 0{
-            let employee: Employee = prestashop_api
+            let employee: Option<Employee> = prestashop_api
                 .request_subresources_by_id_wasm(
                     "employees",
                     "employee",
                     &self.order.id_employee_sales_rep,
                 )
-                .await?;
+                .await
+                .ok();
     
-            info!("helper_traits -> employee: {employee:#?}");
-            Some(employee)
+            employee
         } else {
             None
         };
@@ -653,16 +651,16 @@ impl <'a>PrestashopPayloadHelper<'a> for PrestashopPayload {
         self.sales_rep = sales_rep;
 
         let split_rep: Option<Employee> = if !self.order.id_employee_split_rep.eq("0") {
-            let employee_2: Employee = prestashop_api
+            let employee_2: Option<Employee> = prestashop_api
                 .request_subresources_by_id_wasm(
                     "employees",
                     "employee",
                     &self.order.id_employee_split_rep,
                 )
-                .await?;
+                .await
+                .ok();
     
-            info!("helper_traits -> employee: {employee_2:#?}");
-            Some(employee_2)
+            employee_2
         } else {
             None
         };
