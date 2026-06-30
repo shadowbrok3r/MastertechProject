@@ -132,16 +132,5 @@ incremental = true     # cache unchanged crates between rebuilds
 # inherits = "release"
 # strip = false  # Disable strip just for this profile
 
-# egui 0.35 migration: local fork clones bumped to 0.35. Drop these and re-pin
-# the git deps to pushed commits once the workspace builds green.
-[patch."https://github.com/shadowbrok3r/egui_dock"]
-egui_dock = { path = "../egui_dock" }
-
-[patch."https://github.com/shadowbrok3r/egui-data-table"]
-egui-data-table = { path = "../egui-data-table" }
-
-[patch."https://github.com/shadowbrok3r/egui_skia"]
-egui_skia = { path = "../egui_skia" }
-
 [patch.crates-io]
-egui-phosphor = { path = "../egui-phosphor" }
+egui-phosphor = { git = "https://github.com/shadowbrok3r/egui-phosphor", branch = "egui-035" }
