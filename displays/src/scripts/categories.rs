@@ -179,6 +179,15 @@ pub fn stress_tests_scripts() -> Vec<ScriptItem> {
             .with_pass_criteria("≥ 1 GB/s sustained; zero mismatches")
             .with_warning_criteria("PCIe replay deltas during the run")
             .with_error_criteria("Any round-trip data mismatch"),
+        // Whole-system combined load
+        ScriptItem::new("Stress: Combined", ScriptCategory::StressTests)
+            .with_description("Single fused stressor: CPU FMA + RAM bandwidth + GPU compute at once; reports combined CPU+GPU GFLOPS")
+            .with_pass_criteria("Runs to completion with no errors or TDR")
+            .with_error_criteria("GPU device loss or any reported error"),
+        ScriptItem::new("Concurrent: CPU+RAM+GPU", ScriptCategory::StressTests)
+            .with_description("Runs CPU, RAM, and GPU stressors simultaneously as independent lanes, each with its own throughput")
+            .with_pass_criteria("All lanes run to completion with no errors")
+            .with_error_criteria("Any lane reports errors or aborts"),
         // Scored benchmarks — each persists a benchmark_result row (plus the
         // backing stress_test_run) for cross-machine score comparison.
         ScriptItem::new("Benchmark Suite", ScriptCategory::StressTests)

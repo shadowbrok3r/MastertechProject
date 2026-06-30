@@ -100,6 +100,8 @@ pub enum Stressor {
     /// CPU↔GPU buffer round-trip with full readback verify; reports GB/s;
     /// mismatches counted in `errors`.
     GpuPcie,
+    /// Concurrent CPU FMA + RAM bandwidth + GPU compute load; reports combined CPU+GPU GFLOPS.
+    Combined,
 }
 
 impl Stressor {
@@ -132,6 +134,7 @@ impl Stressor {
             Self::GpuMatmul => "GPU Matmul",
             Self::GpuVram => "GPU VRAM",
             Self::GpuPcie => "GPU PCIe",
+            Self::Combined => "Combined (CPU+RAM+GPU)",
         }
     }
 
@@ -164,6 +167,7 @@ impl Stressor {
             Self::GpuMatmul => "GFLOPS",
             Self::GpuVram => "MiB/s",
             Self::GpuPcie => "GB/s",
+            Self::Combined => "GFLOPS",
         }
     }
 
@@ -209,6 +213,7 @@ impl Stressor {
             Self::GpuMatmul,
             Self::GpuVram,
             Self::GpuPcie,
+            Self::Combined,
         ]
     }
 }

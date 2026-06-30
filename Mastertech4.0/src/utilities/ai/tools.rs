@@ -1,4 +1,4 @@
-use rmcp::{handler::server::{wrapper::Parameters, tool::ToolRouter, ServerHandler}, model::{CallToolResult, Content, ErrorCode, ErrorData, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo}, schemars, tool, tool_handler, tool_router};
+use rmcp::{handler::server::{wrapper::Parameters, tool::ToolRouter, ServerHandler}, model::{CallToolResult, ContentBlock, ErrorCode, ErrorData, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo}, schemars, tool, tool_handler, tool_router};
 use enigo::{Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings};
 use anyhow::{anyhow, Context}; 
 use base64::Engine;
@@ -160,7 +160,7 @@ impl DesktopToolProvider {
 
         Ok(CallToolResult::success(
             vec![
-                Content::json(screens)
+                ContentBlock::json(screens)
                     .map_err(|e| anyhow!(e).context("Failed to serialize screen details to JSON"))
                     .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?
             ]
@@ -215,7 +215,7 @@ impl DesktopToolProvider {
                     "is_maximized": window.is_maximized().unwrap_or(false) // Include maximized state
                 });
 
-                return Ok(CallToolResult::success(vec![Content::json(result_json)
+                return Ok(CallToolResult::success(vec![ContentBlock::json(result_json)
                     .map_err(|e| anyhow!(e).context("Failed to serialize find_window result"))
                     .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?
                 ]));
@@ -224,7 +224,7 @@ impl DesktopToolProvider {
 
         // If no window was found after checking all
         info!("No matching window found for query: '{}'", title_query);
-        Ok(CallToolResult::success(vec![Content::json(json!({
+        Ok(CallToolResult::success(vec![ContentBlock::json(json!({
             "status": "success", // Still a successful tool execution, just no result found
             "found": false,
             "message": format!("No non-minimized window found matching title query '{}'", title_query)
@@ -255,7 +255,7 @@ impl DesktopToolProvider {
 
         let (x, y) = enigo.location().map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?;
         info!("Mouse moved successfully.");
-        Ok(CallToolResult::success(vec![Content::json(json!({ "status": "success", "current_x": x, "current_y": y }))
+        Ok(CallToolResult::success(vec![ContentBlock::json(json!({ "status": "success", "current_x": x, "current_y": y }))
             .map_err(|e| anyhow!(e).context("Failed to serialize move_mouse result"))
             .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?
         ]))
@@ -273,7 +273,7 @@ impl DesktopToolProvider {
         let (x, y) = enigo.location().map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?;
         info!("Mouse position retrieved successfully: ({}, {})", x, y);
         let result_json = json!({ "status": "success", "x": x, "y": y });
-        Ok(CallToolResult::success(vec![Content::json(result_json)
+        Ok(CallToolResult::success(vec![ContentBlock::json(result_json)
             .map_err(|e| anyhow!(e).context("Failed to serialize get_mouse_position result"))
             .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?
         ]))
@@ -309,7 +309,7 @@ impl DesktopToolProvider {
 
         enigo.button(button_enum, direction).map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?;
         info!("Mouse action successful: Button='{}', Action='{:?}'", button_str, direction);
-        Ok(CallToolResult::success(vec![Content::json(json!({ "status": "success", "button": button_str, "action": action_str }))
+        Ok(CallToolResult::success(vec![ContentBlock::json(json!({ "status": "success", "button": button_str, "action": action_str }))
             .map_err(|e| anyhow!(e).context("Failed to serialize mouse_action result"))
             .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?
         ]))
@@ -347,7 +347,7 @@ impl DesktopToolProvider {
             };
             enigo.key(key_enum, direction).map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?;
             info!("Key action successful.");
-            Ok(CallToolResult::success(vec![Content::json(json!({ "status": "success", "key": key_str, "action": action_str }))
+            Ok(CallToolResult::success(vec![ContentBlock::json(json!({ "status": "success", "key": key_str, "action": action_str }))
                 .map_err(|e| anyhow!(e).context("Failed to serialize keyboard key action result"))
                 .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?
             ]))
@@ -355,7 +355,7 @@ impl DesktopToolProvider {
             info!("Typing text: '{}'", text_to_type);
             enigo.text(text_to_type).map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?;
             info!("Text typing successful.");
-            Ok(CallToolResult::success(vec![Content::json(json!({ "status": "success", "text_typed": text_to_type }))
+            Ok(CallToolResult::success(vec![ContentBlock::json(json!({ "status": "success", "text_typed": text_to_type }))
                 .map_err(|e| anyhow!(e).context("Failed to serialize keyboard text typing result"))
                 .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?
             ]))
@@ -390,7 +390,7 @@ impl DesktopToolProvider {
         let result_json = json!({
             "status": "success", "format": "png", "width": image.width(), "height": image.height(), "base64_data": base64_image,
         });
-        Ok(CallToolResult::success(vec![Content::json(result_json)
+        Ok(CallToolResult::success(vec![ContentBlock::json(result_json)
             .map_err(|e| anyhow!(e).context("Failed to serialize capture_screen result"))
             .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?
         ]))
@@ -412,7 +412,7 @@ impl DesktopToolProvider {
         // let exit_code = output.status.code().unwrap_or(-1);
         // info!( "Command '{}' executed. Status: {}, Stdout len: {}, Stderr len: {}", params.command, exit_code, stdout.len(), stderr.len());
         let result_json = json!({ "status": "success"  }); // , "exit_code": exit_code, "stdout": stdout, "stderr": stderr,
-        Ok(CallToolResult::success(vec![Content::json(result_json)
+        Ok(CallToolResult::success(vec![ContentBlock::json(result_json)
              .map_err(|e| anyhow!(e).context("Failed to serialize run_shell_command result"))
              .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?
         ]))
@@ -445,7 +445,7 @@ impl DesktopToolProvider {
         enigo.button(button_enum, Direction::Click)
             .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, format!("OpenAI Click: Failed to click button: {e:?}"), None))?;
 
-        Ok(CallToolResult::success(vec![Content::json(json!({ "status": "success" }))
+        Ok(CallToolResult::success(vec![ContentBlock::json(json!({ "status": "success" }))
             .map_err(|e| anyhow!(e).context("Failed to serialize execute_openai_click result"))
             .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?
         ]))
@@ -489,7 +489,7 @@ impl DesktopToolProvider {
              }
         }
 
-        Ok(CallToolResult::success(vec![Content::json(json!({ "status": "success" }))
+        Ok(CallToolResult::success(vec![ContentBlock::json(json!({ "status": "success" }))
             .map_err(|e| anyhow!(e).context("Failed to serialize execute_openai_scroll result"))
             .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?
         ]))
@@ -538,7 +538,7 @@ impl DesktopToolProvider {
         }
 
         info!("OpenAI keypress sequence executed successfully.");
-        Ok(CallToolResult::success(vec![Content::json(json!({ "status": "success" }))
+        Ok(CallToolResult::success(vec![ContentBlock::json(json!({ "status": "success" }))
             .map_err(|e| anyhow!(e).context("Failed to serialize execute_openai_keypress result"))
             .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?
         ]))
@@ -557,7 +557,7 @@ impl DesktopToolProvider {
             .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, format!("OpenAI Type: Failed to type text: {e:?}"), None))?;
 
         info!("OpenAI text typing successful.");
-        Ok(CallToolResult::success(vec![Content::json(json!({ "status": "success" }))
+        Ok(CallToolResult::success(vec![ContentBlock::json(json!({ "status": "success" }))
             .map_err(|e| anyhow!(e).context("Failed to serialize execute_openai_type result"))
             .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?
         ]))
@@ -575,7 +575,7 @@ impl DesktopToolProvider {
         sleep(Duration::from_millis(duration_ms)).await;
 
         info!("Wait completed.");
-        Ok(CallToolResult::success(vec![Content::json(json!({ "status": "success", "duration_ms": duration_ms }))
+        Ok(CallToolResult::success(vec![ContentBlock::json(json!({ "status": "success", "duration_ms": duration_ms }))
             .map_err(|e| anyhow!(e).context("Failed to serialize execute_openai_wait result"))
             .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?
         ]))

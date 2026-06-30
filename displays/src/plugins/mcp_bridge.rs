@@ -47,7 +47,7 @@
 use rmcp::{
     handler::server::{wrapper::Parameters, tool::ToolRouter, ServerHandler},
     model::{
-        CallToolResult, Content, ErrorCode, ErrorData, Implementation, ProtocolVersion,
+        CallToolResult, ContentBlock, ErrorCode, ErrorData, Implementation, ProtocolVersion,
         ServerCapabilities, ServerInfo,
     },
     schemars, tool, tool_handler, tool_router,
@@ -526,7 +526,7 @@ pub struct TelemetrySnapshotParams {
 #[derive(Deserialize, Debug, Serialize, JsonSchema, Clone)]
 #[schemars(inline)]
 pub struct ScenarioStageParam {
-    #[schemars(description = "Stressor (snake_case): cpu, memory, disk, matrix, memcpy, bitops, cache, vm, stream, branch, atomic, mutex, switch, prime, fp, hash, prefetch, icache, tsc, gpu, gpu_matmul, gpu_vram, gpu_pcie")]
+    #[schemars(description = "Stressor (snake_case): cpu, memory, disk, matrix, memcpy, bitops, cache, vm, stream, branch, atomic, mutex, switch, prime, fp, hash, prefetch, icache, tsc, gpu, gpu_matmul, gpu_vram, gpu_pcie, combined")]
     pub stressor: String,
     #[schemars(description = "Stage length in seconds (1-1800)")]
     pub duration_secs: u64,
@@ -566,6 +566,22 @@ pub struct StressScenarioRunParams {
     #[schemars(description = "Diagnostic session id to link as session_ref.")]
     pub diagnostic_session_id: Option<String>,
     #[schemars(description = "Preset label recorded on the run (default 'mcp:scenario-v1').")]
+    pub preset_label: Option<String>,
+    #[schemars(description = "Free-form notes recorded on the run.")]
+    pub notes: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct StressConcurrentRunParams {
+    #[schemars(description = "Lanes that run AT THE SAME TIME (e.g. cpu + memory + gpu — OCCT-style combined load). 1-8 lanes. Each lane's threads default to an auto-budget across the core pool; per-lane duration_secs is IGNORED (the run uses the shared duration_secs below).")]
+    pub lanes: Vec<ScenarioStageParam>,
+    #[schemars(description = "How long to run all lanes together, in seconds (1-7200).")]
+    pub duration_secs: u64,
+    #[schemars(description = "Service order number for stress_test_run.service_order linkage (e.g. '2147605').")]
+    pub service_number: Option<String>,
+    #[schemars(description = "Diagnostic session id to link as session_ref.")]
+    pub diagnostic_session_id: Option<String>,
+    #[schemars(description = "Preset label recorded on the run (default 'mcp:concurrent-v1').")]
     pub preset_label: Option<String>,
     #[schemars(description = "Free-form notes recorded on the run.")]
     pub notes: Option<String>,
@@ -1458,7 +1474,7 @@ impl PluginToolProvider {
         let mgr = self.try_read_manager()?;
         let plugins = mgr.list_plugins();
         Ok(CallToolResult::success(vec![
-            Content::json(plugins).map_err(to_internal)?
+            ContentBlock::json(plugins).map_err(to_internal)?
         ]))
     }
 
@@ -1472,7 +1488,7 @@ impl PluginToolProvider {
     ) -> Result<CallToolResult, ErrorData> {
         let mut mgr = self.try_write_manager()?;
         let ok = mgr.set_plugin_enabled(&p.plugin_id, true);
-        Ok(CallToolResult::success(vec![Content::json(
+        Ok(CallToolResult::success(vec![ContentBlock::json(
             serde_json::json!({ "plugin_id": p.plugin_id, "enabled": ok }),
         )
         .map_err(to_internal)?]))
@@ -1488,7 +1504,7 @@ impl PluginToolProvider {
     ) -> Result<CallToolResult, ErrorData> {
         let mut mgr = self.try_write_manager()?;
         let ok = mgr.set_plugin_enabled(&p.plugin_id, false);
-        Ok(CallToolResult::success(vec![Content::json(
+        Ok(CallToolResult::success(vec![ContentBlock::json(
             serde_json::json!({ "plugin_id": p.plugin_id, "disabled": ok }),
         )
         .map_err(to_internal)?]))
@@ -1508,7 +1524,7 @@ impl PluginToolProvider {
             .dispatch_mcp_call(&p.plugin_id, &p.tool_name, args)
             .map_err(to_internal)?;
         Ok(CallToolResult::success(vec![
-            Content::json(result).map_err(to_internal)?
+            ContentBlock::json(result).map_err(to_internal)?
         ]))
     }
 
@@ -1523,7 +1539,7 @@ impl PluginToolProvider {
         Parameters(_p): Parameters<RemoteEguiListTargetsParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let targets = super::remote_egui_control::hub().list_targets();
-        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
             "targets": targets,
             "note": "Connect from Web Console first. Use remote_egui_list_widget_anchors + click_anchor when the remote app registers anchors; else perform_steps.",
         }))
@@ -1541,10 +1557,10 @@ impl PluginToolProvider {
         let hub = super::remote_egui_control::hub();
         if let Some(meta) = hub.get_last_frame_meta(&p.connection_string) {
             Ok(CallToolResult::success(vec![
-                Content::json(meta).map_err(to_internal)?,
+                ContentBlock::json(meta).map_err(to_internal)?,
             ]))
         } else {
-            Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+            Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
                 "ok": false,
                 "connection_string": p.connection_string,
                 "detail": "No egui frame recorded yet. Open Mastertech Viewer for this client and wait until the remote UI appears.",
@@ -1699,7 +1715,7 @@ impl PluginToolProvider {
             ("degraded", "Session registered but neither fresh frames nor round-trip responses. Client likely disconnected uncleanly; expect reconnect or restart before remote operations.")
         };
 
-        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
             "connection_string": cs,
             "verdict": verdict,
             "advice": advice,
@@ -1729,7 +1745,7 @@ impl PluginToolProvider {
         super::remote_egui_control::hub()
             .send_event(&p.connection_string, event)
             .map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
             "ok": true,
             "connection_string": p.connection_string,
         }))
@@ -1764,7 +1780,7 @@ impl PluginToolProvider {
         super::remote_egui_control::hub()
             .send_events(&p.connection_string, &seq)
             .map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
             "ok": true,
             "connection_string": p.connection_string,
             "events_enqueued": n,
@@ -1786,7 +1802,7 @@ impl PluginToolProvider {
                 super::remote::EguiInputEvent::Text(p.text.clone()),
             )
             .map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
             "ok": true,
             "connection_string": p.connection_string,
             "chars": p.text.chars().count(),
@@ -1815,7 +1831,7 @@ impl PluginToolProvider {
                 }
             }
         }
-        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
             "ok": true,
             "connection_string": p.connection_string,
             "steps_run": p.steps.len(),
@@ -1848,7 +1864,7 @@ impl PluginToolProvider {
                 })
             })
             .collect();
-        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
             "connection_string": p.connection_string,
             "anchors": listed,
             "count": listed.len(),
@@ -1890,7 +1906,7 @@ impl PluginToolProvider {
         ];
         hub.send_events(&p.connection_string, &seq)
             .map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
             "ok": true,
             "connection_string": p.connection_string,
             "key": p.key,
@@ -1917,7 +1933,7 @@ impl PluginToolProvider {
             Ok(other) => serde_json::json!({ "connected": true, "unexpected": format!("{other:?}") }),
             Err(e) => serde_json::json!({ "connected": false, "error": e.to_string() }),
         };
-        Ok(CallToolResult::success(vec![Content::json(json).map_err(to_internal)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(json).map_err(to_internal)?]))
     }
 
     #[tool(
@@ -1932,7 +1948,7 @@ impl PluginToolProvider {
             egui_inspection::Response::Tree { step, pixels_per_point, accesskit } => {
                 let tree = accesskit
                     .map(|t| serde_json::to_value(&t).unwrap_or(serde_json::Value::Null));
-                Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+                Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
                     "step": step,
                     "pixels_per_point": pixels_per_point,
                     "tree": tree,
@@ -1961,7 +1977,7 @@ impl PluginToolProvider {
         {
             egui_inspection::Response::Screenshot(png) => {
                 let b64 = base64::engine::general_purpose::STANDARD.encode(&png.bytes);
-                Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+                Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
                     "width": png.size[0],
                     "height": png.size[1],
                     "mime": "image/png",
@@ -1987,7 +2003,7 @@ impl PluginToolProvider {
         super::egui_inspect::request(egui_inspection::Request::ApplyEvents { events })
             .await
             .map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
             "ok": true, "x": p.x, "y": p.y, "double": p.double,
         }))
         .map_err(to_internal)?]))
@@ -2005,7 +2021,7 @@ impl PluginToolProvider {
         super::egui_inspect::request(egui_inspection::Request::ApplyEvents { events })
             .await
             .map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
             "ok": true, "text": p.text,
         }))
         .map_err(to_internal)?]))
@@ -2025,7 +2041,7 @@ impl PluginToolProvider {
         super::egui_inspect::request(egui_inspection::Request::ApplyEvents { events })
             .await
             .map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
             "ok": true, "key": p.key,
         }))
         .map_err(to_internal)?]))
@@ -2061,7 +2077,7 @@ impl PluginToolProvider {
                     .map_err(|e| to_internal(format!("write Cargo.toml: {e}")))?;
             }
 
-            Ok(CallToolResult::success(vec![Content::json(
+            Ok(CallToolResult::success(vec![ContentBlock::json(
                 serde_json::json!({
                     "plugin_id": p.plugin_id,
                     "action": "written",
@@ -2075,7 +2091,7 @@ impl PluginToolProvider {
                 .await
                 .map_err(|e| to_internal(format!("read lib.rs: {e}")))?;
 
-            Ok(CallToolResult::success(vec![Content::json(
+            Ok(CallToolResult::success(vec![ContentBlock::json(
                 serde_json::json!({
                     "plugin_id": p.plugin_id,
                     "source": source,
@@ -2121,7 +2137,7 @@ impl PluginToolProvider {
         let stderr = String::from_utf8_lossy(&output.stderr);
 
         if !output.status.success() {
-            return Ok(CallToolResult::success(vec![Content::json(
+            return Ok(CallToolResult::success(vec![ContentBlock::json(
                 serde_json::json!({
                     "plugin_id": p.plugin_id,
                     "success": false,
@@ -2158,7 +2174,7 @@ impl PluginToolProvider {
         self.try_lock_artifacts()?
             .store(&p.plugin_id, artifact_bytes);
 
-        Ok(CallToolResult::success(vec![Content::json(
+        Ok(CallToolResult::success(vec![ContentBlock::json(
             serde_json::json!({
                 "plugin_id": p.plugin_id,
                 "success": true,
@@ -2203,7 +2219,7 @@ impl PluginToolProvider {
             mgr.load_wasm(artifact)
                 .map_err(|e| to_internal(format!("WASM load failed: {e}")))?;
 
-            Ok(CallToolResult::success(vec![Content::json(
+            Ok(CallToolResult::success(vec![ContentBlock::json(
                 serde_json::json!({
                     "plugin_id": p.plugin_id,
                     "deployed": true,
@@ -2246,7 +2262,7 @@ impl PluginToolProvider {
             mgr.load_wasm(prev_artifact)
                 .map_err(|e| to_internal(format!("Rollback load failed: {e}")))?;
 
-            Ok(CallToolResult::success(vec![Content::json(
+            Ok(CallToolResult::success(vec![ContentBlock::json(
                 serde_json::json!({
                     "plugin_id": p.plugin_id,
                     "rolled_back": true,
@@ -2300,7 +2316,7 @@ impl PluginToolProvider {
 
         let elapsed_ms = start.elapsed().as_millis();
 
-        Ok(CallToolResult::success(vec![Content::json(
+        Ok(CallToolResult::success(vec![ContentBlock::json(
             serde_json::json!({
                 "plugin_id": p.plugin_id,
                 "observed_ms": elapsed_ms,
@@ -2348,7 +2364,7 @@ impl PluginToolProvider {
                 .map_err(|e| to_internal(format!("write wat: {e}")))?;
             let sz = wasm.len();
             self.try_lock_artifacts()?.store(&p.plugin_id, wasm);
-            Ok(CallToolResult::success(vec![Content::json(
+            Ok(CallToolResult::success(vec![ContentBlock::json(
                 serde_json::json!({
                     "plugin_id": p.plugin_id,
                     "display_name": display,
@@ -2436,7 +2452,7 @@ impl PluginToolProvider {
             }),
         };
 
-        Ok(CallToolResult::success(vec![Content::json(body).map_err(to_internal)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(body).map_err(to_internal)?]))
     }
 
     #[tool(
@@ -2576,11 +2592,11 @@ impl PluginToolProvider {
             let value: serde_json::Value = serde_json::from_str(&result_json)
                 .unwrap_or(serde_json::Value::String(result_json));
             Ok(CallToolResult::success(vec![
-                Content::json(value).map_err(to_internal)?,
+                ContentBlock::json(value).map_err(to_internal)?,
             ]))
         } else {
             Ok(CallToolResult::error(vec![
-                Content::text(result_json),
+                ContentBlock::text(result_json),
             ]))
         }
     }
@@ -2611,7 +2627,7 @@ impl PluginToolProvider {
                 .map_err(|e| to_internal(format!("write wat: {e}")))?;
             let sz = wasm.len();
             self.try_lock_artifacts()?.store(&p.plugin_id, wasm);
-            Ok(CallToolResult::success(vec![Content::json(
+            Ok(CallToolResult::success(vec![ContentBlock::json(
                 serde_json::json!({
                     "plugin_id": p.plugin_id,
                     "success": true,
@@ -2638,7 +2654,7 @@ impl PluginToolProvider {
             .await
             .map_err(to_internal)?;
         Ok(CallToolResult::success(vec![
-            Content::json(serde_json::json!({
+            ContentBlock::json(serde_json::json!({
                 "count": results.len(),
                 "plugins": results.iter().map(|r| serde_json::json!({
                     "plugin_id": r.plugin_id,
@@ -2667,10 +2683,10 @@ impl PluginToolProvider {
             .map_err(to_internal)?;
         match entry {
             Some(e) => Ok(CallToolResult::success(vec![
-                Content::json(serde_json::json!(e)).map_err(to_internal)?
+                ContentBlock::json(serde_json::json!(e)).map_err(to_internal)?
             ])),
             None => Ok(CallToolResult::success(vec![
-                Content::text(format!("No plugin found with ID '{}'", p.plugin_id))
+                ContentBlock::text(format!("No plugin found with ID '{}'", p.plugin_id))
             ])),
         }
     }
@@ -2769,7 +2785,7 @@ impl PluginToolProvider {
             .await
             .map_err(to_internal)?;
 
-        Ok(CallToolResult::success(vec![Content::json(
+        Ok(CallToolResult::success(vec![ContentBlock::json(
             serde_json::json!({
                 "plugin_id": p.plugin_id,
                 "published": true,
@@ -2819,7 +2835,7 @@ impl PluginToolProvider {
             }
         }
 
-        Ok(CallToolResult::success(vec![Content::json(
+        Ok(CallToolResult::success(vec![ContentBlock::json(
             serde_json::json!({
                 "plugin_id": p.plugin_id,
                 "fetched": true,
@@ -2873,7 +2889,7 @@ impl PluginToolProvider {
         use database::schema::RecordIdExt;
         let id_str = id.key_string();
         super::diagnostic_session_registry::register(&session.connection_string, &id_str);
-        Ok(CallToolResult::success(vec![Content::json(
+        Ok(CallToolResult::success(vec![ContentBlock::json(
             serde_json::json!({ "session_id": id_str }),
         )
         .map_err(to_internal)?]))
@@ -2899,7 +2915,7 @@ impl PluginToolProvider {
             ),
         };
         let validation = validate_link_bundle(&bundle).await;
-        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
             "ok": validation.ok,
             "issues": validation.issues,
             "resolved_customer_id": validation.resolved_customer_id.map(|r| r.key_string()),
@@ -2919,7 +2935,7 @@ impl PluginToolProvider {
         let report = repair_connection_links(&p.connection_string)
             .await
             .map_err(|e| ErrorData::invalid_params(e.to_string(), None))?;
-        Ok(CallToolResult::success(vec![Content::json(report).map_err(to_internal)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(report).map_err(to_internal)?]))
     }
 
     #[tool(
@@ -2937,7 +2953,7 @@ impl PluginToolProvider {
         )
         .await
         .map_err(|e| ErrorData::invalid_params(e.to_string(), None))?;
-        Ok(CallToolResult::success(vec![Content::json(report).map_err(to_internal)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(report).map_err(to_internal)?]))
     }
 
     #[tool(
@@ -2971,7 +2987,7 @@ impl PluginToolProvider {
         )
         .await
         .map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![Content::json(
+        Ok(CallToolResult::success(vec![ContentBlock::json(
             serde_json::json!({
                 "session_id": p.session_id,
                 "task_id": p.task_id,
@@ -3039,7 +3055,7 @@ impl PluginToolProvider {
             .map_err(to_internal)?;
         use database::schema::RecordIdExt;
         let id_str = id.key_string();
-        Ok(CallToolResult::success(vec![Content::json(
+        Ok(CallToolResult::success(vec![ContentBlock::json(
             serde_json::json!({ "entry_id": id_str, "session_id": p.session_id }),
         )
         .map_err(to_internal)?]))
@@ -3199,7 +3215,7 @@ impl PluginToolProvider {
             .await
             .map_err(to_internal)?;
 
-        Ok(CallToolResult::success(vec![Content::json(
+        Ok(CallToolResult::success(vec![ContentBlock::json(
             serde_json::json!({
                 "run_id": run_id.key_string(),
                 "event_count": events.len(),
@@ -3227,7 +3243,7 @@ impl PluginToolProvider {
         .await
         .map_err(to_internal)?;
         super::diagnostic_session_registry::clear_session(&p.session_id);
-        Ok(CallToolResult::success(vec![Content::json(
+        Ok(CallToolResult::success(vec![ContentBlock::json(
             serde_json::json!({ "session_id": p.session_id, "closed": true, "status": p.status }),
         )
         .map_err(to_internal)?]))
@@ -3249,7 +3265,7 @@ impl PluginToolProvider {
         )
         .await
         .map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![Content::json(
+        Ok(CallToolResult::success(vec![ContentBlock::json(
             serde_json::json!({ "count": sessions.len(), "sessions": sessions }),
         )
         .map_err(to_internal)?]))
@@ -3268,10 +3284,10 @@ impl PluginToolProvider {
             .map_err(to_internal)?;
         match full {
             Some(f) => Ok(CallToolResult::success(vec![
-                Content::json(serde_json::json!(f)).map_err(to_internal)?
+                ContentBlock::json(serde_json::json!(f)).map_err(to_internal)?
             ])),
             None => Ok(CallToolResult::success(vec![
-                Content::text(format!("No diagnostic session found with ID '{}'", p.session_id))
+                ContentBlock::text(format!("No diagnostic session found with ID '{}'", p.session_id))
             ])),
         }
     }
@@ -3302,7 +3318,7 @@ impl PluginToolProvider {
             .map_err(to_internal)?
             .take(0)
             .map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![Content::json(
+        Ok(CallToolResult::success(vec![ContentBlock::json(
             serde_json::json!({ "count": customers.len(), "customers": customers }),
         )
         .map_err(to_internal)?]))
@@ -3335,10 +3351,10 @@ impl PluginToolProvider {
             .map_err(to_internal)?;
         match result {
             Some(v) => Ok(CallToolResult::success(vec![
-                Content::json(v).map_err(to_internal)?
+                ContentBlock::json(v).map_err(to_internal)?
             ])),
             None => Ok(CallToolResult::success(vec![
-                Content::text(format!("No customer found with ID '{}'", p.customer_id))
+                ContentBlock::text(format!("No customer found with ID '{}'", p.customer_id))
             ])),
         }
     }
@@ -3364,10 +3380,10 @@ impl PluginToolProvider {
             .map_err(to_internal)?;
         match result {
             Some(v) => Ok(CallToolResult::success(vec![
-                Content::json(v).map_err(to_internal)?
+                ContentBlock::json(v).map_err(to_internal)?
             ])),
             None => Ok(CallToolResult::success(vec![
-                Content::text(format!("No service order found with number '{}'", p.service_number))
+                ContentBlock::text(format!("No service order found with number '{}'", p.service_number))
             ])),
         }
     }
@@ -3402,7 +3418,7 @@ impl PluginToolProvider {
             .map_err(to_internal)?
             .take(0)
             .map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![Content::json(
+        Ok(CallToolResult::success(vec![ContentBlock::json(
             serde_json::json!({ "count": results.len(), "orders": results }),
         )
         .map_err(to_internal)?]))
@@ -3431,10 +3447,10 @@ impl PluginToolProvider {
             .map_err(to_internal)?;
         match result {
             Some(v) => Ok(CallToolResult::success(vec![
-                Content::json(v).map_err(to_internal)?
+                ContentBlock::json(v).map_err(to_internal)?
             ])),
             None => Ok(CallToolResult::success(vec![
-                Content::text(format!("No computer found with ID '{}'", p.computer_id))
+                ContentBlock::text(format!("No computer found with ID '{}'", p.computer_id))
             ])),
         }
     }
@@ -3457,12 +3473,12 @@ impl PluginToolProvider {
             api.request_resources_wasm("orders", query_params).await;
 
         match orders {
-            Ok(o) => Ok(CallToolResult::success(vec![Content::json(
+            Ok(o) => Ok(CallToolResult::success(vec![ContentBlock::json(
                 serde_json::json!({ "count": o.len(), "orders": o }),
             )
             .map_err(to_internal)?])),
             Err(e) => Ok(CallToolResult::success(vec![
-                Content::text(format!("PrestaShop search error: {e}"))
+                ContentBlock::text(format!("PrestaShop search error: {e}"))
             ])),
         }
     }
@@ -3476,12 +3492,12 @@ impl PluginToolProvider {
         Parameters(p): Parameters<SearchOdooInventoryParams>,
     ) -> Result<CallToolResult, ErrorData> {
         match database::schema::odoo::search_odoo_products(&p.query).await {
-            Ok(resp) => Ok(CallToolResult::success(vec![Content::json(
+            Ok(resp) => Ok(CallToolResult::success(vec![ContentBlock::json(
                 serde_json::json!({ "count": resp.result.len(), "products": resp.result }),
             )
             .map_err(to_internal)?])),
             Err(e) => Ok(CallToolResult::success(vec![
-                Content::text(format!("Odoo search error: {e}"))
+                ContentBlock::text(format!("Odoo search error: {e}"))
             ])),
         }
     }
@@ -3509,7 +3525,7 @@ impl PluginToolProvider {
             .map_err(to_internal)?
             .take(0)
             .map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![Content::json(
+        Ok(CallToolResult::success(vec![ContentBlock::json(
             serde_json::json!({ "results": result }),
         )
         .map_err(to_internal)?]))
@@ -3549,7 +3565,7 @@ impl PluginToolProvider {
             .map_err(to_internal)?
             .take(0)
             .map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![Content::json(
+        Ok(CallToolResult::success(vec![ContentBlock::json(
             serde_json::json!({ "count": rows.len(), "results": rows }),
         )
         .map_err(to_internal)?]))
@@ -3571,7 +3587,7 @@ impl PluginToolProvider {
             snap = agent.snapshot();
         }
         Ok(CallToolResult::success(vec![
-            Content::json(snap).map_err(to_internal)?,
+            ContentBlock::json(snap).map_err(to_internal)?,
         ]))
     }
 
@@ -3600,7 +3616,7 @@ impl PluginToolProvider {
                 serde_json::from_value(serde_json::Value::String(s.stressor.clone())).map_err(
                     |_| {
                         to_internal(format!(
-                            "Unknown stressor '{}'. Valid: cpu, memory, disk, matrix, memcpy, bitops, cache, vm, stream, branch, atomic, mutex, switch, prime, fp, hash, prefetch, icache, tsc, gpu, gpu_matmul, gpu_vram, gpu_pcie",
+                            "Unknown stressor '{}'. Valid: cpu, memory, disk, matrix, memcpy, bitops, cache, vm, stream, branch, atomic, mutex, switch, prime, fp, hash, prefetch, icache, tsc, gpu, gpu_matmul, gpu_vram, gpu_pcie, combined",
                             s.stressor
                         ))
                     },
@@ -3732,10 +3748,153 @@ impl PluginToolProvider {
             })
         });
 
-        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
             "run_id": run_id,
             "verdict": verdict_json,
             "stage_metrics": stage_metrics,
+            "logs": logs,
+            "persisted": true,
+        }))
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "stress_concurrent_run",
+        description = "Run multiple stressors AT THE SAME TIME on this host (OCCT-style combined test: e.g. cpu + memory + gpu concurrently), each as its own lane with its own live metrics. Persisted like scenario runs (stress_test_run + stress_test_event + stress_test_metric + hardware_component, target_kind=system, one metric stream per lane tagged by stage_index). Threads are auto-budgeted across the core pool with one core reserved for the GPU lane. Caps: 1-8 lanes, 1-7200s. Blocks until the run finishes; returns run_id, verdict, and per-lane final metrics."
+    )]
+    async fn stress_concurrent_run(
+        &self,
+        Parameters(p): Parameters<StressConcurrentRunParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        use stress_runner::{RunPlan, RunSpec, RunStage, RunUpdate, TargetKind, TestTool};
+
+        if p.lanes.is_empty() || p.lanes.len() > 8 {
+            return Err(to_internal("Provide 1-8 concurrent lanes."));
+        }
+        if p.duration_secs == 0 || p.duration_secs > 7200 {
+            return Err(to_internal("duration_secs must be 1-7200."));
+        }
+        let mut lanes: Vec<RunStage> = Vec::with_capacity(p.lanes.len());
+        for s in &p.lanes {
+            let stressor: stress_runner::Stressor =
+                serde_json::from_value(serde_json::Value::String(s.stressor.clone())).map_err(
+                    |_| {
+                        to_internal(format!(
+                            "Unknown stressor '{}'. Valid: cpu, memory, disk, matrix, memcpy, bitops, cache, vm, stream, branch, atomic, mutex, switch, prime, fp, hash, prefetch, icache, tsc, gpu, gpu_matmul, gpu_vram, gpu_pcie, combined",
+                            s.stressor
+                        ))
+                    },
+                )?;
+            lanes.push(RunStage {
+                label: s.label.clone().unwrap_or_else(|| s.stressor.clone()),
+                stressor,
+                threads: s.threads,
+                duration_secs: 0,
+                memory_cap_mb: s.memory_cap_mb.unwrap_or(1024),
+                disk_file_mb: s.disk_file_mb.unwrap_or(512),
+            });
+        }
+
+        let preset = p
+            .preset_label
+            .clone()
+            .unwrap_or_else(|| "mcp:concurrent-v1".to_string());
+        let spec = RunSpec {
+            computer: stress_runner::local_computer_record(),
+            tool: TestTool::StressKitScenario {
+                name: Some(preset.clone()),
+            },
+            target_kind: TargetKind::System,
+            target_component: None,
+            touched_components: Vec::new(),
+            service_order: p
+                .service_number
+                .as_deref()
+                .map(|n| parse_record_id(n.trim(), "service_order")),
+            session_ref: p
+                .diagnostic_session_id
+                .as_deref()
+                .map(|s| parse_record_id(s.trim(), "diagnostic_session")),
+            task_ref: None,
+            tech: Some("mcp".to_string()),
+            hostname: None,
+            machine_id: None,
+            bios_settings: Default::default(),
+            driver_versions: Default::default(),
+            notes: p.notes.clone(),
+            preset_label: Some(preset),
+            tags: vec!["origin:mcp".to_string(), "preset:concurrent".to_string()],
+            plan: RunPlan::Concurrent {
+                lanes,
+                duration_secs: Some(p.duration_secs),
+            },
+            rules: None,
+        };
+
+        let budget_secs = p.duration_secs.min(7200).max(1);
+        let telemetry = TELEMETRY_AGENT.clone();
+        let handle = tokio::task::spawn_blocking(move || {
+            let mut run_id: Option<String> = None;
+            let mut logs: Vec<String> = Vec::new();
+            let mut lane_metrics: std::collections::HashMap<String, serde_json::Value> =
+                std::collections::HashMap::new();
+            let verdict = stress_runner::drive_blocking(spec, telemetry, |update| match update {
+                RunUpdate::Started { run_id: id } => {
+                    use database::schema::RecordIdExt;
+                    run_id = Some(id.key_string());
+                }
+                RunUpdate::StageStarted { label, .. } => {
+                    logs.push(format!("Concurrent run started: {label}"));
+                }
+                RunUpdate::Tick { stage_label, metrics, .. } => {
+                    let key = stage_label.unwrap_or_else(|| "lane".to_string());
+                    if let Ok(v) = serde_json::to_value(&metrics) {
+                        lane_metrics.insert(key, v);
+                    }
+                }
+                RunUpdate::StageFinished { .. } => {}
+                RunUpdate::StageVerdict { label, pass, violations, .. } => {
+                    if pass {
+                        logs.push(format!("Lane verdict: {label} PASS"));
+                    } else {
+                        logs.push(format!("Lane verdict: {label} FAIL ({})", violations.join("; ")));
+                    }
+                }
+                RunUpdate::Warning { message } => logs.push(format!("warning: {message}")),
+                RunUpdate::Error { message } => logs.push(format!("error: {message}")),
+                RunUpdate::Finished(_) => {}
+            });
+            (run_id, logs, lane_metrics, verdict)
+        });
+
+        let grace = std::time::Duration::from_secs(budget_secs + 180);
+        let (run_id, logs, lane_metrics, verdict) = match tokio::time::timeout(grace, handle).await {
+            Ok(Ok(out)) => out,
+            Ok(Err(e)) => return Err(to_internal(format!("concurrent worker panicked: {e}"))),
+            Err(_) => {
+                return Err(to_internal(format!(
+                    "Concurrent run exceeded budget+grace ({}s) — the run thread may still be finishing; check stress_test_run for the in_progress row.",
+                    grace.as_secs()
+                )))
+            }
+        };
+
+        let verdict_json = verdict.map(|v| {
+            use database::schema::RecordIdExt;
+            serde_json::json!({
+                "run_id": v.run_id.key_string(),
+                "result": serde_json::to_value(&v.result).unwrap_or_default(),
+                "finish_reason": serde_json::to_value(&v.finish_reason).unwrap_or_default(),
+                "failure_mode": serde_json::to_value(&v.failure_mode).unwrap_or_default(),
+                "summary": serde_json::to_value(&v.summary).unwrap_or_default(),
+                "duration_secs": v.duration_secs,
+            })
+        });
+
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
+            "run_id": run_id,
+            "verdict": verdict_json,
+            "lane_metrics": lane_metrics,
             "logs": logs,
             "persisted": true,
         }))
@@ -3763,7 +3922,7 @@ impl PluginToolProvider {
             .map_err(to_internal)?
             .take(0)
             .map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
             "dry_run": p.dry_run,
             "grace_secs": grace,
             "affected": rows.len(),
@@ -3819,7 +3978,7 @@ impl PluginToolProvider {
             }
         }
 
-        Ok(CallToolResult::success(vec![Content::json(
+        Ok(CallToolResult::success(vec![ContentBlock::json(
             serde_json::json!({ "categories": out }),
         )
         .map_err(to_internal)?]))
@@ -3910,7 +4069,7 @@ impl PluginToolProvider {
             }
         }
 
-        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(payload).map_err(to_internal)?]))
     }
 
     #[tool(
@@ -3922,7 +4081,7 @@ impl PluginToolProvider {
         Parameters(p): Parameters<ScriptsRunRemoteParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let payload = execute_one_remote_script(p).await?;
-        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(payload).map_err(to_internal)?]))
     }
 
     #[tool(
@@ -3988,7 +4147,7 @@ impl PluginToolProvider {
             runs.push(one);
         }
 
-        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
             "connection_string": p.connection_string,
             "service_number": p.service_number,
             "diagnostic_session_id": diagnostic_session_id,
@@ -4034,7 +4193,7 @@ impl PluginToolProvider {
         let workers: Vec<database::schema::ConnectedClient> = response
             .take(0)
             .map_err(|e| to_internal(format!("decode workers: {e}")))?;
-        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
             "count": workers.len(),
             "workers": workers.iter().map(|w| serde_json::json!({
                 "connection_string": w.connection_string,
@@ -4124,7 +4283,7 @@ impl PluginToolProvider {
             );
             let (success, stdout, stderr, artifact_size) =
                 run_local_cargo_compile(&dir, &p.plugin_id, &self).await?;
-            return Ok(CallToolResult::success(vec![Content::json(
+            return Ok(CallToolResult::success(vec![ContentBlock::json(
                 serde_json::json!({
                     "job_id": format!("local-fallback:{}", p.plugin_id),
                     "plugin_id": p.plugin_id,
@@ -4195,7 +4354,7 @@ impl PluginToolProvider {
             job.id.table,
             database::schema::RecordIdExt::key_string(&job.id)
         );
-        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
             "job_id": job_id_str,
             "plugin_id": p.plugin_id,
             "target": target,
@@ -4268,7 +4427,7 @@ impl PluginToolProvider {
                 "note": "unrecognized status value; schema may have evolved",
             }),
         };
-        Ok(CallToolResult::success(vec![Content::json(json).map_err(to_internal)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(json).map_err(to_internal)?]))
     }
 }
 

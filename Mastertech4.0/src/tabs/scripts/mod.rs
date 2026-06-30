@@ -485,6 +485,9 @@ impl EguiScriptsTab {
                 ScriptCategory::JunkwareRemoval => {
                     self.execute_junkware_script(&script, log_tx);
                 },
+                ScriptCategory::StressTests => {
+                    self.execute_stress_script(&script, log_tx);
+                },
                 _ => {
                     self.log_warning(&script.name, "Unknown script category");
                 }
@@ -699,6 +702,158 @@ impl EguiScriptsTab {
                     category2,
                     &script_name2,
                     "GPU probe exited without a verdict",
+                ));
+            }
+        });
+    }
+
+    /// Run any StressTests-category script by name through the shared catalog.
+    /// Handles single stressors, scenarios, certs, the GPU probe, Combined, and
+    /// the Concurrent (CPU+RAM+GPU) plan. Scored "Benchmark: *" names are not
+    /// driven here.
+    fn execute_stress_script(&mut self, script: &ScriptItem, log_tx: Sender<ScriptLogEntry>) {
+        use std::sync::Arc;
+        use stress_kit::telemetry::TelemetryAgent;
+        use stress_runner::{build_stress_script_spec, drive_blocking, RunResult, RunUpdate};
+
+        let category = script.category.clone();
+        let script_name = script.name.clone();
+        let _ = log_tx.try_send(ScriptLogEntry::info(
+            category.clone(),
+            &script_name,
+            format!("Starting stress script: {script_name}"),
+        ));
+
+        let client = crate::filesystem::get_client_hash();
+        let service_number = self.service_number_input.clone();
+        let diagnostic_session_id = self.mcp_diagnostic_session_id.clone().unwrap_or_default();
+        let duration_secs = 60u64;
+        let log_tx2 = log_tx.clone();
+        let category2 = category.clone();
+        let script_name2 = script_name.clone();
+
+        std::thread::spawn(move || {
+            let Some(computer) = client.computer.clone() else {
+                let _ = log_tx2.try_send(ScriptLogEntry::error(
+                    category2,
+                    &script_name2,
+                    "no computer identity; cannot start stress run",
+                ));
+                return;
+            };
+            let Some(mut spec) = build_stress_script_spec(&script_name2, computer, duration_secs)
+            else {
+                let _ = log_tx2.try_send(ScriptLogEntry::warning(
+                    category2,
+                    &script_name2,
+                    format!("'{script_name2}' is not a runnable stress script here"),
+                ));
+                return;
+            };
+
+            let telemetry = Arc::new(TelemetryAgent::start(1000));
+            spec.tags.push("origin:scripts".into());
+            spec.hostname = std::env::var("COMPUTERNAME")
+                .or_else(|_| std::env::var("HOSTNAME"))
+                .ok();
+            spec.machine_id = Some(client.client_hash.clone());
+            if !service_number.is_empty() {
+                spec.service_order = Some(database::schema::RecordId::new(
+                    database::schema::TICKET_TABLE,
+                    service_number,
+                ));
+            }
+            if !diagnostic_session_id.is_empty() {
+                spec.session_ref = Some(database::schema::entity_link::parse_record_id(
+                    &diagnostic_session_id,
+                    database::schema::DIAGNOSTIC_SESSION_TABLE,
+                ));
+            }
+
+            let verdict = drive_blocking(spec, telemetry, |update| match update {
+                RunUpdate::Started { run_id } => {
+                    use database::schema::RecordIdExt;
+                    let _ = log_tx2.try_send(ScriptLogEntry::info(
+                        category2.clone(),
+                        &script_name2,
+                        format!("stress_test_run id: {}", run_id.key_string()),
+                    ));
+                }
+                RunUpdate::StageStarted { index, label, stage_count } => {
+                    let _ = log_tx2.try_send(ScriptLogEntry::info(
+                        category2.clone(),
+                        &script_name2,
+                        format!("Stage {}/{}: {label}", index + 1, stage_count),
+                    ));
+                }
+                RunUpdate::Tick { metrics, stage_label, throughput_unit, .. } => {
+                    if let Some(err) = metrics.last_error.as_ref() {
+                        let lane = stage_label.unwrap_or_else(|| "run".into());
+                        let _ = log_tx2.try_send(ScriptLogEntry::warning(
+                            category2.clone(),
+                            &script_name2,
+                            format!("{lane}: {err}"),
+                        ));
+                    } else if let Some(lane) = stage_label {
+                        let _ = log_tx2.try_send(ScriptLogEntry::info(
+                            category2.clone(),
+                            &script_name2,
+                            format!("{lane}: {:.2} {throughput_unit}", metrics.throughput),
+                        ));
+                    }
+                }
+                RunUpdate::StageFinished { .. } => {}
+                RunUpdate::StageVerdict { label, pass, violations, .. } => {
+                    if !pass {
+                        let _ = log_tx2.try_send(ScriptLogEntry::warning(
+                            category2.clone(),
+                            &script_name2,
+                            format!("Stage {label} FAIL: {}", violations.join("; ")),
+                        ));
+                    }
+                }
+                RunUpdate::Finished(v) => {
+                    let msg = format!(
+                        "{script_name2} {} in {:.1}s (run persisted)",
+                        match v.result {
+                            RunResult::Pass => "passed",
+                            RunResult::Fail => "failed",
+                            RunResult::Aborted => "aborted",
+                            RunResult::Inconclusive => "inconclusive",
+                            RunResult::InProgress => "in progress",
+                        },
+                        v.duration_secs
+                    );
+                    let entry = if v.result == RunResult::Pass {
+                        ScriptLogEntry::success(category2.clone(), &script_name2, msg)
+                    } else if v.result == RunResult::Aborted {
+                        ScriptLogEntry::warning(category2.clone(), &script_name2, msg)
+                    } else {
+                        ScriptLogEntry::error(category2.clone(), &script_name2, msg)
+                    };
+                    let _ = log_tx2.try_send(entry);
+                }
+                RunUpdate::Warning { message } => {
+                    let _ = log_tx2.try_send(ScriptLogEntry::warning(
+                        category2.clone(),
+                        &script_name2,
+                        message,
+                    ));
+                }
+                RunUpdate::Error { message } => {
+                    let _ = log_tx2.try_send(ScriptLogEntry::error(
+                        category2.clone(),
+                        &script_name2,
+                        message,
+                    ));
+                }
+            });
+
+            if verdict.is_none() {
+                let _ = log_tx2.try_send(ScriptLogEntry::error(
+                    category2,
+                    &script_name2,
+                    "stress run exited without a verdict",
                 ));
             }
         });

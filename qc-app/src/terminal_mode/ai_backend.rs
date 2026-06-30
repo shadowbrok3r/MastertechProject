@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::Result;
 use crossbeam::channel::Sender;
 use futures::StreamExt;
-use rmcp::model::{CallToolRequestParams, RawContent};
+use rmcp::model::CallToolRequestParams;
 
 /// qc-app's own MCP server (raw TCP rmcp), spawned on the first app tick.
 const QC_MCP_ADDR: &str = "127.0.0.1:9100";
@@ -103,10 +103,7 @@ fn text_of(result: &rmcp::model::CallToolResult) -> String {
     let body: String = result
         .content
         .iter()
-        .filter_map(|c| match &c.raw {
-            RawContent::Text(t) => Some(t.text.clone()),
-            _ => None,
-        })
+        .filter_map(|c| c.as_text().map(|t| t.text.clone()))
         .collect::<Vec<_>>()
         .join("\n");
     if body.is_empty() {

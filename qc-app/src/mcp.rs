@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use rmcp::{
     handler::server::{wrapper::Parameters, tool::ToolRouter, ServerHandler},
     model::{
-        CallToolResult, Content, ErrorData, Implementation, ProtocolVersion,
+        CallToolResult, ContentBlock, ErrorData, Implementation, ProtocolVersion,
         ServerCapabilities, ServerInfo,
     },
     schemars, tool, tool_handler, tool_router,
@@ -98,6 +98,7 @@ pub enum StressorKind {
     GpuMatmul,
     GpuVram,
     GpuPcie,
+    Combined,
 }
 
 impl From<StressorKind> for Stressor {
@@ -130,6 +131,7 @@ impl From<StressorKind> for Stressor {
             StressorKind::GpuMatmul => Stressor::GpuMatmul,
             StressorKind::GpuVram => Stressor::GpuVram,
             StressorKind::GpuPcie => Stressor::GpuPcie,
+            StressorKind::Combined => Stressor::Combined,
         }
     }
 }
@@ -169,6 +171,17 @@ pub struct RunScenarioArgs {
     /// With `total_wall_secs`, loop the stage list until the cap is reached.
     #[serde(default)]
     pub repeat_until_total: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct RunConcurrentArgs {
+    /// Lanes that run AT THE SAME TIME (e.g. cpu + memory + gpu). Each lane's
+    /// `threads` defaults to an auto-budget across the core pool; per-lane
+    /// `duration_secs` is ignored in favor of the shared `duration_secs` below.
+    pub lanes: Vec<StressStageArgs>,
+    /// How long to run all lanes together, in seconds. `None` = run until stopped.
+    #[serde(default)]
+    pub duration_secs: Option<u64>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -307,7 +320,7 @@ impl QcToolProvider {
         let snapshot = HwSnapshot::from_cores(&cores);
         let json = serde_json::to_string_pretty(&snapshot)
             .map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -326,7 +339,7 @@ impl QcToolProvider {
             .unwrap_or(None);
         let json = serde_json::to_string_pretty(&report)
             .map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -362,13 +375,13 @@ impl QcToolProvider {
         if let Ok(g) = self.state.report_sink.lock() {
             if let Some(sink) = g.as_ref() {
                 sink.send_report(report);
-                return Ok(CallToolResult::success(vec![Content::text(
+                return Ok(CallToolResult::success(vec![ContentBlock::text(
                     "Report queued for upload.".to_string(),
                 )]));
             }
         }
 
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             "Report generated but no orchestrator URL is configured — not uploaded.".to_string(),
         )]))
     }
@@ -389,7 +402,7 @@ impl QcToolProvider {
             .and_then(|g| g.as_ref().map(|a| a.snapshot()));
         let json = serde_json::to_string_pretty(&snapshot)
             .map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -451,7 +464,7 @@ impl QcToolProvider {
 
         let json = serde_json::to_string_pretty(&report)
             .map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -500,7 +513,7 @@ impl QcToolProvider {
 
         let json = serde_json::to_string_pretty(&report)
             .map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -526,7 +539,7 @@ impl QcToolProvider {
                 .map_err(|e| to_internal(e.to_string()))?,
             None => "{\"status\":\"idle\",\"detail\":\"no run in flight\"}".to_string(),
         };
-        Ok(CallToolResult::success(vec![Content::text(body)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -546,7 +559,7 @@ impl QcToolProvider {
             .map(|s| s.latest.clone());
         let body = serde_json::to_string_pretty(&snapshot)
             .map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(body)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -693,7 +706,7 @@ impl QcToolProvider {
         };
         let json = serde_json::to_string_pretty(&body)
             .map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -752,7 +765,7 @@ impl QcToolProvider {
         });
         let json = serde_json::to_string_pretty(&body)
             .map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -789,7 +802,7 @@ impl QcToolProvider {
         let model = stress_runner::RunReportModel::from_data(&data);
         let json = serde_json::to_string_pretty(&model)
             .map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -984,7 +997,7 @@ impl QcToolProvider {
         };
         let json = serde_json::to_string_pretty(&body)
             .map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -1005,7 +1018,7 @@ impl QcToolProvider {
             .unwrap_or_default();
         let json = serde_json::to_string_pretty(&gpus)
             .map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -1059,7 +1072,7 @@ impl QcToolProvider {
             .collect();
         let json = serde_json::to_string_pretty(&rows)
             .map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -1083,7 +1096,7 @@ impl QcToolProvider {
             .await?;
         let json = serde_json::to_string_pretty(&report)
             .map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -1107,7 +1120,7 @@ impl QcToolProvider {
             .await?;
         let json = serde_json::to_string_pretty(&report)
             .map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -1131,7 +1144,66 @@ impl QcToolProvider {
             .await?;
         let json = serde_json::to_string_pretty(&report)
             .map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
+    }
+
+    #[tool(
+        name = "run_stress_concurrent",
+        description = "Run multiple stressors AT THE SAME TIME (OCCT-style combined test: e.g. cpu + memory + gpu concurrently), each as its own lane with its own live metrics, via stress_runner::RunController. Blocks until done. Persists hardware_component, stress_test_run (target_kind=system), per-lane stress_test_metric (~1 Hz, tagged by stage_index), stress_test_event. Threads are auto-budgeted across cores with one reserved for the GPU lane. Returns run_id + per-lane reports."
+    )]
+    async fn run_stress_concurrent(
+        &self,
+        Parameters(args): Parameters<RunConcurrentArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        if args.lanes.is_empty() {
+            return Err(to_internal("lanes cannot be empty"));
+        }
+
+        let lanes: Vec<RunStage> = args
+            .lanes
+            .iter()
+            .map(|s| RunStage {
+                label: s.label.clone(),
+                stressor: s.stressor.into(),
+                threads: s.threads,
+                duration_secs: 0,
+                memory_cap_mb: s.memory_cap_mb,
+                disk_file_mb: s.disk_file_mb,
+            })
+            .collect();
+        let labels: Vec<String> = lanes.iter().map(|s| s.label.clone()).collect();
+
+        let telemetry = self
+            .state
+            .telemetry
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .ok_or_else(|| to_internal("telemetry sampler not yet ready (first frame pending)"))?;
+        let computer = self.state.computer.clone();
+        let slot = self.state.run_slot.clone();
+
+        // Seed off Combined so the run's target_kind is System (whole-system).
+        let mut spec = RunSpec::single_stresskit(computer, Stressor::Combined, None);
+        spec.plan = RunPlan::Concurrent {
+            lanes,
+            duration_secs: args.duration_secs,
+        };
+        spec.tool = TestTool::StressKitScenario {
+            name: Some("qc-mcp:concurrent".to_string()),
+        };
+        spec.preset_label = Some("qc-mcp:concurrent".to_string());
+        spec.tags = vec!["origin:mcp".into(), "preset:concurrent".into()];
+
+        let report = tokio::task::spawn_blocking(move || {
+            drive_scenario_via_controller(spec, telemetry, labels, slot)
+        })
+        .await
+        .map_err(|e| to_internal(format!("concurrent task join: {e}")))?;
+
+        let json = serde_json::to_string_pretty(&report)
+            .map_err(|e| to_internal(e.to_string()))?;
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -1155,7 +1227,31 @@ impl QcToolProvider {
             .await?;
         let json = serde_json::to_string_pretty(&report)
             .map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
+    }
+
+    #[tool(
+        name = "run_combined_test",
+        description = "Combined whole-system torture as a SINGLE fused stressor: CPU FMA + RAM bandwidth + GPU compute in one session. Default 300 s. Reports combined CPU+GPU GFLOPS; runs CPU+RAM with a warning when no GPU is present. (For independent per-component lanes + metrics use run_stress_concurrent instead.)"
+    )]
+    async fn run_combined_test(
+        &self,
+        Parameters(args): Parameters<DurationOnlyArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let report = self
+            .run_verified_single(
+                "combined",
+                Stressor::Combined,
+                0,
+                args.duration_secs.unwrap_or(300),
+                1024,
+                "qc-mcp:combined-v1",
+                "preset:combined",
+            )
+            .await?;
+        let json = serde_json::to_string_pretty(&report)
+            .map_err(|e| to_internal(e.to_string()))?;
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -1180,7 +1276,7 @@ impl QcToolProvider {
 
         let json = serde_json::to_string_pretty(&outcome)
             .map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -1232,7 +1328,7 @@ impl QcToolProvider {
         });
         let json = serde_json::to_string_pretty(&body)
             .map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -1268,7 +1364,7 @@ impl QcToolProvider {
 
         let json = serde_json::to_string_pretty(&rows)
             .map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -1293,7 +1389,7 @@ impl QcToolProvider {
         .map_err(|e| to_internal(format!("ladder task join: {e}")))?;
         let json = serde_json::to_string_pretty(&outcome)
             .map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -1348,7 +1444,7 @@ impl QcToolProvider {
         });
         let json = serde_json::to_string_pretty(&body)
             .map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -1363,7 +1459,7 @@ impl QcToolProvider {
             .await
             .map_err(|e| to_internal(format!("identity task join: {e}")))?;
         let json = serde_json::to_string_pretty(&id).map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -1379,7 +1475,7 @@ impl QcToolProvider {
             .map_err(|e| to_internal(format!("smbios task join: {e}")))?
             .map_err(|e| to_internal(e.to_string()))?;
         let json = serde_json::to_string_pretty(&res).map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -1394,7 +1490,7 @@ impl QcToolProvider {
             .await
             .map_err(|e| to_internal(format!("firmware task join: {e}")))?;
         let json = serde_json::to_string_pretty(&fs).map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -1409,7 +1505,7 @@ impl QcToolProvider {
             .await
             .map_err(|e| to_internal(format!("storage task join: {e}")))?;
         let json = serde_json::to_string_pretty(&disks).map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -1451,7 +1547,7 @@ impl QcToolProvider {
         .map_err(|e| to_internal(format!("driver check task join: {e}")))?
         .map_err(|e| to_internal(e))?;
         let json = serde_json::to_string_pretty(&rows).map_err(|e| to_internal(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -1488,7 +1584,7 @@ impl QcToolProvider {
         if !status.is_success() {
             return Err(to_internal(format!("orchestrator returned {status} for serial {serial}")));
         }
-        Ok(CallToolResult::success(vec![Content::text(body)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -1525,7 +1621,7 @@ impl QcToolProvider {
         if !status.is_success() {
             return Err(to_internal(format!("orchestrator returned {status} for serial {serial}")));
         }
-        Ok(CallToolResult::success(vec![Content::text(body)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 }
 
@@ -2387,11 +2483,13 @@ impl ServerHandler for QcToolProvider {
             "QC tools. Telemetry: `get_hw_snapshot`, `get_extended_telemetry`, `get_gpu_telemetry`, \
              `get_temperatures`. \
              Stress (all persist to SurrealDB via stress_runner): `list_stressors`, `run_stressor`, \
-             `run_stress_scenario`, `run_qc_benchmark` (curated 8-stage burn-in with pass/fail verdict), \
+             `run_stress_scenario`, `run_stress_concurrent` (run CPU+RAM+GPU lanes at the SAME time, \
+             per-lane metrics), `run_qc_benchmark` (curated 8-stage burn-in with pass/fail verdict), \
              `run_gpu_probe`, `stop_stress_run`, `get_run_status`. \
              Verified tests with error detection: `run_memtest` (RAM pattern verify), \
              `run_cpu_stability` (duplicate-execution compare), `run_linpack` (LU + residual check), \
-             `run_psu_test` (CPU+GPU combined max load). \
+             `run_psu_test` (CPU+GPU combined max load), \
+             `run_combined_test` (single fused CPU+RAM+GPU torture). \
              Benchmarks with persisted scores: `run_benchmark`, `run_benchmark_suite`, \
              `measure_memory_latency`, `get_benchmark_results` (score history / cross-machine). \
              Reporting: `get_last_report`, `send_report`.",

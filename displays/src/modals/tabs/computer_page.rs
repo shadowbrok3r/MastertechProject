@@ -1,7 +1,7 @@
 use eframe::egui::{Color32, ComboBox, Grid, RichText, ScrollArea, TextEdit, Ui, Vec2, Vec2b, Widget};
 use database::schema::{random_record_id, ComputerData, RecordIdExt, TicketData, COMPUTER_TABLE};
 
-use crate::{PlatformSpawner, Spawner};
+use crate::{ui_tools::icons, PlatformSpawner, Spawner};
 
 use super::return_colors;
 
@@ -16,6 +16,9 @@ pub struct ComputerSearchData<'a> {
     pub import_presta_clicked: &'a mut bool,
     /// Set to `true` by this widget when the "Import from Everest" button is clicked.
     pub import_everest_clicked: &'a mut bool,
+    /// Set by this widget to a customer computer the user wants to view in a
+    /// separate modal, without changing the task's current computer.
+    pub open_in_second_modal: &'a mut Option<ComputerData>,
 }
 
 /// Build the display label for a computer in the selector.
@@ -122,6 +125,26 @@ pub fn display_computer_page_with_search(
                                 *search.import_everest_clicked = true;
                             }
                         });
+
+                        // Open another of the customer's computers in its own modal,
+                        // without overwriting the task's current computer.
+                        let others: Vec<ComputerData> = search.customer_computers.iter()
+                            .filter(|c| c.id != computer.id)
+                            .cloned()
+                            .collect();
+                        if !others.is_empty() {
+                            ui.add_space(6.0);
+                            ui.separator();
+                            ui.label(RichText::new("Other computers for this customer").weak());
+                            for comp in &others {
+                                ui.horizontal(|ui| {
+                                    ui.label(computer_label(comp));
+                                    if ui.button(format!("{} Open", icons::OPEN)).on_hover_text("View this computer in a separate window").clicked() {
+                                        *search.open_in_second_modal = Some(comp.clone());
+                                    }
+                                });
+                            }
+                        }
                     });
                     ui.add_space(10.0);
                 }
