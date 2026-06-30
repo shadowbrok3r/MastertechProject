@@ -180,6 +180,7 @@ pub fn metric_from_snapshot(
             .as_ref()
             .map(|w| w.delta_since_program_start as u32),
         last_error: last_error.map(|s| s.to_string()),
+        cpu_temp_c: snapshot.cpu_package_temp_c(),
         gpu_temp_c: fold_gpu_max(snapshot, |g| g.temp_c),
         gpu_clock_mhz: fold_gpu_max(snapshot, |g| g.gpu_clock_mhz),
         gpu_power_w: fold_gpu_max(snapshot, |g| g.power_w),

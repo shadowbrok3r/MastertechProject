@@ -82,6 +82,7 @@ pub struct RunReportModel {
     pub max_temp_c: Option<f32>,
     pub avg_temp_c: Option<f32>,
     pub max_gpu_temp_c: Option<f32>,
+    pub max_cpu_temp_c: Option<f32>,
     pub max_clock_mhz: Option<u32>,
     pub avg_clock_mhz: Option<u32>,
     pub max_power_w: Option<u32>,
@@ -153,11 +154,12 @@ impl RunReportModel {
                 last_stage = m.stage_index;
             }
 
-            let tick_max_temp = m
-                .cores
-                .iter()
-                .filter_map(|c| c.temp_c)
-                .fold(None::<f32>, |acc, t| Some(acc.map_or(t, |p| p.max(t))));
+            let tick_max_temp = m.cpu_temp_c.or_else(|| {
+                m.cores
+                    .iter()
+                    .filter_map(|c| c.temp_c)
+                    .fold(None::<f32>, |acc, t| Some(acc.map_or(t, |p| p.max(t))))
+            });
             if let Some(t) = tick_max_temp {
                 cpu_temp.points.push((x, t as f64));
             }
@@ -235,6 +237,7 @@ impl RunReportModel {
             max_temp_c: run.summary.max_temp_c,
             avg_temp_c: run.summary.avg_temp_c,
             max_gpu_temp_c: run.summary.max_gpu_temp_c,
+            max_cpu_temp_c: run.summary.max_cpu_temp_c,
             max_clock_mhz: run.summary.max_clock_mhz,
             avg_clock_mhz: run.summary.avg_clock_mhz,
             max_power_w: run.summary.max_power_w,

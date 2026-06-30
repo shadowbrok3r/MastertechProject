@@ -843,6 +843,10 @@ pub struct RunSummary {
     #[serde(default)]
     #[surreal(default)]
     pub max_gpu_temp_c: Option<f32>,
+    /// Max CPU/package temperature from thermals. Missing on older rows.
+    #[serde(default)]
+    #[surreal(default)]
+    pub max_cpu_temp_c: Option<f32>,
 }
 
 // ============================================================
@@ -1245,6 +1249,10 @@ pub struct StressTestMetric {
     #[serde(default)]
     #[surreal(default)]
     pub gpu_temp_c: Option<f32>,
+    /// Max CPU/package temperature from thermals at this tick. Missing on older rows.
+    #[serde(default)]
+    #[surreal(default)]
+    pub cpu_temp_c: Option<f32>,
     #[serde(default)]
     #[surreal(default)]
     pub gpu_clock_mhz: Option<u32>,
@@ -1279,6 +1287,7 @@ impl StressTestMetric {
             whea_delta_count: None,
             last_error: None,
             gpu_temp_c: None,
+            cpu_temp_c: None,
             gpu_clock_mhz: None,
             gpu_power_w: None,
             gpu_usage_pct: None,

@@ -588,6 +588,45 @@ pub struct StressConcurrentRunParams {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct StressScenarioRunRemoteParams {
+    #[schemars(description = "Web Console room id — same as ConnectedClient.connection_string; admin must be connected.")]
+    pub connection_string: String,
+    #[schemars(description = "Ordered stages; each runs one stressor for duration_secs. 1-16 stages, total runtime capped at 7200s.")]
+    pub stages: Vec<ScenarioStageParam>,
+    #[schemars(description = "Optional wall-clock cap in seconds for the whole scenario.")]
+    pub total_wall_secs: Option<u64>,
+    #[schemars(description = "With total_wall_secs set, loop the stage list until the wall cap.")]
+    #[serde(default)]
+    pub repeat_until_total: bool,
+    #[schemars(description = "Service order number for stress_test_run.service_order linkage (e.g. '2147605'). REQUIRED.")]
+    pub service_number: Option<String>,
+    #[schemars(description = "Diagnostic session id to link as session_ref. Auto-resolved from the open session for connection_string when omitted.")]
+    pub diagnostic_session_id: Option<String>,
+    #[schemars(description = "Preset label recorded on the run (default 'mcp:scenario-remote-v1').")]
+    pub preset_label: Option<String>,
+    #[schemars(description = "Free-form notes recorded on the run.")]
+    pub notes: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct StressConcurrentRunRemoteParams {
+    #[schemars(description = "Web Console room id — same as ConnectedClient.connection_string; admin must be connected.")]
+    pub connection_string: String,
+    #[schemars(description = "Lanes that run AT THE SAME TIME (e.g. cpu + memory + gpu — OCCT-style combined load). 1-8 lanes. Each lane's threads default to an auto-budget across the core pool; per-lane duration_secs is IGNORED (the run uses the shared duration_secs below).")]
+    pub lanes: Vec<ScenarioStageParam>,
+    #[schemars(description = "How long to run all lanes together, in seconds (1-7200).")]
+    pub duration_secs: u64,
+    #[schemars(description = "Service order number for stress_test_run.service_order linkage (e.g. '2147605'). REQUIRED.")]
+    pub service_number: Option<String>,
+    #[schemars(description = "Diagnostic session id to link as session_ref. Auto-resolved from the open session for connection_string when omitted.")]
+    pub diagnostic_session_id: Option<String>,
+    #[schemars(description = "Preset label recorded on the run (default 'mcp:concurrent-remote-v1').")]
+    pub preset_label: Option<String>,
+    #[schemars(description = "Free-form notes recorded on the run.")]
+    pub notes: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct RemoteEguiClickParams {
     #[schemars(description = "Web Console room id.")]
     pub connection_string: String,
@@ -1289,6 +1328,167 @@ async fn execute_one_remote_script(
     }
 
     Ok(payload)
+}
+
+/// Validate scenario/concurrent stages identically to the local tools and map them to wire stages.
+fn validate_remote_stress_stages(
+    stages: &[ScenarioStageParam],
+    concurrent: bool,
+) -> Result<Vec<crate::RemoteScenarioStage>, ErrorData> {
+    let max = if concurrent { 8 } else { 16 };
+    if stages.is_empty() || stages.len() > max {
+        return Err(to_internal(if concurrent {
+            "Provide 1-8 concurrent lanes."
+        } else {
+            "Provide 1-16 stages."
+        }));
+    }
+    let mut out: Vec<crate::RemoteScenarioStage> = Vec::with_capacity(stages.len());
+    let mut stage_sum: u64 = 0;
+    for s in stages {
+        if !concurrent && (s.duration_secs == 0 || s.duration_secs > 1800) {
+            return Err(to_internal(format!(
+                "Stage '{}' duration_secs must be 1-1800.",
+                s.label.clone().unwrap_or_else(|| s.stressor.clone())
+            )));
+        }
+        let _stressor: stress_runner::Stressor =
+            serde_json::from_value(serde_json::Value::String(s.stressor.clone())).map_err(|_| {
+                to_internal(format!(
+                    "Unknown stressor '{}'. Valid: cpu, memory, disk, matrix, memcpy, bitops, cache, vm, stream, branch, atomic, mutex, switch, prime, fp, hash, prefetch, icache, tsc, gpu, gpu_matmul, gpu_vram, gpu_pcie, combined",
+                    s.stressor
+                ))
+            })?;
+        stage_sum += s.duration_secs;
+        out.push(crate::RemoteScenarioStage {
+            stressor: s.stressor.clone(),
+            duration_secs: s.duration_secs,
+            threads: s.threads,
+            memory_cap_mb: s.memory_cap_mb,
+            disk_file_mb: s.disk_file_mb,
+            label: s.label.clone(),
+        });
+    }
+    if !concurrent && stage_sum > 7200 {
+        return Err(to_internal("Total stage time exceeds the 7200s cap."));
+    }
+    Ok(out)
+}
+
+/// Send a `RunRemoteScenario`/`RunRemoteConcurrent` Cmd to a client, await the
+/// shared remote-script reply, then verify stress_test persistence on the client.
+async fn execute_remote_stress_plan(
+    connection_string: String,
+    cmd: crate::Cmd,
+    result_name: &str,
+    service_number: &str,
+    diagnostic_session_id: Option<String>,
+    budget_secs: u64,
+) -> Result<serde_json::Value, ErrorData> {
+    if service_number.trim().is_empty() {
+        return Err(to_internal(
+            "service_number is required (stress_test_run.service_order linkage).",
+        ));
+    }
+    let serialized = bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
+        .map_err(|e| to_internal(format!("bincode serialize: {e}")))?;
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<super::remote_script_notify::RemoteScriptSession>();
+    {
+        let mut guard = super::remote_script_notify::REMOTE_SCRIPT_PENDING
+            .lock()
+            .map_err(|_| to_internal("REMOTE_SCRIPT_PENDING poisoned"))?;
+        if let Some((pending_name, pending_tx)) = guard.remove(&connection_string) {
+            if !pending_tx.is_closed() {
+                let busy = format!(
+                    "Remote script '{pending_name}' is still awaiting completion on {connection_string}; that client runs one stress op at a time. Retry after it finishes or times out."
+                );
+                guard.insert(connection_string.clone(), (pending_name, pending_tx));
+                return Err(to_internal(busy));
+            }
+        }
+        if let Ok(mut accum) = super::remote_script_notify::REMOTE_SCRIPT_ACCUM.lock() {
+            accum.insert(
+                connection_string.clone(),
+                super::remote_script_notify::RemoteScriptSession::default(),
+            );
+        }
+        guard.insert(connection_string.clone(), (result_name.to_string(), tx));
+    }
+
+    super::remote_egui_control::hub()
+        .send_raw_binary(&connection_string, serialized)
+        .map_err(to_internal)?;
+
+    let timeout = std::time::Duration::from_secs(budget_secs + 300);
+    let session = match tokio::time::timeout(timeout, rx).await {
+        Ok(Ok(s)) => s,
+        Ok(Err(_)) => {
+            let _ = super::remote_script_notify::REMOTE_SCRIPT_PENDING
+                .lock()
+                .map(|mut g| g.remove(&connection_string));
+            return Err(to_internal("Remote stress channel closed unexpectedly"));
+        }
+        Err(_) => {
+            let _ = super::remote_script_notify::REMOTE_SCRIPT_PENDING
+                .lock()
+                .map(|mut g| g.remove(&connection_string));
+            let partial_logs = super::remote_script_notify::REMOTE_SCRIPT_ACCUM
+                .lock()
+                .ok()
+                .and_then(|a| a.get(&connection_string).map(|s| s.logs.clone()))
+                .unwrap_or_default();
+            let run_hint =
+                super::stress_test_verify::extract_stress_run_id_from_logs(&partial_logs);
+            let computer_id =
+                super::stress_test_verify::computer_id_for_connection(&connection_string).await;
+            let persistence = super::stress_test_verify::verify_stress_test_persistence(
+                computer_id.as_deref(),
+                run_hint.as_deref(),
+                diagnostic_session_id.as_deref(),
+            )
+            .await;
+            return Ok(serde_json::json!({
+                "op": result_name,
+                "connection_string": connection_string,
+                "success": false,
+                "timed_out": true,
+                "message": format!(
+                    "Timed out after {}s — the stress plan may still be running or the machine hung; check stress_test_run for the in_progress row.",
+                    timeout.as_secs()
+                ),
+                "logs": partial_logs,
+                "computer_id": computer_id,
+                "diagnostic_session_id": diagnostic_session_id,
+                "stress_test_persistence": persistence,
+            }));
+        }
+    };
+
+    let overall_success = session
+        .results
+        .iter()
+        .all(|(_, s)| s == "Success" || s == "success");
+    let run_hint = super::stress_test_verify::extract_stress_run_id_from_logs(&session.logs);
+    let computer_id =
+        super::stress_test_verify::computer_id_for_connection(&connection_string).await;
+    let persistence = super::stress_test_verify::verify_stress_test_persistence(
+        computer_id.as_deref(),
+        run_hint.as_deref(),
+        diagnostic_session_id.as_deref(),
+    )
+    .await;
+
+    Ok(serde_json::json!({
+        "op": result_name,
+        "connection_string": connection_string,
+        "success": overall_success,
+        "diagnostic_session_id": diagnostic_session_id,
+        "computer_id": computer_id,
+        "results": session.results.iter().map(|(n, s)| serde_json::json!({"name": n, "status": s})).collect::<Vec<_>>(),
+        "logs": session.logs,
+        "stress_test_persistence": persistence,
+    }))
 }
 
 fn default_remote_egui_true() -> bool {
@@ -4085,6 +4285,99 @@ impl PluginToolProvider {
     }
 
     #[tool(
+        name = "stress_scenario_run_remote",
+        description = "Run a CUSTOM staged stress scenario on a REMOTE Mastertech client connected via the admin Web Console (mirror of stress_scenario_run, but pushed to the client over the same transport as scripts_run_remote). Compose any sequence of stress-kit stressors with per-stage durations; the client persists stress_test_run + stress_test_event + stress_test_metric + hardware_component via stress-runner, linked to service_order. Caps: 16 stages, 1800s/stage, 7200s total. service_number is REQUIRED. Blocks until the scenario finishes; returns success, per-run logs, and stress_test_persistence verification."
+    )]
+    async fn stress_scenario_run_remote(
+        &self,
+        Parameters(p): Parameters<StressScenarioRunRemoteParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let stages = validate_remote_stress_stages(&p.stages, false)?;
+        let stage_sum: u64 = stages.iter().map(|s| s.duration_secs).sum();
+        let budget_secs = p.total_wall_secs.unwrap_or(stage_sum).min(7200).max(1);
+
+        let service_number = p.service_number.clone().unwrap_or_default();
+        if service_number.trim().is_empty() {
+            return Err(to_internal(
+                "service_number is required for remote stress scenarios (stress_test_run.service_order linkage).",
+            ));
+        }
+        let diagnostic_session_id = p
+            .diagnostic_session_id
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| super::diagnostic_session_registry::get(&p.connection_string));
+
+        let cmd = crate::Cmd::RunRemoteScenario {
+            stages,
+            total_wall_secs: p.total_wall_secs,
+            repeat_until_total: p.repeat_until_total,
+            service_number: Some(service_number.clone()),
+            diagnostic_session_id: diagnostic_session_id.clone(),
+            preset_label: p.preset_label.clone(),
+            notes: p.notes.clone(),
+        };
+
+        let payload = execute_remote_stress_plan(
+            p.connection_string.clone(),
+            cmd,
+            crate::REMOTE_SCENARIO_RESULT_NAME,
+            &service_number,
+            diagnostic_session_id,
+            budget_secs,
+        )
+        .await?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(payload).map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "stress_concurrent_run_remote",
+        description = "Run multiple stressors AT THE SAME TIME on a REMOTE Mastertech client (OCCT-style combined test: e.g. cpu + memory + gpu concurrently; mirror of stress_concurrent_run pushed to the client). Each lane persists into stress_test_run + stress_test_event + stress_test_metric + hardware_component via stress-runner, linked to service_order, target_kind=system. Caps: 1-8 lanes, 1-7200s. service_number is REQUIRED. Blocks until the run finishes; returns success, per-run logs, and stress_test_persistence verification."
+    )]
+    async fn stress_concurrent_run_remote(
+        &self,
+        Parameters(p): Parameters<StressConcurrentRunRemoteParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        if p.duration_secs == 0 || p.duration_secs > 7200 {
+            return Err(to_internal("duration_secs must be 1-7200."));
+        }
+        let lanes = validate_remote_stress_stages(&p.lanes, true)?;
+        let budget_secs = p.duration_secs.min(7200).max(1);
+
+        let service_number = p.service_number.clone().unwrap_or_default();
+        if service_number.trim().is_empty() {
+            return Err(to_internal(
+                "service_number is required for remote concurrent stress runs (stress_test_run.service_order linkage).",
+            ));
+        }
+        let diagnostic_session_id = p
+            .diagnostic_session_id
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| super::diagnostic_session_registry::get(&p.connection_string));
+
+        let cmd = crate::Cmd::RunRemoteConcurrent {
+            lanes,
+            duration_secs: p.duration_secs,
+            service_number: Some(service_number.clone()),
+            diagnostic_session_id: diagnostic_session_id.clone(),
+            preset_label: p.preset_label.clone(),
+            notes: p.notes.clone(),
+        };
+
+        let payload = execute_remote_stress_plan(
+            p.connection_string.clone(),
+            cmd,
+            crate::REMOTE_CONCURRENT_RESULT_NAME,
+            &service_number,
+            diagnostic_session_id,
+            budget_secs,
+        )
+        .await?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(payload).map_err(to_internal)?]))
+    }
+
+    #[tool(
         name = "scripts_run_stress_suite_remote",
         description = "Run the full StressTests catalog sequentially on a remote client (GPU Stress Test, QC Benchmark, and every 'Stress: …' single). Each script persists stress_test_run, stress_test_event, stress_test_metric, and hardware_component via stress-runner. Use `skip` to omit scripts that already ran. Returns per-script results plus suite summary counts."
     )]
@@ -4773,6 +5066,18 @@ Tools:
   optional timeout_secs (per-script override; default QC Benchmark=900s, others=300s).
   Returns { summary: { total, passed, failed, persistence_verified }, runs[] }.
   Use this instead of external scripts or repeated scripts_run_remote loops.
+- stress_scenario_run_remote — run a CUSTOM staged stress scenario on a REMOTE client (the
+  remote analog of stress_scenario_run, not limited to catalog scripts). Args: connection_string,
+  stages[] (each: stressor, duration_secs, optional threads/memory_cap_mb/disk_file_mb/label),
+  optional total_wall_secs + repeat_until_total, required service_number, optional
+  diagnostic_session_id/preset_label/notes. Caps: 16 stages, 1800s/stage, 7200s total. The client
+  persists stress_test_run/metric/event via stress-runner. Returns { success, logs[], computer_id?,
+  stress_test_persistence } — inspect stress_test_persistence.verified after a hang.
+- stress_concurrent_run_remote — run multiple stressors AT THE SAME TIME on a REMOTE client
+  (OCCT-style cpu+memory+gpu combined load; remote analog of stress_concurrent_run). Args:
+  connection_string, lanes[] (per-lane duration_secs IGNORED), shared duration_secs (1-7200),
+  required service_number, optional diagnostic_session_id/preset_label/notes. Caps 1-8 lanes.
+  Returns the same shape as stress_scenario_run_remote.
 
 Workflow integration (customer QC / New Computer build on a REMOTE client):
 - Use scripts_run_remote for every QC step: Activate CPS, Activate SEB, Install Windows

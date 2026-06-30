@@ -50,6 +50,286 @@ fn send_file_chunks(data: Vec<u8>, sender: &mut ClientTransport) {
     }
 }
 
+/// Which custom stress plan a `RunRemoteScenario` / `RunRemoteConcurrent` carries.
+enum RemoteStressPlanRequest {
+    Scenario {
+        stages: Vec<displays::RemoteScenarioStage>,
+        total_wall_secs: Option<u64>,
+        repeat_until_total: bool,
+    },
+    Concurrent {
+        lanes: Vec<displays::RemoteScenarioStage>,
+        duration_secs: u64,
+    },
+}
+
+/// Map a wire stage to a `stress_runner::RunStage`; errors on an unknown stressor name.
+fn remote_stage_to_run_stage(
+    s: &displays::RemoteScenarioStage,
+    concurrent: bool,
+) -> Result<stress_runner::RunStage, String> {
+    let stressor: stress_runner::Stressor =
+        serde_json::from_value(serde_json::Value::String(s.stressor.clone()))
+            .map_err(|_| format!("unknown stressor '{}'", s.stressor))?;
+    Ok(stress_runner::RunStage {
+        label: s.label.clone().unwrap_or_else(|| s.stressor.clone()),
+        stressor,
+        threads: s.threads,
+        duration_secs: if concurrent { 0 } else { s.duration_secs },
+        memory_cap_mb: s.memory_cap_mb.unwrap_or(if concurrent { 1024 } else { 256 }),
+        disk_file_mb: s.disk_file_mb.unwrap_or(512),
+    })
+}
+
+/// Drive a custom scenario/concurrent stress plan on this client and stream
+/// RemoteScriptLog/RemoteScriptResult/RemoteScriptsComplete back to the admin.
+fn run_remote_stress_plan(
+    tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    request: RemoteStressPlanRequest,
+    service_number: Option<String>,
+    diagnostic_session_id: Option<String>,
+    preset_label: Option<String>,
+    notes: Option<String>,
+) {
+    use stress_runner::{RunPlan, RunResult, RunSpec, RunUpdate, TargetKind, TestTool};
+
+    let send_log = |tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>, msg: String| {
+        if let Ok(payload) = encode_to_vec(&Cmd::RemoteScriptLog(msg), standard()) {
+            let _ = tx.send(payload);
+        }
+    };
+    let send_result =
+        |tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>, name: &str, status: RemoteScriptStatus| {
+            if let Ok(payload) =
+                encode_to_vec(&Cmd::RemoteScriptResult { name: name.to_string(), status }, standard())
+            {
+                let _ = tx.send(payload);
+            }
+        };
+    let send_complete = |tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>| {
+        if let Ok(payload) = encode_to_vec(&Cmd::RemoteScriptsComplete, standard()) {
+            let _ = tx.send(payload);
+        }
+    };
+
+    let (concurrent, result_name) = match &request {
+        RemoteStressPlanRequest::Scenario { .. } => (false, displays::REMOTE_SCENARIO_RESULT_NAME),
+        RemoteStressPlanRequest::Concurrent { .. } => (true, displays::REMOTE_CONCURRENT_RESULT_NAME),
+    };
+
+    let service_number = service_number.unwrap_or_default();
+    if service_number.trim().is_empty() {
+        send_log(
+            &tx,
+            format!(
+                "{result_name}: service_number is required so stress_test_run carries service_order / customer / computer linkage — aborting."
+            ),
+        );
+        send_result(&tx, result_name, RemoteScriptStatus::Failed);
+        send_complete(&tx);
+        return;
+    }
+
+    let stages_result: Result<Vec<stress_runner::RunStage>, String> = match &request {
+        RemoteStressPlanRequest::Scenario { stages, .. } => {
+            if stages.is_empty() || stages.len() > 16 {
+                Err("provide 1-16 stages".to_string())
+            } else {
+                stages.iter().map(|s| remote_stage_to_run_stage(s, false)).collect()
+            }
+        }
+        RemoteStressPlanRequest::Concurrent { lanes, .. } => {
+            if lanes.is_empty() || lanes.len() > 8 {
+                Err("provide 1-8 concurrent lanes".to_string())
+            } else {
+                lanes.iter().map(|s| remote_stage_to_run_stage(s, true)).collect()
+            }
+        }
+    };
+    let stages = match stages_result {
+        Ok(s) => s,
+        Err(e) => {
+            send_log(&tx, format!("{result_name}: {e}"));
+            send_result(&tx, result_name, RemoteScriptStatus::Failed);
+            send_complete(&tx);
+            return;
+        }
+    };
+
+    let plan = match &request {
+        RemoteStressPlanRequest::Scenario { total_wall_secs, repeat_until_total, .. } => {
+            RunPlan::Scenario {
+                stages: stages.clone(),
+                total_wall_secs: *total_wall_secs,
+                repeat_until_total: *repeat_until_total,
+            }
+        }
+        RemoteStressPlanRequest::Concurrent { duration_secs, .. } => RunPlan::Concurrent {
+            lanes: stages.clone(),
+            duration_secs: Some(*duration_secs),
+        },
+    };
+
+    let target_kind = if concurrent {
+        TargetKind::System
+    } else {
+        let kinds: Vec<TargetKind> = stages
+            .iter()
+            .map(|s| stress_runner::default_target_kind(s.stressor))
+            .collect();
+        if kinds.windows(2).all(|w| w[0] == w[1]) {
+            kinds.first().copied().unwrap_or(TargetKind::Mixed)
+        } else {
+            TargetKind::Mixed
+        }
+    };
+
+    let preset = preset_label.unwrap_or_else(|| {
+        if concurrent {
+            "mcp:concurrent-remote-v1".to_string()
+        } else {
+            "mcp:scenario-remote-v1".to_string()
+        }
+    });
+    let preset_tag = if concurrent { "preset:concurrent" } else { "preset:scenario" };
+
+    let name_owned = result_name.to_string();
+    tokio::spawn(async move {
+        send_log(&tx, format!("{name_owned}: running custom stress plan via stress-runner (persisted)"));
+
+        enum PlanMsg {
+            Log(String),
+            Done(bool),
+        }
+        let (plan_tx, plan_rx) = crossbeam::channel::unbounded::<PlanMsg>();
+
+        std::thread::spawn(move || {
+            use std::sync::Arc;
+            use stress_kit::telemetry::TelemetryAgent;
+
+            let client = crate::filesystem::get_client_hash();
+            let computer = match client.computer.clone() {
+                Some(c) => c,
+                None => {
+                    let _ = plan_tx.send(PlanMsg::Log(
+                        "get_client_hash returned no computer record".into(),
+                    ));
+                    let _ = plan_tx.send(PlanMsg::Done(false));
+                    return;
+                }
+            };
+
+            let mut spec = RunSpec::single_stresskit(
+                computer,
+                stages.first().map(|s| s.stressor).unwrap_or(stress_runner::Stressor::Cpu),
+                None,
+            );
+            spec.plan = plan;
+            spec.target_kind = target_kind;
+            spec.tool = TestTool::StressKitScenario { name: Some(preset.clone()) };
+            spec.tech = Some("mcp".to_string());
+            spec.notes = notes;
+            spec.preset_label = Some(preset.clone());
+            spec.tags = vec!["origin:mcp".into(), "origin:remote_scripts".into(), preset_tag.into()];
+            spec.hostname = std::env::var("COMPUTERNAME")
+                .or_else(|_| std::env::var("HOSTNAME"))
+                .ok();
+            spec.machine_id = Some(client.client_hash.clone());
+            spec.service_order = Some(database::schema::RecordId::new(
+                database::schema::TICKET_TABLE,
+                service_number,
+            ));
+            if let Some(sess) = diagnostic_session_id.filter(|s| !s.trim().is_empty()) {
+                spec.session_ref = Some(database::schema::entity_link::parse_record_id(
+                    &sess,
+                    database::schema::DIAGNOSTIC_SESSION_TABLE,
+                ));
+            }
+
+            let telemetry = Arc::new(TelemetryAgent::start(1000));
+            let mut success = false;
+            stress_runner::drive_blocking(spec, telemetry, |update| match update {
+                RunUpdate::Started { run_id } => {
+                    use database::schema::RecordIdExt;
+                    let _ = plan_tx.send(PlanMsg::Log(format!(
+                        "stress_test_run id: {}",
+                        run_id.key_string()
+                    )));
+                }
+                RunUpdate::StageStarted { index, label, stage_count } => {
+                    let _ = plan_tx.send(PlanMsg::Log(format!(
+                        "Stage {}/{}: {label}",
+                        index + 1,
+                        stage_count
+                    )));
+                }
+                RunUpdate::Tick { metrics, stage_label, .. } => {
+                    if let Some(err) = metrics.last_error.as_ref() {
+                        let stage = stage_label.unwrap_or_else(|| "run".into());
+                        let _ = plan_tx.send(PlanMsg::Log(format!("{stage}: {err}")));
+                    }
+                }
+                RunUpdate::StageFinished { .. } => {}
+                RunUpdate::StageVerdict { index, label, pass, violations, .. } => {
+                    let _ = plan_tx.send(PlanMsg::Log(format!(
+                        "stage {} '{label}': {}",
+                        index + 1,
+                        if pass { "PASS" } else { "FAIL" }
+                    )));
+                    for violation in violations {
+                        let _ = plan_tx.send(PlanMsg::Log(format!(
+                            "stage {} violation: {violation}",
+                            index + 1
+                        )));
+                    }
+                }
+                RunUpdate::Finished(v) => {
+                    success = v.result == RunResult::Pass;
+                    let result_str = match v.result {
+                        RunResult::Pass => "PASSED",
+                        RunResult::Fail => "FAILED",
+                        RunResult::Aborted => "ABORTED",
+                        RunResult::Inconclusive => "INCONCLUSIVE",
+                        RunResult::InProgress => "IN_PROGRESS",
+                    };
+                    let _ = plan_tx.send(PlanMsg::Log(format!(
+                        "{result_str} in {:.1}s (run persisted)",
+                        v.duration_secs
+                    )));
+                }
+                RunUpdate::Warning { message } => {
+                    let _ = plan_tx.send(PlanMsg::Log(format!("warning: {message}")));
+                }
+                RunUpdate::Error { message } => {
+                    let _ = plan_tx.send(PlanMsg::Log(format!("error: {message}")));
+                }
+            });
+            let _ = plan_tx.send(PlanMsg::Done(success));
+        });
+
+        let mut final_success: Option<bool> = None;
+        while final_success.is_none() {
+            while let Ok(msg) = plan_rx.try_recv() {
+                match msg {
+                    PlanMsg::Log(line) => send_log(&tx, line),
+                    PlanMsg::Done(ok) => final_success = Some(ok),
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+        send_result(
+            &tx,
+            &name_owned,
+            if final_success.unwrap_or(false) {
+                RemoteScriptStatus::Success
+            } else {
+                RemoteScriptStatus::Failed
+            },
+        );
+        send_complete(&tx);
+    });
+}
+
 fn scan_directory_size(root: &Path) -> Result<(u64, u64, u64), String> {
     use walkdir::WalkDir;
 
@@ -2967,6 +3247,50 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                 }
                 }); // end tokio::spawn — returns immediately so the TCP session loop
                     // can continue processing Ping/AppPing while scripts run.
+            }
+
+            Cmd::RunRemoteScenario {
+                stages,
+                total_wall_secs,
+                repeat_until_total,
+                service_number,
+                diagnostic_session_id,
+                preset_label,
+                notes,
+            } => {
+                run_remote_stress_plan(
+                    self.command_tx.clone(),
+                    RemoteStressPlanRequest::Scenario {
+                        stages,
+                        total_wall_secs,
+                        repeat_until_total,
+                    },
+                    service_number,
+                    diagnostic_session_id,
+                    preset_label,
+                    notes,
+                );
+            }
+
+            Cmd::RunRemoteConcurrent {
+                lanes,
+                duration_secs,
+                service_number,
+                diagnostic_session_id,
+                preset_label,
+                notes,
+            } => {
+                run_remote_stress_plan(
+                    self.command_tx.clone(),
+                    RemoteStressPlanRequest::Concurrent {
+                        lanes,
+                        duration_secs,
+                    },
+                    service_number,
+                    diagnostic_session_id,
+                    preset_label,
+                    notes,
+                );
             }
 
             Cmd::RunScriptContent { filename, content } => {

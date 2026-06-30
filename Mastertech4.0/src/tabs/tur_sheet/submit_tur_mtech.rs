@@ -1,5 +1,5 @@
 use database::schema::{
-    utilities::{check_for_duplicates, create_full_task_payload}, 
+    utilities::{check_for_duplicates, create_and_link_records, create_full_task_payload},
     merge_computer, merge_customer, merge_task, merge_ticket,
     DuplicateCheckResult, FieldDisplay, MergeResolution, RecordIdExt, TaskCreationResult, TaskHistory
 };
@@ -448,6 +448,51 @@ impl MastertechContext {
 
         // Reset state after spawning
         self.tur_submit_state = TurSubmitState::Idle;
+    }
+
+    /// Creates and links customer + computer + service_order without creating a task.
+    pub fn create_and_link_only(&mut self) {
+        let toast_tx = get_toast_sender();
+        if self.ticket_data.service_number.is_empty() {
+            let _ = toast_tx.try_send(ToastMessage::Warning(
+                "Enter a service number before linking records".to_string(),
+            ));
+            return;
+        }
+
+        let ticket_data = self.ticket_data.clone();
+        let customer_data = self.customer_data.clone();
+        let computer_data = self.computer_data.clone();
+        let connection_string = crate::filesystem::get_client_hash().connection_string;
+
+        spawn(async move {
+            let result =
+                create_and_link_records(ticket_data, customer_data, computer_data, connection_string)
+                    .await;
+            info!("create_and_link_records result: {result:?}");
+            match result {
+                TaskCreationResult::Created { service_number } => {
+                    let _ = toast_tx.try_send(ToastMessage::Success(format!(
+                        "Records linked for service #{service_number}"
+                    )));
+                }
+                TaskCreationResult::AlreadyExists { service_number } => {
+                    let _ = toast_tx.try_send(ToastMessage::Info(format!(
+                        "Records already linked for service #{service_number}"
+                    )));
+                }
+                TaskCreationResult::Updated { service_number } => {
+                    let _ = toast_tx.try_send(ToastMessage::Info(format!(
+                        "Records updated for service #{service_number}"
+                    )));
+                }
+                TaskCreationResult::Error { message } => {
+                    let _ = toast_tx.try_send(ToastMessage::Error(format!(
+                        "Error linking records: {message}"
+                    )));
+                }
+            }
+        });
     }
 
     /// Apply merge resolution to create final data

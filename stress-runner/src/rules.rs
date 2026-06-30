@@ -239,11 +239,13 @@ impl StageStats {
         self.whea_delta = whea_count(snapshot).saturating_sub(self.whea_baseline);
         self.tdr_delta = tdr_count(snapshot).saturating_sub(self.tdr_baseline);
 
-        let tick_max_cpu_temp = snapshot
-            .cores
-            .iter()
-            .filter_map(|c| c.temp_c)
-            .fold(None::<f32>, |acc, t| Some(acc.map_or(t, |m| m.max(t))));
+        let tick_max_cpu_temp = snapshot.cpu_package_temp_c().or_else(|| {
+            snapshot
+                .cores
+                .iter()
+                .filter_map(|c| c.temp_c)
+                .fold(None::<f32>, |a, t| Some(a.map_or(t, |m| m.max(t))))
+        });
         if let Some(t) = tick_max_cpu_temp {
             self.max_cpu_temp_c = Some(self.max_cpu_temp_c.map_or(t, |m| m.max(t)));
             self.sum_cpu_temp += t as f64;

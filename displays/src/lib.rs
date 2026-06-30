@@ -684,7 +684,50 @@ pub enum Cmd {
     },
 
     None,
+
+    /// Run a custom staged stress scenario on the remote client via stress-runner.
+    /// Persists stress_test_run / stress_test_metric / stress_test_event linked to service_order.
+    RunRemoteScenario {
+        stages: Vec<RemoteScenarioStage>,
+        total_wall_secs: Option<u64>,
+        #[serde(default)]
+        repeat_until_total: bool,
+        service_number: Option<String>,
+        diagnostic_session_id: Option<String>,
+        preset_label: Option<String>,
+        notes: Option<String>,
+    },
+
+    /// Run multiple stressors concurrently on the remote client via stress-runner.
+    /// Persists stress_test_run / stress_test_metric / stress_test_event linked to service_order.
+    RunRemoteConcurrent {
+        lanes: Vec<RemoteScenarioStage>,
+        duration_secs: u64,
+        service_number: Option<String>,
+        diagnostic_session_id: Option<String>,
+        preset_label: Option<String>,
+        notes: Option<String>,
+    },
 }
+
+/// One stage/lane of a remote stress scenario or concurrent run.
+/// Wire-mirror of the MCP `ScenarioStageParam`; the client maps `stressor` → `stress_runner::Stressor`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RemoteScenarioStage {
+    pub stressor: String,
+    pub duration_secs: u64,
+    #[serde(default)]
+    pub threads: usize,
+    pub memory_cap_mb: Option<u64>,
+    pub disk_file_mb: Option<u64>,
+    pub label: Option<String>,
+}
+
+/// RemoteScriptResult name emitted by the client for a `RunRemoteScenario`; matches the admin waiter.
+pub const REMOTE_SCENARIO_RESULT_NAME: &str = "stress_scenario_run_remote";
+
+/// RemoteScriptResult name emitted by the client for a `RunRemoteConcurrent`; matches the admin waiter.
+pub const REMOTE_CONCURRENT_RESULT_NAME: &str = "stress_concurrent_run_remote";
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EventLogEntry {

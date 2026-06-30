@@ -1542,6 +1542,7 @@ struct SummaryAccumulator {
     whea_delta_count: u32,
     tdr_delta_count: u32,
     max_gpu_temp_c: Option<f32>,
+    max_cpu_temp_c: Option<f32>,
     disk_io_errors: u32,
     /// GPU-classified `last_error` transitions (device lost, acquire failed).
     gpu_device_errors: u32,
@@ -1638,6 +1639,10 @@ impl SummaryAccumulator {
             }
         }
 
+        if let Some(t) = snapshot.cpu_package_temp_c() {
+            self.max_cpu_temp_c = Some(self.max_cpu_temp_c.map_or(t, |m| m.max(t)));
+        }
+
         // GPU board power summed across cards (NVML); CPU package power has
         // no portable source, so this is the PSU-load proxy we have.
         let gpu_w: f64 = snapshot.gpus.iter().filter_map(|g| g.power_w).map(f64::from).sum();
@@ -1697,6 +1702,7 @@ impl SummaryAccumulator {
             memory_errors: 0,
             test_errors: self.total_test_errors().min(u32::MAX as u64) as u32,
             max_gpu_temp_c: self.max_gpu_temp_c,
+            max_cpu_temp_c: self.max_cpu_temp_c,
         }
     }
 

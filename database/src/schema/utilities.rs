@@ -514,9 +514,8 @@ pub async fn create_full_task_payload(
     task_data.priority = Priority::Normal;
     task_data.assignee = assignee_id;
 
-    // if ticket_data.computer.is_none() {
-    //     ticket_data.computer = Some(computer_data.id.clone());
-    // }
+    ticket_data.customer = Some(customer_id.clone());
+    ticket_data.computer = Some(computer_id.clone());
 
     info!("schema/utilities.rs -> cust_record: {customer_data:?}");
     let update_customer: std::result::Result<Option<Record>, surrealdb::Error> = DATABASE
@@ -633,6 +632,126 @@ pub async fn create_full_task_payload(
     }
 
     result
+}
+
+/// Creates and links customer + canonical computer + service_order without
+/// creating or sending a task, so remote diagnostics can resolve
+/// customer_id/computer_id without a throwaway temp task.
+pub async fn create_and_link_records(
+    mut ticket_data: TicketData,
+    customer_data: CustomerData,
+    mut computer_data: ComputerData,
+    connection_string: String,
+) -> TaskCreationResult {
+    info!("schema/utilities.rs -> create_and_link_records");
+    let service_number = ticket_data.service_number.clone();
+    if service_number.is_empty() {
+        return TaskCreationResult::Error {
+            message: "Cannot link records without a service number.".into(),
+        };
+    }
+
+    let canonical = super::entity_link::canonical_computer_id(&connection_string);
+    computer_data.id = canonical.clone();
+
+    let customer_id = customer_data.id.clone();
+    info!("schema/utilities.rs -> create_and_link_records cust_record: {customer_data:?}");
+    let update_customer: std::result::Result<Option<Record>, surrealdb::Error> = DATABASE
+        .upsert(customer_id.clone())
+        .content(customer_data.clone())
+        .await;
+    match update_customer {
+        Ok(record) => {
+            log::info!("Updated Customer {record:?}");
+            if let Some(record_id) = record {
+                computer_data.customer = Some(record_id.id);
+            } else {
+                computer_data.customer = Some(customer_id.clone());
+            }
+        }
+        Err(e) => {
+            log::warn!("Error updating Customer {e:?}");
+            computer_data.customer = Some(customer_id.clone());
+        }
+    }
+
+    if super::entity_link::computer_has_minimal_hardware(&computer_data) {
+        let create_computer_record: std::result::Result<Option<Record>, surrealdb::Error> =
+            DATABASE.upsert(canonical.clone()).content(computer_data).await;
+        match create_computer_record {
+            Ok(record) => info!("schema/utilities.rs -> create_computer_record: {record:?}"),
+            Err(e) => {
+                return TaskCreationResult::Error {
+                    message: format!("Failed to create computer record: {e}"),
+                }
+            }
+        }
+    } else {
+        let hostname = connection_string
+            .split(':')
+            .next()
+            .unwrap_or(&connection_string)
+            .to_string();
+        let upsert_computer: std::result::Result<Option<ComputerData>, surrealdb::Error> = DATABASE
+            .query("UPSERT $cid SET customer = $cust, hostname = $host")
+            .bind(("cid", canonical.clone()))
+            .bind(("cust", computer_data.customer.clone()))
+            .bind(("host", hostname))
+            .await
+            .and_then(|mut response| response.take(0));
+        match upsert_computer {
+            Ok(record) => info!("schema/utilities.rs -> placeholder computer record: {record:?}"),
+            Err(e) => {
+                return TaskCreationResult::Error {
+                    message: format!("Failed to link placeholder computer record: {e}"),
+                }
+            }
+        }
+    }
+
+    let existing_service_order: Option<RecordId> = match DATABASE
+        .query("SELECT VALUE id FROM service_order WHERE service_number == $service_number LIMIT 1")
+        .bind(("service_number", service_number.clone()))
+        .await
+    {
+        Ok(mut response) => response.take(0).unwrap_or_default(),
+        Err(e) => {
+            warn!("Could not check for existing service_order by number: {e:?}");
+            None
+        }
+    };
+    if let Some(existing_id) = existing_service_order {
+        ticket_data.id = existing_id;
+    }
+    ticket_data.customer = Some(customer_id.clone());
+    ticket_data.computer = Some(canonical.clone());
+
+    let ticket_id = ticket_data.id.clone();
+    info!("schema/utilities.rs -> create_and_link_records ticket record: {ticket_data:?}");
+    let service_ticket_record: std::result::Result<Option<Record>, surrealdb::Error> = DATABASE
+        .upsert(ticket_id)
+        .content(ticket_data)
+        .await;
+    match service_ticket_record {
+        Ok(record) => info!("schema/utilities.rs -> service_ticket_record: {record:?}"),
+        Err(e) => {
+            return TaskCreationResult::Error {
+                message: format!("Failed to create service ticket: {e}"),
+            }
+        }
+    }
+
+    if let Err(e) = super::entity_link::link_connected_client_record(
+        &connection_string,
+        &customer_id.key_string(),
+        None,
+    )
+    .await
+    {
+        log::warn!("create_and_link_records: link_connected_client_record failed (non-fatal): {e:?}");
+    }
+
+    TaskCreationResult::Created { service_number }
 }
 
 /// Performs a cascade duplicate check for all related entities.
