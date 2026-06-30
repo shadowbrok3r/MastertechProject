@@ -53,6 +53,8 @@ pub const STRESS_SCRIPT_NAMES: &[&str] = &[
     "Stress: GPU Matmul",
     "Stress: GPU VRAM",
     "Stress: GPU PCIe",
+    "Stress: Combined",
+    "Concurrent: CPU+RAM+GPU",
 ];
 
 pub fn is_stress_script(name: &str) -> bool {
@@ -157,6 +159,14 @@ pub fn build_stress_script_spec(
         "Stress: GPU Matmul" => Some(single(computer, Stressor::GpuMatmul, duration_secs, "gpu_matmul")),
         "Stress: GPU VRAM" => Some(single(computer, Stressor::GpuVram, duration_secs, "gpu_vram")),
         "Stress: GPU PCIe" => Some(single(computer, Stressor::GpuPcie, duration_secs, "gpu_pcie")),
+        "Stress: Combined" => Some(single_with_mem(
+            computer,
+            Stressor::Combined,
+            duration_secs,
+            "combined",
+            1024,
+        )),
+        "Concurrent: CPU+RAM+GPU" => Some(concurrent_torture_spec(computer, duration_secs)),
         _ => None,
     }
 }
@@ -243,4 +253,37 @@ fn qc_benchmark_spec(computer: RecordId) -> RunSpec {
         },
         rules: None,
     }
+}
+
+fn concurrent_lane(label: &str, stressor: Stressor) -> RunStage {
+    RunStage {
+        label: label.to_string(),
+        stressor,
+        threads: 0,
+        duration_secs: 0,
+        memory_cap_mb: 1024,
+        disk_file_mb: 16,
+    }
+}
+
+/// CPU + RAM + GPU run concurrently as separate lanes (`RunPlan::Concurrent`).
+/// Threads are budgeted across lanes at launch; `duration_secs` applies to the
+/// whole block. Seeded off `Stressor::Combined` for a whole-system target kind.
+fn concurrent_torture_spec(computer: RecordId, duration_secs: u64) -> RunSpec {
+    let lanes = vec![
+        concurrent_lane("cpu", Stressor::Cpu),
+        concurrent_lane("memory", Stressor::Memory),
+        concurrent_lane("gpu", Stressor::Gpu),
+    ];
+    let mut spec = RunSpec::single_stresskit(computer, Stressor::Combined, None);
+    spec.tool = TestTool::StressKitScenario {
+        name: Some("scripts:concurrent".into()),
+    };
+    spec.preset_label = Some("scripts:concurrent".into());
+    spec.tags = vec!["preset:concurrent".into()];
+    spec.plan = RunPlan::Concurrent {
+        lanes,
+        duration_secs: Some(duration_secs),
+    };
+    spec
 }

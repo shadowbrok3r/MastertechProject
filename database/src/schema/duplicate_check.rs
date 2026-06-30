@@ -137,6 +137,12 @@ pub struct DuplicateResolution {
     
     pub computer_resolution: MergeResolution,
     pub computer_fields: FieldSelections,
+
+    /// Register the new device as an additional computer for the same customer
+    /// instead of overwriting the existing one. Only meaningful when a duplicate
+    /// computer was found.
+    #[serde(default)]
+    pub add_second_computer: bool,
 }
 
 /// Helper trait to get field names and values for display in the merge UI

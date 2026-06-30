@@ -1,6 +1,6 @@
 use rmcp::{
     handler::server::{wrapper::Parameters, tool::ToolRouter, ServerHandler},
-    model::{CallToolResult, Content, ErrorCode, ErrorData, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo},
+    model::{CallToolResult, ContentBlock, ErrorCode, ErrorData, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo},
     schemars, tool, tool_handler, tool_router,
 };
 use schemars::JsonSchema;
@@ -148,7 +148,7 @@ impl DiagnosticToolProvider {
         let payload = mcp_analyze_bsod(dump_path, include_recent.unwrap_or(true))
             .await
             .map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(payload).map_err(to_internal)?]))
     }
 
     /// Parse Windows Event Logs and surface patterns.
@@ -164,7 +164,7 @@ impl DiagnosticToolProvider {
         )
         .await
         .map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(payload).map_err(to_internal)?]))
     }
 
     /// Build a performance report over a time window.
@@ -180,7 +180,7 @@ impl DiagnosticToolProvider {
         )
         .await
         .map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(payload).map_err(to_internal)?]))
     }
 
     /// Summarize system state and health.
@@ -196,7 +196,7 @@ impl DiagnosticToolProvider {
         )
         .await
         .map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(payload).map_err(to_internal)?]))
     }
 
     /// Provide intelligent shell completions.
@@ -211,7 +211,7 @@ impl DiagnosticToolProvider {
             p.context,
         )
         .map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(payload).map_err(to_internal)?]))
     }
 
     /// Execute a script with an approval workflow.
@@ -228,7 +228,7 @@ impl DiagnosticToolProvider {
         )
         .await
         .map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(payload).map_err(to_internal)?]))
     }
 
     /// Simple wait tool useful for orchestration.
@@ -241,7 +241,7 @@ impl DiagnosticToolProvider {
     #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
     sleep(Duration::from_millis(ms)).await;
     let payload = mcp_wait_payload(Some(ms)).await.map_err(to_internal)?;
-    Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
+    Ok(CallToolResult::success(vec![ContentBlock::json(payload).map_err(to_internal)?]))
     }
 
     /// List scripts stored in the user's SurrealDB toolbox bucket.
@@ -252,7 +252,7 @@ impl DiagnosticToolProvider {
     ) -> Result<CallToolResult, ErrorData> {
         let bucket = resolve_bucket(&p.bucket_name);
         let payload = mcp_list_scripts(&bucket).await.map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(payload).map_err(to_internal)?]))
     }
 
     /// Read the contents of a script from the toolbox.
@@ -263,7 +263,7 @@ impl DiagnosticToolProvider {
     ) -> Result<CallToolResult, ErrorData> {
         let bucket = resolve_bucket(&p.bucket_name);
         let payload = mcp_read_script(&bucket, &p.script_name).await.map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(payload).map_err(to_internal)?]))
     }
 
     /// Save or update a script in the toolbox.
@@ -274,7 +274,7 @@ impl DiagnosticToolProvider {
     ) -> Result<CallToolResult, ErrorData> {
         let bucket = resolve_bucket(&p.bucket_name);
         let payload = mcp_save_script(&bucket, &p.script_name, &p.content).await.map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(payload).map_err(to_internal)?]))
     }
 
     /// Delete a script from the toolbox.
@@ -285,7 +285,7 @@ impl DiagnosticToolProvider {
     ) -> Result<CallToolResult, ErrorData> {
         let bucket = resolve_bucket(&p.bucket_name);
         let payload = mcp_delete_script(&bucket, &p.script_name).await.map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(payload).map_err(to_internal)?]))
     }
 }
 

@@ -133,6 +133,10 @@ pub struct TaskModal {
     #[serde(skip)]
     pub service_history_rx: Receiver<Vec<LiveTaskPayload>>,
 
+    /// Another of the customer's computers, opened in a separate modal for viewing.
+    #[serde(skip)]
+    pub second_computer_modal: Option<ComputerData>,
+
     // Diagnostics tab state (#new)
     /// `DiagnosticSession`s linked to this task or the same computer,
     /// each bundled with their own entries.
@@ -322,6 +326,7 @@ impl TaskModal {
             open_customer_service_history: false,
             open_computer_service_history: false,
             service_history_tx, service_history_rx,
+            second_computer_modal: None,
             // Diagnostics
             diagnostic_sessions: Vec::new(),
             diagnostics_loading: false,
@@ -784,6 +789,57 @@ impl TaskModal {
     }
 
     /// Show service history popup for customer or computer (#217)
+    /// Show one of the customer's other computers in a separate modal, leaving
+    /// the task's current computer untouched.
+    pub fn show_second_computer_modal(&mut self, ui: &mut Ui) {
+        if self.second_computer_modal.is_none() {
+            return;
+        }
+
+        let screen_rect = ui.ctx().content_rect();
+        ui.painter().rect_filled(
+            screen_rect,
+            0.0,
+            Color32::from_rgba_unmultiplied(0, 0, 0, 180),
+        );
+        let max_h = screen_rect.height() * 0.85;
+
+        let mut close = false;
+        if let Some(ref mut comp) = self.second_computer_modal {
+            let title = if comp.hostname.is_empty() {
+                comp.id.key_string()
+            } else {
+                comp.hostname.clone()
+            };
+            Area::new(Id::new("second_computer_modal"))
+                .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+                .order(Order::Foreground)
+                .show(ui.ctx(), |ui| {
+                    Frame::popup(ui.style())
+                        .fill(theme::bg_surface(ui))
+                        .inner_margin(20.0)
+                        .show(ui, |ui| {
+                            ui.set_min_width(660.0);
+                            ui.set_max_height(max_h);
+                            ui.horizontal(|ui| {
+                                ui.heading(RichText::new(format!("Customer Computer — {title}")).color(Color32::LIGHT_BLUE));
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    if ui.button("✕").clicked() {
+                                        close = true;
+                                    }
+                                });
+                            });
+                            ui.separator();
+                            let avail = ui.available_size();
+                            display_computer_page_with_search(ui, None, Some(comp), avail, None, None);
+                        });
+                });
+        }
+        if close {
+            self.second_computer_modal = None;
+        }
+    }
+
     pub fn show_service_history_modal(&mut self, ui: &mut Ui) {
         if !self.service_history_open {
             return;
@@ -1233,21 +1289,26 @@ impl DisplayModal for TaskModal {
                 ModalAction::ComputerInfoPage => {
                     let mut import_presta_clicked = false;
                     let mut import_everest_clicked = false;
+                    let mut open_in_second_modal: Option<ComputerData> = None;
                     let search_data = ComputerSearchData {
                         search_query: &mut self.computer_search_query,
                         customer_computers: &self.customer_computers,
                         selected_computer: &mut None,
                         import_presta_clicked: &mut import_presta_clicked,
                         import_everest_clicked: &mut import_everest_clicked,
+                        open_in_second_modal: &mut open_in_second_modal,
                     };
                     display_computer_page_with_search(
-                        ui, 
-                        self.service_ticket.as_mut(), 
-                        self.computer.as_mut(), 
+                        ui,
+                        self.service_ticket.as_mut(),
+                        self.computer.as_mut(),
                         avail_size,
                         Some(search_data),
                         Some(&mut self.open_computer_service_history),
                     );
+                    if let Some(other) = open_in_second_modal {
+                        self.second_computer_modal = Some(other);
+                    }
                     if import_presta_clicked {
                         self.import_computer_open = true;
                         self.import_computer_source = ImportComputerSource::Prestashop;
@@ -1313,6 +1374,7 @@ impl DisplayModal for TaskModal {
 
         // Show import computer modal if open
         self.show_import_computer_modal(ui);
+        self.show_second_computer_modal(ui);
 
         // Show service history modal if open
         self.show_service_history_modal(ui);

@@ -305,8 +305,23 @@ impl DuplicateMergeModal {
                 return;
             }
             
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(5), Constraint::Length(1)])
+                .split(area);
+
             let fields = dup.existing.get_differing_fields(&dup.new);
-            self.draw_field_diff(f, area, "Computer Differences", &fields, &self.resolution.computer_resolution, &self.resolution.computer_fields);
+            self.draw_field_diff(f, chunks[0], "Computer Differences", &fields, &self.resolution.computer_resolution, &self.resolution.computer_fields);
+
+            let on = self.resolution.add_second_computer;
+            let hint = Paragraph::new(Line::from(vec![
+                Span::styled("[S] Add as Second Computer: ", Style::default().fg(CATPPUCCIN.text)),
+                Span::styled(
+                    if on { "ON (keep existing, save this as a new computer for the customer)" } else { "OFF" },
+                    Style::default().fg(if on { CATPPUCCIN.green } else { CATPPUCCIN.subtext0 }),
+                ),
+            ]));
+            f.render_widget(hint, chunks[1]);
         } else {
             self.draw_no_duplicate_message(f, area, "Computer");
         }
@@ -474,10 +489,15 @@ impl DuplicateMergeModal {
         if let Some(ref dup) = self.check_result.computer {
             let status = if dup.is_identical { "✅ Identical" } else { "⚠ Conflict" };
             let status_color = if dup.is_identical { CATPPUCCIN.green } else { CATPPUCCIN.yellow };
+            let computer_res = if self.resolution.add_second_computer {
+                "Add as Second Computer"
+            } else {
+                resolution_text(&self.resolution.computer_resolution)
+            };
             lines.push(Line::from(vec![
                 Span::styled(format!("{:<15}", "Computer"), Style::default().fg(CATPPUCCIN.text)),
                 Span::styled(format!("{:<15}", status), Style::default().fg(status_color)),
-                Span::styled(resolution_text(&self.resolution.computer_resolution), Style::default().fg(CATPPUCCIN.text)),
+                Span::styled(computer_res, Style::default().fg(CATPPUCCIN.text)),
             ]));
         }
         
@@ -550,6 +570,7 @@ impl DuplicateMergeModal {
                 self.resolution.service_order_resolution = MergeResolution::KeepExisting;
                 self.resolution.customer_resolution = MergeResolution::KeepExisting;
                 self.resolution.computer_resolution = MergeResolution::KeepExisting;
+                self.resolution.add_second_computer = false;
                 true
             }
             KeyCode::Char('N') => {
@@ -558,6 +579,7 @@ impl DuplicateMergeModal {
                 self.resolution.service_order_resolution = MergeResolution::UseNew;
                 self.resolution.customer_resolution = MergeResolution::UseNew;
                 self.resolution.computer_resolution = MergeResolution::UseNew;
+                self.resolution.add_second_computer = false;
                 true
             }
             KeyCode::Char('M') => {
@@ -566,6 +588,7 @@ impl DuplicateMergeModal {
                 self.resolution.service_order_resolution = MergeResolution::Merge;
                 self.resolution.customer_resolution = MergeResolution::Merge;
                 self.resolution.computer_resolution = MergeResolution::Merge;
+                self.resolution.add_second_computer = false;
                 true
             }
             KeyCode::Char('k') => {
@@ -581,6 +604,13 @@ impl DuplicateMergeModal {
             KeyCode::Char('m') => {
                 // Set current page resolution to merge
                 self.set_current_resolution(MergeResolution::Merge);
+                true
+            }
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                // Toggle "add as second computer" (Computer page only)
+                if self.current_page == MergeModalPage::Computer {
+                    self.resolution.add_second_computer = !self.resolution.add_second_computer;
+                }
                 true
             }
             KeyCode::Char(' ') => {
@@ -629,18 +659,21 @@ impl DuplicateMergeModal {
                             self.resolution.service_order_resolution = MergeResolution::KeepExisting;
                             self.resolution.customer_resolution = MergeResolution::KeepExisting;
                             self.resolution.computer_resolution = MergeResolution::KeepExisting;
+                            self.resolution.add_second_computer = false;
                         }
                         2 => { // Use All New
                             self.resolution.task_resolution = MergeResolution::UseNew;
                             self.resolution.service_order_resolution = MergeResolution::UseNew;
                             self.resolution.customer_resolution = MergeResolution::UseNew;
                             self.resolution.computer_resolution = MergeResolution::UseNew;
+                            self.resolution.add_second_computer = false;
                         }
                         3 => { // Merge All
                             self.resolution.task_resolution = MergeResolution::Merge;
                             self.resolution.service_order_resolution = MergeResolution::Merge;
                             self.resolution.customer_resolution = MergeResolution::Merge;
                             self.resolution.computer_resolution = MergeResolution::Merge;
+                            self.resolution.add_second_computer = false;
                         }
                         4 => { self.confirmed = true; self.close(); } // Confirm
                         _ => {}

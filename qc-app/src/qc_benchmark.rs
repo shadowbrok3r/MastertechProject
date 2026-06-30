@@ -99,5 +99,6 @@ pub fn qc_floor_for(stressor: Stressor) -> f64 {
         Stressor::GpuMatmul => 100.0,
         Stressor::GpuVram => 1000.0,
         Stressor::GpuPcie => 1.0,
+        Stressor::Combined => 1.0,
     }
 }

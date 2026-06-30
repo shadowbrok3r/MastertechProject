@@ -42,6 +42,8 @@ pub fn stressor_to_db(s: Stressor) -> StressKitStressor {
         Stressor::GpuMatmul => StressKitStressor::GpuMatmul,
         Stressor::GpuVram => StressKitStressor::GpuVram,
         Stressor::GpuPcie => StressKitStressor::GpuPcie,
+        // No persisted variant yet; recorded as the closest existing combined-load kind.
+        Stressor::Combined => StressKitStressor::Psu,
     }
 }
 
@@ -109,6 +111,7 @@ pub fn default_target_kind(s: Stressor) -> TargetKind {
         Stressor::Gpu | Stressor::GpuMatmul | Stressor::GpuVram | Stressor::GpuPcie => {
             TargetKind::Gpu
         }
+        Stressor::Combined => TargetKind::System,
     }
 }
 

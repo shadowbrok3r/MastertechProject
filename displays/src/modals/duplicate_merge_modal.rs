@@ -346,6 +346,18 @@ impl DuplicateMergeModal {
                 &mut self.resolution.computer_resolution,
                 &mut self.resolution.computer_fields,
             );
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.checkbox(
+                &mut self.resolution.add_second_computer,
+                "Add as Second Computer (keep the existing one; save this device as a new computer for the same customer)",
+            );
+            if self.resolution.add_second_computer {
+                ui.label(RichText::new(
+                    "The existing computer is preserved. This device is saved as a separate computer record under the same customer (the resolution choice above is ignored).",
+                ).weak());
+            }
         } else {
             ui.label("No duplicate computer found.");
         }
@@ -427,7 +439,13 @@ impl DuplicateMergeModal {
                                 ui.colored_label(ui.global_style().visuals.warn_fg_color, "Conflict");
                             }
                         });
-                        row.col(|ui| { ui.label(resolution_text(&self.resolution.computer_resolution)); });
+                        row.col(|ui| {
+                            if self.resolution.add_second_computer {
+                                ui.label("Add as Second Computer");
+                            } else {
+                                ui.label(resolution_text(&self.resolution.computer_resolution));
+                            }
+                        });
                     });
                 }
             });
@@ -511,14 +529,23 @@ impl DuplicateMergeModal {
 
         // Computer Preview
         if let Some(ref dup) = self.check_result.computer.clone() {
-            let final_computer = match self.resolution.computer_resolution {
-                MergeResolution::KeepExisting => dup.existing.clone(),
-                MergeResolution::UseNew => dup.new.clone(),
-                MergeResolution::Merge => merge_computer(&dup.existing, &dup.new, &self.resolution.computer_fields),
-                MergeResolution::Cancel => dup.existing.clone(),
+            let final_computer = if self.resolution.add_second_computer {
+                dup.new.clone()
+            } else {
+                match self.resolution.computer_resolution {
+                    MergeResolution::KeepExisting => dup.existing.clone(),
+                    MergeResolution::UseNew => dup.new.clone(),
+                    MergeResolution::Merge => merge_computer(&dup.existing, &dup.new, &self.resolution.computer_fields),
+                    MergeResolution::Cancel => dup.existing.clone(),
+                }
             };
-            
-            ui.collapsing(RichText::new("💻 Computer").strong().size(16.0), |ui| {
+
+            let computer_header = if self.resolution.add_second_computer {
+                "💻 Computer (new — added as second)"
+            } else {
+                "💻 Computer"
+            };
+            ui.collapsing(RichText::new(computer_header).strong().size(16.0), |ui| {
                 render_preview_grid(ui, &[
                     ("Hostname", &final_computer.hostname),
                     ("OS", &final_computer.operating_system),
@@ -558,6 +585,7 @@ impl DuplicateMergeModal {
                     self.resolution.service_order_resolution = MergeResolution::UseNew;
                     self.resolution.customer_resolution = MergeResolution::UseNew;
                     self.resolution.computer_resolution = MergeResolution::UseNew;
+                    self.resolution.add_second_computer = false;
                 }
 
                 if ui.add(
@@ -568,6 +596,7 @@ impl DuplicateMergeModal {
                     self.resolution.service_order_resolution = MergeResolution::KeepExisting;
                     self.resolution.customer_resolution = MergeResolution::KeepExisting;
                     self.resolution.computer_resolution = MergeResolution::KeepExisting;
+                    self.resolution.add_second_computer = false;
                 }
             });
         });

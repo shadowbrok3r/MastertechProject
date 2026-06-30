@@ -31,6 +31,9 @@ pub enum PanelMode {
     /// TOML certification presets (Bronze→Platinum, power virus) with
     /// per-stage verdict rules. Shared with the MCP `run_certification` tool.
     Certification,
+    /// Multiple stressors at once (CPU + RAM + GPU…), each its own lane with
+    /// its own live throughput. Drives `RunPlan::Concurrent`.
+    Concurrent,
 }
 
 impl Default for PanelMode {
@@ -49,6 +52,30 @@ pub struct StressPanelConfig {
     pub qc_benchmark: QcBenchmarkConfig,
     #[serde(default)]
     pub certification: CertConfig,
+    #[serde(default)]
+    pub concurrent: ConcurrentConfig,
+}
+
+/// Persisted state for the Concurrent mode: which lanes run at once + a shared duration.
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct ConcurrentConfig {
+    pub lanes: Vec<StressorChoice>,
+    pub duration_secs: u64,
+    pub use_timeout: bool,
+    pub memory_cap_mb: u64,
+    pub disk_file_mb: u64,
+}
+
+impl Default for ConcurrentConfig {
+    fn default() -> Self {
+        Self {
+            lanes: vec![StressorChoice::Cpu, StressorChoice::Memory, StressorChoice::Gpu],
+            duration_secs: 120,
+            use_timeout: true,
+            memory_cap_mb: 1024,
+            disk_file_mb: 64,
+        }
+    }
 }
 
 /// Persisted state for the Certification mode.
@@ -134,10 +161,15 @@ pub enum StressorChoice {
     CpuVerify,
     Linpack,
     Psu,
+    Combined,
+    Gpu,
+    GpuMatmul,
+    GpuVram,
+    GpuPcie,
 }
 
 impl StressorChoice {
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 28] = [
         Self::Cpu,
         Self::Memory,
         Self::Disk,
@@ -161,6 +193,11 @@ impl StressorChoice {
         Self::CpuVerify,
         Self::Linpack,
         Self::Psu,
+        Self::Combined,
+        Self::Gpu,
+        Self::GpuMatmul,
+        Self::GpuVram,
+        Self::GpuPcie,
     ];
 
     pub fn label(self) -> &'static str {
@@ -192,6 +229,11 @@ impl StressorChoice {
             Self::CpuVerify => Stressor::CpuVerify,
             Self::Linpack => Stressor::Linpack,
             Self::Psu => Stressor::Psu,
+            Self::Combined => Stressor::Combined,
+            Self::Gpu => Stressor::Gpu,
+            Self::GpuMatmul => Stressor::GpuMatmul,
+            Self::GpuVram => Stressor::GpuVram,
+            Self::GpuPcie => Stressor::GpuPcie,
         }
     }
 
@@ -291,6 +333,17 @@ struct LatestMetrics {
     throughput_unit: &'static str,
 }
 
+/// Live state for one lane of a concurrent run, keyed by `stage_index`.
+#[derive(Clone)]
+struct LaneLive {
+    index: u32,
+    label: String,
+    throughput: f64,
+    unit: &'static str,
+    errors: u64,
+    last_error: Option<String>,
+}
+
 /// Scenario run progress.
 #[derive(Default)]
 struct ScenarioState {
@@ -324,6 +377,8 @@ pub struct StressPanel {
     last_preset: Option<String>,
     /// Per-stage rules verdicts for the current/last run, in finish order.
     stage_verdicts: Vec<StageVerdictRow>,
+    /// Live per-lane throughput for a concurrent run, keyed by `stage_index`.
+    concurrent_lanes: Vec<LaneLive>,
     /// Parsed preset cached for the Certification mode preview.
     cert_preview: Option<stress_runner::CertPreset>,
     /// Last certification start error, shown in the Certification UI.
@@ -377,6 +432,7 @@ impl Default for StressPanel {
             order_context: None,
             last_preset: None,
             stage_verdicts: Vec::new(),
+            concurrent_lanes: Vec::new(),
             cert_preview: None,
             cert_error: None,
             report_request: None,
@@ -458,6 +514,7 @@ impl StressPanel {
                 self.latest = None;
                 self.scenario_state = ScenarioState::default();
                 self.stage_verdicts.clear();
+                self.concurrent_lanes.clear();
             }
             RunUpdate::StageStarted { index, label, stage_count } => {
                 let elapsed = self.latest.as_ref().map_or(0.0, |m| m.elapsed_secs);
@@ -473,12 +530,22 @@ impl StressPanel {
                 self.history.clear();
             }
             RunUpdate::Tick {
-                stage_index: _,
-                stage_label: _,
+                stage_index,
+                stage_label,
                 metrics,
                 telemetry: _,
                 throughput_unit,
             } => {
+                if let Some(idx) = stage_index {
+                    self.upsert_lane(
+                        idx,
+                        stage_label,
+                        metrics.throughput,
+                        metrics.errors,
+                        metrics.last_error.clone(),
+                        throughput_unit,
+                    );
+                }
                 self.history.push(metrics.throughput as f32);
                 if self.history.len() > 120 {
                     self.history.remove(0);
@@ -597,6 +664,84 @@ impl StressPanel {
         self.scenario_state = ScenarioState::default();
         self.show_verdict = false;
         self.run = Some(RunController::start(spec, telemetry));
+    }
+
+    /// Spin up a concurrent run: every selected lane runs at once via
+    /// `RunPlan::Concurrent`. Same `RunController` + persistence path as the
+    /// other modes; the worker budgets threads across lanes at launch.
+    fn start_concurrent(
+        &mut self,
+        cfg: &ConcurrentConfig,
+        telemetry: Arc<TelemetryAgent>,
+        computer: RecordId,
+    ) {
+        if cfg.lanes.is_empty() {
+            return;
+        }
+        let duration = if cfg.use_timeout && cfg.duration_secs > 0 {
+            Some(cfg.duration_secs)
+        } else {
+            None
+        };
+        let lanes: Vec<RunStage> = cfg
+            .lanes
+            .iter()
+            .map(|c| RunStage {
+                label: c.label().to_string(),
+                stressor: c.to_stressor(),
+                threads: 0,
+                duration_secs: cfg.duration_secs,
+                memory_cap_mb: cfg.memory_cap_mb,
+                disk_file_mb: cfg.disk_file_mb,
+            })
+            .collect();
+        // Seed off Combined so the run's target_kind is System (whole-system).
+        let mut spec = RunSpec::single_stresskit(computer, Stressor::Combined, None);
+        spec.plan = RunPlan::Concurrent { lanes, duration_secs: duration };
+        spec.tool = TestTool::StressKitScenario {
+            name: Some("qc-app:concurrent".to_string()),
+        };
+        spec.preset_label = Some("qc-app:concurrent".to_string());
+        spec.tags = vec!["origin:gui".into(), "preset:concurrent".into()];
+        self.apply_order_context(&mut spec);
+        self.last_preset = spec.preset_label.clone();
+        self.history.clear();
+        self.latest = None;
+        self.scenario_state = ScenarioState::default();
+        self.concurrent_lanes.clear();
+        self.show_verdict = false;
+        self.run = Some(RunController::start(spec, telemetry));
+    }
+
+    /// Upsert a concurrent lane's latest throughput, keyed by `stage_index`.
+    fn upsert_lane(
+        &mut self,
+        index: u32,
+        label: Option<String>,
+        throughput: f64,
+        errors: u64,
+        last_error: Option<String>,
+        unit: &'static str,
+    ) {
+        if let Some(lane) = self.concurrent_lanes.iter_mut().find(|l| l.index == index) {
+            lane.throughput = throughput;
+            lane.errors = errors;
+            lane.last_error = last_error;
+            lane.unit = unit;
+            if let Some(l) = label {
+                lane.label = l;
+            }
+        } else {
+            self.concurrent_lanes.push(LaneLive {
+                index,
+                label: label.unwrap_or_else(|| format!("lane {index}")),
+                throughput,
+                unit,
+                errors,
+                last_error,
+            });
+            self.concurrent_lanes.sort_by_key(|l| l.index);
+        }
     }
 
     fn stop(&mut self) {
@@ -734,6 +879,7 @@ impl StressPanel {
             PanelMode::Scenario => self.start_scenario(&cfg.scenario, telemetry, computer),
             PanelMode::QcBenchmark => self.start_qc_benchmark(&cfg.qc_benchmark, telemetry, computer),
             PanelMode::Certification => self.start_certification(&cfg.certification, telemetry, computer),
+            PanelMode::Concurrent => self.start_concurrent(&cfg.concurrent, telemetry, computer),
         }
     }
 
@@ -859,6 +1005,22 @@ impl StressPanel {
                     ui.selectable_value(&mut cfg.mode, PanelMode::Scenario, "Scenario");
                     ui.selectable_value(&mut cfg.mode, PanelMode::QcBenchmark, "QC Benchmark");
                     ui.selectable_value(&mut cfg.mode, PanelMode::Certification, "Certification");
+                    ui.selectable_value(&mut cfg.mode, PanelMode::Concurrent, "Concurrent");
+                });
+                ui.separator();
+                ui.add_enabled_ui(!running, |ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(format!("{}  Combined Torture", p::CPU))
+                                .fill(egui::Color32::from_rgb(150, 70, 160)),
+                        )
+                        .on_hover_text("Run CPU + RAM + GPU stressors at the same time")
+                        .clicked()
+                    {
+                        cfg.mode = PanelMode::Single;
+                        cfg.single.stressor = StressorChoice::Combined;
+                        self.start_requested = true;
+                    }
                 });
                 ui.separator();
                 if ui.button("Hardware Monitor").clicked() {
@@ -894,6 +1056,7 @@ impl StressPanel {
                     PanelMode::Scenario => self.ui_scenario(ui, cfg, running),
                     PanelMode::QcBenchmark => self.ui_qc_benchmark(ui, cfg, running),
                     PanelMode::Certification => self.ui_certification(ui, cfg, running),
+                    PanelMode::Concurrent => self.ui_concurrent(ui, cfg, running),
                 }
 
                 if self.show_verdict {
@@ -952,7 +1115,10 @@ impl StressPanel {
                 | StressorChoice::Memcpy
                 | StressorChoice::Vm
                 | StressorChoice::MemTest
-                | StressorChoice::Linpack => {
+                | StressorChoice::Linpack
+                | StressorChoice::Combined
+                | StressorChoice::GpuVram
+                | StressorChoice::GpuPcie => {
                     ui.horizontal(|ui| {
                         ui.label("Memory cap (MiB)");
                         ui.add_enabled(
@@ -987,7 +1153,9 @@ impl StressPanel {
                 | StressorChoice::Icache
                 | StressorChoice::Tsc
                 | StressorChoice::CpuVerify
-                | StressorChoice::Psu => {}
+                | StressorChoice::Psu
+                | StressorChoice::Gpu
+                | StressorChoice::GpuMatmul => {}
             }
 
             ui.horizontal(|ui| {
@@ -1271,6 +1439,125 @@ impl StressPanel {
         self.ui_stage_grid(ui, "qc_bench_stage_grid", &stage_rows);
         ui.add_space(6.0);
         self.ui_run_status_column(ui, unit);
+    }
+
+    fn ui_concurrent(&mut self, ui: &mut egui::Ui, cfg: &mut StressPanelConfig, running: bool) {
+        const LANE_CHOICES: [StressorChoice; 11] = [
+            StressorChoice::Cpu,
+            StressorChoice::Fp,
+            StressorChoice::Linpack,
+            StressorChoice::CpuVerify,
+            StressorChoice::Memory,
+            StressorChoice::Stream,
+            StressorChoice::MemTest,
+            StressorChoice::Disk,
+            StressorChoice::Gpu,
+            StressorChoice::GpuMatmul,
+            StressorChoice::GpuVram,
+        ];
+
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Concurrent stress").strong());
+                ui.label(
+                    egui::RichText::new("run several subsystems at once — each its own live lane")
+                        .small()
+                        .weak(),
+                );
+            });
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("Lanes").weak());
+            ui.add_enabled_ui(!running, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    for choice in LANE_CHOICES {
+                        let mut on = cfg.concurrent.lanes.contains(&choice);
+                        if ui.checkbox(&mut on, choice.label()).changed() {
+                            if on {
+                                if !cfg.concurrent.lanes.contains(&choice) {
+                                    cfg.concurrent.lanes.push(choice);
+                                }
+                            } else {
+                                cfg.concurrent.lanes.retain(|c| *c != choice);
+                            }
+                        }
+                    }
+                });
+            });
+
+            let gpu_lanes = cfg
+                .concurrent
+                .lanes
+                .iter()
+                .filter(|c| c.to_stressor().is_gpu())
+                .count();
+            if gpu_lanes > 1 {
+                ui.colored_label(
+                    egui::Color32::from_rgb(220, 170, 60),
+                    format!(
+                        "{gpu_lanes} GPU lanes share one GPU and will contend — pick one for clean numbers."
+                    ),
+                );
+            }
+            if cfg.concurrent.lanes.is_empty() {
+                ui.colored_label(egui::Color32::GRAY, "Select at least one lane.");
+            }
+
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.add_enabled(!running, |ui: &mut egui::Ui| {
+                    ui.checkbox(&mut cfg.concurrent.use_timeout, "Run for")
+                });
+                ui.add_enabled(
+                    !running && cfg.concurrent.use_timeout,
+                    egui::DragValue::new(&mut cfg.concurrent.duration_secs)
+                        .range(5..=86_400)
+                        .suffix(" s"),
+                );
+                ui.separator();
+                ui.label("Memory cap (MiB)");
+                ui.add_enabled(
+                    !running,
+                    egui::DragValue::new(&mut cfg.concurrent.memory_cap_mb).range(16..=65_536),
+                );
+            });
+        });
+
+        ui.add_space(6.0);
+        if !self.concurrent_lanes.is_empty() {
+            ui.label(egui::RichText::new("Live lanes").strong());
+            egui::Grid::new("concurrent_lane_grid")
+                .num_columns(3)
+                .striped(true)
+                .show(ui, |ui| {
+                    ui.label(egui::RichText::new("Lane").weak());
+                    ui.label(egui::RichText::new("Throughput").weak());
+                    ui.label(egui::RichText::new("Status").weak());
+                    ui.end_row();
+                    for lane in &self.concurrent_lanes {
+                        ui.label(&lane.label);
+                        ui.label(format!("{:.2} {}", lane.throughput, lane.unit));
+                        if lane.errors > 0 {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(220, 80, 80),
+                                format!("{} error(s)", lane.errors),
+                            );
+                        } else if let Some(err) = &lane.last_error {
+                            ui.colored_label(egui::Color32::from_rgb(220, 170, 60), err.clone());
+                        } else {
+                            ui.colored_label(egui::Color32::from_rgb(80, 180, 110), "ok");
+                        }
+                        ui.end_row();
+                    }
+                });
+            ui.add_space(2.0);
+            ui.label(
+                egui::RichText::new(format!("elapsed {:.0} s", self.scenario_state.total_elapsed_secs))
+                    .small()
+                    .weak(),
+            );
+        } else if running {
+            ui.label(egui::RichText::new("Starting lanes…").weak());
+        }
     }
 
     fn ui_certification(&mut self, ui: &mut egui::Ui, cfg: &mut StressPanelConfig, running: bool) {

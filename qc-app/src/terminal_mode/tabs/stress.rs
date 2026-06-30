@@ -304,6 +304,7 @@ impl<'a> StressTab<'a> {
             PanelMode::Scenario => self.start_scenario(telemetry, computer),
             PanelMode::QcBenchmark => self.start_qc_benchmark(telemetry, computer),
             PanelMode::Certification => self.start_certification(telemetry, computer),
+            PanelMode::Concurrent => {}
         }
     }
 
@@ -467,6 +468,7 @@ impl<'a> StressTab<'a> {
             PanelMode::Scenario => Focus::Stage(0),
             PanelMode::QcBenchmark => Focus::QcMult,
             PanelMode::Certification => Focus::CertPreset,
+            PanelMode::Concurrent => Focus::Stressor,
         };
         self.cfg.mode = mode;
         self.refresh_cert_preview();
@@ -623,6 +625,7 @@ impl<'a> StressTab<'a> {
             }
             PanelMode::QcBenchmark => vec![Focus::QcMult],
             PanelMode::Certification => vec![Focus::CertPreset, Focus::CertMult],
+            PanelMode::Concurrent => vec![],
         }
     }
 
@@ -990,6 +993,16 @@ impl<'a> StressTab<'a> {
             PanelMode::Scenario => self.draw_scenario(f, area),
             PanelMode::QcBenchmark => self.draw_qc(f, area),
             PanelMode::Certification => self.draw_cert(f, area),
+            PanelMode::Concurrent => {
+                let inner = config_block_inner(f, area, "Concurrent");
+                f.render_widget(
+                    Paragraph::new(
+                        "Concurrent stress (CPU + RAM + GPU lanes) is configured in the desktop app.",
+                    )
+                    .style(Style::default().fg(THEME.text_muted)),
+                    inner,
+                );
+            }
         }
     }
 

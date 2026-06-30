@@ -495,7 +495,7 @@ impl MastertechContext {
         };
 
         // Apply computer resolution
-        let computer_data = if let Some(ref dup) = check_result.computer {
+        let mut computer_data = if let Some(ref dup) = check_result.computer {
             match resolution.computer_resolution {
                 MergeResolution::KeepExisting => dup.existing.clone(),
                 MergeResolution::UseNew => pending.computer_data.clone(),
@@ -505,6 +505,18 @@ impl MastertechContext {
         } else {
             pending.computer_data.clone()
         };
+
+        // "Add as second computer": keep the existing computer untouched and write
+        // the new device under its canonical HOST:hash9 id (same key as
+        // ConnectedClient.computer) so it never overwrites the existing record and
+        // stays correlated with the connected client. No random fallback — Mastertech
+        // always derives a connection_string for the running machine. The customer
+        // link is applied in create_full_task_payload.
+        if resolution.add_second_computer && check_result.computer.is_some() {
+            computer_data = pending.computer_data.clone();
+            computer_data.id = crate::filesystem::local_computer_record();
+            info!("Add-as-second-computer: using canonical computer id {:?}", computer_data.id);
+        }
 
         (task_data, ticket_data, customer_data, computer_data)
     }

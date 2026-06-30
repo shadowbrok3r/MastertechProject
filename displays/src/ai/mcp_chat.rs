@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use crossbeam::channel::Sender;
 use futures::StreamExt;
-use rmcp::model::{CallToolRequestParams, RawContent};
+use rmcp::model::CallToolRequestParams;
 
 use crate::ai::{effective_api_base, effective_api_key, effective_model, gpts};
 use crate::tabs::ai_playground::{ChatMessage, ChatMessageType, SentFrom};
@@ -36,10 +36,7 @@ fn text_of(result: &rmcp::model::CallToolResult) -> String {
     let body: String = result
         .content
         .iter()
-        .filter_map(|c| match &c.raw {
-            RawContent::Text(t) => Some(t.text.clone()),
-            _ => None,
-        })
+        .filter_map(|c| c.as_text().map(|t| t.text.clone()))
         .collect::<Vec<_>>()
         .join("\n");
     if body.is_empty() {

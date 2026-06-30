@@ -78,6 +78,13 @@ pub enum RunPlan {
         total_wall_secs: Option<u64>,
         repeat_until_total: bool,
     },
+    /// Run every lane at the same time, each as its own `StressSession`.
+    /// `threads == 0` lanes are budgeted across the core pool at launch.
+    Concurrent {
+        lanes: Vec<RunStage>,
+        /// `None` = run until the operator stops it.
+        duration_secs: Option<u64>,
+    },
 }
 
 /// Declarative description of one stress run.  Identifying fields
@@ -522,6 +529,60 @@ fn worker(
                 &mut outcomes,
             );
         }
+
+        RunPlan::Concurrent { lanes: mut lane_specs, duration_secs } => {
+            if let Some(extra) = budget_concurrent_threads(&mut lane_specs) {
+                send(&update_tx, RunUpdate::Warning { message: extra });
+            }
+            let label = format!("Concurrent ({} lanes)", lane_specs.len());
+            send(
+                &update_tx,
+                RunUpdate::StageStarted { index: 0, label: label.clone(), stage_count: 1 },
+            );
+            persist_event(
+                &run_id_clone,
+                DbEventKind::StageStarted,
+                "stress-kit",
+                Some(label.clone()),
+                None,
+            );
+
+            let sessions: Vec<StressSession> = lane_specs
+                .iter()
+                .map(|l| {
+                    StressSession::start(StressConfig {
+                        stressor: l.stressor,
+                        threads: l.threads,
+                        timeout: duration_secs.map(Duration::from_secs),
+                        memory_cap_mb: l.memory_cap_mb,
+                        disk_file_mb: l.disk_file_mb,
+                    })
+                })
+                .collect();
+
+            drive_concurrent(
+                &lane_specs,
+                &sessions,
+                &telemetry,
+                &cancel,
+                &update_tx,
+                &run_id_clone,
+                &mut acc,
+                duration_secs,
+                started_at,
+                &rules,
+                &mut outcomes,
+            );
+
+            persist_event(
+                &run_id_clone,
+                DbEventKind::StageFinished,
+                "stress-kit",
+                Some(label),
+                None,
+            );
+            send(&update_tx, RunUpdate::StageFinished { index: 0 });
+        }
     }
 
     // ---- 4. Finalize ----
@@ -594,6 +655,9 @@ fn build_run(spec: &RunSpec) -> StressTestRun {
         let total: u64 = total_wall_secs
             .unwrap_or_else(|| stages.iter().map(|s| s.duration_secs).sum());
         run.duration_planned_secs = Some(total);
+    }
+    if let RunPlan::Concurrent { duration_secs, .. } = &spec.plan {
+        run.duration_planned_secs = *duration_secs;
     }
     run
 }
@@ -766,6 +830,242 @@ fn drive_single(
         }
     }
     outcomes.push(StageOutcome { summary, verdict });
+}
+
+/// Assign `threads` to `threads == 0` CPU lanes by dividing the core pool,
+/// reserving one core when any lane drives the GPU. Returns a warning when
+/// more than one lane contends for the single physical GPU.
+fn budget_concurrent_threads(lanes: &mut [RunStage]) -> Option<String> {
+    let total = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    let uses_gpu = |s: Stressor| s.is_gpu() || matches!(s, Stressor::Combined | Stressor::Psu);
+    let gpu_lane_count = lanes.iter().filter(|l| uses_gpu(l.stressor)).count();
+    let reserve = usize::from(gpu_lane_count > 0);
+    let pool = total.saturating_sub(reserve).max(1);
+
+    let auto: Vec<usize> = lanes
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.threads == 0 && !l.stressor.is_gpu())
+        .map(|(i, _)| i)
+        .collect();
+    if !auto.is_empty() {
+        let per = (pool / auto.len()).max(1);
+        for i in auto {
+            lanes[i].threads = per;
+        }
+    }
+
+    (gpu_lane_count > 1).then(|| {
+        format!("{gpu_lane_count} GPU lanes selected; they share one physical GPU and will contend")
+    })
+}
+
+/// Drive a concurrent run: every lane runs at once as its own `StressSession`.
+/// System telemetry rolls up once per tick; each lane writes its own metric
+/// rows tagged by `stage_index` and gets its own stage verdict.
+#[allow(clippy::too_many_arguments)]
+fn drive_concurrent(
+    lanes: &[RunStage],
+    sessions: &[StressSession],
+    telemetry: &Arc<TelemetryAgent>,
+    cancel: &Arc<AtomicBool>,
+    update_tx: &Sender<RunUpdate>,
+    run_id: &RecordId,
+    acc: &mut SummaryAccumulator,
+    duration_secs: Option<u64>,
+    started_at: Instant,
+    rules: &Option<VerdictRules>,
+    outcomes: &mut Vec<StageOutcome>,
+) {
+    let n = lanes.len();
+    let effective_rules = rules.clone().unwrap_or_default();
+    let snapshot0 = telemetry.snapshot();
+
+    let mut latest: Vec<Metrics> = vec![Metrics::default(); n];
+    let mut stats: Vec<StageStats> = lanes
+        .iter()
+        .enumerate()
+        .map(|(i, l)| StageStats::begin(i as u32, &l.label, l.stressor, &snapshot0))
+        .collect();
+    let mut peak: Vec<Option<f64>> = vec![None; n];
+    let mut tp_sum = vec![0.0_f64; n];
+    let mut tp_count = vec![0_u32; n];
+    let mut last_error: Vec<Option<String>> = vec![None; n];
+    let mut had_error = vec![false; n];
+    let mut seen_errors = vec![0_u64; n];
+    let mut fatal_seen = vec![false; n];
+
+    let mut last_tick = Instant::now();
+    let mut metric_batch: Vec<StressTestMetric> = Vec::with_capacity(METRIC_BATCH_SIZE);
+    let deadline = duration_secs.map(|d| started_at + Duration::from_secs(d));
+    let stop_all = |sessions: &[StressSession]| sessions.iter().for_each(|s| s.stop());
+    let mut aborted = false;
+
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            stop_all(sessions);
+            break;
+        }
+        if sessions.iter().all(|s| s.is_stopping()) {
+            break;
+        }
+        if let Some(dl) = deadline {
+            if Instant::now() >= dl {
+                stop_all(sessions);
+                break;
+            }
+        }
+
+        for (i, s) in sessions.iter().enumerate() {
+            if let Some(m) = s.try_recv() {
+                if m.fatal {
+                    fatal_seen[i] = true;
+                    let msg = m.last_error.clone().unwrap_or_else(|| {
+                        format!("{} aborted (fatal stressor error)", lanes[i].label)
+                    });
+                    send(update_tx, RunUpdate::Error { message: msg });
+                    s.stop();
+                }
+                if m.throughput > 0.0 {
+                    peak[i] = Some(peak[i].map_or(m.throughput, |p: f64| p.max(m.throughput)));
+                    tp_sum[i] += m.throughput;
+                    tp_count[i] += 1;
+                }
+                if let Some(err) = &m.last_error {
+                    had_error[i] = true;
+                    last_error[i] = Some(err.clone());
+                }
+                latest[i] = m;
+            }
+        }
+
+        if last_tick.elapsed() >= TICK_INTERVAL {
+            last_tick = Instant::now();
+            let snapshot = telemetry.snapshot();
+            if snapshot.is_populated() {
+                let whea_before = acc.whea_delta_count;
+                let tdr_before = acc.tdr_delta_count;
+                acc.absorb(&Metrics::default(), &snapshot, "mixed");
+                persist_counter_events(run_id, acc, whea_before, tdr_before);
+
+                for (i, lane) in lanes.iter().enumerate() {
+                    let unit = lane.stressor.throughput_unit();
+                    stats[i].absorb_tick(&latest[i], &snapshot, &effective_rules);
+                    if latest[i].errors > seen_errors[i] {
+                        let new_errors = latest[i].errors - seen_errors[i];
+                        seen_errors[i] = latest[i].errors;
+                        persist_error_event(
+                            run_id,
+                            lane.stressor,
+                            new_errors,
+                            latest[i].last_error.clone(),
+                        );
+                    }
+                    match metric_from_snapshot(
+                        run_id.clone(),
+                        &snapshot,
+                        Some(latest[i].throughput),
+                        Some(unit),
+                        latest[i].last_error.as_deref(),
+                        Some(i as u32),
+                        Some(lane.label.clone()),
+                    ) {
+                        Ok(metric) => {
+                            metric_batch.push(metric);
+                            if metric_batch.len() >= METRIC_BATCH_SIZE {
+                                if let Err(err) = flush_metrics(&mut metric_batch) {
+                                    send(update_tx, RunUpdate::Error {
+                                        message: format!("stress_test_metric persist failed: {err}"),
+                                    });
+                                    stop_all(sessions);
+                                    aborted = true;
+                                    break;
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            send(update_tx, RunUpdate::Error {
+                                message: format!("invalid telemetry for stress_test_metric: {err}"),
+                            });
+                            stop_all(sessions);
+                            aborted = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            for (i, lane) in lanes.iter().enumerate() {
+                send(update_tx, RunUpdate::Tick {
+                    stage_index: Some(i as u32),
+                    stage_label: Some(lane.label.clone()),
+                    metrics: latest[i].clone(),
+                    telemetry: snapshot.clone(),
+                    throughput_unit: lane.stressor.throughput_unit(),
+                });
+            }
+
+            if aborted {
+                break;
+            }
+        }
+
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    if let Err(err) = flush_metrics(&mut metric_batch) {
+        send(update_tx, RunUpdate::Error {
+            message: format!("stress_test_metric persist failed: {err}"),
+        });
+    }
+
+    let final_snapshot = telemetry.snapshot();
+    let mut total_test_errors = 0_u64;
+    for (i, lane) in lanes.iter().enumerate() {
+        stats[i].errors = stats[i].errors.max(latest[i].errors);
+        stats[i].finish(&final_snapshot);
+        total_test_errors = total_test_errors.saturating_add(stats[i].errors);
+        // A lane that aborted mid-run is a failure even with no error counter;
+        // classify it the way `absorb` would for the single-stressor path.
+        if fatal_seen[i] {
+            let detail = last_error[i].clone().unwrap_or_default();
+            if is_gpu_error_message(&detail) {
+                acc.gpu_device_errors = acc.gpu_device_errors.saturating_add(1);
+                acc.last_gpu_error = Some(detail);
+            } else {
+                acc.disk_io_errors = acc.disk_io_errors.saturating_add(1);
+                acc.last_disk_error = Some(detail);
+            }
+        }
+        let unit = lane.stressor.throughput_unit();
+        let verdict = rules.as_ref().map(|r| evaluate_stage(&stats[i], r));
+        let avg = if tp_count[i] > 0 {
+            Some(tp_sum[i] / tp_count[i] as f64)
+        } else {
+            None
+        };
+        let summary = stage_summary_from_stats(
+            &stats[i],
+            lane.stressor,
+            lane.threads as u32,
+            duration_secs.unwrap_or(0),
+            started_at.elapsed().as_secs_f64(),
+            peak[i],
+            avg,
+            unit,
+            had_error[i],
+            last_error[i].take(),
+            verdict.as_ref(),
+        );
+        if let Some(v) = &verdict {
+            if !v.pass {
+                persist_stage_verdict_event(run_id, v);
+            }
+        }
+        outcomes.push(StageOutcome { summary, verdict });
+        emit_stage_verdict(update_tx, outcomes.last());
+    }
+    acc.completed_stage_errors = acc.completed_stage_errors.saturating_add(total_test_errors);
 }
 
 /// Drive a scenario run.
