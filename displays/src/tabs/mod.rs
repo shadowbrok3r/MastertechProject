@@ -115,6 +115,7 @@ impl egui_dock::TabViewer for SharedContext {
                 .show(ui),
             TabId::AdminConsole => self.admin_console(ui),
             TabId::WebConsole => self.web_console.ui(ui),
+            #[cfg(not(target_arch = "wasm32"))]
             TabId::Ai => {
                 // Local self-diagnosis: chat about THIS machine via the
                 // in-process Mastertech MCP tools, no remote client.
@@ -122,6 +123,13 @@ impl egui_dock::TabViewer for SharedContext {
                 self.enhanced_ai_playground.focused_client = None;
                 self.enhanced_ai_playground.enhanced_ai_playground(ui);
                 let _ = self.enhanced_ai_playground.take_close_request();
+            }
+            #[cfg(target_arch = "wasm32")]
+            TabId::Ai => {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(40.0);
+                    ui.label("AI self-diagnosis is available in the desktop application.");
+                });
             }
             TabId::DatabaseEditor => self.database_viewer.ui(ui, self.current_user.clone()),
             TabId::QueryEditor => {

@@ -452,15 +452,32 @@ impl MastertechContext {
                 && self.customer_data.phone_number != "801-334-6262".to_string()
                 && is_windows; // HIGHLIGHT ALL THE REQUIRED FIELDS IN RED
 
-            if ui.add_enabled(
-                false, 
-                Button::new( 
-                    RichText::new("Complete QC"))
+            let link_btn = ui.add_enabled(
+                !self.ticket_data.service_number.is_empty(),
+                Button::new(
+                    RichText::new("Create & Link Records"))
                     .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)))
                     .min_size(Vec2::new(140., 20.0)
                 )
-            ).clicked() {
-                
+            ).on_hover_text(
+                "Creates and links customer, computer, and service order for remote diagnostics without creating or sending a task."
+            );
+            push_widget_anchor("tur.create_and_link_records", link_btn.rect);
+            if link_btn.clicked() {
+                if self.shared_ctx.current_user.is_some() {
+                    self.create_and_link_only();
+                } else {
+                    let toast = &mut self.shared_ctx.toasts;
+                    let error_toast = Toast {
+                        kind: ToastKind::Error,
+                        text: "You are not logged in".into(),
+                        options: ToastOptions::default()
+                            .show_progress(true)
+                            .duration_in_seconds(6.0),
+                        ..Default::default()
+                    };
+                    toast.add(error_toast);
+                }
             }
 
             if ui.add_enabled(

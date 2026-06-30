@@ -95,6 +95,15 @@ impl TelemetrySnapshot {
     pub fn is_populated(&self) -> bool {
         self.captured_at_unix_ms > 0 && !self.cores.is_empty() && self.memory.total_mb > 0
     }
+
+    /// Hottest CPU/package thermal reading this tick, from `thermals`.
+    pub fn cpu_package_temp_c(&self) -> Option<f32> {
+        self.thermals.iter()
+            .filter(|r| { let l = r.label.to_lowercase();
+                l.contains("package") || l.contains("cpu") || l.contains("tctl") || l.contains("tdie") || l.starts_with("tz") })
+            .map(|r| r.temp_c)
+            .fold(None, |acc: Option<f32>, t| Some(acc.map_or(t, |m| m.max(t))))
+    }
 }
 
 pub struct TelemetryAgent {
