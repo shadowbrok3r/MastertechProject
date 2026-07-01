@@ -1,5 +1,5 @@
 -- ============================================================
--- TABLE: user                     last changed: user_mcp_settings
+-- TABLE: user                     last changed: user_tui_color_scheme
 -- Managed by surrealkit. Edit here, then `rollout plan`.
 -- ============================================================
 -- SCHEMAFULL. Rust source of truth: `database::schema::user::User`.
@@ -37,6 +37,7 @@ DEFINE FIELD mcp_settings.model    ON user TYPE none | string         PERMISSION
 DEFINE FIELD user_settings ON user TYPE object FLEXIBLE
     DEFAULT { color_scheme: {  }, ui_layout: { mastertech: {  }, mtechserver: {  } } } PERMISSIONS FULL;
 DEFINE FIELD user_settings.color_scheme         ON user TYPE none | bytes                               PERMISSIONS FULL;
+DEFINE FIELD user_settings.tui_color_scheme     ON user TYPE none | bytes                               PERMISSIONS FULL;
 DEFINE FIELD user_settings.ui_layout            ON user TYPE none | object FLEXIBLE
     DEFAULT { mastertech: {  }, mtechserver: {  } } PERMISSIONS FULL;
 DEFINE FIELD user_settings.ui_layout.mastertech  ON user TYPE none | object FLEXIBLE DEFAULT {  }        PERMISSIONS FULL;

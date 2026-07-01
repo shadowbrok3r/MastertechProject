@@ -92,7 +92,10 @@ pub fn history_json_from_messages(msgs: &[ChatMessage]) -> Vec<serde_json::Value
             ChatMessageType::Text(t) | ChatMessageType::Code(t) => t.clone(),
             _ => continue,
         };
-        if text.trim().is_empty() || text.starts_with(icons::WRENCH) {
+        if text.trim().is_empty()
+            || text.starts_with(icons::WRENCH)
+            || text.starts_with(crate::ai::claude_code::TOOL_PREFIX)
+        {
             continue;
         }
         let role = match m.from {
@@ -102,131 +105,6 @@ pub fn history_json_from_messages(msgs: &[ChatMessage]) -> Vec<serde_json::Value
         out.push(serde_json::json!({ "role": role, "content": text }));
     }
     out
-}
-
-/// Streams a headless Claude Code session (subscription auth — no Anthropic API key) that uses
-/// the Mastertech MCP on :9004 to diagnose. Claude Code runs its own tool loop; we parse its
-/// stream-json events and emit Reasoning/Text/Error/Done over `response_tx`.
-pub async fn stream_claude_code(
-    prompt: String,
-    thread_id: String,
-    response_tx: Sender<ChatMessage>,
-) -> Result<()> {
-    use std::process::Stdio;
-    use std::time::Duration;
-    use tokio::io::{AsyncBufReadExt, BufReader};
-    use tokio::process::Command;
-
-    let cfg = r#"{ "mcpServers": { "mastertech": { "type": "http", "url": "http://127.0.0.1:9004/mcp" } } }"#;
-    let cfg_path = std::env::temp_dir().join("mtech-claude-mcp.json");
-    if let Err(e) = std::fs::write(&cfg_path, cfg) {
-        send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Error(format!("Claude Code: MCP config write failed: {e}")));
-        send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Done);
-        return Ok(());
-    }
-
-    // Reads + diagnostic-session writes only; machine-touching tools omitted until an approval gate exists.
-    let allowed = "ToolSearch,mcp__mastertech__query_surrealdb,mcp__mastertech__search_diagnostics,\
-mcp__mastertech__get_diagnostic_session,mcp__mastertech__get_computer_details,\
-mcp__mastertech__search_service_orders,mcp__mastertech__create_diagnostic_session,\
-mcp__mastertech__log_diagnostic_entry,\
-mcp__mastertech__egui_inspect_status,mcp__mastertech__egui_inspect_tree,\
-mcp__mastertech__egui_inspect_screenshot";
-
-    let args = [
-        "-p".to_string(), prompt,
-        "--output-format".into(), "stream-json".into(),
-        "--verbose".into(),
-        "--include-partial-messages".into(),
-        "--mcp-config".into(), cfg_path.to_string_lossy().into_owned(),
-        "--strict-mcp-config".into(),
-        "--allowedTools".into(), allowed.into(),
-        "--permission-mode".into(), "default".into(),
-    ];
-
-    let candidates: &[&str] = if cfg!(windows) { &["claude.cmd", "claude.exe", "claude"] } else { &["claude"] };
-    let mut child = None;
-    for bin in candidates {
-        match Command::new(*bin)
-            .args(&args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-        {
-            Ok(c) => { child = Some(c); break; }
-            Err(_) => continue,
-        }
-    }
-    let Some(mut child) = child else {
-        send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Error("Claude Code (`claude`) not found. Install it and run `claude login` (Max subscription) on this machine.".to_string()));
-        send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Done);
-        return Ok(());
-    };
-
-    let stdout = child.stdout.take().expect("claude stdout piped");
-    let mut lines = BufReader::new(stdout).lines();
-    let event_timeout = Duration::from_secs(60);
-    let mut text_id: Option<String> = None;
-    let mut think_id: Option<String> = None;
-
-    loop {
-        match tokio::time::timeout(event_timeout, lines.next_line()).await {
-            Ok(Ok(Some(line))) => {
-                let line = line.trim();
-                if line.is_empty() { continue; }
-                let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
-                match v["type"].as_str().unwrap_or("") {
-                    "stream_event" => {
-                        let ev = &v["event"];
-                        match ev["type"].as_str().unwrap_or("") {
-                            "content_block_delta" => {
-                                if let Some(t) = ev["delta"]["text"].as_str() {
-                                    let id = text_id.get_or_insert_with(new_id).clone();
-                                    send(&response_tx, &thread_id, id, SentFrom::Gpt, ChatMessageType::Text(t.to_string()));
-                                } else if let Some(t) = ev["delta"]["thinking"].as_str() {
-                                    let id = think_id.get_or_insert_with(new_id).clone();
-                                    send(&response_tx, &thread_id, id, SentFrom::Gpt, ChatMessageType::Reasoning(t.to_string()));
-                                }
-                            }
-                            "content_block_start" => {
-                                if ev["content_block"]["type"].as_str() == Some("tool_use") {
-                                    let name = ev["content_block"]["name"].as_str().unwrap_or("tool");
-                                    let pretty = name.strip_prefix("mcp__mastertech__").unwrap_or(name);
-                                    send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Text(format!("{} `{}`", icons::WRENCH, pretty)));
-                                    text_id = None;
-                                    think_id = None;
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    "result" => {
-                        let is_err = v["is_error"].as_bool().unwrap_or(false)
-                            || v["subtype"].as_str() == Some("error");
-                        if is_err {
-                            let msg = v["error"]["message"].as_str().or_else(|| v["result"].as_str()).unwrap_or("Claude Code error");
-                            send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Error(format!("Claude Code: {msg}")));
-                        }
-                        break;
-                    }
-                    _ => {}
-                }
-            }
-            Ok(Ok(None)) => break,
-            Ok(Err(_)) => break,
-            Err(_) => {
-                let _ = child.start_kill();
-                send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Error(format!("Claude Code: no output for {}s — MCP tool stalled (:9004 session?). Stopped.", event_timeout.as_secs())));
-                break;
-            }
-        }
-    }
-
-    let _ = child.wait().await;
-    send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Done);
-    Ok(())
 }
 
 /// Streams a chat completion from the OpenAI-compatible endpoint in `mcp_settings`

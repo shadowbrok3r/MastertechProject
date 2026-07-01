@@ -1,5 +1,5 @@
 use ratatui::{buffer::Buffer, crossterm::event::{KeyCode, KeyModifiers}, layout::{Position, Rect}, style::{Color, Style, Stylize}, text::Line, widgets::{Block, BorderType, Borders, Widget, WidgetRef}};
-use crate::terminal_mode::{events::action_handler::{get_event_sender, WidgetEvent, WidgetId}, styling::{CATPPUCCIN, CATPPUCCINTHEME, APP_BACKGROUND, THEME}};
+use crate::terminal_mode::{events::action_handler::{get_event_sender, WidgetEvent, WidgetId}, styling::{CATPPUCCIN, ThemeRole, THEME}};
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use super::{button::{ButtonState, Theme}, ButtonType};
 use super::tui_textarea::{CursorMove, TextArea};
@@ -32,7 +32,7 @@ pub struct InputField <'a> {
     /// state of input field
     state: RefCell<ButtonState>,
     /// duh
-    theme: Theme,
+    theme: ThemeRole,
     block: RefCell<Option<Block<'a>>>,
     event_sender: Sender<WidgetEvent>,
     last_width: RefCell<Option<usize>>,
@@ -64,7 +64,7 @@ impl <'a> InputField <'a>{
             block: RefCell::new(None),
             area: RefCell::new(None),
             state: RefCell::new(ButtonState::Normal),
-            theme: CATPPUCCINTHEME,
+            theme: ThemeRole::Input,
             event_sender: get_event_sender(),
             last_width: RefCell::new(None),
             last_click_time: RefCell::new(None),
@@ -255,7 +255,7 @@ impl <'a> ButtonType <'a> for InputField <'a> {
 
     /// Helper method to get the right colors based on the current state.
     fn colors(&self) -> (Color, Color, Color, Color) {
-        let t = self.theme;
+        let t = self.theme.resolve();
         match *self.state.borrow() {
             ButtonState::Normal => (t.background, THEME.text_muted, t.shadow, THEME.border_idle()),
             ButtonState::Selected => (t.background, THEME.text, t.shadow, THEME.tertiary),
@@ -482,7 +482,7 @@ impl <'a> WidgetRef for InputField <'a> {
         let (_background, text_color, _shadow, highlight) = self.colors();
         
         // Ensure consistent background
-        buf.set_style(area, Style::default().bg(APP_BACKGROUND));
+        buf.set_style(area, Style::default().bg(THEME.bg));
         
         // Check if area is too small to render properly
         if area.height < INPUT_FIELD_MIN_HEIGHT {
@@ -492,7 +492,7 @@ impl <'a> WidgetRef for InputField <'a> {
                 .borders(Borders::LEFT | Borders::RIGHT)
                 .border_type(BorderType::Rounded)
                 .title(Line::raw(format!("{}: ", self.title)).fg(text_color))
-                .style(Style::default().fg(highlight).bg(APP_BACKGROUND));
+                .style(Style::default().fg(highlight).bg(THEME.bg));
             
             // Render the block
             compact_block.render(area, buf);
@@ -509,7 +509,7 @@ impl <'a> WidgetRef for InputField <'a> {
                     };
                     // Truncate if needed
                     let display_text: String = first_line.chars().take(text_area.width as usize).collect();
-                    buf.set_string(text_area.x, text_area.y, &display_text, Style::default().fg(CATPPUCCIN.text).bg(APP_BACKGROUND));
+                    buf.set_string(text_area.x, text_area.y, &display_text, Style::default().fg(CATPPUCCIN.text).bg(THEME.bg));
                 }
             }
             
@@ -526,19 +526,19 @@ impl <'a> WidgetRef for InputField <'a> {
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .title(Line::raw(self.title).fg(text_color))
-            .style(Style::default().fg(highlight).bg(APP_BACKGROUND));
+            .style(Style::default().fg(highlight).bg(THEME.bg));
 
         let input = self.input.try_borrow_mut();
 
         if let Ok(mut input) = input {
             let block = if let Some(block) = self.block.borrow().clone(){
-                block.style(Style::default().fg(highlight).bg(APP_BACKGROUND))
+                block.style(Style::default().fg(highlight).bg(THEME.bg))
             } 
             else { 
                 default_block 
             };
             // Set background style on the text area itself
-            input.set_style(Style::default().fg(CATPPUCCIN.text).bg(APP_BACKGROUND));
+            input.set_style(Style::default().fg(CATPPUCCIN.text).bg(THEME.bg));
             input.set_block(block);
             input.render(area, buf);
         }

@@ -2,8 +2,8 @@ use dioxus::prelude::*;
 mod components;
 mod theme;
 
-mod pages { pub mod tasks; pub mod login; }
-mod services { pub mod tasks; pub mod helpers; }
+mod pages { pub mod tasks; pub mod login; #[cfg(feature = "client-sessions")] pub mod clients; }
+mod services { pub mod tasks; pub mod helpers; #[cfg(feature = "client-sessions")] pub mod clients; }
 use database::init_database;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -121,11 +121,15 @@ fn app() -> Element {
 
                 // Scrollable content (takes remaining space; bottom tabs stay in flow)
                 div { class: "flex-1 min-h-0 overflow-y-auto overflow-x-hidden",
-                    pages::tasks::TaskBoard {
-                        page: page(),
-                        on_navigate: None,
-                        refresh_token: refresh_nonce(),
-                        create_task_trigger: create_nonce(),
+                    if page() == "Clients" {
+                        ClientsSection {}
+                    } else {
+                        pages::tasks::TaskBoard {
+                            page: page(),
+                            on_navigate: None,
+                            refresh_token: refresh_nonce(),
+                            create_task_trigger: create_nonce(),
+                        }
                     }
                 }
 
@@ -139,6 +143,23 @@ fn app() -> Element {
         }
         if let Some(e) = err() {
             div { class: "fixed bottom-20 left-4 right-4 card-cosmic px-3 py-2 text-warning-red text-xs z-50", {e} }
+        }
+    }
+}
+
+// ── Clients (remote session control) ─────────────────────────
+#[cfg(feature = "client-sessions")]
+#[component]
+fn ClientsSection() -> Element {
+    rsx! { pages::clients::ClientsPage {} }
+}
+
+#[cfg(not(feature = "client-sessions"))]
+#[component]
+fn ClientsSection() -> Element {
+    rsx! {
+        div { class: "p-6 text-center text-sm text-stardust px-4",
+            "Client session control requires the client-sessions build feature."
         }
     }
 }

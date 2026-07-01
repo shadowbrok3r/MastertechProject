@@ -1,5 +1,5 @@
 use ratatui::{crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind}, layout::{Constraint, Layout, Position, Rect}, prelude::Backend, style::{Color, Modifier, Style}, text::{Line, Span, Text}, widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, WidgetRef}, Frame};
-use crate::terminal_mode::{fx::unique_border_effect, styling::{CATPPUCCIN, THEME, APP_BACKGROUND}, widgets::{ButtonType, HandleWidget}};
+use crate::terminal_mode::{fx::unique_border_effect, styling::{CATPPUCCIN, THEME}, widgets::{ButtonType, HandleWidget}};
 use database::schema::{LiveTaskPayload, RecordIdExt, User};
 use unicode_width::UnicodeWidthStr;
 use std::cmp::max;
@@ -357,7 +357,7 @@ impl<'a> TasksTab<'a> {
             Cell::from(Text::from(Self::header_with_sort("Priority", SortColumn::Priority, sort_col, sort_dir, hovered_header == Some(4), widths[4] as usize))),
             Cell::from(Text::from(Self::center_text_with_borders("Description".to_string(), description_width as usize, 3))),
         ])
-        .style(Style::default().fg(THEME.accent).bg(APP_BACKGROUND).add_modifier(Modifier::BOLD))
+        .style(Style::default().fg(THEME.accent).bg(THEME.bg).add_modifier(Modifier::BOLD))
         .height(3)
         .bottom_margin(1);
 
@@ -399,7 +399,7 @@ impl<'a> TasksTab<'a> {
             } else if i % 2 == 0 {
                 CATPPUCCIN.base
             } else {
-                APP_BACKGROUND
+                THEME.bg
             };
             
             let fg_color = if is_hovered {
@@ -692,7 +692,7 @@ impl<'a> TasksTab<'a> {
         for (i, option) in options.iter().enumerate().skip(scroll_offset).take(visible_height) {
             let y = inner.y + (i - scroll_offset) as u16;
             let style = if i == selected_idx {
-                Style::default().fg(APP_BACKGROUND).bg(THEME.accent).add_modifier(Modifier::BOLD)
+                Style::default().fg(THEME.bg).bg(THEME.accent).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(CATPPUCCIN.text)
             };

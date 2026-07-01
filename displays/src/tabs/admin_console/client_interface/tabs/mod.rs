@@ -7,4 +7,6 @@ pub mod terminal_viewer;
 #[cfg(feature="tokio")]
 pub mod egui_viewer;
 #[cfg(feature="tokio")]
+pub mod desktop_viewer;
+#[cfg(feature="tokio")]
 pub mod beta_terminal;

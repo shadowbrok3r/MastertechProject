@@ -34,6 +34,8 @@ pub mod mcp;
 
 pub mod plugins;
 
+pub mod remote_desktop;
+
 #[cfg(feature = "tokio")]
 pub mod remote_viewer;
 
@@ -708,6 +710,16 @@ pub enum Cmd {
         preset_label: Option<String>,
         notes: Option<String>,
     },
+
+    /// Admin → client: begin streaming the desktop of `monitor` at the given
+    /// frame rate, JPEG `quality` (1..=100), and resolution `scale` (0..=1).
+    DesktopStreamStart { monitor: u32, fps: u32, quality: u8, scale: f32 },
+    /// Admin → client: stop desktop streaming.
+    DesktopStreamStop,
+    /// Admin → client: request the client's monitor list.
+    DesktopListMonitors,
+    /// Client → admin: the client's available monitors.
+    DesktopMonitorList(Vec<crate::remote_desktop::DesktopMonitorInfo>),
 }
 
 /// One stage/lane of a remote stress scenario or concurrent run.
@@ -919,6 +931,12 @@ pub const EGUI_FRAME_TAG: u8 = 0xEF;
 
 /// Admin → client: serialized `plugins::remote::EguiInputEvent` for remote control.
 pub const EGUI_INPUT_TAG: u8 = 0xEE;
+
+/// Client → admin: serialized `remote_desktop::DesktopFrameMessage` (raster desktop capture).
+pub const DESKTOP_FRAME_TAG: u8 = 0xED;
+
+/// Admin → client: serialized `remote_desktop::DesktopInputEvent` for full-desktop control.
+pub const DESKTOP_INPUT_TAG: u8 = 0xEC;
 
 pub fn serialize_system_info(system_info: &SystemInformation) -> Vec<u8> {
     encode_to_vec(system_info, standard()).expect("Failed to serialize SystemInformation")

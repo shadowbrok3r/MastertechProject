@@ -43,6 +43,14 @@ pub struct EnhancedAiPlayground {
     /// When true, hides the close ✕ and the external Claude Code button and uses self-diagnosis empty-state copy.
     #[serde(skip)]
     pub self_diagnosis: bool,
+    /// Multi-turn Claude Code session (subscription auth, :9004 MCP).
+    #[cfg(not(target_arch = "wasm32"))]
+    #[serde(skip)]
+    pub claude: crate::ai::claude_code::ClaudeCodeSession,
+    /// Thread the Claude Code session is bound to; input in that thread resumes it.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[serde(skip)]
+    claude_thread: Option<String>,
     /// Set when the panel's close button is clicked; the host reads + clears it.
     #[serde(skip)]
     close_requested: bool,
@@ -72,6 +80,10 @@ impl Default for EnhancedAiPlayground {
             use_mcp_tools: true,
             focused_client: None,
             self_diagnosis: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            claude: crate::ai::claude_code::ClaudeCodeSession::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            claude_thread: None,
             close_requested: false,
             loaded: false,
             load_tx,
@@ -86,8 +98,8 @@ impl EnhancedAiPlayground {
         std::mem::take(&mut self.close_requested)
     }
 
-    /// Start a Claude Code (subscription) diagnostic in a fresh thread, seeded with the focused
-    /// connected client. Claude Code runs its own loop against the Mastertech MCP.
+    /// Start a Claude Code (subscription) session in a fresh thread, seeded with the focused
+    /// connected client. Later input in that thread resumes the same session.
     pub fn start_claude_diagnosis(&mut self, connection_string: Option<String>) {
         let thread_id = uuid::Uuid::new_v4().to_string();
         self.selected_thread = thread_id.clone();
@@ -106,23 +118,19 @@ impl EnhancedAiPlayground {
             from: SentFrom::Me,
             content: ChatMessageType::Text(label),
         });
-        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        #[cfg(not(target_arch = "wasm32"))]
         {
             let prompt = match &connection_string {
-                Some(cs) => format!(
-                    "Diagnose the connected client with connection_string '{cs}'. Pull its prior history \
-                     and run an initial triage using the Mastertech tools (remote tools act on that client)."
-                ),
-                None => "Run an initial diagnostic using the Mastertech tools.".to_string(),
+                Some(_) => "Diagnose that client. Pull its prior history and run an initial triage \
+                     using the Mastertech tools."
+                    .to_string(),
+                None => "Run an initial diagnostic of this machine using the Mastertech tools.".to_string(),
             };
-            let tx = self.response_tx.clone();
-            PlatformSpawner::spawn(async move {
-                if let Err(e) = crate::ai::mcp_chat::stream_claude_code(prompt, thread_id, tx).await {
-                    log::error!("stream_claude_code error: {e:?}");
-                }
-            });
+            self.claude.reset();
+            self.claude_thread = Some(thread_id.clone());
+            self.claude.send(prompt, connection_string, thread_id, self.response_tx.clone());
         }
-        #[cfg(not(all(not(target_arch = "wasm32"), feature = "tokio")))]
+        #[cfg(target_arch = "wasm32")]
         {
             let _ = connection_string;
         }
@@ -130,6 +138,12 @@ impl EnhancedAiPlayground {
 
     pub fn enhanced_ai_playground(&mut self, ui: &mut Ui) {
         self.ensure_loaded();
+
+        // Keep frames coming while Claude streams so the drain below runs without input.
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.claude.is_busy() {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+        }
 
         eframe::egui::Panel::top("enhanced_ai_topbar")
             .frame(Frame::default().inner_margin(Margin::symmetric(6, 2)))
@@ -239,15 +253,24 @@ impl EnhancedAiPlayground {
                 {
                     self.use_mcp_tools = !self.use_mcp_tools;
                 }
-                #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
-                if !self.self_diagnosis
-                    && ui
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    if self.claude.is_busy() {
+                        if ui
+                            .button(RichText::new(icons::STOP).color(ui.visuals().error_fg_color))
+                            .on_hover_text("Stop Claude Code")
+                            .clicked()
+                        {
+                            self.claude.cancel();
+                        }
+                    } else if ui
                         .button(RichText::new(icons::ROBOT))
                         .on_hover_text("Diagnose with Claude Code (subscription)")
                         .clicked()
-                {
-                    let cs = self.focused_client.clone();
-                    self.start_claude_diagnosis(cs);
+                    {
+                        let cs = self.focused_client.clone();
+                        self.start_claude_diagnosis(cs);
+                    }
                 }
                 let model = crate::ai::effective_model(crate::ai::gpts::MODEL);
                 ui.label(RichText::new(model).weak().small());
@@ -514,6 +537,13 @@ impl EnhancedAiPlayground {
             from: SentFrom::Me,
             content: ChatMessageType::Text(input.clone()),
         });
+
+        // Input in the Claude Code thread resumes that session instead of the OpenAI endpoint.
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.claude_thread.as_deref() == Some(thread_id.as_str()) {
+            self.claude.send(input, None, thread_id, self.response_tx.clone());
+            return;
+        }
 
         #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
         {

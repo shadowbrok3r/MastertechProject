@@ -3,7 +3,7 @@ use ratatui::{
     buffer::Buffer, crossterm::event::{MouseButton, MouseEvent, MouseEventKind}, layout::{Position, Rect}, style::{Color, Modifier, Style}, text::Line, widgets::{Widget, WidgetRef}
 };
 use tachyonfx::Effect;
-use crate::{filesystem::get_client_hash, terminal_mode::{events::action_handler::{get_event_sender, WidgetButton, WidgetEvent, WidgetId}, fx::{effect::{animated_border, UniqueEffectId}, EffectStage}, styling::{TURQUOISE, APP_BACKGROUND, THEME}}};
+use crate::{filesystem::get_client_hash, terminal_mode::{events::action_handler::{get_event_sender, WidgetButton, WidgetEvent, WidgetId}, fx::{effect::{animated_border, UniqueEffectId}, EffectStage}, styling::{ThemeRole, TURQUOISE, THEME}}};
 use std::{cell::RefCell, fmt::{Debug, Display}};
 use super::{ButtonType, SHORTCUT_SET};
 use unicode_width::{UnicodeWidthStr, UnicodeWidthChar};
@@ -25,7 +25,7 @@ pub struct Button<'a> {
     id: WidgetId,
     title: String,
     label: Line<'a>,
-    theme: Theme,
+    theme: ThemeRole,
     state: RefCell<ButtonState>,
     // on_click: Arc<RefCell<Option<Box<dyn FnMut() + 'a>>>>,
     // on_click: Arc<RefCell<Option<F>>>,
@@ -95,7 +95,7 @@ pub(crate) fn truncate_to_width(s: &str, max_width: usize) -> String {
     out
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Theme {
     pub text: Color,
     pub background: Color,
@@ -109,7 +109,7 @@ impl<'a> Button<'a> {
             id,
             title: label.to_string(),
             label: Line::raw(label.to_string()),
-            theme: TURQUOISE,
+            theme: ThemeRole::Custom(TURQUOISE),
             state: RefCell::new(ButtonState::Normal),
             area: RefCell::new(None),
             effect_stage: RefCell::new(EffectStage::default()),
@@ -187,7 +187,7 @@ impl<'a> Button<'a> {
         } else {
             THEME.text
         };
-        let border_style = Style::default().fg(border).bg(APP_BACKGROUND);
+        let border_style = Style::default().fg(border).bg(THEME.bg);
         let inner = area.width.saturating_sub(2) as usize;
         let label = truncate_to_width(&self.title, inner);
         let lw = label.width() as u16;
@@ -203,12 +203,12 @@ impl<'a> Button<'a> {
                 buf.set_string(area.x, y, SHORTCUT_SET.vertical_left, border_style);
                 buf.set_string(area.x + area.width - 1, y, SHORTCUT_SET.vertical_right, border_style);
             }
-            buf.set_string(lx, area.y + area.height / 2, &label, Style::default().fg(fg).bg(APP_BACKGROUND));
+            buf.set_string(lx, area.y + area.height / 2, &label, Style::default().fg(fg).bg(THEME.bg));
         } else {
             let y = area.y;
             buf.set_string(area.x, y, SHORTCUT_SET.vertical_left, border_style);
             buf.set_string(area.x + area.width - 1, y, SHORTCUT_SET.vertical_right, border_style);
-            buf.set_string(lx, y, &label, Style::default().fg(fg).bg(APP_BACKGROUND));
+            buf.set_string(lx, y, &label, Style::default().fg(fg).bg(THEME.bg));
         }
 
         // Animated pink border glow on hover.
@@ -246,7 +246,7 @@ impl<'a> Button<'a> {
         } else {
             THEME.text
         };
-        let bg = APP_BACKGROUND;
+        let bg = THEME.bg;
         buf.set_style(area, Style::default().fg(fg).bg(bg));
 
         let label = truncate_to_width(
@@ -296,7 +296,7 @@ impl<'a> Button<'a> {
         self.id.clone()
     }
 
-    pub const fn theme(mut self, theme: Theme) -> Self {
+    pub fn theme(mut self, theme: ThemeRole) -> Self {
         self.theme = theme;
         self
     }
@@ -401,7 +401,7 @@ impl <'a> ButtonType<'a> for Button<'a> {
             let dim = Color::DarkGray;
             return (dim, dim, dim, dim);
         }
-        let t = self.theme;
+        let t = self.theme.resolve();
         match *self.state.borrow() {
             ButtonState::Normal => (t.background, t.text, t.shadow, t.highlight),
             ButtonState::Selected => (t.background, t.text, Color::White, Color::White),
@@ -469,7 +469,7 @@ impl <'a> WidgetRef for Button<'a> {
 
         // When height < 3 we cannot draw full borders + label; draw a minimal one-line representation
         if area.height < 3 {
-            buf.set_style(area, Style::default().fg(text).bg(APP_BACKGROUND));
+            buf.set_style(area, Style::default().fg(text).bg(THEME.bg));
             let inner_width = area.width.saturating_sub(2) as usize;
             let label_text = self.title.clone();
             let display_text = if label_text.width() > inner_width && inner_width > 3 {
@@ -495,17 +495,17 @@ impl <'a> WidgetRef for Button<'a> {
             let label_x = area.x + 1 + (available_width.saturating_sub(display_width)) / 2;
             let label_y = area.y;
             if area.width >= 2 {
-                buf.set_string(area.x, label_y, &SHORTCUT_SET.vertical_left, Style::default().fg(highlight).bg(APP_BACKGROUND));
-                buf.set_string(area.x + area.width - 1, label_y, &SHORTCUT_SET.vertical_right, Style::default().fg(highlight).bg(APP_BACKGROUND));
+                buf.set_string(area.x, label_y, &SHORTCUT_SET.vertical_left, Style::default().fg(highlight).bg(THEME.bg));
+                buf.set_string(area.x + area.width - 1, label_y, &SHORTCUT_SET.vertical_right, Style::default().fg(highlight).bg(THEME.bg));
             }
             let inner_rect = Rect { x: area.x + 1, y: label_y, width: available_width, height: 1 };
-            buf.set_style(inner_rect, Style::default().fg(text).bg(APP_BACKGROUND));
+            buf.set_style(inner_rect, Style::default().fg(text).bg(THEME.bg));
             buf.set_line(label_x, label_y, &Line::raw(display_text), available_width);
             self.set_area(area);
             return;
         }
 
-        buf.set_style(area, Style::default().fg(text).bg(APP_BACKGROUND));
+        buf.set_style(area, Style::default().fg(text).bg(THEME.bg));
         
         // Horizontal padding inside the button (space between text and borders)
         const HORIZONTAL_PADDING: u16 = 1;
@@ -521,7 +521,7 @@ impl <'a> WidgetRef for Button<'a> {
                 area.x,
                 area.y,
                 top_str,
-                Style::default().fg(highlight).bg(APP_BACKGROUND),
+                Style::default().fg(highlight).bg(THEME.bg),
             );
         }
 
@@ -536,7 +536,7 @@ impl <'a> WidgetRef for Button<'a> {
                 area.x,
                 y,
                 SHORTCUT_SET.vertical_left,
-                Style::default().fg(highlight).bg(APP_BACKGROUND),
+                Style::default().fg(highlight).bg(THEME.bg),
             );
 
             // Background fill (inside the borders)
@@ -546,14 +546,14 @@ impl <'a> WidgetRef for Button<'a> {
                 width: area.width.saturating_sub(2),
                 height: 1,  // Exactly 1 row per iteration
             };
-            buf.set_style(inner_rect, Style::default().fg(text).bg(APP_BACKGROUND));
+            buf.set_style(inner_rect, Style::default().fg(text).bg(THEME.bg));
 
             // Right border
             buf.set_string(
                 area.x + area.width - 1,
                 y,
                 SHORTCUT_SET.vertical_right,
-                Style::default().fg(highlight).bg(APP_BACKGROUND),
+                Style::default().fg(highlight).bg(THEME.bg),
             );
         }
 
@@ -568,7 +568,7 @@ impl <'a> WidgetRef for Button<'a> {
                 area.x,
                 area.y + area.height - 1,
                 bot_str,
-                Style::default().fg(shadow).bg(APP_BACKGROUND),
+                Style::default().fg(shadow).bg(THEME.bg),
             );
         }
 

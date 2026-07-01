@@ -530,39 +530,68 @@ pub async fn init_database() -> anyhow::Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// Async sleep available on both native (tokio) and wasm (gloo) targets.
+pub async fn sleep_compat(dur: std::time::Duration) {
+    #[cfg(not(target_arch = "wasm32"))]
+    tokio::time::sleep(dur).await;
+    #[cfg(target_arch = "wasm32")]
+    gloo_timers::future::TimeoutFuture::new(dur.as_millis().min(u32::MAX as u128) as u32).await;
+}
+
+/// Races `fut` against a deadline; `Err` on timeout.
+pub async fn with_timeout<T>(
+    dur: std::time::Duration,
+    fut: impl std::future::IntoFuture<Output = T>,
+) -> anyhow::Result<T> {
+    use futures::future::{select, Either};
+    let fut = fut.into_future();
+    let sleep = sleep_compat(dur);
+    futures::pin_mut!(fut);
+    futures::pin_mut!(sleep);
+    match select(fut, sleep).await {
+        Either::Left((v, _)) => Ok(v),
+        Either::Right(_) => Err(anyhow::anyhow!("operation timed out after {dur:?}")),
+    }
+}
+
+/// Random id distinguishing one app instance's live-query canaries from
+/// other sessions of the same user.
+pub fn new_live_session_id() -> String {
+    uuid::Uuid::new_v4().simple().to_string()
+}
+
+/// Record id bound to `$auth` on the current connection; `None` when
+/// unauthenticated or signed in as something other than a record user.
+pub async fn current_auth_id() -> anyhow::Result<Option<schema::RecordId>> {
+    let mut response = with_timeout(
+        std::time::Duration::from_secs(10),
+        DATABASE.query("RETURN $auth.id"),
+    )
+    .await??;
+    Ok(response.take::<Option<schema::RecordId>>(0)?)
+}
+
 /// Check if the database connection is alive by running a simple query
 /// Returns true if connected, false if connection is dead
 pub async fn is_db_connected() -> bool {
     // A dead websocket black-holes queries; bound the probe so the check can fail.
-    #[cfg(not(target_arch = "wasm32"))]
+    match with_timeout(
+        std::time::Duration::from_secs(3),
+        DATABASE.query("RETURN true"),
+    )
+    .await
     {
-        let probe = DATABASE.query("RETURN true");
-        match tokio::time::timeout(std::time::Duration::from_secs(3), probe).await {
-            Ok(Ok(mut response)) => {
-                let result: Option<bool> = response.take(0).unwrap_or(None);
-                result.unwrap_or(false)
-            }
-            Ok(Err(e)) => {
-                log::warn!("Database connection check failed: {}", e);
-                false
-            }
-            Err(_) => {
-                log::warn!("Database connection check timed out after 3s; treating connection as dead");
-                false
-            }
+        Ok(Ok(mut response)) => {
+            let result: Option<bool> = response.take(0).unwrap_or(None);
+            result.unwrap_or(false)
         }
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        match DATABASE.query("RETURN true").await {
-            Ok(mut response) => {
-                let result: Option<bool> = response.take(0).unwrap_or(None);
-                result.unwrap_or(false)
-            }
-            Err(e) => {
-                log::warn!("Database connection check failed: {}", e);
-                false
-            }
+        Ok(Err(e)) => {
+            log::warn!("Database connection check failed: {}", e);
+            false
+        }
+        Err(_) => {
+            log::warn!("Database connection check timed out after 3s; treating connection as dead");
+            false
         }
     }
 }
@@ -681,6 +710,12 @@ pub async fn ensure_db_connected() -> anyhow::Result<(), anyhow::Error> {
 
     log::info!("Database reconnection successful");
     Ok(())
+}
+
+/// [`ensure_db_connected`] with a hard deadline so a black-holed websocket
+/// can never wedge callers waiting on the result.
+pub async fn ensure_db_connected_bounded() -> anyhow::Result<(), anyhow::Error> {
+    with_timeout(std::time::Duration::from_secs(30), ensure_db_connected()).await?
 }
 
 /// Retry a DB operation across a transient connection blip.

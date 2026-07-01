@@ -872,6 +872,21 @@ impl TerminalWebsocketClient {
             Cmd::FileSystemAction(FileSystemAction::CopyFromClient(_path)) => {
 
             }
+            Cmd::DesktopStreamStart { monitor, fps, quality, scale } => {
+                log::info!("websockets -> DesktopStreamStart monitor={monitor} fps={fps} quality={quality} scale={scale}");
+                crate::remote_desktop::start_desktop_stream(monitor, fps, quality, scale);
+            }
+            Cmd::DesktopStreamStop => {
+                log::info!("websockets -> DesktopStreamStop");
+                crate::remote_desktop::stop_desktop_stream();
+            }
+            Cmd::DesktopListMonitors => {
+                let monitors = crate::remote_desktop::enumerate_monitors();
+                let response = Cmd::DesktopMonitorList(monitors);
+                if let Ok(payload) = encode_to_vec(&response, standard()) {
+                    sender.send(WsMessage::Binary(payload));
+                }
+            }
             Cmd::FileSystemAction(FileSystemAction::CopyToClient(_minio_path)) => {
                 // self.explorer
             } // self.explorer.previewed_file = Some(String::from_utf8(byte_vec.clone()));

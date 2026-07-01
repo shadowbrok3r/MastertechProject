@@ -13,7 +13,9 @@ pub enum Tab {
     SystemInfo,
     Logs,
     Login,
-    Webconsole
+    Webconsole,
+    Settings,
+    Assistant
 }
 
 impl Tab {

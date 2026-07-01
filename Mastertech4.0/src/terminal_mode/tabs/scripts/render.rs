@@ -1,5 +1,5 @@
 use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect}, prelude::Backend, style::{Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget, Wrap}, Frame};
-use crate::terminal_mode::{events::action_handler::WidgetId, fx::effect::animated_border, styling::{CATPPUCCIN, APP_BACKGROUND, THEME}, tabs::checklist::TodoItem, widgets::{ButtonType, HandleWidget, ShrinkArea}};
+use crate::terminal_mode::{events::action_handler::WidgetId, fx::effect::animated_border, styling::{CATPPUCCIN, THEME}, tabs::checklist::TodoItem, widgets::{ButtonType, HandleWidget, ShrinkArea}};
 use super::{checklist::Status, ScriptsTab};
 use displays::get_current_user_from_auth;
 use unicode_width::UnicodeWidthStr;
@@ -352,7 +352,7 @@ impl<'a> ScriptsTab<'a> {
             .title_alignment(Alignment::Center)
             .title_style(THEME.title())
             .border_style(Style::default().fg(THEME.accent))
-            .style(Style::default().bg(APP_BACKGROUND).fg(THEME.text));
+            .style(Style::default().bg(THEME.bg).fg(THEME.text));
 
         f.render_widget(block, popup_area);
 
@@ -431,7 +431,7 @@ impl<'a> ScriptsTab<'a> {
                     .title_style(THEME.title())
                     .border_style(Style::new().fg(THEME.accent))
                     .title_alignment(ratatui::layout::Alignment::Center)
-                    .style(Style::new().bg(APP_BACKGROUND).fg(THEME.text))
+                    .style(Style::new().bg(THEME.bg).fg(THEME.text))
                 )
                 .highlight_style(THEME.menu_highlight())
                 .highlight_symbol("\u{25b8} ");
@@ -671,7 +671,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
             .split(left_half);
 
         let para = Paragraph::new("Scripts Library")
-            .block(Block::default().bg(APP_BACKGROUND))
+            .block(Block::default().bg(THEME.bg))
             .centered();
 
         (&para).render(left_side_chunks[0], f.buffer_mut());

@@ -1,4 +1,4 @@
-use crate::terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, modals::DuplicateMergeModal, widgets::{autocomplete_input::AutoCompleteInput, button::{Button, ButtonState, Theme}, input_field::InputField, ButtonType}};
+use crate::terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, modals::DuplicateMergeModal, styling::ThemeRole, widgets::{autocomplete_input::AutoCompleteInput, button::{Button, ButtonState}, input_field::InputField, ButtonType}};
 use std::{rc::Rc, sync::{Arc, Mutex}, cell::RefCell};
 use database::schema::{prestashop_schema::OrderRow, GetKeysResponse};
 use ratatui::{layout::Rect, style::Style};
@@ -91,16 +91,16 @@ impl<'a> ServiceFormTab<'a> {
             technician_name: AutoCompleteInput::new("Technician Name", WidgetId("TechnicianName".to_string())),
             checkin_notes: InputField::new("CheckIn Notes", WidgetId("CheckInNotes".to_string())),
             recommendations: InputField::new("Recommendations", WidgetId("Recommendations".to_string())),
-            get_ticket_btn: Button::new("Get Ticket",WidgetId("GetTicket".to_string())).theme(Theme::ACCENT),
-            submit_btn: Button::new("Submit",WidgetId("SubmitTur".to_string())).theme(Theme::ACCENT),
-            get_keys_btn: Button::new("Get Keys",WidgetId("GetKeys".to_string())).theme(Theme::TERTIARY),
-            webroot_key_btn: Button::new("Webroot Key",WidgetId("CopyWebroot".to_string())).theme(Theme::NEUTRAL),
-            superanti_key_btn: Button::new("SuperAnti Key",WidgetId("CopySuperAnti".to_string())).theme(Theme::NEUTRAL),
+            get_ticket_btn: Button::new("Get Ticket",WidgetId("GetTicket".to_string())).theme(ThemeRole::Accent),
+            submit_btn: Button::new("Submit",WidgetId("SubmitTur".to_string())).theme(ThemeRole::Accent),
+            get_keys_btn: Button::new("Get Keys",WidgetId("GetKeys".to_string())).theme(ThemeRole::Tertiary),
+            webroot_key_btn: Button::new("Webroot Key",WidgetId("CopyWebroot".to_string())).theme(ThemeRole::Neutral),
+            superanti_key_btn: Button::new("SuperAnti Key",WidgetId("CopySuperAnti".to_string())).theme(ThemeRole::Neutral),
             // SEB/Carbonite buttons - initialized with labels that will be updated with values
-            carbonite_device_name_btn: Button::new("Carbonite Device Name",WidgetId("CopyCarboniteDeviceName".to_string())).theme(Theme::NEUTRAL),
-            carbonite_device_id_btn: Button::new("Device ID",WidgetId("CopyCarboniteDeviceId".to_string())).theme(Theme::NEUTRAL),
-            activation_code_btn: Button::new("Activation Code",WidgetId("CopyActivationCode".to_string())).theme(Theme::NEUTRAL),
-            recurly_id_btn: Button::new("Recurly ID",WidgetId("CopyRecurlyId".to_string())).theme(Theme::NEUTRAL),
+            carbonite_device_name_btn: Button::new("Carbonite Device Name",WidgetId("CopyCarboniteDeviceName".to_string())).theme(ThemeRole::Neutral),
+            carbonite_device_id_btn: Button::new("Device ID",WidgetId("CopyCarboniteDeviceId".to_string())).theme(ThemeRole::Neutral),
+            activation_code_btn: Button::new("Activation Code",WidgetId("CopyActivationCode".to_string())).theme(ThemeRole::Neutral),
+            recurly_id_btn: Button::new("Recurly ID",WidgetId("CopyRecurlyId".to_string())).theme(ThemeRole::Neutral),
             order_row_fields: Vec::new(),
             order_number: service_num_field,
             other_fields,

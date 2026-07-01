@@ -90,16 +90,33 @@ impl Notification {
         Ok(())
     }
 
-    /// Upserts this user's live-query canary (fixed record id, so it never
-    /// accumulates) stamped with `nonce`. The `live_query_check` type tells the
-    /// client to confirm live-stream liveness without surfacing a toast.
-    pub async fn send_live_query_canary(user: RecordId, nonce: String) -> anyhow::Result<()> {
-        let id = RecordId::new(NOTIFICATION_TABLE, format!("canary_{}", user.key_string()));
+    /// Upserts this session's live-query canary (record id fixed per
+    /// user+session so concurrent tabs never clobber each other's nonce)
+    /// stamped with `nonce`. The `live_query_check` type tells the client to
+    /// confirm live-stream liveness without surfacing a toast.
+    pub async fn send_live_query_canary(
+        user: RecordId,
+        session: &str,
+        nonce: String,
+    ) -> anyhow::Result<()> {
+        let id = RecordId::new(
+            NOTIFICATION_TABLE,
+            format!("canary_{}_{}", user.key_string(), session),
+        );
         DATABASE
             .query("UPSERT $id SET user = $user, notification_type = 'live_query_check', notification_description = $nonce, status = 'Read', created_at = time::now()")
             .bind(("id", id))
             .bind(("user", user))
             .bind(("nonce", nonce))
+            .await?;
+        Ok(())
+    }
+
+    /// Deletes this user's canary records older than a day (dead sessions).
+    pub async fn purge_stale_canaries(user: RecordId) -> anyhow::Result<()> {
+        DATABASE
+            .query("DELETE notification WHERE notification_type = 'live_query_check' AND user = $user AND created_at < time::now() - 1d")
+            .bind(("user", user))
             .await?;
         Ok(())
     }

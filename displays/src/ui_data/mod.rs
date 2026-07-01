@@ -1,6 +1,8 @@
-use database::{live_data::listen_data_filtered, schema::{utilities::{get_notifications, get_qcs, get_store_users, get_tasks_for_store}, RecordIdExt, TaskNotePayload, TaskNoteRead, User}};
+use database::{live_data::{listen_data_filtered, Action}, schema::{utilities::{get_notifications, get_qcs, get_store_users, get_tasks_for_store}, RecordIdExt, TaskNotePayload, TaskNoteRead, User}};
 use crate::ui_tools::toasts::{Toast, ToastKind, ToastOptions, ToastStyle};
 use crate::{get_toast_receiver, PlatformSpawner, Spawner, ToastMessage};
+use crate::app_state::ReconnectOutcome;
+use crossbeam::channel::Sender;
 use std::sync::Arc;
 
 pub mod receive_notes;
@@ -17,7 +19,45 @@ pub mod open_service_apply;
 // pub mod receive_database;
 
 impl crate::app_state::SharedContext {
+    /// Spawns one abortable live-query stream; stream failures report
+    /// `(epoch, error)` so stale generations can be discarded.
+    fn spawn_live_stream<T>(&mut self, tx: Sender<(Action, T)>, query: String)
+    where
+        T: serde::de::DeserializeOwned
+            + serde::Serialize
+            + std::fmt::Debug
+            + std::marker::Unpin
+            + database::SurrealValue
+            + Send
+            + 'static,
+    {
+        let epoch = self.live_epoch;
+        let error_tx = self.live_query_error_tx.clone();
+        let (fut, handle) = futures::future::abortable(async move {
+            let res = listen_data_filtered::<T>(tx, query.clone(), vec![]).await;
+            log::info!("live stream ended (`{query}`): {res:?}");
+            if let Err(e) = res {
+                let _ = error_tx.try_send((epoch, e.to_string()));
+            }
+        });
+        self.live_stream_aborts.push(handle);
+        PlatformSpawner::spawn(async move {
+            let _ = fut.await;
+        });
+    }
+
+    /// Aborts all live-query streams (dropping a stream auto-KILLs it) and
+    /// advances the epoch so late errors from them are ignored.
+    pub fn kill_live_streams(&mut self) {
+        for handle in self.live_stream_aborts.drain(..) {
+            handle.abort();
+        }
+        self.live_epoch = self.live_epoch.wrapping_add(1);
+        self.live_queries_active = false;
+    }
+
     pub fn load_data(&mut self, ctx: &eframe::egui::Context, user: &User) {
+        let first_load = self.timer.is_none();
         self.refresh_client_list();
         self.timer = Some(web_time::Instant::now());
         // get all of our channel Senders from crossbeam to get user/store/completed tasks,
@@ -43,7 +83,10 @@ impl crate::app_state::SharedContext {
             // self.web_console_layout.set_filesystem(self.filesystem.clone());
         }
 
-        if self.tasks.is_empty() || self.store_users.is_empty() {
+        // A reconnect sets `force_data_refetch`: live events missed during
+        // the outage are never replayed, so the snapshot must be re-pulled.
+        let force_refetch = std::mem::take(&mut self.force_data_refetch);
+        if self.tasks.is_empty() || self.store_users.is_empty() || force_refetch {
             let initial_tasks_tx = self.initial_tasks_tx.clone();
             let store_users_tx = self.store_users_tx.clone();
             let store = user.get_store();
@@ -82,127 +125,60 @@ impl crate::app_state::SharedContext {
             });
         }
 
-        // Live-query fan-out used to crash the SurrealDB pod (see
-        // `SurrealCrashes.md`): 40-50 users × 5 unfiltered streams =
-        // 200-250 concurrent `LIVE SELECT *` subscriptions. Two
-        // changes here:
-        //
-        //   1. `live_queries_active` gates the whole block. If
-        //      `load_data` runs again (re-login, reconnect, etc.),
-        //      we don't stack a second set of streams on top of the
-        //      still-running first set.
-        //   2. Every stream is filtered through
-        //      `listen_data_filtered` with a `WHERE` clause scoped to
-        //      the user's store, and each stream's UUID is shipped
-        //      back through `live_query_uuid_tx` so the
-        //      `receive_shared_logic` drain can call `KILL` on
-        //      shutdown / re-spawn instead of leaking the streams.
+        // Every stream is store-scoped (unfiltered fan-out used to crash the
+        // SurrealDB pod, see `SurrealCrashes.md`), spawned abortable, and
+        // epoch-tagged. Reconnects call `kill_live_streams()` first so a
+        // second set of subscriptions is never stacked on the first.
         if !self.live_queries_active {
             self.live_queries_active = true;
 
-            // Clone error channel for each live query
-            let error_tx_notes = self.live_query_error_tx.clone();
-            let error_tx_users = self.live_query_error_tx.clone();
-            let error_tx_tasks = self.live_query_error_tx.clone();
-            let error_tx_notifs = self.live_query_error_tx.clone();
-            let error_tx_clients = self.live_query_error_tx.clone();
-
             // task_note → joined through task.assignee.store so a note's
-            // visibility tracks the task it's attached to. Matches the
-            // pattern used by `TaskNotePayload::get_all_notes_in_my_store`.
-            PlatformSpawner::spawn(async move {
-                let res = listen_data_filtered::<TaskNotePayload>(
-                    notes_tx,
-                    "LIVE SELECT * FROM task_note WHERE task_id.assignee.store == $auth.store".to_string(),
-                    vec![],
-                ).await;
-                log::info!("listen_task_notes: {res:?}");
-                if let Err(e) = res {
-                    let _ = error_tx_notes.try_send(e.to_string());
-                }
-            });
+            // visibility tracks the task it's attached to.
+            self.spawn_live_stream::<TaskNotePayload>(
+                notes_tx,
+                "LIVE SELECT * FROM task_note WHERE task_id.assignee.store == $auth.store".to_string(),
+            );
 
-            // user → other users in the same store (admin presence /
-            // settings updates). Unfiltered before; now store-scoped.
-            PlatformSpawner::spawn(async move {
-                let res = listen_data_filtered::<User>(
-                    live_user_tx,
-                    "LIVE SELECT * FROM user WHERE store == $auth.store".to_string(),
-                    vec![],
-                ).await;
-                log::info!("listen_user: {res:?}");
-                if let Err(e) = res {
-                    let _ = error_tx_users.try_send(e.to_string());
-                }
-            });
+            // user → other users in the same store.
+            self.spawn_live_stream::<User>(
+                live_user_tx,
+                "LIVE SELECT * FROM user WHERE store == $auth.store".to_string(),
+            );
 
-            // task → assignee on this store. Matches the initial-fetch
-            // shape from `get_tasks_for_store` (assignee.store == $store).
-            PlatformSpawner::spawn(async move {
-                let res = listen_data_filtered::<database::schema::LiveTaskPayload>(
-                    live_tasks_tx,
-                    "LIVE SELECT * FROM task WHERE assignee.store == $auth.store".to_string(),
-                    vec![],
-                ).await;
-                log::info!("listen_tasks: {res:?}");
-                if let Err(e) = res {
-                    let _ = error_tx_tasks.try_send(e.to_string());
-                }
-            });
+            // task → assignees on this store.
+            self.spawn_live_stream::<database::schema::LiveTaskPayload>(
+                live_tasks_tx,
+                "LIVE SELECT * FROM task WHERE assignee.store == $auth.store".to_string(),
+            );
 
-            // notification → only this user's notifications. Notifications
-            // are addressed via the `user` field, so this is the tightest
-            // possible scope. Reduces server fan-out from "every
-            // notification table change" to "only mine".
-            PlatformSpawner::spawn(async move {
-                let res = listen_data_filtered::<database::schema::Notification>(
-                    live_notif_tx,
-                    "LIVE SELECT * FROM notification WHERE user == $auth.id".to_string(),
-                    vec![],
-                ).await;
-                log::info!("listen_notifications: {res:?}");
-                if let Err(e) = res {
-                    let _ = error_tx_notifs.try_send(e.to_string());
-                }
-            });
+            // notification → only this user's notifications.
+            self.spawn_live_stream::<database::schema::Notification>(
+                live_notif_tx,
+                "LIVE SELECT * FROM notification WHERE user == $auth.id".to_string(),
+            );
 
-            // connected_client → only this store's clients. Earlier
-            // iterations also gated on `connected == true`, but the
-            // admin UI needs to see disconnected rows (to show them as
-            // offline in the list); only store-scoping is applied here.
+            // connected_client → this store's connected clients.
             let is_root = user.get_authorization() == database::schema::user::UserAuthorization::Root;
-            PlatformSpawner::spawn(async move {
-                let query = if is_root {
-                    "LIVE SELECT * FROM connected_client WHERE assigned_user.store == $auth.store AND connected == true".to_string()
-                } else {
-                    "LIVE SELECT * FROM connected_client WHERE assigned_user == $auth.id AND assigned_user.store == $auth.store AND connected == true".to_string()
-                };
-                let res = listen_data_filtered::<database::schema::ConnectedClient>(
-                    live_clients_tx,
-                    query,
-                    vec![],
-                ).await;
-                log::info!("listen_connected_clients: {res:?}");
-                if let Err(e) = res {
-                    let _ = error_tx_clients.try_send(e.to_string());
-                }
-            });
+            let query = if is_root {
+                "LIVE SELECT * FROM connected_client WHERE assigned_user.store == $auth.store AND connected == true".to_string()
+            } else {
+                "LIVE SELECT * FROM connected_client WHERE assigned_user == $auth.id AND assigned_user.store == $auth.store AND connected == true".to_string()
+            };
+            self.spawn_live_stream::<database::schema::ConnectedClient>(live_clients_tx, query);
         } else {
             log::info!("load_data: live queries already active; skipping re-spawn");
         }
 
-        // Slice 5: kick off the per-admin TCP reachability prober.
-        // The prober loops forever until `wait_for_shutdown` fires,
-        // reading the current client list from the in-memory snapshot
-        // updated by `receive_client` (no per-round DB query) and
-        // shipping probe results back via `reachability_tx`. The UI
-        // drains them in `receive_shared_ui::drain_reachability_events`.
-        // Not available in WASM — raw TCP sockets don't exist in browsers.
+        // Per-admin TCP reachability prober; spawned once — the loop runs
+        // for the app's lifetime, so reconnect-driven `load_data` calls must
+        // not stack additional probers. Not available in WASM.
         #[cfg(not(target_arch = "wasm32"))]
-        reachability::spawn_prober(
-            self.reachability_tx.clone(),
-            self.clients_for_prober.clone(),
-        );
+        if first_load {
+            reachability::spawn_prober(
+                self.reachability_tx.clone(),
+                self.clients_for_prober.clone(),
+            );
+        }
 
         self.stock_tables.first_run();
         crate::ui_tools::theme_config::apply_user_color_scheme(ctx, &user.get_color_scheme());
@@ -217,17 +193,21 @@ impl crate::app_state::SharedContext {
         });
 
         ctx.request_repaint();
-        
-        let toast = &mut self.toasts;
-        let auth_toast = Toast {
-            kind: ToastKind::Success,
-            text: format!("Logged in successfully\nWelcome, {}", name).into(),
-            options: ToastOptions::default()
-                .show_progress(true)
-                .duration_in_seconds(6.0),
-            style: ToastStyle::default(),
-        };
-        toast.add(auth_toast);
+
+        // Reconnect-driven reloads stay silent; recovery is announced by the
+        // canary confirmation instead.
+        if first_load {
+            let toast = &mut self.toasts;
+            let auth_toast = Toast {
+                kind: ToastKind::Success,
+                text: format!("Logged in successfully\nWelcome, {}", name).into(),
+                options: ToastOptions::default()
+                    .show_progress(true)
+                    .duration_in_seconds(6.0),
+                style: ToastStyle::default(),
+            };
+            toast.add(auth_toast);
+        }
     }
 
     pub fn receive_shared(&mut self, frame: &mut eframe::Frame, ctx: &eframe::egui::Context) {
@@ -243,41 +223,80 @@ impl crate::app_state::SharedContext {
         }
 
         ctx.request_repaint_after(web_time::Duration::from_secs(1));
-        if let Ok(error_msg) = self.live_query_error_rx.try_recv() {
-            log::warn!("Live query connection error detected: {}", error_msg);
-            let looks_transient = error_msg.contains("connection reset")
-                || error_msg.contains("reset")
-                || error_msg.contains("I/O")
-                || error_msg.contains("ConnectionFailed")
-                || error_msg.contains("stream terminated");
-            if looks_transient {
-                self.trigger_live_reconnect(ctx);
+
+        // Drain the full error backlog every frame (five streams die at once
+        // on a WS reset); errors from replaced stream generations are noise.
+        let mut reconnect_wanted = false;
+        while let Ok((epoch, error_msg)) = self.live_query_error_rx.try_recv() {
+            if epoch != self.live_epoch {
+                log::debug!("Ignoring stale live-query error (epoch {epoch}): {error_msg}");
+                continue;
             }
+            log::warn!("Live query connection error detected: {}", error_msg);
+            reconnect_wanted = true;
+        }
+        if reconnect_wanted {
+            self.trigger_live_reconnect(ctx);
         }
 
-        // ensure_db_connected finished (spawned by trigger_live_reconnect):
-        // on success re-issue the LIVE SELECTs and force an immediate canary
-        // re-probe to confirm the new subscriptions actually deliver.
-        if let Ok(result) = self.reconnect_result_rx.try_recv() {
+        // Reconnect finished: on success kill the old streams, re-issue the
+        // LIVE SELECTs, refetch the snapshot the outage may have gapped, and
+        // force an immediate canary round-trip to confirm delivery. Results
+        // from attempts the stall watchdog already abandoned are discarded.
+        while let Ok((token, outcome)) = self.reconnect_result_rx.try_recv() {
+            if token != self.reconnect_token {
+                log::debug!("Ignoring result from abandoned reconnect attempt {token}: {outcome:?}");
+                continue;
+            }
             self.reconnect_in_progress = false;
-            match result {
-                Ok(()) => {
-                    log::info!("Reconnect OK — re-issuing live queries and re-probing");
-                    self.live_queries_active = false;
+            self.reconnect_started_at = None;
+            match outcome {
+                ReconnectOutcome::Ok => {
+                    log::info!("Reconnect OK — re-issuing live queries and re-syncing");
+                    self.kill_live_streams();
+                    self.force_data_refetch = true;
                     if let Some(user) = self.current_user.clone() {
                         self.load_data(ctx, &user);
                     }
+                    self.needs_reconnect = false;
                     self.last_canary_at = None;
                     self.canary_sent_at = None;
                     self.canary_nonce = None;
                 }
-                Err(e) => {
-                    log::warn!("ensure_db_connected failed: {e}");
-                    if self.reconnect_attempts >= 3 {
-                        self.show_reload_prompt = true;
-                    }
+                ReconnectOutcome::AuthLost => {
+                    log::warn!("Reconnected but $auth no longer matches the logged-in user");
+                    self.needs_reconnect = false;
+                    self.show_reload_prompt = true;
+                    self.toasts.add(Toast {
+                        kind: ToastKind::Error,
+                        text: "Session expired — please reload and log in again".into(),
+                        options: ToastOptions::default()
+                            .show_progress(true)
+                            .duration_in_seconds(8.0),
+                        style: ToastStyle::default(),
+                    });
+                }
+                ReconnectOutcome::Failed(e) => {
+                    log::warn!("Reconnect attempt {} failed: {e}", self.reconnect_attempts);
+                    self.needs_reconnect = true;
                 }
             }
+        }
+
+        // Stall watchdog + retry pump: a wedged attempt is abandoned, and a
+        // pending retry re-fires once `trigger_live_reconnect`'s backoff allows.
+        const RECONNECT_STALL: web_time::Duration = web_time::Duration::from_secs(45);
+        if self.reconnect_in_progress {
+            if let Some(started) = self.reconnect_started_at {
+                if web_time::Instant::now().duration_since(started) >= RECONNECT_STALL {
+                    log::warn!("Reconnect attempt stalled for {RECONNECT_STALL:?} — abandoning it");
+                    self.reconnect_in_progress = false;
+                    self.reconnect_started_at = None;
+                    self.needs_reconnect = true;
+                }
+            }
+        } else if self.needs_reconnect {
+            self.trigger_live_reconnect(ctx);
         }
 
         self.tick_live_query_health(ctx);
@@ -312,6 +331,12 @@ impl crate::app_state::SharedContext {
                         }
                     }
                 }
+                // Void any pre-hide canary (its timeout counted hidden time)
+                // and probe immediately so a WS that died while hidden is
+                // detected within seconds of returning to the foreground.
+                self.canary_sent_at = None;
+                self.canary_nonce = None;
+                self.last_canary_at = None;
             } else {
                 log::info!("Tab hidden");
                 self.tab_hidden_at = Some(web_time::Instant::now());
@@ -413,56 +438,78 @@ impl crate::app_state::SharedContext {
         }
     }
 
-    /// Rebuilds the DB connection off-thread; on success the
-    /// `reconnect_result_rx` drain re-issues the LIVE SELECTs and re-probes.
-    /// A cooldown swallows error bursts, the attempt budget refills after a
-    /// quiet period, and a single reconnect runs at a time.
+    /// Rebuilds the DB connection off-thread; the `reconnect_result_rx`
+    /// drain applies the outcome. Retries forever with exponential backoff
+    /// (a pending retry parks on `needs_reconnect` until the backoff
+    /// elapses); one attempt runs at a time; the operator is never blocked.
     fn trigger_live_reconnect(&mut self, _ctx: &eframe::egui::Context) {
-        const RECONNECT_COOLDOWN: web_time::Duration = web_time::Duration::from_secs(10);
-        const ATTEMPT_RESET_WINDOW: web_time::Duration = web_time::Duration::from_secs(60);
-        const MAX_RECONNECT_ATTEMPTS: u32 = 3;
-
-        if self.reconnect_in_progress {
+        if self.reconnect_in_progress || self.show_reload_prompt {
             return;
         }
+        let Some(user) = self.current_user.clone() else {
+            self.needs_reconnect = false;
+            return;
+        };
+
+        // 5s → 10s → 20s → 40s → 60s cap between consecutive failures.
         let now = web_time::Instant::now();
+        let backoff = web_time::Duration::from_secs((5u64 << self.reconnect_attempts.min(4)).min(60));
         if let Some(t) = self.last_live_respawn_at {
-            if now.duration_since(t) < RECONNECT_COOLDOWN {
+            if self.reconnect_attempts > 0 && now.duration_since(t) < backoff {
+                self.needs_reconnect = true;
                 return;
             }
-            if now.duration_since(t) >= ATTEMPT_RESET_WINDOW {
-                self.reconnect_attempts = 0;
-            }
-        }
-        if self.reconnect_attempts >= MAX_RECONNECT_ATTEMPTS {
-            log::warn!("Live reconnect budget exhausted — prompting operator");
-            self.show_reload_prompt = true;
-            return;
         }
 
-        self.reconnect_attempts += 1;
+        self.reconnect_attempts = self.reconnect_attempts.saturating_add(1);
+        self.reconnect_token = self.reconnect_token.wrapping_add(1);
         self.reconnect_in_progress = true;
-        self.needs_reconnect = true;
+        self.reconnect_started_at = Some(now);
+        self.needs_reconnect = false;
         self.last_live_respawn_at = Some(now);
-        log::warn!(
-            "Live-query reconnect attempt {}/{}",
-            self.reconnect_attempts, MAX_RECONNECT_ATTEMPTS
-        );
+        log::warn!("Live-query reconnect attempt {}", self.reconnect_attempts);
+
+        if !self.db_degraded {
+            self.db_degraded = true;
+            self.toasts.add(Toast {
+                kind: ToastKind::Warning,
+                text: "Connection interrupted — reconnecting in the background".into(),
+                options: ToastOptions::default()
+                    .show_progress(true)
+                    .duration_in_seconds(4.0),
+                style: ToastStyle::default(),
+            });
+        }
 
         let tx = self.reconnect_result_tx.clone();
+        let token = self.reconnect_token;
+        let expected = user.get_id();
         PlatformSpawner::spawn(async move {
-            let res = database::ensure_db_connected().await.map_err(|e| e.to_string());
-            let _ = tx.try_send(res);
+            let outcome = match database::ensure_db_connected_bounded().await {
+                // Verify the restored session is still the same user; a
+                // guest fallback would silently starve the LIVE streams.
+                Ok(()) => match database::current_auth_id().await {
+                    Ok(Some(id)) if id == expected => ReconnectOutcome::Ok,
+                    Ok(other) => {
+                        log::warn!("Post-reconnect $auth.id is {other:?}, expected {expected:?}");
+                        ReconnectOutcome::AuthLost
+                    }
+                    Err(e) => ReconnectOutcome::Failed(format!("auth verification failed: {e}")),
+                },
+                Err(e) => ReconnectOutcome::Failed(e.to_string()),
+            };
+            let _ = tx.try_send((token, outcome));
         });
     }
 
-    /// Periodic + post-reconnect live-query health probe. Writes a
-    /// `live_query_check` canary notification and expects it back through the
-    /// `notification` live stream within `CANARY_TIMEOUT`; a miss means the
-    /// subscription is dead and triggers a reconnect.
+    /// Periodic + post-reconnect live-query health probe. Writes this
+    /// session's `live_query_check` canary notification and expects it back
+    /// through the `notification` live stream within `CANARY_TIMEOUT`; a
+    /// miss (or a failed write) means the connection is dead and triggers a
+    /// reconnect.
     fn tick_live_query_health(&mut self, ctx: &eframe::egui::Context) {
         const PROBE_INTERVAL: web_time::Duration = web_time::Duration::from_secs(45);
-        const CANARY_TIMEOUT: web_time::Duration = web_time::Duration::from_secs(5);
+        const CANARY_TIMEOUT: web_time::Duration = web_time::Duration::from_secs(10);
 
         let Some(user) = self.current_user.clone() else {
             return;
@@ -496,16 +543,35 @@ impl crate::app_state::SharedContext {
         }
 
         self.canary_seq = self.canary_seq.wrapping_add(1);
-        let nonce = format!("{}:{}", user.get_id().key_string(), self.canary_seq);
+        let nonce = format!("{}:{}", self.live_session_id, self.canary_seq);
         self.canary_nonce = Some(nonce.clone());
         self.canary_sent_at = Some(now);
         self.last_canary_at = Some(now);
         let uid = user.get_id();
+        let session = self.live_session_id.clone();
+        let seq = self.canary_seq;
+        let epoch = self.live_epoch;
+        let error_tx = self.live_query_error_tx.clone();
         PlatformSpawner::spawn(async move {
-            if let Err(e) =
-                database::schema::Notification::send_live_query_canary(uid, nonce).await
+            match database::schema::Notification::send_live_query_canary(
+                uid.clone(),
+                &session,
+                nonce,
+            )
+            .await
             {
-                log::warn!("send_live_query_canary failed: {e:?}");
+                Err(e) => {
+                    log::warn!("send_live_query_canary failed: {e:?}");
+                    let _ = error_tx.try_send((epoch, format!("canary write failed: {e}")));
+                }
+                Ok(()) if seq % 20 == 1 => {
+                    if let Err(e) =
+                        database::schema::Notification::purge_stale_canaries(uid).await
+                    {
+                        log::debug!("purge_stale_canaries failed: {e:?}");
+                    }
+                }
+                Ok(()) => {}
             }
         });
         ctx.request_repaint_after(CANARY_TIMEOUT + web_time::Duration::from_millis(250));
@@ -519,26 +585,53 @@ impl crate::app_state::SharedContext {
         self.handle_modals(ctx);
         self.client_diagnostics_popup_ui(ctx);
         self.drain_reachability_events();
+        self.connection_status_pill(ctx);
         #[cfg(target_arch = "wasm32")]
         self.reload_prompt_ui(ctx);
         self.toasts.show(ctx);
     }
 
-    /// Action-required banner shown when `live_query_error_rx` reports
-    /// a stream-terminated error. There is no automatic reconnect path
-    /// anymore — the operator clicks "Reconnect" to call `load_data`
-    /// directly (the same pattern Mastertech4.0 uses), which re-issues
-    /// the five LIVE SELECT subscriptions against whatever WS the
-    /// SurrealDB SDK is currently holding. If that fails too, the
-    /// operator can click "Reload page" to fully restart the WASM app.
+    /// Small corner pill shown while the DB link is degraded; reconnection
+    /// runs in the background and needs no operator action.
+    fn connection_status_pill(&mut self, ctx: &eframe::egui::Context) {
+        if !self.db_degraded || self.show_reload_prompt {
+            return;
+        }
+        eframe::egui::Area::new(eframe::egui::Id::new("db_status_pill"))
+            .anchor(eframe::egui::Align2::RIGHT_BOTTOM, [-12.0, -12.0])
+            .order(eframe::egui::Order::Foreground)
+            .show(ctx, |ui| {
+                eframe::egui::Frame::new()
+                    .fill(eframe::egui::Color32::from_rgb(45, 35, 20))
+                    .stroke(eframe::egui::Stroke::new(
+                        1.0,
+                        eframe::egui::Color32::from_rgb(220, 170, 60),
+                    ))
+                    .corner_radius(eframe::egui::CornerRadius::same(12))
+                    .inner_margin(eframe::egui::Margin::symmetric(10, 6))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.add(eframe::egui::Spinner::new().size(13.0));
+                            ui.label(
+                                eframe::egui::RichText::new("Reconnecting…")
+                                    .size(12.0)
+                                    .color(eframe::egui::Color32::from_rgb(240, 210, 140)),
+                            );
+                        });
+                    });
+            });
+    }
+
+    /// Action-required banner shown only when a reconnect restored the
+    /// connection but not the operator's identity (expired JWT / guest
+    /// fallback) — the one failure mode a reload + login must fix.
     #[cfg(target_arch = "wasm32")]
     fn reload_prompt_ui(&mut self, ctx: &eframe::egui::Context) {
         if !self.show_reload_prompt {
             return;
         }
         let mut reload_clicked = false;
-        let mut reconnect_clicked = false;
-        eframe::egui::Window::new("Connection lost")
+        eframe::egui::Window::new("Session expired")
             .anchor(eframe::egui::Align2::CENTER_TOP, [0.0, 60.0])
             .collapsible(false)
             .resizable(false)
@@ -555,57 +648,28 @@ impl crate::app_state::SharedContext {
                 ui.vertical_centered(|ui| {
                     ui.add_space(4.0);
                     ui.label(
-                        eframe::egui::RichText::new("Real-time updates are offline")
+                        eframe::egui::RichText::new("Your session expired")
                             .strong()
                             .size(14.0)
                             .color(eframe::egui::Color32::from_rgb(255, 200, 200)),
                     );
                     ui.label(
                         eframe::egui::RichText::new(
-                            "The live subscription was dropped. Try reconnecting first, \
-                            or reload the page if that doesn't recover.",
+                            "The connection was restored but your login could not be \
+                            re-established. Reload the page and sign in again.",
                         )
                         .color(eframe::egui::Color32::from_rgb(230, 200, 200)),
                     );
                     ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        if ui.button("Reconnect").clicked() {
-                            reconnect_clicked = true;
-                        }
-                        if ui.button("Reload page").clicked() {
-                            reload_clicked = true;
-                        }
-                    });
+                    if ui.button("Reload page").clicked() {
+                        reload_clicked = true;
+                    }
                     ui.add_space(4.0);
                 });
             });
-        if reconnect_clicked {
-            log::info!(
-                "Reconnect button clicked — calling load_data to re-issue LIVE SELECTs"
-            );
-            self.show_reload_prompt = false;
-            self.reconnect_attempts = 0;
-            // Snapshot current_user before calling load_data so we don't
-            // hold an aliasing borrow of self.
-            let user = self.current_user.clone();
-            if let Some(user) = user {
-                self.load_data(ctx, &user);
-            } else {
-                log::warn!("Reconnect clicked but current_user is None");
-            }
-        }
         if reload_clicked {
-            #[cfg(target_arch = "wasm32")]
-            {
-                if let Some(win) = web_sys::window() {
-                    let _ = win.location().reload();
-                }
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                // Native: reload doesn't apply. Just dismiss; the
-                // operator can hit Reconnect again if they want to retry.
-                self.show_reload_prompt = false;
+            if let Some(win) = web_sys::window() {
+                let _ = win.location().reload();
             }
         }
     }

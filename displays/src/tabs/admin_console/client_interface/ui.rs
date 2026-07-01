@@ -34,12 +34,21 @@ pub enum WsDisplayState {
     /// the matched task's ticket, check-in notes, recommendations, task
     /// notes, diagnostic sessions, and history.
     ServiceRecord,
+    /// Full remote-desktop control: live raster screen view with keyboard and
+    /// mouse injection into the client's OS.
+    RemoteDesktop,
 }
 
 impl WebSocketClient {
     pub fn show(&mut self, ui: &mut Ui) {
         self.receive(ui.ctx());
         ui.set_min_height(600.);
+
+        // Auto-stop remote-desktop streaming when the operator navigates away.
+        if self.desktop_streaming && !matches!(self.state, WsDisplayState::RemoteDesktop) {
+            self.desktop_streaming = false;
+            let _ = self.send_cmd_tx.try_send(Cmd::DesktopStreamStop);
+        }
 
         // ── Unified menu-button toolbar ──────────────────────────────────
         //
@@ -165,6 +174,25 @@ impl WebSocketClient {
                         let _ = self.display_state_channel.0.try_send(WsDisplayState::Terminal);
                         self.egui_viewer_active = true;
                         let _ = self.send_cmd_tx.try_send(Cmd::SetFrameCapture { enabled: true });
+                        ui.close();
+                    }
+                    if self.desktop_streaming {
+                        if ui.button(RichText::new(format!("{} Stop Remote Desktop", icons::STOP)).color(ui.style().visuals.error_fg_color)).clicked() {
+                            self.desktop_streaming = false;
+                            let _ = self.send_cmd_tx.try_send(Cmd::DesktopStreamStop);
+                            let _ = self.display_state_channel.0.try_send(WsDisplayState::Home);
+                            ui.close();
+                        }
+                    } else if ui.button(format!("{} Remote Desktop", icons::DESKTOP)).clicked() {
+                        self.desktop_streaming = true;
+                        let _ = self.send_cmd_tx.try_send(Cmd::DesktopListMonitors);
+                        let _ = self.send_cmd_tx.try_send(Cmd::DesktopStreamStart {
+                            monitor: self.desktop_monitor,
+                            fps: self.desktop_fps,
+                            quality: self.desktop_quality,
+                            scale: self.desktop_scale,
+                        });
+                        let _ = self.display_state_channel.0.try_send(WsDisplayState::RemoteDesktop);
                         ui.close();
                     }
                     if self.interactive {
@@ -378,6 +406,7 @@ impl WebSocketClient {
                     WsDisplayState::InstalledPrograms => "Installed Programs",
                     WsDisplayState::McpToolLog    => "MCP Tool Log",
                     WsDisplayState::ServiceRecord => "Service Record",
+                    WsDisplayState::RemoteDesktop => "Remote Desktop",
                 };
                 ui.label(
                     RichText::new(current_view)
@@ -565,6 +594,123 @@ impl WebSocketClient {
                 let client = self.client.clone();
                 let state_tx = self.display_state_channel.0.clone();
                 self.service_record.display(ui, &client, &state_tx);
+            },
+            WsDisplayState::RemoteDesktop => {
+                #[cfg(all(feature = "tokio", not(target_arch = "wasm32")))]
+                {
+                    let monitors = self.desktop_monitors.clone();
+                    let mut monitor = self.desktop_monitor;
+                    let mut fps = self.desktop_fps;
+                    let mut quality = self.desktop_quality;
+                    let mut scale = self.desktop_scale;
+                    let mut streaming = self.desktop_streaming;
+                    let mut restart = false;
+                    let mut stop = false;
+                    let frames = self.desktop_viewer.frames_shown;
+                    let latency = self.desktop_viewer.last_latency_ms;
+                    let bytes = self.desktop_viewer.last_frame_bytes;
+
+                    let label = |m: &crate::remote_desktop::DesktopMonitorInfo| {
+                        format!(
+                            "{}{} ({}x{})",
+                            if m.is_primary { "★ " } else { "" },
+                            m.name,
+                            m.width,
+                            m.height
+                        )
+                    };
+
+                    ui.horizontal_wrapped(|ui| {
+                        if !monitors.is_empty() {
+                            let selected = monitors
+                                .iter()
+                                .find(|m| m.id == monitor)
+                                .map(|m| label(m))
+                                .unwrap_or_else(|| "Primary".to_string());
+                            eframe::egui::ComboBox::from_id_salt("remote_desktop_monitor")
+                                .selected_text(selected)
+                                .show_ui(ui, |ui| {
+                                    for m in &monitors {
+                                        if ui
+                                            .selectable_label(monitor == m.id, label(m))
+                                            .clicked()
+                                        {
+                                            monitor = m.id;
+                                            restart = true;
+                                        }
+                                    }
+                                });
+                        }
+                        if ui
+                            .add(eframe::egui::Slider::new(&mut fps, 1..=30).text("fps"))
+                            .drag_stopped()
+                        {
+                            restart = true;
+                        }
+                        if ui
+                            .add(eframe::egui::Slider::new(&mut quality, 20..=90).text("quality"))
+                            .drag_stopped()
+                        {
+                            restart = true;
+                        }
+                        if ui
+                            .add(eframe::egui::Slider::new(&mut scale, 0.25..=1.0).text("scale"))
+                            .drag_stopped()
+                        {
+                            restart = true;
+                        }
+                        if streaming {
+                            if ui.button(format!("{} Stop", icons::STOP)).clicked() {
+                                streaming = false;
+                                stop = true;
+                            }
+                        } else if ui.button(format!("{} Start", icons::PLAY)).clicked() {
+                            streaming = true;
+                            restart = true;
+                        }
+                        ui.separator();
+                        ui.label(
+                            RichText::new(format!(
+                                "{frames} frames | {latency} ms | {} KB/frame",
+                                bytes / 1024
+                            ))
+                            .small()
+                            .color(Color32::from_rgb(140, 180, 140)),
+                        );
+                    });
+
+                    self.desktop_monitor = monitor;
+                    self.desktop_fps = fps;
+                    self.desktop_quality = quality;
+                    self.desktop_scale = scale;
+                    self.desktop_streaming = streaming;
+                    if stop {
+                        let _ = self.send_cmd_tx.try_send(Cmd::DesktopStreamStop);
+                    }
+                    if restart && streaming {
+                        let _ = self.send_cmd_tx.try_send(Cmd::DesktopStreamStart {
+                            monitor,
+                            fps,
+                            quality,
+                            scale,
+                        });
+                    }
+
+                    ui.separator();
+                    let Self { desktop_viewer, transport, .. } = self;
+                    desktop_viewer.ui(ui, |ev| {
+                        match bincode::serde::encode_to_vec(&ev, standard()) {
+                            Ok(ser) => {
+                                let mut v = vec![crate::DESKTOP_INPUT_TAG];
+                                v.extend(ser);
+                                transport.send(WsMessage::Binary(v));
+                            }
+                            Err(e) => {
+                                log::warn!(target: "remote_desktop", "encode input failed: {e}");
+                            }
+                        }
+                    });
+                }
             },
         };
     }

@@ -51,7 +51,7 @@ pub fn LoginPage(props: LoginPageProps) -> Element {
             div { class: "card-cosmic w-full max-w-xs p-5 space-y-4",
                 // Logo
                 div { class: "flex items-center gap-2 justify-center mb-2",
-                    div { class: "w-8 h-8 rounded-lg bg-gradient-to-br from-[#5b21b6] to-[#db2777]" }
+                    div { class: "w-8 h-8 rounded-lg bg-gradient-to-br from-[#ff2d55] to-[#ff1493]" }
                     span { class: "text-base font-bold text-star-white", "Mastertech" }
                 }
                 input {

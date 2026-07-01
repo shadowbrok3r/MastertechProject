@@ -728,3 +728,82 @@ async fn write_frame(
     write_half.write_all(payload).await?;
     Ok(())
 }
+
+/// High-level transport event for non-egui consumers (the Dioxus mobile app)
+/// that drive an [`AdminTransport`] directly without the full
+/// [`WebSocketClient`](super::WebSocketClient). Binary frames that decode as a
+/// [`Cmd`](crate::Cmd) are delivered as [`SessionEvent::Cmd`]; everything else
+/// passes through raw.
+#[derive(Debug)]
+pub enum SessionEvent {
+    Opened,
+    Closed,
+    Error(String),
+    Cmd(crate::Cmd),
+    Text(String),
+    Binary(Vec<u8>),
+}
+
+impl AdminTransport {
+    /// Dial a client the way the admin console's `open_session` does: direct
+    /// TCP when `local_ip`+`tcp_port` are advertised, else the WebSocket relay.
+    pub fn dial(client: &database::schema::ConnectedClient) -> Option<AdminTransport> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let (Some(ip), Some(port)) = (client.local_ip.as_deref(), client.tcp_port) {
+            if !ip.is_empty() {
+                return Some(AdminTransport::from_tcp(
+                    format!("{ip}:{port}"),
+                    client.connection_string.clone(),
+                ));
+            }
+        }
+        AdminTransport::dial_relay(&client.connection_string)
+    }
+
+    /// Dial the WebSocket relay room for `connection_string` as `master`.
+    pub fn dial_relay(connection_string: &str) -> Option<AdminTransport> {
+        let url = database::websocket_url_with_room(
+            if cfg!(debug_assertions) {
+                database::WS_MASTER_URL_LOCAL
+            } else {
+                database::WS_MASTER_URL
+            },
+            connection_string,
+            "master",
+        );
+        match ewebsock::connect(&url, Default::default()) {
+            Ok((sender, receiver)) => Some(AdminTransport::from_ws(sender, receiver)),
+            Err(e) => {
+                log::error!("AdminTransport::dial_relay -> {url:?}: {e}");
+                None
+            }
+        }
+    }
+
+    /// Serialize and send a [`Cmd`](crate::Cmd) over this transport.
+    pub fn send_cmd(&mut self, cmd: &crate::Cmd) {
+        self.send(WsMessage::Binary(super::serialize_command(cmd)));
+    }
+
+    /// Poll one high-level [`SessionEvent`], decoding binary frames as `Cmd`
+    /// when they parse exactly. Returns `None` when no event is queued.
+    pub fn poll_event(&mut self) -> Option<SessionEvent> {
+        match self.try_recv()? {
+            WsEvent::Opened => Some(SessionEvent::Opened),
+            WsEvent::Closed => Some(SessionEvent::Closed),
+            WsEvent::Error(e) => Some(SessionEvent::Error(e)),
+            WsEvent::Message(WsMessage::Binary(b)) => {
+                let b: Vec<u8> = b.into();
+                if super::is_zstd_frame(&b) {
+                    return Some(SessionEvent::Binary(b));
+                }
+                match super::deserialize_command(&b) {
+                    Some(cmd) => Some(SessionEvent::Cmd(cmd)),
+                    None => Some(SessionEvent::Binary(b)),
+                }
+            }
+            WsEvent::Message(WsMessage::Text(t)) => Some(SessionEvent::Text(t.into())),
+            WsEvent::Message(_) => None,
+        }
+    }
+}

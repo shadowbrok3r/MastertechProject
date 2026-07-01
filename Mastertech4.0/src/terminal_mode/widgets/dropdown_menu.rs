@@ -5,7 +5,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::terminal_mode::styling::{APP_BACKGROUND, THEME};
+use crate::terminal_mode::styling::THEME;
 use super::menu_item::MenuItem;
 
 /// A hover/click dropdown overlay anchored under a trigger rect.
@@ -98,7 +98,7 @@ impl DropdownMenu {
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(Style::new().fg(THEME.accent))
-            .style(Style::new().bg(APP_BACKGROUND));
+            .style(Style::new().bg(THEME.bg));
         let inner = block.inner(rect);
         f.render_widget(block, rect);
 

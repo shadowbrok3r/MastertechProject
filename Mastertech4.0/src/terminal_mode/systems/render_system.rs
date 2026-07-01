@@ -64,6 +64,11 @@ impl RenderSystem {
                                 if let Ok(mut ctx) = self.ctx.lock() {
                                     let tx = ctx.tasks_tx.clone();
                                     ctx.user = user.0.clone();
+                                    // Apply the user's saved terminal-mode color scheme,
+                                    // or the default so a prior user's theme doesn't leak.
+                                    crate::terminal_mode::styling::TuiColorScheme::decode(&user.0.get_tui_color_scheme())
+                                        .unwrap_or_default()
+                                        .apply();
                                     let store = user.0.get_store().as_str().to_string();
                                     let usr_id = user.0.get_id().clone();
                                     let mut client = get_client_hash();

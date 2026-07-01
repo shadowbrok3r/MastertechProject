@@ -46,6 +46,8 @@ pub fn effective_model(default: &str) -> String {
 // region:    --- Modules
 
 pub mod chat;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod claude_code;
 pub mod conv;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub mod mcp_chat;

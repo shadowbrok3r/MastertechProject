@@ -10,9 +10,13 @@ use database::live_data::Action;
 
 impl SharedContext {
     pub fn receive_notification(&mut self, ctx: &eframe::egui::Context) {
-        if let Ok((action, notification)) = self.live_notification_rx.try_recv() {
+        // Drain the whole backlog each frame — after a hidden-tab stretch the
+        // buffered stream can hold hundreds of events, and the canary echo
+        // must not sit behind them past its timeout.
+        while let Ok((action, notification)) = self.live_notification_rx.try_recv() {
             // Live-query canary: confirm the notification stream is alive and
-            // never surface it as a real notification.
+            // never surface it as a real notification. Canaries from other
+            // sessions of the same user flow through here too — ignore them.
             if notification.notification_type == "live_query_check" {
                 let matched = matches!(action, Action::Create | Action::Update)
                     && self.canary_nonce.as_deref()
@@ -23,14 +27,19 @@ impl SharedContext {
                     self.reconnect_attempts = 0;
                     self.needs_reconnect = false;
                     self.show_reload_prompt = false;
-                } else if self.canary_nonce.is_some() {
-                    log::debug!(
-                        "live-query canary unmatched: {} ({action:?}); awaiting {:?}",
-                        notification.notification_description,
-                        self.canary_nonce
-                    );
+                    if self.db_degraded {
+                        self.db_degraded = false;
+                        self.toasts.add(Toast {
+                            kind: ToastKind::Success,
+                            text: "Connection restored".into(),
+                            options: ToastOptions::default()
+                                .show_progress(true)
+                                .duration_in_seconds(4.0),
+                            style: ToastStyle::default(),
+                        });
+                    }
                 }
-                return;
+                continue;
             }
 
             // Test text
