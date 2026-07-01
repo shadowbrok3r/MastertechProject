@@ -1266,6 +1266,18 @@ pub struct StressTestMetric {
     #[serde(default)]
     #[surreal(default)]
     pub tdr_delta_count: Option<u32>,
+    /// Mean CPU utilization across logical cores at this tick. Missing on older rows.
+    #[serde(default)]
+    #[surreal(default)]
+    pub cpu_usage_pct: Option<f32>,
+    /// Mean CPU core clock (MHz) at this tick. Missing on older rows.
+    #[serde(default)]
+    #[surreal(default)]
+    pub clock_mhz: Option<u32>,
+    /// Aggregate board power (W) at this tick; GPU-sum proxy. Missing on older rows.
+    #[serde(default)]
+    #[surreal(default)]
+    pub power_w: Option<f32>,
 }
 
 impl StressTestMetric {
@@ -1292,6 +1304,9 @@ impl StressTestMetric {
             gpu_power_w: None,
             gpu_usage_pct: None,
             tdr_delta_count: None,
+            cpu_usage_pct: None,
+            clock_mhz: None,
+            power_w: None,
         }
     }
 

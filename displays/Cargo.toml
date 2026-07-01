@@ -6,7 +6,7 @@ edition = "2024"
 [features]
 default = [ "wasm" ]
 tokio = ["dep:tokio"]
-native-telemetry = ["dep:stress-kit"]
+native-telemetry = ["dep:stress-kit", "stress-kit/winring0-thermal"]
 wasm = ["dep:wasm-bindgen-futures", "dep:web-time"]
 wasm-plugins = ["dep:wasmtime", "dep:wasmtime-wasi", "dep:wat"]
 puffin = []

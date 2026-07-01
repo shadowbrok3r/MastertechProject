@@ -18,7 +18,9 @@ use winapi::um::winsvc::{
     OpenServiceW, StartServiceW, SC_HANDLE, SC_MANAGER_ALL_ACCESS, SERVICE_ALL_ACCESS,
     SERVICE_CONTROL_STOP, SERVICE_STATUS,
 };
-use winapi::um::{errhandlingapi, fileapi, handleapi, ioapiset, processthreadsapi, winbase, winnt};
+use winapi::um::{
+    errhandlingapi, fileapi, handleapi, ioapiset, processthreadsapi, synchapi, winbase, winnt,
+};
 
 use super::ThermalReading;
 
@@ -55,6 +57,12 @@ const MAX_CORES: usize = 64;
 const CPU_MIN_PLAUSIBLE_C: f32 = 0.0;
 const CPU_MAX_PLAUSIBLE_C: f32 = 125.0;
 
+/// Bounded wait for the shared PCI mutex; proceed unlocked past this so a stuck
+/// peer can't stall the sampler thread.
+const PCI_MUTEX_WAIT_MS: u32 = 200;
+const WAIT_OBJECT_0: u32 = 0;
+const WAIT_ABANDONED: u32 = 0x80;
+
 #[derive(Clone, Copy, PartialEq)]
 enum Vendor {
     Intel,
@@ -68,6 +76,9 @@ pub struct CpuThermalMonitor {
     tj_max: u32,
     cached: Vec<ThermalReading>,
     last_polled: Instant,
+    /// `Global\Access_PCI`; null when unavailable. Serializes SMN index/data
+    /// access against other sensor tools (LHM/HWiNFO/AIDA64/CPU-Z).
+    pci_mutex: winnt::HANDLE,
 }
 
 impl CpuThermalMonitor {
@@ -97,6 +108,7 @@ impl CpuThermalMonitor {
             tj_max: 100,
             cached: Vec::new(),
             last_polled: Instant::now() - MIN_POLL_INTERVAL,
+            pci_mutex: open_pci_mutex(),
         };
         if vendor == Vendor::Intel {
             me.tj_max = me.read_tjmax();
@@ -181,6 +193,7 @@ impl CpuThermalMonitor {
     }
 
     fn read_amd_tctl(&self) -> Option<f32> {
+        let _guard = PciGuard::acquire(self.pci_mutex);
         self.write_pci_config(AMD_D0F0, AMD_SMU_INDEX_REG, AMD_SMN_THM_CUR_TEMP)?;
         let val = self.read_pci_config(AMD_D0F0, AMD_SMU_DATA_REG)?;
         if val == 0 || val == 0xFFFF_FFFF {
@@ -268,8 +281,41 @@ impl CpuThermalMonitor {
 
 impl Drop for CpuThermalMonitor {
     fn drop(&mut self) {
+        if !self.pci_mutex.is_null() {
+            unsafe { handleapi::CloseHandle(self.pci_mutex) };
+        }
         unsafe { handleapi::CloseHandle(self.device) };
         unload_driver();
+    }
+}
+
+/// Opens the shared `Global\Access_PCI` mutex; null on failure (caller proceeds unlocked).
+fn open_pci_mutex() -> winnt::HANDLE {
+    let name = wide(r"Global\Access_PCI");
+    unsafe { synchapi::CreateMutexW(null_mut(), 0, name.as_ptr()) }
+}
+
+/// Holds `Global\Access_PCI` for one SMN read; best-effort (proceeds on null/timeout).
+struct PciGuard {
+    handle: winnt::HANDLE,
+    acquired: bool,
+}
+
+impl PciGuard {
+    fn acquire(handle: winnt::HANDLE) -> Self {
+        let acquired = !handle.is_null() && {
+            let r = unsafe { synchapi::WaitForSingleObject(handle, PCI_MUTEX_WAIT_MS) };
+            r == WAIT_OBJECT_0 || r == WAIT_ABANDONED
+        };
+        Self { handle, acquired }
+    }
+}
+
+impl Drop for PciGuard {
+    fn drop(&mut self) {
+        if self.acquired {
+            unsafe { synchapi::ReleaseMutex(self.handle) };
+        }
     }
 }
 

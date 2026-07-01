@@ -189,7 +189,36 @@ pub fn metric_from_snapshot(
             .tdr
             .as_ref()
             .map(|t| t.delta_since_program_start as u32),
+        cpu_usage_pct: mean_core_usage_pct(snapshot),
+        clock_mhz: mean_core_clock_mhz(snapshot),
+        power_w: gpu_power_sum_w(snapshot),
     })
+}
+
+/// Mean `usage_pct` across logical cores; `None` when no cores sampled.
+fn mean_core_usage_pct(snapshot: &TelemetrySnapshot) -> Option<f32> {
+    if snapshot.cores.is_empty() {
+        return None;
+    }
+    let sum: f32 = snapshot.cores.iter().map(|c| c.usage_pct).sum();
+    Some(sum / snapshot.cores.len() as f32)
+}
+
+/// Mean core clock (MHz) across cores reporting a nonzero frequency.
+fn mean_core_clock_mhz(snapshot: &TelemetrySnapshot) -> Option<u32> {
+    let (sum, count) = snapshot
+        .cores
+        .iter()
+        .map(|c| c.freq_mhz)
+        .filter(|&mhz| mhz > 0)
+        .fold((0u64, 0u64), |(s, n), mhz| (s + mhz, n + 1));
+    (count > 0).then(|| (sum / count) as u32)
+}
+
+/// Board power (W) summed across GPUs; the PSU-load proxy (no portable CPU power source).
+fn gpu_power_sum_w(snapshot: &TelemetrySnapshot) -> Option<f32> {
+    let sum: f32 = snapshot.gpus.iter().filter_map(|g| g.power_w).sum();
+    (sum > 0.0).then_some(sum)
 }
 
 /// Max of one optional field across all sampled GPUs.

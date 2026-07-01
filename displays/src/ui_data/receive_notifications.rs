@@ -87,7 +87,7 @@ impl SharedContext {
                                     .color(theme::success_ctx(ctx))
                                     .font(FontId::monospace(15.))
                                     .into(),
-                                    options: ToastOptions::default().duration(None),
+                                    options: ToastOptions::default().duration(Some(std::time::Duration::from_secs(3))),
                                     style: ToastStyle::default(),
                                 };
                                 toast.add(auth_toast);
