@@ -476,6 +476,7 @@ pub async fn create_full_task_payload(
     // let task_id = task_data.id.clone();
     let customer_id = customer_data.id.clone();
     let computer_id = computer_data.id.clone();
+    let connection_string = computer_id.key_string();
     let service_number = ticket_data.service_number.clone();
 
     // A service_order with this service_number may already exist under a
@@ -561,6 +562,20 @@ pub async fn create_full_task_payload(
     match service_ticket_record {
         Ok(record) => info!("schema/utilities.rs -> service_ticket_record: {record:?}"),
         Err(e) => return TaskCreationResult::Error { message: format!("Failed to create service ticket: {e}") },
+    }
+
+    // Canonical computer id key equals the connection_string; link the
+    // connected_client so the admin console reads customer instead of None.
+    if super::entity_link::is_canonical_computer_key(&connection_string) {
+        if let Err(e) = super::entity_link::link_connected_client_record(
+            &connection_string,
+            &customer_id.key_string(),
+            None,
+        )
+        .await
+        {
+            log::warn!("create_full_task_payload: link_connected_client_record failed (non-fatal): {e:?}");
+        }
     }
 
     info!("schema/utilities.rs -> Task Data: {:?}", &task_data);

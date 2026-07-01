@@ -42,4 +42,4 @@ windows = { version = "0.62", features = [
 wmi = "=0.18.3"
 evtx = "0.11"
 # WinRing0 loader (winring0-thermal feature); SCM + device IO via winapi.
-winapi = { version = "0.3", features = ["fileapi", "ioapiset", "winnt", "handleapi", "errhandlingapi", "winbase", "processthreadsapi", "minwindef", "winsvc", "std"] }
+winapi = { version = "0.3", features = ["fileapi", "ioapiset", "winnt", "handleapi", "errhandlingapi", "winbase", "synchapi", "processthreadsapi", "minwindef", "winsvc", "std"] }

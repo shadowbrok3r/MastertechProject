@@ -84,6 +84,14 @@ pub struct SharedContext {
     pub connected_clients_tx: Sender<Vec<ConnectedClient>>,
     #[serde(skip)]
     pub connected_clients_rx: Receiver<Vec<ConnectedClient>>,
+    /// {Resolved (connection_string, customer) from a client's linked computer when connected_client.customer is null}
+    #[serde(skip)]
+    pub client_customer_resolved_tx: Sender<Vec<(String, RecordId)>>,
+    #[serde(skip)]
+    pub client_customer_resolved_rx: Receiver<Vec<(String, RecordId)>>,
+    /// {connection_strings with an in-flight customer-resolution query}
+    #[serde(skip)]
+    pub client_customer_resolving: std::collections::HashSet<String>,
     #[serde(skip)]
     pub live_clients_tx: Sender<(Action, ConnectedClient)>,
     #[serde(skip)]
@@ -487,6 +495,7 @@ impl SharedContext {
         let (live_clients_tx, live_clients_rx) = channel::unbounded::<(Action, ConnectedClient)>();
         let (associated_notes_tx, associated_notes_rx) = channel::unbounded::<Vec<TaskNotePayload>>();
         let (connected_clients_tx, connected_clients_rx) = channel::unbounded::<Vec<ConnectedClient>>();
+        let (client_customer_resolved_tx, client_customer_resolved_rx) = channel::unbounded::<Vec<(String, RecordId)>>();
         let (notes_tx, notes_rx) = channel::unbounded::<(Action, TaskNotePayload)>();
         let (read_state_tx, read_state_rx) = channel::unbounded::<Vec<TaskNoteRead>>();
         let (client_diagnostics_tx, client_diagnostics_rx) =
@@ -566,6 +575,8 @@ impl SharedContext {
             store_users_tx, store_users_rx, 
             app_state_tx, app_state_rx,
             connected_clients_tx, connected_clients_rx,
+            client_customer_resolved_tx, client_customer_resolved_rx,
+            client_customer_resolving: std::collections::HashSet::new(),
             new_ticket_tx, new_ticket_rx,
             notes_tx, notes_rx,
             live_user_tx, live_user_rx,

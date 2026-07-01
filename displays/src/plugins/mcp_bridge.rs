@@ -418,6 +418,7 @@ pub struct CallPluginToolParams {
     #[schemars(description = "Tool name to call")]
     pub tool_name: String,
     #[schemars(description = "JSON arguments for the tool")]
+    #[serde(default, deserialize_with = "deserialize_lenient_args")]
     pub args: Option<serde_json::Value>,
 }
 
@@ -489,6 +490,7 @@ pub struct CallRemotePluginToolParams {
     #[schemars(description = "Tool name exposed by the remote plugin")]
     pub tool_name: String,
     #[schemars(description = "JSON arguments for the tool (default: {})")]
+    #[serde(default, deserialize_with = "deserialize_lenient_args")]
     pub args: Option<serde_json::Value>,
 }
 
@@ -1723,9 +1725,9 @@ impl PluginToolProvider {
         let result = mgr
             .dispatch_mcp_call(&p.plugin_id, &p.tool_name, args)
             .map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![
-            ContentBlock::json(result).map_err(to_internal)?
-        ]))
+        Ok(CallToolResult::success(vec![plugin_value_to_content(
+            result,
+        )?]))
     }
 
     // ── Remote egui (MCP → Web Console WebSocket) ───────────────────────────────
@@ -2791,9 +2793,9 @@ impl PluginToolProvider {
         if success {
             let value: serde_json::Value = serde_json::from_str(&result_json)
                 .unwrap_or(serde_json::Value::String(result_json));
-            Ok(CallToolResult::success(vec![
-                ContentBlock::json(value).map_err(to_internal)?,
-            ]))
+            Ok(CallToolResult::success(vec![plugin_value_to_content(
+                value,
+            )?]))
         } else {
             Ok(CallToolResult::error(vec![
                 ContentBlock::text(result_json),
@@ -4774,19 +4776,25 @@ Always check search_plugins before building new plugins. Current registry (as of
 - **com.mastertech.repair** ("System Repair") — dism_restore_health, sfc_scannow, uninstall_superantispyware, chkdsk_schedule, run_command (arbitrary PowerShell). Use for Windows system file repair.
 - **com.mastertech.diagnostics** ("Diagnostics") — system_summary, top_processes, disk_info, recent_system_errors, recent_app_crashes, stopped_auto_services, network_info, startup_programs, wifi_status, wifi_event_logs, wifi_fix, find_uninstall_targets, uninstall_msi_software, cpu_power_health, crash_deep_dive, verify_fix, detect_hardware, analyze_dump_files, disable_orphaned_drivers, kill_problematic_processes. **Do NOT use burn_cpu / burn_memory / burn_disk / burn_combined / stress_and_monitor for persisted stress tests** — they do not write stress_test_run / stress_test_event / hardware_component rows. Use scripts_run_remote with category 'StressTests' (e.g. 'GPU Stress Test', 'QC Benchmark', 'Stress: CPU') instead.
 - **com.mastertech.status-reporter** — status_report (returns UTC clock from remote host, confirms plugin is live). Lightweight connectivity test.
+- **com.mastertech.driver-fetch** ("TechDB Driver Fetch") — list_techdb_models, list_model_drivers, fetch_model_path, audio_power_crash_check, install_senary_audio, audio_power_mitigation, schedule_restart, cancel_restart. Automates the OPK Driver / BIOS Server workflow below (mount + list + robocopy + install) so you don't `run_command` it by hand every time. See "OPK Driver / BIOS Server" for what it does and when to reach for it. **IMPORTANT:** its tool args must be passed as a bare string (e.g. `"GX5HRXG"` or `"GX5HRXG:AMD_HawkPoint_GX_IDL_IDG\3.AUDIO"`), NOT a JSON object — `call_plugin_tool`/`call_remote_plugin_tool`'s `args` channel currently double-encodes objects into a string the WASM side can't read as key/value (same root cause as the `run_command` args-drop issue on `com.mastertech.repair`; a source fix has been written for this — see "args double-encoding fix" below — but it needs a rebuild+restart of the admin app to take effect; until then, no-arg and bare-string tool designs are the working pattern). **install_senary_audio / any installer-launching tool can legitimately take several minutes** — a timed-out call does NOT mean it's hung; re-check `audio_power_crash_check`'s `acp_services` field for a newly-created `*.Svc` service before assuming failure, and do NOT re-invoke the same install tool while a prior call may still be in flight (the MCP client layer has been observed to auto-retry on its own shorter timeout even while the admin app's 300s internal deadline is still legitimately running, causing duplicate dispatch of the same installer).
 
 When in doubt, call search_plugins with relevant keywords — the registry is the source of truth.
 
 === OPK Driver / BIOS Server (PC Laptops internal — QC builds & driver remediation) ===
 The OPK server hosts the canonical drivers + BIOS updates for every laptop/desktop PC Laptops sells.
-Share: \\opk-riv\winbits\Drivers\7\TechDB  (host `opk-riv` = 192.168.22.21, on the 192.168.22.0/24 LAN that all shop machines and connected clients share).
-Layout: one folder per chassis MODEL NUMBER (e.g. `X5KK4NAG`). Each model folder holds component subfolders (1AMDChipset, 2AMDVGA, 3Senary_Audio, 4LAN, 5GL_CardReader, 6WLAN&BT, 7DRTM, 8AMDMEP, 9CameraMEP, Nahimic, RAID, …), the driver payloads as archives (.zip / .7z — extract before installing), an `AMD STP Installation procedure.pdf` (authoritative install order), and a manifest .xlsx. On a freshly-built machine the drivers are staged to D:\Driver.
+Share: \\opk-riv\winbits\Drivers\7\TechDB  (host `opk-riv` = 192.168.22.21, on the 192.168.22.0/24 LAN that all shop machines and connected clients share). Credentials: user `Images` (see `com.mastertech.driver-fetch` source / a tech for the password — do not paste it into chat transcripts unnecessarily).
+Layout: one folder per chassis MODEL NUMBER (e.g. `X5KK4NAG`, `GX5HRXG`). Each model folder holds component subfolders — sometimes flat (1AMDChipset, 2AMDVGA, 3Senary_Audio, 4LAN, 5GL_CardReader, 6WLAN&BT, 7DRTM, 8AMDMEP, 9CameraMEP, Nahimic, RAID, …), sometimes nested one level deeper under a platform-codename folder (e.g. `GX5HRXG\AMD_HawkPoint_GX_IDL_IDG\3.AUDIO\{Realtek,Senary}`) — **do not assume the category layout, always `list_model_drivers` first**. Driver payloads are archives (.zip / .7z — extract before installing), there's usually an `AMD STP Installation procedure.pdf` / driver-list .xlsx (authoritative install order), and on a freshly-built machine the drivers are staged to D:\Driver.
 Find the model: it is the chassis/barebone model (TongFang/Mechrevo OEM), NOT Win32_ComputerSystem.Model (often reads "Standard"). Read it from Win32_BaseBoard.Product / SMBIOS or the OPK/service record.
 
-Access / auth: the share needs LAN credentials. Domain-joined or authorized shop machines (and the admin host) read it directly; a workgroup service CLIENT logged in as a local account gets "System error 5 — Access is denied" (TCP 445 open + name resolves, so it is purely an auth gate). To pull drivers ONTO a client either (a) `net use \\opk-riv\winbits <pass> /user:<DOMAIN\user>` then `robocopy \\opk-riv\winbits\Drivers\7\TechDB\<MODEL> D:\Driver /E`, or (b) relay from an authorized admin host over the LAN (HTTP/SMB). The Mastertech WS / plugin channel is NOT a bulk file-transfer path (GPU packages are multi-hundred-MB).
+Access / auth: the share needs LAN credentials. Domain-joined or authorized shop machines (and the admin host) read it directly; a workgroup service CLIENT logged in as a local account gets "System error 5 — Access is denied" (TCP 445 open + name resolves, so it is purely an auth gate).
 
-Install order (per the PDF): AMD Chipset (.exe) -> AMD VGA (Setup.exe) -> Senary Audio (Install.bat, as admin) -> LAN -> Cardreader (GIPciSD.inf) -> WLAN (.inf) -> Bluetooth (.inf) -> DRTM (amddrtm.inf) -> MEP (AmdMepEnum.inf) -> CameraMEP (Setup.cmd) -> Nahimic -> ControlCenter. INF-only components install non-interactively with `pnputil /add-driver <inf> /install`.
-For BSOD/driver remediation: outdated AMD drivers are a known DRIVER_POWER_STATE_FAILURE (0x9F via pci.sys; the kernel triage bucket names amdhdaudbus) and HYPERVISOR_ERROR (amdppm idle/halt) cause. The AMD VGA package ships amdhdaudbus.sys; the AMD Chipset package covers CPU power management.
+**Preferred path — use the `com.mastertech.driver-fetch` plugin** instead of hand-running `net use`/`robocopy` every time: `search_plugins "driver-fetch"` → `fetch_plugin` → `plugin_deploy_remote` onto the target client → `list_techdb_models` (no args) to confirm the model folder exists → `list_model_drivers` (bare model string, e.g. `"GX5HRXG"`) to find the real category path (layout varies per chassis, see above) → `fetch_model_path` (bare `"Model:RelPath"` string, e.g. `"GX5HRXG:AMD_HawkPoint_GX_IDL_IDG\3.AUDIO"`) to robocopy that folder straight onto the target machine's local disk (`C:\ProgramData\MTechDrivers\<model>\<relpath>\`). This runs the mount+robocopy ON the target machine via its own `host_run_command`, so — same as the manual `net use`/`robocopy` approach — it is NOT pushing bulk bytes through the Mastertech WS/plugin channel; only the small JSON listing/status responses cross that channel. Stage the files and let a tech extract/run the installer rather than auto-installing on customer hardware sight-unseen.
+Manual fallback if the plugin isn't deployed: (a) `net use \\opk-riv\winbits <pass> /user:<DOMAIN\user>` then `robocopy \\opk-riv\winbits\Drivers\7\TechDB\<MODEL> D:\Driver /E`, or (b) relay from an authorized admin host over the LAN (HTTP/SMB).
+
+Install order (per the PDF, when present): AMD Chipset (.exe) -> AMD VGA (Setup.exe) -> Senary Audio (Install.bat, as admin) -> LAN -> Cardreader (GIPciSD.inf) -> WLAN (.inf) -> Bluetooth (.inf) -> DRTM (amddrtm.inf) -> MEP (AmdMepEnum.inf) -> CameraMEP (Setup.cmd) -> Nahimic -> ControlCenter. INF-only components install non-interactively with `pnputil /add-driver <inf> /install`.
+For BSOD/driver remediation: outdated AMD drivers are a known DRIVER_POWER_STATE_FAILURE (0x9F via pci.sys; the kernel triage bucket names amdhdaudbus) and HYPERVISOR_ERROR (amdppm idle/halt) cause. The AMD VGA package ships amdhdaudbus.sys; the AMD Chipset package covers CPU power management. On chassis that also ship a Senary smart-amp (see `3.AUDIO\Senary` / `3Senary_Audio`), a missing/uninstalled Senary package — `Get-PnpDevice` shows `Senary Audio*` entries stuck in Problem 45 — independently causes buzzing/cutout audio even when the Realtek codec driver itself is current; run `com.mastertech.driver-fetch`'s `audio_power_crash_check` (no args) on the target client to check both signals (0x9F/Kernel-Power-41 count AND Senary PnP status) in one shot before re-pushing just the Realtek driver again.
+
+Fixing the Senary gap end to end (verified working on a GX5HRXG, 2026-06-30): `fetch_model_path` the model's `*.AUDIO` folder → `install_senary_audio` (extracts the Preinstall zip, runs `Install.bat`; takes several minutes, see the timing note above) → `schedule_restart` (the new Senary PnP devices stay Problem 45 until reboot — that is expected, not a failure, since the audio APO/service chain doesn't bind to the live HD Audio function until next boot) → after reboot, `audio_power_crash_check` again to confirm `Senary Audio` / `Speakers (Senary Audio)` / `Senary Audio Effects` / `Senary Audio Service` all read Status OK / Problem 0, and a `Senary*.Svc` Windows service is Running. Stale Problem-45 ghost entries under old instance IDs are normal residue and not a sign of failure. Follow up with `audio_power_mitigation` to disable "allow the computer to turn off this device to save power" on the AMD Audio CoProcessor and AMD HD Audio Controller (reduces 0x9F recurrence risk going forward); not every audio device exposes a power-management tab, so a "no MSPower_DeviceEnable instance" result for one sub-device is expected, not an error.
 
 === Diagnostic Prior-History Lookup (MUST do before diagnosing) ===
 When performing diagnostics on a machine, ALWAYS gather prior history first.
@@ -5281,6 +5289,36 @@ fn to_internal<E: std::fmt::Display>(e: E) -> ErrorData {
     ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None)
 }
 
+// Emits an image content block when a plugin result carries base64 image bytes; otherwise JSON.
+fn plugin_value_to_content(v: serde_json::Value) -> Result<ContentBlock, ErrorData> {
+    let img = {
+        let b64 = v
+            .get("image_base64")
+            .or_else(|| v.get("base64"))
+            .or_else(|| v.get("data"));
+        let mime = v
+            .get("mime")
+            .or_else(|| v.get("mime_type"))
+            .or_else(|| v.get("mimeType"));
+        match (b64, mime) {
+            (Some(serde_json::Value::String(b)), Some(serde_json::Value::String(m)))
+                if m.starts_with("image/") =>
+            {
+                let raw = b
+                    .strip_prefix("data:")
+                    .and_then(|s| s.split_once(',').map(|(_, d)| d))
+                    .unwrap_or(b);
+                Some((raw.to_string(), m.clone()))
+            }
+            _ => None,
+        }
+    };
+    match img {
+        Some((data, mime)) => Ok(ContentBlock::image(data, mime)),
+        None => ContentBlock::json(v).map_err(to_internal),
+    }
+}
+
 /// Last `n` lines of `s`, joined with `\n`. Used to keep
 /// `plugin_compile_status` payloads compact when a build prints
 /// kilobytes of warnings before succeeding.
@@ -5314,6 +5352,37 @@ where
         Some(other) => Err(D::Error::custom(format!(
             "expected u64 or numeric string, got: {other}"
         ))),
+    }
+}
+
+/// Lenient `args` deserializer: some tool-calling clients double-encode an
+/// object into a JSON string because the `args` schema declares no `"type"`,
+/// which silently breaks every plugin's `args.get(key)`. Re-parses it back.
+fn deserialize_lenient_args<'de, D>(deserializer: D) -> Result<Option<serde_json::Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v: Option<serde_json::Value> = Option::deserialize(deserializer)?;
+    Ok(v.map(unwrap_json_string_layers))
+}
+
+/// Re-parses a `Value::String` that looks like JSON, recursing through nested layers.
+fn unwrap_json_string_layers(v: serde_json::Value) -> serde_json::Value {
+    match v {
+        serde_json::Value::String(s) => {
+            let trimmed = s.trim();
+            let looks_like_json = (trimmed.starts_with('{') && trimmed.ends_with('}'))
+                || (trimmed.starts_with('[') && trimmed.ends_with(']'));
+            if looks_like_json {
+                match serde_json::from_str::<serde_json::Value>(trimmed) {
+                    Ok(inner) => unwrap_json_string_layers(inner),
+                    Err(_) => serde_json::Value::String(s),
+                }
+            } else {
+                serde_json::Value::String(s)
+            }
+        }
+        other => other,
     }
 }
 

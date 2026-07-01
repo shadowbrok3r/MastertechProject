@@ -1,5 +1,5 @@
-use database::{live_data::{handle_live_delete_client, update_or_insert_client}, schema::{ConnectedClient, UserAuthorization}};
-use crate::{app_state::SharedContext, ui_tools::toasts::{Toast, ToastKind, ToastOptions, ToastStyle}};
+use database::{live_data::{handle_live_delete_client, update_or_insert_client}, schema::{ConnectedClient, ComputerData, RecordId, UserAuthorization}, DATABASE};
+use crate::{app_state::SharedContext, ui_tools::toasts::{Toast, ToastKind, ToastOptions, ToastStyle}, PlatformSpawner, Spawner};
 use eframe::egui::{Color32, RichText};
 use std::collections::BTreeMap;
 use database::live_data::Action;
@@ -8,6 +8,8 @@ use database::live_data::Action;
 
 impl SharedContext {
     pub fn receive_client(&mut self) {
+        self.drain_resolved_client_customers();
+
         // Process only ONE notification per frame to avoid duplicates
         if let Ok((action, new_client)) = self.live_clients_rx.try_recv() {
             log::debug!("new_client: {action:?} // connected={} // {}", new_client.connected, new_client.connection_string);
@@ -118,6 +120,8 @@ impl SharedContext {
             if let Ok(mut guard) = self.clients_for_prober.lock() {
                 *guard = self.clients.clone();
             }
+
+            self.resolve_missing_client_customers();
         }
 
         if let Ok(connected_clients) = self.connected_clients_rx.try_recv() {
@@ -140,6 +144,85 @@ impl SharedContext {
             if let Ok(mut guard) = self.clients_for_prober.lock() {
                 *guard = self.clients.clone();
             }
+
+            self.resolve_missing_client_customers();
+        }
+    }
+
+    /// Batch-resolves the customer of clients whose `customer` is null but
+    /// whose linked `computer` carries one, pushing results to the drain.
+    fn resolve_missing_client_customers(&mut self) {
+        let pending: Vec<(String, RecordId)> = self
+            .clients
+            .iter()
+            .filter(|c| {
+                c.customer.is_none()
+                    && c.computer.is_some()
+                    && !c.connection_string.trim().is_empty()
+                    && !self.client_customer_resolving.contains(&c.connection_string)
+            })
+            .filter_map(|c| {
+                c.computer
+                    .clone()
+                    .map(|comp| (c.connection_string.clone(), comp))
+            })
+            .collect();
+        if pending.is_empty() {
+            return;
+        }
+
+        for (cs, _) in pending.iter() {
+            self.client_customer_resolving.insert(cs.clone());
+        }
+        let tx = self.client_customer_resolved_tx.clone();
+        PlatformSpawner::spawn(async move {
+            let mut resolved: Vec<(String, RecordId)> = Vec::new();
+            for (cs, computer_id) in pending {
+                let computer: Result<Option<ComputerData>, surrealdb::Error> =
+                    DATABASE.select(computer_id).await;
+                if let Ok(Some(comp)) = computer {
+                    if let Some(customer) = comp.customer {
+                        resolved.push((cs, customer));
+                    }
+                }
+            }
+            if !resolved.is_empty() {
+                let _ = tx.try_send(resolved);
+            }
+        });
+    }
+
+    /// Applies resolved customers in-memory only (never written back to the
+    /// DB), then re-syncs the admin console views and prober snapshot.
+    fn drain_resolved_client_customers(&mut self) {
+        let mut touched = false;
+        while let Ok(resolved) = self.client_customer_resolved_rx.try_recv() {
+            for (cs, customer) in resolved {
+                self.client_customer_resolving.remove(&cs);
+                if let Some(client) = self
+                    .clients
+                    .iter_mut()
+                    .find(|c| c.connection_string == cs && c.customer.is_none())
+                {
+                    client.customer = Some(customer);
+                    touched = true;
+                }
+            }
+        }
+        if !touched {
+            return;
+        }
+
+        let mut client_map = BTreeMap::new();
+        let connected = self.clients.iter().filter(|c| c.connected).cloned().collect::<Vec<ConnectedClient>>();
+        let disconnected = self.clients.iter().filter(|c| !c.connected).cloned().collect::<Vec<ConnectedClient>>();
+        client_map.insert("Connected".to_string(), connected);
+        client_map.insert("Disconnected".to_string(), disconnected);
+        self.web_console_layout.clients = self.clients.clone();
+        self.web_console_layout.client_map = client_map;
+
+        if let Ok(mut guard) = self.clients_for_prober.lock() {
+            *guard = self.clients.clone();
         }
     }
 }
