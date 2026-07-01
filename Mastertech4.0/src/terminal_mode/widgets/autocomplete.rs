@@ -1,5 +1,5 @@
 use ratatui::{buffer::Buffer, crossterm::event::{KeyCode, KeyModifiers}, layout::{Position, Rect}, style::{Color, Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, Clear, List, ListItem, Widget, WidgetRef}};
-use crate::terminal_mode::{events::action_handler::{get_event_sender, WidgetEvent, WidgetId}, styling::{CATPPUCCIN, CATPPUCCINTHEME, DEEPPINK, APP_BACKGROUND}};
+use crate::terminal_mode::{events::action_handler::{get_event_sender, WidgetEvent, WidgetId}, styling::{CATPPUCCIN, ThemeRole, THEME}};
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use super::{button::{ButtonState, Theme}, ButtonType};
@@ -17,7 +17,7 @@ pub struct AutoCompleteInput<'a> {
     title: &'static str,
     area: RefCell<Option<Rect>>,
     state: RefCell<ButtonState>,
-    theme: Theme,
+    theme: ThemeRole,
     block: RefCell<Option<Block<'a>>>,
     event_sender: Sender<WidgetEvent>,
     has_wrapped: Rc<RefCell<bool>>,
@@ -46,7 +46,7 @@ impl<'a> AutoCompleteInput<'a> {
             block: RefCell::new(None),
             area: RefCell::new(None),
             state: RefCell::new(ButtonState::Normal),
-            theme: CATPPUCCINTHEME,
+            theme: ThemeRole::Input,
             event_sender: get_event_sender(),
             has_wrapped: Rc::new(RefCell::new(false)),
             last_width: RefCell::new(None),
@@ -212,7 +212,7 @@ impl<'a> AutoCompleteInput<'a> {
             self.content_y.replace(None);
             return;
         }
-        let popup_bg = APP_BACKGROUND;
+        let popup_bg = THEME.bg;
         let selected_bg = CATPPUCCIN.surface1;
         let num_items = match_r.len().min(self.max_suggestions);
         let max_width = match_r.iter().take(self.max_suggestions).map(|(s, _, _)| s.len()).max().unwrap_or(10) + 4;
@@ -261,7 +261,7 @@ impl<'a> AutoCompleteInput<'a> {
         let block = Block::default()
             .borders(borders)
             .border_type(BorderType::Rounded)
-            .border_style(Style::new().fg(DEEPPINK.text))
+            .border_style(Style::new().fg(THEME.accent))
             .style(Style::new().bg(popup_bg).fg(CATPPUCCIN.sky));
         Clear.render(physical_popup_rect, buf);
         buf.set_style(physical_popup_rect, Style::default().bg(popup_bg));
@@ -310,7 +310,7 @@ impl<'a> ButtonType<'a> for AutoCompleteInput<'a> {
     }
 
     fn colors(&self) -> (Color, Color, Color, Color) {
-        let t = self.theme;
+        let t = self.theme.resolve();
         match *self.state.borrow() {
             ButtonState::Normal => (CATPPUCCIN.lavender, t.text, t.shadow, t.highlight),
             ButtonState::Selected => (CATPPUCCIN.blue, CATPPUCCIN.text, CATPPUCCIN.sapphire, CATPPUCCIN.red),

@@ -256,17 +256,10 @@ impl MtechServer {
         
         self.shared_ctx.receive_shared(frame, ctx);
         
-        // There is no longer an automatic reconnect path on WASM. The
-        // previous `needs_reconnect → reconnect_with_jwt` chain produced
-        // cascades of `"Already connected"` failures whenever the
-        // visibility handler tripped (every tab switch) even though the
-        // WS was perfectly healthy. The authoritative reconnect signal is
-        // the `live_query_error_rx` drain in `receive_shared_logic`,
-        // which now sets `show_reload_prompt = true`. The operator
-        // confirms with a click; `reload_prompt_ui` then calls
-        // `load_data` directly to re-issue the LIVE SELECTs. Long
-        // tab-hide auto-reloads are handled by the visibility drain in
-        // `receive_shared_logic` (>= 45min hidden → window.location.reload).
+        // Reconnects are fully automatic: `receive_shared_logic` drains
+        // stream errors / canary timeouts, rebuilds the connection with
+        // backoff, and re-issues the LIVE SELECTs plus a snapshot refetch.
+        // The only operator prompt left is the auth-lost banner.
         
         // Retrieve our database connection, and 2. Requesting some task data
         if let Ok(db) = self.shared_ctx.db_rx.try_recv() {

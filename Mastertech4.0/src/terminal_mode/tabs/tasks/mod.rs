@@ -1,7 +1,8 @@
 use crate::terminal_mode::context::TerminalContext;
 use crate::terminal_mode::fx::{EffectStage, UniqueEffectId};
 use crate::terminal_mode::events::action_handler::WidgetId;
-use crate::terminal_mode::widgets::button::{Button, Theme};
+use crate::terminal_mode::styling::ThemeRole;
+use crate::terminal_mode::widgets::button::Button;
 use crate::terminal_mode::widgets::dropdown_menu::DropdownMenu;
 use crate::terminal_mode::widgets::menu_item::MenuItem;
 use crate::terminal_mode::modals::TaskModal;
@@ -130,11 +131,11 @@ impl<'a> TasksTab<'a> {
     pub fn new(_client: Client, ctx: Arc<Mutex<TerminalContext>>) -> Self {
         // Create sortable header buttons
         let sort_due_btn = Button::new("Due ▼", WidgetId("TasksSortDue".to_string()))
-            .theme(Theme::NEUTRAL);
+            .theme(ThemeRole::Neutral);
         let sort_status_btn = Button::new("Status", WidgetId("TasksSortStatus".to_string()))
-            .theme(Theme::NEUTRAL);
+            .theme(ThemeRole::Neutral);
         let sort_priority_btn = Button::new("Priority", WidgetId("TasksSortPriority".to_string()))
-            .theme(Theme::NEUTRAL);
+            .theme(ThemeRole::Neutral);
         let filter_trigger = Button::new(TaskFilter::My.label(), WidgetId("TasksFilter".to_string()))
             .menu_trigger();
 

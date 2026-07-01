@@ -32,7 +32,7 @@ pub fn TopBar(props: NavbarProps) -> Element {
     rsx! {
         div { class: "nav-galaxy flex items-center h-11 px-3 gap-2 sticky top-0 z-30",
             // Logo dot
-            div { class: "w-5 h-5 rounded-md bg-gradient-to-br from-[#6a659b] to-[#4a4575] flex-shrink-0" }
+            div { class: "w-5 h-5 rounded-md bg-gradient-to-br from-[#ff2d55] to-[#801628] flex-shrink-0" }
             span { class: "text-sm font-semibold text-star-white truncate flex-1", {props.active.clone()} }
 
             // + New
@@ -54,7 +54,7 @@ pub fn TopBar(props: NavbarProps) -> Element {
             // Avatar / user menu
             div { class: "relative flex-shrink-0",
                 button {
-                    class: "w-8 h-8 rounded-full bg-gradient-to-br from-[#5b21b6] to-[#db2777] flex items-center justify-center text-xs font-bold text-star-white",
+                    class: "w-8 h-8 rounded-full bg-gradient-to-br from-[#ff2d55] to-[#ff1493] flex items-center justify-center text-xs font-bold text-star-white",
                     r#type: "button",
                     onclick: move |_| menu_open.set(!menu_open()),
                     {initials.clone()}
@@ -68,7 +68,7 @@ pub fn TopBar(props: NavbarProps) -> Element {
                     // Fixed position so it overlays content; navbar doesn't grow
                     div { class: "fixed right-2 top-12 w-40 card-cosmic p-1 z-50 shadow-nebula",
                         if let Some(u) = user.clone() {
-                            div { class: "px-3 py-1.5 text-xs text-stardust border-b border-[#2a2c5d]/40 truncate", {u.get_username()} }
+                            div { class: "px-3 py-1.5 text-xs text-stardust border-b border-[#401c2a]/40 truncate", {u.get_username()} }
                         }
                         button {
                             class: "w-full text-left px-3 py-2 text-xs nav-link",
@@ -98,10 +98,12 @@ pub fn TopBar(props: NavbarProps) -> Element {
 // ── Bottom tab bar ───────────────────────────────────────────
 #[component]
 pub fn BottomTabs(props: NavbarProps) -> Element {
-    let tabs = [("My Tasks", "☰"), ("Store Tasks", "🏪"), ("Completed", "✓")];
+    let mut tabs: Vec<(&str, &str)> = vec![("My Tasks", "☰"), ("Store Tasks", "🏪"), ("Completed", "✓")];
+    #[cfg(feature = "client-sessions")]
+    tabs.push(("Clients", "🖥"));
 
     rsx! {
-        div { class: "flex-shrink-0 nav-galaxy border-t border-[#2a2c5d]/40 flex items-stretch",
+        div { class: "flex-shrink-0 nav-galaxy border-t border-[#401c2a]/40 flex items-stretch",
             style: "padding-bottom: env(safe-area-inset-bottom, 0px);",
             for (label, icon) in tabs.iter() {
                 {

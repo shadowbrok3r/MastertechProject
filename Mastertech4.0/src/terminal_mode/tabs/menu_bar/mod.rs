@@ -1,8 +1,9 @@
 use crate::terminal_mode::{
     context::TerminalContext,
     events::action_handler::{get_event_sender, WidgetButton, WidgetEvent, WidgetId},
+    styling::ThemeRole,
     widgets::{
-        button::{Button, ButtonState, Theme},
+        button::{Button, ButtonState},
         dropdown_menu::DropdownMenu,
         menu_item::MenuItem,
         ButtonType,
@@ -51,9 +52,9 @@ impl MenuGroup {
     pub fn tabs(self) -> &'static [Tab] {
         match self {
             MenuGroup::Service => &[Tab::TurSheet, Tab::Tasks],
-            MenuGroup::Tools => &[Tab::Scripts, Tab::SystemInfo, Tab::Ncdu],
+            MenuGroup::Tools => &[Tab::Scripts, Tab::SystemInfo, Tab::Ncdu, Tab::Assistant],
             MenuGroup::Remote => &[Tab::Webconsole, Tab::Logs],
-            MenuGroup::Account => &[Tab::Login],
+            MenuGroup::Account => &[Tab::Login, Tab::Settings],
         }
     }
 
@@ -76,6 +77,8 @@ fn tab_label(tab: Tab, login_label: &str) -> String {
         Tab::Webconsole => "Webconsole".to_string(),
         Tab::Logs => "Logs".to_string(),
         Tab::Login => login_label.to_string(),
+        Tab::Settings => "Theme".to_string(),
+        Tab::Assistant => "Assistant".to_string(),
     }
 }
 
@@ -111,7 +114,7 @@ impl<'a> MenuBar<'a> {
             tools_trigger: Button::new("Tools", WidgetId("MenuTools".to_owned())).menu_trigger(),
             remote_trigger: Button::new("Remote", WidgetId("MenuRemote".to_owned())).menu_trigger(),
             account_trigger: Button::new("Account", WidgetId("MenuAccount".to_owned())).menu_trigger(),
-            connect_ws_btn: Button::new("Connect WS", WidgetId("Connect".to_owned())).theme(Theme::ACCENT),
+            connect_ws_btn: Button::new("Connect WS", WidgetId("Connect".to_owned())).theme(ThemeRole::Accent),
             login_label: RefCell::new("Login".to_string()),
             dropdown: RefCell::new(DropdownMenu::new()),
             open_group: RefCell::new(None),

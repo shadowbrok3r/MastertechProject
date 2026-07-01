@@ -265,7 +265,7 @@ fn NotesPanel(props: NotesPanelProps) -> Element {
             match notes.read().as_ref() {
                 Some(Ok(list)) if !list.is_empty() => rsx!{
                     for n in list.iter() {
-                        div { class: "text-xs text-moonlight py-1 border-b border-[#2a2c5d]/20 last:border-0",
+                        div { class: "text-xs text-moonlight py-1 border-b border-[#401c2a]/20 last:border-0",
                             div { class: "text-stardust text-[10px]", {format!("{} · {}", n.username, n.created_at.format("%m/%d %I:%M%p"))} }
                             div { class: "whitespace-pre-wrap mt-0.5", {n.note.clone()} }
                         }

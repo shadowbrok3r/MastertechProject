@@ -1,0 +1,33 @@
+id = "20260701120000__user_tui_color_scheme"
+name = "user_tui_color_scheme"
+state = "planned"
+# source == target: this rollout applies already-committed .surql state to the DB.
+# Run `surrealkit rollout lint database/rollouts/20260701120000__user_tui_color_scheme.toml`
+# and paste the reported `current=` hash into both fields if lint disagrees.
+source_schema_hash = "bb0c62bd46763165b90caa8e6b7283fecd5c8b19df9be887fb15f18a002e1fb2"
+target_schema_hash = "bb0c62bd46763165b90caa8e6b7283fecd5c8b19df9be887fb15f18a002e1fb2"
+compatibility = "phased"
+renames = []
+
+# Additive: user_settings.tui_color_scheme (none | bytes) on the SCHEMAFULL user
+# table, mirroring user_settings.color_scheme. Stores the terminal-mode
+# TuiColorScheme as serialized JSON bytes; written via
+# `UPDATE $auth.id SET user_settings.tui_color_scheme = $color_scheme`.
+# user_settings is FLEXIBLE so old rows need no backfill; the field stays NONE
+# until a user saves a theme from the TUI Settings tab.
+
+[[steps]]
+id = "add_tui_color_scheme_field"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE user_settings.tui_color_scheme ON user TYPE none | bytes PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "drop_tui_color_scheme_field"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE FIELD IF EXISTS user_settings.tui_color_scheme ON user;
+"""

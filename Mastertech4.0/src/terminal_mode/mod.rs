@@ -1,5 +1,5 @@
 use ratatui::{crossterm::{ event::{DisableMouseCapture, EnableMouseCapture}, execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},}, layout::{Constraint, Direction, Layout}};
-use tabs::{logger::Logger, login::LoginTab, menu_bar::Tab, service_form::ServiceFormTab, tasks::TasksTab, webconsole::WebconsoleTab, MenuBar, NcduTab, ScriptsTab, SysinfoTab};
+use tabs::{assistant::AssistantTab, logger::Logger, login::LoginTab, menu_bar::Tab, service_form::ServiceFormTab, settings::SettingsTab, tasks::TasksTab, webconsole::WebconsoleTab, MenuBar, NcduTab, ScriptsTab, SysinfoTab};
 use systems::{communication_system::Message, data_system::DataSystem, notification_system::Notification, render_system::RenderSystem, widget_render_system::WidgetRenderer};
 use std::{cell::RefCell, io, rc::Rc, sync::{Arc, Mutex}, time::{Duration, Instant}};
 use events::{action_handler::{get_event_receiver, EventManager}, EventHandler};
@@ -11,7 +11,7 @@ use widgets::HandleWidget;
 use data::LocalTermEvent;
 use ratatui::prelude::*;
 use reqwest::Client;
-use styling::APP_BACKGROUND;
+use styling::THEME;
 
 pub mod systems;
 pub mod widgets;
@@ -42,6 +42,8 @@ pub struct TerminalApp<'a> {
     sysinfo_tab: SysinfoTab,
     login_tab: Rc<RefCell<LoginTab<'a>>>,
     webconsole_tab: Rc<RefCell<WebconsoleTab<'a>>>,
+    settings_tab: Rc<RefCell<SettingsTab<'a>>>,
+    assistant_tab: Rc<RefCell<AssistantTab<'a>>>,
     event_handler: EventHandler,
     event_manager: EventManager<'a>,
     ctx: Arc<Mutex<TerminalContext>>,
@@ -131,6 +133,8 @@ impl<'a> TerminalApp<'a> {
         
         let login_tab = Rc::new(RefCell::new(LoginTab::new(client.clone(), ctx.clone())));
         let webconsole_tab = Rc::new(RefCell::new(WebconsoleTab::new(client.clone(), ctx.clone())));
+        let settings_tab = Rc::new(RefCell::new(SettingsTab::new(ctx.clone())));
+        let assistant_tab = Rc::new(RefCell::new(AssistantTab::new()));
 
         let sysinfo_tab = SysinfoTab::new();
         let menu_bar = Rc::new(RefCell::new(MenuBar::new(ctx.clone(), manual_connect_tx)));
@@ -143,6 +147,7 @@ impl<'a> TerminalApp<'a> {
         event_manager.register_handler(webconsole_tab.clone());
         event_manager.register_handler(menu_bar.clone());
         event_manager.register_handler(tasks_tab.clone());
+        event_manager.register_handler(settings_tab.clone());
 
         let plugin_manager = Arc::new(std::sync::RwLock::new(
             displays::plugins::PluginManager::new(),
@@ -157,6 +162,8 @@ impl<'a> TerminalApp<'a> {
             service_tab,
             sysinfo_tab,
             webconsole_tab,
+            settings_tab,
+            assistant_tab,
             ncdu_tab,
             data_system,
             render_system,
@@ -192,6 +199,15 @@ impl <'a>TerminalApp<'a> {
         let shutdown_rx_data = shutdown_tx.subscribe();
         let shutdown_rx_websocket = shutdown_tx.subscribe();
         let shutdown_rx_render = shutdown_tx.subscribe();
+
+        // Standalone TUI: serve the :9004 MCP so the Assistant tab's Claude Code
+        // session has tools (the egui process normally starts this in logic()).
+        let mgr_http = self.plugin_manager.clone();
+        join_handles.push(tokio::spawn(async move {
+            if let Err(e) = displays::plugins::mcp_bridge::run_plugin_mcp_server_http(mgr_http).await {
+                log::error!("Plugin MCP HTTP server error: {e:?}");
+            }
+        }));
 
         // Spawn a background task to drain the WASM plugin load channel
         let pm_bg = self.plugin_manager.clone();
@@ -285,7 +301,7 @@ impl <'a>TerminalApp<'a> {
                 let area = f.area();
                 // Apply consistent dark background across the entire frame
                 // This ensures all areas, including gaps between widgets, have the same background
-                f.buffer_mut().set_style(area, Style::new().bg(APP_BACKGROUND));
+                f.buffer_mut().set_style(area, Style::new().bg(THEME.bg));
                 if !splash_screen.is_rendered() {
                     Self::render_splash_screen(f, &mut splash_screen);
                 } else {
@@ -359,7 +375,7 @@ impl <'a>TerminalApp<'a> {
     /// embedded egui driver.
     pub fn render_frame<B: Backend>(&mut self, f: &mut Frame) {
         let area = f.area();
-        f.buffer_mut().set_style(area, Style::new().bg(APP_BACKGROUND));
+        f.buffer_mut().set_style(area, Style::new().bg(THEME.bg));
 
         if let Ok(mut menu) = self.menu_bar.try_borrow_mut() {
             menu.check_active_tab();
@@ -405,6 +421,8 @@ impl <'a>TerminalApp<'a> {
                 Tab::SystemInfo => self.sysinfo_tab.draw::<B>(f, main_content_area),
                 Tab::Login => self.login_tab.borrow_mut().draw::<B>(f, main_content_area),
                 Tab::Webconsole => self.webconsole_tab.borrow_mut().draw::<B>(f, main_content_area),
+                Tab::Settings => self.settings_tab.borrow_mut().draw::<B>(f, main_content_area),
+                Tab::Assistant => self.assistant_tab.borrow_mut().draw::<B>(f, main_content_area),
                 Tab::Ncdu => self.ncdu_tab.borrow_mut().draw::<B>(f, main_content_area),
                 Tab::Logs => {
                     buf.merge(f.buffer_mut());

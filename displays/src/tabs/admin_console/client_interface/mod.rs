@@ -24,6 +24,7 @@ use web_time::Instant;
 use {
     tabs::terminal_viewer::RemoteTerminal,
     tabs::egui_viewer::InlineEguiViewer,
+    tabs::desktop_viewer::DesktopViewer,
     tabs::beta_terminal::BetaTerminal,
     crate::mcp::{CommandCompletion, DiagnosticResponse, McpService},
     crate::{PlatformSpawner, Spawner},
@@ -45,7 +46,7 @@ pub mod startup_apps_viewer;
 pub mod remote_scripts_viewer;
 pub mod service_record_viewer;
 
-pub use admin_transport::{AdminTransport, TransportKind};
+pub use admin_transport::{AdminTransport, SessionEvent, TransportKind};
 
 pub enum ClientConnection{
     ClientUrl(String),
@@ -102,6 +103,15 @@ pub struct WebSocketClient {
     remote_terminal: RemoteTerminal,
     #[cfg(not(target_arch="wasm32"))]
     pub egui_viewer: InlineEguiViewer,
+    #[cfg(not(target_arch="wasm32"))]
+    pub desktop_viewer: DesktopViewer,
+    /// Full remote-desktop stream state and capture parameters.
+    pub desktop_streaming: bool,
+    pub desktop_monitors: Vec<crate::remote_desktop::DesktopMonitorInfo>,
+    pub desktop_monitor: u32,
+    pub desktop_fps: u32,
+    pub desktop_quality: u8,
+    pub desktop_scale: f32,
     #[cfg(not(target_arch="wasm32"))]
     pub beta_terminal: BetaTerminal,
     pub use_beta_terminal: bool,
@@ -255,6 +265,14 @@ Get-WmiObject")
             #[cfg(not(target_arch="wasm32"))]
             egui_viewer: InlineEguiViewer::new(),
             #[cfg(not(target_arch="wasm32"))]
+            desktop_viewer: DesktopViewer::new(),
+            desktop_streaming: false,
+            desktop_monitors: Vec::new(),
+            desktop_monitor: 0,
+            desktop_fps: 10,
+            desktop_quality: 60,
+            desktop_scale: 1.0,
+            #[cfg(not(target_arch="wasm32"))]
             beta_terminal: BetaTerminal::new(),
             use_beta_terminal: false,
             #[cfg(not(target_arch="wasm32"))]
@@ -391,6 +409,7 @@ Get-WmiObject")
         let rx = self.msg_from_client_rx.clone();
         let terminal_tx = self.remote_terminal.buffer_tx.clone();
         let egui_frame_tx = self.egui_viewer.frame_tx.clone();
+        let desktop_frame_tx = self.desktop_viewer.frame_tx.clone();
         let conn_for_egui_meta = self.client.connection_string.clone();
         let current_area = self.remote_terminal.current_area;
         let size_rx = self.size_rx.clone();
@@ -414,6 +433,15 @@ Get-WmiObject")
                                 crate::plugins::remote_egui_control::hub()
                                     .record_last_frame(&conn_for_egui_meta, &frame);
                                 let _ = egui_frame_tx.try_send(frame);
+                            }
+                        } else if buffer_array.first() == Some(&crate::DESKTOP_FRAME_TAG) {
+                            if let Ok((frame, _)) = bincode::serde::decode_from_slice::<
+                                crate::remote_desktop::DesktopFrameMessage, _,
+                            >(
+                                &buffer_array[1..],
+                                bincode::config::standard(),
+                            ) {
+                                let _ = desktop_frame_tx.try_send(frame);
                             }
                         } else {
                             RemoteTerminal::receive_buffer(

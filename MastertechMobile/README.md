@@ -1,39 +1,63 @@
-# Development
+# MastertechMobile
 
-Your new jumpstart project includes basic organization with an organized `assets` folder and a `components` folder.
-If you chose to develop with the router feature, you will also have a `views` folder.
+Dioxus (0.7.9) mobile/desktop/web client for Mastertech: technician task board
+plus remote-client session control. Styled with the **AMOLED Crimson** theme
+(true-black OLED base, hot pinkish-red accents) matched to the Mastertech4.0 TUI
+`TuiColorScheme::amoled_crimson` scheme.
+
+## Workspace
+
+This crate is intentionally **excluded** from the root `MastertechProject`
+workspace (its Dioxus dependency tree is kept out of `cargo build --workspace`
+and CI). It is its own workspace root — see `[workspace]`,
+`[workspace.dependencies]`, and the `[patch.crates-io]` egui-phosphor pin in
+`Cargo.toml`. Path deps (`database`, `displays`) still belong to the root
+workspace and resolve their own `workspace = true` deps there.
+
+`surrealdb` is pinned to the workspace-root version (`3.2.0-beta.2`,
+`protocol-ws`).
+
+## Features
+
+- `mobile` / `desktop` / `web` — selects the Dioxus render backend.
+- `client-sessions` (default) — remote-client listing + control. Pulls in the
+  `displays` crate to reuse its `Cmd` wire type, bincode framing, and
+  `AdminTransport` (direct-TCP with WebSocket-relay fallback) so mobile speaks
+  the identical protocol to the Mastertech agent. Disable for a lean bundle:
+  `--no-default-features --features mobile`.
+
+## Structure
 
 ```
-project/
-├─ assets/ # Any assets that are used by the app should be placed here
-├─ src/
-│  ├─ main.rs # The entrypoint for the app.
-│  ├─ components/
-│  │  ├─ mod.rs # Defines the components module
-│  │  ├─ hero.rs # The Hero component for use in the home page
-├─ Cargo.toml # The Cargo.toml file defines the dependencies and feature flags for your project
+src/
+├─ main.rs            # App entry, auth/session, top-level layout + routing
+├─ theme.rs           # ThemeConfig (AMOLED Crimson defaults)
+├─ components/        # navbar, modal, toast, and vendored dioxus-primitives wrappers
+├─ pages/
+│  ├─ tasks.rs        # Task board (My/Store/Completed)
+│  ├─ login.rs        # Login
+│  └─ clients.rs      # Remote-client sessions (feature: client-sessions)
+└─ services/
+   ├─ tasks.rs        # Task queries/mutations
+   ├─ helpers.rs      # Task list helpers
+   └─ clients.rs      # ClientSession over displays' AdminTransport (feature: client-sessions)
+assets/styles.css     # AMOLED Crimson stylesheet (linked at runtime)
 ```
 
-### Tailwind
-1. Install npm: https://docs.npmjs.com/downloading-and-installing-node-js-and-npm
-2. Install the Tailwind CSS CLI: https://tailwindcss.com/docs/installation
-3. Run the following command in the root of the project to start the Tailwind CSS compiler:
+## Serving
 
 ```bash
-npx tailwindcss -i ./tailwind.css -o ./assets/tailwind.css --watch
+dx serve --platform desktop          # or: --platform web / android / ios
 ```
 
-### Serving Your App
-
-Run the following command in the root of your project to start developing with the default platform:
+Native check without the heavy displays build:
 
 ```bash
-dx serve
+cargo check --no-default-features --features desktop
 ```
 
-To run for a different platform, use the `--platform platform` flag. E.g.
+Full check including remote sessions:
+
 ```bash
-dx serve --platform desktop
+cargo check --no-default-features --features desktop,client-sessions
 ```
-
-

@@ -82,6 +82,8 @@ pub struct UserSettings {
     /// Color scheme serialized egui::Style for desktop/egui environments
     /// Mobile specific color scheme allowing different palette (e.g. Dioxus / CSS usage)
     mobile_color_scheme: Option<Bytes>,
+    /// Terminal-mode color scheme serialized TuiColorScheme JSON
+    tui_color_scheme: Option<Bytes>,
     ui_layout: UiLayout
 }
 
@@ -274,6 +276,15 @@ impl User {
         }
     }
 
+    /// Returns the stored terminal-mode color scheme bytes if any
+    pub fn get_tui_color_scheme(&self) -> Vec<u8> {
+        if let Some(bytes) = self.user_settings.tui_color_scheme.clone() {
+            bytes.to_vec()
+        } else {
+            Vec::new()
+        }
+    }
+
     pub fn get_minio_secret_key(&self) -> Option<String> {
         self.minio_secret_key.clone()
     }
@@ -331,6 +342,12 @@ impl User {
     /// Sets the mobile (web/dioxus) color scheme bytes.
     pub fn set_mobile_color_scheme(&mut self, color_scheme: Vec<u8>) -> &mut Self {
         self.user_settings.mobile_color_scheme = Some(color_scheme.into());
+        self
+    }
+
+    /// Sets the terminal-mode color scheme bytes.
+    pub fn set_tui_color_scheme(&mut self, color_scheme: Vec<u8>) -> &mut Self {
+        self.user_settings.tui_color_scheme = Some(color_scheme.into());
         self
     }
 
@@ -627,14 +644,25 @@ impl User {
     /// Update just the mobile color scheme (serialized egui::Style bytes) in the database
     pub async fn update_mobile_color_scheme(color_scheme: Bytes) -> anyhow::Result<(), anyhow::Error> {
         log::info!("mobile_color_scheme BYTES: {color_scheme:?}");
-        match DATABASE  
+        match DATABASE
             .query("UPDATE $auth.id SET user_settings.mobile_color_scheme = $color_scheme")
             .bind(("color_scheme", color_scheme))
-            .await 
+            .await
         {
             Ok(res) => log::info!("update_mobile_color_scheme -> Res: {res:?}"),
             Err(e) => log::error!("update_mobile_color_scheme -> Error updating User Settings: {e:?}"),
         };
+        Ok(())
+    }
+
+    /// Update just the terminal-mode color scheme (serialized TuiColorScheme JSON) in the database.
+    /// Errors propagate so callers can surface save failures.
+    pub async fn update_tui_color_scheme(color_scheme: Bytes) -> anyhow::Result<(), anyhow::Error> {
+        DATABASE
+            .query("UPDATE $auth.id SET user_settings.tui_color_scheme = $color_scheme")
+            .bind(("color_scheme", color_scheme))
+            .await?
+            .check()?;
         Ok(())
     }
 

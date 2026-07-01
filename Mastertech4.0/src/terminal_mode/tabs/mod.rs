@@ -1,3 +1,4 @@
+pub mod assistant;
 pub mod scripts;
 pub mod service_form;
 pub mod tasks;
@@ -7,6 +8,7 @@ pub mod menu_bar;
 pub mod webconsole;
 pub mod task_manager;
 pub mod ncdu;
+pub mod settings;
 
 pub use scripts::*;
 pub use menu_bar::*;

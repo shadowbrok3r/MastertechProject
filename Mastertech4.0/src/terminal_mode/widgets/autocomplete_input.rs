@@ -8,7 +8,7 @@ use ratatui::{
 };
 use crate::terminal_mode::{
     events::action_handler::{get_event_sender, WidgetEvent, WidgetId},
-    styling::{CATPPUCCIN, CATPPUCCINTHEME, THEME, APP_BACKGROUND}
+    styling::{CATPPUCCIN, ThemeRole, THEME}
 };
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use super::{button::{ButtonState, Theme}, ButtonType};
@@ -33,7 +33,7 @@ pub struct AutoCompleteInput<'a> {
     /// state of input field
     state: RefCell<ButtonState>,
     /// duh
-    theme: Theme,
+    theme: ThemeRole,
     block: RefCell<Option<Block<'a>>>,
     event_sender: Sender<WidgetEvent>,
     
@@ -63,7 +63,7 @@ impl<'a> AutoCompleteInput<'a> {
             on_screen_area: RefCell::new(None),
             popup_area: RefCell::new(None),
             state: RefCell::new(ButtonState::Normal),
-            theme: CATPPUCCINTHEME,
+            theme: ThemeRole::Input,
             event_sender: get_event_sender(),
             suggestions: RefCell::new(vec![]),
             show_popup: RefCell::new(false),
@@ -155,10 +155,10 @@ impl<'a> AutoCompleteInput<'a> {
         let block = Block::default()
             .border_type(BorderType::Rounded)
             .border_style(Style::new().fg(THEME.accent))
-            .style(Style::new().bg(APP_BACKGROUND).fg(THEME.text));
+            .style(Style::new().bg(THEME.bg).fg(THEME.text));
 
         Clear.render(popup_area, buf);
-        buf.set_style(popup_area, Style::default().bg(APP_BACKGROUND));
+        buf.set_style(popup_area, Style::default().bg(THEME.bg));
 
         let inner_area = block.inner(popup_area);
         block.render(popup_area, buf);
@@ -175,7 +175,7 @@ impl<'a> AutoCompleteInput<'a> {
                 let style = if selected {
                     Style::default().bg(THEME.surface).fg(THEME.accent)
                 } else {
-                    Style::default().bg(APP_BACKGROUND).fg(THEME.text)
+                    Style::default().bg(THEME.bg).fg(THEME.text)
                 };
                 ListItem::new(suggestion.clone()).style(style)
             })
@@ -190,7 +190,7 @@ impl<'a> AutoCompleteInput<'a> {
                     .title("Suggestions")
                     .title_style(THEME.title())
             )
-            .style(Style::default().bg(APP_BACKGROUND));
+            .style(Style::default().bg(THEME.bg));
 
         let mut list_state = ListState::default();
         if let Some(selected) = *self.selected_suggestion.borrow() {
@@ -338,7 +338,7 @@ impl<'a> ButtonType<'a> for AutoCompleteInput<'a> {
 
     /// Helper method to get the right colors based on the current state.
     fn colors(&self) -> (Color, Color, Color, Color) {
-        let t = self.theme;
+        let t = self.theme.resolve();
         match *self.state.borrow() {
             ButtonState::Normal => (t.background, THEME.text_muted, t.shadow, THEME.border_idle()),
             ButtonState::Selected => (t.background, THEME.text, t.shadow, THEME.tertiary),

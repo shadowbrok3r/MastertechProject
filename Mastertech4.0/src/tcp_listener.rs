@@ -26,7 +26,7 @@ use crate::transport::{
 };
 use tcp_protocol::is_supported_version;
 use anyhow::{anyhow, Context, Result};
-use displays::{deserialize_command, EGUI_INPUT_TAG};
+use displays::{deserialize_command, DESKTOP_INPUT_TAG, EGUI_INPUT_TAG};
 use std::net::SocketAddr;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -87,6 +87,33 @@ fn term_frame_broadcast() -> &'static broadcast::Sender<Vec<u8>> {
 /// WS relay path.
 pub fn broadcast_term_frame(bytes: Vec<u8>) {
     let _ = term_frame_broadcast().send(bytes);
+}
+
+// ── Remote-desktop frame broadcast ─────────────────────────────────────────────
+//
+// The remote-desktop capture thread (`crate::remote_desktop`) pushes raster
+// JPEG frames here; every connected TCP admin session forwards them to its
+// socket. Mirrors the egui-frame broadcast so no changes to the capture path
+// are needed. Bytes already carry the leading `DESKTOP_FRAME_TAG`.
+
+static DESKTOP_FRAME_TX: OnceLock<broadcast::Sender<Vec<u8>>> = OnceLock::new();
+
+fn desktop_frame_broadcast() -> &'static broadcast::Sender<Vec<u8>> {
+    DESKTOP_FRAME_TX.get_or_init(|| {
+        let (tx, _) = broadcast::channel(32);
+        tx
+    })
+}
+
+/// Called by the remote-desktop capture thread for each encoded frame.
+pub fn broadcast_desktop_frame(tagged_bytes: Vec<u8>) {
+    let _ = desktop_frame_broadcast().send(tagged_bytes);
+}
+
+/// Number of connected admin TCP sessions subscribed to desktop frames.
+/// The capture thread uses this to auto-stop after all admins disconnect.
+pub fn desktop_frame_subscriber_count() -> usize {
+    desktop_frame_broadcast().receiver_count()
 }
 
 /// Preferred port. We try this first; if it's taken (e.g. another
@@ -370,6 +397,8 @@ async fn run_session_loop(
     let mut frame_rx = frame_broadcast().subscribe();
     // Subscribe to terminal-mode (ratatui) buffer frames for the same reason.
     let mut term_frame_rx = term_frame_broadcast().subscribe();
+    // Subscribe to raster desktop frames (full remote-desktop control).
+    let mut desktop_frame_rx = desktop_frame_broadcast().subscribe();
 
     let (in_tx, mut in_rx) = tokio_mpsc::unbounded_channel::<Result<InboundFrame, anyhow::Error>>();
     let reader_handle = tokio::spawn(reader_task(read_half, in_tx));
@@ -395,18 +424,31 @@ async fn run_session_loop(
                 };
                 match res {
                     Ok(InboundFrame::Binary(bytes)) => {
-                        if bytes.first().copied() == Some(EGUI_INPUT_TAG) {
-                            // Egui input event from admin — route to the frame capture plugin.
-                            if let Ok((ev, _)) = bincode::serde::decode_from_slice::<
-                                displays::plugins::EguiInputEvent,
-                                _,
-                            >(&bytes[1..], bincode::config::standard())
-                            {
-                                let _ = displays::plugins::egui_input_sender().try_send(ev);
+                        match bytes.first().copied() {
+                            Some(EGUI_INPUT_TAG) => {
+                                // Egui input event from admin — route to the frame capture plugin.
+                                if let Ok((ev, _)) = bincode::serde::decode_from_slice::<
+                                    displays::plugins::EguiInputEvent,
+                                    _,
+                                >(&bytes[1..], bincode::config::standard())
+                                {
+                                    let _ = displays::plugins::egui_input_sender().try_send(ev);
+                                }
                             }
-                        } else {
-                            let cmd = deserialize_command(&bytes);
-                            client.handle_command(cmd, transport).await;
+                            Some(DESKTOP_INPUT_TAG) => {
+                                // Full-desktop input event from admin — inject via enigo.
+                                if let Ok((ev, _)) = bincode::serde::decode_from_slice::<
+                                    displays::remote_desktop::DesktopInputEvent,
+                                    _,
+                                >(&bytes[1..], bincode::config::standard())
+                                {
+                                    let _ = crate::remote_desktop::desktop_input_sender().try_send(ev);
+                                }
+                            }
+                            _ => {
+                                let cmd = deserialize_command(&bytes);
+                                client.handle_command(cmd, transport).await;
+                            }
                         }
                     }
                     Ok(InboundFrame::Text(text)) => {
@@ -468,6 +510,18 @@ async fn run_session_loop(
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
                         term_frame_rx = term_frame_broadcast().subscribe();
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {}
+                }
+            }
+            // Outbound: forward raster desktop frames to the admin.
+            desktop_result = desktop_frame_rx.recv() => {
+                match desktop_result {
+                    Ok(tagged_bytes) => {
+                        let _ = write_tx.send(TcpFrame::Binary(tagged_bytes));
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        desktop_frame_rx = desktop_frame_broadcast().subscribe();
                     }
                     Err(broadcast::error::RecvError::Closed) => {}
                 }

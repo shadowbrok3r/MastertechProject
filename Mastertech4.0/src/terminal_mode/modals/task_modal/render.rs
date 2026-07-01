@@ -12,7 +12,7 @@ use ratatui::{
 use database::schema::{Status, TaskNotePayload};
 use unicode_width::UnicodeWidthStr;
 use crate::terminal_mode::{
-    styling::{CATPPUCCIN, THEME, APP_BACKGROUND},
+    styling::{CATPPUCCIN, THEME},
     widgets::{tui_textarea::CursorMove, ButtonType, HandleWidget},
 };
 use super::{ModalFocus, ModalPage, TaskModal};
@@ -35,7 +35,7 @@ impl<'a> HandleWidget<'a> for TaskModal<'a> {
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(THEME.accent))
             .title_style(THEME.title())
-            .style(Style::default().bg(APP_BACKGROUND))
+            .style(Style::default().bg(THEME.bg))
             .title(format!(" {} - {} ", self.task.task_name, self.modal_id))
             .title_alignment(Alignment::Center);
 
@@ -418,7 +418,7 @@ impl<'a> TaskModal<'a> {
             .into_iter()
             .enumerate()
             .map(|(i, (label, value))| {
-                let bg = if i % 2 == 0 { APP_BACKGROUND } else { CATPPUCCIN.base };
+                let bg = if i % 2 == 0 { THEME.bg } else { CATPPUCCIN.base };
                 Row::new(vec![
                     Cell::from(Span::styled(label, Style::default().fg(THEME.tertiary))),
                     Cell::from(value),
@@ -800,7 +800,7 @@ impl<'a> TaskModal<'a> {
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(THEME.border(true))
-            .style(Style::default().bg(APP_BACKGROUND))
+            .style(Style::default().bg(THEME.bg))
             .title(selector.title())
             .title_style(THEME.title());
         let inner = block.inner(popup_area);

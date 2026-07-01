@@ -19,7 +19,7 @@ use chrono::Utc;
 use crossbeam::channel::{Receiver, Sender};
 use crate::terminal_mode::{
     events::action_handler::WidgetId,
-    styling::{CATPPUCCIN, CATPPUCCINTHEME},
+    styling::{CATPPUCCIN, ThemeRole},
     widgets::button::Button,
     widgets::tui_textarea::TextArea,
 };
@@ -258,7 +258,7 @@ impl<'a> TaskModal<'a> {
         let mut tab_buttons = Vec::new();
         for page in ModalPage::all() {
             let btn = Button::new(page.title(), WidgetId(page.widget_id().to_string()))
-                .theme(CATPPUCCINTHEME)
+                .theme(ThemeRole::Input)
                 .as_tab();
             tab_buttons.push(btn);
         }
@@ -270,7 +270,7 @@ impl<'a> TaskModal<'a> {
 
         // Create close button
         let close_btn = Button::new("✕ Close", WidgetId("TaskModalClose".to_string()))
-            .theme(CATPPUCCINTHEME);
+            .theme(ThemeRole::Input);
 
         let (ticket_tx, ticket_rx) = crossbeam::channel::unbounded();
         let (customer_tx, customer_rx) = crossbeam::channel::unbounded();

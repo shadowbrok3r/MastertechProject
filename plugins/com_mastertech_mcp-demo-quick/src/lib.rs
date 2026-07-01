@@ -8,7 +8,7 @@ fn align_up(pos: usize, align: usize) -> usize {
     (pos + align - 1) & !(align - 1)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn alloc(size: i32) -> i32 {
     unsafe {
         let size = size as usize;
@@ -20,11 +20,11 @@ pub extern "C" fn alloc(size: i32) -> i32 {
             return 0;
         }
         HEAP_POS = p + size;
-        HEAP.as_mut_ptr().add(p) as i32
+        (&raw mut HEAP).cast::<u8>().add(p) as i32
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn dealloc(_ptr: i32, _size: i32) {}
 
 fn leak_bytes(slice: &[u8]) -> u64 {
@@ -39,43 +39,43 @@ fn leak_bytes(slice: &[u8]) -> u64 {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn plugin_id() -> u64 {
     leak_bytes(b"com.mastertech.mcp-demo-quick")
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn plugin_name() -> u64 {
     leak_bytes(b"MCP Demo Quick")
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn plugin_version() -> u64 {
     leak_bytes(b"0.1.0")
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn on_load() {}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn on_unload() {}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn logic() {}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ui_commands() -> u64 {
     leak_bytes(b"[]")
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mcp_tools() -> u64 {
     leak_bytes(
         br#"[{"name":"hello","description":"Returns pong","parameters_schema":{"type":"object","properties":{}}}]"#,
     )
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn handle_mcp_call(
     tool_ptr: i32,
     tool_len: i32,

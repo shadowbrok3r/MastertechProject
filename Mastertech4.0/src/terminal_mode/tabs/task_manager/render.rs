@@ -1,6 +1,6 @@
 
 use ratatui::{crossterm::event::KeyCode, layout::{Constraint, Direction, Layout, Margin, Rect}, prelude::Backend, style::{Modifier, Style, Stylize}, widgets::{canvas::{Canvas, Line}, Block, Borders, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation, StatefulWidget, Table, TableState, Widget, WidgetRef, FrameExt}, Frame};
-use crate::terminal_mode::{styling::{CATPPUCCIN, APP_BACKGROUND}, widgets::HandleWidget};
+use crate::terminal_mode::{styling::{CATPPUCCIN, THEME}, widgets::HandleWidget};
 use std::{collections::HashMap, time::Instant};
 use super::SysinfoTab;
 
@@ -15,12 +15,12 @@ impl SysinfoTab {
         // Determine current value (or fallback to 0.0).
         let current_cpu = cpu_points.last().map(|p| p.1).unwrap_or(0.0);
         let cpu_canvas = Canvas::default()
-            .background_color(APP_BACKGROUND)
+            .background_color(THEME.bg)
             .block(
                 Block::default().borders(Borders::ALL)
                     .border_type(ratatui::widgets::BorderType::Rounded)
-                    .border_style(Style::default().bg(APP_BACKGROUND))
-                    .style(Style::new().bg(APP_BACKGROUND))
+                    .border_style(Style::default().bg(THEME.bg))
+                    .style(Style::new().bg(THEME.bg))
                     .title("CPU Usage")
                     .add_modifier(Modifier::BOLD)
             )
@@ -56,15 +56,15 @@ impl SysinfoTab {
             .collect();
         let current_mem = mem_points.last().map(|p| p.1).unwrap_or(0.0);
         let mem_canvas = Canvas::default()
-            .background_color(APP_BACKGROUND)
+            .background_color(THEME.bg)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .title("Memory Usage")
                     .add_modifier(Modifier::BOLD)
                     .border_type(ratatui::widgets::BorderType::Rounded)
-                    .border_style(Style::default().fg(CATPPUCCIN.rosewater).bg(APP_BACKGROUND))
-                    .style(Style::default().fg(CATPPUCCIN.rosewater).bg(APP_BACKGROUND)),
+                    .border_style(Style::default().fg(CATPPUCCIN.rosewater).bg(THEME.bg))
+                    .style(Style::default().fg(CATPPUCCIN.rosewater).bg(THEME.bg)),
             )
             .x_bounds([lower_bound, current_time])
             .y_bounds([0.0, 100.0])
@@ -98,15 +98,15 @@ impl SysinfoTab {
         let current_gpu = gpu_points.last().map(|p| p.1).unwrap_or(0.0);
         let gpu_points_interp = interpolate_points(&gpu_points, 5);
         let gpu_canvas = Canvas::default()
-            .background_color(APP_BACKGROUND)
+            .background_color(THEME.bg)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .title("GPU Usage")
                     .add_modifier(Modifier::BOLD)
                     .border_type(ratatui::widgets::BorderType::Rounded)
-                    .border_style(Style::default().fg(CATPPUCCIN.mauve).bg(APP_BACKGROUND))
-                    .style(Style::default().fg(CATPPUCCIN.mauve).bg(APP_BACKGROUND)),
+                    .border_style(Style::default().fg(CATPPUCCIN.mauve).bg(THEME.bg))
+                    .style(Style::default().fg(CATPPUCCIN.mauve).bg(THEME.bg)),
             )
             .x_bounds([lower_bound, current_time])
             .y_bounds([0.0, 100.0])
@@ -189,13 +189,13 @@ impl SysinfoTab {
         ];
 
         let temp_canvas = Canvas::default()
-            .background_color(APP_BACKGROUND)
+            .background_color(THEME.bg)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(ratatui::widgets::BorderType::Rounded)
-                    .border_style(Style::default().bg(APP_BACKGROUND))
-                    .style(Style::default().bg(APP_BACKGROUND))
+                    .border_style(Style::default().bg(THEME.bg))
+                    .style(Style::default().bg(THEME.bg))
                     .title("Component Temps")
                     .add_modifier(Modifier::BOLD),
             )
@@ -271,8 +271,8 @@ impl SysinfoTab {
                 .border_type(ratatui::widgets::BorderType::Rounded)
                 .title("Processes")
                 .add_modifier(Modifier::BOLD)
-                .border_style(Style::default().fg(CATPPUCCIN.red).bg(APP_BACKGROUND))
-                .style(Style::default().fg(CATPPUCCIN.red).bg(APP_BACKGROUND)),
+                .border_style(Style::default().fg(CATPPUCCIN.red).bg(THEME.bg))
+                .style(Style::default().fg(CATPPUCCIN.red).bg(THEME.bg)),
         )
         .highlight_symbol(">>")
         .highlight_spacing(ratatui::widgets::HighlightSpacing::WhenSelected);
@@ -307,7 +307,7 @@ impl SysinfoTab {
         }
 
         let details_paragraph = Paragraph::new(details_text)
-            .style(Style::default().fg(CATPPUCCIN.pink).bg(APP_BACKGROUND));
+            .style(Style::default().fg(CATPPUCCIN.pink).bg(THEME.bg));
 
         details_paragraph
     }
@@ -378,7 +378,7 @@ impl<'a> HandleWidget<'a> for SysinfoTab {
         let details_block = Block::default()
             .border_type(ratatui::widgets::BorderType::Rounded)
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(CATPPUCCIN.sapphire).bg(APP_BACKGROUND))
+            .border_style(Style::default().fg(CATPPUCCIN.sapphire).bg(THEME.bg))
             .add_modifier(Modifier::BOLD)
             .title("System Details");
 

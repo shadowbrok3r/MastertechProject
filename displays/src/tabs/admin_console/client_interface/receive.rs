@@ -218,6 +218,7 @@ impl WebSocketClient {
                             // buffers and egui frames onto the same channel as
                             // sysinfo/Cmd; route by content, not by view state.
                             let is_viewer_frame = bin.first() == Some(&crate::EGUI_FRAME_TAG)
+                                || bin.first() == Some(&crate::DESKTOP_FRAME_TAG)
                                 || is_zstd_frame(&bin);
                             // Intercept admin control-plane Cmd results before view-specific decoding.
                             let mut handled_as_admin_cmd = false;
@@ -249,6 +250,11 @@ impl WebSocketClient {
                                                 timestamp: chrono::Local::now().to_rfc3339(),
                                             });
                                             self.notifications += 1;
+                                            handled_as_admin_cmd = true;
+                                        }
+                                        Cmd::DesktopMonitorList(monitors) => {
+                                            log::info!("Received {} monitor(s) from client", monitors.len());
+                                            self.desktop_monitors = monitors;
                                             handled_as_admin_cmd = true;
                                         }
                                         _ => {}
@@ -453,7 +459,9 @@ impl WebSocketClient {
     }
 
     fn handle_binary_message(&mut self, bin: Vec<u8>, ctx: &Context) {
-        if bin.first() == Some(&crate::EGUI_FRAME_TAG) {
+        if bin.first() == Some(&crate::EGUI_FRAME_TAG)
+            || bin.first() == Some(&crate::DESKTOP_FRAME_TAG)
+        {
             return;
         }
         // Builder traffic: workers prepend `BUILDER_WIRE_TAG` to every

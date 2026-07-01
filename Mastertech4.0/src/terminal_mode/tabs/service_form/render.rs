@@ -1,5 +1,5 @@
 use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent}, layout::{Constraint, Direction, Layout, Position, Rect, Size}, prelude::{Backend, StatefulWidget}, style::{Color, Style}, widgets::{Block, Borders, WidgetRef}, Frame};
-use crate::terminal_mode::{styling::{CATPPUCCIN, APP_BACKGROUND}, widgets::{button::ButtonState, ButtonType, HandleWidget, ShrinkArea, SHORTCUT_SET}};
+use crate::terminal_mode::{styling::{CATPPUCCIN, THEME}, widgets::{button::ButtonState, ButtonType, HandleWidget, ShrinkArea, SHORTCUT_SET}};
 use crate::terminal_mode::widgets::tui_scroll_view::ScrollView;
 use super::ServiceFormTab;
 
@@ -21,7 +21,7 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
         };
 
         let mut scroll_view = ScrollView::new(virtual_size);
-        scroll_view.buf_mut().set_style(area, Style::new().bg(APP_BACKGROUND));
+        scroll_view.buf_mut().set_style(area, Style::new().bg(THEME.bg));
         
         // Calculate centered content area (60% of total width, centered)
         let content_width_percent = 60;

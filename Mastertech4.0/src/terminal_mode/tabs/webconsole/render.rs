@@ -1,6 +1,6 @@
 use displays::remote_viewer::ratagui::TerminalEvent;
 use ratatui::{layout::{Constraint, Direction, Layout, Margin, Position, Rect}, prelude::Backend, style::Stylize, widgets::{Block, Paragraph, Widget, WidgetRef}, Frame};
-use crate::terminal_mode::{data::LocalTermEvent, styling::{CATPPUCCIN, APP_BACKGROUND}, widgets::{ButtonType, ShrinkArea}};
+use crate::terminal_mode::{data::LocalTermEvent, styling::{CATPPUCCIN, THEME}, widgets::{ButtonType, ShrinkArea}};
 use ratatui::crossterm::event::{KeyEvent, MouseEvent};
 use super::{PageState, WebconsoleTab};
 
@@ -11,7 +11,7 @@ impl <'a> WebconsoleTab <'a> {
         match &self.page_state {
             PageState::None => {
                 let placeholder = Paragraph::new("Select a client to view remote terminal")
-                    .block(Block::default().bg(APP_BACKGROUND))
+                    .block(Block::default().bg(THEME.bg))
                     .centered();
                 (&placeholder).render(area, f.buffer_mut());
             },
@@ -29,7 +29,7 @@ impl <'a> WebconsoleTab <'a> {
                     // Draw a background block
                     f.render_widget(
                         Block::default()
-                        .bg(APP_BACKGROUND)
+                        .bg(THEME.bg)
                         .border_type(ratatui::widgets::BorderType::QuadrantOutside),
                         area,
                     );
@@ -99,7 +99,7 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for WebconsoleTab<'a> {
                 .split(left_half);
 
             let para = Paragraph::new("Clients")
-                .block(Block::default().bg(APP_BACKGROUND))
+                .block(Block::default().bg(THEME.bg))
                 .centered();
             (&para).render(left_side_chunks[0], f.buffer_mut());
 

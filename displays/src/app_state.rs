@@ -40,6 +40,16 @@ pub enum AppState {
     NoAuth(String),
 }
 
+/// Result of a background reconnect attempt.
+#[derive(Debug, Clone)]
+pub enum ReconnectOutcome {
+    /// Connection healthy and `$auth` still matches the logged-in user.
+    Ok,
+    /// Connection healthy but auth degraded (guest/expired) — needs re-login.
+    AuthLost,
+    Failed(String),
+}
+
 impl Default for AppState {
     fn default() -> Self {
         Self::NoAuth("Not Authenticated".to_string())
@@ -152,35 +162,54 @@ pub struct SharedContext {
     #[serde(skip)]
     pub live_user_rx: Receiver<(Action, User)>,
     
-    /// {Channel for live query connection errors - triggers reconnection in WASM}
+    /// {Live-query stream errors, tagged with the epoch that produced them}
     #[serde(skip)]
-    pub live_query_error_tx: Sender<String>,
+    pub live_query_error_tx: Sender<(u64, String)>,
     #[serde(skip)]
-    pub live_query_error_rx: Receiver<String>,
-    /// {Flag indicating we need to reconnect due to a connection reset}
+    pub live_query_error_rx: Receiver<(u64, String)>,
+    /// {A reconnect attempt is pending (failed attempt awaiting backoff)}
     pub needs_reconnect: bool,
 
-    /// Async reconnect result channel for WASM. The reconnect task runs
-    /// inside `wasm_bindgen_futures::spawn_local` (no JoinHandle) and posts
-    /// its `Ok(())` / `Err(reason)` here so the next frame can call
-    /// `load_data` (or bump the failure counter) on the main thread where
-    /// `&mut self` is available.
+    /// Background reconnect tasks post `(attempt_token, outcome)` here; the
+    /// next frame drains it on the main thread where `&mut self` is
+    /// available. Results from abandoned (stalled) attempts are discarded
+    /// by comparing tokens.
     #[serde(skip)]
-    pub reconnect_result_tx: Sender<Result<(), String>>,
+    pub reconnect_result_tx: Sender<(u64, ReconnectOutcome)>,
     #[serde(skip)]
-    pub reconnect_result_rx: Receiver<Result<(), String>>,
+    pub reconnect_result_rx: Receiver<(u64, ReconnectOutcome)>,
+    /// Token identifying the most recently spawned reconnect attempt.
+    #[serde(skip)]
+    pub reconnect_token: u64,
     /// Gate so a transient-error storm doesn't start five overlapping
     /// reconnect tasks. Cleared in the result drain.
     #[serde(skip)]
     pub reconnect_in_progress: bool,
-    /// Consecutive reconnect failures. Reset to 0 on a successful
-    /// reconnect; when it reaches 3, `show_reload_prompt` flips so the
-    /// user gets an action-required banner.
+    /// When the in-flight reconnect attempt started (stall watchdog).
+    #[serde(skip)]
+    pub reconnect_started_at: Option<web_time::Instant>,
+    /// Consecutive reconnect failures; drives the retry backoff. Reset to 0
+    /// when a canary round-trip confirms the subscriptions are live again.
     #[serde(skip)]
     pub reconnect_attempts: u32,
-    /// When true, `receive_shared_ui` renders the manual-reload banner.
+    /// When true, `receive_shared_ui` renders the re-login banner (auth lost).
     #[serde(skip)]
     pub show_reload_prompt: bool,
+    /// True from first detected outage until a canary confirms recovery.
+    #[serde(skip)]
+    pub db_degraded: bool,
+    /// Forces the next `load_data` to refetch tasks/users/notifications.
+    #[serde(skip)]
+    pub force_data_refetch: bool,
+    /// Generation counter for live-query streams; stale-epoch errors are ignored.
+    #[serde(skip)]
+    pub live_epoch: u64,
+    /// Abort handles for the currently-running live-query streams.
+    #[serde(skip)]
+    pub live_stream_aborts: Vec<futures::future::AbortHandle>,
+    /// Random per-app-instance id namespacing this session's canary records.
+    #[serde(skip)]
+    pub live_session_id: String,
 
     /// `document.visibilitychange` signal. `true` = visible, `false` =
     /// hidden. Drained in `receive_shared_logic`: on hidden we stamp
@@ -506,13 +535,12 @@ impl SharedContext {
         let (new_note_tx, new_note_rx) = channel::unbounded::<TaskNotePayload>();
         let (live_notification_tx, live_notification_rx) = channel::unbounded::<(Action, Notification)>();
         let (live_user_tx, live_user_rx) = channel::unbounded::<(Action, User)>();
-        // Was bounded(1) — that silently dropped 4 of 5 try_sends when all
-        // live streams errored at the same instant (Cloudflare WS reset).
-        // The 10s cooldown in `receive_shared_logic` still coalesces the
-        // burst, so unbounded is safe and far less brittle.
-        let (live_query_error_tx, live_query_error_rx) = channel::unbounded::<String>();
+        // Unbounded so a burst of stream errors (all five streams dying on
+        // one WS reset) is never silently dropped; the epoch tag lets the
+        // drain discard entries from already-replaced stream generations.
+        let (live_query_error_tx, live_query_error_rx) = channel::unbounded::<(u64, String)>();
         let (reconnect_result_tx, reconnect_result_rx) =
-            channel::unbounded::<Result<(), String>>();
+            channel::unbounded::<(u64, ReconnectOutcome)>();
         let (visibility_signal_tx, visibility_signal_rx) = channel::unbounded::<bool>();
         let (notification_tx, notification_rx) = channel::unbounded::<Vec<Notification>>();
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
@@ -583,9 +611,16 @@ impl SharedContext {
             live_query_error_tx, live_query_error_rx,
             needs_reconnect: false,
             reconnect_result_tx, reconnect_result_rx,
+            reconnect_token: 0,
             reconnect_in_progress: false,
+            reconnect_started_at: None,
             reconnect_attempts: 0,
             show_reload_prompt: false,
+            db_degraded: false,
+            force_data_refetch: false,
+            live_epoch: 0,
+            live_stream_aborts: Vec::new(),
+            live_session_id: database::new_live_session_id(),
             visibility_signal_tx, visibility_signal_rx,
             tab_hidden_at: None,
             visibility_listener_installed: false,

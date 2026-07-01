@@ -17,6 +17,7 @@ pub mod first_run;
 pub mod data;
 pub mod transport;
 pub mod tcp_listener;
+pub mod remote_desktop;
 pub mod remote_self_update;
 
 impl eframe::App for app_state::MasterTechApp {
