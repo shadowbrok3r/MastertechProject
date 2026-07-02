@@ -101,6 +101,12 @@ pub struct ScriptsTab<'a> {
     /// (category, text) of the running script
     current_script: RefCell<Option<(Category, String)>>,
     is_popup_open: RefCell<bool>,
+    /// A finished script logged the reboot-recommended marker; prompt once the batch drains.
+    reboot_pending: RefCell<bool>,
+    /// Reboot prompt overlay is visible.
+    reboot_prompt_open: RefCell<bool>,
+    /// Item texts dispatched this run that still owe a checklist completion.
+    batch_pending: RefCell<std::collections::HashSet<String>>,
     /// Job Builder column collapsed (default) vs expanded.
     job_builder_collapsed: RefCell<bool>,
     /// Clickable region that toggles the Job Builder collapse.
@@ -372,6 +378,9 @@ impl<'a> ScriptsTab<'a> {
             current_script: RefCell::new(None),
             data_path_buttons: Vec::new(),
             is_popup_open: RefCell::new(false),
+            reboot_pending: RefCell::new(false),
+            reboot_prompt_open: RefCell::new(false),
+            batch_pending: RefCell::new(std::collections::HashSet::new()),
             job_builder_collapsed: RefCell::new(true),
             job_builder_toggle_area: RefCell::new(None),
             // destination_directory: String::new(),
@@ -778,6 +787,9 @@ impl<'a> ScriptsTab<'a> {
         }
 
         while let Ok(msg) = self.script_log_rx.try_recv() {
+            if msg.contains(displays::scripts::REBOOT_RECOMMENDED_MARKER) {
+                self.reboot_pending.replace(true);
+            }
             for pending in self.pending_mcp_runs.iter_mut() {
                 pending.log_lines.push(msg.clone());
             }
@@ -785,6 +797,7 @@ impl<'a> ScriptsTab<'a> {
         }
 
         while let Ok((category, item_text, success)) = self.checklist_completion_rx.try_recv() {
+            self.batch_pending.borrow_mut().remove(&item_text);
             if let Some(idx) = self.pending_mcp_runs.iter().position(|p| {
                 p.category == category && p.script_name == item_text
             }) {
@@ -803,6 +816,13 @@ impl<'a> ScriptsTab<'a> {
                 );
             }
             self.update_checklist(category, &item_text, success);
+        }
+
+        // Prompt only after every dispatched script has reported completion.
+        if *self.reboot_pending.borrow() && self.batch_pending.borrow().is_empty() {
+            self.reboot_pending.replace(false);
+            self.reboot_prompt_open.replace(true);
+            self.log_message("Reboot required to finalize Webroot activation — press R to reboot now (MasterTech relaunches after login), Esc to dismiss.");
         }
 
         #[cfg(target_os="windows")]

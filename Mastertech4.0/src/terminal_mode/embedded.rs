@@ -3,7 +3,7 @@ use crate::terminal_mode::data::LocalTermEvent;
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use database::schema::User;
 use displays::remote_viewer::ratagui::{RataguiBackend, TerminalEvent};
-use eframe::egui::{Event, EventFilter, Frame, Id, Sense, Ui};
+use eframe::egui::{Event, EventFilter, Frame, Id, Ui};
 use ratatui::crossterm::event::{KeyEvent, MouseEvent};
 use ratatui::Terminal;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -95,8 +95,9 @@ impl EmbeddedTerminal {
             ui.add(terminal.backend_mut());
         });
 
-        let area_resp = inner.response.interact(Sense::click_and_drag());
-        if area_resp.clicked() || area_resp.is_pointer_button_down_on() {
+        // Pointer press inside the terminal area focuses it; no interactive
+        // sense here so clicks still reach the terminal line widgets.
+        if inner.response.contains_pointer() && ctx.input(|i| i.pointer.any_pressed()) {
             ctx.memory_mut(|m| m.request_focus(focus_id));
         }
 

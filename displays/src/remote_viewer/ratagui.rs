@@ -15,6 +15,7 @@ pub enum TerminalEvent {
     MouseClick { x: u16, y: u16 },
     KeyPress { code: Key, modifiers: Modifiers },
     MouseMove { x: u16, y: u16 },
+    MouseScroll { x: u16, y: u16, up: bool },
     // KeyPress { code: KeyCode, modifiers: KeyModifiers }
 }
 
@@ -58,6 +59,8 @@ pub struct RataguiBackend {
     buffer_changed: bool, // New: Track buffer content changes
     #[serde(skip)]
     hover_events: bool,
+    #[serde(skip)]
+    scroll_accum: f32,
     #[serde(skip)]
     event_tx: Sender<TerminalEvent>,
 }
@@ -126,6 +129,8 @@ impl Widget for &mut RataguiBackend {
         });
 
         let jobs = self.cached_job.as_ref().expect("Cached job should be initialized");
+        let scroll_y = ui.input(|i| i.smooth_scroll_delta.y);
+        let hover_pos = ui.input(|i| i.pointer.hover_pos());
         let mut combined_response = None;
         ui.vertical(|ui| {
             for (i, job) in jobs.iter().enumerate() {
@@ -156,6 +161,21 @@ impl Widget for &mut RataguiBackend {
                     if let Some(pos) = r.hover_pos() {
                         let x = ((pos.x - r.rect.min.x) / char_width).floor().max(0.0) as u16;
                         let _ = self.event_tx.send(TerminalEvent::MouseMove { x, y: i as u16 });
+                    }
+                }
+                // One scroll event per accumulated wheel notch on the hovered row.
+                if scroll_y != 0.0 {
+                    if let Some(pos) = hover_pos {
+                        if r.rect.contains(pos) {
+                            const SCROLL_STEP: f32 = 50.0;
+                            self.scroll_accum += scroll_y;
+                            let x = ((pos.x - r.rect.min.x) / char_width).floor().max(0.0) as u16;
+                            while self.scroll_accum.abs() >= SCROLL_STEP {
+                                let up = self.scroll_accum > 0.0;
+                                self.scroll_accum -= if up { SCROLL_STEP } else { -SCROLL_STEP };
+                                let _ = self.event_tx.send(TerminalEvent::MouseScroll { x, y: i as u16, up });
+                            }
+                        }
                     }
                 }
                 if i == 0 {
@@ -197,6 +217,7 @@ impl RataguiBackend {
             frame_index: 0,
             buffer_changed: false,
             hover_events: false,
+            scroll_accum: 0.0,
             event_tx
         }
     }
@@ -228,6 +249,7 @@ impl RataguiBackend {
             frame_index: 0,
             buffer_changed: false,
             hover_events: false,
+            scroll_accum: 0.0,
             event_tx
         }
     }

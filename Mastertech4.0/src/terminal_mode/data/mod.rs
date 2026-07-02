@@ -471,6 +471,12 @@ impl TryFrom<LocalTermEvent> for MouseEvent {
                 row: y,
                 modifiers: KeyModifiers::NONE,
             }),
+            TerminalEvent::MouseScroll { x, y, up } => Ok(MouseEvent {
+                kind: if up { MouseEventKind::ScrollUp } else { MouseEventKind::ScrollDown },
+                column: x,
+                row: y,
+                modifiers: KeyModifiers::NONE,
+            }),
             _ => Err(anyhow::anyhow!("Error converting TerminalEvent to MouseEvent")),
         }
     }
@@ -478,20 +484,12 @@ impl TryFrom<LocalTermEvent> for MouseEvent {
 
 impl Into<TerminalEvent> for LocalTermEvent {
     fn into(self) -> TerminalEvent {
-        match self.0 {
-            TerminalEvent::MouseClick { x, y } => TerminalEvent::MouseClick { x, y },
-            TerminalEvent::KeyPress { code, modifiers } => TerminalEvent::KeyPress { code, modifiers },
-            TerminalEvent::MouseMove { x, y } => TerminalEvent::MouseMove { x, y },
-        }
+        self.0
     }
 }
 
 impl Into<LocalTermEvent> for TerminalEvent {
     fn into(self) -> LocalTermEvent {
-        match self {
-            TerminalEvent::MouseClick { x, y } => LocalTermEvent(TerminalEvent::MouseClick { x, y }),
-            TerminalEvent::KeyPress { code, modifiers } => LocalTermEvent(TerminalEvent::KeyPress { code, modifiers }),
-            TerminalEvent::MouseMove { x, y } => LocalTermEvent(TerminalEvent::MouseMove { x, y }),
-        }
+        LocalTermEvent(self)
     }
 }

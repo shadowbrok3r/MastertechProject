@@ -207,11 +207,13 @@ impl AntiVirusProduct {
 }
 
 
+/// Installs or re-activates Webroot. Returns `true` when an existing install was
+/// re-keyed via the /autouninstall identity-reset path, so a reboot is recommended.
 pub async fn install_webroot(
-    activation_key: String, 
+    activation_key: String,
     client: Client,
     progress_tx: Sender<(u64, u64)>
-) -> anyhow::Result<(), anyhow::Error> {
+) -> anyhow::Result<bool, anyhow::Error> {
     if activation_key.is_empty() {
         return Err(anyhow::anyhow!("Activation key is empty"));
     }
@@ -255,6 +257,22 @@ pub async fn install_webroot(
 
     #[cfg(target_os = "windows")]
     {
+        if already_installed {
+            // A keyed run over a live same-version agent is a no-op. /autouninstall is the
+            // only caller allowed to stop the PPL-protected service; it then re-runs the
+            // install path, which mints a fresh device identity the cloud accepts.
+            info!("Webroot present — running /autouninstall to reset device identity...");
+            let uninstall = Command::new("cmd")
+                .arg("/C")
+                .arg(&wrv_path)
+                .arg("/autouninstall")
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+                .await?;
+            // Exit code 2 is expected: the uninstall is refused but the identity reset still runs.
+            info!("Webroot /autouninstall exit status: {:?}", uninstall.status);
+        }
+
         info!("Running Webroot installer (waiting for completion)...");
         let output = Command::new("cmd")
             .arg("/C")
@@ -290,7 +308,7 @@ pub async fn install_webroot(
             info!("Webroot retry exit status: {:?}", retry.status);
         }
     }
-    Ok(())
+    Ok(already_installed)
 }
 
 pub async fn install_sas(

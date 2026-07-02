@@ -42,6 +42,9 @@ impl Display for ScriptStatus {
     }
 }
 
+/// Log-line marker emitted when a script finished but needs a reboot to take full effect.
+pub const REBOOT_RECOMMENDED_MARKER: &str = "[reboot recommended]";
+
 /// Planned wall-clock budget in seconds for one remote script run.
 pub fn default_remote_script_timeout_secs(script_name: &str) -> u64 {
     match script_name {
