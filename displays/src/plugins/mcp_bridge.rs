@@ -1301,6 +1301,10 @@ async fn execute_one_remote_script(
         .results
         .iter()
         .all(|(_, s)| s == "Success" || s == "success");
+    let reboot_recommended = session
+        .logs
+        .iter()
+        .any(|l| l.contains(crate::scripts::REBOOT_RECOMMENDED_MARKER));
     let mut payload = serde_json::json!({
         "script": p.script_name,
         "connection_string": p.connection_string,
@@ -1309,6 +1313,12 @@ async fn execute_one_remote_script(
         "results": session.results.iter().map(|(n, s)| serde_json::json!({"name": n, "status": s})).collect::<Vec<_>>(),
         "logs": session.logs,
     });
+    if reboot_recommended {
+        payload["reboot_recommended"] = serde_json::json!(true);
+        payload["reboot_hint"] = serde_json::json!(
+            "Webroot was re-keyed over an existing install; a reboot finalizes the new device identity. Ask the tech/admin to reboot the client (admin console Power > Reboot keeps MasterTech persistent across the restart)."
+        );
+    }
 
     if super::stress_test_verify::is_persisted_stress_script(&p.script_name) {
         let run_hint =

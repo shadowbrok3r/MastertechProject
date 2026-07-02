@@ -370,6 +370,8 @@ async fn main() -> eframe::Result<()> {
         unsafe {
             let _ = SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);
         }
+        // Delete the one-shot logon relaunch task so it does not fire on every logon.
+        utilities::windows::reboot::clear_relaunch_task();
     }
 
     let matches = clap::Command::new("Mastertech")

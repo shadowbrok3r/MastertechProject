@@ -403,6 +403,48 @@ impl<'a> ScriptsTab<'a> {
 
     }
 
+    /// Centered overlay shown when a finished script needs a reboot to take effect.
+    fn draw_reboot_prompt(&self, f: &mut Frame, area: Rect) {
+        if !*self.reboot_prompt_open.borrow() {
+            return;
+        }
+        let width = 64.min(area.width.saturating_sub(4));
+        let height = 7;
+        let popup = Rect::new(
+            area.x + (area.width.saturating_sub(width)) / 2,
+            area.y + (area.height.saturating_sub(height)) / 2,
+            width,
+            height,
+        );
+        let text = vec![
+            Line::from("Webroot was re-keyed over an existing install."),
+            Line::from("A reboot finalizes the new device identity."),
+            Line::from("MasterTech relaunches automatically after login."),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("[R]", Style::new().fg(THEME.accent).bold()),
+                Span::raw(" Reboot now    "),
+                Span::styled("[Esc]", Style::new().fg(THEME.tertiary).bold()),
+                Span::raw(" Later"),
+            ]),
+        ];
+        let widget = Paragraph::new(text)
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true })
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .title("Reboot required")
+                    .title_style(THEME.title())
+                    .title_alignment(Alignment::Center)
+                    .border_style(Style::new().fg(THEME.accent))
+                    .style(Style::new().bg(THEME.bg).fg(THEME.text)),
+            );
+        f.render_widget(Clear, popup);
+        f.render_widget(widget, popup);
+    }
+
     fn draw_context_menu(&self, f: &mut Frame) {
         if let Some((widget_id, popup_area)) = &*self.active_popup.borrow() {
             let items = self.popup_items.borrow();
@@ -979,8 +1021,10 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         if is_open {
             self.draw_data_path_buttons::<B>(f, area);
         }
+
+        self.draw_reboot_prompt(f, area);
     }
-    
+
     fn handle_mouse_event(&self, mouse_event: &MouseEvent) {
         // let start_total = Instant::now();
         let c = mouse_event.column;
@@ -1385,6 +1429,26 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
 
     fn handle_key_event(&mut self, key_event: KeyEvent) -> bool {
         log::info!("KEY EVENT: {key_event:?}");
+        if *self.reboot_prompt_open.borrow() {
+            match key_event.code {
+                KeyCode::Char('r') | KeyCode::Char('R') => {
+                    self.reboot_prompt_open.replace(false);
+                    self.log_message("Rebooting to finalize Webroot activation...");
+                    #[cfg(target_os = "windows")]
+                    crate::utilities::windows::reboot::spawn_reboot_with_relaunch(
+                        true,
+                        "Mastertech reboot to finalize Webroot activation",
+                    );
+                    return true;
+                }
+                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                    self.reboot_prompt_open.replace(false);
+                    self.log_message("Reboot deferred — Webroot activation finalizes on the next restart.");
+                    return true;
+                }
+                _ => return true,
+            }
+        }
         match key_event.code {
             KeyCode::Right => {
                 log::info!("RIGHT");

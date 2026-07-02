@@ -27,6 +27,8 @@ pub struct RemoteScriptsViewer {
     pub log_messages: Vec<String>,
     pub running: bool,
     pub loading: bool,
+    /// A completed script logged the reboot-recommended marker.
+    pub reboot_recommended: bool,
     auto_scroll: bool,
     custom_scripts_rx: Receiver<Vec<(String, String)>>,
     custom_scripts_tx: Sender<Vec<(String, String)>>,
@@ -44,6 +46,7 @@ impl RemoteScriptsViewer {
             log_messages: Vec::new(),
             running: false,
             loading: false,
+            reboot_recommended: false,
             auto_scroll: true,
             custom_scripts_rx,
             custom_scripts_tx,
@@ -142,6 +145,9 @@ impl RemoteScriptsViewer {
     }
 
     pub fn append_log(&mut self, msg: String) {
+        if msg.contains(crate::scripts::REBOOT_RECOMMENDED_MARKER) {
+            self.reboot_recommended = true;
+        }
         self.log_messages.push(msg);
     }
 
@@ -214,6 +220,7 @@ impl RemoteScriptsViewer {
                             let scripts = self.get_selected_scripts();
                             if !scripts.is_empty() {
                                 self.running = true;
+                                self.reboot_recommended = false;
                                 self.log_messages.clear();
                                 for cat in &mut self.categories {
                                     for item in &mut cat.items {
@@ -245,6 +252,31 @@ impl RemoteScriptsViewer {
                 });
             });
         });
+
+        if self.reboot_recommended && !self.running {
+            let banner_id = ui.id().with("scripts_reboot_banner");
+            eframe::egui::Panel::top(banner_id).show_inside(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(
+                            "Webroot was re-keyed — a client reboot finalizes the new device identity.",
+                        )
+                        .color(Color32::from_rgb(249, 226, 175)),
+                    );
+                    if ui.button("Reboot client & relaunch MasterTech").clicked() {
+                        let _ = cmd_tx.try_send(Cmd::RebootSystem {
+                            persist_mastertech: true,
+                            terminal_mode: false,
+                        });
+                        self.log_messages.push("Reboot sent — client relaunches MasterTech after login.".into());
+                        self.reboot_recommended = false;
+                    }
+                    if ui.button("Dismiss").clicked() {
+                        self.reboot_recommended = false;
+                    }
+                });
+            });
+        }
 
         let side_id = ui.id().with("scripts_side_panel");
         eframe::egui::Panel::left(side_id)

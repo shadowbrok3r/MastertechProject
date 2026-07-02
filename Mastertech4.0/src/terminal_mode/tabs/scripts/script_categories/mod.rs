@@ -53,6 +53,16 @@ impl <'a> ScriptsTab <'a> {
             }
         };
 
+        // Track scripts that report back via checklist_completion_tx; stress tests do not.
+        {
+            let mut batch = self.batch_pending.borrow_mut();
+            for item in &selected {
+                if !matches!(item.category(), Category::StressTests) {
+                    batch.insert(item.text.clone());
+                }
+            }
+        }
+
         for item in selected {
             let category = item.category().clone();
             self.current_script.replace(Some((category.clone(), item.text.clone())));

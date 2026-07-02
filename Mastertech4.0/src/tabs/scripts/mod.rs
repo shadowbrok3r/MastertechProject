@@ -118,6 +118,8 @@ pub struct EguiScriptsTab {
     pub windows_update_tx: Sender<crate::utilities::windows::windows_update::WindowsUpdateEvent>,
     /// Is data transfer UI showing
     pub show_data_transfer_ui: bool,
+    /// A completed script recommends a reboot; drives the reboot prompt modal.
+    pub reboot_prompt_open: bool,
     /// Selected source paths for data transfer
     pub selected_sources: Vec<String>,
     /// Selected destination for data transfer
@@ -183,6 +185,7 @@ impl EguiScriptsTab {
             #[cfg(target_os = "windows")]
             windows_update_tx,
             show_data_transfer_ui: false,
+            reboot_prompt_open: false,
             selected_sources: Vec::new(),
             selected_destination: None,
             pending_mcp_runs: Vec::new(),
@@ -353,6 +356,9 @@ impl EguiScriptsTab {
     pub fn receive(&mut self) {
         // Receive log messages
         while let Ok(log_entry) = self.channels.log_rx.try_recv() {
+            if log_entry.message.contains(displays::scripts::REBOOT_RECOMMENDED_MARKER) {
+                self.reboot_prompt_open = true;
+            }
             self.state.logs.push(log_entry);
         }
 
@@ -946,19 +952,22 @@ impl EguiScriptsTab {
                 let _ = log_tx.try_send(ScriptLogEntry::info(
                     category.clone(), &script_name, "Fetching CPS keys..."
                 ));
-                
+
                 match SendRequest::get_cps(so_num, client.clone()).await {
                     Ok(keys) if !keys.is_empty() => {
                         let key = keys.get(0).cloned().unwrap_or_default();
-                        
+                        #[allow(unused_mut, unused_variables)]
+                        let mut reboot_recommended = false;
+
                         // Install Webroot
                         let _ = log_tx.try_send(ScriptLogEntry::info(
                             category.clone(), &script_name, "Installing Webroot..."
                         ));
-                        
+
                         #[cfg(target_os = "windows")]
                         match install_webroot(key.webroot_key.clone(), client.clone(), install_progress_tx).await {
-                            Ok(_) => {
+                            Ok(rekeyed) => {
+                                reboot_recommended = rekeyed;
                                 let _ = log_tx.try_send(ScriptLogEntry::success(
                                     category.clone(), &script_name, "Webroot installed successfully"
                                 ));
@@ -969,24 +978,34 @@ impl EguiScriptsTab {
                                 ));
                             }
                         }
-                        
+
                         // Install SAS
                         let _ = log_tx.try_send(ScriptLogEntry::info(
                             category.clone(), &script_name, "Installing SuperAntiSpyware..."
                         ));
-                        
+
                         #[cfg(target_os = "windows")]
                         match install_sas(key.superanti_key, client, install_progress_tx2).await {
                             Ok(_) => {
                                 let _ = log_tx.try_send(ScriptLogEntry::success(
-                                    category, &script_name, "SuperAntiSpyware installed successfully"
+                                    category.clone(), &script_name, "SuperAntiSpyware installed successfully"
                                 ));
                             },
                             Err(e) => {
                                 let _ = log_tx.try_send(ScriptLogEntry::error(
-                                    category, &script_name, format!("SAS install failed: {}", e)
+                                    category.clone(), &script_name, format!("SAS install failed: {}", e)
                                 ));
                             }
+                        }
+
+                        if reboot_recommended {
+                            let _ = log_tx.try_send(ScriptLogEntry::success(
+                                category, &script_name,
+                                format!(
+                                    "{} Webroot was re-keyed over an existing install — reboot to finalize activation",
+                                    displays::scripts::REBOOT_RECOMMENDED_MARKER
+                                ),
+                            ));
                         }
                     },
                     Ok(_) => {
@@ -2389,6 +2408,31 @@ impl MastertechContext {
         if self.scripts_tab.show_data_transfer_ui {
             self.render_data_transfer_ui(ui);
             return;
+        }
+
+        if self.scripts_tab.reboot_prompt_open {
+            egui::Window::new("Reboot required")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ui.ctx(), |ui| {
+                    ui.label("Webroot was re-keyed over an existing install.");
+                    ui.label("A reboot finalizes the new device identity. MasterTech will relaunch after login.");
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(RichText::new("Reboot now").color(colors::COMPLETED)).clicked() {
+                            #[cfg(target_os = "windows")]
+                            crate::utilities::windows::reboot::spawn_reboot_with_relaunch(
+                                false,
+                                "Mastertech reboot to finalize Webroot activation",
+                            );
+                            self.scripts_tab.reboot_prompt_open = false;
+                        }
+                        if ui.button("Later").clicked() {
+                            self.scripts_tab.reboot_prompt_open = false;
+                        }
+                    });
+                });
         }
 
         // Top bar with service number and controls

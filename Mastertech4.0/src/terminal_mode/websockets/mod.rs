@@ -1447,60 +1447,20 @@ impl TerminalWebsocketClient {
                 #[cfg(target_os = "windows")]
                 {
                     if persist_mastertech {
-                        // Create a scheduled task to run Mastertech on next login
-                        // This uses schtasks to create a one-time task that runs at logon
-                        let exe_path = std::env::current_exe().unwrap_or_default();
-                        let exe_path_str = exe_path.to_string_lossy();
-                        
-                        let command = if terminal_mode {
-                            format!("\"{}\" -t", exe_path_str)
-                        } else {
-                            format!("\"{}\"", exe_path_str)
-                        };
-
-                        // Create a scheduled task that runs once at next logon then deletes itself
-                        let task_name = "MastertechAutoRestart";
-                        let create_task = tokio::process::Command::new("schtasks")
-                            .args([
-                                "/Create",
-                                "/TN", task_name,
-                                "/TR", &command,
-                                "/SC", "ONLOGON",
-                                "/RL", "HIGHEST",
-                                "/F", // Force overwrite if exists
-                            ])
-                            .output()
-                            .await;
-                        
-                        match create_task {
-                            Ok(out) => {
-                                if out.status.success() {
-                                    log::info!("Created scheduled task for Mastertech auto-restart");
-                                } else {
-                                    let stderr = String::from_utf8_lossy(&out.stderr);
-                                    log::error!("Failed to create scheduled task: {}", stderr);
-                                }
-                            }
-                            Err(e) => log::error!("Error creating scheduled task: {}", e),
+                        // Logon task with working directory = exe dir, so data.enc resolves.
+                        if let Err(e) =
+                            crate::utilities::windows::reboot::schedule_mastertech_relaunch(terminal_mode).await
+                        {
+                            log::error!("Failed to create relaunch scheduled task: {e}");
                         }
                     }
-                    
-                    // Initiate system reboot with 5 second delay
-                    let output = tokio::process::Command::new("shutdown")
-                        .args(["/r", "/t", "5", "/c", "Mastertech remote reboot requested"])
-                        .output()
-                        .await;
-                    
-                    match output {
-                        Ok(out) => {
-                            if out.status.success() {
-                                log::info!("Reboot initiated successfully");
-                            } else {
-                                let stderr = String::from_utf8_lossy(&out.stderr);
-                                log::error!("Failed to initiate reboot: {}", stderr);
-                            }
-                        }
-                        Err(e) => log::error!("Error executing shutdown command: {}", e),
+
+                    if let Err(e) =
+                        crate::utilities::windows::reboot::reboot_now("Mastertech remote reboot requested").await
+                    {
+                        log::error!("Failed to initiate reboot: {e}");
+                    } else {
+                        log::info!("Reboot initiated successfully");
                     }
                 }
                 #[cfg(target_os = "linux")]
@@ -2274,6 +2234,8 @@ if (Test-Path $path) {{
                 let task_epoch = Instant::now();
                 // Millis from task_epoch when the current script started; AtomicU64 keeps the future Send.
                 let script_started_ms = std::sync::atomic::AtomicU64::new(0);
+                // Set when a script in this batch wants a reboot; reported once after the batch.
+                let batch_reboot_recommended = std::sync::atomic::AtomicBool::new(false);
 
                 let send_log = |tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>, msg: String| {
                     let cmd = Cmd::RemoteScriptLog(msg);
@@ -2345,8 +2307,11 @@ if (Test-Path $path) {{
                                     let key = keys.get(0).cloned().unwrap_or_default();
                                     send_log(&tx, format!("Webroot key: {}", key.webroot_key));
                                     match crate::utilities::scripts::antivirus::install_webroot(key.webroot_key, client, progress_tx).await {
-                                        Ok(_) => {
+                                        Ok(rekeyed) => {
                                             send_log(&tx, "Webroot installed successfully".into());
+                                            if rekeyed {
+                                                batch_reboot_recommended.store(true, std::sync::atomic::Ordering::SeqCst);
+                                            }
                                             send_result(&tx, &script.name, RemoteScriptStatus::Success);
                                         }
                                         Err(e) => {
@@ -3254,6 +3219,13 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                         );
                         send_result(&tx, &script.name, RemoteScriptStatus::Failed);
                     }
+                }
+
+                if batch_reboot_recommended.load(std::sync::atomic::Ordering::SeqCst) {
+                    send_log(&tx, format!(
+                        "{} Webroot was re-keyed over an existing install — reboot the client to finalize activation (Power ▸ Reboot relaunches MasterTech)",
+                        displays::scripts::REBOOT_RECOMMENDED_MARKER
+                    ));
                 }
 
                 let complete = Cmd::RemoteScriptsComplete;
