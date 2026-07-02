@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# MOBILE_DIR = MastertechMobile crate dir (where scripts/ lives)
+# MOBILE_DIR = MastertechMobile crate dir (its own workspace root, where target/ lives)
 MOBILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# ROOT = workspace root (where target/ lives)
-ROOT="$(cd "$MOBILE_DIR/.." && pwd)"
 SDK_BUNDLE="${SDK_BUNDLE:-$HOME/.swiftpm/swift-sdks/darwin.artifactbundle}"
 
 usage() {
@@ -94,9 +92,9 @@ case "$MODE" in
       --verbose
 
     if [[ -n "$RELEASE_FLAG" ]]; then
-      APP="$ROOT/target/dx/mastertech-mobile/release/ios/MastertechMobile.app"
+      APP="$MOBILE_DIR/target/dx/mastertech-mobile/release/ios/MastertechMobile.app"
     else
-      APP="$ROOT/target/dx/mastertech-mobile/debug/ios/MastertechMobile.app"
+      APP="$MOBILE_DIR/target/dx/mastertech-mobile/debug/ios/MastertechMobile.app"
     fi
 
     if [[ ! -d "$APP" ]]; then

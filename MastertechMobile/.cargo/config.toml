@@ -1,14 +1,13 @@
-# iOS cross-compile: for `--ld-path` to Swift's ld64.lld, copy
-# `config.toml.example` → `config.toml` and fill in your local absolute path.
-
 [target.x86_64-apple-ios]
 linker = "/usr/lib/swift/bin/clang"
 rustflags = [
   "-C", "link-arg=-fuse-ld=lld",
+  "-C", "link-arg=--ld-path=/home/shadowbroker/.swiftpm/swift-sdks/darwin.artifactbundle/toolset/bin/ld64.lld",
 ]
 
 [target.aarch64-apple-ios]
 linker = "/usr/lib/swift/bin/clang"
 rustflags = [
   "-C", "link-arg=-fuse-ld=lld",
+  "-C", "link-arg=--ld-path=/home/shadowbroker/.swiftpm/swift-sdks/darwin.artifactbundle/toolset/bin/ld64.lld",
 ]

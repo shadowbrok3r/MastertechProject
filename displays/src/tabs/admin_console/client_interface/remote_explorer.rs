@@ -520,7 +520,11 @@ impl RemoteExplorer {
         let save_path = if let Some(dir) = &self.download_dest {
             Some(dir.join(&filename))
         } else {
-            rfd::FileDialog::new().set_file_name(&filename).save_file()
+            #[cfg(not(any(target_os = "ios", target_os = "android")))]
+            let picked = rfd::FileDialog::new().set_file_name(&filename).save_file();
+            #[cfg(any(target_os = "ios", target_os = "android"))]
+            let picked = None;
+            picked
         };
 
         match save_path {
@@ -799,10 +803,13 @@ impl RemoteExplorer {
         if paths.len() == 1 {
             self.download_dest = None;
         } else {
+            #[cfg(not(any(target_os = "ios", target_os = "android")))]
             match rfd::FileDialog::new().pick_folder() {
                 Some(dir) => self.download_dest = Some(dir),
                 None => return,
             }
+            #[cfg(any(target_os = "ios", target_os = "android"))]
+            return;
         }
         self.download_queue = paths.into_iter().collect();
         self.start_next_download(cmd_tx);
@@ -1597,6 +1604,7 @@ impl RemoteExplorer {
             return;
         }
         
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("All Files", &["*"])
             .add_filter("Scripts", &["ps1", "bat", "cmd", "sh", "py"])

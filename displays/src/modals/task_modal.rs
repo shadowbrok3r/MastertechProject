@@ -7,6 +7,7 @@ use database::schema::prestashop_schema::PrestashopPayload;
 use database::schema::helper_traits::parse_email_user;
 use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
 use crossbeam::channel::{Receiver, Sender};
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 use rfd::{AsyncFileDialog, FileHandle};
 use egui_extras::{Size, StripBuilder};
 use serde_json::Value;
@@ -1403,6 +1404,7 @@ pub struct SpecialPartOrder {
     part_description: String,           //  "Test",
     part_lcd_toggle: bool,              //  "0"
     spo_status: SpoStatus,
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     #[serde(skip)]
     files: Arc<Mutex<Option<Vec<FileHandle>>>>,
 }
@@ -1425,6 +1427,7 @@ impl Default for SpecialPartOrder {
             part_description: String::new(),
             part_lcd_toggle: false,
             spo_status: SpoStatus::AwaitingQuote,
+            #[cfg(not(any(target_os = "ios", target_os = "android")))]
             files: Arc::new(Mutex::new(None)),
         }
     }
@@ -1569,9 +1572,11 @@ impl SpecialPartOrder {
                                     ui.horizontal(|ui| {
                                         let toggle = ui.checkbox(&mut self.part_lcd_toggle, "LCD?");
                                         ui.add_space(ui.available_width() / 2.0);
+                                        #[cfg(not(any(target_os = "ios", target_os = "android")))]
                                         let file_upload =
                                             ui.selectable_label(false, "Upload Picture");
 
+                                        #[cfg(not(any(target_os = "ios", target_os = "android")))]
                                         if file_upload.clicked() {
                                             let data_clone = Arc::clone(&self.files);
                                             PlatformSpawner::spawn(async move {
@@ -1638,14 +1643,17 @@ impl SpecialPartOrder {
                                                 part_description: self.part_description.clone(),
                                                 part_lcd_toggle: self.part_lcd_toggle.clone(),
                                                 spo_status: self.spo_status.clone(),
+                                                #[cfg(not(any(target_os = "ios", target_os = "android")))]
                                                 files: self.files.clone(),
                                             };
 
+                                            #[cfg(not(any(target_os = "ios", target_os = "android")))]
                                             let data_clone = Arc::clone(&self.files);
 
                                             PlatformSpawner::spawn(async move {
                                                 let mut _bytes: Bytes = Bytes::new();
                                                 let mut _file_name = String::new();
+                                                #[cfg(not(any(target_os = "ios", target_os = "android")))]
                                                 #[cfg(not(target_arch="wasm32"))]
                                                 {
                                                     let data = data_clone.lock().await;

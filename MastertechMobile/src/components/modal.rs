@@ -22,12 +22,14 @@ pub fn Dialog(props: DialogProps) -> Element {
     let wrap = props.wrap_class.clone().unwrap_or_default();
     let close_label = props.close_button_label.clone().unwrap_or_else(|| "Close".into());
     rsx! {
-        div { class: "fixed inset-0 z-50 flex items-center justify-center bg-galaxy-overlay",
-            div { class: "card-cosmic p-4 max-w-md w-[92%] shadow-nebula ".to_string() + &wrap,
-                div { class: "mb-3", {props.children} }
+        div { class: "fixed inset-0 z-50 flex items-center justify-center bg-galaxy-overlay p-3",
+            div {
+                class: "card-cosmic p-3 max-w-md w-full shadow-nebula overflow-y-auto ".to_string() + &wrap,
+                style: "max-height: 85vh;",
+                div { class: "mb-2", {props.children} }
                 div { class: "text-right",
                     button {
-                        class: "btn-cosmic touch-target",
+                        class: "btn-cosmic",
                         onclick: move |_| {
                             let mut sig = props.show_modal.to_owned();
                             sig.set(false);

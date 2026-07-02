@@ -6,10 +6,13 @@ use crossbeam::channel::Sender;
 use database::schema::User;
 use eframe::egui::{Align, Button, CentralPanel, Color32, Context, Direction, FontId, Frame, Layout, RichText, Stroke, TextEdit, Ui};
 use egui_extras::{Column, TableBuilder};
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 use futures::StreamExt;
 use log::{error, info};
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+use reqwest::header::CONTENT_TYPE;
 use reqwest::{
-    header::{HeaderName, ACCEPT, CONTENT_TYPE, USER_AGENT},
+    header::{HeaderName, ACCEPT, USER_AGENT},
     Client,
 };
 use serde::{Deserialize, Serialize};
@@ -20,6 +23,7 @@ use crate::{app_state::SharedContext, get_toast_sender, markdown_editor, Platfor
 const GIT_MASTER_TECH_REPO_BASE: &str =
     "https://git.master-tech.app/repos/shadowbrok3r/MastertechProject";
 
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 #[inline]
 fn proxied_github_asset_url(asset_api_url: &str) -> String {
     asset_api_url.replace("api.github.com", "git.master-tech.app")
@@ -201,6 +205,7 @@ impl SharedContext {
                                                 let link =
                                                     ui.link(link_txt).on_hover_text(&asset.name);
 
+                                                #[cfg(not(any(target_os = "ios", target_os = "android")))]
                                                 if link.clicked() {
                                                     let asset = asset.clone();
                                                     let tx = self.bytes_channel.0.clone();
@@ -208,6 +213,8 @@ impl SharedContext {
                                                         let _ = download_release(asset, tx).await;
                                                     });
                                                 }
+                                                #[cfg(any(target_os = "ios", target_os = "android"))]
+                                                let _ = link;
 
                                                 ui.add_space(10.0);
                                                 ui.label(&asset.name);
@@ -260,6 +267,7 @@ pub async fn get_github_releases(tx: Sender<Vec<GithubRelease>>) -> Result<(), a
     Ok(())
 }
 
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub async fn download_release(asset: Asset, tx: Sender<(Vec<u8>, u64)>) -> Result<(), anyhow::Error> {
     let file = rfd::AsyncFileDialog::new()
         .set_file_name(asset.name.clone())

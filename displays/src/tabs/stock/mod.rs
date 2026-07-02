@@ -36,6 +36,7 @@ enum ImportKick {
 /// row if the first line is non-alphanumeric or looks like the word
 /// "serial".
 #[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 fn pick_csv_serials() -> Option<Vec<String>> {
     let path = rfd::FileDialog::new()
         .add_filter("CSV / Text", &["csv", "txt"])
@@ -662,6 +663,7 @@ impl StockTable {
                                 match kind {
                                     ImportKick::Csv => {
                                         #[cfg(not(target_arch = "wasm32"))]
+                                        #[cfg(not(any(target_os = "ios", target_os = "android")))]
                                         if let Some(serials) = pick_csv_serials() {
                                             self.kick_off_import(serials);
                                         }
