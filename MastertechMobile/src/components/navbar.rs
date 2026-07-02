@@ -32,7 +32,7 @@ pub fn TopBar(props: NavbarProps) -> Element {
     rsx! {
         div { class: "nav-galaxy flex items-center h-11 px-3 gap-2 sticky top-0 z-30",
             // Logo dot
-            div { class: "w-5 h-5 rounded-md bg-gradient-to-br from-[#ff2d55] to-[#801628] flex-shrink-0" }
+            div { class: "w-5 h-5 rounded-md grad-crimson-deep flex-shrink-0" }
             span { class: "text-sm font-semibold text-star-white truncate flex-1", {props.active.clone()} }
 
             // + New
@@ -54,7 +54,7 @@ pub fn TopBar(props: NavbarProps) -> Element {
             // Avatar / user menu
             div { class: "relative flex-shrink-0",
                 button {
-                    class: "w-8 h-8 rounded-full bg-gradient-to-br from-[#ff2d55] to-[#ff1493] flex items-center justify-center text-xs font-bold text-star-white",
+                    class: "w-8 h-8 rounded-full grad-crimson flex items-center justify-center text-xs font-bold text-star-white",
                     r#type: "button",
                     onclick: move |_| menu_open.set(!menu_open()),
                     {initials.clone()}
@@ -103,27 +103,22 @@ pub fn BottomTabs(props: NavbarProps) -> Element {
     tabs.push(("Clients", "🖥"));
 
     rsx! {
-        div { class: "flex-shrink-0 nav-galaxy border-t border-[#401c2a]/40 flex items-stretch",
-            style: "padding-bottom: env(safe-area-inset-bottom, 0px);",
-            for (label, icon) in tabs.iter() {
-                {
-                    let is_active = props.active.as_str() == *label
-                        || (*label == "Completed" && props.active.as_str() == "Completed Tasks");
-                    let label_s = if *label == "Completed" { "Completed Tasks".to_string() } else { label.to_string() };
-                    rsx! {
-                        button {
-                            class: format!(
-                                "flex-1 flex flex-col items-center justify-center py-1.5 text-[10px] {}",
-                                if is_active { "text-aurora-purple" } else { "text-stardust" }
-                            ),
-                            r#type: "button",
-                            onclick: move |_| {
-                                if let Some(cb) = &props.on_tab { cb.call(label_s.clone()); }
-                            },
-                            span { class: "text-base leading-none", {*icon} }
-                            span { {*label} }
-                            if is_active {
-                                div { class: "w-6 h-0.5 rounded-full bg-aurora-purple mt-0.5" }
+        div { class: "flex-shrink-0 tabbar-wrap",
+            div { class: "tabbar-float flex items-stretch gap-1",
+                for (label, icon) in tabs.iter() {
+                    {
+                        let is_active = props.active.as_str() == *label
+                            || (*label == "Completed" && props.active.as_str() == "Completed Tasks");
+                        let label_s = if *label == "Completed" { "Completed Tasks".to_string() } else { label.to_string() };
+                        rsx! {
+                            button {
+                                class: format!("tab-btn {}", if is_active { "tab-btn-active" } else { "" }),
+                                r#type: "button",
+                                onclick: move |_| {
+                                    if let Some(cb) = &props.on_tab { cb.call(label_s.clone()); }
+                                },
+                                span { class: "tab-icon", {*icon} }
+                                span { {*label} }
                             }
                         }
                     }

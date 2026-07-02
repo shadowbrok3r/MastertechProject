@@ -1,3 +1,4 @@
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 use bytes::Bytes;
 use database::{live_data::{listen_data, Action}, schema::{ChatAction, ChatMessageType, ChatThread, RecordId, User, UserMessage, CHAT_THREAD_TABLE, USER_MESSAGE_TABLE}};
 use crate::{get_current_user_from_auth, get_database_users, PlatformSpawner, Spawner};
@@ -131,6 +132,7 @@ impl UserChat {
                         self.image_id.clear();
                     }
                 },
+                #[cfg(not(any(target_os = "ios", target_os = "android")))]
                 ChatAction::UploadedFiles(files) => {
                     if let Some(thread) = self.selected_thread.clone() {
                         let user = self.current_user.clone();

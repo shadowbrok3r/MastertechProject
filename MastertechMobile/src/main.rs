@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 
 const FAVICON: Asset = asset!("/assets/favicon.ico");
+const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 const STYLES_CSS: Asset = asset!("/assets/styles.css");
 
 #[derive(Serialize, Deserialize, Default)]
@@ -36,7 +37,32 @@ fn clear_session() {
 }
 
 fn main() {
+    // rustls 0.23 panics on first TLS handshake unless a process-level CryptoProvider is installed.
+    if rustls::crypto::ring::default_provider().install_default().is_err() {
+        log::debug!("rustls CryptoProvider already installed");
+    }
+    install_panic_log_hook();
     dioxus::launch(app);
+}
+
+// Appends panic messages to <data dir>/mastertech_mobile/panic.log for on-device diagnosis.
+fn install_panic_log_hook() {
+    let prev = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if let Some(dir) = dirs::data_local_dir().map(|p| p.join("mastertech_mobile")) {
+            let _ = fs::create_dir_all(&dir);
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let msg = format!("[{ts}] {info}\n");
+            if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(dir.join("panic.log")) {
+                use std::io::Write;
+                let _ = f.write_all(msg.as_bytes());
+            }
+        }
+        prev(info);
+    }));
 }
 
 #[component]
@@ -102,6 +128,7 @@ fn app() -> Element {
 
     rsx! {
         document::Link { rel: "icon", href: FAVICON }
+        document::Link { rel: "stylesheet", href: TAILWIND_CSS }
         document::Link { rel: "stylesheet", href: STYLES_CSS }
         crate::components::toast::ToastFrame { manager: toast }
 

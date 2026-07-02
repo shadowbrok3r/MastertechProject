@@ -2,6 +2,7 @@ use eframe::egui::{Align, Button, CentralPanel, Color32, Direction, Frame, Image
 use database::schema::{ChatAction, ChatMessageType, ChatThread, RecordIdExt, UserMessage};
 use crate::{markdown_editor::viewer::easy_mark, PlatformSpawner, Spawner};
 use std::{borrow::Cow, sync::Arc};
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 use rfd::AsyncFileDialog;
 use super::UserChat;
 
@@ -163,6 +164,7 @@ impl UserChat {
                 ui.add_space(10.);
 
                 ui.vertical_centered(|ui| {
+                    #[cfg(not(any(target_os = "ios", target_os = "android")))]
                     if Button::new(RichText::new(" 🖻 ").heading())
                     .min_size(Vec2::new(ui.available_width(), 25.))
                     .stroke(Stroke::new(0.8_f32, Color32::from_rgb(150, 12, 150)))

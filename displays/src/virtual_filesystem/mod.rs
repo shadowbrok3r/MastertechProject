@@ -10,12 +10,15 @@ use database::schema::{Node, User, buckets::{list_buckets, normalize_prefix}, fi
 use reqwest::{header::{CONTENT_TYPE, ETAG}, Client, Url};
 use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use crossbeam::channel::{Receiver, Sender};
-use futures::{StreamExt, Future};
+use futures::StreamExt;
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+use futures::Future;
 use anyhow::{Result, Error};
 use crate::PlatformSpawner;
 use mime_guess::from_path;
 use database::STORAGE_URL;
 use uuid::Uuid;
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 use rfd::FileHandle;
 use bytes::Bytes;
 use std::iter;
@@ -738,6 +741,7 @@ impl FileSystem {
                 );
                 ui.close();
             }
+            #[cfg(not(any(target_os = "ios", target_os = "android")))]
             if ui.button("📤 Upload File").clicked() {
                 self.upload(self.current_prefix.clone());
                 ui.close();
@@ -796,6 +800,7 @@ impl FileSystem {
                                 ui.vertical_centered_justified(|ui| {
                                     ui.set_width(200.0);
 
+                                    #[cfg(not(any(target_os = "ios", target_os = "android")))]
                                     if ui.button("Download").clicked(){
                                         info!("Path: {:?}", full_path.clone());
                                         self.download_selection(full_path.to_string(), label.clone());
@@ -803,6 +808,7 @@ impl FileSystem {
 
                                     ui.add_space(5.0);
 
+                                    #[cfg(not(any(target_os = "ios", target_os = "android")))]
                                     if ui.button("Upload").clicked(){
                                         info!("Dir: {:?}", full_path.clone());
                                         self.upload(full_path.to_string());
@@ -867,6 +873,7 @@ impl FileSystem {
                         {
                             ui.vertical_centered_justified(|ui| {
                                 ui.set_width(200.0);
+                                #[cfg(not(any(target_os = "ios", target_os = "android")))]
                                 if ui.button("Download").clicked(){
                                     self.download_selection(full_path.clone(), label.clone());
                                 }
@@ -1098,6 +1105,7 @@ impl FileSystem {
         }
     }
 
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     pub fn upload(&self, path: String) {
         let task = rfd::AsyncFileDialog::new().pick_files();
         let name = self.user.get_user_bucket_name().to_string();
@@ -1142,6 +1150,7 @@ impl FileSystem {
     }
 
     #[cfg(feature="tokio")]
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     pub fn upload_folder(&self, _path: String) {
         let _task = rfd::AsyncFileDialog::new().pick_folders();
         let _access_key = self.user.get_minio_access_key().unwrap_or_default();
@@ -1159,6 +1168,7 @@ impl FileSystem {
         // });
     }
 
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     fn download_selection(&self, path: String, filename: String) {
         let task = rfd::AsyncFileDialog::new().set_file_name(filename.clone()).save_file();
         let tx = self.bytes_tx.clone();
@@ -1415,10 +1425,11 @@ impl FileSystem {
         }
     }
 
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     async fn perform_upload(
-        name: &String, 
-        access_key: &String, 
-        secret_key: &String, 
+        name: &String,
+        access_key: &String,
+        secret_key: &String,
         mut path: String,
         task: impl Future<Output = Option<Vec<FileHandle>>>
     ) -> Result<(), Error> {
@@ -1679,10 +1690,11 @@ impl FileSystem {
         Err(anyhow::anyhow!("Downloaded bytes do not match content length"))
     }
     
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     async fn perform_download(
-        name: &String, 
-        access_key: &String, 
-        secret_key: &String, 
+        name: &String,
+        access_key: &String,
+        secret_key: &String,
         tx: Sender<(u64, u64)>,
         path: &String,
         filename: &String,

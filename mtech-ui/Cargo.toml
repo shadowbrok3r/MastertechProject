@@ -8,7 +8,6 @@ description = "Shared egui UI helpers (theme, dock chrome, in-app logger) for Ma
 puffin = []
 
 [dependencies]
-eframe.workspace = true
 egui_dock.workspace = true
 regex.workspace = true
 chrono.workspace = true
@@ -16,3 +15,10 @@ log.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
+
+# Mobile targets use a renderer-less eframe (glow/glutin cannot compile there).
+[target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
+eframe = { workspace = true }
+
+[target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
+eframe = { version = "0.35", features = ["serde", "default_fonts"], default-features = false }

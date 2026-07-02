@@ -305,6 +305,7 @@ impl WebSocketClient {
                         RichText::new(menu_label("Transfer")).color(sys_color).strong(),
                         |ui| {
                             #[cfg(not(target_arch = "wasm32"))]
+                            #[cfg(not(any(target_os = "ios", target_os = "android")))]
                             {
                                 if ui.button("Send File…").clicked() {
                                     if let Some(path) = rfd::FileDialog::new().pick_file() {

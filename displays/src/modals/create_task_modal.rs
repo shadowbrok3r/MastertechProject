@@ -669,11 +669,13 @@ impl Tur {
                 Self::presta_api(prestashop_api_tx, self.ticket_data.service_number.clone());
             }
         
+            #[cfg(not(any(target_os = "ios", target_os = "android")))]
             let upload = Button::new("Upload TUR")
                 .min_size(Vec2::new(70., 25.))
                 .stroke(Stroke::new(1.0_f32, ui.style().visuals.warn_fg_color))
                 .ui(ui);
-            
+
+            #[cfg(not(any(target_os = "ios", target_os = "android")))]
             if upload.clicked() {
                 // let tx = tx.clone();
                 PlatformSpawner::spawn(async move {

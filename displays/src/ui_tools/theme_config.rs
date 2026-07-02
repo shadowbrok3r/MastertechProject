@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;
 use derivative::Derivative;
 use database::schema::User;
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 use serde_json::to_vec;
 use std::sync::Arc;
 
@@ -360,70 +361,75 @@ impl ThemeConfig {
 
                     ui.add_space(5.);
 
-                    let save_local = Button::new("Save to file")
-                        .min_size(Vec2::new(70., 25.))
-                        .stroke(Stroke::new(1.0_f32, self.warn_color))
-                        .ui(ui);
-                    
-                    if save_local.clicked() {
-                        let color_settings = ctx.global_style().clone();
-                        
-                        PlatformSpawner::spawn(async move {
-                            // Serialize the struct into JSON
-                            if let Ok(json_data) = to_vec(&color_settings) {
+                    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+                    {
+                        let save_local = Button::new("Save to file")
+                            .min_size(Vec2::new(70., 25.))
+                            .stroke(Stroke::new(1.0_f32, self.warn_color))
+                            .ui(ui);
+
+                        if save_local.clicked() {
+                            let color_settings = ctx.global_style().clone();
+
+                            PlatformSpawner::spawn(async move {
+                                // Serialize the struct into JSON
+                                if let Ok(json_data) = to_vec(&color_settings) {
+                                    // Show the save file dialog
+                                    if let Some(file) = rfd::AsyncFileDialog::new()
+                                        .set_file_name("mastertech_color_scheme.json") // Default file name
+                                        .save_file()
+                                        .await
+                                    {
+                                        // Write the JSON data to the selected file
+                                        if let Err(err) = file.write(&json_data).await {
+                                            log::error!("Failed to save file: {:?}", err);
+                                        }
+                                    }
+                                } else {
+                                    log::error!("Error serializing settings to json");
+                                }
+                            });
+                        }
+
+                        ui.add_space(5.);
+
+                        let upload = Button::new("Upload settings")
+                            .min_size(Vec2::new(70., 25.))
+                            .stroke(Stroke::new(1.0_f32, self.warn_color))
+                            .ui(ui);
+
+                        if upload.clicked() {
+                            let tx = tx.clone();
+                            PlatformSpawner::spawn(async move {
                                 // Show the save file dialog
                                 if let Some(file) = rfd::AsyncFileDialog::new()
+                                    .add_filter("Json", &["json"])
                                     .set_file_name("mastertech_color_scheme.json") // Default file name
-                                    .save_file()
+                                    .pick_file()
                                     .await
                                 {
-                                    // Write the JSON data to the selected file
-                                    if let Err(err) = file.write(&json_data).await {
-                                        log::error!("Failed to save file: {:?}", err);
-                                    }
-                                }
-                            } else {
-                                log::error!("Error serializing settings to json");
-                            }
-                        });
-                    }
-
-                    ui.add_space(5.);
-
-                    let upload = Button::new("Upload settings")
-                        .min_size(Vec2::new(70., 25.))
-                        .stroke(Stroke::new(1.0_f32, self.warn_color))
-                        .ui(ui);
-                    
-                    if upload.clicked() {
-                        let tx = tx.clone();
-                        PlatformSpawner::spawn(async move {
-                            // Show the save file dialog
-                            if let Some(file) = rfd::AsyncFileDialog::new()
-                                .add_filter("Json", &["json"])
-                                .set_file_name("mastertech_color_scheme.json") // Default file name
-                                .pick_file()
-                                .await
-                            {
-                                match super::style_from_json(&file.read().await) {
-                                    Ok(theme) => {
-                                        // Persist (JSON) so it replaces any legacy record and
-                                        // survives restart, then apply it for this session.
-                                        match User::update_color_scheme(
-                                            encode_style(&theme).unwrap_or_default().into()
-                                        ).await {
-                                            Ok(_) => log::info!("Imported color scheme saved"),
-                                            Err(e) => log::error!("Error saving imported scheme: {e:?}"),
+                                    match super::style_from_json(&file.read().await) {
+                                        Ok(theme) => {
+                                            // Persist (JSON) so it replaces any legacy record and
+                                            // survives restart, then apply it for this session.
+                                            match User::update_color_scheme(
+                                                encode_style(&theme).unwrap_or_default().into()
+                                            ).await {
+                                                Ok(_) => log::info!("Imported color scheme saved"),
+                                                Err(e) => log::error!("Error saving imported scheme: {e:?}"),
+                                            }
+                                            let _ = tx.try_send(theme);
                                         }
-                                        let _ = tx.try_send(theme);
+                                        Err(e) => log::error!("Error converting bytes to Theme: {e:?}"),
                                     }
-                                    Err(e) => log::error!("Error converting bytes to Theme: {e:?}"),
                                 }
-                            }
-                            
-                        });
+
+                            });
+                        }
                     }
-                    
+                    #[cfg(any(target_os = "ios", target_os = "android"))]
+                    let _ = &tx;
+
                 });
             });
 
