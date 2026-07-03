@@ -19,12 +19,20 @@ use uefi::proto::network::snp::SimpleNetwork;
 use uefi::proto::pci::root_bridge::PciRootBridgeIo;
 use uefi::table::cfg::ConfigTableEntry;
 
+mod bootdiag;
+mod capsule;
 mod charts;
+mod hii;
 mod netraw;
 mod order;
 mod smolnet;
+mod stream;
 mod stress;
 mod styling;
+mod wasmrt;
+
+/// Built-in demo plugin (Mastertech ABI) for the Plugins tab self-test.
+const DEMO_PLUGIN: &[u8] = include_bytes!("demo_plugin.wasm");
 
 /// Semantic palette derived from the terminal-mode theme (see `styling`).
 /// RGB values are quantized to the nearest EFI text color by ratatui-uefi.
@@ -40,28 +48,35 @@ mod palette {
     pub const GOOD: Color = THEME.success; // present / yes / link up
     pub const BAD: Color = CATPPUCCIN.overlay0; // absent / no
     pub const ERR: Color = THEME.error; // error / link down
+    pub const WARN: Color = CATPPUCCIN.peach; // caution / non-fatal finding
 }
 
 /// Default upload endpoint, baked from the workspace `.env` ORCHESTRATOR_URL at
 /// build time (see build.rs). Falls back to the production URL.
 const DEFAULT_URL: &str = env!("ORCHESTRATOR_URL");
 
-const TABS: [&str; 11] = [
+const TABS: [&str; 14] = [
     "Overview",
     "System",
     "Memory",
     "Firmware",
+    "BIOS",
     "Network",
     "Storage",
     "Stress",
     "Order",
     "Readiness",
     "Diag",
+    "Boot",
+    "Plugins",
     "Log",
 ];
 
-const TAB_STRESS: usize = 6;
-const TAB_ORDER: usize = 7;
+const TAB_BIOS: usize = 4;
+const TAB_STRESS: usize = 7;
+const TAB_ORDER: usize = 8;
+const TAB_BOOT: usize = 11;
+const TAB_PLUGINS: usize = 12;
 
 /// Idle ticks (~33 ms each) between command polls while agent mode is on (~5 s).
 const AGENT_POLL_TICKS: u32 = 150;
@@ -1355,6 +1370,12 @@ fn fingerprint_json(info: &SysInfo) -> String {
         mca,
         mem_errors,
     ));
+    out.push_str(",\"bios_settings\":");
+    out.push_str(&hii::audit_json(&info.hii).to_string());
+    out.push_str(",\"firmware_update\":");
+    out.push_str(&capsule::esrt_json(&info.esrt).to_string());
+    out.push_str(",\"boot_diagnostics\":");
+    out.push_str(&bootdiag::diag_json(&info.bootdiag).to_string());
     out.push('}');
     out
 }
@@ -1467,6 +1488,19 @@ fn http_post_json(target: &str, path: &str, body: &[u8]) -> Result<String, Strin
     net_tcp::post(&u.host_port, path, body)
 }
 
+/// Download a firmware capsule (up to 64 MiB) over EFI HTTP. Capsules come from
+/// vendor/orchestrator `https://` URLs, so this always takes the DNS+TLS path.
+fn download_capsule(url: &str) -> Result<Vec<u8>, String> {
+    let (code, body) = http_efi::get_capped(url, 64 << 20)?;
+    if code != 200 {
+        return Err(format!("HTTP {code} fetching capsule"));
+    }
+    if body.is_empty() {
+        return Err("empty capsule body".into());
+    }
+    Ok(body)
+}
+
 /// HTTP(S) POST via the EFI HTTP protocol — used for `https://` (TLS) and for
 /// hostnames (DNS), both of which the raw-TCP4 path can't do. Plain http:// is
 /// blocked by firmware policy, but https:// is allowed.
@@ -1508,10 +1542,16 @@ mod http_efi {
         Ok(format!("HTTP {:?} ({}B)", resp.status, resp.body.len()))
     }
 
+    /// GET with a 4 MiB body cap (order/command payloads).
+    pub fn get(url: &str) -> Result<(u16, Vec<u8>), String> {
+        get_capped(url, 4 << 20)
+    }
+
     /// GET returning (status code, full body). Reads until Content-Length is
     /// satisfied; without one, drains until the firmware reports the
-    /// connection finished.
-    pub fn get(url: &str) -> Result<(u16, Vec<u8>), String> {
+    /// connection finished. `max_cap` bounds the body (capsules need a larger
+    /// ceiling than the default order payloads).
+    pub fn get_capped(url: &str, max_cap: usize) -> Result<(u16, Vec<u8>), String> {
         logln(format!("http(efi): GET {url}"));
         let handles = boot::find_handles::<HttpBinding>()
             .map_err(|e| format!("no EFI HTTP service ({e:?})"))?;
@@ -1530,8 +1570,7 @@ mod http_efi {
             .find(|(k, _)| k == "content-length")
             .and_then(|(_, v)| v.trim().parse::<usize>().ok());
         let mut body = first.body;
-        // 4 MiB cap: an order payload is a few KB; anything bigger is wrong.
-        let cap = content_len.unwrap_or(4 << 20).min(4 << 20);
+        let cap = content_len.unwrap_or(max_cap).min(max_cap);
         while body.len() < cap {
             match http.response_more(&mut body) {
                 Ok(chunk) if chunk.is_empty() => break,
@@ -1675,6 +1714,97 @@ mod net_tcp {
     /// axum_server QC listener (Mastertech "connected client" path).
     pub fn send_qc(target: &str, body: &[u8]) -> Result<String, String> {
         run(target, "", body, true)
+    }
+
+    /// Fire-and-forget: connect, transmit already-framed bytes, close — no
+    /// response read, so a pre-boot frame push never stalls the render loop
+    /// waiting on the server. Mirrors the proven connect+transmit sequence.
+    pub fn send_preboot(target: &str, framed: &[u8]) -> Result<(), String> {
+        if tcp4_absent() {
+            return Err("no TCP4 stack".into());
+        }
+        let (rip, rport) = parse_target(target).ok_or("bad target")?;
+        let handles = boot::find_handles::<Tcp4Sb>().map_err(|e| format!("no TCP4 ({e:?})"))?;
+        let sbh = *handles.first().ok_or("no TCP4 iface")?;
+        let mut sb = unsafe {
+            boot::open_protocol::<Tcp4Sb>(
+                OpenProtocolParams { handle: sbh, agent: boot::image_handle(), controller: None },
+                OpenProtocolAttributes::GetProtocol,
+            )
+        }
+        .map_err(|e| format!("open sb: {e:?}"))?;
+        let mut child: uefi_raw::Handle = core::ptr::null_mut();
+        if unsafe { (sb.0.create_child)(&mut sb.0, &mut child) } != Status::SUCCESS {
+            return Err("create_child".into());
+        }
+        let Some(child_handle) = (unsafe { Handle::from_ptr(child) }) else {
+            return Err("null child".into());
+        };
+        let r = tx_only(child_handle, rip, rport, framed);
+        let _ = unsafe { (sb.0.destroy_child)(&mut sb.0, child) };
+        r
+    }
+
+    fn tx_only(child: Handle, rip: Ipv4Address, rport: u16, framed: &[u8]) -> Result<(), String> {
+        let mut tcp = unsafe {
+            boot::open_protocol::<Tcp4>(
+                OpenProtocolParams { handle: child, agent: boot::image_handle(), controller: None },
+                OpenProtocolAttributes::GetProtocol,
+            )
+        }
+        .map_err(|e| format!("open tcp4: {e:?}"))?;
+        let tcp_ptr: *mut Tcp4Protocol = &mut tcp.0;
+        let cfg = Tcp4ConfigData {
+            type_of_service: 0,
+            time_to_live: 64,
+            access_point: Tcp4AccessPoint {
+                use_default_address: Boolean::from(true),
+                station_address: Ipv4Address([0, 0, 0, 0]),
+                subnet_mask: Ipv4Address([0, 0, 0, 0]),
+                station_port: 0,
+                remote_address: rip,
+                remote_port: rport,
+                active_flag: Boolean::from(true),
+            },
+            control_option: core::ptr::null_mut(),
+        };
+        if unsafe { ((*tcp_ptr).configure)(tcp_ptr, &cfg) } != Status::SUCCESS {
+            return Err("configure".into());
+        }
+        let event = unsafe { boot::create_event(EventType::empty(), Tpl::CALLBACK, None, None) }
+            .map_err(|e| format!("event: {e:?}"))?;
+        let ev = event.as_ptr();
+        let mut ct = Tcp4ConnectionToken {
+            completion_token: Tcp4CompletionToken { event: ev, status: Status::NOT_READY },
+        };
+        if unsafe { ((*tcp_ptr).connect)(tcp_ptr, &mut ct) } != Status::SUCCESS {
+            return Err("connect call".into());
+        }
+        if unsafe { pump(tcp_ptr, &ct.completion_token.status, 5_000) } != Status::SUCCESS {
+            return Err("connect".into());
+        }
+        let mut tx = TxData1 {
+            push: Boolean::from(true),
+            urgent: Boolean::from(false),
+            data_length: framed.len() as u32,
+            fragment_count: 1,
+            fragment_table: [Tcp4FragmentData {
+                fragment_length: framed.len() as u32,
+                fragment_buf: framed.as_ptr() as *mut u8,
+            }],
+        };
+        let mut txtok = Tcp4IoToken {
+            completion_token: Tcp4CompletionToken { event: ev, status: Status::NOT_READY },
+            packet: Tcp4Packet { tx_data: (&mut tx as *mut TxData1).cast() },
+        };
+        if unsafe { ((*tcp_ptr).transmit)(tcp_ptr, &mut txtok) } != Status::SUCCESS {
+            return Err("transmit call".into());
+        }
+        if unsafe { pump(tcp_ptr, &txtok.completion_token.status, 5_000) } != Status::SUCCESS {
+            return Err("transmit".into());
+        }
+        let _ = unsafe { ((*tcp_ptr).configure)(tcp_ptr, core::ptr::null()) };
+        Ok(())
     }
 
     fn build_get(path: &str, host: &str) -> Vec<u8> {
@@ -3054,6 +3184,9 @@ struct SysInfo {
     mchbar: MchbarInfo,
     mca: Vec<stress::McaBank>,
     mem_errors: Vec<MemError>,
+    hii: hii::HiiAudit,
+    esrt: capsule::EsrtInfo,
+    bootdiag: bootdiag::BootDiag,
 }
 
 fn is_ram(ty: MemoryType) -> bool {
@@ -3184,6 +3317,9 @@ impl SysInfo {
         info.mchbar = collect_mchbar();
         info.mca = stress::cpu_mca();
         info.mem_errors = collect_mem_errors();
+        info.hii = hii::collect();
+        info.esrt = capsule::collect();
+        info.bootdiag = bootdiag::collect(&info);
         info
     }
 }
@@ -3468,6 +3604,31 @@ fn page_firmware(frame: &mut Frame, area: Rect, info: &SysInfo) {
     ));
 
     lines.push(Line::from(""));
+    lines.push(header("Firmware update (ESRT / capsule)"));
+    let esrt = &info.esrt;
+    if esrt.present {
+        if let Some(e) = esrt.system_entry() {
+            lines.push(kv("BIOS fw version", format!("0x{:08x}", e.fw_version)));
+            lines.push(kv("Lowest supported", format!("0x{:08x}", e.lowest_supported)));
+            let sc = if e.last_attempt_status == 0 { palette::GOOD } else { palette::ERR };
+            lines.push(Line::from(vec![
+                Span::styled(format!("{:<14}", "Last attempt"), Style::default().fg(palette::LABEL)),
+                Span::styled(
+                    format!("v0x{:08x} - {}", e.last_attempt_version, e.last_status_name()),
+                    Style::default().fg(sc),
+                ),
+            ]));
+        }
+        lines.push(kv("ESRT resources", format!("{}", esrt.fw_resource_count)));
+    } else {
+        lines.push(kv("ESRT", "not present".to_string()));
+    }
+    lines.push(Line::from(vec![
+        Span::styled(format!("{:<14}", "Capsule-on-disk"), Style::default().fg(palette::LABEL)),
+        yn(esrt.capsule_on_disk),
+    ]));
+
+    lines.push(Line::from(""));
     lines.push(header("Hardware error logs (intermittent-fault triage)"));
     lines.push(Line::from(vec![
         Span::styled(format!("{:<14}", "RTC battery"), Style::default().fg(palette::LABEL)),
@@ -3513,6 +3674,331 @@ fn page_firmware(frame: &mut Frame, area: Rect, info: &SysInfo) {
         ]));
     }
     frame.render_widget(para(lines, "Firmware & Tables"), area);
+}
+
+/// BIOS Setup audit from the HII database: golden-config settings + coverage.
+fn page_bios(frame: &mut Frame, area: Rect, info: &SysInfo) {
+    let a = &info.hii;
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(40), Constraint::Min(0)])
+        .split(area);
+
+    let mut left = vec![
+        header("HII database"),
+        Line::from(vec![
+            Span::styled(format!("{:<14}", "Exported"), Style::default().fg(palette::LABEL)),
+            yn(a.available),
+        ]),
+        kv("Raw size", human_bytes(a.raw_bytes as u64)),
+        kv("Package lists", format!("{}", a.package_lists)),
+        kv("Forms packages", format!("{}", a.forms_packages)),
+        kv("Form sets", format!("{}", a.formsets)),
+        kv("Setup questions", format!("{}", a.questions_total)),
+        kv("Golden flagged", format!("{}", a.settings.len())),
+    ];
+    if !a.note.is_empty() {
+        left.push(Line::from(""));
+        left.push(Line::from(Span::styled(
+            fit(&a.note, 36),
+            Style::default().fg(palette::MUTED),
+        )));
+    }
+    left.push(Line::from(""));
+    left.push(header("Reads via"));
+    left.push(Line::from(Span::styled(
+        "EFI_HII_DATABASE_PROTOCOL",
+        Style::default().fg(palette::MUTED),
+    )));
+    left.push(Line::from(Span::styled(
+        "values best-effort (EFI varstore)",
+        Style::default().fg(palette::MUTED),
+    )));
+    frame.render_widget(para(left, "BIOS Audit"), cols[0]);
+
+    let mut lines = vec![header("Golden-config settings")];
+    if a.settings.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "no watched settings resolved",
+            Style::default().fg(palette::MUTED),
+        )));
+    }
+    for s in &a.settings {
+        let cat = s.category.unwrap_or("");
+        let cur = s.current.as_deref().unwrap_or("(unread)");
+        let cur_color = match s.current.as_deref() {
+            Some(v) if v.eq_ignore_ascii_case("enabled") => palette::GOOD,
+            Some(v) if v.eq_ignore_ascii_case("disabled") => palette::ERR,
+            Some(_) => palette::TEXT,
+            None => palette::MUTED,
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!("[{cat}] "), Style::default().fg(palette::LABEL)),
+            Span::styled(fit(&s.name, 34), Style::default().fg(palette::TEXT)),
+            Span::styled(" = ", Style::default().fg(palette::MUTED)),
+            Span::styled(cur.to_string(), Style::default().fg(cur_color)),
+        ]));
+        if !s.options.is_empty() {
+            lines.push(Line::from(Span::styled(
+                format!("      {} / {}", s.kind.label(), s.options.join(" | ")),
+                Style::default().fg(palette::MUTED),
+            )));
+        }
+    }
+    frame.render_widget(para(lines, "Setup Settings"), cols[1]);
+}
+
+/// Boot Doctor: why won't Windows boot — the boot chain, checked pre-OS.
+fn page_boot(frame: &mut Frame, area: Rect, info: &SysInfo) {
+    use bootdiag::Severity;
+    let d = &info.bootdiag;
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(40), Constraint::Min(0)])
+        .split(area);
+
+    let esp_line = |label: &str, ok: bool| {
+        Line::from(vec![
+            Span::styled(format!("{label:<16}"), Style::default().fg(palette::LABEL)),
+            if ok {
+                Span::styled("yes", Style::default().fg(palette::GOOD))
+            } else {
+                Span::styled("NO", Style::default().fg(palette::ERR))
+            },
+        ])
+    };
+    let mut left = vec![
+        header("Boot chain"),
+        esp_line("ESP readable", d.esp_found),
+        esp_line("bootmgfw.efi", d.bootmgfw_present),
+        esp_line("BCD store", d.bcd_present),
+        esp_line("fallback boot", d.fallback_present),
+    ];
+    if d.bootmgfw_present {
+        left.push(kv("bootmgfw size", human_bytes(d.bootmgfw_size)));
+    }
+    left.push(Line::from(""));
+    left.push(header("Windows boot entry"));
+    match d.windows_entry {
+        Some(n) => {
+            left.push(kv("Entry", format!("Boot{n:04X}")));
+            left.push(esp_line("in BootOrder", d.windows_in_boot_order));
+            left.push(esp_line("active", d.windows_entry_active));
+        }
+        None => left.push(Line::from(Span::styled(
+            "none found",
+            Style::default().fg(palette::ERR),
+        ))),
+    }
+    left.push(Line::from(""));
+    left.push(header("GPT partitions"));
+    left.push(kv("ESP", format!("{}", d.part_esp)));
+    left.push(kv("MSR", format!("{}", d.part_msr)));
+    left.push(kv("Windows data", format!("{}", d.part_win_data)));
+    left.push(kv("Recovery", format!("{}", d.part_recovery)));
+    frame.render_widget(para(left, "Boot Doctor"), cols[0]);
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+        .split(cols[1]);
+
+    let mut vlines = vec![header("Verdict")];
+    for (sev, msg) in &d.verdicts {
+        let (tag, color) = match sev {
+            Severity::Ok => ("OK  ", palette::GOOD),
+            Severity::Warn => ("WARN", palette::WARN),
+            Severity::Fail => ("FAIL", palette::ERR),
+        };
+        vlines.push(Line::from(Span::styled(
+            format!("[{tag}]"),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        )));
+        for chunk in wrap_text(msg, 72) {
+            vlines.push(Line::from(Span::styled(
+                format!("  {chunk}"),
+                Style::default().fg(palette::TEXT),
+            )));
+        }
+    }
+    frame.render_widget(para(vlines, "Diagnosis"), rows[0]);
+
+    let mut elines = vec![header("Boot entries (firmware order)")];
+    if d.boot_entries.is_empty() {
+        elines.push(Line::from(Span::styled(
+            "no boot entries parsed",
+            Style::default().fg(palette::MUTED),
+        )));
+    }
+    for e in &d.boot_entries {
+        let color = if e.is_windows { palette::GOOD } else { palette::TEXT };
+        elines.push(Line::from(vec![
+            Span::styled(format!("Boot{:04X} ", e.num), Style::default().fg(palette::LABEL)),
+            Span::styled(fit(&e.description, 40), Style::default().fg(color)),
+            Span::styled(
+                if e.active { "" } else { " [off]" },
+                Style::default().fg(palette::ERR),
+            ),
+        ]));
+    }
+    frame.render_widget(para(elines, "Entries"), rows[1]);
+}
+
+/// WASM diagnostic plugins run in-firmware via the wasmi interpreter.
+fn page_plugins(frame: &mut Frame, area: Rect, app: &App) {
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(40), Constraint::Min(0)])
+        .split(area);
+
+    let left = vec![
+        header("WASM runtime"),
+        kv("Interpreter", "wasmi (no JIT)".to_string()),
+        kv("ABI", "wasm32-wasip1 + env".to_string()),
+        kv("Embedded", format!("{} B demo", DEMO_PLUGIN.len())),
+        Line::from(""),
+        header("Run"),
+        Line::from(vec![
+            Span::styled("ENTER ", Style::default().fg(palette::ACCENT)),
+            Span::styled("run embedded self-test", Style::default().fg(palette::MUTED)),
+        ]),
+        Line::from(Span::styled(
+            "remote: agent op run_plugin",
+            Style::default().fg(palette::MUTED),
+        )),
+        Line::from(Span::styled(
+            "{url, tool, args}",
+            Style::default().fg(palette::MUTED),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "runs the same plugins as the",
+            Style::default().fg(palette::MUTED),
+        )),
+        Line::from(Span::styled(
+            "desktop app, pre-OS",
+            Style::default().fg(palette::MUTED),
+        )),
+    ];
+    frame.render_widget(para(left, "Plugins"), cols[0]);
+
+    let mut lines = vec![header("Last plugin run")];
+    if app.plugin_out.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "no run yet - press ENTER",
+            Style::default().fg(palette::MUTED),
+        )));
+    }
+    for l in &app.plugin_out {
+        lines.push(Line::from(Span::styled(l.clone(), Style::default().fg(palette::TEXT))));
+    }
+    frame.render_widget(para(lines, "Output"), cols[1]);
+}
+
+/// Firmware capability bits + pre-serialized diagnostic JSON for the `host_fw_*`
+/// read ABI, so plugins query cached data without live re-collection or borrows.
+fn fw_data(info: &SysInfo) -> wasmrt::FwData {
+    use wasmrt::caps;
+    let mut fw = wasmrt::FwData::default();
+    #[cfg(target_arch = "x86_64")]
+    {
+        fw.caps |= caps::MSR;
+    }
+    fw.caps |= caps::VARIABLES;
+    if !info.nvme.is_empty() {
+        fw.caps |= caps::NVME;
+    }
+    if let Some(mut root) = rb_open() {
+        fw.caps |= caps::PCI;
+        if smbus_base(&mut root).is_some() {
+            fw.caps |= caps::SMBUS;
+        }
+    }
+    fw.push(
+        "bert",
+        serde_json::json!({
+            "present": info.bert.present,
+            "error": info.bert.error_present,
+            "severity": info.bert.severity,
+            "entries": info.bert.entry_count,
+        })
+        .to_string(),
+    );
+    fw.push(
+        "fpdt",
+        serde_json::json!({
+            "present": info.fpdt.present,
+            "fw_boot_ms": info.fpdt.fw_boot_ms,
+            "os_loader_ms": info.fpdt.os_loader_ms,
+        })
+        .to_string(),
+    );
+    fw.push(
+        "msdm",
+        serde_json::json!({ "present": info.msdm, "key": info.msdm_key }).to_string(),
+    );
+    fw.push(
+        "smbios",
+        serde_json::json!({
+            "sys_mfr": info.dmi.sys_mfr,
+            "sys_product": info.dmi.sys_product,
+            "sys_serial": info.dmi.sys_serial,
+            "board_product": info.dmi.board_product,
+            "bios_vendor": info.dmi.bios_vendor,
+            "bios_version": info.dmi.bios_version,
+            "bios_date": info.dmi.bios_date,
+            "cpu": info.dmi.cpu_version,
+        })
+        .to_string(),
+    );
+    fw.push("esrt", capsule::esrt_json(&info.esrt).to_string());
+    fw.push("bootdiag", bootdiag::diag_json(&info.bootdiag).to_string());
+    fw.push("bios_settings", hii::audit_json(&info.hii).to_string());
+    fw
+}
+
+/// Load and invoke a plugin, formatting the run into `app.plugin_out`.
+fn run_wasm_plugin(app: &mut App, bytes: &[u8], tool: &str, args: &str) {
+    let host = {
+        let s = app.info.dmi.sys_serial.trim();
+        if s.is_empty() || s == "-" { "uefi" } else { s }
+    };
+    let fw = fw_data(&app.info);
+    app.plugin_out.clear();
+    match wasmrt::run(bytes, host, Some((tool, args)), fw) {
+        Ok(run) => {
+            app.plugin_out.push(format!("id: {}", run.id));
+            app.plugin_out.push(format!("name: {} v{}", run.name, run.version));
+            for chunk in wrap_text(&format!("tools: {}", run.tools), 60) {
+                app.plugin_out.push(chunk);
+            }
+            app.plugin_out.push(format!("tool: {tool}"));
+            for chunk in wrap_text(&format!("result: {}", run.result), 60) {
+                app.plugin_out.push(chunk);
+            }
+            if !run.stdout.is_empty() {
+                for chunk in wrap_text(&format!("stdout: {}", run.stdout), 60) {
+                    app.plugin_out.push(chunk);
+                }
+            }
+            for l in run.log.iter().take(6) {
+                app.plugin_out.push(format!("log: {l}"));
+            }
+            app.status = format!("plugin {} ran ok", run.id);
+        }
+        Err(e) => {
+            app.plugin_out.push(format!("error: {e}"));
+            app.status = format!("plugin failed: {e}");
+        }
+    }
+}
+
+/// Wrap a string into <=width chunks for the fixed-width output pane.
+fn wrap_text(s: &str, width: usize) -> Vec<String> {
+    s.as_bytes()
+        .chunks(width.max(1))
+        .map(|c| String::from_utf8_lossy(c).into_owned())
+        .collect()
 }
 
 fn page_network(frame: &mut Frame, area: Rect, app: &App) {
@@ -3838,11 +4324,33 @@ fn page_stress(frame: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(if errs == 0 { palette::GOOD } else { palette::ERR }),
         ),
     ]));
+    let memtest_active = eng.current_stage() == Some(stress::Stage::Memtest);
+    let memtest_ran = eng.results.iter().any(|r| r.stage == stress::Stage::Memtest);
+    if memtest_active {
+        lines.push(kv("Algorithm", stress::memtest_algo_label()));
+    }
+    if memtest_active || memtest_ran {
+        let cov = stress::memtest_coverage();
+        lines.push(kv(
+            "Coverage",
+            format!("{}/{} algos", cov.len(), stress::MEMTEST_ALGOS.len()),
+        ));
+    }
     if let Some(addr) = eng.memtest_fail_addr() {
         lines.push(Line::from(vec![
             Span::styled(format!("{:<14}", "1st fail addr"), Style::default().fg(palette::LABEL)),
             Span::styled(format!("0x{addr:x}"), Style::default().fg(palette::ERR)),
         ]));
+        for e in stress::memtest_error_log().iter().take(4) {
+            lines.push(Line::from(vec![
+                Span::styled("  bits ", Style::default().fg(palette::MUTED)),
+                Span::styled(
+                    format!("0x{:016x}", e.expected ^ e.actual),
+                    Style::default().fg(palette::ERR),
+                ),
+                Span::styled(format!("  @ 0x{:x}", e.addr), Style::default().fg(palette::MUTED)),
+            ]));
+        }
     }
     if !eng.status.is_empty() {
         lines.push(kv("Status", eng.status.clone()));
@@ -4441,12 +4949,15 @@ fn render(frame: &mut Frame, app: &App) {
         1 => page_system(frame, root[1], &app.info),
         2 => page_memory(frame, root[1], &app.info),
         3 => page_firmware(frame, root[1], &app.info),
-        4 => page_network(frame, root[1], app),
-        5 => page_storage(frame, root[1], &app.info),
-        6 => page_stress(frame, root[1], app),
-        7 => page_order(frame, root[1], app),
-        8 => page_readiness(frame, root[1], &app.info),
-        9 => page_diag(frame, root[1], &app.info),
+        TAB_BIOS => page_bios(frame, root[1], &app.info),
+        5 => page_network(frame, root[1], app),
+        6 => page_storage(frame, root[1], &app.info),
+        TAB_STRESS => page_stress(frame, root[1], app),
+        TAB_ORDER => page_order(frame, root[1], app),
+        9 => page_readiness(frame, root[1], &app.info),
+        10 => page_diag(frame, root[1], &app.info),
+        TAB_BOOT => page_boot(frame, root[1], &app.info),
+        TAB_PLUGINS => page_plugins(frame, root[1], app),
         _ => page_log(frame, root[1]),
     }
 
@@ -4464,6 +4975,12 @@ fn render(frame: &mut Frame, app: &App) {
             ("ENTER", "lookup"),
             ("e", "serial"),
             ("Tab", "next"),
+            ("q", "quit"),
+        ],
+        TAB_PLUGINS => &[
+            ("ENTER", "run self-test"),
+            ("Tab/->", "next"),
+            ("<-", "prev"),
             ("q", "quit"),
         ],
         _ => &[
@@ -4517,6 +5034,16 @@ struct App {
     agent_tick: u32,
     /// Raw SimpleNetwork lease (set when DHCP succeeded only via the SNP path).
     raw_net: Option<netraw::RawNet>,
+    /// Rendered output from the last WASM plugin run.
+    plugin_out: Vec<String>,
+    /// Pre-boot TUI streaming to the admin console is active.
+    streaming: bool,
+    /// Monotonic streamed-frame counter.
+    stream_frame: u64,
+    /// Dirty-frame suppressor for the stream.
+    stream_throttle: stream::Throttle,
+    /// Remote viewer events queued for injection into the input loop.
+    injected: Vec<terminput::Event>,
 }
 
 impl App {
@@ -4552,6 +5079,11 @@ fn run() -> Result<()> {
         agent: false,
         agent_tick: 0,
         raw_net: None,
+        plugin_out: Vec::new(),
+        streaming: false,
+        stream_frame: 0,
+        stream_throttle: stream::Throttle::new(),
+        injected: Vec::new(),
     };
 
     terminal.clear()?;
@@ -4562,11 +5094,32 @@ fn run() -> Result<()> {
 
     loop {
         app.stress.tick();
-        terminal.draw(|frame| render(frame, &app))?;
+        // Render, and while streaming capture the just-rendered buffer into a
+        // wire frame; the CompletedFrame's borrow ends when the block returns.
+        let captured = {
+            let completed = terminal.draw(|frame| render(frame, &app))?;
+            if app.streaming && !app.target.is_empty() {
+                Some(stream::buffer_to_frame(completed.buffer, app.stream_frame))
+            } else {
+                None
+            }
+        };
+        if let Some(pf) = captured {
+            if let Some(bytes) = app.stream_throttle.frame_if_dirty(&pf) {
+                let host = parse_upload_url(&app.target).host_port;
+                if let Err(e) = net_tcp::send_preboot(&host, &bytes) {
+                    logln(format!("stream: frame send failed: {e}"));
+                }
+            }
+            app.stream_frame = app.stream_frame.wrapping_add(1);
+        }
 
-        // Blocking input when idle; poll + frame ticks while a stress run
-        // needs the charts and counters refreshed.
-        let event = if app.stress.is_active() || app.agent {
+        // Blocking input when idle; poll + frame ticks while a stress run,
+        // agent polling, or streaming needs the loop to keep spinning. A
+        // queued remote-viewer event is consumed as if it were typed locally.
+        let event = if let Some(inj) = app.injected.pop() {
+            Some(inj)
+        } else if app.stress.is_active() || app.agent || app.streaming {
             let ev = input_reader.poll_event()?;
             if ev.is_none() {
                 uefi::boot::stall(core::time::Duration::from_millis(33));
@@ -4698,6 +5251,15 @@ fn run() -> Result<()> {
                     "agent mode off".into()
                 };
             }
+            terminput::KeyCode::Char('v') => {
+                app.streaming = !app.streaming;
+                app.stream_frame = 0;
+                app.status = if app.streaming {
+                    format!("streaming TUI -> {}", app.target)
+                } else {
+                    "streaming off".into()
+                };
+            }
             // Stress tab controls.
             terminput::KeyCode::Up if app.tab == TAB_STRESS => {
                 app.stress.selected = app.stress.selected.saturating_sub(1);
@@ -4715,6 +5277,12 @@ fn run() -> Result<()> {
             }
             terminput::KeyCode::Char('b') if app.tab == TAB_STRESS => {
                 app.stress.start_preset();
+            }
+            // Plugins tab: run the embedded self-test plugin.
+            terminput::KeyCode::Enter if app.tab == TAB_PLUGINS => {
+                app.status = "running embedded WASM plugin...".into();
+                terminal.draw(|frame| render(frame, &app))?;
+                run_wasm_plugin(&mut app, DEMO_PLUGIN, "selftest", "{}");
             }
             terminput::KeyCode::Char('s') if app.tab == TAB_STRESS => {
                 if app.stress.is_active() {
@@ -4864,6 +5432,120 @@ fn execute_command(
             if let Some(idx) = cmd.kind.pointer("/custom/payload/stage").and_then(|v| v.as_u64()) {
                 if let Some(stage) = stress::STAGES.get(idx as usize) {
                     app.stress.start_single(*stage);
+                }
+            }
+        }
+        // Flash a BIOS capsule. Requires an explicit url + confirm:true; on
+        // success it resets and never returns. A version gate rejects
+        // downgrades before download when expected_version is supplied.
+        Some("bios_update") => {
+            let url = cmd.kind.pointer("/custom/payload/url").and_then(|v| v.as_str());
+            let confirm = cmd
+                .kind
+                .pointer("/custom/payload/confirm")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if let Some(v) = cmd
+                .kind
+                .pointer("/custom/payload/expected_version")
+                .and_then(|v| v.as_u64())
+            {
+                match capsule::update_verdict(&app.info.esrt, v as u32) {
+                    Ok(msg) => logln(format!("bios_update: version gate {msg}")),
+                    Err(e) => {
+                        app.status = format!("bios_update rejected: {e}");
+                        logln(format!("bios_update: {e}"));
+                        return Ok(());
+                    }
+                }
+            }
+            match (url, confirm) {
+                (Some(url), true) => {
+                    app.status = format!("bios_update: fetching {url} ...");
+                    terminal.draw(|frame| render(frame, app))?;
+                    match download_capsule(url) {
+                        Ok(bytes) => {
+                            app.status = format!("bios_update: applying {} bytes", bytes.len());
+                            terminal.draw(|frame| render(frame, app))?;
+                            // Resets on success; only returns on failure.
+                            if let Err(e) = capsule::apply_capsule(&bytes) {
+                                app.status = format!("BIOS update failed: {e}");
+                            }
+                        }
+                        Err(e) => app.status = format!("capsule download failed: {e}"),
+                    }
+                }
+                _ => app.status = "bios_update ignored (needs url + confirm:true)".into(),
+            }
+        }
+        // Fetch a WASM plugin by URL and invoke a tool on it in firmware.
+        Some("run_plugin") => {
+            let url = cmd.kind.pointer("/custom/payload/url").and_then(|v| v.as_str());
+            let tool = cmd
+                .kind
+                .pointer("/custom/payload/tool")
+                .and_then(|v| v.as_str())
+                .unwrap_or("selftest");
+            let args = cmd
+                .kind
+                .pointer("/custom/payload/args")
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "{}".to_string());
+            match url {
+                Some(url) => match http_efi::get_capped(url, 8 << 20) {
+                    Ok((200, bytes)) => run_wasm_plugin(app, &bytes, tool, &args),
+                    Ok((code, _)) => app.status = format!("run_plugin: HTTP {code}"),
+                    Err(e) => app.status = format!("run_plugin fetch failed: {e}"),
+                },
+                None => app.status = "run_plugin needs a url".into(),
+            }
+        }
+        // Start/stop pre-boot TUI streaming; optional target override.
+        Some("stream_start") => {
+            if let Some(t) = cmd.kind.pointer("/custom/payload/target").and_then(|v| v.as_str()) {
+                app.target = t.to_string();
+            }
+            app.streaming = true;
+            app.stream_frame = 0;
+            app.status = format!("streaming to {}", app.target);
+        }
+        Some("stream_stop") => {
+            app.streaming = false;
+            app.status = "streaming stopped".into();
+        }
+        // Inject a remote keystroke into the input loop (viewer control).
+        Some("preboot_key") => {
+            use tcp_protocol::preboot::{PbKeyCode, PreBootEvent, PreBootKey};
+            let p = &cmd.kind;
+            let code = if let Some(ch) = p
+                .pointer("/custom/payload/char")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.chars().next())
+            {
+                Some(PbKeyCode::Char(ch))
+            } else {
+                match p.pointer("/custom/payload/named").and_then(|v| v.as_str()) {
+                    Some("Enter") => Some(PbKeyCode::Enter),
+                    Some("Esc") => Some(PbKeyCode::Esc),
+                    Some("Backspace") => Some(PbKeyCode::Backspace),
+                    Some("Tab") => Some(PbKeyCode::Tab),
+                    Some("Up") => Some(PbKeyCode::Up),
+                    Some("Down") => Some(PbKeyCode::Down),
+                    Some("Left") => Some(PbKeyCode::Left),
+                    Some("Right") => Some(PbKeyCode::Right),
+                    _ => None,
+                }
+            };
+            if let Some(code) = code {
+                let key = PreBootKey {
+                    code,
+                    ctrl: p.pointer("/custom/payload/ctrl").and_then(|v| v.as_bool()).unwrap_or(false),
+                    alt: p.pointer("/custom/payload/alt").and_then(|v| v.as_bool()).unwrap_or(false),
+                    shift: p.pointer("/custom/payload/shift").and_then(|v| v.as_bool()).unwrap_or(false),
+                };
+                if let Some(ev) = stream::event_to_terminput(&PreBootEvent::Key(key)) {
+                    app.injected.push(ev);
+                    app.status = "remote key injected".into();
                 }
             }
         }

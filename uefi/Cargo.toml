@@ -11,6 +11,14 @@ smoltcp = { version = "0.13.1", default-features = false, features = ["medium-et
 # re-enable layout-cache + std for v0.30.1 perf (cached splits, iterator BufferDiff).
 ratatui = { version = "0.30.2", default-features = false, features = ["layout-cache", "std"] }
 terminput = { version = "0.5.14", default-features = false }
+# Pure-Rust WASM interpreter (no JIT) for running Mastertech plugins in
+# firmware. no_std + alloc; libm for float ops, btree collections to avoid a
+# getrandom-backed hasher that UEFI can't satisfy.
+wasmi = { version = "2.0.0-beta.4", default-features = false, features = ["libm", "validate", "prefer-btree-collections"] }
+# Shared admin↔client wire types; the preboot module (serde + bincode) streams
+# the firmware TUI to the admin console's RataguiBackend. tokio/socket2 in this
+# crate are gated off the uefi target.
+tcp_protocol = { path = "../tcp_protocol" }
 ratatui-uefi = { path = "crates/ratatui-uefi" }
 terminput-uefi = { path = "crates/terminput-uefi" }
 anyhow.workspace = true

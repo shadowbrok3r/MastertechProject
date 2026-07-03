@@ -41,6 +41,8 @@ pub mod entity_link;
 pub mod fleet;
 pub mod qc_fingerprint;
 pub mod task_creation;
+pub mod crash_intel;
+pub mod driver_intel;
 
 pub use task::*;
 pub use task_note::*;
@@ -64,6 +66,8 @@ pub use entity_link::*;
 pub use stress_test::*;
 pub use benchmark::*;
 pub use task_creation::*;
+pub use crash_intel::*;
+pub use driver_intel::*;
 
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";
@@ -97,6 +101,11 @@ pub const FLEET_AGENT_TABLE: &str = "fleet_agent";
 pub const FLEET_EVENT_TABLE: &str = "fleet_event";
 pub const FLEET_COMMAND_TABLE: &str = "fleet_command";
 pub const QC_FINGERPRINT_TABLE: &str = "qc_fingerprint";
+pub const CRASH_SIGNATURE_TABLE: &str = "crash_signature";
+pub const CRASH_SIGHTING_TABLE: &str = "crash_sighting";
+pub const CRASH_VERDICT_TABLE: &str = "crash_verdict";
+pub const DRIVER_SNAPSHOT_TABLE: &str = "driver_snapshot";
+pub const KNOWN_BAD_DRIVER_TABLE: &str = "known_bad_driver";
 
 pub use prestashop as prestashop_schema;
 

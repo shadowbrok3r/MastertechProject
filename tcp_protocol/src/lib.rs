@@ -110,7 +110,7 @@ pub fn decode_ping_payload(bytes: &[u8]) -> Option<(u64, u64)> {
 ///
 /// `with_retries` is a no-op on Windows pre-1703; time + interval still
 /// apply, which is enough to detect failure in roughly the same window.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "uefi")))]
 pub fn apply_tcp_options(stream: &tokio::net::TcpStream) -> std::io::Result<()> {
     use socket2::{SockRef, TcpKeepalive};
     let sock = SockRef::from(stream);
@@ -124,6 +124,121 @@ pub fn apply_tcp_options(stream: &tokio::net::TcpStream) -> std::io::Result<()> 
     sock.set_tcp_keepalive(&ka)?;
     stream.set_nodelay(true)?;
     Ok(())
+}
+
+/// Pre-boot terminal streaming: the UEFI firmware app renders a ratatui
+/// terminal and streams it to the admin console using the same viewer widget
+/// as the OS client. Firmware can't produce the OS path's zstd+egui
+/// `BufferMessage` (no zstd C-FFI, no egui), so it ships these plain-serde
+/// mirror types under dedicated frame tags instead. Encoded with bincode
+/// (the same codec displays already uses), uncompressed.
+pub mod preboot {
+    use serde::{Deserialize, Serialize};
+
+    /// A ratatui buffer frame streamed from firmware, row-major `cols*rows`.
+    pub const FRAME_TAG_PREBOOT_FRAME: u8 = 0x05;
+    /// An input event from the admin viewer back to firmware.
+    pub const FRAME_TAG_PREBOOT_INPUT: u8 = 0x06;
+
+    /// Mirrors `ratatui::style::Color` so a cell's color survives the wire
+    /// without pulling ratatui into firmware's wire crate.
+    #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum PbColor {
+        Reset,
+        Black,
+        Red,
+        Green,
+        Yellow,
+        Blue,
+        Magenta,
+        Cyan,
+        Gray,
+        DarkGray,
+        LightRed,
+        LightGreen,
+        LightYellow,
+        LightBlue,
+        LightMagenta,
+        LightCyan,
+        White,
+        Indexed(u8),
+        Rgb(u8, u8, u8),
+    }
+
+    /// One terminal cell: its grapheme, colors, and ratatui modifier bits.
+    #[derive(Serialize, Deserialize, Clone, Debug)]
+    pub struct PreBootCell {
+        pub symbol: String,
+        pub fg: PbColor,
+        pub bg: PbColor,
+        pub mods: u16,
+    }
+
+    /// A full terminal frame.
+    #[derive(Serialize, Deserialize, Clone, Debug)]
+    pub struct PreBootFrame {
+        pub frame: u64,
+        pub cols: u16,
+        pub rows: u16,
+        pub cells: Vec<PreBootCell>,
+    }
+
+    /// Lossy key code — the subset firmware's `terminput` loop can consume.
+    #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum PbKeyCode {
+        Char(char),
+        Enter,
+        Esc,
+        Backspace,
+        Tab,
+        Up,
+        Down,
+        Left,
+        Right,
+        Home,
+        End,
+        PageUp,
+        PageDown,
+        Delete,
+        Insert,
+        F(u8),
+    }
+
+    #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+    pub struct PreBootKey {
+        pub code: PbKeyCode,
+        pub ctrl: bool,
+        pub alt: bool,
+        pub shift: bool,
+    }
+
+    /// An event from the viewer to the firmware app.
+    #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+    pub enum PreBootEvent {
+        Key(PreBootKey),
+        MouseClick { x: u16, y: u16 },
+        MouseScroll { x: u16, y: u16, up: bool },
+    }
+
+    pub fn encode_frame(f: &PreBootFrame) -> Vec<u8> {
+        bincode::serde::encode_to_vec(f, bincode::config::standard()).unwrap_or_default()
+    }
+
+    pub fn decode_frame(b: &[u8]) -> Option<PreBootFrame> {
+        bincode::serde::decode_from_slice(b, bincode::config::standard())
+            .ok()
+            .map(|(v, _)| v)
+    }
+
+    pub fn encode_event(e: &PreBootEvent) -> Vec<u8> {
+        bincode::serde::encode_to_vec(e, bincode::config::standard()).unwrap_or_default()
+    }
+
+    pub fn decode_event(b: &[u8]) -> Option<PreBootEvent> {
+        bincode::serde::decode_from_slice(b, bincode::config::standard())
+            .ok()
+            .map(|(v, _)| v)
+    }
 }
 
 #[cfg(test)]

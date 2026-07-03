@@ -72,7 +72,7 @@ type PendingRequests = std::sync::Mutex<HashMap<String, oneshot::Sender<(bool, S
 static REMOTE_TOOL_PENDING: Lazy<PendingRequests> = Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
 
 /// Register a pending request and return a receiver that resolves when the remote client replies.
-fn register_pending_request(request_id: String) -> oneshot::Receiver<(bool, String)> {
+pub(crate) fn register_pending_request(request_id: String) -> oneshot::Receiver<(bool, String)> {
     let (tx, rx) = oneshot::channel();
     if let Ok(mut map) = REMOTE_TOOL_PENDING.lock() {
         map.insert(request_id, tx);
@@ -96,7 +96,7 @@ pub fn resolve_pending_request(request_id: &str, success: bool, result_json: Str
 /// taking up a noticeable amount of memory after a long debugging
 /// session.  Idempotent: cheap no-op when the entry has already been
 /// resolved.
-fn unregister_pending_request(request_id: &str) {
+pub(crate) fn unregister_pending_request(request_id: &str) {
     if let Ok(mut map) = REMOTE_TOOL_PENDING.lock() {
         map.remove(request_id);
     }
@@ -911,6 +911,79 @@ pub struct LogDiagnosticEntryParams {
     #[schemars(description = "Plugins used for this entry, e.g. [{\"plugin_id\": \"com.mastertech.hw-diag\", \"tool_name\": \"whea_errors\"}]")]
     #[serde(default, deserialize_with = "de_plugins_used")]
     pub plugins_used: Option<Vec<PluginUsageRefParam>>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct CrashIntelSearchParams {
+    #[schemars(description = "Search term matched against module, bugcheck code, and bugcheck name. Omit for the most recently seen signatures.")]
+    pub query: Option<String>,
+    #[schemars(description = "Max signatures to return (default 20)")]
+    pub limit: Option<u32>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct CrashIntelSignatureParams {
+    #[schemars(description = "Bugcheck code — '0x133', '133', or 'DPC_WATCHDOG_VIOLATION (133)'")]
+    pub bugcheck_code: String,
+    #[schemars(description = "Faulting module, e.g. 'rtwlane.sys'")]
+    pub module: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct CrashVerdictRecordParams {
+    #[schemars(description = "Bugcheck code — '0x133', '133', or 'DPC_WATCHDOG_VIOLATION (133)'")]
+    pub bugcheck_code: String,
+    #[schemars(description = "Faulting module, e.g. 'rtwlane.sys'")]
+    pub module: String,
+    #[schemars(description = "Diagnosis: what this crash class actually is")]
+    pub verdict: String,
+    #[schemars(description = "Remediation that resolved it (if known)")]
+    pub fix: Option<String>,
+    #[schemars(description = "Confidence: low | medium | high | confirmed (default medium)")]
+    pub confidence: Option<String>,
+    #[schemars(description = "Tech name or AI identifier recording this verdict")]
+    pub author: Option<String>,
+    #[schemars(description = "Source: tech | ai | autopilot (default ai)")]
+    pub source: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct KnownBadDriverAddParams {
+    #[schemars(description = "Driver module or INF stem, e.g. 'rtwlane' or 'rtwlane.sys'")]
+    pub module: String,
+    #[schemars(description = "Bad version matchers (exact or prefix, e.g. '6001.15'). Empty matches every version.")]
+    #[serde(default, deserialize_with = "deserialize_optional_string_vec")]
+    pub bad_versions: Option<Vec<String>>,
+    #[schemars(description = "Version known to fix the issue, if any")]
+    pub fixed_version: Option<String>,
+    #[schemars(description = "Symptom this driver causes, e.g. '0x133 DPC_WATCHDOG BSOD on Wi-Fi'")]
+    pub symptom: Option<String>,
+    #[schemars(description = "Recommended fix, e.g. 'update via vendor package' or 'disable adapter'")]
+    pub fix: Option<String>,
+    #[schemars(description = "Severity: info | warn | critical (default warn)")]
+    pub severity: Option<String>,
+    #[schemars(description = "Driver vendor name")]
+    pub vendor: Option<String>,
+    #[schemars(description = "Human-readable driver/device name")]
+    pub display_name: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct DriverSnapshotsListParams {
+    #[schemars(description = "Web Console connection_string of the client")]
+    pub connection_string: String,
+    #[schemars(description = "Max snapshots to return (default 10)")]
+    pub limit: Option<u32>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct DriverSnapshotDiffParams {
+    #[schemars(description = "Web Console connection_string of the client")]
+    pub connection_string: String,
+    #[schemars(description = "Older snapshot record id (`driver_snapshot:key`). Omit to use the second-newest.")]
+    pub older_id: Option<String>,
+    #[schemars(description = "Newer snapshot record id (`driver_snapshot:key`). Omit to use the newest.")]
+    pub newer_id: Option<String>,
 }
 
 /// Accepts a real array or a stringified JSON array from clients with degraded schemas.
@@ -3502,6 +3575,223 @@ impl PluginToolProvider {
                 ContentBlock::text(format!("No diagnostic session found with ID '{}'", p.session_id))
             ])),
         }
+    }
+
+    // ── Fleet crash-signature intelligence ──────────────────────────────
+
+    #[tool(
+        name = "crash_intel_search",
+        description = "Search fleet crash signatures (normalized bugcheck+module classes with sighting counts and recorded verdicts). Omit query for the most recently seen. Use this FIRST when diagnosing a BSOD — a prior verdict may already answer it."
+    )]
+    async fn crash_intel_search(
+        &self,
+        Parameters(p): Parameters<CrashIntelSearchParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let limit = p.limit.unwrap_or(20).min(100);
+        let signatures = match p.query.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
+            Some(term) => database::schema::CrashSignature::search(term, limit).await,
+            None => database::schema::CrashSignature::recent(limit).await,
+        }
+        .map_err(to_internal)?;
+
+        let mut out = Vec::with_capacity(signatures.len());
+        for sig in signatures {
+            let verdicts = database::schema::CrashSignature::verdicts(&sig.id, 3)
+                .await
+                .unwrap_or_default();
+            out.push(serde_json::json!({ "signature": sig, "verdicts": verdicts }));
+        }
+        Ok(CallToolResult::success(vec![ContentBlock::json(
+            serde_json::json!({ "count": out.len(), "signatures": out }),
+        )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "crash_intel_signature",
+        description = "Full detail for one crash signature: fleet sightings (which machines, when) and every recorded verdict."
+    )]
+    async fn crash_intel_signature(
+        &self,
+        Parameters(p): Parameters<CrashIntelSignatureParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let found = database::schema::CrashSignature::find(&p.bugcheck_code, &p.module)
+            .await
+            .map_err(to_internal)?;
+        match found {
+            Some(sig) => {
+                let sightings = database::schema::CrashSignature::sightings(&sig.id, 20)
+                    .await
+                    .unwrap_or_default();
+                let verdicts = database::schema::CrashSignature::verdicts(&sig.id, 10)
+                    .await
+                    .unwrap_or_default();
+                Ok(CallToolResult::success(vec![ContentBlock::json(
+                    serde_json::json!({ "signature": sig, "sightings": sightings, "verdicts": verdicts }),
+                )
+                .map_err(to_internal)?]))
+            }
+            None => Ok(CallToolResult::success(vec![ContentBlock::text(format!(
+                "No crash signature recorded for {} {}",
+                p.bugcheck_code, p.module
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "crash_verdict_record",
+        description = "Record a diagnosis+fix verdict against a crash signature so every future machine hitting the same bugcheck+module surfaces it automatically. Creates the signature if it doesn't exist yet."
+    )]
+    async fn crash_verdict_record(
+        &self,
+        Parameters(p): Parameters<CrashVerdictRecordParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let sig = database::schema::CrashSignature::ensure(&p.bugcheck_code, &p.module)
+            .await
+            .map_err(to_internal)?;
+        let verdict_id = database::schema::CrashVerdict::create(
+            &sig.id,
+            &p.verdict,
+            p.fix.as_deref().unwrap_or(""),
+            p.confidence.as_deref().unwrap_or("medium"),
+            p.author.as_deref().unwrap_or(""),
+            p.source.as_deref().unwrap_or("ai"),
+            None,
+        )
+        .await
+        .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(
+            serde_json::json!({
+                "signature_id": sig.id,
+                "verdict_id": verdict_id,
+                "recorded": true,
+            }),
+        )
+        .map_err(to_internal)?]))
+    }
+
+    // ── Driver time machine ──────────────────────────────────────────────
+
+    #[tool(
+        name = "known_bad_driver_add",
+        description = "Add a driver to the fleet blocklist. Intake triage flags any machine carrying a matching module+version and cross-references crash modules against it."
+    )]
+    async fn known_bad_driver_add(
+        &self,
+        Parameters(p): Parameters<KnownBadDriverAddParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let entry = database::schema::KnownBadDriver {
+            id: database::schema::random_record_id(database::schema::KNOWN_BAD_DRIVER_TABLE),
+            module: p.module.clone(),
+            display_name: p.display_name.unwrap_or_default(),
+            vendor: p.vendor.unwrap_or_default(),
+            bad_versions: p.bad_versions.unwrap_or_default(),
+            fixed_version: p.fixed_version,
+            symptom: p.symptom.unwrap_or_default(),
+            fix: p.fix.unwrap_or_default(),
+            severity: p.severity.unwrap_or_else(|| "warn".to_string()),
+            signature_ref: None,
+            active: true,
+            created_at: chrono::Utc::now().into(),
+            updated_at: chrono::Utc::now().into(),
+        };
+        let id = database::schema::KnownBadDriver::create(&entry)
+            .await
+            .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(
+            serde_json::json!({ "id": id, "added": true }),
+        )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "known_bad_driver_list",
+        description = "List all active fleet driver-blocklist entries."
+    )]
+    async fn known_bad_driver_list(&self) -> Result<CallToolResult, ErrorData> {
+        let entries = database::schema::KnownBadDriver::active()
+            .await
+            .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(
+            serde_json::json!({ "count": entries.len(), "entries": entries }),
+        )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "driver_snapshots_list",
+        description = "List driver-inventory snapshots recorded for a connected client (metadata only — id, label, taken_at, driver_count)."
+    )]
+    async fn driver_snapshots_list(
+        &self,
+        Parameters(p): Parameters<DriverSnapshotsListParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let snapshots = database::schema::DriverSnapshot::list_meta_for_connection(
+            &p.connection_string,
+            p.limit.unwrap_or(10).min(50),
+        )
+        .await
+        .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(
+            serde_json::json!({ "count": snapshots.len(), "snapshots": snapshots }),
+        )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "driver_snapshot_diff",
+        description = "Diff two driver snapshots of a client (added/removed/version-changed packages) and match the newer inventory against the known-bad-driver blocklist. Defaults to the two newest snapshots."
+    )]
+    async fn driver_snapshot_diff(
+        &self,
+        Parameters(p): Parameters<DriverSnapshotDiffParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        use database::schema::entity_link::parse_record_id;
+        let (older, newer) = match (&p.older_id, &p.newer_id) {
+            (Some(o), Some(n)) => {
+                let older = database::schema::DriverSnapshot::get(&parse_record_id(
+                    o,
+                    database::schema::DRIVER_SNAPSHOT_TABLE,
+                ))
+                .await
+                .map_err(to_internal)?;
+                let newer = database::schema::DriverSnapshot::get(&parse_record_id(
+                    n,
+                    database::schema::DRIVER_SNAPSHOT_TABLE,
+                ))
+                .await
+                .map_err(to_internal)?;
+                (older, newer)
+            }
+            _ => {
+                let mut snaps =
+                    database::schema::DriverSnapshot::list_for_connection(&p.connection_string, 2)
+                        .await
+                        .map_err(to_internal)?;
+                let newer = if snaps.is_empty() { None } else { Some(snaps.remove(0)) };
+                let older = if snaps.is_empty() { None } else { Some(snaps.remove(0)) };
+                (older, newer)
+            }
+        };
+        let (Some(older), Some(newer)) = (older, newer) else {
+            return Ok(CallToolResult::success(vec![ContentBlock::text(
+                "Need at least two driver snapshots for this client to diff. Take snapshots with the com.mastertech.driverstore plugin first.",
+            )]));
+        };
+        let diff = database::schema::driver_intel::diff_driver_sets(&older.drivers, &newer.drivers);
+        let blocklist = database::schema::KnownBadDriver::active()
+            .await
+            .unwrap_or_default();
+        let hits = database::schema::KnownBadDriver::match_inventory(&blocklist, &newer.drivers);
+        Ok(CallToolResult::success(vec![ContentBlock::json(
+            serde_json::json!({
+                "older": { "id": older.id, "label": older.label, "taken_at": older.taken_at, "driver_count": older.driver_count },
+                "newer": { "id": newer.id, "label": newer.label, "taken_at": newer.taken_at, "driver_count": newer.driver_count },
+                "diff": diff,
+                "known_bad_hits": hits,
+            }),
+        )
+        .map_err(to_internal)?]))
     }
 
     // ── Customer / Service data tools ────────────────────────────────────
