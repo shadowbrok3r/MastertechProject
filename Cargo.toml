@@ -17,6 +17,7 @@ members = [
     "Mastertech4.0",
     "qc-app",
     "MtechServer2.0",
+    "pxe-bench",
 ]
 # Targets of bare `cargo build`/`check`/`test` and rust-analyzer. Excludes the
 # wasm-only MtechServer2.0 (cdylib) so native commands don't try to compile it;
@@ -35,6 +36,7 @@ default-members = [
     "database-tools",
     "Mastertech4.0",
     "qc-app",
+    "pxe-bench",
 ]
 # Standalone crates with their own toolchain/target; never part of this resolve.
 # uefi has its own [workspace] and builds standalone. MastertechMobile still
@@ -117,13 +119,15 @@ opt-level = 3
 codegen-units = 1
 
 # Compile with: cargo build -p MasterTech --profile release-fast
+# Add --features skia-render to include the egui_skia software renderer; see
+# Mastertech4.0/BUILD.md for the required env vars (SKIA_NINJA_COMMAND, CARGO_TARGET_DIR) on Windows.
 # Inherits all release semantics (cfg(debug_assertions) = false, production DB URLs, etc.)
 # skips LTO and uses more codegen units for faster incremental rebuilds.
 [profile.release-fast]
 inherits = "release"
 lto = false            # no link-time optimisation (biggest time saver)
 codegen-units = 16     # more parallel codegen units; trades binary size for speed
-opt-level = 2          # slightly faster than 3 to compile; runtime cost is negligible
+opt-level = "z"          # slightly faster than 3 to compile; runtime cost is negligible
 strip = false          # keep symbols for legible stack traces during testing
 debug = false          # no debug info (keeps binary small)
 incremental = true     # cache unchanged crates between rebuilds

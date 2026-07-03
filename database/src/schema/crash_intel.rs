@@ -1,0 +1,724 @@
+//! Fleet crash-signature intelligence.
+//!
+//! Normalizes WinDbg `!analyze -v` results (via the `com.mastertech.dump-decode`
+//! plugin) into `(bugcheck_code, module)` signatures upserted in place, appends a
+//! `crash_sighting` per decoded dump, and looks up prior `crash_verdict` rows so a
+//! repeat crash surfaces the known diagnosis/fix immediately.
+
+use serde::{Deserialize, Serialize};
+
+use crate::DATABASE;
+
+use super::{Datetime, RecordId, SurrealValue};
+
+/// One normalized crash class: a (bugcheck, module) pair seen across the fleet.
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+pub struct CrashSignature {
+    pub id: RecordId,
+    pub bugcheck_code: String,
+    #[serde(default)]
+    pub bugcheck_name: String,
+    pub module: String,
+    #[serde(default)]
+    pub offsets: Vec<String>,
+    #[serde(default)]
+    pub module_versions: Vec<String>,
+    #[serde(default)]
+    pub failure_buckets: Vec<String>,
+    #[serde(default)]
+    pub machines: Vec<String>,
+    #[serde(default)]
+    pub sighting_count: u32,
+    pub first_seen: Datetime,
+    pub last_seen: Datetime,
+    #[serde(default)]
+    pub latest_verdict: Option<RecordId>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+/// One decoded dump occurrence tied to a signature.
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+pub struct CrashSighting {
+    pub id: RecordId,
+    pub signature: RecordId,
+    #[serde(default)]
+    pub connection_string: Option<String>,
+    #[serde(default)]
+    pub computer: Option<RecordId>,
+    #[serde(default)]
+    pub session_ref: Option<RecordId>,
+    #[serde(default)]
+    pub task_ref: Option<RecordId>,
+    #[serde(default)]
+    pub dump_name: Option<String>,
+    #[serde(default)]
+    pub dump_kind: String,
+    #[serde(default)]
+    pub dump_time: Option<String>,
+    #[serde(default)]
+    pub offset: Option<String>,
+    #[serde(default)]
+    pub module_version: Option<String>,
+    #[serde(default)]
+    pub failure_bucket: Option<String>,
+    #[serde(default)]
+    pub process_name: Option<String>,
+    #[serde(default)]
+    pub caused_by: Option<String>,
+    #[serde(default)]
+    pub raw_excerpt: String,
+    pub created_at: Datetime,
+}
+
+/// Diagnosis + fix recorded against a signature.
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+pub struct CrashVerdict {
+    pub id: RecordId,
+    pub signature: RecordId,
+    pub verdict: String,
+    #[serde(default)]
+    pub fix: String,
+    #[serde(default)]
+    pub confidence: String,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub task_ref: Option<RecordId>,
+    pub created_at: Datetime,
+}
+
+/// Crash fields extracted from one decoded dump, pre-normalization.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ParsedCrash {
+    pub bugcheck_code: String,
+    pub bugcheck_name: String,
+    pub module: String,
+    pub offset: Option<String>,
+    pub process_name: Option<String>,
+    pub failure_bucket: Option<String>,
+    pub caused_by: Option<String>,
+    pub dump_name: Option<String>,
+    pub dump_time: Option<String>,
+    pub raw_excerpt: String,
+}
+
+/// Machine/task context attached to ingested sightings.
+#[derive(Debug, Clone, Default)]
+pub struct SightingContext {
+    pub connection_string: Option<String>,
+    pub computer: Option<RecordId>,
+    pub session_ref: Option<RecordId>,
+    pub task_ref: Option<RecordId>,
+    pub dump_kind: String,
+}
+
+/// Ingest outcome: the merged signature plus whatever the fleet already knew.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrashIngest {
+    pub signature: CrashSignature,
+    pub sighting_id: RecordId,
+    pub previously_seen: bool,
+    pub prior_sighting_count: u32,
+    pub prior_machine_count: u32,
+    pub verdicts: Vec<CrashVerdict>,
+}
+
+/// `crash_signature:<0xNNN_module>` so repeat crashes upsert in place.
+pub fn crash_signature_record_id(bugcheck_code: &str, module: &str) -> RecordId {
+    let key = format!(
+        "{}_{}",
+        bugcheck_code.trim().to_ascii_lowercase(),
+        module.trim().to_ascii_lowercase()
+    );
+    RecordId::new(super::CRASH_SIGNATURE_TABLE, key)
+}
+
+/// Canonical bugcheck form: `"133"`, `"0x00000133"`, `"NAME (133)"` → `"0x133"`.
+pub fn normalize_bugcheck_code(raw: &str) -> Option<String> {
+    let mut s = raw.trim();
+    if let (Some(open), Some(close)) = (s.rfind('('), s.rfind(')')) {
+        if open < close {
+            s = s[open + 1..close].trim();
+        }
+    }
+    let s = s.split('_').next().unwrap_or("");
+    let s = s.trim_start_matches("0x").trim_start_matches("0X");
+    if s.is_empty() || !s.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    u64::from_str_radix(s, 16).ok().map(|n| format!("{n:#x}"))
+}
+
+/// Lowercased module file name, preferring the image name when meaningful.
+pub fn normalize_module(image_name: &str, module_name: &str) -> Option<String> {
+    let clean = |v: &str| {
+        let v = v.trim().to_ascii_lowercase();
+        let bad = v.is_empty() || v.contains("unknown") || v == "none";
+        (!bad).then_some(v)
+    };
+    clean(image_name).or_else(|| clean(module_name))
+}
+
+/// File stem without extension, lowercase: `rtwlane.sys` → `rtwlane`.
+pub fn module_stem(module: &str) -> String {
+    let m = module.trim().to_ascii_lowercase();
+    match m.rsplit_once('.') {
+        Some((stem, ext)) if matches!(ext, "sys" | "dll" | "exe" | "inf") => stem.to_string(),
+        _ => m,
+    }
+}
+
+fn field_after_colon(line: &str) -> String {
+    line.split_once(':')
+        .map(|(_, v)| v.trim().to_string())
+        .unwrap_or_default()
+}
+
+fn offset_from_symbol(symbol: &str) -> Option<String> {
+    let sym = symbol.trim();
+    sym.split_once('+')
+        .map(|(_, off)| format!("+{}", off.trim().trim_end_matches(')').trim()))
+        .filter(|o| o.len() > 1)
+}
+
+fn looks_like_bugcheck_title(line: &str) -> bool {
+    let t = line.trim();
+    let Some(open) = t.find(" (") else { return false };
+    t.ends_with(')')
+        && open >= 5
+        && t[..open]
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+}
+
+/// Extract crash fields from raw WinDbg `!analyze -v` text.
+pub fn parse_windbg_analysis(text: &str) -> Option<ParsedCrash> {
+    let mut p = ParsedCrash::default();
+    let mut key_lines: Vec<&str> = Vec::new();
+    for line in text.lines() {
+        let t = line.trim();
+        if t.starts_with("BUGCHECK_CODE:") {
+            if let Some(code) = normalize_bugcheck_code(&field_after_colon(t)) {
+                p.bugcheck_code = code;
+            }
+            key_lines.push(t);
+        } else if t.starts_with("BUGCHECK_STR:") && p.bugcheck_code.is_empty() {
+            if let Some(code) = normalize_bugcheck_code(&field_after_colon(t)) {
+                p.bugcheck_code = code;
+            }
+            key_lines.push(t);
+        } else if looks_like_bugcheck_title(t) && p.bugcheck_name.is_empty() {
+            let open = t.find(" (").unwrap_or(t.len());
+            p.bugcheck_name = t[..open].to_string();
+            if p.bugcheck_code.is_empty() {
+                if let Some(code) = normalize_bugcheck_code(t) {
+                    p.bugcheck_code = code;
+                }
+            }
+            key_lines.push(t);
+        } else if t.starts_with("IMAGE_NAME:") {
+            if let Some(m) = normalize_module(&field_after_colon(t), "") {
+                p.module = m;
+            }
+            key_lines.push(t);
+        } else if t.starts_with("MODULE_NAME:") {
+            if p.module.is_empty() {
+                if let Some(m) = normalize_module("", &field_after_colon(t)) {
+                    p.module = m;
+                }
+            }
+            key_lines.push(t);
+        } else if t.starts_with("PROCESS_NAME:") {
+            p.process_name = Some(field_after_colon(t)).filter(|v| !v.is_empty());
+            key_lines.push(t);
+        } else if t.starts_with("FAILURE_BUCKET_ID:") {
+            p.failure_bucket = Some(field_after_colon(t)).filter(|v| !v.is_empty());
+            key_lines.push(t);
+        } else if t.starts_with("SYMBOL_NAME:") {
+            if p.offset.is_none() {
+                p.offset = offset_from_symbol(&field_after_colon(t));
+            }
+            key_lines.push(t);
+        } else if t.starts_with("Probably caused by") {
+            let v = field_after_colon(t);
+            if !v.is_empty() {
+                if p.module.is_empty() {
+                    if let Some(m) =
+                        normalize_module(v.split_whitespace().next().unwrap_or(""), "")
+                    {
+                        p.module = m;
+                    }
+                }
+                if p.offset.is_none() {
+                    p.offset = offset_from_symbol(&v);
+                }
+                p.caused_by = Some(v);
+            }
+            key_lines.push(t);
+        }
+    }
+    p.raw_excerpt = key_lines.join("\n");
+    (!p.bugcheck_code.is_empty() && !p.module.is_empty()).then_some(p)
+}
+
+/// Parse `===DUMP===`-chunked batch text into per-dump crashes.
+pub fn parse_windbg_batch_text(text: &str) -> Vec<ParsedCrash> {
+    text.split("===DUMP=== ")
+        .filter_map(|chunk| {
+            let (header, body) = chunk.split_once('\n')?;
+            let mut parsed = parse_windbg_analysis(body)?;
+            let mut parts = header.splitn(2, " | ");
+            parsed.dump_name = parts.next().map(|s| s.trim().to_string());
+            parsed.dump_time = parts.next().map(|s| s.trim().to_string());
+            Some(parsed)
+        })
+        .collect()
+}
+
+fn json_str(v: &serde_json::Value, key: &str) -> String {
+    v.get(key)
+        .and_then(|x| x.as_str())
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
+/// `status` field of a dump-decode payload (`done` / `running` / …), if present.
+pub fn payload_status(payload: &serde_json::Value) -> Option<String> {
+    let data = payload.get("data").unwrap_or(payload);
+    data.get("status")
+        .and_then(|s| s.as_str())
+        .map(|s| s.to_string())
+}
+
+/// Extract crashes from any `com.mastertech.dump-decode` result payload:
+/// `read_batch` structured dumps, `read_analyze`/`read_analyze_livekernel`
+/// label-prefixed fields, `read_raw` text heads, or bare WinDbg text.
+pub fn parse_dump_decode_payload(payload: &serde_json::Value) -> Vec<ParsedCrash> {
+    let data = payload.get("data").unwrap_or(payload);
+
+    if let Some(dumps) = data.get("dumps").and_then(|d| d.as_array()) {
+        return dumps
+            .iter()
+            .filter_map(|d| {
+                let mut p = ParsedCrash {
+                    bugcheck_code: normalize_bugcheck_code(&json_str(d, "bugcheck"))
+                        .or_else(|| normalize_bugcheck_code(&json_str(d, "name")))
+                        .unwrap_or_default(),
+                    bugcheck_name: json_str(d, "name")
+                        .split(" (")
+                        .next()
+                        .unwrap_or_default()
+                        .to_string(),
+                    module: normalize_module(&json_str(d, "image"), &json_str(d, "module"))
+                        .unwrap_or_default(),
+                    offset: offset_from_symbol(&json_str(d, "symbol")),
+                    process_name: Some(json_str(d, "process")).filter(|v| !v.is_empty()),
+                    failure_bucket: Some(json_str(d, "bucket")).filter(|v| !v.is_empty()),
+                    caused_by: Some(json_str(d, "caused_by")).filter(|v| !v.is_empty()),
+                    dump_name: Some(json_str(d, "dump")).filter(|v| !v.is_empty()),
+                    dump_time: Some(json_str(d, "time")).filter(|v| !v.is_empty()),
+                    raw_excerpt: String::new(),
+                };
+                if p.offset.is_none() {
+                    p.offset = offset_from_symbol(&json_str(d, "caused_by"));
+                }
+                p.raw_excerpt = serde_json::to_string(d).unwrap_or_default();
+                (!p.bugcheck_code.is_empty() && !p.module.is_empty()).then_some(p)
+            })
+            .collect();
+    }
+
+    if data.get("image_name").is_some()
+        || data.get("bugcheck_str").is_some()
+        || data.get("module_name").is_some()
+    {
+        let synthesized = format!(
+            "{}\n{}\n{}\n{}\n{}",
+            json_str(data, "bugcheck_str"),
+            json_str(data, "failure_bucket"),
+            json_str(data, "module_name"),
+            json_str(data, "image_name"),
+            json_str(data, "process_name"),
+        );
+        return parse_windbg_analysis(&synthesized).into_iter().collect();
+    }
+
+    let head = json_str(data, "head");
+    if !head.is_empty() {
+        return parse_windbg_batch_text(&head);
+    }
+
+    if let Some(text) = payload.as_str() {
+        if text.contains("===DUMP===") {
+            return parse_windbg_batch_text(text);
+        }
+        return parse_windbg_analysis(text).into_iter().collect();
+    }
+
+    Vec::new()
+}
+
+const SIGNATURE_UPSERT: &str = "UPSERT $id MERGE { \
+        bugcheck_code: $bugcheck_code, \
+        bugcheck_name: IF $bugcheck_name != '' THEN $bugcheck_name ELSE (bugcheck_name ?? '') END, \
+        module: $module, \
+        offsets: array::distinct(array::concat(offsets ?? [], $offsets)), \
+        module_versions: array::distinct(array::concat(module_versions ?? [], $module_versions)), \
+        failure_buckets: array::distinct(array::concat(failure_buckets ?? [], $failure_buckets)), \
+        machines: array::distinct(array::concat(machines ?? [], $machines)), \
+        sighting_count: (sighting_count ?? 0) + 1, \
+        first_seen: first_seen ?? time::now(), \
+        last_seen: time::now() \
+    } RETURN AFTER";
+
+impl CrashSignature {
+    /// Upsert the signature, append a sighting, and return prior fleet knowledge.
+    /// Re-analyzing a dump already sighted on the same machine returns the
+    /// existing state without double-counting.
+    pub async fn ingest(parsed: &ParsedCrash, ctx: &SightingContext) -> anyhow::Result<CrashIngest> {
+        let id = crash_signature_record_id(&parsed.bugcheck_code, &parsed.module);
+
+        if let (Some(cs), Some(dn)) = (ctx.connection_string.as_deref(), parsed.dump_name.as_deref())
+        {
+            let existing: Vec<CrashSighting> = DATABASE
+                .query(
+                    "SELECT * FROM crash_sighting WHERE signature == $sig \
+                     AND connection_string == $cs AND dump_name == $dn LIMIT 1",
+                )
+                .bind(("sig", id.clone()))
+                .bind(("cs", cs.to_string()))
+                .bind(("dn", dn.to_string()))
+                .await?
+                .take(0)?;
+            if let Some(prior) = existing.into_iter().next() {
+                if let Some(signature) = DATABASE.select::<Option<Self>>(id.clone()).await? {
+                    let verdicts = Self::verdicts(&signature.id, 5).await?;
+                    return Ok(CrashIngest {
+                        previously_seen: true,
+                        prior_sighting_count: signature.sighting_count,
+                        prior_machine_count: signature.machines.len() as u32,
+                        sighting_id: prior.id,
+                        verdicts,
+                        signature,
+                    });
+                }
+            }
+        }
+
+        let machines: Vec<String> = ctx.connection_string.iter().cloned().collect();
+        let offsets: Vec<String> = parsed.offset.iter().cloned().collect();
+        let buckets: Vec<String> = parsed.failure_bucket.iter().cloned().collect();
+
+        let mut response = DATABASE
+            .query(SIGNATURE_UPSERT)
+            .bind(("id", id.clone()))
+            .bind(("bugcheck_code", parsed.bugcheck_code.clone()))
+            .bind(("bugcheck_name", parsed.bugcheck_name.clone()))
+            .bind(("module", parsed.module.clone()))
+            .bind(("offsets", offsets))
+            .bind(("module_versions", Vec::<String>::new()))
+            .bind(("failure_buckets", buckets))
+            .bind(("machines", machines))
+            .await?;
+        let rows: Vec<Self> = response.take(0)?;
+        let signature = rows
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("crash_signature UPSERT returned no row"))?;
+
+        let prior_sighting_count = signature.sighting_count.saturating_sub(1);
+        let new_machine = ctx
+            .connection_string
+            .as_ref()
+            .map(|cs| signature.machines.iter().filter(|m| *m == cs).count() <= 1)
+            .unwrap_or(false);
+        let prior_machine_count =
+            (signature.machines.len() as u32).saturating_sub(new_machine as u32);
+
+        let sighting = CrashSighting {
+            id: super::random_record_id(super::CRASH_SIGHTING_TABLE),
+            signature: id.clone(),
+            connection_string: ctx.connection_string.clone(),
+            computer: ctx.computer.clone(),
+            session_ref: ctx.session_ref.clone(),
+            task_ref: ctx.task_ref.clone(),
+            dump_name: parsed.dump_name.clone(),
+            dump_kind: if ctx.dump_kind.is_empty() {
+                "minidump".to_string()
+            } else {
+                ctx.dump_kind.clone()
+            },
+            dump_time: parsed.dump_time.clone(),
+            offset: parsed.offset.clone(),
+            module_version: None,
+            failure_bucket: parsed.failure_bucket.clone(),
+            process_name: parsed.process_name.clone(),
+            caused_by: parsed.caused_by.clone(),
+            raw_excerpt: parsed.raw_excerpt.chars().take(2000).collect(),
+            created_at: chrono::Utc::now().into(),
+        };
+        let created: Option<CrashSighting> = DATABASE
+            .create(sighting.id.clone())
+            .content(sighting.clone())
+            .await?;
+        let sighting_id = created.map(|s| s.id).unwrap_or(sighting.id);
+
+        let verdicts = Self::verdicts(&signature.id, 5).await?;
+
+        Ok(CrashIngest {
+            previously_seen: prior_sighting_count > 0 || !verdicts.is_empty(),
+            prior_sighting_count,
+            prior_machine_count,
+            sighting_id,
+            verdicts,
+            signature,
+        })
+    }
+
+    /// Fetch-or-create a signature without recording a sighting.
+    pub async fn ensure(bugcheck_code: &str, module: &str) -> anyhow::Result<Self> {
+        let code = normalize_bugcheck_code(bugcheck_code)
+            .ok_or_else(|| anyhow::anyhow!("invalid bugcheck code '{bugcheck_code}'"))?;
+        let module = module.trim().to_ascii_lowercase();
+        if module.is_empty() {
+            anyhow::bail!("module is required");
+        }
+        let id = crash_signature_record_id(&code, &module);
+        if let Some(existing) = DATABASE.select(id.clone()).await? {
+            return Ok(existing);
+        }
+        let mut response = DATABASE
+            .query(
+                "UPSERT $id MERGE { bugcheck_code: $code, module: $module, \
+                 sighting_count: sighting_count ?? 0, \
+                 first_seen: first_seen ?? time::now(), last_seen: last_seen ?? time::now() } \
+                 RETURN AFTER",
+            )
+            .bind(("id", id))
+            .bind(("code", code))
+            .bind(("module", module))
+            .await?;
+        let rows: Vec<Self> = response.take(0)?;
+        rows.into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("crash_signature ensure returned no row"))
+    }
+
+    /// Signature lookup without recording a sighting.
+    pub async fn find(bugcheck_code: &str, module: &str) -> anyhow::Result<Option<Self>> {
+        let Some(code) = normalize_bugcheck_code(bugcheck_code) else {
+            return Ok(None);
+        };
+        let id = crash_signature_record_id(&code, module);
+        Ok(DATABASE.select(id).await?)
+    }
+
+    /// Newest verdicts for a signature.
+    pub async fn verdicts(signature: &RecordId, limit: u32) -> anyhow::Result<Vec<CrashVerdict>> {
+        let verdicts: Vec<CrashVerdict> = DATABASE
+            .query("SELECT * FROM crash_verdict WHERE signature == $sig ORDER BY created_at DESC LIMIT $limit")
+            .bind(("sig", signature.clone()))
+            .bind(("limit", limit as i64))
+            .await?
+            .take(0)?;
+        Ok(verdicts)
+    }
+
+    /// Most recently seen signatures, for the intel browser.
+    pub async fn recent(limit: u32) -> anyhow::Result<Vec<Self>> {
+        let rows: Vec<Self> = DATABASE
+            .query("SELECT * FROM crash_signature ORDER BY last_seen DESC LIMIT $limit")
+            .bind(("limit", limit as i64))
+            .await?
+            .take(0)?;
+        Ok(rows)
+    }
+
+    /// Case-insensitive substring search over module and bucket names.
+    pub async fn search(term: &str, limit: u32) -> anyhow::Result<Vec<Self>> {
+        let rows: Vec<Self> = DATABASE
+            .query(
+                "SELECT * FROM crash_signature \
+                 WHERE string::contains(string::lowercase(module), string::lowercase($term)) \
+                    OR string::contains(string::lowercase(bugcheck_code), string::lowercase($term)) \
+                    OR string::contains(string::lowercase(bugcheck_name), string::lowercase($term)) \
+                 ORDER BY last_seen DESC LIMIT $limit",
+            )
+            .bind(("term", term.to_string()))
+            .bind(("limit", limit as i64))
+            .await?
+            .take(0)?;
+        Ok(rows)
+    }
+
+    /// Sightings for a signature, newest first.
+    pub async fn sightings(signature: &RecordId, limit: u32) -> anyhow::Result<Vec<CrashSighting>> {
+        let rows: Vec<CrashSighting> = DATABASE
+            .query("SELECT * FROM crash_sighting WHERE signature == $sig ORDER BY created_at DESC LIMIT $limit")
+            .bind(("sig", signature.clone()))
+            .bind(("limit", limit as i64))
+            .await?
+            .take(0)?;
+        Ok(rows)
+    }
+}
+
+impl CrashVerdict {
+    /// Record a verdict and point the signature's `latest_verdict` at it.
+    pub async fn create(
+        signature: &RecordId,
+        verdict: &str,
+        fix: &str,
+        confidence: &str,
+        author: &str,
+        source: &str,
+        task_ref: Option<RecordId>,
+    ) -> anyhow::Result<RecordId> {
+        let row = Self {
+            id: super::random_record_id(super::CRASH_VERDICT_TABLE),
+            signature: signature.clone(),
+            verdict: verdict.to_string(),
+            fix: fix.to_string(),
+            confidence: confidence.to_string(),
+            author: author.to_string(),
+            source: source.to_string(),
+            task_ref,
+            created_at: chrono::Utc::now().into(),
+        };
+        let created: Option<Self> = DATABASE.create(row.id.clone()).content(row.clone()).await?;
+        let id = created.map(|v| v.id).unwrap_or(row.id);
+
+        DATABASE
+            .query("UPDATE $sig SET latest_verdict = $verdict")
+            .bind(("sig", signature.clone()))
+            .bind(("verdict", id.clone()))
+            .await?;
+        Ok(id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ANALYZE_TEXT: &str = "\
+Microsoft (R) Windows Debugger Version 10.0\n\
+DPC_WATCHDOG_VIOLATION (133)\n\
+The DPC watchdog detected a prolonged run time at an IRQL of DISPATCH_LEVEL.\n\
+BUGCHECK_CODE:  133\n\
+BUGCHECK_P1: 0\n\
+PROCESS_NAME:  System\n\
+MODULE_NAME: rtwlane\n\
+IMAGE_NAME:  rtwlane.sys\n\
+SYMBOL_NAME:  rtwlane+18e2b\n\
+FAILURE_BUCKET_ID:  0x133_DPC_rtwlane!unknown_function\n\
+Probably caused by : rtwlane.sys ( rtwlane+18e2b )\n";
+
+    #[test]
+    fn normalizes_bugcheck_codes() {
+        assert_eq!(normalize_bugcheck_code("133").as_deref(), Some("0x133"));
+        assert_eq!(normalize_bugcheck_code("0x00000133").as_deref(), Some("0x133"));
+        assert_eq!(
+            normalize_bugcheck_code("DPC_WATCHDOG_VIOLATION (133)").as_deref(),
+            Some("0x133")
+        );
+        assert_eq!(normalize_bugcheck_code("0x1A").as_deref(), Some("0x1a"));
+        assert_eq!(normalize_bugcheck_code("not hex"), None);
+    }
+
+    #[test]
+    fn parses_analyze_text() {
+        let p = parse_windbg_analysis(ANALYZE_TEXT).expect("should parse");
+        assert_eq!(p.bugcheck_code, "0x133");
+        assert_eq!(p.bugcheck_name, "DPC_WATCHDOG_VIOLATION");
+        assert_eq!(p.module, "rtwlane.sys");
+        assert_eq!(p.offset.as_deref(), Some("+18e2b"));
+        assert_eq!(p.process_name.as_deref(), Some("System"));
+        assert_eq!(
+            p.failure_bucket.as_deref(),
+            Some("0x133_DPC_rtwlane!unknown_function")
+        );
+    }
+
+    #[test]
+    fn parses_batch_chunks() {
+        let text = format!(
+            "CDB=C:\\cdb.exe\n===DUMP=== 071226-9375-01.dmp | 2026-07-12T09:33:00\n{ANALYZE_TEXT}\n===DUMP=== 071126-8562-01.dmp | 2026-07-11T18:02:11\n{ANALYZE_TEXT}"
+        );
+        let crashes = parse_windbg_batch_text(&text);
+        assert_eq!(crashes.len(), 2);
+        assert_eq!(crashes[0].dump_name.as_deref(), Some("071226-9375-01.dmp"));
+        assert_eq!(crashes[1].dump_time.as_deref(), Some("2026-07-11T18:02:11"));
+    }
+
+    #[test]
+    fn parses_read_batch_payload() {
+        let payload = serde_json::json!({
+            "tool": "read_batch",
+            "data": {
+                "status": "done",
+                "analyzed": 1,
+                "dumps": [{
+                    "dump": "071226-9375-01.dmp",
+                    "time": "2026-07-12T09:33:00",
+                    "bugcheck": "133",
+                    "name": "DPC_WATCHDOG_VIOLATION (133)",
+                    "params": ["0", "501"],
+                    "bucket": "0x133_DPC_rtwlane!unknown_function",
+                    "module": "rtwlane",
+                    "image": "rtwlane.sys",
+                    "process": "System",
+                    "symbol": "rtwlane+18e2b",
+                    "caused_by": "rtwlane.sys ( rtwlane+18e2b )",
+                    "stack": []
+                }]
+            }
+        });
+        assert_eq!(payload_status(&payload).as_deref(), Some("done"));
+        let crashes = parse_dump_decode_payload(&payload);
+        assert_eq!(crashes.len(), 1);
+        assert_eq!(crashes[0].bugcheck_code, "0x133");
+        assert_eq!(crashes[0].module, "rtwlane.sys");
+        assert_eq!(crashes[0].offset.as_deref(), Some("+18e2b"));
+    }
+
+    #[test]
+    fn parses_single_analyze_payload() {
+        let payload = serde_json::json!({
+            "tool": "read_analyze",
+            "data": {
+                "status": "done",
+                "bugcheck_str": "BUGCHECK_STR:  0x1a_61941",
+                "failure_bucket": "FAILURE_BUCKET_ID:  0x1a_61941_ntkrnlmp!unknown",
+                "module_name": "MODULE_NAME: nt",
+                "image_name": "IMAGE_NAME:  ntkrnlmp.exe",
+                "process_name": "PROCESS_NAME:  chrome.exe"
+            }
+        });
+        let crashes = parse_dump_decode_payload(&payload);
+        assert_eq!(crashes.len(), 1);
+        assert_eq!(crashes[0].bugcheck_code, "0x1a");
+        assert_eq!(crashes[0].module, "ntkrnlmp.exe");
+        assert_eq!(crashes[0].process_name.as_deref(), Some("chrome.exe"));
+    }
+
+    #[test]
+    fn skips_unknown_modules() {
+        assert_eq!(normalize_module("Unknown_Image", "Unknown_Module"), None);
+        assert_eq!(
+            normalize_module("", "rtwlane").as_deref(),
+            Some("rtwlane")
+        );
+    }
+
+    #[test]
+    fn module_stems() {
+        assert_eq!(module_stem("rtwlane.sys"), "rtwlane");
+        assert_eq!(module_stem("RTWLANE.INF"), "rtwlane");
+        assert_eq!(module_stem("nt"), "nt");
+    }
+}

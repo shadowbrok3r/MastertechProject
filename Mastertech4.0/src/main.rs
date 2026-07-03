@@ -6,6 +6,7 @@ use log::{error, info};
 extern crate winapi;
 
 mod terminal_mode;
+#[cfg(feature = "skia-render")]
 mod software_gui;
 pub mod app_state;
 mod filesystem;
@@ -280,6 +281,23 @@ fn init_terminal_mode_logging(log_to_file: bool) {
     }
 }
 
+#[cfg(feature = "skia-render")]
+fn try_software_gui() -> bool {
+    match software_gui::run() {
+        Ok(()) => true,
+        Err(e) => {
+            error!("software renderer failed: {e:?}");
+            false
+        }
+    }
+}
+
+#[cfg(not(feature = "skia-render"))]
+fn try_software_gui() -> bool {
+    error!("egui_skia software renderer not compiled into this build (enable the `skia-render` feature)");
+    false
+}
+
 async fn run_gui(log_to_file: bool, force_cpu: bool) -> eframe::Result<()> {
     let egui_logger = Box::new(
         displays::ui_tools::egui_logger::builder()
@@ -307,10 +325,7 @@ async fn run_gui(log_to_file: bool, force_cpu: bool) -> eframe::Result<()> {
     let mut gui_ok = false;
     if force_cpu {
         log::info!("--cpu/--software set; forcing the egui_skia software renderer");
-        match software_gui::run() {
-            Ok(()) => gui_ok = true,
-            Err(e) => error!("software renderer failed: {e:?}"),
-        }
+        gui_ok = try_software_gui();
     } else {
         let eframe_app = eframe::run_native(
             format!("Mastertech-{}", database::version_with_build!()).as_str(),
@@ -330,10 +345,7 @@ async fn run_gui(log_to_file: bool, force_cpu: bool) -> eframe::Result<()> {
             Ok(()) => gui_ok = true,
             Err(e) => {
                 error!("eframe glow init failed: {e:?}; trying egui_skia software renderer");
-                match software_gui::run() {
-                    Ok(()) => gui_ok = true,
-                    Err(e2) => error!("software renderer failed: {e2:?}"),
-                }
+                gui_ok = try_software_gui();
             }
         }
     }

@@ -25,8 +25,12 @@ pub const MAX_CORES: usize = 256;
 const PRESET_STAGE_SECS: f64 = 20.0;
 const SAMPLE_EVERY_SECS: f64 = 0.5;
 const CHART_WINDOW_SECS: f64 = 120.0;
-/// Region size ladder; first allocation that succeeds wins.
-const REGION_SIZES: [usize; 5] = [
+/// Region size ladder; first allocation that succeeds wins. Larger rungs widen
+/// memtest coverage; throughput stages measure B/s so chunk size doesn't skew
+/// their scores. try_reserve falls back on failure, so overshooting is safe.
+const REGION_SIZES: [usize; 7] = [
+    2 << 30,
+    1 << 30,
     512 << 20,
     256 << 20,
     128 << 20,
@@ -324,19 +328,251 @@ fn memcpy_kernel(sh: &Shared, slot: usize, deadline: Option<u64>) {
 /// First failing memtest cell address (0 = none); CAS-set once by any core.
 static FIRST_FAIL_ADDR: AtomicU64 = AtomicU64::new(0);
 
-const MEMTEST_PATTERNS: [u64; 8] = [
-    0x0000_0000_0000_0000,
-    0xFFFF_FFFF_FFFF_FFFF,
-    0xAAAA_AAAA_AAAA_AAAA,
-    0x5555_5555_5555_5555,
-    0x3333_3333_3333_3333,
-    0xCCCC_CCCC_CCCC_CCCC,
-    0x0F0F_0F0F_0F0F_0F0F,
-    0xF0F0_F0F0_F0F0_F0F0,
+/// Bounded ring of failing-cell details (address, expected, actual) captured
+/// across all cores. Decodes to which data lines / DIMM failed. Reset per run.
+const MAX_ERR_LOG: usize = 32;
+
+#[repr(align(64))]
+struct ErrSlot {
+    addr: AtomicU64,
+    expected: AtomicU64,
+    actual: AtomicU64,
+}
+impl ErrSlot {
+    const fn new() -> Self {
+        Self {
+            addr: AtomicU64::new(0),
+            expected: AtomicU64::new(0),
+            actual: AtomicU64::new(0),
+        }
+    }
+}
+static ERR_LOG: [ErrSlot; MAX_ERR_LOG] = [const { ErrSlot::new() }; MAX_ERR_LOG];
+/// Slots claimed so far (may exceed MAX_ERR_LOG; only the first that many land).
+static ERR_LOGGED: AtomicUsize = AtomicUsize::new(0);
+/// Algorithm the last-writing core is running (index into MEMTEST_ALGOS).
+static MEMTEST_ALGO: AtomicU8 = AtomicU8::new(0);
+/// Bitmask of algorithms that have completed at least one full pass this run.
+static MEMTEST_COVERAGE: AtomicU8 = AtomicU8::new(0);
+
+/// A cell failure. `expected ^ actual` names the flipped bits.
+#[derive(Clone, Copy)]
+pub struct MemErrDetail {
+    pub addr: u64,
+    pub expected: u64,
+    pub actual: u64,
+}
+
+pub const MEMTEST_ALGOS: [&str; 6] = [
+    "mov-inv 0x00",
+    "mov-inv 0xFF",
+    "mov-inv checkerboard",
+    "own-address",
+    "mov-inv random",
+    "row-hammer",
 ];
 
-/// Pattern write/verify over the core's chunk. Values mix the pattern with
-/// the cell address so aliased/stuck address lines are caught too.
+pub fn memtest_algo_label() -> &'static str {
+    MEMTEST_ALGOS[(MEMTEST_ALGO.load(Ordering::Relaxed) as usize) % MEMTEST_ALGOS.len()]
+}
+
+/// Names of algorithms that completed at least one full pass this run.
+pub fn memtest_coverage() -> Vec<&'static str> {
+    let mask = MEMTEST_COVERAGE.load(Ordering::Relaxed);
+    MEMTEST_ALGOS
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| mask & (1 << i) != 0)
+        .map(|(_, s)| *s)
+        .collect()
+}
+
+/// Captured failure details, up to MAX_ERR_LOG.
+pub fn memtest_error_log() -> Vec<MemErrDetail> {
+    let n = ERR_LOGGED.load(Ordering::Relaxed).min(MAX_ERR_LOG);
+    (0..n)
+        .map(|i| MemErrDetail {
+            addr: ERR_LOG[i].addr.load(Ordering::Relaxed),
+            expected: ERR_LOG[i].expected.load(Ordering::Relaxed),
+            actual: ERR_LOG[i].actual.load(Ordering::Relaxed),
+        })
+        .collect()
+}
+
+fn reset_error_log() {
+    FIRST_FAIL_ADDR.store(0, Ordering::Relaxed);
+    ERR_LOGGED.store(0, Ordering::Relaxed);
+    MEMTEST_COVERAGE.store(0, Ordering::Relaxed);
+}
+
+/// Record one failing cell: bump FIRST_FAIL_ADDR and claim a log slot.
+fn record_error(addr: u64, expected: u64, actual: u64) {
+    let _ = FIRST_FAIL_ADDR.compare_exchange(0, addr, Ordering::Relaxed, Ordering::Relaxed);
+    let slot = ERR_LOGGED.fetch_add(1, Ordering::Relaxed);
+    if slot < MAX_ERR_LOG {
+        ERR_LOG[slot].addr.store(addr, Ordering::Relaxed);
+        ERR_LOG[slot].expected.store(expected, Ordering::Relaxed);
+        ERR_LOG[slot].actual.store(actual, Ordering::Relaxed);
+    }
+}
+
+/// Evict a cache line so the next access re-reads DRAM (row-hammer needs real
+/// activations). `clflush` is a base-ISA instruction on x86_64.
+#[inline(always)]
+fn clflush(p: *const u8) {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        core::arch::asm!("clflush [{}]", in(reg) p, options(nostack, preserves_flags));
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    let _ = p;
+}
+
+/// True when the run should abort mid-pass.
+#[inline(always)]
+fn stop(sh: &Shared, deadline: Option<u64>) -> bool {
+    sh.cancel.load(Ordering::Relaxed) || expired(deadline)
+}
+
+/// MemTest86 moving inversions: fill ascending with `pattern`, verify+write the
+/// complement ascending, then verify+restore descending. Catches coupled cells
+/// the single write/verify misses. Returns false if aborted before completion.
+fn mov_inv(base: *mut u64, n: usize, pattern: u64, me: &CoreSlot, sh: &Shared, dl: Option<u64>) -> bool {
+    unsafe {
+        for i in 0..n {
+            base.add(i).write_volatile(pattern);
+            if i & 0x3FFF == 0 && stop(sh, dl) {
+                return false;
+            }
+        }
+        me.ops.fetch_add((n * 8) as u64, Ordering::Relaxed);
+        let comp = !pattern;
+        for i in 0..n {
+            let p = base.add(i);
+            let got = p.read_volatile();
+            if got != pattern {
+                me.errors.fetch_add(1, Ordering::Relaxed);
+                record_error(p as u64, pattern, got);
+            }
+            p.write_volatile(comp);
+            if i & 0x3FFF == 0 && stop(sh, dl) {
+                return false;
+            }
+        }
+        me.ops.fetch_add((n * 16) as u64, Ordering::Relaxed);
+        for i in (0..n).rev() {
+            let p = base.add(i);
+            let got = p.read_volatile();
+            if got != comp {
+                me.errors.fetch_add(1, Ordering::Relaxed);
+                record_error(p as u64, comp, got);
+            }
+            p.write_volatile(pattern);
+            if i & 0x3FFF == 0 && stop(sh, dl) {
+                return false;
+            }
+        }
+        me.ops.fetch_add((n * 16) as u64, Ordering::Relaxed);
+    }
+    true
+}
+
+/// Own-address test: each cell holds its own (optionally inverted) address.
+/// Isolates stuck/aliased address lines a data pattern can't distinguish.
+fn addr_test(base: *mut u64, n: usize, invert: bool, me: &CoreSlot, sh: &Shared, dl: Option<u64>) -> bool {
+    unsafe {
+        for i in 0..n {
+            let p = base.add(i);
+            let v = if invert { !(p as u64) } else { p as u64 };
+            p.write_volatile(v);
+            if i & 0x3FFF == 0 && stop(sh, dl) {
+                return false;
+            }
+        }
+        me.ops.fetch_add((n * 8) as u64, Ordering::Relaxed);
+        for i in 0..n {
+            let p = base.add(i);
+            let want = if invert { !(p as u64) } else { p as u64 };
+            let got = p.read_volatile();
+            if got != want {
+                me.errors.fetch_add(1, Ordering::Relaxed);
+                record_error(p as u64, want, got);
+            }
+            if i & 0x3FFF == 0 && stop(sh, dl) {
+                return false;
+            }
+        }
+        me.ops.fetch_add((n * 8) as u64, Ordering::Relaxed);
+    }
+    true
+}
+
+/// Row size to straddle when hammering; wide enough to hit distinct DRAM rows
+/// on typical DDR4/DDR5 without the platform's physical-address map.
+const HAMMER_STRIDE_BYTES: usize = 256 * 1024;
+/// Activations per aggressor pair (each iteration touches both then flushes).
+const HAMMER_ACTIVATIONS: u64 = 900_000;
+
+/// Best-effort row-hammer: fill the chunk with 0x55, hammer aggressor pairs a
+/// stride apart with flushed reads, then verify nothing flipped. Without the
+/// firmware's DRAM geometry this can't target true adjacent rows, so a clean
+/// pass is not proof of immunity — but flips it does see are real.
+fn hammer_test(base: *mut u64, n: usize, me: &CoreSlot, sh: &Shared, dl: Option<u64>) -> bool {
+    const VICTIM: u64 = 0x5555_5555_5555_5555;
+    unsafe {
+        for i in 0..n {
+            base.add(i).write_volatile(VICTIM);
+            if i & 0x3FFF == 0 && stop(sh, dl) {
+                return false;
+            }
+        }
+        me.ops.fetch_add((n * 8) as u64, Ordering::Relaxed);
+        let stride = HAMMER_STRIDE_BYTES / 8;
+        let mut a = 0usize;
+        while a + 2 * stride < n {
+            let ag1 = base.add(a);
+            let ag2 = base.add(a + stride);
+            let mut k = 0u64;
+            while k < HAMMER_ACTIVATIONS {
+                core::ptr::read_volatile(ag1);
+                core::ptr::read_volatile(ag2);
+                clflush(ag1 as *const u8);
+                clflush(ag2 as *const u8);
+                k += 1;
+                if k & 0xFFFF == 0 && stop(sh, dl) {
+                    return false;
+                }
+            }
+            me.ops.fetch_add(HAMMER_ACTIVATIONS * 2, Ordering::Relaxed);
+            a += stride;
+        }
+        for i in 0..n {
+            let p = base.add(i);
+            let got = p.read_volatile();
+            if got != VICTIM {
+                me.errors.fetch_add(1, Ordering::Relaxed);
+                record_error(p as u64, VICTIM, got);
+            }
+            if i & 0x3FFF == 0 && stop(sh, dl) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Xorshift64* seeded per pass/slot; a per-run random pattern for mov-inv.
+#[inline(always)]
+fn rng(seed: u64) -> u64 {
+    let mut x = seed | 1;
+    x ^= x >> 12;
+    x ^= x << 25;
+    x ^= x >> 27;
+    x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+}
+
+/// MemTest86-style battery over the core's chunk, cycling algorithms each pass:
+/// moving inversions (0x00/0xFF/checkerboard/random), own-address, row-hammer.
 fn memtest_kernel(sh: &Shared, slot: usize, deadline: Option<u64>) {
     let (ptr, len) = sh.chunk(slot);
     if ptr.is_null() || len < 8192 {
@@ -347,44 +583,24 @@ fn memtest_kernel(sh: &Shared, slot: usize, deadline: Option<u64>) {
     let n = (len - 8) / 8;
     let mut pass = 0usize;
     while !sh.cancel.load(Ordering::Relaxed) {
-        let pattern = MEMTEST_PATTERNS[pass % MEMTEST_PATTERNS.len()];
-        unsafe {
-            for i in 0..n {
-                let p = base.add(i);
-                p.write_volatile(pattern ^ (p as u64));
-                // Cancel/deadline checks per 64 KiB to stay responsive.
-                if i & 0x1FFF == 0
-                    && (sh.cancel.load(Ordering::Relaxed) || expired(deadline))
-                {
-                    return;
-                }
+        let algo = pass % MEMTEST_ALGOS.len();
+        MEMTEST_ALGO.store(algo as u8, Ordering::Relaxed);
+        let done = match algo {
+            0 => mov_inv(base, n, 0x0000_0000_0000_0000, me, sh, deadline),
+            1 => mov_inv(base, n, 0xFFFF_FFFF_FFFF_FFFF, me, sh, deadline),
+            2 => mov_inv(base, n, 0xAAAA_AAAA_AAAA_AAAA, me, sh, deadline),
+            3 => {
+                addr_test(base, n, false, me, sh, deadline)
+                    && addr_test(base, n, true, me, sh, deadline)
             }
-            let mut bad = 0u64;
-            for i in 0..n {
-                let p = base.add(i);
-                if p.read_volatile() != pattern ^ (p as u64) {
-                    bad += 1;
-                    let _ = FIRST_FAIL_ADDR.compare_exchange(
-                        0,
-                        p as u64,
-                        Ordering::Relaxed,
-                        Ordering::Relaxed,
-                    );
-                }
-                if i & 0x1FFF == 0
-                    && (sh.cancel.load(Ordering::Relaxed) || expired(deadline))
-                {
-                    if bad > 0 {
-                        me.errors.fetch_add(bad, Ordering::Relaxed);
-                    }
-                    return;
-                }
-            }
-            if bad > 0 {
-                me.errors.fetch_add(bad, Ordering::Relaxed);
-            }
+            4 => mov_inv(base, n, rng(pass as u64 ^ ((slot as u64) << 32)), me, sh, deadline),
+            _ => hammer_test(base, n, me, sh, deadline),
+        };
+        if done {
+            MEMTEST_COVERAGE.fetch_or(1 << algo, Ordering::Relaxed);
+        } else {
+            return;
         }
-        me.ops.fetch_add((n * 16) as u64, Ordering::Relaxed);
         pass += 1;
         if expired(deadline) {
             return;
@@ -401,7 +617,7 @@ pub struct TempSensor {
 }
 
 #[cfg(target_arch = "x86_64")]
-unsafe fn rdmsr(msr: u32) -> u64 {
+pub(crate) unsafe fn rdmsr(msr: u32) -> u64 {
     let (hi, lo): (u32, u32);
     unsafe {
         core::arch::asm!(
@@ -708,7 +924,7 @@ impl StressEngine {
             c.ops.store(0, Ordering::Relaxed);
             c.errors.store(0, Ordering::Relaxed);
         }
-        FIRST_FAIL_ADDR.store(0, Ordering::Relaxed);
+        reset_error_log();
         let workers = self.workers.clamp(0, MAX_CORES);
         if stage == Stage::CpuAlu {
             sh.region_ptr.store(0, Ordering::Release);
@@ -940,13 +1156,32 @@ impl StressEngine {
                 })
             })
             .collect();
-        Some(serde_json::json!({
+        let mut out = serde_json::json!({
             "source": "uefi",
             "workers": self.workers,
             "region_mib": self.region.len() >> 20,
             "cpu_max_c": self.temp_max,
             "stages": stages,
-        }))
+        });
+        if self.results.iter().any(|r| r.stage == Stage::Memtest) {
+            let errors: Vec<serde_json::Value> = memtest_error_log()
+                .iter()
+                .map(|e| {
+                    serde_json::json!({
+                        "addr": format!("0x{:x}", e.addr),
+                        "expected": format!("0x{:016x}", e.expected),
+                        "actual": format!("0x{:016x}", e.actual),
+                        "bits": format!("0x{:016x}", e.expected ^ e.actual),
+                    })
+                })
+                .collect();
+            out["memtest"] = serde_json::json!({
+                "algorithms": MEMTEST_ALGOS,
+                "coverage": memtest_coverage(),
+                "error_cells": errors,
+            });
+        }
+        Some(out)
     }
 }
 

@@ -37,6 +37,9 @@ pub enum WsDisplayState {
     /// Full remote-desktop control: live raster screen view with keyboard and
     /// mouse injection into the client's OS.
     RemoteDesktop,
+    /// Fleet Intel: crash-signature intelligence (dump analysis, prior
+    /// verdicts) and the driver time machine (snapshots, drift, blocklist).
+    FleetIntel,
 }
 
 impl WebSocketClient {
@@ -138,6 +141,16 @@ impl WebSocketClient {
                         .clicked()
                     {
                         let _ = self.display_state_channel.0.try_send(WsDisplayState::ServiceRecord);
+                        ui.close();
+                    }
+                    if ui
+                        .button(format!("{} Fleet Intel", icons::DIAGNOSTICS))
+                        .on_hover_text(
+                            "Crash-signature intelligence (dump analysis + prior verdicts across the fleet) and driver snapshots/drift/blocklist for this client",
+                        )
+                        .clicked()
+                    {
+                        let _ = self.display_state_channel.0.try_send(WsDisplayState::FleetIntel);
                         ui.close();
                     }
                     ui.separator();
@@ -408,6 +421,7 @@ impl WebSocketClient {
                     WsDisplayState::McpToolLog    => "MCP Tool Log",
                     WsDisplayState::ServiceRecord => "Service Record",
                     WsDisplayState::RemoteDesktop => "Remote Desktop",
+                    WsDisplayState::FleetIntel    => "Fleet Intel",
                 };
                 ui.label(
                     RichText::new(current_view)
@@ -595,6 +609,18 @@ impl WebSocketClient {
                 let client = self.client.clone();
                 let state_tx = self.display_state_channel.0.clone();
                 self.service_record.display(ui, &client, &state_tx);
+            },
+            WsDisplayState::FleetIntel => {
+                #[cfg(all(feature = "tokio", not(target_arch = "wasm32")))]
+                {
+                    let client = self.client.clone();
+                    let cmd_tx = self.send_cmd_tx.clone();
+                    self.fleet_intel.display(ui, &client, &cmd_tx);
+                }
+                #[cfg(not(all(feature = "tokio", not(target_arch = "wasm32"))))]
+                {
+                    ui.label("Fleet Intel requires the native tokio build.");
+                }
             },
             WsDisplayState::RemoteDesktop => {
                 #[cfg(all(feature = "tokio", not(target_arch = "wasm32")))]

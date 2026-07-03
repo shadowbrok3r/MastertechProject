@@ -28,7 +28,10 @@ mcp__mastertech__search_service_orders,mcp__mastertech__create_diagnostic_sessio
 mcp__mastertech__log_diagnostic_entry,mcp__mastertech__search_customers,\
 mcp__mastertech__get_customer_details,mcp__mastertech__telemetry_snapshot,\
 mcp__mastertech__egui_inspect_status,mcp__mastertech__egui_inspect_tree,\
-mcp__mastertech__egui_inspect_screenshot";
+mcp__mastertech__egui_inspect_screenshot,mcp__mastertech__crash_intel_search,\
+mcp__mastertech__crash_intel_signature,mcp__mastertech__crash_verdict_record,\
+mcp__mastertech__known_bad_driver_list,mcp__mastertech__driver_snapshots_list,\
+mcp__mastertech__driver_snapshot_diff";
 
 const SYSTEM_PROMPT: &str = "You are the Mastertech diagnostic assistant. A PC Laptops technician is \
 chatting with you from inside the Mastertech app. Use the mastertech MCP tools for live data instead \

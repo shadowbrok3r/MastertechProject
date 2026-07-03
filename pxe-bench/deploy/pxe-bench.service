@@ -1,0 +1,20 @@
+[Unit]
+Description=Mastertech bench PXE appliance (ProxyDHCP + TFTP + HTTP)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/mtech/pxe
+ExecStart=/srv/mtech/pxe/pxe-bench /srv/mtech/pxe/pxe-bench.toml
+Restart=on-failure
+RestartSec=3
+
+# :67 (DHCP) and :69 (TFTP) are privileged ports. Running as root is simplest
+# for a trusted-LAN bench box. To run as a dedicated unprivileged user instead,
+# set User=pxe and keep the capability grant below:
+User=root
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

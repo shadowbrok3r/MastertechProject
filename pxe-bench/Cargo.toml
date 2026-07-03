@@ -1,0 +1,16 @@
+[package]
+name = "pxe-bench"
+version = "0.1.0"
+edition = "2021"
+description = "Bench PXE appliance: ProxyDHCP + TFTP + HTTP boot server that netboots dead machines straight into Mastertech PE"
+
+# Concrete versions (not workspace inheritance) so the crate folder can be
+# copied to the bench host and `cargo build --release` on its own — see
+# deploy/UBUNTU-SETUP.md. Still builds fine as a workspace member here.
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+anyhow = "1"
+log = "0.4"
+toml = "1"
+env_logger = "0.11"

@@ -177,6 +177,9 @@ pub struct WebSocketClient {
     pub startup_apps_viewer: StartupAppsViewer,
     pub remote_scripts_viewer: RemoteScriptsViewer,
     pub mcp_tool_log_viewer: McpToolLogViewer,
+    /// Fleet Intel page: crash-signature intelligence + driver time machine.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+    pub fleet_intel: tabs::fleet_intel_viewer::FleetIntelViewer,
     /// "Service Record" page: the matched task's full modal (ticket,
     /// notes, recommendations, diagnostics, history) for this client.
     pub service_record: ServiceRecordViewer,
@@ -358,6 +361,8 @@ Get-WmiObject")
             startup_apps_viewer: StartupAppsViewer::new(),
             remote_scripts_viewer: RemoteScriptsViewer::new(),
             mcp_tool_log_viewer: McpToolLogViewer::new(),
+            #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+            fleet_intel: tabs::fleet_intel_viewer::FleetIntelViewer::new(),
             service_record: ServiceRecordViewer::new(),
             home_page: HomePage::new(),
             egui_viewer_active: false,

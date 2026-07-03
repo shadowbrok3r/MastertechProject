@@ -23,6 +23,11 @@ harness = false
 [features]
 default = [ "inline" ]
 inline = []
+# egui_skia CPU/software renderer fallback for machines with no working GPU GL
+# stack (Windows PE). Off by default: `cargo build`/`cargo run` skip skia-bindings
+# entirely, avoiding its from-source compile (ninja, Developer Mode, long build
+# times -- see BUILD.md). Enable with --features skia-render.
+skia-render = ["dep:egui_skia", "dep:skia-safe", "dep:softbuffer", "dep:winit", "dep:raw-window-handle"]
 
 [dependencies]
 eframe = { version="0.35", features=["persistence", "serde",  "default_fonts", "glow", "x11", "accesskit"], default-features=false }
@@ -76,12 +81,11 @@ directories = "6.0.0"
 image-meta = "0.1.4"
 rusqlite = { version = "0.39.0", features = ["bundled"] }
 
-# egui_skia CPU/software renderer fallback for machines with no working GPU GL stack (Windows PE).
-egui_skia = { git = "https://github.com/shadowbrok3r/egui_skia", features = ["winit", "cpu_fix"] }
-skia-safe = "0.99"
-softbuffer = "0.4"
-winit = { version = "0.30", features = ["rwh_06"] }
-raw-window-handle = "0.6"
+egui_skia = { git = "https://github.com/shadowbrok3r/egui_skia", features = ["winit", "cpu_fix"], optional = true }
+skia-safe = { version = "0.99", optional = true }
+softbuffer = { version = "0.4", optional = true }
+winit = { version = "0.30", features = ["rwh_06"], optional = true }
+raw-window-handle = { version = "0.6", optional = true }
 
 # nvme = "0.2.2"
 

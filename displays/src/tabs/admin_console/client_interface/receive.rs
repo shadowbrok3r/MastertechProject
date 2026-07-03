@@ -204,6 +204,19 @@ impl WebSocketClient {
             self.transport.send(msg);
         }
 
+        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        for notice in
+            crate::plugins::crash_intel_hooks::drain_notices(&self.client.connection_string)
+        {
+            self.history.push(History {
+                from: "Crash Intel".to_string(),
+                message: notice,
+                timestamp: chrono::Local::now().to_rfc3339(),
+            });
+            self.notifications += 1;
+            ctx.request_repaint();
+        }
+
         // Drain ALL pending websocket messages in one frame to avoid backlog.
         // Remote-viewer frames (zstd terminal buffers + tagged egui frames)
         // are coalesced to the latest to skip stale frames; everything else
@@ -228,6 +241,15 @@ impl WebSocketClient {
                                     match decoded {
                                         Cmd::RemotePluginToolResult { request_id, plugin_id, tool_name, success, result_json } => {
                                             log::info!("Remote plugin tool result: {plugin_id}::{tool_name} req={request_id} success={success}");
+                                            #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+                                            if success && crate::plugins::crash_intel_hooks::is_dump_analysis_result(&plugin_id, &tool_name) {
+                                                crate::plugins::crash_intel_hooks::ingest_dump_decode_result(
+                                                    self.client.connection_string.clone(),
+                                                    self.client.computer.clone(),
+                                                    tool_name.clone(),
+                                                    result_json.clone(),
+                                                );
+                                            }
                                             #[cfg(not(target_arch = "wasm32"))]
                                             crate::plugins::mcp_bridge::resolve_pending_request(&request_id, success, result_json);
                                             handled_as_admin_cmd = true;

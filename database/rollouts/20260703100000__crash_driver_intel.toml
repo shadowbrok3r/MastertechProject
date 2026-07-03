@@ -1,0 +1,122 @@
+id = "20260703100000__crash_driver_intel"
+name = "crash_driver_intel"
+state = "planned"
+# Pure-additive: five new SCHEMALESS tables for fleet crash-signature
+# intelligence (crash_signature/crash_sighting/crash_verdict) and the driver
+# time machine (driver_snapshot/known_bad_driver). run_sql with OVERWRITE per
+# the qc_report_tables precedent; DDL mirrors database/schema/crash_intel.surql
+# and driver_intel.surql (source of truth).
+# Applying committed file state only: source == target. Paste the `current=`
+# hash reported by `surrealkit rollout lint` into both fields.
+source_schema_hash = "35438044c60d86137082b159ee8a4f7fd597d0ba20c0df06858ac17707c7c988"
+target_schema_hash = "35438044c60d86137082b159ee8a4f7fd597d0ba20c0df06858ac17707c7c988"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "create_crash_intel_tables"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE crash_signature TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE csig_module        ON crash_signature FIELDS module;
+DEFINE INDEX OVERWRITE csig_bugcheck      ON crash_signature FIELDS bugcheck_code;
+DEFINE INDEX OVERWRITE csig_last_seen     ON crash_signature FIELDS last_seen;
+DEFINE FIELD OVERWRITE bugcheck_code      ON crash_signature TYPE string                           PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE bugcheck_name      ON crash_signature TYPE string DEFAULT ''                PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE module             ON crash_signature TYPE string                           PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE offsets            ON crash_signature TYPE array<string> DEFAULT []         PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE offsets.*          ON crash_signature TYPE string                           PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE module_versions    ON crash_signature TYPE array<string> DEFAULT []         PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE module_versions.*  ON crash_signature TYPE string                           PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE failure_buckets    ON crash_signature TYPE array<string> DEFAULT []         PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE failure_buckets.*  ON crash_signature TYPE string                           PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE machines           ON crash_signature TYPE array<string> DEFAULT []         PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE machines.*         ON crash_signature TYPE string                           PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE sighting_count     ON crash_signature TYPE int DEFAULT 0                    PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE first_seen         ON crash_signature TYPE datetime DEFAULT time::now()     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE last_seen          ON crash_signature TYPE datetime DEFAULT time::now()     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE latest_verdict     ON crash_signature TYPE none | record<crash_verdict>     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE tags               ON crash_signature TYPE array<string> DEFAULT []         PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE tags.*             ON crash_signature TYPE string                           PERMISSIONS FULL;
+DEFINE TABLE OVERWRITE crash_sighting TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE csight_signature   ON crash_sighting FIELDS signature;
+DEFINE INDEX OVERWRITE csight_connection  ON crash_sighting FIELDS connection_string;
+DEFINE INDEX OVERWRITE csight_computer    ON crash_sighting FIELDS computer;
+DEFINE INDEX OVERWRITE csight_created     ON crash_sighting FIELDS created_at;
+DEFINE FIELD OVERWRITE signature          ON crash_sighting TYPE record<crash_signature>           PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE connection_string  ON crash_sighting TYPE none | string                     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE computer           ON crash_sighting TYPE none | record<computer>           PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE session_ref        ON crash_sighting TYPE none | record<diagnostic_session> PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE task_ref           ON crash_sighting TYPE none | record<task>               PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE dump_name          ON crash_sighting TYPE none | string                     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE dump_kind          ON crash_sighting TYPE string DEFAULT 'minidump'         PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE dump_time          ON crash_sighting TYPE none | string                     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE offset             ON crash_sighting TYPE none | string                     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE module_version     ON crash_sighting TYPE none | string                     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE failure_bucket     ON crash_sighting TYPE none | string                     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE process_name       ON crash_sighting TYPE none | string                     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE caused_by          ON crash_sighting TYPE none | string                     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE raw_excerpt        ON crash_sighting TYPE string DEFAULT ''                 PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE created_at         ON crash_sighting TYPE datetime DEFAULT time::now()      PERMISSIONS FULL;
+DEFINE TABLE OVERWRITE crash_verdict TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE cverd_signature    ON crash_verdict FIELDS signature;
+DEFINE INDEX OVERWRITE cverd_created      ON crash_verdict FIELDS created_at;
+DEFINE FIELD OVERWRITE signature          ON crash_verdict TYPE record<crash_signature>            PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE verdict            ON crash_verdict TYPE string                             PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE fix                ON crash_verdict TYPE string DEFAULT ''                  PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE confidence         ON crash_verdict TYPE string DEFAULT 'medium'            PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE author             ON crash_verdict TYPE string DEFAULT ''                  PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE source             ON crash_verdict TYPE string DEFAULT 'tech'              PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE task_ref           ON crash_verdict TYPE none | record<task>                PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE created_at         ON crash_verdict TYPE datetime DEFAULT time::now()       PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "create_driver_intel_tables"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE driver_snapshot TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE dsnap_connection   ON driver_snapshot FIELDS connection_string;
+DEFINE INDEX OVERWRITE dsnap_computer     ON driver_snapshot FIELDS computer;
+DEFINE INDEX OVERWRITE dsnap_taken_at     ON driver_snapshot FIELDS taken_at;
+DEFINE FIELD OVERWRITE connection_string  ON driver_snapshot TYPE string                             PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE computer           ON driver_snapshot TYPE none | record<computer>            PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE session_ref        ON driver_snapshot TYPE none | record<diagnostic_session>  PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE label              ON driver_snapshot TYPE string DEFAULT 'manual'            PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE source             ON driver_snapshot TYPE string DEFAULT 'pnputil'           PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE taken_at           ON driver_snapshot TYPE datetime DEFAULT time::now()       PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE driver_count      ON driver_snapshot TYPE int DEFAULT 0                       PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE drivers            ON driver_snapshot TYPE array<object> DEFAULT []           PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE drivers.*          ON driver_snapshot TYPE object                             PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE notes              ON driver_snapshot TYPE string DEFAULT ''                  PERMISSIONS FULL;
+DEFINE TABLE OVERWRITE known_bad_driver TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE kbd_module         ON known_bad_driver FIELDS module;
+DEFINE INDEX OVERWRITE kbd_active         ON known_bad_driver FIELDS active;
+DEFINE FIELD OVERWRITE module             ON known_bad_driver TYPE string                            PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE display_name       ON known_bad_driver TYPE string DEFAULT ''                 PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE vendor             ON known_bad_driver TYPE string DEFAULT ''                 PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE bad_versions       ON known_bad_driver TYPE array<string> DEFAULT []          PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE bad_versions.*     ON known_bad_driver TYPE string                            PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE fixed_version      ON known_bad_driver TYPE none | string                     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE symptom            ON known_bad_driver TYPE string DEFAULT ''                 PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE fix                ON known_bad_driver TYPE string DEFAULT ''                 PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE severity           ON known_bad_driver TYPE string DEFAULT 'warn'             PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE signature_ref      ON known_bad_driver TYPE none | record<crash_signature>    PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE active             ON known_bad_driver TYPE bool DEFAULT true                 PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE created_at         ON known_bad_driver TYPE datetime DEFAULT time::now()      PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE updated_at         ON known_bad_driver TYPE datetime DEFAULT time::now()      PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "drop_crash_driver_intel"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE TABLE IF EXISTS crash_sighting;
+REMOVE TABLE IF EXISTS crash_verdict;
+REMOVE TABLE IF EXISTS crash_signature;
+REMOVE TABLE IF EXISTS driver_snapshot;
+REMOVE TABLE IF EXISTS known_bad_driver;
+"""

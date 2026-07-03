@@ -3,6 +3,7 @@ use ratatui::buffer::Buffer;
 use anyhow::Context;
 use bincode::{config::*, serde::*};
 
+pub mod preboot;
 pub mod ratagui;
 pub mod terminal_line;
 const ZSTD_LEVEL: i32 = 3;

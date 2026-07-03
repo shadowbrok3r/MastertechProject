@@ -8,6 +8,12 @@ pub mod stress_test_verify;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub mod diagnostic_session_registry;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+pub mod crash_intel_hooks;
+#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+pub mod driver_intel_hooks;
+#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+pub mod intake_autopilot;
+#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub mod mcp_bridge;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub mod remote_egui_control;
