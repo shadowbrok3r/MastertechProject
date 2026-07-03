@@ -43,9 +43,13 @@ pub enum AppState {
 /// Result of a background reconnect attempt.
 #[derive(Debug, Clone)]
 pub enum ReconnectOutcome {
-    /// Connection healthy and `$auth` still matches the logged-in user.
-    Ok,
-    /// Connection healthy but auth degraded (guest/expired) — needs re-login.
+    /// Socket usable and `$auth` matches the logged-in user. `socket_was_down`
+    /// distinguishes a genuine connection outage (streams died with the
+    /// socket; snapshot must be refetched) from a live-but-single-stream
+    /// failure (socket was fine; a poisoned/errored stream).
+    Ok { socket_was_down: bool },
+    /// Socket usable but `$auth` can't be restored (expired token, no cached
+    /// password) — the operator must sign in again.
     AuthLost,
     Failed(String),
 }
@@ -189,15 +193,10 @@ pub struct SharedContext {
     #[serde(skip)]
     pub reconnect_started_at: Option<web_time::Instant>,
     /// Consecutive reconnect failures; drives the retry backoff. Reset to 0
-    /// when a canary round-trip confirms the subscriptions are live again.
+    /// only on a genuine socket-level recovery (never by the canary, so a
+    /// permanently-failing single stream can't defeat the backoff).
     #[serde(skip)]
     pub reconnect_attempts: u32,
-    /// When true, `receive_shared_ui` renders the re-login banner (auth lost).
-    #[serde(skip)]
-    pub show_reload_prompt: bool,
-    /// True from first detected outage until a canary confirms recovery.
-    #[serde(skip)]
-    pub db_degraded: bool,
     /// Forces the next `load_data` to refetch tasks/users/notifications.
     #[serde(skip)]
     pub force_data_refetch: bool,
@@ -210,6 +209,16 @@ pub struct SharedContext {
     /// Random per-app-instance id namespacing this session's canary records.
     #[serde(skip)]
     pub live_session_id: String,
+    /// Most recent live-query stream error. Keeps the canary from refilling
+    /// the reconnect budget while a stream is still actively failing, so the
+    /// backoff can hold at its cap instead of tight-looping.
+    #[serde(skip)]
+    pub last_stream_error_at: Option<web_time::Instant>,
+    /// When the last reconnect-driven snapshot refetch ran. Rate-limits the
+    /// socket-healthy re-issue path so a permanently-failing stream can't
+    /// refetch the whole store every backoff cycle.
+    #[serde(skip)]
+    pub last_force_refetch_at: Option<web_time::Instant>,
 
     /// `document.visibilitychange` signal. `true` = visible, `false` =
     /// hidden. Drained in `receive_shared_logic`: on hidden we stamp
@@ -615,12 +624,12 @@ impl SharedContext {
             reconnect_in_progress: false,
             reconnect_started_at: None,
             reconnect_attempts: 0,
-            show_reload_prompt: false,
-            db_degraded: false,
             force_data_refetch: false,
             live_epoch: 0,
             live_stream_aborts: Vec::new(),
             live_session_id: database::new_live_session_id(),
+            last_stream_error_at: None,
+            last_force_refetch_at: None,
             visibility_signal_tx, visibility_signal_rx,
             tab_hidden_at: None,
             visibility_listener_installed: false,

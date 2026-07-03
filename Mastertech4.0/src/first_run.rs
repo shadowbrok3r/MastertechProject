@@ -138,39 +138,12 @@ impl MasterTechApp {
 
         self.context.shared_ctx.receive_shared_logic(frame, ctx);
 
-        // Live-query auto-respawn on SurrealDB blip.  Without this, a
-        // transient DB outage (e.g. the 13:56:35 ConnectionFailed event
-        // that stranded a connected client off the admin's list) would
-        // leave every LIVE SELECT subscription terminated and the
-        // in-memory connected_client/task/notification lists stale until
-        // app restart.  `receive_shared_logic` already flips
-        // `live_queries_active = false` + `needs_reconnect = true` when
-        // it sees a transient-looking error on the live-query error
-        // channel; here we re-call `load_data` so the spawn block in
-        // ui_data/mod.rs re-issues every LIVE SELECT against the
-        // (auto-reconnected) SurrealDB websocket.
-        //
-        // The SurrealDB SDK reconnects its websocket on its own, but
-        // LIVE subscriptions are per-connection state — they're gone
-        // after a reset and must be explicitly re-issued.  If the SDK
-        // hasn't reconnected yet by the time this runs, the respawn
-        // fails fast and trips the same error channel; the bounded(1)
-        // error channel naturally rate-limits the loop so we don't
-        // hammer.
-        if self.context.shared_ctx.needs_reconnect {
-            log::info!(
-                "Mastertech4.0: respawning live queries after SurrealDB blip..."
-            );
-            self.context.shared_ctx.needs_reconnect = false;
-            if let Some(user) = self.context.shared_ctx.current_user.clone() {
-                self.context.shared_ctx.load_data(ctx, &user);
-            } else {
-                log::warn!(
-                    "Mastertech4.0: needs_reconnect set but no current_user; \
-                     deferring respawn to next login"
-                );
-            }
-        }
+        // Live-query reconnection is owned entirely by the shared
+        // `receive_shared_logic` supervisor (backoff, stall watchdog,
+        // socket-wait, auth restore, stream re-issue). `needs_reconnect`
+        // is now that pump's internal parking flag — consuming it here
+        // would drop the parked backoff retry, so native does nothing
+        // extra.
 
         self.receive_prestashop(frame);
         self.receive_database(ctx, frame);

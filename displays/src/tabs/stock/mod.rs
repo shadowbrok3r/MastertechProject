@@ -115,7 +115,14 @@ pub struct StockTable {
     systems_in_store_table: egui_data_table::DataTable<SystemInStoreData>,
     systems_order_id: String,
     systems_loading: bool,
-    systems_first_load: bool,
+    /// A stream (full pull or reconcile) is currently in flight.
+    systems_streaming: bool,
+    /// Request to load this store's cache (if changed) and run a reconcile.
+    systems_needs_reconcile: bool,
+    /// Table changed locally; persist to storage on the next receive.
+    systems_dirty: bool,
+    /// Store id whose cached rows are currently loaded in the table.
+    systems_loaded_store: Option<u64>,
     is_admin: bool,
     first_run: bool,
     pub serial_channel: (Sender<SerialData>, Receiver<SerialData>),
@@ -123,7 +130,7 @@ pub struct StockTable {
     pub stock_channel: (Sender<Vec<RawStockData>>, Receiver<Vec<RawStockData>>),
     pub cost_channel: (Sender<Vec<CostBreakdownData>>, Receiver<Vec<CostBreakdownData>>),
     pub cost_summary_channel: (Sender<CostBreakdownSummary>, Receiver<CostBreakdownSummary>),
-    pub systems_channel: (Sender<Vec<SystemInStoreData>>, Receiver<Vec<SystemInStoreData>>),
+    pub systems_stream_channel: (Sender<SystemStreamMsg>, Receiver<SystemStreamMsg>),
     pub systems_add_channel: (Sender<SystemInStoreData>, Receiver<SystemInStoreData>),
     pub systems_task_channel: (Sender<SystemInStoreData>, Receiver<SystemInStoreData>),
     store_selection: u64,
@@ -308,7 +315,7 @@ impl Default for StockTable {
         let bulk_products_channel: (Sender<Vec<BulkProductData>>, Receiver<Vec<BulkProductData>>) = crossbeam::channel::unbounded();
         let bulk_summary_channel: (Sender<BulkCostSummary>, Receiver<BulkCostSummary>) = crossbeam::channel::unbounded();
         let bulk_progress_channel: (Sender<(usize, usize)>, Receiver<(usize, usize)>) = crossbeam::channel::unbounded();
-        let systems_channel = <Vec<SystemInStoreData>>::create_unbounded_channel();
+        let systems_stream_channel: (Sender<SystemStreamMsg>, Receiver<SystemStreamMsg>) = crossbeam::channel::unbounded();
         let systems_add_channel = <SystemInStoreData>::create_unbounded_channel();
         let systems_task_channel = <SystemInStoreData>::create_unbounded_channel();
         let customer_change_channel: (Sender<CustomerChangeRequest>, Receiver<CustomerChangeRequest>) = crossbeam::channel::unbounded();
@@ -379,7 +386,10 @@ impl Default for StockTable {
             systems_in_store_table: egui_data_table::DataTable::<SystemInStoreData>::default(),
             systems_order_id: String::new(),
             systems_loading: false,
-            systems_first_load: true,
+            systems_streaming: false,
+            systems_needs_reconcile: true,
+            systems_dirty: false,
+            systems_loaded_store: None,
             is_admin,
             first_run: true, 
             serial_channel, 
@@ -387,7 +397,7 @@ impl Default for StockTable {
             stock_channel,
             cost_channel,
             cost_summary_channel,
-            systems_channel,
+            systems_stream_channel,
             systems_add_channel,
             systems_task_channel,
             store_selection: Store::RIV.into_odoo_store_id() as u64,
@@ -882,25 +892,16 @@ impl StockTable {
                                     ui.selectable_value(selected, Store::SAN.into_store_id() as u64, Store::SAN.as_str());
                                 });
                             
-                            // Trigger refresh when store changes
+                            // Reload cache + reconcile when store changes.
                             if *selected != current {
-                                self.systems_first_load = true;
+                                self.systems_needs_reconcile = true;
                             }
-                            
+
                             ui.add_space(10.);
 
-                            if Button::new("Refresh").ui(ui).clicked() || self.systems_first_load {
-                                self.systems_first_load = false;
-                                self.systems_loading = true;
-                                let systems_tx = self.systems_channel.0.clone();
-                                // store_selection is shared with the Store-Inventory view, which
-                                // writes Odoo ids; normalize to a PrestaShop id so first-load and
-                                // subsequent refreshes always hit the right backend identifier.
-                                let store_id = Store::from_any_store_id(&self.store_selection.to_string())
-                                    .into_store_id() as u64;
-                                PlatformSpawner::spawn(async move {
-                                    let _ = get_systems_in_store(store_id, systems_tx).await;
-                                });
+                            // Serviced in `receive`, which has storage access.
+                            if Button::new("Refresh").ui(ui).clicked() {
+                                self.systems_needs_reconcile = true;
                             }
                             
                             ui.add_space(10.);
@@ -925,7 +926,7 @@ impl StockTable {
                                 });
                             }
 
-                            if self.systems_loading {
+                            if self.systems_loading || self.systems_streaming {
                                 ui.add_space(5.);
                                 Spinner::new().size(18.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
                             }
@@ -1256,18 +1257,8 @@ impl StockTable {
                     }
                 },
                 StockSelection::SystemsInStore => {
-                    if self.systems_loading {
-                        ui.vertical_centered(|ui| {
-                            ui.add_space(50.);
-                            ui.label("Fetching systems in-store...");
-                            Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
-                        });
-                    } else if self.systems_in_store_table.len() < 1 {
-                        ui.vertical_centered(|ui| {
-                            ui.add_space(50.);
-                            ui.label("No systems found. Select a store and click Refresh to load systems.");
-                        });
-                    } else {
+                    // Render whatever rows have landed, even mid-stream.
+                    if self.systems_in_store_table.len() >= 1 {
                         Renderer::new(
                             &mut self.systems_in_store_table,
                             &mut self.systems_in_store_viewer
@@ -1277,6 +1268,17 @@ impl StockTable {
                             s.auto_shrink = [false, false].into();
                         })
                         .ui(ui);
+                    } else if self.systems_loading || self.systems_streaming {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(50.);
+                            ui.label("Fetching systems in-store...");
+                            Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
+                        });
+                    } else {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(50.);
+                            ui.label("No systems found. Select a store and click Refresh to load systems.");
+                        });
                     }
 
                     // Show customer change modal if open
@@ -2243,7 +2245,12 @@ impl StockTable {
         }
     }
 
-    pub fn receive(&mut self, ui_actions_tx: Sender<TaskUiActions>) {
+    pub fn receive(
+        &mut self,
+        ui_actions_tx: Sender<TaskUiActions>,
+        ctx: &eframe::egui::Context,
+        frame: &mut eframe::Frame,
+    ) {
         if let Ok(stock_data) = self.stock_channel.1.try_recv() {
             // A live stock pull always switches the Store Inventory view
             // back to Live and drops any audit-row mode flags.
@@ -2388,11 +2395,64 @@ impl StockTable {
             self.bulk_progress = progress;
         }
 
-        // Handle systems in-store data
-        if let Ok(systems_data) = self.systems_channel.1.try_recv() {
-            log::info!("Received systems in-store data: {} systems", systems_data.len());
-            self.systems_loading = false;
-            self.systems_in_store_table.replace(systems_data);
+        // Normalize store_selection (may be an Odoo id) to the PrestaShop store id.
+        let systems_store_id = Store::from_any_store_id(&self.store_selection.to_string())
+            .into_store_id() as u64;
+
+        // On first view, store change, or Refresh: load cache then stream a reconcile.
+        if self.stock_selection == StockSelection::SystemsInStore {
+            let store_changed = self.systems_loaded_store != Some(systems_store_id);
+            if self.systems_needs_reconcile || store_changed {
+                self.systems_needs_reconcile = false;
+                if store_changed {
+                    let cached = load_systems_from_storage(frame, systems_store_id).unwrap_or_default();
+                    self.systems_in_store_table.replace(cached);
+                    self.systems_loaded_store = Some(systems_store_id);
+                }
+                let cached_now: Vec<SystemInStoreData> =
+                    self.systems_in_store_table.iter().cloned().collect();
+                self.systems_streaming = true;
+                self.systems_loading = self.systems_in_store_table.len() < 1;
+                let tx = self.systems_stream_channel.0.clone();
+                let repaint_ctx = ctx.clone();
+                if cached_now.is_empty() {
+                    PlatformSpawner::spawn(async move {
+                        let _ = get_systems_in_store(systems_store_id, repaint_ctx, tx).await;
+                    });
+                } else {
+                    PlatformSpawner::spawn(async move {
+                        let _ = reconcile_systems_in_store(systems_store_id, cached_now, repaint_ctx, tx).await;
+                    });
+                }
+            }
+        }
+
+        // Drain pending stream messages in one take/replace.
+        if !self.systems_stream_channel.1.is_empty() {
+            let mut rows = self.systems_in_store_table.take();
+            while let Ok(msg) = self.systems_stream_channel.1.try_recv() {
+                match msg {
+                    SystemStreamMsg::Row(data) => {
+                        let data = *data;
+                        if let Some(existing) = rows.iter_mut().find(|s| s.order_id == data.order_id) {
+                            *existing = data;
+                        } else {
+                            rows.push(data);
+                        }
+                        self.systems_loading = false;
+                    }
+                    SystemStreamMsg::Remove(order_id) => {
+                        rows.retain(|s| s.order_id != order_id);
+                    }
+                    SystemStreamMsg::Done => {
+                        self.systems_streaming = false;
+                        self.systems_loading = false;
+                        self.systems_dirty = true;
+                    }
+                }
+            }
+            self.systems_in_store_table.replace(rows);
+            ctx.request_repaint();
         }
 
         // Handle single system add
@@ -2404,6 +2464,17 @@ impl StockTable {
                 data.push(system_data);
             }
             self.systems_in_store_table.replace(data);
+            self.systems_dirty = true;
+        }
+
+        // Persist the systems table to storage after any local change.
+        if self.systems_dirty {
+            self.systems_dirty = false;
+            if let Some(store) = self.systems_loaded_store {
+                let rows: Vec<SystemInStoreData> =
+                    self.systems_in_store_table.iter().cloned().collect();
+                save_systems_to_storage(frame, store, &rows);
+            }
         }
 
         // Handle single system task creation
@@ -2763,7 +2834,8 @@ impl StockTable {
                                                                 }
                                                             }
                                                             self.systems_in_store_table.replace(data);
-                                                            
+                                                            self.systems_dirty = true;
+
                                                             // Async update to Prestashop
                                                             PlatformSpawner::spawn(async move {
                                                                 update_order_customer(&order_id, &customer_id, &address_id).await;
@@ -2791,6 +2863,29 @@ impl StockTable {
                         });
                     });
             });
+    }
+}
+
+/// Storage key for a store's cached Systems In-Store rows.
+fn systems_storage_key(store_id: u64) -> String {
+    format!("systems_in_store::{store_id}")
+}
+
+/// Load a store's cached Systems In-Store rows from eframe storage
+/// (localStorage on web, the app data file on native). None when storage is
+/// unavailable, absent, or unparseable.
+fn load_systems_from_storage(frame: &eframe::Frame, store_id: u64) -> Option<Vec<SystemInStoreData>> {
+    let raw = frame.storage()?.get_string(&systems_storage_key(store_id))?;
+    serde_json::from_str(&raw).ok()
+}
+
+/// Persist a store's Systems In-Store rows to eframe storage.
+fn save_systems_to_storage(frame: &mut eframe::Frame, store_id: u64, rows: &[SystemInStoreData]) {
+    if let Some(storage) = frame.storage_mut() {
+        if let Ok(json) = serde_json::to_string(rows) {
+            storage.set_string(&systems_storage_key(store_id), json);
+            storage.flush();
+        }
     }
 }
 

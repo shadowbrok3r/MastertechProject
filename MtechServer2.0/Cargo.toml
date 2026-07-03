@@ -51,7 +51,7 @@ serde_json.workspace = true
 egui_extras.workspace = true
 egui_dock.workspace = true
 anyhow.workspace = true
-eframe.workspace = true
+eframe = { workspace = true, features = ["persistence"] }
 crossbeam.workspace = true
 gloo-console.workspace = true
 
