@@ -22,21 +22,20 @@ impl SharedContext {
                     && self.canary_nonce.as_deref()
                         == Some(notification.notification_description.as_str());
                 if matched {
+                    // Echo confirms the notification stream + write path are
+                    // live. Refill the reconnect budget only after streams
+                    // have been quiet — a still-failing stream keeps
+                    // last_stream_error_at recent, so the backoff holds at its
+                    // cap instead of being reset into a tight loop.
+                    const STREAM_QUIET: web_time::Duration = web_time::Duration::from_secs(90);
                     self.canary_nonce = None;
                     self.canary_sent_at = None;
-                    self.reconnect_attempts = 0;
-                    self.needs_reconnect = false;
-                    self.show_reload_prompt = false;
-                    if self.db_degraded {
-                        self.db_degraded = false;
-                        self.toasts.add(Toast {
-                            kind: ToastKind::Success,
-                            text: "Connection restored".into(),
-                            options: ToastOptions::default()
-                                .show_progress(true)
-                                .duration_in_seconds(4.0),
-                            style: ToastStyle::default(),
-                        });
+                    let quiet = self
+                        .last_stream_error_at
+                        .map(|t| web_time::Instant::now().duration_since(t) >= STREAM_QUIET)
+                        .unwrap_or(true);
+                    if quiet {
+                        self.reconnect_attempts = 0;
                     }
                 }
                 continue;

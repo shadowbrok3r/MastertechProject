@@ -58,6 +58,15 @@ impl crate::app_state::SharedContext {
 
     pub fn load_data(&mut self, ctx: &eframe::egui::Context, user: &User) {
         let first_load = self.timer.is_none();
+        // A fresh login starts the reconnect supervisor from a clean slate so
+        // stale backoff/error state from a prior session can't carry over.
+        if first_load {
+            self.reconnect_attempts = 0;
+            self.needs_reconnect = false;
+            self.last_stream_error_at = None;
+            self.last_live_respawn_at = None;
+            self.last_force_refetch_at = None;
+        }
         self.refresh_client_list();
         self.timer = Some(web_time::Instant::now());
         // get all of our channel Senders from crossbeam to get user/store/completed tasks,
@@ -226,6 +235,8 @@ impl crate::app_state::SharedContext {
 
         // Drain the full error backlog every frame (five streams die at once
         // on a WS reset); errors from replaced stream generations are noise.
+        // Stamp the most recent error so the canary knows not to refill the
+        // backoff budget while a stream is still actively failing.
         let mut reconnect_wanted = false;
         while let Ok((epoch, error_msg)) = self.live_query_error_rx.try_recv() {
             if epoch != self.live_epoch {
@@ -233,16 +244,22 @@ impl crate::app_state::SharedContext {
                 continue;
             }
             log::warn!("Live query connection error detected: {}", error_msg);
+            self.last_stream_error_at = Some(web_time::Instant::now());
             reconnect_wanted = true;
         }
         if reconnect_wanted {
+            // A permanently-failing stream can't storm: the backoff (below)
+            // caps at 60s and the canary won't refill it while errors keep
+            // arriving, so this self-throttles to one retry per 60s and
+            // self-heals if the stream recovers.
             self.trigger_live_reconnect(ctx);
         }
 
-        // Reconnect finished: on success kill the old streams, re-issue the
-        // LIVE SELECTs, refetch the snapshot the outage may have gapped, and
-        // force an immediate canary round-trip to confirm delivery. Results
-        // from attempts the stall watchdog already abandoned are discarded.
+        // Reconnect finished: kill the old streams, re-issue the LIVE SELECTs,
+        // refetch the snapshot the gap may have dropped, and force a canary
+        // round-trip to confirm delivery. A genuine socket recovery refills
+        // the backoff budget; a live-but-single-stream re-issue does not.
+        // Results from attempts the stall watchdog abandoned are discarded.
         while let Ok((token, outcome)) = self.reconnect_result_rx.try_recv() {
             if token != self.reconnect_token {
                 log::debug!("Ignoring result from abandoned reconnect attempt {token}: {outcome:?}");
@@ -251,10 +268,29 @@ impl crate::app_state::SharedContext {
             self.reconnect_in_progress = false;
             self.reconnect_started_at = None;
             match outcome {
-                ReconnectOutcome::Ok => {
-                    log::info!("Reconnect OK — re-issuing live queries and re-syncing");
+                ReconnectOutcome::Ok { socket_was_down } => {
+                    log::info!("Reconnect OK (socket_was_down={socket_was_down}) — re-issuing live queries");
+                    // Re-issuing tears down all five streams, so a snapshot
+                    // refetch is needed to fill the kill→resubscribe gap. A
+                    // genuine outage always refetches; a socket-healthy
+                    // single-stream re-issue is rate-limited so a
+                    // permanently-failing stream can't refetch the whole store
+                    // every backoff cycle.
+                    const REFETCH_MIN_INTERVAL: web_time::Duration =
+                        web_time::Duration::from_secs(300);
+                    let now = web_time::Instant::now();
                     self.kill_live_streams();
-                    self.force_data_refetch = true;
+                    let refetch_due = self
+                        .last_force_refetch_at
+                        .map(|t| now.duration_since(t) >= REFETCH_MIN_INTERVAL)
+                        .unwrap_or(true);
+                    if socket_was_down {
+                        self.reconnect_attempts = 0;
+                    }
+                    if socket_was_down || refetch_due {
+                        self.force_data_refetch = true;
+                        self.last_force_refetch_at = Some(now);
+                    }
                     if let Some(user) = self.current_user.clone() {
                         self.load_data(ctx, &user);
                     }
@@ -264,17 +300,19 @@ impl crate::app_state::SharedContext {
                     self.canary_nonce = None;
                 }
                 ReconnectOutcome::AuthLost => {
-                    log::warn!("Reconnected but $auth no longer matches the logged-in user");
+                    // The socket is back but the session can't be restored
+                    // (expired token, no cached password). Route to login on
+                    // both platforms rather than wedging behind a modal.
+                    log::warn!("Reconnected but $auth can't be restored — returning to login");
+                    self.kill_live_streams();
                     self.needs_reconnect = false;
-                    self.show_reload_prompt = true;
-                    self.toasts.add(Toast {
-                        kind: ToastKind::Error,
-                        text: "Session expired — please reload and log in again".into(),
-                        options: ToastOptions::default()
-                            .show_progress(true)
-                            .duration_in_seconds(8.0),
-                        style: ToastStyle::default(),
-                    });
+                    self.reconnect_attempts = 0;
+                    self.current_user = None;
+                    let _ = self.app_state_tx.try_send(
+                        crate::app_state::AppState::NoAuth(
+                            "Your session expired — please sign in again".to_string(),
+                        ),
+                    );
                 }
                 ReconnectOutcome::Failed(e) => {
                     log::warn!("Reconnect attempt {} failed: {e}", self.reconnect_attempts);
@@ -370,7 +408,7 @@ impl crate::app_state::SharedContext {
         self.receive_task();
         self.receive_notes();
         self.receive_notification(ctx);
-        self.stock_tables.receive(self.ui_actions_tx.clone());
+        self.stock_tables.receive(self.ui_actions_tx.clone(), ctx, frame);
         self.sales_tracker.receive(ctx);
         self.receive_client();
         self.receive_prestashop();
@@ -438,12 +476,13 @@ impl crate::app_state::SharedContext {
         }
     }
 
-    /// Rebuilds the DB connection off-thread; the `reconnect_result_rx`
-    /// drain applies the outcome. Retries forever with exponential backoff
-    /// (a pending retry parks on `needs_reconnect` until the backoff
-    /// elapses); one attempt runs at a time; the operator is never blocked.
+    /// Waits for the SDK's socket self-heal off-thread, restores the
+    /// operator's identity, and reports the outcome to the `reconnect_result_rx`
+    /// drain (which re-issues the LIVE SELECTs). Retries with exponential
+    /// backoff — a pending retry parks on `needs_reconnect` until the backoff
+    /// elapses; one attempt at a time; the operator is never blocked.
     fn trigger_live_reconnect(&mut self, _ctx: &eframe::egui::Context) {
-        if self.reconnect_in_progress || self.show_reload_prompt {
+        if self.reconnect_in_progress {
             return;
         }
         let Some(user) = self.current_user.clone() else {
@@ -469,33 +508,18 @@ impl crate::app_state::SharedContext {
         self.last_live_respawn_at = Some(now);
         log::warn!("Live-query reconnect attempt {}", self.reconnect_attempts);
 
-        if !self.db_degraded {
-            self.db_degraded = true;
-            self.toasts.add(Toast {
-                kind: ToastKind::Warning,
-                text: "Connection interrupted — reconnecting in the background".into(),
-                options: ToastOptions::default()
-                    .show_progress(true)
-                    .duration_in_seconds(4.0),
-                style: ToastStyle::default(),
-            });
-        }
-
         let tx = self.reconnect_result_tx.clone();
         let token = self.reconnect_token;
         let expected = user.get_id();
         PlatformSpawner::spawn(async move {
-            let outcome = match database::ensure_db_connected_bounded().await {
-                // Verify the restored session is still the same user; a
-                // guest fallback would silently starve the LIVE streams.
-                Ok(()) => match database::current_auth_id().await {
-                    Ok(Some(id)) if id == expected => ReconnectOutcome::Ok,
-                    Ok(other) => {
-                        log::warn!("Post-reconnect $auth.id is {other:?}, expected {expected:?}");
-                        ReconnectOutcome::AuthLost
+            let outcome = match database::await_db_socket().await {
+                Ok(socket_was_down) => {
+                    match database::restore_auth_if_needed(expected).await {
+                        Ok(true) => ReconnectOutcome::Ok { socket_was_down },
+                        Ok(false) => ReconnectOutcome::AuthLost,
+                        Err(e) => ReconnectOutcome::Failed(format!("auth restore failed: {e}")),
                     }
-                    Err(e) => ReconnectOutcome::Failed(format!("auth verification failed: {e}")),
-                },
+                }
                 Err(e) => ReconnectOutcome::Failed(e.to_string()),
             };
             let _ = tx.try_send((token, outcome));
@@ -586,15 +610,13 @@ impl crate::app_state::SharedContext {
         self.client_diagnostics_popup_ui(ctx);
         self.drain_reachability_events();
         self.connection_status_pill(ctx);
-        #[cfg(target_arch = "wasm32")]
-        self.reload_prompt_ui(ctx);
         self.toasts.show(ctx);
     }
 
-    /// Small corner pill shown while the DB link is degraded; reconnection
-    /// runs in the background and needs no operator action.
+    /// Small corner pill shown while a reconnect is in flight or pending;
+    /// reconnection runs in the background and needs no operator action.
     fn connection_status_pill(&mut self, ctx: &eframe::egui::Context) {
-        if !self.db_degraded || self.show_reload_prompt {
+        if !(self.reconnect_in_progress || self.needs_reconnect) {
             return;
         }
         eframe::egui::Area::new(eframe::egui::Id::new("db_status_pill"))
@@ -620,58 +642,6 @@ impl crate::app_state::SharedContext {
                         });
                     });
             });
-    }
-
-    /// Action-required banner shown only when a reconnect restored the
-    /// connection but not the operator's identity (expired JWT / guest
-    /// fallback) — the one failure mode a reload + login must fix.
-    #[cfg(target_arch = "wasm32")]
-    fn reload_prompt_ui(&mut self, ctx: &eframe::egui::Context) {
-        if !self.show_reload_prompt {
-            return;
-        }
-        let mut reload_clicked = false;
-        eframe::egui::Window::new("Session expired")
-            .anchor(eframe::egui::Align2::CENTER_TOP, [0.0, 60.0])
-            .collapsible(false)
-            .resizable(false)
-            .title_bar(false)
-            .frame(
-                eframe::egui::Frame::new()
-                    .fill(eframe::egui::Color32::from_rgb(60, 30, 30))
-                    .stroke(eframe::egui::Stroke::new(
-                        1.5,
-                        eframe::egui::Color32::from_rgb(220, 80, 80),
-                    )),
-            )
-            .show(ctx, |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(4.0);
-                    ui.label(
-                        eframe::egui::RichText::new("Your session expired")
-                            .strong()
-                            .size(14.0)
-                            .color(eframe::egui::Color32::from_rgb(255, 200, 200)),
-                    );
-                    ui.label(
-                        eframe::egui::RichText::new(
-                            "The connection was restored but your login could not be \
-                            re-established. Reload the page and sign in again.",
-                        )
-                        .color(eframe::egui::Color32::from_rgb(230, 200, 200)),
-                    );
-                    ui.add_space(6.0);
-                    if ui.button("Reload page").clicked() {
-                        reload_clicked = true;
-                    }
-                    ui.add_space(4.0);
-                });
-            });
-        if reload_clicked {
-            if let Some(win) = web_sys::window() {
-                let _ = win.location().reload();
-            }
-        }
     }
 
     /// Slice 5: drain the background prober's results into the

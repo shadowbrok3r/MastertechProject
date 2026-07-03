@@ -596,126 +596,86 @@ pub async fn is_db_connected() -> bool {
     }
 }
 
-/// Ensure database connection is alive, attempt to reconnect if not
-/// This is useful for operations that may fail due to dropped WebSocket connections
-/// 
-/// # Returns
-/// - `Ok(())` if connection is alive or was successfully re-established
-/// - `Err(...)` if reconnection failed
-pub async fn ensure_db_connected() -> anyhow::Result<(), anyhow::Error> {
-    // First, try a simple health check
+/// Waits (bounded) for the SurrealDB SDK's internal auto-reconnect to
+/// restore the websocket, polling `is_db_connected` with backoff. Returns
+/// whether the socket had actually dropped (`true`) vs was already healthy
+/// (`false`).
+///
+/// The SDK owns the socket: its `router` is a process-lifetime `OnceLock`,
+/// so `DATABASE.connect()` on the singleton only ever returns
+/// `Err(AlreadyConnected)`. On a drop the SDK's own `router_reconnect` loop
+/// rebuilds the socket every ~1s and replays `Signin`/`Authenticate`/`Use`.
+/// The app's job is only to wait for that, then re-issue its LIVE queries
+/// (which the SDK does not replay).
+pub async fn await_db_socket() -> anyhow::Result<bool> {
     if is_db_connected().await {
-        return Ok(());
+        return Ok(false);
     }
-    
-    log::warn!("Database connection lost, attempting to reconnect...");
-    
-    log::info!("About to query DB. DATABASE ptr: {:p}", &*DATABASE);
-    // Connection is dead, try to reconnect
-    // First invalidate the old connection
-    let _ = DATABASE.invalidate().await;
-    
-    // Reconnect
-    if cfg!(debug_assertions) {
-        DATABASE.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await?;
-        log::info!("Reconnected to local DB: {}", DB_URL_LOCAL);
-    } else {
-        DATABASE.connect::<surrealdb::engine::remote::ws::Wss>(DB_URL_DEV).await?;
-        log::info!("Reconnected to: {}", DB_URL_DEV);
+    log::warn!("Database socket down; waiting for SDK auto-reconnect");
+    for attempt in 0..8u32 {
+        let delay = std::time::Duration::from_millis((250u64 << attempt.min(5)).min(8000));
+        sleep_compat(delay).await;
+        if is_db_connected().await {
+            log::info!("Database socket recovered after {} probe(s)", attempt + 1);
+            return Ok(true);
+        }
     }
-    
-    // Re-select namespace and database
-    DATABASE.use_ns(NS).use_db(DB).await?;
-    
-    // Check if we had a user (don't hold MutexGuard across await)
-    let had_user = CURRENT_USER_INFO.try_lock().map(|g| g.is_some()).unwrap_or(false);
+    Err(anyhow::anyhow!("database socket did not recover within budget"))
+}
 
-    if had_user {
-        // Try to restore the *same* identity the user logged in with so
-        // perms (e.g. record-scope `assigned_user == $auth.id` filters in
-        // `connected_client`) don't silently become unsatisfiable after a
-        // hiccup. Three-way fallback:
-        //   1. Replay the cached JWT (cheap, no creds re-sent).
-        //   2. If the JWT is expired/invalid, replay email+password
-        //      against the user scope.
-        //   3. Last-ditch: guest, with a clear warning so the operator
-        //      knows to log in again.
-        let cached: Option<CachedAuth> =
-            CACHED_AUTH.try_lock().ok().and_then(|g| g.clone());
+/// Confirms `$auth` is `expected`; if not (the SDK replayed an expired token
+/// or the session dropped to guest), replays the cached JWT then the cached
+/// email+password. Returns whether `$auth` ended up as `expected`. Never
+/// falls back to guest — a genuinely unrecoverable auth is surfaced to the
+/// caller so it can route the operator back to login.
+pub async fn restore_auth_if_needed(expected: schema::RecordId) -> anyhow::Result<bool> {
+    if current_auth_id().await? == Some(expected.clone()) {
+        return Ok(true);
+    }
+    let cached: Option<CachedAuth> = CACHED_AUTH.try_lock().ok().and_then(|g| g.clone());
 
-        let mut restored = false;
-        if let Some(CachedAuth { jwt: Some(token), .. }) = cached.as_ref() {
-            match DATABASE.authenticate(token.clone()).await {
-                Ok(_) => {
-                    log::info!("Replayed cached JWT after reconnect");
-                    restored = true;
-                }
-                Err(e) => {
-                    log::info!("Cached JWT replay failed ({e}); will try password");
+    if let Some(CachedAuth { jwt: Some(token), .. }) = cached.as_ref() {
+        if DATABASE.authenticate(token.clone()).await.is_ok()
+            && current_auth_id().await? == Some(expected.clone())
+        {
+            log::info!("Restored auth via cached JWT after reconnect");
+            return Ok(true);
+        }
+    }
+
+    if let Some(CachedAuth { email: Some(em), password: Some(pw), .. }) = cached.as_ref() {
+        let creds = SurrealRec {
+            namespace: NS.to_string(),
+            database: DB.to_string(),
+            access: USER_SCOPE.to_string(),
+            params: Auth { email: em.clone(), password: pw.clone() },
+        };
+        match DATABASE.signin(creds).await {
+            Ok(jwt) => {
+                cache_auth(Some(jwt.access.as_insecure_token().to_string()), None, None);
+                if current_auth_id().await? == Some(expected) {
+                    log::info!("Restored auth via cached credentials after reconnect");
+                    return Ok(true);
                 }
             }
-        }
-
-        if !restored {
-            if let Some(CachedAuth {
-                email: Some(em),
-                password: Some(pw),
-                ..
-            }) = cached.as_ref()
-            {
-                let creds = SurrealRec {
-                    namespace: NS.to_string(),
-                    database: DB.to_string(),
-                    access: USER_SCOPE.to_string(),
-                    params: Auth {
-                        email: em.clone(),
-                        password: pw.clone(),
-                    },
-                };
-                match DATABASE.signin(creds).await {
-                    Ok(jwt) => {
-                        // Refresh the cached JWT so the next reconnect
-                        // takes the cheap path.
-                        cache_auth(
-                            Some(jwt.access.as_insecure_token().to_string()),
-                            None,
-                            None,
-                        );
-                        log::info!("Re-authenticated via cached credentials");
-                        restored = true;
-                    }
-                    Err(e) => {
-                        log::warn!("Cached credential replay failed: {e}");
-                    }
-                }
-            }
-        }
-
-        if !restored {
-            log::warn!(
-                "No usable cached auth; falling back to guest. \
-                 User must re-login for full access."
-            );
-            DATABASE.signin(SurrealRec {
-                namespace: NS.to_string(),
-                database: DB.to_string(),
-                access: "guest".to_string(),
-                params: Credentials {
-                    username: "guest".to_string(),
-                    password: SURREAL_GUEST_PASSWORD.to_string()
-                }
-            }).await?;
+            Err(e) => log::warn!("Cached credential re-signin failed: {e}"),
         }
     }
 
-    log::info!("Database reconnection successful");
-    Ok(())
+    Ok(false)
+}
+
+/// Ensure the DB socket is usable, waiting for the SDK's auto-reconnect.
+/// Auth is not touched here (the SDK replays it); callers needing a
+/// *specific* identity restored use [`restore_auth_if_needed`].
+pub async fn ensure_db_connected() -> anyhow::Result<(), anyhow::Error> {
+    await_db_socket().await.map(|_| ())
 }
 
 /// [`ensure_db_connected`] with a hard deadline so a black-holed websocket
 /// can never wedge callers waiting on the result.
 pub async fn ensure_db_connected_bounded() -> anyhow::Result<(), anyhow::Error> {
-    with_timeout(std::time::Duration::from_secs(30), ensure_db_connected()).await?
+    with_timeout(std::time::Duration::from_secs(40), ensure_db_connected()).await?
 }
 
 /// Retry a DB operation across a transient connection blip.

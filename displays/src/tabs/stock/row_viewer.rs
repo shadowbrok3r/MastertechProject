@@ -1235,6 +1235,9 @@ pub struct SystemInStoreData {
     pub ram: String,
     pub warranty: String,
     pub store_id: String,
+    /// Prestashop `date_upd`; staleness key for the cache reconcile.
+    #[serde(default)]
+    pub date_upd: String,
     /// Computer data for task creation (detachable for use with CreateTaskModal)
     pub computer_data: ComputerData,
 }

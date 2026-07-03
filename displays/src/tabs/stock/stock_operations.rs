@@ -644,47 +644,59 @@ pub fn get_customer_ids_for_store(store_id: u64) -> Vec<&'static str> {
     }
 }
 
-/// Fetch systems in-store for a given store
-pub async fn get_systems_in_store(
-    store_id: u64,
-    systems_tx: Sender<Vec<SystemInStoreData>>,
-) -> Result<(), Error> {
-    info!("Fetching systems in-store for store {}", store_id);
-    
-    let presta = Prestashop::default();
-    let mut all_orders: Vec<Order> = Vec::new();
-    
-    // Order types we want: SalesOrder, ReadyToRoll, Bsd, Rci
-    let order_types = [
+/// One message in the incremental Systems In-Store stream.
+pub enum SystemStreamMsg {
+    /// A row to insert or update, keyed by `order_id`.
+    Row(Box<SystemInStoreData>),
+    /// An order that left the in-store set; remove it by `order_id`.
+    Remove(String),
+    /// The stream finished; the consumer persists the table to storage.
+    Done,
+}
+
+/// Order types shown in the Systems In-Store view.
+fn systems_order_types() -> [OrderType; 4] {
+    [
         OrderType::SalesOrder,
         OrderType::ReadyToRoll,
         OrderType::Bsd,
         OrderType::Rci,
-    ];
-    
-    // Query for each customer ID and order type combination
+    ]
+}
+
+/// Full streamed pull: fetch every in-store order for a store and emit each
+/// processed row as it completes. Used for a cold cache or a forced reload.
+pub async fn get_systems_in_store(
+    store_id: u64,
+    ctx: eframe::egui::Context,
+    tx: Sender<SystemStreamMsg>,
+) -> Result<(), Error> {
+    info!("Streaming systems in-store for store {}", store_id);
+
+    let presta = Prestashop::default();
+
     for customer_id in get_customer_ids_for_store(store_id) {
-        for order_type in order_types.iter() {
-            let mut query = HashMap::new();
+        for order_type in systems_order_types().iter() {
             let store_id_str = store_id.to_string();
             let order_type_id = order_type.to_id().to_string();
             let order_state_id = OrderState::DeliveredToStore.to_id().to_string();
 
+            let mut query = HashMap::new();
             query.insert("output_format", "JSON");
             query.insert("filter[id_customer]", customer_id);
             query.insert("filter[id_store]", &store_id_str);
             query.insert("filter[id_order_type]", &order_type_id);
             query.insert("filter[current_state]", &order_state_id);
+            let query_refs: HashMap<&str, &str> = query.iter().map(|(k, v)| (*k, *v)).collect();
 
-            // Convert HashMap<&str, String> to HashMap<&str, &str> for the API
-            let query_refs: HashMap<&str, &str> = query.iter()
-                .map(|(k, v)| (*k, *v))
-                .collect();
-            
             match presta.request_resources_wasm::<Order>("orders", query_refs).await {
                 Ok(orders) => {
                     info!("Got {} orders for customer {} type {:?}", orders.len(), customer_id, order_type.to_id());
-                    all_orders.extend(orders);
+                    for order in orders.iter() {
+                        let data = process_order_to_system_data(order).await;
+                        let _ = tx.try_send(SystemStreamMsg::Row(Box::new(data)));
+                        ctx.request_repaint();
+                    }
                 }
                 Err(e) => {
                     log::error!("Failed to fetch orders for customer {} type {:?}: {:?}", customer_id, order_type.to_id(), e);
@@ -692,19 +704,94 @@ pub async fn get_systems_in_store(
             }
         }
     }
-    
-    info!("Total orders fetched: {}", all_orders.len());
-    
-    // Process each order into SystemInStoreData
-    let mut systems_data: Vec<SystemInStoreData> = Vec::new();
-    
-    for order in all_orders.iter() {
-        let system_data = process_order_to_system_data(order).await;
-        systems_data.push(system_data);
+
+    let _ = tx.try_send(SystemStreamMsg::Done);
+    ctx.request_repaint();
+    Ok(())
+}
+
+/// Reconcile a cached Systems In-Store list against the live order set.
+/// Runs a minimal `[id,date_upd]` order-list query per customer/type, reuses
+/// cached rows whose `date_upd` is unchanged, re-fetches new or changed
+/// orders, and removes orders no longer in the in-store set. Each decision is
+/// streamed so the table patches incrementally.
+pub async fn reconcile_systems_in_store(
+    store_id: u64,
+    cached: Vec<SystemInStoreData>,
+    ctx: eframe::egui::Context,
+    tx: Sender<SystemStreamMsg>,
+) -> Result<(), Error> {
+    info!("Reconciling {} cached systems for store {}", cached.len(), store_id);
+
+    let cached_by_id: HashMap<String, SystemInStoreData> =
+        cached.into_iter().map(|s| (s.order_id.clone(), s)).collect();
+
+    // Minimal staleness query pulls only id + date_upd per order.
+    let mut list_api = Prestashop::default();
+    list_api.display = "[id,date_upd]";
+    // Full-display client for fetching new/changed orders.
+    let detail_api = Prestashop::default();
+
+    let mut live: HashMap<String, String> = HashMap::new();
+    for customer_id in get_customer_ids_for_store(store_id) {
+        for order_type in systems_order_types().iter() {
+            let store_id_str = store_id.to_string();
+            let order_type_id = order_type.to_id().to_string();
+            let order_state_id = OrderState::DeliveredToStore.to_id().to_string();
+
+            let mut query = HashMap::new();
+            query.insert("output_format", "JSON");
+            query.insert("filter[id_customer]", customer_id);
+            query.insert("filter[id_store]", &store_id_str);
+            query.insert("filter[id_order_type]", &order_type_id);
+            query.insert("filter[current_state]", &order_state_id);
+            let query_refs: HashMap<&str, &str> = query.iter().map(|(k, v)| (*k, *v)).collect();
+
+            match list_api.request_resources_wasm::<Order>("orders", query_refs).await {
+                Ok(orders) => {
+                    for o in orders.iter() {
+                        if !o.id.is_empty() && o.id != "0" {
+                            live.insert(o.id.clone(), o.date_upd.clone());
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("staleness query failed (customer {} type {:?}): {e:?}", customer_id, order_type.to_id());
+                }
+            }
+        }
     }
-    
-    systems_tx.try_send(systems_data)?;
-    
+
+    // Drop cached orders no longer in the live in-store set.
+    for id in cached_by_id.keys() {
+        if !live.contains_key(id) {
+            let _ = tx.try_send(SystemStreamMsg::Remove(id.clone()));
+            ctx.request_repaint();
+        }
+    }
+
+    // Reuse unchanged rows; fetch and process new or changed orders.
+    for (id, date_upd) in live.iter() {
+        let reuse = cached_by_id
+            .get(id)
+            .filter(|c| !date_upd.is_empty() && &c.date_upd == date_upd);
+        if let Some(cached_row) = reuse {
+            let _ = tx.try_send(SystemStreamMsg::Row(Box::new(cached_row.clone())));
+            ctx.request_repaint();
+            continue;
+        }
+        match detail_api.request_subresources_by_id_wasm::<Order>("orders", "order", id).await {
+            Ok(order) => {
+                let data = process_order_to_system_data(&order).await;
+                let _ = tx.try_send(SystemStreamMsg::Row(Box::new(data)));
+                ctx.request_repaint();
+            }
+            Err(e) => log::error!("systems reconcile: order {id} fetch failed: {e:?}"),
+        }
+    }
+
+    let _ = tx.try_send(SystemStreamMsg::Done);
+    ctx.request_repaint();
     Ok(())
 }
 
@@ -776,6 +863,7 @@ pub async fn process_order_to_system_data(order: &Order) -> SystemInStoreData {
         ram,
         warranty,
         store_id: order.id_store.clone(),
+        date_upd: order.date_upd.clone(),
         computer_data,
     }
 }
