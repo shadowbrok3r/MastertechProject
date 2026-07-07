@@ -5,8 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/srv/mtech/pxe
-ExecStart=/srv/mtech/pxe/pxe-bench /srv/mtech/pxe/pxe-bench.toml
+# Binary on a normal (executable) FS; config + payload roots on the noexec .img.
+WorkingDirectory=/mnt/tech/pxe
+ExecStart=/usr/local/bin/pxe-bench /mnt/tech/pxe/pxe-bench.toml
 Restart=on-failure
 RestartSec=3
 

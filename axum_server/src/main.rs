@@ -113,6 +113,8 @@ pub struct AppState {
     cache: Arc<Mutex<HashMap<String, CachedData>>>,
     /// Shared fleet state for the QC orchestrator routes.
     pub fleet: SharedFleetState,
+    /// Pre-boot terminal relay sessions, keyed by machine serial.
+    pub preboot: routes::api::preboot::SharedPreBoot,
 }
 
 impl AppState {
@@ -120,6 +122,7 @@ impl AppState {
         AppState {
             cache: Arc::new(Mutex::new(HashMap::new())),
             fleet: Arc::new(Mutex::new(FleetState::default())),
+            preboot: routes::api::preboot::new_registry(),
         }
     }
 }

@@ -3,10 +3,11 @@
 # Run on the Ubuntu bench host. WinPE media (boot.wim etc.) is built separately
 # on Windows and copied into $HTTP/media — see UBUNTU-SETUP.md.
 #
-#   ./stage-payload.sh [PXE_ROOT]   (default /srv/mtech/pxe)
-set -euo pipefail
+#   sh stage-payload.sh [PXE_ROOT]   (default /mnt/tech/pxe)
+# POSIX sh-safe (no pipefail) so it runs under dash and off a noexec mount.
+set -eu
 
-PXE_ROOT="${1:-/srv/mtech/pxe}"
+PXE_ROOT="${1:-/mnt/tech/pxe}"
 TFTP="$PXE_ROOT/tftp"
 HTTP="$PXE_ROOT/http"
 mkdir -p "$TFTP" "$HTTP/media"

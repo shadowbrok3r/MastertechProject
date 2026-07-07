@@ -81,6 +81,9 @@ const TAB_PLUGINS: usize = 12;
 /// Idle ticks (~33 ms each) between command polls while agent mode is on (~5 s).
 const AGENT_POLL_TICKS: u32 = 150;
 
+/// Idle ticks (~33 ms each) between remote-input polls while streaming (~400 ms).
+const PREBOOT_INPUT_POLL_TICKS: u32 = 12;
+
 /// In-memory ring log. Single-threaded app, but a Mutex keeps it simple and
 /// also lets us back the `log` facade (so the uefi crate's own debug!/trace!
 /// messages land here too).
@@ -1714,97 +1717,6 @@ mod net_tcp {
     /// axum_server QC listener (Mastertech "connected client" path).
     pub fn send_qc(target: &str, body: &[u8]) -> Result<String, String> {
         run(target, "", body, true)
-    }
-
-    /// Fire-and-forget: connect, transmit already-framed bytes, close — no
-    /// response read, so a pre-boot frame push never stalls the render loop
-    /// waiting on the server. Mirrors the proven connect+transmit sequence.
-    pub fn send_preboot(target: &str, framed: &[u8]) -> Result<(), String> {
-        if tcp4_absent() {
-            return Err("no TCP4 stack".into());
-        }
-        let (rip, rport) = parse_target(target).ok_or("bad target")?;
-        let handles = boot::find_handles::<Tcp4Sb>().map_err(|e| format!("no TCP4 ({e:?})"))?;
-        let sbh = *handles.first().ok_or("no TCP4 iface")?;
-        let mut sb = unsafe {
-            boot::open_protocol::<Tcp4Sb>(
-                OpenProtocolParams { handle: sbh, agent: boot::image_handle(), controller: None },
-                OpenProtocolAttributes::GetProtocol,
-            )
-        }
-        .map_err(|e| format!("open sb: {e:?}"))?;
-        let mut child: uefi_raw::Handle = core::ptr::null_mut();
-        if unsafe { (sb.0.create_child)(&mut sb.0, &mut child) } != Status::SUCCESS {
-            return Err("create_child".into());
-        }
-        let Some(child_handle) = (unsafe { Handle::from_ptr(child) }) else {
-            return Err("null child".into());
-        };
-        let r = tx_only(child_handle, rip, rport, framed);
-        let _ = unsafe { (sb.0.destroy_child)(&mut sb.0, child) };
-        r
-    }
-
-    fn tx_only(child: Handle, rip: Ipv4Address, rport: u16, framed: &[u8]) -> Result<(), String> {
-        let mut tcp = unsafe {
-            boot::open_protocol::<Tcp4>(
-                OpenProtocolParams { handle: child, agent: boot::image_handle(), controller: None },
-                OpenProtocolAttributes::GetProtocol,
-            )
-        }
-        .map_err(|e| format!("open tcp4: {e:?}"))?;
-        let tcp_ptr: *mut Tcp4Protocol = &mut tcp.0;
-        let cfg = Tcp4ConfigData {
-            type_of_service: 0,
-            time_to_live: 64,
-            access_point: Tcp4AccessPoint {
-                use_default_address: Boolean::from(true),
-                station_address: Ipv4Address([0, 0, 0, 0]),
-                subnet_mask: Ipv4Address([0, 0, 0, 0]),
-                station_port: 0,
-                remote_address: rip,
-                remote_port: rport,
-                active_flag: Boolean::from(true),
-            },
-            control_option: core::ptr::null_mut(),
-        };
-        if unsafe { ((*tcp_ptr).configure)(tcp_ptr, &cfg) } != Status::SUCCESS {
-            return Err("configure".into());
-        }
-        let event = unsafe { boot::create_event(EventType::empty(), Tpl::CALLBACK, None, None) }
-            .map_err(|e| format!("event: {e:?}"))?;
-        let ev = event.as_ptr();
-        let mut ct = Tcp4ConnectionToken {
-            completion_token: Tcp4CompletionToken { event: ev, status: Status::NOT_READY },
-        };
-        if unsafe { ((*tcp_ptr).connect)(tcp_ptr, &mut ct) } != Status::SUCCESS {
-            return Err("connect call".into());
-        }
-        if unsafe { pump(tcp_ptr, &ct.completion_token.status, 5_000) } != Status::SUCCESS {
-            return Err("connect".into());
-        }
-        let mut tx = TxData1 {
-            push: Boolean::from(true),
-            urgent: Boolean::from(false),
-            data_length: framed.len() as u32,
-            fragment_count: 1,
-            fragment_table: [Tcp4FragmentData {
-                fragment_length: framed.len() as u32,
-                fragment_buf: framed.as_ptr() as *mut u8,
-            }],
-        };
-        let mut txtok = Tcp4IoToken {
-            completion_token: Tcp4CompletionToken { event: ev, status: Status::NOT_READY },
-            packet: Tcp4Packet { tx_data: (&mut tx as *mut TxData1).cast() },
-        };
-        if unsafe { ((*tcp_ptr).transmit)(tcp_ptr, &mut txtok) } != Status::SUCCESS {
-            return Err("transmit call".into());
-        }
-        if unsafe { pump(tcp_ptr, &txtok.completion_token.status, 5_000) } != Status::SUCCESS {
-            return Err("transmit".into());
-        }
-        let _ = unsafe { ((*tcp_ptr).configure)(tcp_ptr, core::ptr::null()) };
-        Ok(())
     }
 
     fn build_get(path: &str, host: &str) -> Vec<u8> {
@@ -3957,6 +3869,28 @@ fn fw_data(info: &SysInfo) -> wasmrt::FwData {
     fw
 }
 
+/// GET queued remote-viewer input from the relay and inject it into the loop.
+/// Returns true if any events were injected (drives the adaptive poll rate).
+fn poll_preboot_input(app: &mut App) -> bool {
+    if app.target.is_empty() {
+        return false;
+    }
+    let serial = order::encode_path_segment(app.info.dmi.sys_serial.trim());
+    let path = format!("/api/v1/qc/preboot/{serial}/input");
+    let mut got = false;
+    if let Ok((200, body)) = http_get_json(&app.target, &path) {
+        for eb in tcp_protocol::preboot::split_event_batch(&body) {
+            if let Some(ev) = tcp_protocol::preboot::decode_event(&eb) {
+                if let Some(t) = stream::event_to_terminput(&ev) {
+                    app.injected.push(t);
+                    got = true;
+                }
+            }
+        }
+    }
+    got
+}
+
 /// Load and invoke a plugin, formatting the run into `app.plugin_out`.
 fn run_wasm_plugin(app: &mut App, bytes: &[u8], tool: &str, args: &str) {
     let host = {
@@ -5040,6 +4974,10 @@ struct App {
     streaming: bool,
     /// Monotonic streamed-frame counter.
     stream_frame: u64,
+    /// Idle-tick counter toward the next remote-input poll.
+    stream_tick: u32,
+    /// Tick of the last poll that returned input (drives fast/slow polling).
+    stream_last_input_tick: u32,
     /// Dirty-frame suppressor for the stream.
     stream_throttle: stream::Throttle,
     /// Remote viewer events queued for injection into the input loop.
@@ -5082,6 +5020,8 @@ fn run() -> Result<()> {
         plugin_out: Vec::new(),
         streaming: false,
         stream_frame: 0,
+        stream_tick: 0,
+        stream_last_input_tick: 0,
         stream_throttle: stream::Throttle::new(),
         injected: Vec::new(),
     };
@@ -5105,20 +5045,32 @@ fn run() -> Result<()> {
             }
         };
         if let Some(pf) = captured {
-            if let Some(bytes) = app.stream_throttle.frame_if_dirty(&pf) {
-                let host = parse_upload_url(&app.target).host_port;
-                if let Err(e) = net_tcp::send_preboot(&host, &bytes) {
-                    logln(format!("stream: frame send failed: {e}"));
+            // POST the frame body to the relay only when the screen changed.
+            if let Some(body) = app.stream_throttle.body_if_dirty(&pf) {
+                let serial = order::encode_path_segment(app.info.dmi.sys_serial.trim());
+                let path = format!("/api/v1/qc/preboot/{serial}/frame");
+                if let Err(e) = http_post_json(&app.target, &path, &body) {
+                    logln(format!("stream: frame POST failed: {e}"));
                 }
             }
             app.stream_frame = app.stream_frame.wrapping_add(1);
+            // Fast-poll input (every tick, ~one round-trip) for ~1s after any
+            // activity, then back off to the slow timer — keystroke latency is
+            // one RTT while typing, near-zero churn when idle.
+            app.stream_tick = app.stream_tick.wrapping_add(1);
+            let active = app.stream_tick.wrapping_sub(app.stream_last_input_tick) < 30;
+            let interval = if active { 1 } else { PREBOOT_INPUT_POLL_TICKS };
+            if app.stream_tick % interval == 0 && poll_preboot_input(&mut app) {
+                app.stream_last_input_tick = app.stream_tick;
+            }
         }
 
         // Blocking input when idle; poll + frame ticks while a stress run,
         // agent polling, or streaming needs the loop to keep spinning. A
         // queued remote-viewer event is consumed as if it were typed locally.
-        let event = if let Some(inj) = app.injected.pop() {
-            Some(inj)
+        let event = if !app.injected.is_empty() {
+            // FIFO: keystrokes must replay in the order they were typed.
+            Some(app.injected.remove(0))
         } else if app.stress.is_active() || app.agent || app.streaming {
             let ev = input_reader.poll_event()?;
             if ev.is_none() {

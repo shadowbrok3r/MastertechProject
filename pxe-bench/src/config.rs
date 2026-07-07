@@ -26,6 +26,12 @@ pub struct Config {
     /// iPXE script path (relative to http_root) chained once iPXE is running.
     #[serde(default = "default_ipxe_script")]
     pub ipxe_script: String,
+    /// What boot.ipxe presents: "menu" | "winpe" | "uefi".
+    #[serde(default = "default_boot_mode")]
+    pub boot_mode: String,
+    /// EFI application (served from http_root) chainloaded for the UEFI entry.
+    #[serde(default = "default_uefi_efi")]
+    pub uefi_efi: String,
 }
 
 fn default_tftp_root() -> PathBuf {
@@ -45,6 +51,12 @@ fn default_uefi_boot_file() -> String {
 }
 fn default_ipxe_script() -> String {
     "boot.ipxe".to_string()
+}
+fn default_boot_mode() -> String {
+    "menu".to_string()
+}
+fn default_uefi_efi() -> String {
+    "mtech.efi".to_string()
 }
 
 impl Config {

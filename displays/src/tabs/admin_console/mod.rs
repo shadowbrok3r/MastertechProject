@@ -17,6 +17,7 @@ use crate::tabs::admin_console::ui::CLIENT_ROW_CONTENT_W;
 
 pub mod client_action;
 pub mod client_interface;
+pub mod preboot_viewer;
 pub mod relink_popup;
 pub mod ui;
 
@@ -146,6 +147,13 @@ pub struct AdminConsole {
     pub fk_health_tx: crossbeam::channel::Sender<(String, bool, bool)>,
     #[serde(skip)]
     pub fk_health_rx: crossbeam::channel::Receiver<(String, bool, bool)>,
+    /// Pre-boot terminal viewer (firmware TUI relayed over HTTP). Toggled with
+    /// Ctrl+Shift+B; connects by machine serial to the axum relay.
+    #[serde(skip)]
+    pub preboot_viewer: Option<preboot_viewer::PreBootViewer>,
+    pub preboot_open: bool,
+    pub preboot_serial: String,
+    pub preboot_base_url: String,
 }
 
 impl AdminConsole {
@@ -176,6 +184,53 @@ impl AdminConsole {
             fk_health_cache: HashMap::new(),
             fk_health_tx,
             fk_health_rx,
+            preboot_viewer: None,
+            preboot_open: false,
+            preboot_serial: String::new(),
+            preboot_base_url: "https://axum.master-tech.app".to_string(),
+        }
+    }
+
+    /// Self-contained pre-boot viewer window. Ctrl+Shift+B toggles it; enter a
+    /// machine serial + Connect to poll that firmware session from the relay.
+    pub fn preboot_window(&mut self, ctx: &Context) {
+        if ctx.input(|i| i.modifiers.ctrl && i.modifiers.shift && i.key_pressed(egui::Key::B)) {
+            self.preboot_open = !self.preboot_open;
+        }
+        if !self.preboot_open {
+            return;
+        }
+        let mut open = true;
+        egui::Window::new(format!("{} Pre-Boot Viewer", icons::TERMINAL))
+            .id(egui::Id::new("admin_preboot_viewer"))
+            .default_width(720.0)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Relay:");
+                    ui.add(egui::TextEdit::singleline(&mut self.preboot_base_url).desired_width(220.0));
+                    ui.label("Serial:");
+                    ui.add(egui::TextEdit::singleline(&mut self.preboot_serial).desired_width(160.0));
+                    let ready = !self.preboot_serial.trim().is_empty()
+                        && !self.preboot_base_url.trim().is_empty();
+                    if ui.add_enabled(ready, egui::Button::new("Connect")).clicked() {
+                        self.preboot_viewer = Some(preboot_viewer::PreBootViewer::new(
+                            self.preboot_serial.trim().to_string(),
+                            self.preboot_base_url.trim().trim_end_matches('/').to_string(),
+                        ));
+                    }
+                });
+                ui.separator();
+                if let Some(v) = self.preboot_viewer.as_mut() {
+                    v.poll();
+                    v.ui(ui);
+                    ctx.request_repaint_after(v.repaint_after());
+                } else {
+                    ui.label("Enter a serial and Connect to view a booting machine's screen.");
+                }
+            });
+        if !open {
+            self.preboot_open = false;
         }
     }
 
@@ -791,6 +846,9 @@ impl SharedContext {
             }
             ws_layout.ui(ui);
         });
+
+        // Pre-boot terminal viewer window (Ctrl+Shift+B), self-contained.
+        self.web_console_layout.preboot_window(ui.ctx());
 
         // ── Batch-action confirm dialog (slice 4) ─────────────────────
         //

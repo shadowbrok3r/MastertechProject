@@ -5,6 +5,8 @@
 
 DEFINE TABLE computer TYPE ANY SCHEMALESS PERMISSIONS FULL;
 
+DEFINE INDEX computer_customer_idx ON computer FIELDS customer;
+
 DEFINE FIELD cpu               ON computer TYPE string           PERMISSIONS FULL;
 DEFINE FIELD current_antivirus ON computer TYPE none | array<object> PERMISSIONS FULL;
 DEFINE FIELD current_antivirus.* ON computer TYPE object          PERMISSIONS FULL;

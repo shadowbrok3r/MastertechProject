@@ -1,13 +1,11 @@
 # pxe-bench appliance config for the Ubuntu bench host.
 # server_ip MUST be this box's IPv4 on the bench segment — the address PXE
 # clients fetch boot files from. Confirm with:  ip -4 addr show
-server_ip = "192.168.22.7"
+server_ip = "192.168.22.15"
 
-# Roots live inside the shared .img so files staged from Windows over
-# \\192.168.22.7\Mtech are served directly (no copy, no second network hop).
-# Adjust the /srv/mtech prefix to wherever the .img is mounted (findmnt).
-tftp_root = "/srv/mtech/pxe/tftp"
-http_root = "/srv/mtech/pxe/http"
+# Payload roots on a plain ext4 path (no loop-image/noexec complications).
+tftp_root = "/srv/pxe/tftp"
+http_root = "/srv/pxe/http"
 http_port = 7777
 
 bios_boot_file = "undionly.kpxe"
@@ -16,3 +14,11 @@ bios_boot_file = "undionly.kpxe"
 # UEFI box won't network-boot with snponly. Both are staged by stage-payload.sh.
 uefi_boot_file = "snponly.efi"
 ipxe_script = "boot.ipxe"
+
+# What boot.ipxe presents once iPXE is running:
+#   "menu"  — pick WinPE / UEFI diagnostics / local disk (default)
+#   "winpe" — straight to the WinPE terminal image
+#   "uefi"  — straight to the Mastertech UEFI app (uefi_efi)
+boot_mode = "menu"
+# EFI app served from http_root and chainloaded for the UEFI menu entry.
+uefi_efi = "mtech.efi"

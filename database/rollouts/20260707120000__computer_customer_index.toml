@@ -1,0 +1,31 @@
+id = "20260707120000__computer_customer_index"
+name = "computer_customer_index"
+state = "planned"
+# Additive: index computer.customer. The service_order `created` event calls
+# fn::fix_specs(), which correlates every service_order against computer via
+# `WHERE customer == ...`; with no index this full-scans computer (2.5k rows)
+# per service_order (4.1k rows) inside the create transaction and blows the
+# 20s SURREAL_TRANSACTION_TIMEOUT. The index turns each correlation into an
+# indexed lookup. Mirrors database/schema/computer.surql (source of truth).
+# Applying committed file state only: source == target. Paste the `current=`
+# hash reported by `surrealkit rollout lint` into both fields.
+source_schema_hash = "3097c26be71ca165f12be18a37cf5dcdbdc081d8fabf6eb9d71496f5229df4de"
+target_schema_hash = "3097c26be71ca165f12be18a37cf5dcdbdc081d8fabf6eb9d71496f5229df4de"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "create_computer_customer_index"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE INDEX OVERWRITE computer_customer_idx ON computer FIELDS customer;
+"""
+
+[[steps]]
+id = "drop_computer_customer_index"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE INDEX IF EXISTS computer_customer_idx ON computer;
+"""

@@ -10,7 +10,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Position;
 use ratatui::style::Color;
 use tcp_protocol::preboot::{
-    self, FRAME_TAG_PREBOOT_FRAME, PbColor, PbKeyCode, PreBootCell, PreBootEvent, PreBootFrame,
+    self, PbColor, PbKeyCode, PreBootCell, PreBootEvent, PreBootFrame,
 };
 use terminput::{Event, KeyCode, KeyEvent, KeyModifiers};
 
@@ -104,15 +104,6 @@ pub fn event_to_terminput(ev: &PreBootEvent) -> Option<Event> {
     Some(Event::Key(KeyEvent::new(code).modifiers(m).normalize_case()))
 }
 
-/// `[u32 LE total_len][tag][body]` frame matching the `tcp_protocol` wire.
-fn framed(tag: u8, body: &[u8]) -> Vec<u8> {
-    let mut v = Vec::with_capacity(5 + body.len());
-    v.extend_from_slice(&((1 + body.len()) as u32).to_le_bytes());
-    v.push(tag);
-    v.extend_from_slice(body);
-    v
-}
-
 fn fnv1a(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for &b in bytes {
@@ -133,15 +124,15 @@ impl Throttle {
         Self { last_hash: 0 }
     }
 
-    /// Encode `frame` and return the ready-to-send framed bytes, or None if it
-    /// is identical to the last frame this throttle emitted.
-    pub fn frame_if_dirty(&mut self, frame: &PreBootFrame) -> Option<Vec<u8>> {
+    /// Encode `frame` to its raw bincode body (for an HTTP POST), or None if
+    /// identical to the last frame emitted.
+    pub fn body_if_dirty(&mut self, frame: &PreBootFrame) -> Option<Vec<u8>> {
         let body = preboot::encode_frame(frame);
         let h = fnv1a(&body);
         if h == self.last_hash {
             return None;
         }
         self.last_hash = h;
-        Some(framed(FRAME_TAG_PREBOOT_FRAME, &body))
+        Some(body)
     }
 }
