@@ -151,6 +151,8 @@ pub struct AdminConsole {
     /// Ctrl+Shift+B; connects by machine serial to the axum relay.
     #[serde(skip)]
     pub preboot_viewer: Option<preboot_viewer::PreBootViewer>,
+    #[serde(skip)]
+    pub preboot_roster: preboot_viewer::PreBootRoster,
     pub preboot_open: bool,
     pub preboot_serial: String,
     pub preboot_base_url: String,
@@ -185,6 +187,7 @@ impl AdminConsole {
             fk_health_tx,
             fk_health_rx,
             preboot_viewer: None,
+            preboot_roster: preboot_viewer::PreBootRoster::default(),
             preboot_open: false,
             preboot_serial: String::new(),
             preboot_base_url: "https://axum.master-tech.app".to_string(),
@@ -200,12 +203,25 @@ impl AdminConsole {
         if !self.preboot_open {
             return;
         }
+        // Connected UEFI apps are Root-only.
+        let is_root = crate::get_current_user_from_auth().map(|u| u.is_admin()).unwrap_or(false);
         let mut open = true;
         egui::Window::new(format!("{} Pre-Boot Viewer", icons::TERMINAL))
             .id(egui::Id::new("admin_preboot_viewer"))
             .default_width(720.0)
             .open(&mut open)
             .show(ctx, |ui| {
+                if !is_root {
+                    ui.label(RichText::new("Root access required.").weak());
+                    return;
+                }
+                ui.label(RichText::new("Connected UEFI apps").strong());
+                let base = self.preboot_base_url.trim().trim_end_matches('/').to_string();
+                if let Some(serial) = self.preboot_roster.ui(ui, &base) {
+                    self.preboot_serial = serial.clone();
+                    self.preboot_viewer = Some(preboot_viewer::PreBootViewer::new(serial, base.clone()));
+                }
+                ui.separator();
                 ui.horizontal(|ui| {
                     ui.label("Relay:");
                     ui.add(egui::TextEdit::singleline(&mut self.preboot_base_url).desired_width(220.0));

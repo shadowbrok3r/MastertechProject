@@ -9,11 +9,85 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crossbeam::channel::{Receiver, Sender, unbounded};
-use eframe::egui::Ui;
+use eframe::egui::{Color32, RichText, Ui};
 
 use crate::remote_viewer::preboot::{from_preboot, terminal_event_to_preboot};
 use crate::remote_viewer::ratagui::{RataguiBackend, TerminalEvent};
 use crate::{PlatformSpawner, Spawner};
+
+/// One connected pre-boot box as reported by the relay's session list.
+pub struct PreBootAgent {
+    pub serial: String,
+    pub idle_secs: u64,
+    pub has_frame: bool,
+}
+
+/// Root-gated roster of currently-connected UEFI apps, polled from the relay's
+/// `GET /api/v1/qc/preboot`. Renders clickable rows; returns a serial to view.
+#[derive(Default)]
+pub struct PreBootRoster {
+    agents: Vec<PreBootAgent>,
+    rx: Option<Receiver<Vec<PreBootAgent>>>,
+    fetching: std::sync::Arc<AtomicBool>,
+}
+
+impl PreBootRoster {
+    pub fn ui(&mut self, ui: &mut Ui, base_url: &str) -> Option<String> {
+        if let Some(rx) = &self.rx {
+            if let Ok(list) = rx.try_recv() {
+                self.agents = list;
+                self.rx = None;
+            }
+        }
+        if self.rx.is_none() && !self.fetching.swap(true, Ordering::AcqRel) {
+            let (tx, rxc) = unbounded();
+            self.rx = Some(rxc);
+            let url = format!("{base_url}/api/v1/qc/preboot");
+            let flag = self.fetching.clone();
+            PlatformSpawner::spawn(async move {
+                let mut out = Vec::new();
+                if let Ok(resp) = reqwest::get(&url).await {
+                    if let Ok(v) = resp.json::<serde_json::Value>().await {
+                        if let Some(arr) = v.get("sessions").and_then(|s| s.as_array()) {
+                            for s in arr {
+                                let serial = s.get("serial").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                                if serial.is_empty() {
+                                    continue;
+                                }
+                                out.push(PreBootAgent {
+                                    serial,
+                                    idle_secs: s.get("idle_secs").and_then(|x| x.as_u64()).unwrap_or(u64::MAX),
+                                    has_frame: s.get("has_frame").and_then(|x| x.as_bool()).unwrap_or(false),
+                                });
+                            }
+                        }
+                    }
+                }
+                let _ = tx.try_send(out);
+                flag.store(false, Ordering::Release);
+            });
+        }
+
+        let mut selected = None;
+        if self.agents.is_empty() {
+            ui.label(RichText::new("no connected UEFI apps").weak());
+        }
+        for a in &self.agents {
+            ui.horizontal(|ui| {
+                let live = a.idle_secs < 60;
+                let color = if live { Color32::from_rgb(120, 220, 130) } else { Color32::GRAY };
+                ui.colored_label(color, &a.serial);
+                ui.label(if a.has_frame { "streaming" } else { "idle" });
+                ui.weak(format!("{}s", a.idle_secs));
+                if ui.button("View").clicked() {
+                    selected = Some(a.serial.clone());
+                }
+            });
+        }
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(1500));
+        selected
+    }
+}
 
 /// Percent-encode a serial for safe use as a path segment.
 fn enc(s: &str) -> String {
