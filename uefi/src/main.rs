@@ -84,6 +84,9 @@ const AGENT_POLL_TICKS: u32 = 150;
 /// Idle ticks (~33 ms each) between remote-input polls while streaming (~400 ms).
 const PREBOOT_INPUT_POLL_TICKS: u32 = 12;
 
+/// Idle ticks (~33 ms each) between presence heartbeats (~45 s).
+const PRESENCE_HEARTBEAT_TICKS: u32 = 1350;
+
 /// In-memory ring log. Single-threaded app, but a Mutex keeps it simple and
 /// also lets us back the `log` facade (so the uefi crate's own debug!/trace!
 /// messages land here too).
@@ -502,6 +505,9 @@ struct Smbios {
     bios_version: String,
     bios_date: String,
     chassis_type: String,
+    chassis_serial: String,
+    chassis_asset: String,
+    oem_strings: Vec<String>,
     mem_max_bytes: u64,
     mem_slots: u16,
     mem_ecc: String,
@@ -537,6 +543,55 @@ fn ecc_name(code: u8) -> &'static str {
         0x07 => "CRC",
         _ => "Unknown",
     }
+}
+
+/// Serial placeholders OEMs leave when the real value is blank (mirrors the
+/// qc-app list). Sub-4-char values are treated as placeholders too.
+fn is_placeholder_serial(s: &str) -> bool {
+    let t = s.trim();
+    if t.len() < 4 {
+        return true;
+    }
+    const PLACEHOLDERS: &[&str] = &[
+        "to be filled by o.e.m.",
+        "default string",
+        "system serial number",
+        "base board serial number",
+        "chassis serial number",
+        "none",
+        "n/a",
+        "not applicable",
+        "not specified",
+        "00000000",
+        "123456789",
+        "...",
+    ];
+    let l = t.to_ascii_lowercase();
+    PLACEHOLDERS.iter().any(|p| l == *p)
+}
+
+/// Firmware-readable order/identity serial. On a new build the chassis serial
+/// carries the burned serial; when it's absent the SMBIOS OEM string is the
+/// always-present, order-lookup-accurate fallback (both match PrestaShop
+/// `order_serial.serial_number` via the same path as `request_prestashop`).
+/// System/baseboard/asset are lower fallbacks. The Windows client's "OA3
+/// serial" (a transformed Windows Product ID) is an OS artifact absent from
+/// firmware; this is the pre-OS equivalent.
+fn effective_serial(d: &Smbios) -> String {
+    if !is_placeholder_serial(&d.chassis_serial) {
+        return d.chassis_serial.trim().to_string();
+    }
+    for s in &d.oem_strings {
+        if !is_placeholder_serial(s) {
+            return s.trim().to_string();
+        }
+    }
+    for cand in [&d.sys_serial, &d.board_serial, &d.chassis_asset] {
+        if !is_placeholder_serial(cand) {
+            return cand.trim().to_string();
+        }
+    }
+    String::new()
 }
 
 fn collect_smbios() -> Smbios {
@@ -609,6 +664,11 @@ fn collect_smbios() -> Smbios {
             }
             3 => {
                 s.chassis_type = chassis_name(st.u8_at(0x05)).to_string();
+                s.chassis_serial = st.str_at(0x07);
+                s.chassis_asset = st.str_at(0x08);
+            }
+            11 => {
+                s.oem_strings = st.strings.clone();
             }
             16 => {
                 // Max capacity: 0x07 is KB as u32; if 0x80000000 use the
@@ -1214,7 +1274,7 @@ fn fingerprint_json(info: &SysInfo) -> String {
         jq(&d.sys_mfr),
         jq(&d.sys_product),
         jq(&d.sys_version),
-        jq(&d.sys_serial),
+        jq(&effective_serial(d)),
         jq(&d.sys_uuid),
         jq(&d.sys_sku),
         jq(&d.sys_family),
@@ -1379,6 +1439,19 @@ fn fingerprint_json(info: &SysInfo) -> String {
     out.push_str(&capsule::esrt_json(&info.esrt).to_string());
     out.push_str(",\"boot_diagnostics\":");
     out.push_str(&bootdiag::diag_json(&info.bootdiag).to_string());
+    // Raw serial sources behind the effective `system.serial`, for fidelity.
+    out.push_str(",\"identity\":");
+    out.push_str(
+        &serde_json::json!({
+            "effective_serial": effective_serial(d),
+            "sys_serial": d.sys_serial,
+            "board_serial": d.board_serial,
+            "chassis_serial": d.chassis_serial,
+            "chassis_asset": d.chassis_asset,
+            "oem_strings": d.oem_strings,
+        })
+        .to_string(),
+    );
     out.push('}');
     out
 }
@@ -3875,7 +3948,7 @@ fn poll_preboot_input(app: &mut App) -> bool {
     if app.target.is_empty() {
         return false;
     }
-    let serial = order::encode_path_segment(app.info.dmi.sys_serial.trim());
+    let serial = order::encode_path_segment(&effective_serial(&app.info.dmi));
     let path = format!("/api/v1/qc/preboot/{serial}/input");
     let mut got = false;
     if let Ok((200, body)) = http_get_json(&app.target, &path) {
@@ -3891,15 +3964,45 @@ fn poll_preboot_input(app: &mut App) -> bool {
     got
 }
 
+/// Register once (full fingerprint), then heartbeat, so a networked box appears
+/// and stays fresh in the admin console without operator action.
+fn presence_tick(app: &mut App) {
+    app.present_tick = app.present_tick.saturating_add(1);
+    if !app.present_registered {
+        let _ = upload_fingerprint(app);
+        // Immediate heartbeat so the box shows in the roster without waiting a
+        // full interval for the first one.
+        send_presence_heartbeat(app);
+        app.present_registered = true;
+        app.present_tick = 0;
+    } else if app.present_tick >= PRESENCE_HEARTBEAT_TICKS {
+        app.present_tick = 0;
+        send_presence_heartbeat(app);
+    }
+}
+
+/// Tiny POST that bumps the connected_client:qc_<serial> row's last_update.
+fn send_presence_heartbeat(app: &App) {
+    if app.target.is_empty() {
+        return;
+    }
+    let serial = order::encode_path_segment(&effective_serial(&app.info.dmi));
+    if serial.is_empty() {
+        return;
+    }
+    let path = format!("/api/v1/qc/preboot/{serial}/alive");
+    let _ = http_post_json(&app.target, &path, b"{}");
+}
+
 /// Load and invoke a plugin, formatting the run into `app.plugin_out`.
 fn run_wasm_plugin(app: &mut App, bytes: &[u8], tool: &str, args: &str) {
     let host = {
-        let s = app.info.dmi.sys_serial.trim();
-        if s.is_empty() || s == "-" { "uefi" } else { s }
+        let s = effective_serial(&app.info.dmi);
+        if s.is_empty() { "uefi".to_string() } else { s }
     };
     let fw = fw_data(&app.info);
     app.plugin_out.clear();
-    match wasmrt::run(bytes, host, Some((tool, args)), fw) {
+    match wasmrt::run(bytes, &host, Some((tool, args)), fw) {
         Ok(run) => {
             app.plugin_out.push(format!("id: {}", run.id));
             app.plugin_out.push(format!("name: {} v{}", run.name, run.version));
@@ -4626,6 +4729,29 @@ fn page_readiness(frame: &mut Frame, area: Rect, info: &SysInfo) {
             Span::styled("none (no MSDM table)", Style::default().fg(palette::MUTED)),
         ]));
     }
+
+    lines.push(Line::from(""));
+    lines.push(header("Order identity (lookup serial)"));
+    let eff = effective_serial(&info.dmi);
+    lines.push(Line::from(vec![
+        Span::styled(format!("{:<14}", "Lookup serial"), Style::default().fg(palette::LABEL)),
+        Span::styled(
+            if eff.is_empty() { "(none)".to_string() } else { eff.clone() },
+            Style::default()
+                .fg(if eff.is_empty() { palette::ERR } else { palette::GOOD })
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    let show = |v: &str| if v.trim().is_empty() { "-".to_string() } else { v.trim().to_string() };
+    lines.push(kv("Chassis serial", show(&info.dmi.chassis_serial)));
+    if info.dmi.oem_strings.is_empty() {
+        lines.push(kv("OEM strings", "-".to_string()));
+    } else {
+        for (i, s) in info.dmi.oem_strings.iter().enumerate() {
+            lines.push(kv(&format!("OEM string {}", i + 1), show(s)));
+        }
+    }
+    lines.push(kv("System serial", show(&info.dmi.sys_serial)));
     frame.render_widget(para(lines, "Readiness"), area);
 }
 
@@ -4982,6 +5108,11 @@ struct App {
     stream_throttle: stream::Throttle,
     /// Remote viewer events queued for injection into the input loop.
     injected: Vec<terminput::Event>,
+    /// Auto-presence: once the network is up, register + heartbeat so the box
+    /// shows in the admin console without operator action.
+    present: bool,
+    present_registered: bool,
+    present_tick: u32,
 }
 
 impl App {
@@ -4997,14 +5128,7 @@ fn run() -> Result<()> {
     init_ratatui_perf();
     let (mut terminal, mut input_reader) = create_ui()?;
     let info = SysInfo::collect();
-    let default_serial = {
-        let s = info.dmi.sys_serial.trim();
-        if s.is_empty() || s == "-" {
-            String::new()
-        } else {
-            s.to_string()
-        }
-    };
+    let default_serial = effective_serial(&info.dmi);
     let mut app = App {
         info,
         tab: 0,
@@ -5024,6 +5148,9 @@ fn run() -> Result<()> {
         stream_last_input_tick: 0,
         stream_throttle: stream::Throttle::new(),
         injected: Vec::new(),
+        present: false,
+        present_registered: false,
+        present_tick: 0,
     };
 
     terminal.clear()?;
@@ -5047,7 +5174,7 @@ fn run() -> Result<()> {
         if let Some(pf) = captured {
             // POST the frame body to the relay only when the screen changed.
             if let Some(body) = app.stream_throttle.body_if_dirty(&pf) {
-                let serial = order::encode_path_segment(app.info.dmi.sys_serial.trim());
+                let serial = order::encode_path_segment(&effective_serial(&app.info.dmi));
                 let path = format!("/api/v1/qc/preboot/{serial}/frame");
                 if let Err(e) = http_post_json(&app.target, &path, &body) {
                     logln(format!("stream: frame POST failed: {e}"));
@@ -5071,7 +5198,7 @@ fn run() -> Result<()> {
         let event = if !app.injected.is_empty() {
             // FIFO: keystrokes must replay in the order they were typed.
             Some(app.injected.remove(0))
-        } else if app.stress.is_active() || app.agent || app.streaming {
+        } else if app.stress.is_active() || app.agent || app.streaming || app.present {
             let ev = input_reader.poll_event()?;
             if ev.is_none() {
                 uefi::boot::stall(core::time::Duration::from_millis(33));
@@ -5081,6 +5208,9 @@ fn run() -> Result<()> {
                         app.agent_tick = 0;
                         agent_poll(&mut app, &mut terminal)?;
                     }
+                }
+                if app.present {
+                    presence_tick(&mut app);
                 }
                 continue;
             }
@@ -5135,9 +5265,16 @@ fn run() -> Result<()> {
                 app.status = "DHCP: working (up to 30s)...".into();
                 terminal.draw(|frame| render(frame, &app))?;
                 let (ifaces, raw, status) = run_dhcp();
+                let networked = !ifaces.is_empty() || raw.is_some();
                 app.ifaces = ifaces;
                 app.raw_net = raw;
                 app.status = status;
+                // Network is up by operator choice — auto-appear in the console.
+                if networked && !app.present {
+                    app.present = true;
+                    app.present_registered = false;
+                    app.present_tick = 0;
+                }
             }
             terminput::KeyCode::Char('e') => {
                 app.editing = if app.tab == TAB_ORDER {
@@ -5301,8 +5438,8 @@ fn agent_poll(
     app: &mut App,
     terminal: &mut Terminal<ratatui_uefi::UefiOutputBackend>,
 ) -> Result<()> {
-    let serial = app.info.dmi.sys_serial.trim().to_string();
-    if serial.is_empty() || serial == "-" {
+    let serial = effective_serial(&app.info.dmi);
+    if serial.is_empty() {
         app.status = "agent: no usable serial".into();
         return Ok(());
     }

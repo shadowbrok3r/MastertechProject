@@ -34,8 +34,10 @@ fn encode_event_batch(bodies: &[Vec<u8>]) -> Vec<u8> {
 
 /// Cap on buffered input events per session (drops oldest on overflow).
 const MAX_INPUT_QUEUE: usize = 256;
-/// Sessions idle longer than this are evicted on the next frame POST.
-const SESSION_IDLE_SECS: u64 = 30;
+/// Sessions idle longer than this are evicted on the next frame POST. Wide
+/// enough to span the firmware presence heartbeat (~45s) so a heartbeating
+/// box stays in the roster between frames.
+const SESSION_IDLE_SECS: u64 = 90;
 
 #[derive(Default)]
 pub struct PreBootSession {
@@ -109,6 +111,21 @@ async fn get_input(State(app): State<AppState>, Path(serial): Path<String>) -> i
     (StatusCode::OK, encode_event_batch(&bodies))
 }
 
+/// Firmware → relay: presence heartbeat. Bumps (or creates) the
+/// connected_client:qc_<serial> row so it stays "connected" between
+/// fingerprints and the staleness reaper doesn't retire a live box.
+async fn alive(State(app): State<AppState>, Path(serial): Path<String>) -> impl IntoResponse {
+    // Presence in the in-memory roster (GET /preboot lists it whether or not it
+    // is streaming a screen yet).
+    app.preboot.lock().await.entry(serial.clone()).or_default().last_seen = Some(Instant::now());
+    let id = format!("qc_{serial}");
+    let q = "UPSERT type::thing('connected_client', $id) MERGE \
+             { connected: true, last_update: time::now(), \
+               client_kind: 'qc_agent', connection_string: $cs }";
+    let _ = database::DATABASE.query(q).bind(("id", id)).bind(("cs", serial)).await;
+    StatusCode::OK
+}
+
 /// Admin: list active pre-boot sessions for the viewer picker.
 async fn list_sessions(State(app): State<AppState>) -> impl IntoResponse {
     let reg = app.preboot.lock().await;
@@ -139,4 +156,5 @@ pub fn preboot_routes() -> Router<AppState> {
             "/api/v1/qc/preboot/{serial}/input",
             axum::routing::post(post_input).get(get_input),
         )
+        .route("/api/v1/qc/preboot/{serial}/alive", axum::routing::post(alive))
 }
