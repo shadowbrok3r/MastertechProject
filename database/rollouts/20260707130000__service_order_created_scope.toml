@@ -1,0 +1,47 @@
+id = "20260707130000__service_order_created_scope"
+name = "service_order_created_scope"
+state = "planned"
+# Rewrite the service_order `created` event so it no longer calls the global
+# fn::fix_specs() sweep (a correlated scan that ignored the index and ran ~18s
+# on every insert, blowing the 20s transaction timeout). The scoped event only
+# stamps created_at server-side and auto-links the just-created order's computer
+# via a pre-bound (index-using) lookup. O(1) per insert. Mirrors
+# database/schema/service_order.surql (source of truth). Depends on the
+# computer.customer index from 20260707120000. source == target = current hash;
+# paste the `current=` reported by `surrealkit rollout lint`.
+source_schema_hash = "405d569ea8317d67dccc22b2cd8516a026aa656473cd1d804786ea3625cb5521"
+target_schema_hash = "405d569ea8317d67dccc22b2cd8516a026aa656473cd1d804786ea3625cb5521"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "scope_service_order_created_event"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE EVENT OVERWRITE created ON service_order
+    WHEN $event = 'CREATE'
+    THEN {
+        UPDATE $value.id SET created_at = time::now();
+        IF $value.computer.id == NONE AND $value.customer != NONE {
+            LET $cust = $value.customer;
+            LET $pc = (SELECT VALUE id FROM computer WHERE customer == $cust)[0];
+            IF $pc != NONE {
+                UPDATE $value.id SET computer = $pc;
+            };
+        };
+    };
+"""
+
+[[steps]]
+id = "restore_service_order_created_event"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+DEFINE EVENT OVERWRITE created ON service_order
+    WHEN $event = 'CREATE'
+    THEN {
+        UPDATE service_order SET created_at = time::now() WHERE id = $value.id;
+        fn::fix_specs();
+    };
+"""

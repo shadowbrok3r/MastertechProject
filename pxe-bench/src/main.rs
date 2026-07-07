@@ -29,21 +29,57 @@ ipxe_script = "boot.ipxe"
     Ok(())
 }
 
+// Relative URIs resolve against the fetched-script URL, so no server IP appears.
+const WINPE_BLOCK: &str = "kernel wimboot\n\
+initrd MasterTech.exe MasterTech.exe\n\
+initrd media/sources/boot.wim boot.wim\n\
+boot\n";
+
+fn boot_script(cfg: &Config) -> String {
+    match cfg.boot_mode.as_str() {
+        "winpe" => format!("#!ipxe\n{WINPE_BLOCK}"),
+        "uefi" => format!("#!ipxe\nchain {}\n", cfg.uefi_efi),
+        _ => format!(
+            "#!ipxe\n\
+menu Mastertech Bench Boot\n\
+item winpe   Mastertech WinPE (terminal)\n\
+item uefi    Mastertech UEFI diagnostics\n\
+item local   Boot local disk\n\
+item shell   iPXE shell\n\
+choose --default winpe --timeout 15000 target && goto ${{target}} || goto winpe\n\
+\n\
+:winpe\n\
+echo Booting Mastertech WinPE ...\n\
+kernel wimboot\n\
+initrd MasterTech.exe MasterTech.exe\n\
+initrd media/sources/boot.wim boot.wim\n\
+boot || goto failed\n\
+\n\
+:uefi\n\
+echo Booting Mastertech UEFI diagnostics ...\n\
+chain {efi} || goto failed\n\
+\n\
+:local\n\
+echo Booting local disk ...\n\
+exit\n\
+\n\
+:shell\n\
+shell\n\
+\n\
+:failed\n\
+echo Boot failed - dropping to iPXE shell\n\
+shell\n",
+            efi = cfg.uefi_efi
+        ),
+    }
+}
+
 fn write_default_boot_script(cfg: &Config) -> anyhow::Result<()> {
     let path = cfg.http_root.join(&cfg.ipxe_script);
-    if path.exists() {
-        return Ok(());
-    }
     std::fs::create_dir_all(&cfg.http_root)?;
     std::fs::create_dir_all(&cfg.tftp_root)?;
-    let base = format!("http://{}:{}", cfg.server_ip, cfg.http_port);
-    // Minimal wimboot recipe (ipxe.org/howto/winpe): wimboot auto-extracts the
-    // boot manager + BCD from the WIM, so only boot.wim is served.
-    let script = format!(
-        "#!ipxe\necho Mastertech bench boot - ${{net0/mac}}\nkernel {base}/wimboot\ninitrd {base}/media/sources/boot.wim boot.wim\nboot\n"
-    );
-    std::fs::write(&path, script)?;
-    log::info!("wrote default boot script {}", path.display());
+    std::fs::write(&path, boot_script(cfg))?;
+    log::info!("wrote boot script {} (mode {})", path.display(), cfg.boot_mode);
     Ok(())
 }
 
@@ -83,4 +119,39 @@ async fn main() -> anyhow::Result<()> {
         _ = tokio::signal::ctrl_c() => log::info!("shutting down"),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg(mode: &str) -> Config {
+        toml::from_str(&format!("server_ip = \"192.168.22.15\"\nboot_mode = \"{mode}\"")).unwrap()
+    }
+
+    #[test]
+    fn menu_offers_both_targets_with_relative_uris() {
+        let s = boot_script(&cfg("menu"));
+        assert!(s.contains("item winpe"));
+        assert!(s.contains("item uefi"));
+        assert!(s.contains("chain mtech.efi"));
+        assert!(s.contains("initrd media/sources/boot.wim boot.wim"));
+        assert!(s.contains("goto ${target}"));
+        assert!(!s.contains("192.168"), "no server IP should appear in the script");
+    }
+
+    #[test]
+    fn winpe_mode_is_bare_wimboot() {
+        let s = boot_script(&cfg("winpe"));
+        assert!(!s.contains("menu "));
+        assert!(s.contains("kernel wimboot"));
+        assert!(s.contains("initrd media/sources/boot.wim boot.wim"));
+    }
+
+    #[test]
+    fn uefi_mode_chains_the_efi() {
+        let s = boot_script(&cfg("uefi"));
+        assert!(!s.contains("menu "));
+        assert!(s.contains("chain mtech.efi"));
+    }
 }

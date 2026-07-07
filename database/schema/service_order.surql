@@ -8,8 +8,14 @@ DEFINE TABLE service_order TYPE ANY SCHEMALESS PERMISSIONS FULL;
 DEFINE EVENT created ON service_order
     WHEN $event = 'CREATE'
     THEN {
-        UPDATE service_order SET created_at = time::now() WHERE id = $value.id;
-        fn::fix_specs();
+        UPDATE $value.id SET created_at = time::now();
+        IF $value.computer.id == NONE AND $value.customer != NONE {
+            LET $cust = $value.customer;
+            LET $pc = (SELECT VALUE id FROM computer WHERE customer == $cust)[0];
+            IF $pc != NONE {
+                UPDATE $value.id SET computer = $pc;
+            };
+        };
     };
 
 DEFINE INDEX service_idx        ON service_order FIELDS service_number;

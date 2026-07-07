@@ -23,11 +23,15 @@
     },
     {
       "path": "database/schema/computer.surql",
-      "hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+      "hash": "42844f3e27dc48db96ca3c14db43f8db4169c145c33f32777d99b69015460e9c"
     },
     {
       "path": "database/schema/connected_client.surql",
       "hash": "efba2b8192ab28ca1d4c2d00991181f97a9a2ebf69df04654a770436c92124a7"
+    },
+    {
+      "path": "database/schema/crash_intel.surql",
+      "hash": "346423ed7d188a1973e69df0de54e287d0c9dee5e52f4c8fff0d66855e54a9bc"
     },
     {
       "path": "database/schema/customer.surql",
@@ -40,6 +44,10 @@
     {
       "path": "database/schema/diagnostic_session.surql",
       "hash": "4d12ea34784813957837185c3127045875eeffda6f9dcb5c207e917c6610b3d5"
+    },
+    {
+      "path": "database/schema/driver_intel.surql",
+      "hash": "4571b8b62d07accd59e4d0d7e4a40429ccb801a9b9e289f0028d7370dea00887"
     },
     {
       "path": "database/schema/fleet_agent.surql",
@@ -91,7 +99,7 @@
     },
     {
       "path": "database/schema/service_order.surql",
-      "hash": "effe0e99a05cd15e1793723113dac098867f66ea7c9831a235ca629fc832e1c9"
+      "hash": "6e901642f35d0f034a60378e16167162f27d07dbc332f4c94954686b74a8002a"
     },
     {
       "path": "database/schema/stress_test_event.surql",
@@ -131,7 +139,7 @@
     },
     {
       "path": "database/schema/user.surql",
-      "hash": "81f5b150fdd362a4e2dcfc70a39f70466b2530d78bf2da193b8b3c8cac11da64"
+      "hash": "2b0a3010738497d767211caeaa19e459bad2aa364e81862466313b74ba771044"
     }
   ]
 }

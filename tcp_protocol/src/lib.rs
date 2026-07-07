@@ -139,6 +139,16 @@ pub mod preboot {
     pub const FRAME_TAG_PREBOOT_FRAME: u8 = 0x05;
     /// An input event from the admin viewer back to firmware.
     pub const FRAME_TAG_PREBOOT_INPUT: u8 = 0x06;
+    /// Opens a persistent pre-boot session; body is the UTF-8 session id
+    /// (the machine serial). Sent once, before any frame, so the QC TCP
+    /// listener keeps the socket open and registers a relay session rather
+    /// than treating the connection as a one-shot fingerprint push.
+    ///
+    /// Persistent session flow (firmware dials the QC listener):
+    /// 1. `[len][0x07][serial]` — hello
+    /// 2. `[len][0x05][frame]` … streamed on change
+    /// 3. server writes `[len][0x06][event]` back as the viewer sends input
+    pub const FRAME_TAG_PREBOOT_HELLO: u8 = 0x07;
 
     /// Mirrors `ratatui::style::Color` so a cell's color survives the wire
     /// without pulling ratatui into firmware's wire crate.
@@ -238,6 +248,41 @@ pub mod preboot {
         bincode::serde::decode_from_slice(b, bincode::config::standard())
             .ok()
             .map(|(v, _)| v)
+    }
+
+    /// Pack queued event bodies as `[u32 LE count][(u32 LE len)(body)]*` for the
+    /// HTTP-relayed input channel (server drains its queue into one response).
+    pub fn encode_event_batch(bodies: &[Vec<u8>]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&(bodies.len() as u32).to_le_bytes());
+        for b in bodies {
+            out.extend_from_slice(&(b.len() as u32).to_le_bytes());
+            out.extend_from_slice(b);
+        }
+        out
+    }
+
+    /// Inverse of [`encode_event_batch`]; malformed input yields what parsed so far.
+    pub fn split_event_batch(bytes: &[u8]) -> Vec<Vec<u8>> {
+        let mut out = Vec::new();
+        if bytes.len() < 4 {
+            return out;
+        }
+        let count = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+        let mut p = 4;
+        for _ in 0..count {
+            if p + 4 > bytes.len() {
+                break;
+            }
+            let len = u32::from_le_bytes([bytes[p], bytes[p + 1], bytes[p + 2], bytes[p + 3]]) as usize;
+            p += 4;
+            if p + len > bytes.len() {
+                break;
+            }
+            out.push(bytes[p..p + len].to_vec());
+            p += len;
+        }
+        out
     }
 }
 
