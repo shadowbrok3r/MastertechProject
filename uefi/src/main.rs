@@ -1590,7 +1590,7 @@ mod http_efi {
         logln(format!("http(efi): POST {url} ({}B)", body.len()));
         let handles = boot::find_handles::<HttpBinding>().map_err(|e| {
             logln(format!("http(efi): no HTTP service ({e:?})"));
-            format!("no EFI HTTP service ({e:?})")
+            format!("no HTTPS/DNS in firmware; set target to http://<LAN-IP>:8082 ('e') [{e:?}]")
         })?;
         let h = *handles.first().ok_or("no HTTP-capable interface")?;
         let mut http = HttpHelper::new(h).map_err(|e| {
@@ -1630,7 +1630,7 @@ mod http_efi {
     pub fn get_capped(url: &str, max_cap: usize) -> Result<(u16, Vec<u8>), String> {
         logln(format!("http(efi): GET {url}"));
         let handles = boot::find_handles::<HttpBinding>()
-            .map_err(|e| format!("no EFI HTTP service ({e:?})"))?;
+            .map_err(|e| format!("no HTTPS/DNS in firmware; set target to http://<LAN-IP>:8082 ('e') [{e:?}]"))?;
         let h = *handles.first().ok_or("no HTTP-capable interface")?;
         let mut http = HttpHelper::new(h).map_err(|e| format!("http open: {e:?}"))?;
         http.configure().map_err(|e| format!("configure: {e:?}"))?;
@@ -3968,17 +3968,17 @@ fn poll_preboot_input(app: &mut App) -> bool {
 /// and stays fresh in the admin console without operator action.
 fn presence_tick(app: &mut App) {
     app.present_tick = app.present_tick.saturating_add(1);
-    if !app.present_registered {
-        let _ = upload_fingerprint(app);
-        // Immediate heartbeat so the box shows in the roster without waiting a
-        // full interval for the first one.
-        send_presence_heartbeat(app);
-        app.present_registered = true;
-        app.present_tick = 0;
-    } else if app.present_tick >= PRESENCE_HEARTBEAT_TICKS {
-        app.present_tick = 0;
-        send_presence_heartbeat(app);
+    if app.present_tick < PRESENCE_HEARTBEAT_TICKS {
+        return;
     }
+    app.present_tick = 0;
+    // Retry registration each interval until the fingerprint upload lands, then
+    // just heartbeat. The heartbeat itself upserts the connected_client row, so
+    // the box shows in the roster even if the full fingerprint hasn't yet.
+    if !app.present_registered {
+        app.present_registered = upload_fingerprint(app).is_ok();
+    }
+    send_presence_heartbeat(app);
 }
 
 /// Tiny POST that bumps the connected_client:qc_<serial> row's last_update.
@@ -5273,7 +5273,8 @@ fn run() -> Result<()> {
                 if networked && !app.present {
                     app.present = true;
                     app.present_registered = false;
-                    app.present_tick = 0;
+                    // Fire the first presence attempt on the next tick.
+                    app.present_tick = PRESENCE_HEARTBEAT_TICKS;
                 }
             }
             terminput::KeyCode::Char('e') => {

@@ -61,6 +61,7 @@ async fn post_frame(
     Path(serial): Path<String>,
     body: Bytes,
 ) -> impl IntoResponse {
+    tracing::debug!(serial = %serial, bytes = body.len(), "qc.preboot frame in");
     let mut reg = app.preboot.lock().await;
     let now = Instant::now();
     reg.retain(|_, s| {
@@ -88,6 +89,7 @@ async fn post_input(
     Path(serial): Path<String>,
     body: Bytes,
 ) -> impl IntoResponse {
+    tracing::info!(serial = %serial, bytes = body.len(), "qc.preboot input queued");
     let mut reg = app.preboot.lock().await;
     let s = reg.entry(serial).or_default();
     if s.input.len() >= MAX_INPUT_QUEUE {
@@ -115,6 +117,7 @@ async fn get_input(State(app): State<AppState>, Path(serial): Path<String>) -> i
 /// connected_client:qc_<serial> row so it stays "connected" between
 /// fingerprints and the staleness reaper doesn't retire a live box.
 async fn alive(State(app): State<AppState>, Path(serial): Path<String>) -> impl IntoResponse {
+    tracing::info!(serial = %serial, "qc.preboot alive (presence heartbeat)");
     // Presence in the in-memory roster (GET /preboot lists it whether or not it
     // is streaming a screen yet).
     app.preboot.lock().await.entry(serial.clone()).or_default().last_seen = Some(Instant::now());
