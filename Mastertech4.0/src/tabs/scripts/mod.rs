@@ -82,6 +82,19 @@ mod colors {
     pub const QUEUE_ITEM_BG: Color32 = Color32::from_rgb(30, 30, 46);
 }
 
+/// Quiet period after a queued script's last log before the queue advances.
+const QUEUE_ADVANCE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(1000);
+/// Ceiling before the queue advances past a script that never emits a terminal log.
+const QUEUE_SCRIPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+/// Tracks the currently running queued script for completion detection.
+struct QueueRun {
+    log_start: usize,
+    seen_logs: usize,
+    last_activity: std::time::Instant,
+    started_at: std::time::Instant,
+}
+
 /// Egui Scripts Tab state
 pub struct EguiScriptsTab {
     /// Shared scripts state (categories, queue, logs)
@@ -132,6 +145,8 @@ pub struct EguiScriptsTab {
     pub pending_mcp_runs: Vec<McpPendingRun>,
     /// diagnostic_session id from the latest MCP scripts_run request.
     pub mcp_diagnostic_session_id: Option<String>,
+    /// Completion tracking for the running queued script; None when idle.
+    queue_run: Option<QueueRun>,
 }
 
 /// Tracks one in-flight MCP-initiated script run inside `EguiScriptsTab`.
@@ -190,6 +205,7 @@ impl EguiScriptsTab {
             selected_destination: None,
             pending_mcp_runs: Vec::new(),
             mcp_diagnostic_session_id: None,
+            queue_run: None,
         }
     }
 
@@ -472,7 +488,15 @@ impl EguiScriptsTab {
         if let Some(queued) = self.state.queue.current_script() {
             let script = queued.script.clone();
             self.current_script_name = Some(script.name.clone());
-            
+
+            let now = std::time::Instant::now();
+            self.queue_run = Some(QueueRun {
+                log_start: self.state.logs.len(),
+                seen_logs: self.state.logs.len(),
+                last_activity: now,
+                started_at: now,
+            });
+
             self.log_info(&script.name, format!("Starting: {}", script.name));
             
             // Execute based on category
@@ -498,6 +522,95 @@ impl EguiScriptsTab {
                     self.log_warning(&script.name, "Unknown script category");
                 }
             }
+        }
+    }
+
+    /// Advance the queue once the running script has finished. Completion is
+    /// inferred from the script's most recent terminal log entry after a short
+    /// quiet period, or from a hard timeout; then the next script is started.
+    pub fn advance_queue_if_ready(&mut self) {
+        if !self.state.queue.is_running() {
+            self.queue_run = None;
+            return;
+        }
+        // Pause while the interactive data-transfer picker is open.
+        if self.show_data_transfer_ui {
+            return;
+        }
+        let Some(current_name) = self
+            .state
+            .queue
+            .current_script()
+            .map(|q| q.script.name.clone())
+        else {
+            return;
+        };
+
+        let now = std::time::Instant::now();
+        let logs_len = self.state.logs.len();
+
+        if self.queue_run.is_none() {
+            self.queue_run = Some(QueueRun {
+                log_start: logs_len,
+                seen_logs: logs_len,
+                last_activity: now,
+                started_at: now,
+            });
+            return;
+        }
+        let run = self.queue_run.as_mut().unwrap();
+        if logs_len != run.seen_logs {
+            run.seen_logs = logs_len;
+            run.last_activity = now;
+        }
+        let log_start = run.log_start;
+        let last_activity = run.last_activity;
+        let started_at = run.started_at;
+
+        let (is_terminal, is_failure) = {
+            let latest = self
+                .state
+                .logs
+                .get(log_start..)
+                .unwrap_or(&[])
+                .iter()
+                .rev()
+                .find(|e| e.script_name == current_name);
+            (
+                latest.is_some_and(|e| {
+                    matches!(e.level, LogLevel::Success | LogLevel::Warning | LogLevel::Error)
+                }),
+                latest.is_some_and(|e| matches!(e.level, LogLevel::Error)),
+            )
+        };
+
+        let debounced = now.duration_since(last_activity) >= QUEUE_ADVANCE_DEBOUNCE;
+        let timed_out = now.duration_since(started_at) >= QUEUE_SCRIPT_TIMEOUT;
+
+        if !((is_terminal && debounced) || timed_out) {
+            return;
+        }
+
+        if timed_out && !is_terminal {
+            self.log_warning(
+                &current_name,
+                format!(
+                    "No completion detected after {} min; advancing to the next queued script",
+                    QUEUE_SCRIPT_TIMEOUT.as_secs() / 60
+                ),
+            );
+        }
+
+        self.state.queue.finish_current(is_failure);
+        self.state.queue.next();
+        self.queue_run = None;
+
+        if self.state.queue.is_running() {
+            self.execute_next_script();
+        } else {
+            let (completed, total) = self.state.queue.progress();
+            self.current_script_name = None;
+            self.log_info("Queue", format!("Queue complete ({}/{} finished)", completed, total));
         }
     }
 
