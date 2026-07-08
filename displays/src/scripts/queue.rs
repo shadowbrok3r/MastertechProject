@@ -151,6 +151,21 @@ impl ScriptQueue {
         None
     }
 
+    /// Mark the currently running script with a terminal status.
+    pub fn finish_current(&mut self, failed: bool) {
+        if let Some(current) = self.current_index {
+            if let Some(item) = self.items.get_mut(current) {
+                if item.script.status == ScriptStatus::Running {
+                    item.script.status = if failed {
+                        ScriptStatus::Failed
+                    } else {
+                        ScriptStatus::Completed
+                    };
+                }
+            }
+        }
+    }
+
     /// Stop the queue execution
     pub fn stop(&mut self) {
         self.is_running = false;
@@ -171,6 +186,54 @@ impl ScriptQueue {
             .filter(|qs| matches!(qs.script.status, ScriptStatus::Completed | ScriptStatus::Failed | ScriptStatus::Skipped))
             .count();
         (completed, self.items.len())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scripts::ScriptCategory;
+
+    fn queue_of(n: usize) -> ScriptQueue {
+        let mut q = ScriptQueue::new();
+        for i in 0..n {
+            q.add(ScriptItem::new(format!("script {i}"), ScriptCategory::Tuneup));
+        }
+        q
+    }
+
+    #[test]
+    fn drives_every_script_to_completion() {
+        let mut q = queue_of(3);
+        q.start();
+        assert!(q.is_running());
+        assert_eq!(q.current_script().unwrap().script.status, ScriptStatus::Running);
+
+        // Script 0 succeeds, 1 fails, 2 succeeds.
+        q.finish_current(false);
+        assert_eq!(q.items()[0].script.status, ScriptStatus::Completed);
+        assert!(q.next().is_some());
+
+        q.finish_current(true);
+        assert_eq!(q.items()[1].script.status, ScriptStatus::Failed);
+        assert!(q.next().is_some());
+
+        q.finish_current(false);
+        assert_eq!(q.items()[2].script.status, ScriptStatus::Completed);
+        assert!(q.next().is_none());
+
+        assert!(!q.is_running());
+        assert!(q.current_script().is_none());
+        assert_eq!(q.progress(), (3, 3));
+    }
+
+    #[test]
+    fn finish_current_only_touches_running_script() {
+        let mut q = queue_of(1);
+        q.start();
+        q.finish_current(true);
+        q.finish_current(false); // status no longer Running; must not flip to Completed
+        assert_eq!(q.items()[0].script.status, ScriptStatus::Failed);
     }
 }
 

@@ -151,6 +151,10 @@ impl MasterTechApp {
         self.context.scripts_tab.process_mcp_requests();
         self.context.scripts_tab.receive();
         self.context.scripts_tab.process_mcp_completions();
+        self.context.scripts_tab.advance_queue_if_ready();
+        if self.context.scripts_tab.state.queue.is_running() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+        }
 
         // The GUI-side WS-relay `frontend.receive()` pump is gone with
         // `tabs/websockets/mod.rs`.  Admin→client egui input now arrives
