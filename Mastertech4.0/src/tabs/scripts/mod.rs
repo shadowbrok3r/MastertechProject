@@ -2812,6 +2812,10 @@ impl MastertechContext {
                         .stick_to_bottom(self.scripts_tab.auto_scroll_logs);
 
                     scroll.show(ui, |ui| {
+                        let small = egui::TextStyle::Small.resolve(ui.style());
+                        let body = egui::TextStyle::Body.resolve(ui.style());
+                        let mono_small = egui::FontId::monospace(small.size);
+
                         for entry in self.scripts_tab.state.logs.iter() {
                             let color = match entry.level {
                                 LogLevel::Info => colors::LOG_INFO,
@@ -2827,17 +2831,16 @@ impl MastertechContext {
                                 LogLevel::Error => "🗙",
                             };
 
-                            ui.horizontal_wrapped(|ui| {
-                                let time_str = entry.timestamp.format("%H:%M:%S").to_string();
-                                ui.label(RichText::new(time_str).color(colors::PENDING).small().monospace());
-                                ui.label(RichText::new(icon).color(color));
-                                ui.label(
-                                    RichText::new(format!("[{}]", entry.script_name))
-                                        .color(colors::CATEGORY_HEADER)
-                                        .small(),
-                                );
-                                ui.label(RichText::new(&entry.message).color(color));
-                            });
+                            // Single galley; break_anywhere wraps long paths at the panel width.
+                            let mut job = egui::text::LayoutJob::default();
+                            job.wrap.break_anywhere = true;
+                            let time_str = entry.timestamp.format("%H:%M:%S").to_string();
+                            job.append(&time_str, 0.0, egui::TextFormat { font_id: mono_small.clone(), color: colors::PENDING, ..Default::default() });
+                            job.append(icon, 4.0, egui::TextFormat { font_id: body.clone(), color, ..Default::default() });
+                            job.append(&format!("[{}]", entry.script_name), 4.0, egui::TextFormat { font_id: small.clone(), color: colors::CATEGORY_HEADER, ..Default::default() });
+                            job.append(&entry.message, 4.0, egui::TextFormat { font_id: body.clone(), color, ..Default::default() });
+
+                            ui.label(job);
                         }
                     });
                 }
