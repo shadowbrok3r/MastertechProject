@@ -45,6 +45,7 @@ default-members = [
 exclude = [
     "uefi",
     "MastertechMobile",
+    "preboot-relay",
 ]
 
 [workspace.dependencies]

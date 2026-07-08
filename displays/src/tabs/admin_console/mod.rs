@@ -755,8 +755,46 @@ impl SharedContext {
                     ui.add_space(6.);
                 }
 
+                // Root-only pre-boot UEFI rows (client_kind == qc_agent), shown
+                // in their own section under the machine list.
+                let preboot_rows: Vec<(String, String, i64)> =
+                    if crate::get_current_user_from_auth().map(|u| u.is_admin()).unwrap_or(false) {
+                        clients
+                            .iter()
+                            .filter(|c| {
+                                c.client_kind == database::schema::client::ClientKind::QcAgent
+                                    && c.connected
+                            })
+                            .map(|c| {
+                                let serial = if c.connection_string.trim().is_empty() {
+                                    c.id.key_string().trim_start_matches("qc_").to_string()
+                                } else {
+                                    c.connection_string.trim().to_string()
+                                };
+                                let age = c
+                                    .last_update
+                                    .as_ref()
+                                    .and_then(|d| {
+                                        chrono::DateTime::parse_from_rfc3339(&d.to_string()).ok()
+                                    })
+                                    .map(|t| {
+                                        (chrono::Utc::now() - t.with_timezone(&chrono::Utc))
+                                            .num_seconds()
+                                    })
+                                    .unwrap_or(i64::MAX);
+                                (serial, c.friendly_name.clone().unwrap_or_default(), age)
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                let show_preboot = !preboot_rows.is_empty();
+                // Machine list keeps the top 75%; the pre-boot section gets the rest.
+                let list_max_h =
+                    if show_preboot { ui.available_height() * 0.75 } else { f32::INFINITY };
                 ScrollArea::vertical()
                     .auto_shrink([true, true])
+                    .max_height(list_max_h)
                     .show(ui, |ui| {
                     ui.set_width(CLIENT_ROW_CONTENT_W);
                     ui.set_min_width(CLIENT_ROW_CONTENT_W);
@@ -800,6 +838,59 @@ impl SharedContext {
                         }
                     }
                 });
+
+                if show_preboot {
+                    ui.add_space(4.);
+                    ui.separator();
+                    ui.label(
+                        RichText::new(format!(
+                            "{} Pre-Boot UEFI ({})",
+                            icons::TERMINAL,
+                            preboot_rows.len()
+                        ))
+                        .strong(),
+                    );
+                    let mut view_serial: Option<String> = None;
+                    ScrollArea::vertical()
+                        .id_salt("preboot_qc_section")
+                        .auto_shrink([true, true])
+                        .show(ui, |ui| {
+                            ui.set_width(CLIENT_ROW_CONTENT_W);
+                            for (serial, friendly, age) in &preboot_rows {
+                                ui.horizontal(|ui| {
+                                    // Heartbeat lands every ~45s; <90s = live.
+                                    let color = if *age < 90 {
+                                        Color32::from_rgb(120, 220, 130)
+                                    } else {
+                                        Color32::GRAY
+                                    };
+                                    ui.colored_label(color, serial);
+                                    if !friendly.is_empty() {
+                                        ui.weak(friendly);
+                                    }
+                                    ui.weak(if *age == i64::MAX {
+                                        "no heartbeat".to_string()
+                                    } else {
+                                        format!("{age}s ago")
+                                    });
+                                    if ui.button(format!("{} View", icons::EYE)).clicked() {
+                                        view_serial = Some(serial.clone());
+                                    }
+                                });
+                            }
+                        });
+                    if let Some(s) = view_serial {
+                        let base = ws_client
+                            .preboot_base_url
+                            .trim()
+                            .trim_end_matches('/')
+                            .to_string();
+                        ws_client.preboot_serial = s.clone();
+                        ws_client.preboot_viewer =
+                            Some(preboot_viewer::PreBootViewer::new(s, base));
+                        ws_client.preboot_open = true;
+                    }
+                }
             });
         });
 

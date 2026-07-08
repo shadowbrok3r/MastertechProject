@@ -51,9 +51,9 @@ mod palette {
     pub const WARN: Color = CATPPUCCIN.peach; // caution / non-fatal finding
 }
 
-/// Default upload endpoint, baked from the workspace `.env` ORCHESTRATOR_URL at
-/// build time (see build.rs). Falls back to the production URL.
-const DEFAULT_URL: &str = env!("ORCHESTRATOR_URL");
+/// Default upload endpoint, baked from `UEFI_TARGET_URL` (process env or
+/// workspace `.env`) at build time; defaults to the LAN pre-boot relay.
+const DEFAULT_URL: &str = env!("UEFI_TARGET_URL");
 
 const TABS: [&str; 14] = [
     "Overview",

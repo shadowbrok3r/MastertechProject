@@ -59,7 +59,9 @@ pub fn should_show_connected_client_in_summaries(
     client: &ConnectedClient,
     is_live_admin_transport: bool,
 ) -> bool {
-    if client.client_kind == ClientKind::BuildWorker {
+    // Build workers are fleet infrastructure; QC agents render in the admin
+    // console's own pre-boot section, not as machine rows/cards.
+    if matches!(client.client_kind, ClientKind::BuildWorker | ClientKind::QcAgent) {
         return false;
     }
     if client.connection_string.trim().is_empty() {

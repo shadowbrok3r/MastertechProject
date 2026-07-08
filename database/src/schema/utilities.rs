@@ -279,8 +279,9 @@ pub async fn get_connected_clients(tx: Sender<Vec<ConnectedClient>>) -> Result<(
         let query: Vec<ConnectedClient> = DATABASE
             .query(&format!(
                 "SELECT * FROM connected_client \
-                 WHERE {LIST_FILTER} AND assigned_user.id_store == $auth.id_store \
-                 ORDER BY connected DESC, last_update DESC LIMIT 15",
+                 WHERE (({LIST_FILTER} AND assigned_user.id_store == $auth.id_store) \
+                    OR (client_kind = 'qc_agent' AND connected == true)) \
+                 ORDER BY connected DESC, last_update DESC LIMIT 30",
             ))
             .await?
             .take(0)?;

@@ -1,0 +1,16 @@
+[package]
+name = "preboot-relay"
+version = "0.1.0"
+edition = "2021"
+
+# Standalone crate: excluded from the parent workspace so root builds/CI never
+# touch it. Built and run directly on the LAN relay host.
+[workspace]
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+
+[profile.release]
+strip = true
