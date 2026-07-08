@@ -87,6 +87,9 @@ const PREBOOT_INPUT_POLL_TICKS: u32 = 12;
 /// Idle ticks (~33 ms each) between presence heartbeats (~45 s).
 const PRESENCE_HEARTBEAT_TICKS: u32 = 1350;
 
+/// Idle ticks (~33 ms each) between relay viewer-flag checks (~5 s).
+const VIEWER_CHECK_TICKS: u32 = 150;
+
 /// In-memory ring log. Single-threaded app, but a Mutex keeps it simple and
 /// also lets us back the `log` facade (so the uefi crate's own debug!/trace!
 /// messages land here too).
@@ -564,27 +567,26 @@ fn is_placeholder_serial(s: &str) -> bool {
         "not specified",
         "00000000",
         "123456789",
+        // TongFang/Clevo barebone factory default.
+        "1558",
         "...",
     ];
     let l = t.to_ascii_lowercase();
     PLACEHOLDERS.iter().any(|p| l == *p)
 }
 
-/// Firmware-readable order/identity serial. On a new build the chassis serial
-/// carries the burned serial; when it's absent the SMBIOS OEM string is the
-/// always-present, order-lookup-accurate fallback (both match PrestaShop
-/// `order_serial.serial_number` via the same path as `request_prestashop`).
-/// System/baseboard/asset are lower fallbacks. The Windows client's "OA3
-/// serial" (a transformed Windows Product ID) is an OS artifact absent from
-/// firmware; this is the pre-OS equivalent.
-fn effective_serial(d: &Smbios) -> String {
+/// Firmware-readable order/identity serial. Chassis serial (burned on new
+/// builds) wins; the ACPI MSDM OA3 key is the always-present fallback matching
+/// PrestaShop `order_serial.serial_number` (same path as `request_prestashop`).
+/// SMBIOS system/board/asset serials rank below both.
+fn effective_serial(info: &SysInfo) -> String {
+    let d = &info.dmi;
     if !is_placeholder_serial(&d.chassis_serial) {
         return d.chassis_serial.trim().to_string();
     }
-    for s in &d.oem_strings {
-        if !is_placeholder_serial(s) {
-            return s.trim().to_string();
-        }
+    let key = info.msdm_key.trim();
+    if !key.is_empty() {
+        return key.to_string();
     }
     for cand in [&d.sys_serial, &d.board_serial, &d.chassis_asset] {
         if !is_placeholder_serial(cand) {
@@ -1274,7 +1276,7 @@ fn fingerprint_json(info: &SysInfo) -> String {
         jq(&d.sys_mfr),
         jq(&d.sys_product),
         jq(&d.sys_version),
-        jq(&effective_serial(d)),
+        jq(&effective_serial(info)),
         jq(&d.sys_uuid),
         jq(&d.sys_sku),
         jq(&d.sys_family),
@@ -1443,7 +1445,8 @@ fn fingerprint_json(info: &SysInfo) -> String {
     out.push_str(",\"identity\":");
     out.push_str(
         &serde_json::json!({
-            "effective_serial": effective_serial(d),
+            "effective_serial": effective_serial(info),
+            "msdm_key": info.msdm_key,
             "sys_serial": d.sys_serial,
             "board_serial": d.board_serial,
             "chassis_serial": d.chassis_serial,
@@ -3948,7 +3951,7 @@ fn poll_preboot_input(app: &mut App) -> bool {
     if app.target.is_empty() {
         return false;
     }
-    let serial = order::encode_path_segment(&effective_serial(&app.info.dmi));
+    let serial = order::encode_path_segment(&effective_serial(&app.info));
     let path = format!("/api/v1/qc/preboot/{serial}/input");
     let mut got = false;
     if let Ok((200, body)) = http_get_json(&app.target, &path) {
@@ -3965,9 +3968,13 @@ fn poll_preboot_input(app: &mut App) -> bool {
 }
 
 /// Register once (full fingerprint), then heartbeat, so a networked box appears
-/// and stays fresh in the admin console without operator action.
+/// and stays fresh in the admin console without operator action. Between
+/// heartbeats a cheap viewer-flag poll auto-starts/stops TUI streaming.
 fn presence_tick(app: &mut App) {
     app.present_tick = app.present_tick.saturating_add(1);
+    if app.present_tick % VIEWER_CHECK_TICKS == 0 {
+        viewer_check(app);
+    }
     if app.present_tick < PRESENCE_HEARTBEAT_TICKS {
         return;
     }
@@ -3976,28 +3983,101 @@ fn presence_tick(app: &mut App) {
     // just heartbeat. The heartbeat itself upserts the connected_client row, so
     // the box shows in the roster even if the full fingerprint hasn't yet.
     if !app.present_registered {
-        app.present_registered = upload_fingerprint(app).is_ok();
+        match upload_fingerprint(app) {
+            Ok(_) => {
+                app.present_registered = true;
+                app.status = format!("presence: registered with {}", app.target);
+            }
+            Err(e) => app.status = format!("presence: register failed: {e}"),
+        }
     }
     send_presence_heartbeat(app);
 }
 
 /// Tiny POST that bumps the connected_client:qc_<serial> row's last_update.
-fn send_presence_heartbeat(app: &App) {
+fn send_presence_heartbeat(app: &mut App) {
     if app.target.is_empty() {
         return;
     }
-    let serial = order::encode_path_segment(&effective_serial(&app.info.dmi));
+    let serial = order::encode_path_segment(&effective_serial(&app.info));
     if serial.is_empty() {
         return;
     }
     let path = format!("/api/v1/qc/preboot/{serial}/alive");
-    let _ = http_post_json(&app.target, &path, b"{}");
+    if let Err(e) = http_post_json(&app.target, &path, b"{}") {
+        app.status = format!("presence: {e}");
+    }
+}
+
+/// Poll the relay's viewer flag: start streaming when an admin viewer is
+/// waiting, stop after two consecutive misses. A relay error counts as a miss
+/// so an auto-stream can't outlive a dead relay; manual 'v' state is honored
+/// until the viewer that saw it leaves.
+fn viewer_check(app: &mut App) {
+    if app.target.is_empty() {
+        return;
+    }
+    let serial = order::encode_path_segment(&effective_serial(&app.info));
+    if serial.is_empty() {
+        return;
+    }
+    let path = format!("/api/v1/qc/preboot/{serial}/viewer");
+    let waiting = match http_get_json(&app.target, &path) {
+        Ok((200, body)) => {
+            core::str::from_utf8(&body).map(|s| s.contains("true")).unwrap_or(false)
+        }
+        _ => false,
+    };
+    if waiting {
+        app.viewer_miss = 0;
+        if !app.streaming && !app.stream_manual_off {
+            app.streaming = true;
+            app.stream_auto = true;
+            app.stream_frame = 0;
+            app.stream_throttle = stream::Throttle::new();
+            app.status = "admin viewer connected - streaming TUI".into();
+            logln("stream: auto-started (viewer waiting)".into());
+        }
+    } else {
+        // Viewer gone: lift a manual stop so the next viewer can auto-start.
+        app.stream_manual_off = false;
+        if app.streaming && app.stream_auto {
+            app.viewer_miss = app.viewer_miss.saturating_add(1);
+            if app.viewer_miss >= 2 {
+                app.streaming = false;
+                app.stream_auto = false;
+                app.viewer_miss = 0;
+                app.status = "admin viewer left - streaming off".into();
+                logln("stream: auto-stopped (no viewer)".into());
+            }
+        }
+    }
+}
+
+/// POST the in-memory log ring to the relay for `curl`-friendly retrieval at
+/// GET /api/v1/qc/preboot/<serial>/logs.
+fn upload_logs(app: &mut App) {
+    if app.target.is_empty() {
+        app.status = "logs: set a target first ('e')".into();
+        return;
+    }
+    let serial = order::encode_path_segment(&effective_serial(&app.info));
+    if serial.is_empty() {
+        app.status = "logs: no usable serial".into();
+        return;
+    }
+    let body = log_snapshot().join("\n");
+    let path = format!("/api/v1/qc/preboot/{serial}/logs");
+    app.status = match http_post_json(&app.target, &path, body.as_bytes()) {
+        Ok(_) => format!("logs: uploaded {}B - curl .../qc/preboot/{serial}/logs", body.len()),
+        Err(e) => format!("logs: upload failed: {e}"),
+    };
 }
 
 /// Load and invoke a plugin, formatting the run into `app.plugin_out`.
 fn run_wasm_plugin(app: &mut App, bytes: &[u8], tool: &str, args: &str) {
     let host = {
-        let s = effective_serial(&app.info.dmi);
+        let s = effective_serial(&app.info);
         if s.is_empty() { "uefi".to_string() } else { s }
     };
     let fw = fw_data(&app.info);
@@ -4732,7 +4812,7 @@ fn page_readiness(frame: &mut Frame, area: Rect, info: &SysInfo) {
 
     lines.push(Line::from(""));
     lines.push(header("Order identity (lookup serial)"));
-    let eff = effective_serial(&info.dmi);
+    let eff = effective_serial(info);
     lines.push(Line::from(vec![
         Span::styled(format!("{:<14}", "Lookup serial"), Style::default().fg(palette::LABEL)),
         Span::styled(
@@ -4744,6 +4824,8 @@ fn page_readiness(frame: &mut Frame, area: Rect, info: &SysInfo) {
     ]));
     let show = |v: &str| if v.trim().is_empty() { "-".to_string() } else { v.trim().to_string() };
     lines.push(kv("Chassis serial", show(&info.dmi.chassis_serial)));
+    lines.push(kv("MSDM OA3 key", show(&info.msdm_key)));
+    lines.push(kv("System serial", show(&info.dmi.sys_serial)));
     if info.dmi.oem_strings.is_empty() {
         lines.push(kv("OEM strings", "-".to_string()));
     } else {
@@ -4751,7 +4833,6 @@ fn page_readiness(frame: &mut Frame, area: Rect, info: &SysInfo) {
             lines.push(kv(&format!("OEM string {}", i + 1), show(s)));
         }
     }
-    lines.push(kv("System serial", show(&info.dmi.sys_serial)));
     frame.render_widget(para(lines, "Readiness"), area);
 }
 
@@ -5044,13 +5125,14 @@ fn render(frame: &mut Frame, app: &App) {
             ("q", "quit"),
         ],
         _ => &[
-            ("Tab/->", "next"),
-            ("<-", "prev"),
+            ("Tab", "next"),
             ("r", "refresh"),
-            ("c", "connect"),
-            ("d", "dhcp"),
-            ("e/p", "target/post"),
-            ("a/A", "agent/auto"),
+            ("c/d", "net"),
+            ("e", "target"),
+            ("p", "post"),
+            ("u", "logs"),
+            ("v", "stream"),
+            ("a/A", "agent"),
             ("q", "quit"),
         ],
     };
@@ -5113,6 +5195,12 @@ struct App {
     present: bool,
     present_registered: bool,
     present_tick: u32,
+    /// Streaming was started by the relay's viewer flag, not the 'v' key.
+    stream_auto: bool,
+    /// Consecutive viewer-flag checks with no viewer (auto-stop hysteresis).
+    viewer_miss: u8,
+    /// 'v' stopped streaming; suppresses auto-start until the viewer leaves.
+    stream_manual_off: bool,
 }
 
 impl App {
@@ -5128,7 +5216,7 @@ fn run() -> Result<()> {
     init_ratatui_perf();
     let (mut terminal, mut input_reader) = create_ui()?;
     let info = SysInfo::collect();
-    let default_serial = effective_serial(&info.dmi);
+    let default_serial = effective_serial(&info);
     let mut app = App {
         info,
         tab: 0,
@@ -5151,6 +5239,9 @@ fn run() -> Result<()> {
         present: false,
         present_registered: false,
         present_tick: 0,
+        stream_auto: false,
+        viewer_miss: 0,
+        stream_manual_off: false,
     };
 
     terminal.clear()?;
@@ -5171,10 +5262,10 @@ fn run() -> Result<()> {
                 None
             }
         };
-        if let Some(pf) = captured {
+        if let Some(mut pf) = captured {
             // POST the frame body to the relay only when the screen changed.
-            if let Some(body) = app.stream_throttle.body_if_dirty(&pf) {
-                let serial = order::encode_path_segment(&effective_serial(&app.info.dmi));
+            if let Some(body) = app.stream_throttle.body_if_dirty(&mut pf) {
+                let serial = order::encode_path_segment(&effective_serial(&app.info));
                 let path = format!("/api/v1/qc/preboot/{serial}/frame");
                 if let Err(e) = http_post_json(&app.target, &path, &body) {
                     logln(format!("stream: frame POST failed: {e}"));
@@ -5324,7 +5415,15 @@ fn run() -> Result<()> {
                         net_tcp::post(&u.host_port, &u.path, json.as_bytes())
                     };
                     app.status = match result {
-                        Ok(s) => format!("OK: {s}"),
+                        Ok(s) => {
+                            // A successful upload proves the target is
+                            // reachable - arm presence without needing 'd'.
+                            if !app.present {
+                                app.present = true;
+                                app.present_registered = true;
+                            }
+                            format!("OK: {s}")
+                        }
                         Err(e) => format!("upload failed: {e}"),
                     };
                 }
@@ -5343,12 +5442,19 @@ fn run() -> Result<()> {
             }
             terminput::KeyCode::Char('v') => {
                 app.streaming = !app.streaming;
+                app.stream_auto = false;
+                // A manual stop holds until the current viewer disconnects.
+                app.stream_manual_off = !app.streaming;
                 app.stream_frame = 0;
+                app.stream_throttle = stream::Throttle::new();
                 app.status = if app.streaming {
                     format!("streaming TUI -> {}", app.target)
                 } else {
-                    "streaming off".into()
+                    "streaming off (auto-resume when this viewer leaves)".into()
                 };
+            }
+            terminput::KeyCode::Char('u') => {
+                upload_logs(&mut app);
             }
             // Stress tab controls.
             terminput::KeyCode::Up if app.tab == TAB_STRESS => {
@@ -5439,7 +5545,7 @@ fn agent_poll(
     app: &mut App,
     terminal: &mut Terminal<ratatui_uefi::UefiOutputBackend>,
 ) -> Result<()> {
-    let serial = effective_serial(&app.info.dmi);
+    let serial = effective_serial(&app.info);
     if serial.is_empty() {
         app.status = "agent: no usable serial".into();
         return Ok(());

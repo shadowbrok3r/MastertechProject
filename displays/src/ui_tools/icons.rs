@@ -83,6 +83,7 @@ pub const SIGN_OUT: &str = p::SIGN_OUT;
 
 pub const FOLDER: &str = p::FOLDER;
 pub const FOLDER_OPEN: &str = p::FOLDER_OPEN;
+pub const FOLDER_PLUS: &str = p::FOLDER_PLUS;
 pub const FILE: &str = p::FILE;
 pub const FILE_TEXT: &str = p::FILE_TEXT;
 pub const PACKAGE: &str = p::PACKAGE;

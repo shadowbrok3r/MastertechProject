@@ -4,6 +4,8 @@ use self::{
 };
 use crate::app_state::MastertechContext;
 use crossbeam::channel::{self, Receiver, Sender};
+use directories::UserDirs;
+use displays::ui_tools::icons;
 use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions, Toasts};
 use eframe::egui::Ui;
 use eframe::egui::{collapsing_header::CollapsingState, text::LayoutJob, *};
@@ -35,7 +37,7 @@ pub enum FilesPanelMode {
 impl MastertechContext {
     pub fn file_browse(&mut self, ui: &mut Ui) {
         eframe::egui::Panel::top("file_browser_mode_panel")
-            .exact_size(28.0)
+            .exact_size(30.0)
             .show_inside(ui, |ui| {
                 ui.horizontal(|ui| {
                     eframe::egui::ComboBox::from_id_salt("files_panel_mode")
@@ -55,6 +57,14 @@ impl MastertechContext {
                                 "My Tools",
                             );
                         });
+
+                    if self.files_panel_mode == FilesPanelMode::FileBrowser
+                        && !self.show_deferred_viewport.load(Ordering::Relaxed)
+                    {
+                        if let Ok(mut file_browser) = self.file_browser.lock() {
+                            file_browser.rename_row(ui);
+                        }
+                    }
                 });
             });
 
@@ -76,6 +86,39 @@ const _KB_FROM_BYTES: u64 = 1024;
 const _MB_FROM_BYTES: u64 = 1024 * 1024;
 const _GB_FROM_BYTES: u64 = 1024 * 1024 * 1024;
 
+/// Quick-access sidebar entry resolved to an absolute path.
+struct FolderShortcut {
+    name: String,
+    icon: &'static str,
+    path: PathBuf,
+}
+
+/// Full-width, left-aligned selectable row for the sidebar panels.
+fn sidebar_row(
+    ui: &mut Ui,
+    width: f32,
+    height: f32,
+    selected: bool,
+    label: impl Into<String>,
+) -> Response {
+    let label = label.into();
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
+    let visuals = ui.global_style().interact_selectable(&response, selected);
+    if selected || response.hovered() {
+        ui.painter()
+            .rect_filled(rect, visuals.corner_radius, visuals.weak_bg_fill);
+    }
+    let text_pos = rect.left_center() + Vec2::new(8.0, 0.0);
+    ui.painter().text(
+        text_pos,
+        Align2::LEFT_CENTER,
+        label,
+        FontId::proportional(13.0),
+        visuals.text_color(),
+    );
+    response
+}
+
 #[derive(Serialize)]
 pub struct FileBrowser {
     /// Current opened path.
@@ -90,10 +133,6 @@ pub struct FileBrowser {
     read_dirs_only: bool,
     /// Show hidden files
     show_hidden: bool,
-    /// rename folder/file
-    rename: bool,
-    /// Create new folder
-    new_folder: bool,
     /// HashSet of selected files (hold CTRL key to select multiple)
     selected_items: RefCell<HashSet<PathBuf>>,
     /// HashMap of subcontents of a given dir
@@ -108,12 +147,12 @@ pub struct FileBrowser {
     /// MetaData of each folder
     #[serde(skip)]
     folder_metadata: RefCell<HashMap<PathBuf, MetaData>>,
-    /// Send size of file in bytes
+    /// Send computed (path, size) from a background sizing thread.
     #[serde(skip)]
-    metadata_tx: Sender<u64>,
-    /// Send size of folder in bytes
+    metadata_tx: Sender<(PathBuf, u64)>,
+    /// Receive computed (path, size) from a background sizing thread.
     #[serde(skip)]
-    metadata_rx: Receiver<u64>,
+    metadata_rx: Receiver<(PathBuf, u64)>,
 
     /// Progress percentage
     progress: f64,
@@ -140,6 +179,16 @@ pub struct FileBrowser {
 
     #[serde(skip)]
     toasts: Toasts,
+
+    /// Quick-access sidebar shortcuts resolved to absolute paths.
+    #[serde(skip)]
+    shortcuts: Vec<FolderShortcut>,
+    /// Single selection the rename field was last prefilled for.
+    #[serde(skip)]
+    rename_prefill_for: Option<PathBuf>,
+    /// Items awaiting delete confirmation in the selection panel.
+    #[serde(skip)]
+    pending_delete: Option<Vec<PathBuf>>,
 }
 
 impl FileBrowser {
@@ -165,8 +214,6 @@ impl FileBrowser {
             dir_contents: RefCell::new(HashMap::new()),
             filename_edit,
             read_dirs_only: false,
-            rename: true,
-            new_folder: true,
             show_hidden: false,
             first_refresh_contents: true,
             depth: 1,
@@ -186,6 +233,9 @@ impl FileBrowser {
             drive_letters: Vec::new(),
             source_dir_size: 0,
             toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 45.0)),
+            shortcuts: Vec::new(),
+            rename_prefill_for: None,
+            pending_delete: None,
         }
     }
 
@@ -207,16 +257,54 @@ impl FileBrowser {
             Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
 
         self.handle_keyboard_events(ui, copied_items_tx.clone());
+
+        if self.first_refresh_contents {
+            self.refresh_contents();
+            self.build_shortcuts();
+            self.first_refresh_contents = false;
+        }
+
+        let current_single = self.single_selection();
+        if current_single != self.rename_prefill_for {
+            if let Some(p) = &current_single {
+                self.filename_edit = get_file_name(p).to_string();
+            }
+            self.rename_prefill_for = current_single;
+        }
+
+        if let Some(pending) = &self.pending_delete {
+            let current: HashSet<PathBuf> = self.selected_items.borrow().iter().cloned().collect();
+            let armed: HashSet<PathBuf> = pending.iter().cloned().collect();
+            if current != armed {
+                self.pending_delete = None;
+            }
+        }
+
         self.top_panel(ui);
-        self.bottom_panel(ui);
+        self.left_sidebar(ui);
+        let show_right =
+            !self.selected_items.borrow().is_empty() || !self.copied_items_src.is_empty();
+        self.right_sidebar(ui, show_right, copied_items_tx.clone());
+        if self.animated_progress {
+            self.bottom_panel(ui);
+        }
         self.central_panel(ui);
 
         while let Ok(progress) = self.progress_rx.try_recv() {
             self.progress += progress as f64;
         }
 
-        while let Ok(meta) = self.metadata_rx.try_recv() {
-            total_size += meta;
+        while let Ok((path, size)) = self.metadata_rx.try_recv() {
+            if path.is_dir() {
+                self.folder_metadata
+                    .borrow_mut()
+                    .insert(path.clone(), MetaData { path_size: size });
+            } else {
+                self.file_metadata
+                    .borrow_mut()
+                    .insert(path.clone(), MetaData { path_size: size });
+            }
+            total_size += size;
             self.source_dir_size = total_size;
         }
 
@@ -233,12 +321,6 @@ impl FileBrowser {
             ui.shrink_width_to_current();
             ui.shrink_height_to_current();
             ui.add_space(ui.spacing().item_spacing.y * 1.5);
-
-            if self.first_refresh_contents {
-                self.refresh_contents();
-                self.get_drives();
-                self.first_refresh_contents = false;
-            }
 
             ScrollArea::new([false, true])
                 .id_salt("file_browser_scroll")
@@ -277,58 +359,46 @@ impl FileBrowser {
     pub fn top_panel(&mut self, ui: &mut Ui) {
         eframe::egui::Panel::top("file_browser_top").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
-                let response = ui
-                    .add_sized(
-                        ui.available_size_before_wrap(),
-                        TextEdit::singleline(&mut self.path_edit)
-                            .id(Id::new("path_edit"))
-                            .cursor_at_end(true),
-                    )
-                    .on_hover_text(&self.path_edit);
-
-                if response.lost_focus() {
-                    let path = PathBuf::from(&self.path_edit);
-                    info!("Lost focus on self.path_edit");
-
-                    match self.command_tx.send(Some(Command::OpenPath(path))) {
-                        Ok(_) => info!("sent task successfully"),
-                        Err(e) => log::error!("{e}"),
-                    };
-                }
-            });
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
                 ui.add_enabled_ui(self.path != env::current_dir().unwrap_or_default(), |ui| {
-                    let response = ui.button("🏠").on_hover_text("Home");
-                    if response.clicked() {
-                        match self.command_tx.send(Some(Command::Home)) {
-                            Ok(_) => info!("Home"),
-                            Err(e) => log::error!("{e}"),
-                        }
+                    if ui.button(icons::HOME).on_hover_text("Home").clicked() {
+                        let _ = self.command_tx.send(Some(Command::Home));
                     }
                 });
 
                 ui.add_enabled_ui(self.path.parent().is_some(), |ui| {
-                    let response = ui.button("⬆").on_hover_text("Parent Folder"); //
-                    if response.clicked() {
-                        match self.command_tx.send(Some(Command::UpDirectory)) {
-                            Ok(_) => info!("UpDirectory"),
-                            Err(e) => log::error!("{e}"),
-                        }
+                    if ui.button(icons::UP).on_hover_text("Parent Folder").clicked() {
+                        let _ = self.command_tx.send(Some(Command::UpDirectory));
                     }
                 });
 
-                let response = ui.button("⟲").on_hover_text("Refresh");
-                if response.clicked() {
-                    match self.command_tx.send(Some(Command::Refresh)) {
-                        Ok(_) => info!("sent task successfully"),
-                        Err(e) => log::error!("{e}"),
-                    }
+                if ui.button(icons::REFRESH).on_hover_text("Refresh").clicked() {
+                    let _ = self.command_tx.send(Some(Command::Refresh));
                 }
 
-                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
-                    ui.checkbox(&mut self.read_dirs_only, RichText::new("Directories Only"));
-                    // ui.checkbox(&mut self.show_hidden, "Show Hidden");
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui
+                        .button(icons::FOLDER_PLUS)
+                        .on_hover_text("New Folder")
+                        .clicked()
+                    {
+                        let _ = self.command_tx.send(Some(Command::CreateDirectory));
+                    }
+
+                    let response = ui
+                        .add_sized(
+                            Vec2::new(ui.available_width(), 20.0),
+                            TextEdit::singleline(&mut self.path_edit)
+                                .id(Id::new("path_edit"))
+                                .cursor_at_end(true),
+                        )
+                        .on_hover_text(&self.path_edit);
+
+                    if response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                        let path = PathBuf::from(&self.path_edit);
+                        if path != self.path {
+                            let _ = self.command_tx.send(Some(Command::OpenPath(path)));
+                        }
+                    }
                 });
             });
             ui.add_space(ui.spacing().item_spacing.y);
@@ -347,90 +417,434 @@ impl FileBrowser {
                 };
             }
 
-            // let mut display_text = format!("Try selecting some files to copy.. ");
-            // let mut color = Color32::LIGHT_BLUE;
-            // if copy_shortcut{
-            //     color = Color32::LIGHT_GREEN;
-            //     display_text = "Copied files to clipboard.".to_string();
-            // }else if paste{
-            //     color = ui.style().visuals.error_fg_color;
-            //     display_text = format!("File Copy In Progress: {:?} / {:?}", self.progress as u64 / MB_FROM_BYTES, self.source_dir_size / MB_FROM_BYTES as u64);
-            // }
-            // ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-            //     ui.colored_label(color ,RichText::new(display_text));
-            // });
-
-            ui.horizontal(|ui| {
-                ui.with_layout(Layout::left_to_right(Align::BOTTOM), |ui| {
-                    ui.add_space(5.0);
-                    self.drive_letters
-                        .sort_unstable_by(|b, a| b.partial_cmp(a).unwrap());
-                    for drive in self.drive_letters.iter() {
-                        let button =
-                            Button::new(RichText::new(format!("💾 {drive}")).small()).small();
-
-                        if ui.add(button).clicked() {
-                            let path = Some(Command::OpenPath(PathBuf::from(drive)));
-                            info!("Drive: {:?} -- Path: {:?}", drive, &path);
-
-                            match self.command_tx.send(path) {
-                                Ok(_) => info!("Opening drive path"),
-                                Err(e) => log::error!("{e}"),
-                            }
-                        };
-                    }
-                });
-            });
-
-            ui.horizontal(|ui| {
-                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    let result = ui.add(
-                        TextEdit::singleline(&mut self.filename_edit)
-                            .id(Id::new("file_name_edit"))
-                            .desired_width(ui.available_width() / 3.0),
-                    );
-
-                    if result.lost_focus() && !self.filename_edit.is_empty() {
-                        let _ = self.path.join(&self.filename_edit);
-                    }
-
-                    if self.rename {
-                        ui.add_enabled_ui(self.can_rename(), |ui| {
-                            if ui.button(RichText::new("Rename").small()).clicked() {
-                                if let Some(from) = self.selected_item.clone() {
-                                    let to = from.with_file_name(&self.filename_edit);
-                                    match self.command_tx.send(Some(Command::Rename(from, to))) {
-                                        Ok(_) => {
-                                            info!("ok");
-                                        }
-                                        Err(e) => {
-                                            print!("{e}");
-                                        }
-                                    }
-                                }
-                            }
-                        });
-                    }
-
-                    if self.new_folder
-                        && ui.button(RichText::new("📁 New Folder").small()).clicked()
-                    {
-                        match self.command_tx.send(Some(Command::CreateDirectory)) {
-                            Ok(_) => info!("ok"),
-                            Err(e) => print!("{e}"),
-                        }
-                    }
-                });
-            });
-
-            ProgressBar::new(self.progress as f32 / self.source_dir_size as f32)
-                .show_percentage()
-                .desired_width(ui.available_size_before_wrap().x / 1.6)
-                .fill(Color32::from_rgb(255, 77, 210))
-                .animate(self.animated_progress)
-                .ui(ui);
+            if self.animated_progress {
+                ProgressBar::new(self.progress as f32 / self.source_dir_size as f32)
+                    .show_percentage()
+                    .desired_width(ui.available_size_before_wrap().x / 1.6)
+                    .fill(Color32::from_rgb(255, 77, 210))
+                    .animate(self.animated_progress)
+                    .ui(ui);
+            }
         });
     }
+
+    /// Rename field and button shown on the mode combobox row.
+    pub fn rename_row(&mut self, ui: &mut Ui) {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let can_rename = self.can_rename();
+            ui.add_enabled_ui(can_rename, |ui| {
+                if ui.button(format!("{} Rename", icons::EDIT)).clicked() {
+                    if let Some(from) = self.single_selection() {
+                        let to = from.with_file_name(&self.filename_edit);
+                        let _ = self.command_tx.send(Some(Command::Rename(from, to)));
+                    }
+                }
+            });
+            ui.add(
+                TextEdit::singleline(&mut self.filename_edit)
+                    .id(Id::new("rename_edit_top"))
+                    .desired_width(200.0)
+                    .hint_text("rename…"),
+            );
+        });
+    }
+
+    /// Quick-access and drive navigation sidebar.
+    fn left_sidebar(&mut self, ui: &mut Ui) {
+        let sidebar_frame = Frame::default()
+            .fill(Color32::from_rgb(20, 20, 24))
+            .inner_margin(Margin::same(8))
+            .corner_radius(CornerRadius::same(6))
+            .stroke(Stroke::new(1.0, Color32::from_rgb(60, 60, 70)));
+
+        let mut navigate_to: Option<PathBuf> = None;
+
+        eframe::egui::Panel::left("file_browser_sidebar")
+            .frame(sidebar_frame)
+            .resizable(true)
+            .default_size(170.0)
+            .min_size(140.0)
+            .max_size(300.0)
+            .show_inside(ui, |ui| {
+                ScrollArea::vertical()
+                    .id_salt("file_browser_sidebar_scroll")
+                    .show(ui, |ui| {
+                        const ENTRY_H: f32 = 24.0;
+                        let entry_w = ui.available_width();
+
+                        ui.label(
+                            RichText::new(format!("{} Quick Access", icons::STAR))
+                                .strong()
+                                .color(Color32::LIGHT_GRAY),
+                        );
+                        ui.add_space(4.0);
+                        for shortcut in &self.shortcuts {
+                            let selected = self.path == shortcut.path;
+                            let label = format!("{} {}", shortcut.icon, shortcut.name);
+                            if sidebar_row(ui, entry_w, ENTRY_H, selected, label).clicked() {
+                                navigate_to = Some(shortcut.path.clone());
+                            }
+                        }
+
+                        if !self.drive_letters.is_empty() {
+                            ui.add_space(12.0);
+                            ui.label(
+                                RichText::new("Drives")
+                                    .strong()
+                                    .color(Color32::LIGHT_GRAY),
+                            );
+                            ui.add_space(4.0);
+                            for drive in &self.drive_letters {
+                                let selected = self.path == PathBuf::from(drive);
+                                let label = format!("{} {drive}", icons::HARD_DRIVE);
+                                if sidebar_row(ui, entry_w, ENTRY_H, selected, label).clicked() {
+                                    navigate_to = Some(PathBuf::from(drive));
+                                }
+                            }
+                        }
+
+                        ui.add_space(12.0);
+                        ui.separator();
+                        ui.checkbox(&mut self.read_dirs_only, "Directories Only");
+                    });
+            });
+
+        if let Some(path) = navigate_to {
+            let _ = self.command_tx.send(Some(Command::OpenPath(path)));
+        }
+    }
+
+    /// Selection and clipboard panel shown while items are selected or copied.
+    fn right_sidebar(&mut self, ui: &mut Ui, is_open: bool, copied_items_tx: Sender<String>) {
+        let sidebar_frame = Frame::default()
+            .fill(Color32::from_rgb(24, 20, 28))
+            .inner_margin(Margin::same(8))
+            .corner_radius(CornerRadius::same(6))
+            .stroke(Stroke::new(1.0, Color32::from_rgb(70, 60, 80)));
+
+        let mut selection: Vec<PathBuf> = self.selected_items.borrow().iter().cloned().collect();
+        selection.sort();
+
+        let mut do_copy = false;
+        let mut do_paste = false;
+        let mut do_rename = false;
+        let mut clear_clipboard = false;
+        let mut request_meta: Vec<PathBuf> = Vec::new();
+
+        eframe::egui::Panel::right("file_browser_selection")
+            .frame(sidebar_frame)
+            .resizable(true)
+            .default_size(260.0)
+            .min_size(210.0)
+            .max_size(440.0)
+            .show_animated_inside(ui, is_open, |ui| {
+                ScrollArea::vertical()
+                    .id_salt("file_browser_selection_scroll")
+                    .show(ui, |ui| {
+                        if selection.len() == 1 {
+                            let path = selection[0].clone();
+                            let is_dir = path.is_dir();
+                            let name = get_file_name(&path);
+                            let icon = if is_dir {
+                                icons::FOLDER
+                            } else {
+                                icons::file_icon(name, false)
+                            };
+                            ui.label(
+                                RichText::new(format!("{icon} {name}"))
+                                    .strong()
+                                    .color(Color32::WHITE),
+                            );
+                            ui.label(
+                                RichText::new(if is_dir { "Folder" } else { "File" })
+                                    .italics()
+                                    .color(Color32::LIGHT_GRAY),
+                            );
+
+                            let size = if is_dir {
+                                self.folder_metadata.borrow().get(&path).map(|m| m.path_size)
+                            } else {
+                                self.file_metadata.borrow().get(&path).map(|m| m.path_size)
+                            };
+                            match size {
+                                Some(sz) => {
+                                    ui.label(format!("Size: {}", format_path_metadata(sz)));
+                                }
+                                None => {
+                                    ui.label(RichText::new("Size: calculating…").weak());
+                                    request_meta.push(path.clone());
+                                }
+                            }
+
+                            if let Ok(meta) = std::fs::metadata(&path) {
+                                if let Ok(modified) = meta.modified() {
+                                    let dt: chrono::DateTime<chrono::Local> = modified.into();
+                                    ui.label(format!("Modified: {}", dt.format("%Y-%m-%d %H:%M")));
+                                }
+                            }
+                            ui.label(RichText::new(path.to_string_lossy()).small().weak());
+
+                            ui.add_space(6.0);
+                            ui.separator();
+
+                            let can_rename = self.can_rename();
+                            ui.horizontal(|ui| {
+                                let field_w = (ui.available_width() - 40.0).max(80.0);
+                                ui.add(
+                                    TextEdit::singleline(&mut self.filename_edit)
+                                        .id(Id::new("rename_edit_panel"))
+                                        .desired_width(field_w)
+                                        .hint_text("rename…"),
+                                );
+                                ui.add_enabled_ui(can_rename, |ui| {
+                                    if ui
+                                        .button(icons::EDIT)
+                                        .on_hover_text("Rename")
+                                        .clicked()
+                                    {
+                                        do_rename = true;
+                                    }
+                                });
+                            });
+
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                if ui.button(format!("{} Copy", icons::COPY)).clicked() {
+                                    do_copy = true;
+                                }
+                                if ui.button(format!("{} Delete", icons::TRASH)).clicked() {
+                                    self.pending_delete = Some(selection.clone());
+                                }
+                            });
+                        } else if selection.len() > 1 {
+                            ui.label(
+                                RichText::new(format!("{} items selected", selection.len()))
+                                    .strong()
+                                    .color(Color32::WHITE),
+                            );
+                            ui.add_space(4.0);
+                            ScrollArea::vertical()
+                                .id_salt("multi_selection_list")
+                                .max_height(180.0)
+                                .show(ui, |ui| {
+                                    for p in &selection {
+                                        let icon = if p.is_dir() {
+                                            icons::FOLDER
+                                        } else {
+                                            icons::file_icon(get_file_name(p), false)
+                                        };
+                                        ui.label(format!("{} {}", icon, get_file_name(p)));
+                                    }
+                                });
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                if ui.button(format!("{} Copy", icons::COPY)).clicked() {
+                                    do_copy = true;
+                                }
+                                if ui.button(format!("{} Delete", icons::TRASH)).clicked() {
+                                    self.pending_delete = Some(selection.clone());
+                                }
+                            });
+                        }
+
+                        if let Some(pending) = self.pending_delete.clone() {
+                            ui.add_space(6.0);
+                            Frame::default()
+                                .fill(Color32::from_rgb(60, 20, 20))
+                                .inner_margin(Margin::same(6))
+                                .corner_radius(CornerRadius::same(4))
+                                .show(ui, |ui| {
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "Delete {} item(s)? This cannot be undone.",
+                                            pending.len()
+                                        ))
+                                        .color(Color32::from_rgb(255, 180, 180)),
+                                    );
+                                    ui.horizontal(|ui| {
+                                        if ui
+                                            .button(RichText::new("Confirm Delete").color(Color32::WHITE))
+                                            .clicked()
+                                        {
+                                            let _ = self
+                                                .command_tx
+                                                .send(Some(Command::DeleteMany(pending.clone())));
+                                            self.pending_delete = None;
+                                        }
+                                        if ui.button("Cancel").clicked() {
+                                            self.pending_delete = None;
+                                        }
+                                    });
+                                });
+                        }
+
+                        if !self.copied_items_src.is_empty() {
+                            ui.add_space(8.0);
+                            ui.separator();
+                            ui.label(
+                                RichText::new(format!(
+                                    "{} Clipboard — {} item(s) to copy",
+                                    icons::CLIPBOARD,
+                                    self.copied_items_src.len()
+                                ))
+                                .strong()
+                                .color(Color32::from_rgb(200, 180, 255)),
+                            );
+                            ui.add_space(2.0);
+                            ScrollArea::vertical()
+                                .id_salt("clipboard_list")
+                                .max_height(140.0)
+                                .show(ui, |ui| {
+                                    for p in &self.copied_items_src {
+                                        let is_dir = p.is_dir();
+                                        let icon = if is_dir {
+                                            icons::FOLDER
+                                        } else {
+                                            icons::file_icon(get_file_name(p), false)
+                                        };
+                                        let size = if is_dir {
+                                            self.folder_metadata.borrow().get(p).map(|m| m.path_size)
+                                        } else {
+                                            self.file_metadata.borrow().get(p).map(|m| m.path_size)
+                                        };
+                                        let size_str = size
+                                            .map(|s| format!(" ({})", format_path_metadata(s)))
+                                            .unwrap_or_default();
+                                        ui.label(format!("{} {}{}", icon, get_file_name(p), size_str));
+                                    }
+                                });
+                            ui.add_space(4.0);
+                            ui.label(
+                                RichText::new(format!("Destination: {}", self.path.to_string_lossy()))
+                                    .small()
+                                    .weak(),
+                            );
+
+                            let same_dir = self
+                                .copied_items_src
+                                .iter()
+                                .any(|p| p.parent() == Some(self.path.as_path()));
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                ui.add_enabled_ui(!same_dir, |ui| {
+                                    if ui.button(format!("{} Paste here", icons::CLIPBOARD)).clicked() {
+                                        do_paste = true;
+                                    }
+                                });
+                                if ui.button("Clear").clicked() {
+                                    clear_clipboard = true;
+                                }
+                            });
+                            if same_dir {
+                                ui.label(
+                                    RichText::new("Can't paste into the source folder.")
+                                        .small()
+                                        .color(Color32::from_rgb(255, 170, 120)),
+                                );
+                            }
+                        }
+                    });
+            });
+
+        if do_rename {
+            if let Some(from) = self.single_selection() {
+                let to = from.with_file_name(&self.filename_edit);
+                let _ = self.command_tx.send(Some(Command::Rename(from, to)));
+            }
+        }
+
+        for p in request_meta {
+            let _ = self.command_tx.send(Some(Command::ReadMetadata(p)));
+        }
+
+        if do_copy {
+            self.copied_items_src = selection.clone();
+            for p in &self.copied_items_src {
+                let _ = self.command_tx.send(Some(Command::ReadMetadata(p.clone())));
+            }
+            let name = if self.copied_items_src.len() == 1 {
+                get_file_name(&self.copied_items_src[0]).to_string()
+            } else {
+                format!("{} items", self.copied_items_src.len())
+            };
+            self.toasts.add(Toast {
+                kind: ToastKind::Info,
+                text: format!("Copied {name}").into(),
+                options: ToastOptions::default()
+                    .show_progress(true)
+                    .duration_in_seconds(4.0),
+                ..Default::default()
+            });
+        }
+
+        if do_paste {
+            self.animated_progress = true;
+            self.copied_items_dest = self.path.clone();
+            match self.command_tx.try_send(Some(Command::Copy(
+                self.copied_items_src.clone(),
+                self.copied_items_dest.clone(),
+                self.progress_tx.clone(),
+                copied_items_tx.clone(),
+            ))) {
+                Ok(_) => info!(
+                    "Pasting {:?} to {:?}",
+                    self.copied_items_src, self.copied_items_dest
+                ),
+                Err(e) => log::error!("{e}"),
+            }
+            self.toasts.add(Toast {
+                kind: ToastKind::Info,
+                text: format!("Pasting to {}", self.copied_items_dest.to_string_lossy()).into(),
+                options: ToastOptions::default()
+                    .show_progress(true)
+                    .duration_in_seconds(4.0),
+                ..Default::default()
+            });
+        }
+
+        if clear_clipboard {
+            self.copied_items_src.clear();
+        }
+    }
+
+    /// The single selected path, or `None` when zero or multiple are selected.
+    fn single_selection(&self) -> Option<PathBuf> {
+        let selected = self.selected_items.borrow();
+        if selected.len() == 1 {
+            selected.iter().next().cloned()
+        } else {
+            None
+        }
+    }
+
+    /// Populates quick-access shortcuts from the current user's known folders.
+    fn build_shortcuts(&mut self) {
+        self.shortcuts.clear();
+        let Some(dirs) = UserDirs::new() else {
+            return;
+        };
+        let entries: [(&str, &'static str, Option<&std::path::Path>); 7] = [
+            ("Home", icons::HOME, Some(dirs.home_dir())),
+            ("Desktop", icons::folder_shortcut_icon("Desktop"), dirs.desktop_dir()),
+            ("Documents", icons::folder_shortcut_icon("Documents"), dirs.document_dir()),
+            ("Downloads", icons::folder_shortcut_icon("Downloads"), dirs.download_dir()),
+            ("Pictures", icons::folder_shortcut_icon("Pictures"), dirs.picture_dir()),
+            ("Music", icons::folder_shortcut_icon("Music"), dirs.audio_dir()),
+            ("Videos", icons::folder_shortcut_icon("Videos"), dirs.video_dir()),
+        ];
+        for (name, icon, path) in entries {
+            if let Some(p) = path {
+                if p.exists() {
+                    self.shortcuts.push(FolderShortcut {
+                        name: name.to_string(),
+                        icon,
+                        path: p.to_path_buf(),
+                    });
+                }
+            }
+        }
+    }
+
     /**
         Handles displaying of subcontents of given directory by calling list_subfolders
         and makes only directories collapsible so we can see its subcontents
@@ -442,12 +856,12 @@ impl FileBrowser {
         // let command_sender4 = self.command_tx.clone();
         let command_sender5 = self.command_tx.clone();
 
-        let label = match path.is_dir() {
-            true => "🗀   ",
-            false => "🗋   ",
-        }
-        .to_string()
-            + get_file_name(path);
+        let icon = if path.is_dir() {
+            icons::FOLDER
+        } else {
+            icons::file_icon(get_file_name(path), false)
+        };
+        let label = format!("{icon}   {}", get_file_name(path));
         let mut formatted_size = "".to_string();
         ui.horizontal_top(|ui| {
             if path.is_dir() {
@@ -501,7 +915,7 @@ impl FileBrowser {
                                 let x = WidgetText::LayoutJob(l)
                                     .small()
                                     .background_color(ui.style().visuals.error_fg_color);
-                                ui.add_space(ui.available_size_before_wrap().x - 100.0);
+                                ui.add_space((ui.available_size_before_wrap().x - 100.0).max(0.0));
                                 ui.add(Label::new(x));
                             }
 
@@ -575,7 +989,7 @@ impl FileBrowser {
                     let x = WidgetText::LayoutJob(Arc::new(job))
                         .small()
                         .background_color(ui.style().visuals.error_fg_color);
-                    ui.add_space(ui.available_size_before_wrap().x - 100.0);
+                    ui.add_space((ui.available_size_before_wrap().x - 100.0).max(0.0));
                     ui.add(Label::new(x));
                 }
             }
@@ -609,8 +1023,9 @@ impl FileBrowser {
             .borrow_mut()
             .insert(self.path.clone(), new_contents);
         self.path_edit = self.path.to_string_lossy().to_string();
+        self.selected_items.borrow_mut().clear();
+        self.selected_item = None;
         self.get_drives();
-        //self.select(None);
     }
 
     /**
@@ -653,10 +1068,11 @@ impl FileBrowser {
         empty
     */
     fn can_rename(&self) -> bool {
-        if !self.filename_edit.is_empty() {
-            if let Some(file) = &self.selected_item {
-                return get_file_name(file) != self.filename_edit;
-            }
+        if self.filename_edit.is_empty() {
+            return false;
+        }
+        if let Some(file) = self.single_selection() {
+            return get_file_name(&file) != self.filename_edit;
         }
         false
     }
@@ -675,12 +1091,16 @@ impl FileBrowser {
     }
 
     fn get_drives(&mut self) {
+        self.drive_letters.clear();
         let mut disks = Disks::new_with_refreshed_list();
 
         for disk in &mut disks {
-            self.drive_letters
-                .push(disk.mount_point().to_str().unwrap_or("").to_string());
+            let mount = disk.mount_point().to_str().unwrap_or("").to_string();
+            if !mount.is_empty() && !self.drive_letters.contains(&mount) {
+                self.drive_letters.push(mount);
+            }
         }
+        self.drive_letters.sort();
     }
 
     fn handle_keyboard_events(&mut self, ui: &Ui, copied_items_tx: Sender<String>) {

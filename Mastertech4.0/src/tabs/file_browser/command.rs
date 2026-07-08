@@ -8,7 +8,7 @@ use log::{debug, error};
 // use sysinfo::System;
 use tracing::info;
 
-use crate::tabs::file_browser::{io::MetaData, read_folder};
+use crate::tabs::file_browser::read_folder;
 
 use super::{file_copy::CopyBuilder, FileBrowser};
 
@@ -17,6 +17,7 @@ pub enum Command {
     Copy(Vec<PathBuf>, PathBuf, Sender<u64>, Sender<String>),
     Move(PathBuf, PathBuf),
     Delete(PathBuf),
+    DeleteMany(Vec<PathBuf>),
     Rename(PathBuf, PathBuf),
     CreateDirectory,
     Folder,
@@ -47,12 +48,12 @@ impl FileBrowser{
             },
 
             Command::CreateDirectory => {
-                let mut path = self.path.clone();
-                let name = match self.filename_edit.is_empty() {
-                    true => "New folder",
-                    false => &self.filename_edit,
-                };
-                path.push(name);
+                let mut path = self.path.join("New folder");
+                let mut n = 2;
+                while path.exists() {
+                    path = self.path.join(format!("New folder ({n})"));
+                    n += 1;
+                }
 
                 match fs::create_dir(&path).await {
                     Ok(_) => {
@@ -114,12 +115,32 @@ impl FileBrowser{
             },
 
             Command::Delete(path) => {
-                log::info!("Command::Delete");
-                if let Err(_err) = fs::remove_dir_all(&path).await {
-                    //let _ = response_sender.try_send(Response::Error(FileBrowserError::Io(err)));
+                let result = if path.is_dir() {
+                    fs::remove_dir_all(&path).await
                 } else {
-                    //let _ = response_sender.try_send(Response::Success(format!("Successfully deleted {:?}", path)));
+                    fs::remove_file(&path).await
+                };
+                if let Err(err) = result {
+                    log::error!("Error deleting {path:?}: {err}");
                 }
+                self.selected_items.borrow_mut().remove(&path);
+                self.refresh_contents();
+            },
+
+            Command::DeleteMany(paths) => {
+                for path in &paths {
+                    let result = if path.is_dir() {
+                        fs::remove_dir_all(path).await
+                    } else {
+                        fs::remove_file(path).await
+                    };
+                    if let Err(err) = result {
+                        log::error!("Error deleting {path:?}: {err}");
+                    }
+                    self.selected_items.borrow_mut().remove(path);
+                }
+                self.selected_item = None;
+                self.refresh_contents();
             },
 
             Command::Rename(from, to) => {
@@ -148,38 +169,16 @@ impl FileBrowser{
 
             Command::ReadMetadata(path) => {
                 let sender = self.metadata_tx.clone();
-                let cloned_path = path.clone();
-                let clone_path1 = path.clone();
-
-                // Spawn the appropriate async task depending on whether the path is a directory or a file.
-                let read_metadata_task = if path.is_dir() {
-                    tokio::spawn(async move {
-                        get_size(cloned_path).unwrap_or(0)
-                    })
-                } else if path.is_file() {
-                    tokio::spawn(async move {
-                        tokio::fs::metadata(&cloned_path).await.unwrap().len()
-                    })
-                } else {return;};
-
-                tokio::select! {
-                    result = read_metadata_task => {
-                        match result {
-                            Ok(path_size) => { // Send the result through the channel.
-                                if sender.try_send(path_size).is_err() { log::error!("Error sending metadata");}
-                                
-                                if path.is_dir() { // Insert the metadata into the appropriate HashMap.
-                                    self.folder_metadata.borrow_mut().insert(clone_path1.clone(),
-                                        MetaData { path_size });
-                                } else {
-                                    self.file_metadata.borrow_mut().insert(clone_path1.clone(),
-                                        MetaData { path_size });
-                                }
-                            },
-                            Err(e) => log::error!("Error reading metadata: {:?}", e),
-                        }
-                    }
-                }
+                std::thread::spawn(move || {
+                    let size = if path.is_dir() {
+                        get_size(&path).unwrap_or(0)
+                    } else if path.is_file() {
+                        std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0)
+                    } else {
+                        return;
+                    };
+                    let _ = sender.send((path, size));
+                });
             },
             Command::GetDrives => self.get_drives()
         }

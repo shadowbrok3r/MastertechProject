@@ -125,14 +125,17 @@ impl Throttle {
     }
 
     /// Encode `frame` to its raw bincode body (for an HTTP POST), or None if
-    /// identical to the last frame emitted.
-    pub fn body_if_dirty(&mut self, frame: &PreBootFrame) -> Option<Vec<u8>> {
-        let body = preboot::encode_frame(frame);
-        let h = fnv1a(&body);
+    /// the screen content matches the last frame emitted. The frame counter is
+    /// zeroed during hashing so it can't mark a static screen dirty.
+    pub fn body_if_dirty(&mut self, frame: &mut PreBootFrame) -> Option<Vec<u8>> {
+        let seq = frame.frame;
+        frame.frame = 0;
+        let h = fnv1a(&preboot::encode_frame(frame));
+        frame.frame = seq;
         if h == self.last_hash {
             return None;
         }
         self.last_hash = h;
-        Some(body)
+        Some(preboot::encode_frame(frame))
     }
 }
