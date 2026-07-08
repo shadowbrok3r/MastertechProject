@@ -6,8 +6,13 @@ use bincode::{config::*, serde::*};
 pub mod preboot;
 pub mod ratagui;
 pub mod terminal_line;
+
+// zstd (C backend) doesn't build on wasm32; its only callers are the tokio
+// live-terminal viewer, so the buffer codecs are gated to that feature.
+#[cfg(feature = "tokio")]
 const ZSTD_LEVEL: i32 = 3;
 
+#[cfg(feature = "tokio")]
 pub fn encode_buffer(message: &Buffer) -> anyhow::Result<Vec<u8>> {
     let bincoded = encode_to_vec(message, standard()).context("Failed to serialize buffer")?;
     let compressed = zstd::encode_all(std::io::Cursor::new(&bincoded), ZSTD_LEVEL).context("zstd")?;
@@ -15,6 +20,7 @@ pub fn encode_buffer(message: &Buffer) -> anyhow::Result<Vec<u8>> {
 }
 
 // Helper to encode (frame_index, buffer) together
+#[cfg(feature = "tokio")]
 pub fn encode_buffer_with_frame(frame_index: u64, buffer: &Buffer) -> anyhow::Result<Vec<u8>> {
     let data = (frame_index, buffer);
     let bincoded = encode_to_vec(&data, standard()).context("Failed to serialize frame and buffer")?;
@@ -23,6 +29,7 @@ pub fn encode_buffer_with_frame(frame_index: u64, buffer: &Buffer) -> anyhow::Re
 }
 
 // Updated encoding function
+#[cfg(feature = "tokio")]
 pub fn encode_buffer_with_timestamp(frame_count: u64, buffer: &Buffer) -> anyhow::Result<Vec<u8>, anyhow::Error> {
     
     let timestamp = web_time::SystemTime::now()
@@ -45,6 +52,7 @@ pub fn encode_buffer_with_timestamp(frame_count: u64, buffer: &Buffer) -> anyhow
     Ok(compressed.into())
 }
 
+#[cfg(feature = "tokio")]
 pub fn decode_buffer(packet: &[u8]) -> anyhow::Result<BufferMessage> {
     let bincoded = zstd::decode_all(packet).context("zstd")?;
     let (message, _) = decode_from_slice(&bincoded, standard()).context("bincode")?;

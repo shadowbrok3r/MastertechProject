@@ -59,12 +59,25 @@ pub struct PreBootSession {
     viewer_last_poll: Option<Instant>,
 }
 
+/// A console advertising a direct-link TCP endpoint firmware can dial. Consoles
+/// re-advertise periodically; entries older than [`CONSOLE_TTL_SECS`] are stale.
+struct ConsoleEndpoint {
+    addr: String,
+    last_seen: Instant,
+}
+
+/// Consoles live no longer than this between re-advertisements.
+const CONSOLE_TTL_SECS: u64 = 120;
+
 #[derive(Default)]
 pub struct PreBootRegistry {
     sessions: HashMap<String, PreBootSession>,
     /// Latest log snapshot per serial; survives session sweeps so a box that
     /// dropped off can still be post-mortemed via GET {serial}/logs.
     logs: HashMap<String, Vec<String>>,
+    /// LAN endpoints advertised by admin consoles for the direct-link path,
+    /// keyed by advertised addr. Firmware GETs these to dial a console.
+    consoles: HashMap<String, ConsoleEndpoint>,
 }
 
 pub type SharedPreBoot = Arc<Mutex<PreBootRegistry>>;
@@ -189,7 +202,9 @@ async fn get_logs(State(app): State<AppState>, Path(serial): Path<String>) -> im
 
 /// Firmware → relay: presence heartbeat. Bumps (or creates) the
 /// connected_client:qc_<serial> row so it stays "connected" between
-/// fingerprints and the staleness reaper doesn't retire a live box.
+/// fingerprints and the staleness reaper doesn't retire a live box. While the
+/// row is unlinked, each beat also tries to match a `computer` by OA3 key or
+/// serial and links computer + customer.
 async fn alive(State(app): State<AppState>, Path(serial): Path<String>) -> impl IntoResponse {
     tracing::info!(serial = %serial, "qc.preboot alive (presence heartbeat)");
     // Presence in the in-memory roster (GET /preboot lists it whether or not it
@@ -199,11 +214,48 @@ async fn alive(State(app): State<AppState>, Path(serial): Path<String>) -> impl 
         sweep(&mut reg);
         reg.sessions.entry(serial.clone()).or_default().last_seen = Some(Instant::now());
     }
-    let id = format!("qc_{serial}");
-    let q = "UPSERT type::thing('connected_client', $id) MERGE \
-             { connected: true, last_update: time::now(), \
-               client_kind: 'qc_agent', connection_string: $cs }";
-    let _ = database::DATABASE.query(q).bind(("id", id)).bind(("cs", serial)).await;
+    // SDK upsert for the deterministic row id (the prod engine rejects
+    // `type::thing`, and param-bound UPSERT targets no-op — verified live).
+    use database::schema::{RecordId, SurrealValue};
+    #[derive(SurrealValue)]
+    struct AliveMerge {
+        connected: bool,
+        client_kind: String,
+        connection_string: String,
+    }
+    let rid = RecordId::new("connected_client", format!("qc_{serial}"));
+    let up: Result<Option<serde_json::Value>, _> = database::DATABASE
+        .upsert(rid)
+        .merge(AliveMerge {
+            connected: true,
+            client_kind: "uefi".to_string(),
+            connection_string: serial.clone(),
+        })
+        .await;
+    if let Err(e) = up {
+        tracing::warn!(serial = %serial, error = %e, "qc.preboot alive upsert failed");
+    }
+    // Bump last_update and, while unlinked, match a computer by OA3 key or any
+    // serial field. No record ids in-query, so it parses on every engine.
+    let q = "UPDATE connected_client SET last_update = time::now() \
+             WHERE connection_string = $cs AND client_kind = 'uefi'; \
+             LET $comp = (SELECT id, customer FROM computer \
+                          WHERE oa3_key = $cs OR device_serial = $cs \
+                             OR product_serial = $cs OR motherboard_serial = $cs \
+                          LIMIT 1)[0]; \
+             IF $comp != NONE { \
+                 UPDATE connected_client SET computer = $comp.id, customer = $comp.customer \
+                 WHERE connection_string = $cs AND client_kind = 'uefi' AND computer IS NONE; \
+             };";
+    match database::DATABASE
+        .query(q)
+        .bind(("cs", serial.clone()))
+        .await
+        .and_then(|r| r.check())
+    {
+        Ok(_) => {}
+        Err(e) => tracing::warn!(serial = %serial, error = %e, "qc.preboot alive link/bump failed"),
+    }
     StatusCode::OK
 }
 
@@ -239,9 +291,51 @@ async fn list_sessions(State(app): State<AppState>) -> impl IntoResponse {
     Json(serde_json::json!({ "sessions": sessions }))
 }
 
+/// Console → relay: advertise a direct-link LAN endpoint firmware can dial.
+/// Body: `{"addr":"192.168.x.y:9209"}`. Idempotent on addr; refreshes the TTL.
+async fn post_console(
+    State(app): State<AppState>,
+    body: Bytes,
+) -> impl IntoResponse {
+    let addr = serde_json::from_slice::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|v| v.get("addr").and_then(|a| a.as_str()).map(|s| s.to_string()));
+    let Some(addr) = addr.filter(|a| !a.trim().is_empty()) else {
+        return StatusCode::BAD_REQUEST;
+    };
+    tracing::debug!(addr = %addr, "qc.preboot console advertised");
+    let mut reg = app.preboot.lock().await;
+    let now = Instant::now();
+    reg.consoles.retain(|_, c| now.duration_since(c.last_seen).as_secs() < CONSOLE_TTL_SECS);
+    reg.consoles.insert(addr.clone(), ConsoleEndpoint { addr, last_seen: now });
+    StatusCode::OK
+}
+
+/// Firmware → relay: list fresh console direct-link endpoints to dial.
+async fn get_consoles(State(app): State<AppState>) -> impl IntoResponse {
+    let mut reg = app.preboot.lock().await;
+    let now = Instant::now();
+    reg.consoles.retain(|_, c| now.duration_since(c.last_seen).as_secs() < CONSOLE_TTL_SECS);
+    let consoles: Vec<serde_json::Value> = reg
+        .consoles
+        .values()
+        .map(|c| {
+            serde_json::json!({
+                "addr": c.addr,
+                "age_secs": now.duration_since(c.last_seen).as_secs(),
+            })
+        })
+        .collect();
+    Json(serde_json::json!({ "consoles": consoles }))
+}
+
 pub fn preboot_routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/qc/preboot", axum::routing::get(list_sessions))
+        .route(
+            "/api/v1/qc/preboot/console",
+            axum::routing::post(post_console).get(get_consoles),
+        )
         .route(
             "/api/v1/qc/preboot/{serial}/frame",
             axum::routing::post(post_frame).get(get_frame),

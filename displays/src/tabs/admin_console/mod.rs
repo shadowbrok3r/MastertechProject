@@ -17,6 +17,9 @@ use crate::tabs::admin_console::ui::CLIENT_ROW_CONTENT_W;
 
 pub mod client_action;
 pub mod client_interface;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod preboot_direct;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod preboot_viewer;
 pub mod relink_popup;
 pub mod ui;
@@ -148,14 +151,28 @@ pub struct AdminConsole {
     #[serde(skip)]
     pub fk_health_rx: crossbeam::channel::Receiver<(String, bool, bool)>,
     /// Pre-boot terminal viewer (firmware TUI relayed over HTTP). Toggled with
-    /// Ctrl+Shift+B; connects by machine serial to the axum relay.
+    /// Ctrl+Shift+B; connects by machine serial to the axum relay. Native-only
+    /// (RataguiBackend depends on ratatui, a non-wasm dependency).
+    #[cfg(not(target_arch = "wasm32"))]
     #[serde(skip)]
     pub preboot_viewer: Option<preboot_viewer::PreBootViewer>,
+    #[cfg(not(target_arch = "wasm32"))]
     #[serde(skip)]
     pub preboot_roster: preboot_viewer::PreBootRoster,
     pub preboot_open: bool,
     pub preboot_serial: String,
     pub preboot_base_url: String,
+    /// Direct-link hub: TCP listener firmware dials for low-latency streaming,
+    /// plus its endpoint advertisement to the relay. Started lazily on the
+    /// first admin-console frame.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[serde(skip)]
+    pub direct_hub: preboot_direct::DirectHub,
+    /// Registry plugin id to push over a direct link.
+    pub preboot_plugin_id: String,
+    /// Last plugin run output rendered in the pre-boot window.
+    #[serde(skip)]
+    pub preboot_plugin_out: Vec<String>,
 }
 
 impl AdminConsole {
@@ -186,16 +203,24 @@ impl AdminConsole {
             fk_health_cache: HashMap::new(),
             fk_health_tx,
             fk_health_rx,
+            #[cfg(not(target_arch = "wasm32"))]
             preboot_viewer: None,
+            #[cfg(not(target_arch = "wasm32"))]
             preboot_roster: preboot_viewer::PreBootRoster::default(),
             preboot_open: false,
             preboot_serial: String::new(),
             preboot_base_url: "https://axum.master-tech.app".to_string(),
+            #[cfg(not(target_arch = "wasm32"))]
+            direct_hub: preboot_direct::DirectHub::new(),
+            preboot_plugin_id: "com.mastertech.uefi-diag".to_string(),
+            preboot_plugin_out: Vec::new(),
         }
     }
 
     /// Self-contained pre-boot viewer window. Ctrl+Shift+B toggles it; enter a
     /// machine serial + Connect to poll that firmware session from the relay.
+    /// Native-only (RataguiBackend/ratatui isn't a wasm dependency).
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn preboot_window(&mut self, ctx: &Context) {
         if ctx.input(|i| i.modifiers.ctrl && i.modifiers.shift && i.key_pressed(egui::Key::B)) {
             self.preboot_open = !self.preboot_open;
@@ -208,7 +233,7 @@ impl AdminConsole {
         let mut open = true;
         egui::Window::new(format!("{} Pre-Boot Viewer", icons::TERMINAL))
             .id(egui::Id::new("admin_preboot_viewer"))
-            .default_width(720.0)
+            .default_size([920.0, 640.0])
             .open(&mut open)
             .show(ctx, |ui| {
                 if !is_root {
@@ -237,6 +262,56 @@ impl AdminConsole {
                     }
                 });
                 ui.separator();
+                // Plugin push over a direct link (no HTTP): only when the
+                // active viewer is direct-linked to a connected box.
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some((hub, serial)) =
+                    self.preboot_viewer.as_ref().and_then(|v| v.direct_target())
+                {
+                    if let Some(res) = hub.take_plugin_result(&serial) {
+                        self.preboot_plugin_out.clear();
+                        if res.ok {
+                            self.preboot_plugin_out.push(format!("{} v{}", res.name, res.version));
+                            self.preboot_plugin_out.push(format!("tool: {}", res.tool));
+                            self.preboot_plugin_out.push(res.result);
+                            for l in res.log.into_iter().take(6) {
+                                self.preboot_plugin_out.push(format!("log: {l}"));
+                            }
+                        } else {
+                            self.preboot_plugin_out.push(format!("error: {}", res.error));
+                        }
+                    }
+                    ui.horizontal(|ui| {
+                        ui.label("Plugin:");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.preboot_plugin_id)
+                                .desired_width(220.0),
+                        );
+                        if ui.button(format!("{} Push + run", icons::PLAY)).clicked() {
+                            let req = tcp_protocol::preboot::PbPluginRun {
+                                source: self.preboot_plugin_id.trim().to_string(),
+                                tool: String::new(),
+                                args: "{}".to_string(),
+                            };
+                            if hub.run_plugin(&serial, &req) {
+                                self.preboot_plugin_out = vec!["running…".to_string()];
+                            } else {
+                                self.preboot_plugin_out = vec!["push failed (not connected)".to_string()];
+                            }
+                        }
+                    });
+                    if !self.preboot_plugin_out.is_empty() {
+                        egui::ScrollArea::vertical().max_height(120.0).id_salt("preboot_plugin_out").show(
+                            ui,
+                            |ui| {
+                                for l in &self.preboot_plugin_out {
+                                    ui.label(RichText::new(l).monospace().small());
+                                }
+                            },
+                        );
+                    }
+                    ui.separator();
+                }
                 if let Some(v) = self.preboot_viewer.as_mut() {
                     v.poll();
                     v.ui(ui);
@@ -269,6 +344,14 @@ impl AdminConsole {
     }
 
     pub fn receive(&mut self, ctx: &Context) {
+        // Bring up the direct-link listener + endpoint advertisement once, for
+        // Root operators (the only ones who see pre-boot boxes). Both calls are
+        // idempotent — internal atomics make repeats no-ops.
+        #[cfg(not(target_arch = "wasm32"))]
+        if crate::get_current_user_from_auth().map(|u| u.is_admin()).unwrap_or(false) {
+            self.direct_hub.start(preboot_direct::DIRECT_PORT);
+            self.direct_hub.advertise(self.preboot_base_url.clone());
+        }
         self.filesystem.receive();
         while let Ok((cs, cust_ok, comp_ok)) = self.fk_health_rx.try_recv() {
             self.fk_health_cache.insert(cs, (cust_ok, comp_ok));
@@ -755,39 +838,64 @@ impl SharedContext {
                     ui.add_space(6.);
                 }
 
-                // Root-only pre-boot UEFI rows (client_kind == qc_agent), shown
-                // in their own section under the machine list.
-                let preboot_rows: Vec<(String, String, i64)> =
-                    if crate::get_current_user_from_auth().map(|u| u.is_admin()).unwrap_or(false) {
-                        clients
-                            .iter()
-                            .filter(|c| {
-                                c.client_kind == database::schema::client::ClientKind::QcAgent
-                                    && c.connected
-                            })
-                            .map(|c| {
-                                let serial = if c.connection_string.trim().is_empty() {
-                                    c.id.key_string().trim_start_matches("qc_").to_string()
+                // Root-only pre-boot UEFI / QC-agent rows, shown in their own
+                // section under the machine list. (serial, friendly, age_secs,
+                // kind, direct-linked).
+                let is_root =
+                    crate::get_current_user_from_auth().map(|u| u.is_admin()).unwrap_or(false);
+                let mut preboot_rows: Vec<(String, String, i64, &'static str, bool)> = if is_root {
+                    clients
+                        .iter()
+                        .filter(|c| {
+                            matches!(
+                                c.client_kind,
+                                database::schema::client::ClientKind::QcAgent
+                                    | database::schema::client::ClientKind::Uefi
+                            ) && c.connected
+                        })
+                        .map(|c| {
+                            let serial = if c.connection_string.trim().is_empty() {
+                                c.id.key_string().trim_start_matches("qc_").to_string()
+                            } else {
+                                c.connection_string.trim().to_string()
+                            };
+                            let age = c
+                                .last_update
+                                .as_ref()
+                                .and_then(|d| {
+                                    chrono::DateTime::parse_from_rfc3339(&d.to_string()).ok()
+                                })
+                                .map(|t| {
+                                    (chrono::Utc::now() - t.with_timezone(&chrono::Utc))
+                                        .num_seconds()
+                                })
+                                .unwrap_or(i64::MAX);
+                            let kind =
+                                if c.client_kind == database::schema::client::ClientKind::Uefi {
+                                    "uefi"
                                 } else {
-                                    c.connection_string.trim().to_string()
+                                    "qc"
                                 };
-                                let age = c
-                                    .last_update
-                                    .as_ref()
-                                    .and_then(|d| {
-                                        chrono::DateTime::parse_from_rfc3339(&d.to_string()).ok()
-                                    })
-                                    .map(|t| {
-                                        (chrono::Utc::now() - t.with_timezone(&chrono::Utc))
-                                            .num_seconds()
-                                    })
-                                    .unwrap_or(i64::MAX);
-                                (serial, c.friendly_name.clone().unwrap_or_default(), age)
-                            })
-                            .collect()
-                    } else {
-                        Vec::new()
-                    };
+                            (serial, c.friendly_name.clone().unwrap_or_default(), age, kind, false)
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                // Merge direct-linked boxes: mark existing rows direct, add any
+                // that are direct-only (not yet in the DB client list).
+                #[cfg(not(target_arch = "wasm32"))]
+                if is_root {
+                    for a in ws_client.direct_hub.agents() {
+                        if let Some(row) = preboot_rows.iter_mut().find(|r| r.0 == a.serial) {
+                            row.3 = "uefi";
+                            row.4 = true;
+                            row.2 = row.2.min(a.idle_secs as i64);
+                        } else {
+                            preboot_rows.push((a.serial, String::new(), a.idle_secs as i64, "uefi", true));
+                        }
+                    }
+                }
                 let show_preboot = !preboot_rows.is_empty();
                 // Machine list keeps the top 75%; the pre-boot section gets the rest.
                 let list_max_h =
@@ -850,13 +958,13 @@ impl SharedContext {
                         ))
                         .strong(),
                     );
-                    let mut view_serial: Option<String> = None;
+                    let mut view_serial: Option<(String, bool)> = None;
                     ScrollArea::vertical()
                         .id_salt("preboot_qc_section")
                         .auto_shrink([true, true])
                         .show(ui, |ui| {
                             ui.set_width(CLIENT_ROW_CONTENT_W);
-                            for (serial, friendly, age) in &preboot_rows {
+                            for (serial, friendly, age, kind, direct) in &preboot_rows {
                                 ui.horizontal(|ui| {
                                     // Heartbeat lands every ~45s; <90s = live.
                                     let color = if *age < 90 {
@@ -865,6 +973,10 @@ impl SharedContext {
                                         Color32::GRAY
                                     };
                                     ui.colored_label(color, serial);
+                                    ui.weak(*kind);
+                                    if *direct {
+                                        ui.colored_label(Color32::from_rgb(120, 200, 255), "direct");
+                                    }
                                     if !friendly.is_empty() {
                                         ui.weak(friendly);
                                     }
@@ -874,21 +986,30 @@ impl SharedContext {
                                         format!("{age}s ago")
                                     });
                                     if ui.button(format!("{} View", icons::EYE)).clicked() {
-                                        view_serial = Some(serial.clone());
+                                        view_serial = Some((serial.clone(), *direct));
                                     }
                                 });
                             }
                         });
-                    if let Some(s) = view_serial {
-                        let base = ws_client
-                            .preboot_base_url
-                            .trim()
-                            .trim_end_matches('/')
-                            .to_string();
+                    if let Some((s, direct)) = view_serial {
                         ws_client.preboot_serial = s.clone();
-                        ws_client.preboot_viewer =
-                            Some(preboot_viewer::PreBootViewer::new(s, base));
                         ws_client.preboot_open = true;
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            let viewer = if direct {
+                                preboot_viewer::PreBootViewer::new_direct(s, ws_client.direct_hub.clone())
+                            } else {
+                                let base = ws_client
+                                    .preboot_base_url
+                                    .trim()
+                                    .trim_end_matches('/')
+                                    .to_string();
+                                preboot_viewer::PreBootViewer::new(s, base)
+                            };
+                            ws_client.preboot_viewer = Some(viewer);
+                        }
+                        #[cfg(target_arch = "wasm32")]
+                        let _ = direct;
                     }
                 }
             });
@@ -955,6 +1076,7 @@ impl SharedContext {
         });
 
         // Pre-boot terminal viewer window (Ctrl+Shift+B), self-contained.
+        #[cfg(not(target_arch = "wasm32"))]
         self.web_console_layout.preboot_window(ui.ctx());
 
         // ── Batch-action confirm dialog (slice 4) ─────────────────────

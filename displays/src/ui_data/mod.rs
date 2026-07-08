@@ -170,7 +170,7 @@ impl crate::app_state::SharedContext {
             let is_root = user.get_authorization() == database::schema::user::UserAuthorization::Root;
             let query = if is_root {
                 // Root also receives pre-boot UEFI agents (no assigned_user).
-                "LIVE SELECT * FROM connected_client WHERE (assigned_user.store == $auth.store AND connected == true) OR (client_kind == 'qc_agent' AND connected == true)".to_string()
+                "LIVE SELECT * FROM connected_client WHERE (assigned_user.store == $auth.store AND connected == true) OR (client_kind IN ['qc_agent', 'uefi'] AND connected == true)".to_string()
             } else {
                 "LIVE SELECT * FROM connected_client WHERE assigned_user == $auth.id AND assigned_user.store == $auth.store AND connected == true".to_string()
             };

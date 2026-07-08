@@ -27,7 +27,7 @@
     },
     {
       "path": "database/schema/connected_client.surql",
-      "hash": "efba2b8192ab28ca1d4c2d00991181f97a9a2ebf69df04654a770436c92124a7"
+      "hash": "17268f1cc49dc233d8047d4764b1de7ba6ab09d6cf824f8ce088bafd9a037f62"
     },
     {
       "path": "database/schema/crash_intel.surql",

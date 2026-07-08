@@ -36,7 +36,9 @@ pub mod plugins;
 
 pub mod remote_desktop;
 
-#[cfg(feature = "tokio")]
+// Uses ratatui (a non-wasm dependency); the zstd buffer codecs inside are
+// further gated to the tokio live-viewer that calls them.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod remote_viewer;
 
 

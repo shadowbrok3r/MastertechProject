@@ -1059,6 +1059,7 @@ dependencies = [
  "openssl-sys",
  "serde",
  "serde_json",
+ "surrealdb",
  "tokio",
  "tokio-cron-scheduler",
  "tower-http",

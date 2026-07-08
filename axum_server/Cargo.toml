@@ -6,6 +6,8 @@ edition = "2024"
 [dependencies]
 # The core stuff
 database.workspace = true
+# Direct dep so the SurrealValue derive (expands to ::surrealdb paths) resolves.
+surrealdb.workspace = true
 axum = {version = "0.8", features=["tracing", "macros", "multipart", "ws"]}
 tower-http = { version = "0.6", features = ["full"] }
 tokio = { version="1", features=["full"] }

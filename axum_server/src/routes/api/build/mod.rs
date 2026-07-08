@@ -15,6 +15,7 @@
 //! | GET    | `/api/build/jobs/{job_id}`          | Poll a job's current state. `done` jobs return wasm bytes as base64. |
 //! | GET    | `/api/build/workers`                | List `connected_client` rows with `client_kind = 'build_worker'`. Stale-pruned by `last_update`. |
 //! | POST   | `/api/build/publish`                | Copy a `done` job's wasm into the `plugins` bucket and upsert its `plugin_registry` row. |
+//! | GET    | `/api/v1/plugins/{plugin_id}/wasm`  | Serve a registry plugin's wasm bytes (pre-boot firmware fetch path). |
 //!
 //! Errors map to `500` with the SurrealDB error string in the body so
 //! the agent can debug schema/binding issues without a separate log
@@ -132,6 +133,7 @@ pub fn build_routes() -> Router<AppState> {
         .route("/api/build/jobs/{job_id}", routing::get(get_job))
         .route("/api/build/workers", routing::get(list_workers))
         .route("/api/build/publish", routing::post(publish_job))
+        .route("/api/v1/plugins/{plugin_id}/wasm", routing::get(fetch_wasm))
 }
 
 // ── Handlers ───────────────────────────────────────────────────────
@@ -290,6 +292,30 @@ async fn publish_job(
         wasm_bucket_path: bucket_path,
         source_stored,
     }))
+}
+
+/// Serve a registry plugin's wasm bytes so firmware (via the pre-boot relay)
+/// can fetch and run it in-place.
+async fn fetch_wasm(
+    Path(plugin_id): Path<String>,
+) -> Result<impl axum::response::IntoResponse, (StatusCode, String)> {
+    let entry = PluginRegistryEntry::get_by_plugin_id(&plugin_id)
+        .await
+        .map_err(internal)?
+        .ok_or((StatusCode::NOT_FOUND, format!("no plugin '{plugin_id}' in the registry")))?;
+    let path = entry.wasm_bucket_path.ok_or((
+        StatusCode::NOT_FOUND,
+        format!("plugin '{plugin_id}' has no wasm artifact"),
+    ))?;
+    let bytes = database::schema::get_file("plugins", &path)
+        .await
+        .map_err(internal)?
+        .ok_or((StatusCode::NOT_FOUND, format!("wasm missing from bucket at '{path}'")))?;
+    tracing::info!(plugin_id = %plugin_id, bytes = bytes.len(), "qc.plugin wasm served");
+    Ok((
+        [(axum::http::header::CONTENT_TYPE, "application/wasm")],
+        bytes,
+    ))
 }
 
 // ── Helpers ────────────────────────────────────────────────────────

@@ -23,6 +23,10 @@ pub enum ClientKind {
     /// hardware fingerprint, and shows up as a live client for the duration.
     #[surreal(value = "qc_agent")]
     QcAgent,
+    /// Pre-boot UEFI firmware app — relayed HTTP presence/streaming; no
+    /// hostname or OS, identity is the chassis serial or OA3/MSDM key.
+    #[surreal(value = "uefi")]
+    Uefi,
 }
 
 impl Default for ClientKind {
@@ -37,6 +41,7 @@ impl ClientKind {
             Self::Machine => "machine",
             Self::BuildWorker => "build_worker",
             Self::QcAgent => "qc_agent",
+            Self::Uefi => "uefi",
         }
     }
 }

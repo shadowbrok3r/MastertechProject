@@ -1,0 +1,24 @@
+id = "20260708150000__client_kind_uefi"
+name = "client_kind_uefi"
+state = "completed"
+source_schema_hash = "81d3aa1ce3c61c8a94b55dadc0f81aff920d4a926de3d0b12eb2d31c7c3e524f"
+target_schema_hash = "81d3aa1ce3c61c8a94b55dadc0f81aff920d4a926de3d0b12eb2d31c7c3e524f"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "widen_client_kind_assert"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE client_kind ON connected_client TYPE string DEFAULT 'machine' ASSERT $value IN ['machine', 'build_worker', 'qc_agent', 'uefi'] PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "restore_client_kind_assert"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+UPDATE connected_client SET client_kind = 'qc_agent' WHERE client_kind = 'uefi';
+DEFINE FIELD OVERWRITE client_kind ON connected_client TYPE string DEFAULT 'machine' ASSERT $value IN ['machine', 'build_worker', 'qc_agent'] PERMISSIONS FULL;
+"""

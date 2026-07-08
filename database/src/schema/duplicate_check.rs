@@ -370,6 +370,8 @@ pub fn merge_customer(existing: &CustomerData, new: &CustomerData, selections: &
 pub fn merge_computer(existing: &ComputerData, new: &ComputerData, selections: &FieldSelections) -> ComputerData {
     ComputerData {
         id: existing.id.clone(),
+        // Hardware-derived identity: the incoming reading wins when present.
+        oa3_key: new.oa3_key.clone().or_else(|| existing.oa3_key.clone()),
         customer: if selections.use_new("customer") { new.customer.clone() } else { existing.customer.clone() },
         seb_info: if selections.use_new("seb_info") { new.seb_info.clone() } else { existing.seb_info.clone() },
         hostname: if selections.use_new("hostname") { new.hostname.clone() } else { existing.hostname.clone() },

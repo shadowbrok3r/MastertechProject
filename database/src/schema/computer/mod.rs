@@ -166,6 +166,12 @@ pub struct ComputerData {
     pub product_sku: String,
     pub product_serial: String,
     pub product_vendor: String,
+    /// OA3/MSDM Windows key — the cross-OS identity shared with the pre-boot
+    /// UEFI app (SoftwareLicensingService.OA3xOriginalProductKey on Windows,
+    /// ACPI MSDM in firmware).
+    #[serde(default)]
+    #[surreal(default)]
+    pub oa3_key: Option<String>,
     pub installed_programs: Option<Value>
 }
 
@@ -193,6 +199,7 @@ impl Default for ComputerData {
             product_sku: Default::default(),
             product_serial: Default::default(),
             product_vendor: Default::default(),
+            oa3_key: Default::default(),
             installed_programs: Default::default(),
             current_antivirus: Default::default(),
             windows_active: Default::default(),

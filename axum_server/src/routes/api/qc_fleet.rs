@@ -726,7 +726,7 @@ pub async fn store_fingerprint(
     // Project the hardware fields into a `computer` record keyed by serial.
     // OS/business fields are left blank for the Windows agent / order linkage.
     {
-        use database::schema::computer::{ComputerData, DriveData};
+        use database::schema::computer::DriveData;
         use database::schema::{COMPUTER_TABLE, RecordId};
 
         let gpu = payload
@@ -776,56 +776,80 @@ pub async fn store_fingerprint(
             })
             .unwrap_or_default();
 
-        let comp = ComputerData {
-            id: RecordId::new(COMPUTER_TABLE, serial.clone()),
-            cpu: s("/cpu/model"),
-            gpu,
-            ram,
-            drives,
-            device_name: Some(s("/firmware/chassis")),
-            device_mfg: Some(s("/system/manufacturer")),
-            device_model: Some(s("/system/product")),
-            device_serial: Some(serial.clone()),
-            motherboard_name: s("/baseboard/product"),
-            motherboard_serial: s("/baseboard/serial"),
-            motherboard_asset_tag: s("/baseboard/asset_tag"),
-            motherboard_vendor: s("/baseboard/manufacturer"),
-            product_name: s("/system/product"),
-            product_sku: s("/system/sku"),
-            product_serial: s("/system/serial"),
-            product_vendor: s("/system/manufacturer"),
-            ..ComputerData::default()
-        };
-        let cid = comp.id.clone();
-        let r: Result<Option<ComputerData>, _> = DATABASE.upsert(cid).content(comp).await;
+        let oa3_key = payload
+            .pointer("/identity/msdm_key")
+            .or_else(|| payload.pointer("/security/msdm_key"))
+            .and_then(|v| v.as_str())
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty());
+
+        // MERGE (not content) so an operator-set `customer` link and fields
+        // written by the Windows agent survive subsequent fingerprints.
+        let mut patch = serde_json::json!({
+            "cpu": s("/cpu/model"),
+            "gpu": gpu,
+            "ram": ram,
+            "drives": serde_json::to_value(&drives).unwrap_or_default(),
+            "device_name": s("/firmware/chassis"),
+            "device_mfg": s("/system/manufacturer"),
+            "device_model": s("/system/product"),
+            "device_serial": serial.clone(),
+            "motherboard_name": s("/baseboard/product"),
+            "motherboard_serial": s("/baseboard/serial"),
+            "motherboard_asset_tag": s("/baseboard/asset_tag"),
+            "motherboard_vendor": s("/baseboard/manufacturer"),
+            "product_name": s("/system/product"),
+            "product_sku": s("/system/sku"),
+            "product_serial": s("/system/serial"),
+            "product_vendor": s("/system/manufacturer"),
+        });
+        if let Some(k) = &oa3_key {
+            patch["oa3_key"] = serde_json::json!(k);
+        }
+        let cid = RecordId::new(COMPUTER_TABLE, serial.clone());
+        let r: Result<Option<serde_json::Value>, _> = DATABASE.upsert(cid).merge(patch).await;
         if let Err(e) = r {
             tracing::warn!(serial = %serial, error = %e, "qc.fingerprint computer upsert failed");
         }
     }
 
-    // Mark the box as a live connected client (kind = qc_agent) so it shows up
-    // in the inventory/dashboard for the duration of the QC session.
+    // Mark the box as a live connected client so it shows up in the console.
+    // A fingerprint carrying the pre-boot `identity` block (or the explicit
+    // `agent` marker) is the UEFI firmware app; Windows qc-app fingerprints
+    // stay `qc_agent`. MERGE keeps computer/customer links and assigned_user
+    // intact across fingerprints.
     {
-        use database::schema::client::{ClientKind, ConnectedClient};
-        use database::schema::{CONNECTED_CLIENT_TABLE, RecordId};
-
         let friendly = match s("/system/product") {
             p if p.is_empty() => format!("UEFI QC {serial}"),
             p => p,
         };
-        let cc = ConnectedClient {
-            id: RecordId::new(CONNECTED_CLIENT_TABLE, format!("qc_{serial}")),
-            connection_string: serial.clone(),
-            client_hash: serial.clone(),
-            connected: true,
-            last_update: Some(now_db_datetime()),
-            friendly_name: Some(friendly),
-            local_ip: source_ip,
-            client_kind: ClientKind::QcAgent,
-            ..Default::default()
-        };
-        let cid = cc.id.clone();
-        let r: Result<Option<ConnectedClient>, _> = DATABASE.upsert(cid).content(cc).await;
+        let is_uefi = payload.get("identity").is_some()
+            || payload.get("agent").and_then(|v| v.as_str()) == Some("uefi-app");
+        let kind = if is_uefi { "uefi" } else { "qc_agent" };
+        use database::schema::{CONNECTED_CLIENT_TABLE, RecordId, SurrealValue};
+        #[derive(SurrealValue)]
+        struct CcMerge {
+            connection_string: String,
+            client_hash: String,
+            connected: bool,
+            last_update: DbDatetime,
+            friendly_name: String,
+            local_ip: Option<String>,
+            client_kind: String,
+        }
+        let rid = RecordId::new(CONNECTED_CLIENT_TABLE, format!("qc_{serial}"));
+        let r: Result<Option<serde_json::Value>, _> = DATABASE
+            .upsert(rid)
+            .merge(CcMerge {
+                connection_string: serial.clone(),
+                client_hash: serial.clone(),
+                connected: true,
+                last_update: now_db_datetime(),
+                friendly_name: friendly,
+                local_ip: source_ip,
+                client_kind: kind.to_string(),
+            })
+            .await;
         if let Err(e) = r {
             tracing::warn!(serial = %serial, error = %e, "qc.fingerprint connected_client upsert failed");
         }

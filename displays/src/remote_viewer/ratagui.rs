@@ -279,6 +279,35 @@ impl RataguiBackend {
         self.bold_font = FontId::new(desired as f32, self.bold_font.family.to_owned());
         self.italic_font = FontId::new(desired as f32, self.italic_font.family.to_owned());
         self.bolditalic_font = FontId::new(desired as f32, self.bolditalic_font.family.to_owned());
+        // Cached rows carry the old font metrics.
+        self.cached_job = None;
+        self.buffer_changed = true;
+    }
+
+    /// Largest font size (6..=24) whose glyph grid still fits `cols`×`rows`
+    /// inside the currently available space.
+    pub fn fit_font_to_grid(&mut self, ui: &mut Ui, cols: u16, rows: u16) {
+        if cols == 0 || rows == 0 {
+            return;
+        }
+        let avail = ui.available_size();
+        if avail.x <= 0.0 || avail.y <= 0.0 {
+            return;
+        }
+        let cur = self.font_size.max(1) as f32;
+        let (cw, ch) = ui.fonts_mut(|f| {
+            (f.glyph_width(&self.regular_font, ' '), f.row_height(&self.regular_font))
+        });
+        if cw <= 0.0 || ch <= 0.0 {
+            return;
+        }
+        // Per-point glyph metrics; egui font metrics scale linearly with size.
+        let by_w = avail.x / (cols as f32 * (cw / cur));
+        let by_h = avail.y / (rows as f32 * (ch / cur));
+        let fitted = ((by_w.min(by_h) * 0.98).floor() as u16).clamp(6, 24);
+        if fitted != self.font_size {
+            self.set_font_size(fitted);
+        }
     }
 
     /// Returns a reference to the internal buffer of the `RataguiBackend`.

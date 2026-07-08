@@ -1,0 +1,23 @@
+id = "20260708170000__assigned_user_guest_safe"
+name = "assigned_user_guest_safe"
+state = "completed"
+source_schema_hash = "be1b0cfc238417ea1ab1319b7124cccab4f97dd3ac43fef6af95f9318d837d5e"
+target_schema_hash = "be1b0cfc238417ea1ab1319b7124cccab4f97dd3ac43fef6af95f9318d837d5e"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "guest_safe_assigned_user_default"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE assigned_user ON connected_client TYPE none | record<user> DEFAULT IF $auth.id != NONE AND record::tb($auth.id) == 'user' { $auth.id } PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "restore_assigned_user_default"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE assigned_user ON connected_client TYPE none | record<user> DEFAULT $auth.id PERMISSIONS FULL;
+"""

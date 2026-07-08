@@ -362,6 +362,58 @@ impl RawNet {
     }
 }
 
+/// Extract the UDP payload from a raw Ethernet frame destined for `want_port`.
+/// Mirrors `parse_dhcp`'s layering (Eth → IPv4 → UDP) without the DHCP specifics.
+fn udp_payload_for_port(frame: &[u8], want_port: u16) -> Option<&[u8]> {
+    if frame.len() < 14 + 20 + 8 {
+        return None;
+    }
+    if u16::from_be_bytes([frame[12], frame[13]]) != 0x0800 {
+        return None; // not IPv4
+    }
+    let ip = &frame[14..];
+    let ihl = ((ip[0] & 0x0F) as usize) * 4;
+    if ihl < 20 || ip.len() < ihl + 8 || ip[9] != 17 {
+        return None; // not UDP / truncated
+    }
+    let total_len = u16::from_be_bytes([ip[2], ip[3]]) as usize;
+    if total_len < ihl + 8 || total_len > ip.len() {
+        return None;
+    }
+    let udp = &ip[ihl..];
+    if u16::from_be_bytes([udp[2], udp[3]]) != want_port {
+        return None; // dst port mismatch
+    }
+    let udp_len = u16::from_be_bytes([udp[4], udp[5]]) as usize;
+    if udp_len < 8 || udp_len > udp.len() {
+        return None;
+    }
+    Some(&udp[8..udp_len])
+}
+
+/// Listen for a console discovery beacon on `port` for up to `budget_ms` and
+/// return the advertised console `ip:port`. Pure SNP receive (no UEFI IP4/UDP4
+/// stack), so it works on the raw path; best-effort when the UEFI stack owns
+/// the NIC. Returns None on timeout or if no beacon parsed.
+pub fn discover_console(port: u16, budget_ms: u64) -> Option<String> {
+    let snp = open_snp().ok()?;
+    let mut buf = [0u8; 2048];
+    let mut waited = 0u64;
+    while waited < budget_ms {
+        let Some(n) = recv_frame(&snp, &mut buf, budget_ms - waited) else {
+            break;
+        };
+        waited += 50;
+        if let Some(payload) = udp_payload_for_port(&buf[..n], port) {
+            if let Some(addr) = tcp_protocol::preboot::parse_beacon(payload) {
+                logln(format!("netraw: discovery beacon -> {addr}"));
+                return Some(addr);
+            }
+        }
+    }
+    None
+}
+
 /// Parse an IPv4 literal `a.b.c.d` (ignores any trailing `:port`).
 pub fn parse_ipv4(host: &str) -> Option<[u8; 4]> {
     let host = host.split(':').next().unwrap_or(host);

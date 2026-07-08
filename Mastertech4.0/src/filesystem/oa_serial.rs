@@ -41,6 +41,29 @@ pub fn get_oa_style_serial() -> anyhow::Result<String, anyhow::Error> {
 }
 
 // ----------------------------------------------------
+// OA3/MSDM Windows key (SoftwareLicensingService.OA3xOriginalProductKey) —
+// the same value the pre-boot UEFI app reads from the ACPI MSDM table, so
+// both agents report one identity for the box.
+// ----------------------------------------------------
+pub fn get_oa3_msdm_key() -> anyhow::Result<String, anyhow::Error> {
+    let wmi_con = WMIConnection::new()?;
+    #[derive(Deserialize, Debug)]
+    #[allow(non_camel_case_types, non_snake_case)]
+    struct SoftwareLicensingService {
+        OA3xOriginalProductKey: Option<String>,
+    }
+    for item in wmi_con.query::<SoftwareLicensingService>()? {
+        if let Some(k) = item.OA3xOriginalProductKey {
+            let k = k.trim();
+            if !k.is_empty() {
+                return Ok(k.to_string());
+            }
+        }
+    }
+    Err(anyhow::anyhow!("No OA3 key in SoftwareLicensingService (not an OA3.0 image)"))
+}
+
+// ----------------------------------------------------
 // Convert OA3 → 13 digit (OS-style)
 // Rules per request:
 //  - Remove dashes

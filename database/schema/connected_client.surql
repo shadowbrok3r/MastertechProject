@@ -30,7 +30,9 @@ DEFINE EVENT `update` ON connected_client
         };
     };
 
-DEFINE FIELD assigned_user    ON connected_client TYPE none | record<user>    DEFAULT $auth.id PERMISSIONS FULL;
+-- Guest/system connections (axum ingest) have a non-user or absent $auth;
+-- only a real user auth may become the default assignee.
+DEFINE FIELD assigned_user    ON connected_client TYPE none | record<user>    DEFAULT IF $auth.id != NONE AND record::tb($auth.id) == 'user' { $auth.id } PERMISSIONS FULL;
 DEFINE FIELD command_history  ON connected_client TYPE none | array<object>  PERMISSIONS FULL;
 DEFINE FIELD command_history.* ON connected_client TYPE object               PERMISSIONS FULL;
 DEFINE FIELD computer         ON connected_client TYPE none | record<computer> PERMISSIONS FULL;
@@ -45,4 +47,4 @@ DEFINE FIELD tcp_port         ON connected_client TYPE none | number DEFAULT 910
 -- `plugin_builder` worker. The admin/MCP `list_build_workers` tool
 -- filters on this; the Web Console default view hides workers.
 -- Rows without this field are treated as `machine` for back-compat.
-DEFINE FIELD client_kind      ON connected_client TYPE string DEFAULT 'machine' ASSERT $value IN ['machine', 'build_worker', 'qc_agent'] PERMISSIONS FULL;
+DEFINE FIELD client_kind      ON connected_client TYPE string DEFAULT 'machine' ASSERT $value IN ['machine', 'build_worker', 'qc_agent', 'uefi'] PERMISSIONS FULL;

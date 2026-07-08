@@ -149,6 +149,17 @@ pub mod preboot {
     /// 2. `[len][0x05][frame]` … streamed on change
     /// 3. server writes `[len][0x06][event]` back as the viewer sends input
     pub const FRAME_TAG_PREBOOT_HELLO: u8 = 0x07;
+    /// Console → firmware: run a WASM plugin. Body is a bincode [`PbPluginRun`].
+    /// Only meaningful on the direct socket (the firmware dials a console
+    /// listener); lets the console push a registry plugin without HTTP.
+    pub const FRAME_TAG_PREBOOT_PLUGIN_RUN: u8 = 0x08;
+    /// Firmware → console: the outcome of a plugin run. Body is a bincode
+    /// [`PbPluginResult`].
+    pub const FRAME_TAG_PREBOOT_PLUGIN_RESULT: u8 = 0x09;
+    /// Console → firmware: start/stop streaming frames. Body is a bincode
+    /// [`PbStreamCtl`]. Lets a viewer opening/closing gate the frame flow over
+    /// the direct socket the same way the relay's viewer flag does.
+    pub const FRAME_TAG_PREBOOT_STREAM_CTL: u8 = 0x0A;
 
     /// Mirrors `ratatui::style::Color` so a cell's color survives the wire
     /// without pulling ratatui into firmware's wire crate.
@@ -230,6 +241,91 @@ pub mod preboot {
         MouseScroll { x: u16, y: u16, up: bool },
     }
 
+    /// Console → firmware plugin invocation. `source` is either a registry
+    /// plugin id (firmware fetches it) or an absolute/relative URL; empty runs
+    /// the embedded demo. `tool` empty means "first advertised tool".
+    #[derive(Serialize, Deserialize, Clone, Debug, Default)]
+    pub struct PbPluginRun {
+        pub source: String,
+        pub tool: String,
+        pub args: String,
+    }
+
+    /// Firmware → console plugin outcome.
+    #[derive(Serialize, Deserialize, Clone, Debug, Default)]
+    pub struct PbPluginResult {
+        pub ok: bool,
+        pub id: String,
+        pub name: String,
+        pub version: String,
+        pub tools: String,
+        pub tool: String,
+        pub result: String,
+        pub log: Vec<String>,
+        pub stdout: String,
+        pub error: String,
+    }
+
+    /// Console → firmware stream gate.
+    #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default)]
+    pub struct PbStreamCtl {
+        pub stream: bool,
+    }
+
+    pub fn encode_plugin_run(p: &PbPluginRun) -> Vec<u8> {
+        bincode::serde::encode_to_vec(p, bincode::config::standard()).unwrap_or_default()
+    }
+    pub fn decode_plugin_run(b: &[u8]) -> Option<PbPluginRun> {
+        bincode::serde::decode_from_slice(b, bincode::config::standard()).ok().map(|(v, _)| v)
+    }
+    pub fn encode_plugin_result(p: &PbPluginResult) -> Vec<u8> {
+        bincode::serde::encode_to_vec(p, bincode::config::standard()).unwrap_or_default()
+    }
+    pub fn decode_plugin_result(b: &[u8]) -> Option<PbPluginResult> {
+        bincode::serde::decode_from_slice(b, bincode::config::standard()).ok().map(|(v, _)| v)
+    }
+    pub fn encode_stream_ctl(p: &PbStreamCtl) -> Vec<u8> {
+        bincode::serde::encode_to_vec(p, bincode::config::standard()).unwrap_or_default()
+    }
+    pub fn decode_stream_ctl(b: &[u8]) -> Option<PbStreamCtl> {
+        bincode::serde::decode_from_slice(b, bincode::config::standard()).ok().map(|(v, _)| v)
+    }
+
+    /// UDP port a console broadcasts direct-link discovery beacons on, and the
+    /// firmware listens on. LAN-local (255.255.255.255) — never routed.
+    pub const DISCOVERY_PORT: u16 = 9210;
+
+    /// Discovery-beacon magic + version. Payload is `MTCB\x01<addr UTF-8>` where
+    /// addr is the console's direct-link `ip:port`. Deliberately not bincode so
+    /// the firmware can parse it straight from a raw UDP payload.
+    const BEACON_MAGIC: &[u8; 4] = b"MTCB";
+    const BEACON_VERSION: u8 = 1;
+
+    /// Build a discovery beacon advertising `addr` (the console's `ip:port`).
+    pub fn encode_beacon(addr: &str) -> Vec<u8> {
+        let mut v = Vec::with_capacity(5 + addr.len());
+        v.extend_from_slice(BEACON_MAGIC);
+        v.push(BEACON_VERSION);
+        v.extend_from_slice(addr.as_bytes());
+        v
+    }
+
+    /// Parse a discovery beacon payload, returning the advertised `ip:port`.
+    /// Rejects anything without the magic/version so a stray datagram on the
+    /// port can't be mistaken for a console.
+    pub fn parse_beacon(payload: &[u8]) -> Option<String> {
+        if payload.len() < 6 || &payload[0..4] != BEACON_MAGIC || payload[4] != BEACON_VERSION {
+            return None;
+        }
+        let addr = core::str::from_utf8(&payload[5..]).ok()?.trim();
+        // Must look like host:port with a plausible dotted IPv4 host.
+        let (host, port) = addr.rsplit_once(':')?;
+        if port.parse::<u16>().is_err() || host.split('.').count() != 4 {
+            return None;
+        }
+        Some(addr.to_string())
+    }
+
     pub fn encode_frame(f: &PreBootFrame) -> Vec<u8> {
         bincode::serde::encode_to_vec(f, bincode::config::standard()).unwrap_or_default()
     }
@@ -296,6 +392,15 @@ mod tests {
         let (seq, ts) = decode_ping_payload(&bytes).unwrap();
         assert_eq!(seq, 42);
         assert_eq!(ts, 0x1234_5678_9abc_def0);
+    }
+
+    #[test]
+    fn beacon_roundtrip_and_reject() {
+        use super::preboot::{encode_beacon, parse_beacon};
+        assert_eq!(parse_beacon(&encode_beacon("192.168.22.139:9209")).as_deref(), Some("192.168.22.139:9209"));
+        assert_eq!(parse_beacon(b"random udp junk"), None);
+        assert_eq!(parse_beacon(b"MTCB\x01nohost"), None); // no :port
+        assert_eq!(parse_beacon(b"MTCB\x02192.168.1.1:80"), None); // wrong version
     }
 
     #[test]

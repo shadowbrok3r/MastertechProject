@@ -124,6 +124,8 @@ pub struct PreBootViewer {
     fetching: Arc<AtomicBool>,
     /// Highest firmware frame counter rendered (for display/debug).
     pub last_seq: u64,
+    /// Firmware terminal dimensions from the last decoded frame.
+    grid: Option<(u16, u16)>,
     /// A frame has been decoded; the waiting placeholder shows until then.
     received_frame: bool,
     /// Relay returned 404 for this serial (firmware side not connected).
@@ -133,6 +135,12 @@ pub struct PreBootViewer {
     /// While set, poll frames aggressively — a keystroke was just sent and a
     /// screen update is imminent, so we want it the instant it lands.
     burst_until: Option<web_time::Instant>,
+    /// Direct-link source: when set, frames/input flow over the console's TCP
+    /// session with the firmware instead of the HTTP relay.
+    #[cfg(not(target_arch = "wasm32"))]
+    direct: Option<super::preboot_direct::DirectHub>,
+    /// Last direct frame seq rendered (decode only on change).
+    direct_seq: u64,
 }
 
 impl PreBootViewer {
@@ -149,11 +157,31 @@ impl PreBootViewer {
             frame_tx,
             fetching: Arc::new(AtomicBool::new(false)),
             last_seq: 0,
+            grid: None,
             received_frame: false,
             session_missing: Arc::new(AtomicBool::new(false)),
             poll_err: Arc::new(AtomicBool::new(false)),
             burst_until: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            direct: None,
+            direct_seq: 0,
         }
+    }
+
+    /// Direct-link viewer: frames/input ride the console's TCP session with the
+    /// firmware (via `hub`) instead of the HTTP relay.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn new_direct(serial: String, hub: super::preboot_direct::DirectHub) -> Self {
+        let mut v = Self::new(serial, String::new());
+        v.direct = Some(hub);
+        v
+    }
+
+    /// The direct hub + serial when this viewer streams over a direct socket,
+    /// so the window can offer plugin-push against it.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn direct_target(&self) -> Option<(super::preboot_direct::DirectHub, String)> {
+        self.direct.clone().map(|h| (h, self.serial.clone()))
     }
 
     /// Repaint cadence: fast right after a keystroke (the screen update is
@@ -166,6 +194,26 @@ impl PreBootViewer {
     /// Fetch the latest frame (one GET in flight at a time) and render the most
     /// recent one received. Call once per egui frame.
     pub fn poll(&mut self) {
+        // Direct-link source: pull the newest frame straight from the console's
+        // TCP session with the firmware; no HTTP.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(hub) = &self.direct {
+            self.session_missing.store(!hub.is_connected(&self.serial), Ordering::Release);
+            self.poll_err.store(false, Ordering::Release);
+            let seq = hub.frame_seq(&self.serial);
+            if seq != self.direct_seq {
+                if let Some(bytes) = hub.latest_frame(&self.serial) {
+                    if let Some(frame) = tcp_protocol::preboot::decode_frame(&bytes) {
+                        self.last_seq = frame.frame;
+                        self.grid = Some((frame.cols, frame.rows));
+                        self.received_frame = true;
+                        self.backend.update_buffer(from_preboot(&frame));
+                    }
+                }
+                self.direct_seq = seq;
+            }
+            return;
+        }
         if !self.fetching.swap(true, Ordering::AcqRel) {
             let url = format!("{}/api/v1/qc/preboot/{}/frame", self.base_url, enc(&self.serial));
             let tx = self.frame_tx.clone();
@@ -198,6 +246,7 @@ impl PreBootViewer {
         if let Some(bytes) = latest {
             if let Some(frame) = tcp_protocol::preboot::decode_frame(&bytes) {
                 self.last_seq = frame.frame;
+                self.grid = Some((frame.cols, frame.rows));
                 self.received_frame = true;
                 self.backend.update_buffer(from_preboot(&frame));
             }
@@ -244,11 +293,22 @@ impl PreBootViewer {
                 format!("'{}' dropped off the relay — showing its last frame", self.serial),
             );
         }
+        // Scale the font so the full firmware grid fits the window.
+        if let Some((cols, rows)) = self.grid {
+            self.backend.fit_font_to_grid(ui, cols, rows);
+        }
         ui.add(&mut self.backend);
         while let Ok(ev) = self.event_rx.try_recv() {
             let Some(pb) = terminal_event_to_preboot(&ev) else {
                 continue;
             };
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(hub) = &self.direct {
+                hub.send_input(&self.serial, &pb);
+                self.burst_until =
+                    Some(web_time::Instant::now() + std::time::Duration::from_millis(600));
+                continue;
+            }
             let body = tcp_protocol::preboot::encode_event(&pb);
             let url = format!("{}/api/v1/qc/preboot/{}/input", self.base_url, enc(&self.serial));
             PlatformSpawner::spawn(async move {

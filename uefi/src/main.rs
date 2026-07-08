@@ -87,6 +87,12 @@ const PREBOOT_INPUT_POLL_TICKS: u32 = 12;
 /// Idle ticks (~33 ms each) between presence heartbeats (~45 s).
 const PRESENCE_HEARTBEAT_TICKS: u32 = 1350;
 
+/// Idle ticks (~33 ms each) between console-discovery attempts (~15 s).
+const DIRECT_DISCOVER_TICKS: u32 = 450;
+
+/// Direct-link listener port on the console (mirror of displays' DIRECT_PORT).
+const DIRECT_PORT: u16 = 9209;
+
 /// Idle ticks (~33 ms each) between relay viewer-flag checks (~5 s).
 const VIEWER_CHECK_TICKS: u32 = 150;
 
@@ -1261,7 +1267,8 @@ fn fingerprint_json(info: &SysInfo) -> String {
 
     let mut out = format!(
         concat!(
-            "{{\"system\":{{\"manufacturer\":{},\"product\":{},\"version\":{},\"serial\":{},",
+            "{{\"agent\":\"uefi-app\",",
+            "\"system\":{{\"manufacturer\":{},\"product\":{},\"version\":{},\"serial\":{},",
             "\"uuid\":{},\"sku\":{},\"family\":{}}},",
             "\"baseboard\":{{\"manufacturer\":{},\"product\":{},\"version\":{},\"serial\":{},\"asset_tag\":{}}},",
             "\"cpu\":{{\"model\":{},\"socket\":{},\"cores\":{},\"threads\":{},\"features\":[{}]}},",
@@ -1565,6 +1572,21 @@ fn http_post_json(target: &str, path: &str, body: &[u8]) -> Result<String, Strin
         return http_efi::post(&format!("{}://{}{}", u.scheme, u.host_port, path), body);
     }
     net_tcp::post(&u.host_port, path, body)
+}
+
+/// GET an absolute or target-relative URL, picking the transport like
+/// [`http_get_json`]. Paths resolve against `target`; absolute `http://<IPv4>`
+/// URLs take the raw-TCP4 path, anything needing DNS/TLS falls to EFI HTTP.
+fn http_get_url(target: &str, url: &str) -> Result<(u16, Vec<u8>), String> {
+    if url.starts_with('/') {
+        return http_get_json(target, url);
+    }
+    let u = parse_upload_url(url);
+    if u.needs_efi_http {
+        http_efi::get_capped(&u.full, 8 << 20)
+    } else {
+        net_tcp::get(&u.host_port, &u.path)
+    }
 }
 
 /// Download a firmware capsule (up to 64 MiB) over EFI HTTP. Capsules come from
@@ -2256,6 +2278,223 @@ mod net_tcp {
         let _ = unsafe { ((*tcp_ptr).configure)(tcp_ptr, core::ptr::null()) };
 
         Ok(format!("sent {}B via if{idx}; resp: {resp_line}", req.len()))
+    }
+
+    /// A persistent TCP4 connection to a console's direct-link listener. Unlike
+    /// [`run`], the socket stays open across many main-loop iterations so the
+    /// firmware can stream frames and receive input/plugin frames live.
+    pub struct DirectLink {
+        sb: boot::ScopedProtocol<Tcp4Sb>,
+        child: uefi_raw::Handle,
+        tcp: boot::ScopedProtocol<Tcp4>,
+        event: uefi::Event,
+        rx: Vec<u8>,
+    }
+
+    impl DirectLink {
+        /// Dial `target` ("a.b.c.d:port"), open a child, configure + connect.
+        pub fn connect(target: &str) -> Result<Self, String> {
+            if tcp4_absent() {
+                return Err("no TCP4 stack".into());
+            }
+            let (rip, rport) =
+                parse_target(target).ok_or_else(|| "bad console addr".to_string())?;
+            let sbh = *boot::find_handles::<Tcp4Sb>()
+                .map_err(|e| format!("find Tcp4Sb: {e:?}"))?
+                .first()
+                .ok_or("no TCP4 interface")?;
+            let mut sb = unsafe {
+                boot::open_protocol::<Tcp4Sb>(
+                    OpenProtocolParams { handle: sbh, agent: boot::image_handle(), controller: None },
+                    OpenProtocolAttributes::GetProtocol,
+                )
+            }
+            .map_err(|e| format!("open sb: {e:?}"))?;
+
+            let mut child: uefi_raw::Handle = core::ptr::null_mut();
+            let st = unsafe { (sb.0.create_child)(&mut sb.0, &mut child) };
+            if st != Status::SUCCESS {
+                return Err(format!("create_child: {st:?}"));
+            }
+            let child_handle = match unsafe { Handle::from_ptr(child) } {
+                Some(h) => h,
+                None => {
+                    let _ = unsafe { (sb.0.destroy_child)(&mut sb.0, child) };
+                    return Err("null child handle".into());
+                }
+            };
+
+            let mut tcp = match unsafe {
+                boot::open_protocol::<Tcp4>(
+                    OpenProtocolParams {
+                        handle: child_handle,
+                        agent: boot::image_handle(),
+                        controller: None,
+                    },
+                    OpenProtocolAttributes::GetProtocol,
+                )
+            } {
+                Ok(t) => t,
+                Err(e) => {
+                    let _ = unsafe { (sb.0.destroy_child)(&mut sb.0, child) };
+                    return Err(format!("open tcp4: {e:?}"));
+                }
+            };
+            let tcp_ptr: *mut Tcp4Protocol = &mut tcp.0;
+
+            let cfg = Tcp4ConfigData {
+                type_of_service: 0,
+                time_to_live: 64,
+                access_point: Tcp4AccessPoint {
+                    use_default_address: Boolean::from(true),
+                    station_address: Ipv4Address([0, 0, 0, 0]),
+                    subnet_mask: Ipv4Address([0, 0, 0, 0]),
+                    station_port: 0,
+                    remote_address: rip,
+                    remote_port: rport,
+                    active_flag: Boolean::from(true),
+                },
+                control_option: core::ptr::null_mut(),
+            };
+            let st = unsafe { ((*tcp_ptr).configure)(tcp_ptr, &cfg) };
+            if st != Status::SUCCESS {
+                let _ = unsafe { (sb.0.destroy_child)(&mut sb.0, child) };
+                return Err(format!("configure: {st:?}"));
+            }
+            let event = match unsafe { boot::create_event(EventType::empty(), Tpl::CALLBACK, None, None) } {
+                Ok(e) => e,
+                Err(e) => {
+                    let _ = unsafe { ((*tcp_ptr).configure)(tcp_ptr, core::ptr::null()) };
+                    let _ = unsafe { (sb.0.destroy_child)(&mut sb.0, child) };
+                    return Err(format!("create_event: {e:?}"));
+                }
+            };
+            let mut ct = Tcp4ConnectionToken {
+                completion_token: Tcp4CompletionToken { event: event.as_ptr(), status: Status::NOT_READY },
+            };
+            let st = unsafe { ((*tcp_ptr).connect)(tcp_ptr, &mut ct) };
+            if st == Status::SUCCESS {
+                let st = unsafe { pump(tcp_ptr, &ct.completion_token.status, 8_000) };
+                if st != Status::SUCCESS {
+                    let _ = unsafe { ((*tcp_ptr).configure)(tcp_ptr, core::ptr::null()) };
+                    let _ = unsafe { (sb.0.destroy_child)(&mut sb.0, child) };
+                    return Err(format!("connect: {st:?}"));
+                }
+            } else {
+                let _ = unsafe { ((*tcp_ptr).configure)(tcp_ptr, core::ptr::null()) };
+                let _ = unsafe { (sb.0.destroy_child)(&mut sb.0, child) };
+                return Err(format!("connect call: {st:?}"));
+            }
+            logln(format!("direct: connected to {target}"));
+            Ok(Self { sb, child, tcp, event, rx: Vec::new() })
+        }
+
+        /// Send one `[u32 LE total_len][tag][body]` frame.
+        pub fn send(&mut self, tag: u8, body: &[u8]) -> Result<(), String> {
+            let mut buf = Vec::with_capacity(5 + body.len());
+            buf.extend_from_slice(&((1 + body.len()) as u32).to_le_bytes());
+            buf.push(tag);
+            buf.extend_from_slice(body);
+            let tcp_ptr: *mut Tcp4Protocol = &mut self.tcp.0;
+            let mut tx = TxData1 {
+                push: Boolean::from(true),
+                urgent: Boolean::from(false),
+                data_length: buf.len() as u32,
+                fragment_count: 1,
+                fragment_table: [Tcp4FragmentData {
+                    fragment_length: buf.len() as u32,
+                    fragment_buf: buf.as_ptr() as *mut u8,
+                }],
+            };
+            let mut tok = Tcp4IoToken {
+                completion_token: Tcp4CompletionToken { event: self.event.as_ptr(), status: Status::NOT_READY },
+                packet: Tcp4Packet { tx_data: (&mut tx as *mut TxData1).cast() },
+            };
+            let st = unsafe { ((*tcp_ptr).transmit)(tcp_ptr, &mut tok) };
+            if st != Status::SUCCESS {
+                return Err(format!("transmit call: {st:?}"));
+            }
+            let st = unsafe { pump(tcp_ptr, &tok.completion_token.status, 8_000) };
+            if st != Status::SUCCESS {
+                return Err(format!("transmit: {st:?}"));
+            }
+            Ok(())
+        }
+
+        /// Non-blocking-ish receive: read whatever is ready within `budget_ms`,
+        /// buffer it, and return one complete frame `(tag, body)` if available.
+        pub fn poll_frame(&mut self, budget_ms: u32) -> Result<Option<(u8, Vec<u8>)>, String> {
+            if let Some(f) = self.take_frame() {
+                return Ok(Some(f));
+            }
+            let tcp_ptr: *mut Tcp4Protocol = &mut self.tcp.0;
+            let mut rxbuf = vec![0u8; 8 * 1024];
+            let mut rx = RxData1 {
+                urgent: Boolean::from(false),
+                data_length: rxbuf.len() as u32,
+                fragment_count: 1,
+                fragment_table: [Tcp4FragmentData {
+                    fragment_length: rxbuf.len() as u32,
+                    fragment_buf: rxbuf.as_mut_ptr(),
+                }],
+            };
+            let mut tok = Tcp4IoToken {
+                completion_token: Tcp4CompletionToken { event: self.event.as_ptr(), status: Status::NOT_READY },
+                packet: Tcp4Packet { rx_data: (&mut rx as *mut RxData1).cast() },
+            };
+            let call = unsafe { ((*tcp_ptr).receive)(tcp_ptr, &mut tok) };
+            if call == CONNECTION_FIN || call == CONNECTION_RESET {
+                return Err(format!("recv closed: {call:?}"));
+            }
+            if call != Status::SUCCESS {
+                // No data ready — not an error.
+                return Ok(None);
+            }
+            let st = unsafe { pump(tcp_ptr, &tok.completion_token.status, budget_ms) };
+            if st == CONNECTION_FIN || st == CONNECTION_RESET {
+                return Err(format!("recv closed: {st:?}"));
+            }
+            if st == Status::TIMEOUT {
+                // Cancel the outstanding receive so the token/buffer is free.
+                let _ = unsafe { ((*tcp_ptr).cancel)(tcp_ptr, core::ptr::null_mut()) };
+                return Ok(None);
+            }
+            if st != Status::SUCCESS {
+                return Ok(None);
+            }
+            let got = (rx.data_length as usize).min(rxbuf.len());
+            if got > 0 {
+                self.rx.extend_from_slice(&rxbuf[..got]);
+            }
+            Ok(self.take_frame())
+        }
+
+        /// Extract one complete framed message from the receive buffer.
+        fn take_frame(&mut self) -> Option<(u8, Vec<u8>)> {
+            if self.rx.len() < 4 {
+                return None;
+            }
+            let total = u32::from_le_bytes([self.rx[0], self.rx[1], self.rx[2], self.rx[3]]) as usize;
+            if total == 0 || total > (16 << 20) {
+                self.rx.clear();
+                return None;
+            }
+            if self.rx.len() < 4 + total {
+                return None;
+            }
+            let tag = self.rx[4];
+            let body = self.rx[5..4 + total].to_vec();
+            self.rx.drain(0..4 + total);
+            Some((tag, body))
+        }
+    }
+
+    impl Drop for DirectLink {
+        fn drop(&mut self) {
+            let tcp_ptr: *mut Tcp4Protocol = &mut self.tcp.0;
+            let _ = unsafe { ((*tcp_ptr).configure)(tcp_ptr, core::ptr::null()) };
+            let _ = unsafe { (self.sb.0.destroy_child)(&mut self.sb.0, self.child) };
+        }
     }
 }
 
@@ -3845,10 +4084,36 @@ fn page_plugins(frame: &mut Frame, area: Rect, app: &App) {
         kv("ABI", "wasm32-wasip1 + env".to_string()),
         kv("Embedded", format!("{} B demo", DEMO_PLUGIN.len())),
         Line::from(""),
+        header("Registry"),
+        kv(
+            "Plugin id",
+            format!(
+                "{}{}",
+                app.plugin_id_in,
+                if app.editing == EditField::Plugin { "_" } else { "" }
+            ),
+        ),
+        kv(
+            "Fetched",
+            if app.plugin_wasm.is_empty() {
+                "-".to_string()
+            } else {
+                format!("{} B", app.plugin_wasm.len())
+            },
+        ),
+        Line::from(""),
         header("Run"),
         Line::from(vec![
+            Span::styled("e ", Style::default().fg(palette::ACCENT)),
+            Span::styled("edit plugin id", Style::default().fg(palette::MUTED)),
+        ]),
+        Line::from(vec![
+            Span::styled("f ", Style::default().fg(palette::ACCENT)),
+            Span::styled("fetch from target", Style::default().fg(palette::MUTED)),
+        ]),
+        Line::from(vec![
             Span::styled("ENTER ", Style::default().fg(palette::ACCENT)),
-            Span::styled("run embedded self-test", Style::default().fg(palette::MUTED)),
+            Span::styled("run fetched (or demo)", Style::default().fg(palette::MUTED)),
         ]),
         Line::from(Span::styled(
             "remote: agent op run_plugin",
@@ -3856,15 +4121,6 @@ fn page_plugins(frame: &mut Frame, area: Rect, app: &App) {
         )),
         Line::from(Span::styled(
             "{url, tool, args}",
-            Style::default().fg(palette::MUTED),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            "runs the same plugins as the",
-            Style::default().fg(palette::MUTED),
-        )),
-        Line::from(Span::styled(
-            "desktop app, pre-OS",
             Style::default().fg(palette::MUTED),
         )),
     ];
@@ -3994,6 +4250,184 @@ fn presence_tick(app: &mut App) {
     send_presence_heartbeat(app);
 }
 
+/// Find a console direct-link endpoint: a LAN UDP beacon first (relay-free),
+/// else the relay's console registry over HTTP. Returns `ip[:port]`.
+fn discover_console_addr(app: &App) -> Option<String> {
+    if let Some(addr) = netraw::discover_console(tcp_protocol::preboot::DISCOVERY_PORT, 800) {
+        return Some(addr);
+    }
+    if app.target.is_empty() {
+        return None;
+    }
+    let (code, body) = http_get_json(&app.target, "/api/v1/qc/preboot/console").ok()?;
+    if code != 200 {
+        return None;
+    }
+    let v = serde_json::from_slice::<serde_json::Value>(&body).ok()?;
+    v.get("consoles")
+        .and_then(|c| c.as_array())
+        .and_then(|a| a.first())
+        .and_then(|c| c.get("addr"))
+        .and_then(|a| a.as_str())
+        .map(|s| s.to_string())
+}
+
+/// Discover a console (UDP beacon or relay) and dial it. On success, sends
+/// HELLO(serial) so the console registers a session, then keeps the socket in
+/// `app.direct`. Any failure leaves the relay path untouched.
+fn direct_discover(app: &mut App) {
+    if app.direct.is_some() {
+        return;
+    }
+    // Prefer a LAN UDP beacon (no relay round-trip); fall back to asking the
+    // relay for a console endpoint over HTTP.
+    let addr = discover_console_addr(app);
+    let Some(mut addr) = addr else { return };
+    if !addr.contains(':') {
+        addr = format!("{addr}:{DIRECT_PORT}");
+    }
+    let serial = effective_serial(&app.info);
+    if serial.is_empty() {
+        return;
+    }
+    match net_tcp::DirectLink::connect(&addr) {
+        Ok(mut link) => {
+            match link.send(tcp_protocol::preboot::FRAME_TAG_PREBOOT_HELLO, serial.as_bytes()) {
+                Ok(()) => {
+                    app.direct = Some(link);
+                    app.direct_stream = false;
+                    app.stream_throttle = stream::Throttle::new();
+                    app.status = format!("direct link -> {addr}");
+                    logln(format!("direct: linked to console {addr} as {serial}"));
+                }
+                Err(e) => logln(format!("direct: HELLO failed: {e}")),
+            }
+        }
+        Err(e) => logln(format!("direct: dial {addr} failed: {e}")),
+    }
+}
+
+/// Drain any frames the console sent over the direct socket: input events (into
+/// the injected queue), stream control, and plugin-run requests. Drops the link
+/// on a transport error so discovery can re-establish it.
+fn direct_pump(
+    app: &mut App,
+    terminal: &mut Terminal<ratatui_uefi::UefiOutputBackend>,
+) -> Result<()> {
+    use tcp_protocol::preboot;
+    for _ in 0..8 {
+        let polled = match app.direct.as_mut() {
+            Some(link) => link.poll_frame(4),
+            None => return Ok(()),
+        };
+        match polled {
+            Ok(Some((tag, body))) => match tag {
+                t if t == preboot::FRAME_TAG_PREBOOT_INPUT => {
+                    if let Some(ev) = preboot::decode_event(&body) {
+                        if let Some(te) = stream::event_to_terminput(&ev) {
+                            app.injected.push(te);
+                        }
+                    }
+                }
+                t if t == preboot::FRAME_TAG_PREBOOT_STREAM_CTL => {
+                    if let Some(ctl) = preboot::decode_stream_ctl(&body) {
+                        app.direct_stream = ctl.stream;
+                        app.stream_throttle = stream::Throttle::new();
+                        logln(format!("direct: stream_ctl -> {}", ctl.stream));
+                    }
+                }
+                t if t == preboot::FRAME_TAG_PREBOOT_PLUGIN_RUN => {
+                    if let Some(req) = preboot::decode_plugin_run(&body) {
+                        let res = run_plugin_direct(app, &req, terminal);
+                        if let Some(link) = app.direct.as_mut() {
+                            let out = preboot::encode_plugin_result(&res);
+                            if let Err(e) = link.send(preboot::FRAME_TAG_PREBOOT_PLUGIN_RESULT, &out) {
+                                logln(format!("direct: plugin result send failed: {e}"));
+                                app.direct = None;
+                                app.direct_stream = false;
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            },
+            Ok(None) => break,
+            Err(e) => {
+                logln(format!("direct: link dropped: {e}"));
+                app.direct = None;
+                app.direct_stream = false;
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Run a plugin for a direct-link request: registry id or URL fetched over the
+/// relay target, else the embedded demo. Returns a wire result either way.
+fn run_plugin_direct(
+    app: &mut App,
+    req: &tcp_protocol::preboot::PbPluginRun,
+    terminal: &mut Terminal<ratatui_uefi::UefiOutputBackend>,
+) -> tcp_protocol::preboot::PbPluginResult {
+    use tcp_protocol::preboot::PbPluginResult;
+    let host = {
+        let s = effective_serial(&app.info);
+        if s.is_empty() { "uefi".to_string() } else { s }
+    };
+    let src = req.source.trim();
+    let bytes = if src.is_empty() {
+        DEMO_PLUGIN.to_vec()
+    } else if src.starts_with("http://") || src.starts_with("https://") || src.starts_with('/') {
+        match http_get_url(&app.target, src) {
+            Ok((200, b)) => b,
+            Ok((code, _)) => {
+                return PbPluginResult { error: format!("fetch HTTP {code}"), ..Default::default() };
+            }
+            Err(e) => return PbPluginResult { error: format!("fetch: {e}"), ..Default::default() },
+        }
+    } else {
+        let path = format!("/api/v1/plugins/{}/wasm", order::encode_path_segment(src));
+        match http_get_json(&app.target, &path) {
+            Ok((200, b)) => b,
+            Ok((code, _)) => {
+                return PbPluginResult { error: format!("fetch HTTP {code}"), ..Default::default() };
+            }
+            Err(e) => return PbPluginResult { error: format!("fetch: {e}"), ..Default::default() },
+        }
+    };
+    app.status = format!("direct: running plugin ({} B)", bytes.len());
+    let _ = terminal.draw(|frame| render(frame, app));
+    let tool = if req.tool.trim().is_empty() {
+        match wasmrt::run(&bytes, &host, None, fw_data(&app.info)) {
+            Ok(p) => first_tool_name(&p.tools).unwrap_or_else(|| "selftest".to_string()),
+            Err(e) => return PbPluginResult { error: format!("load: {e}"), ..Default::default() },
+        }
+    } else {
+        req.tool.trim().to_string()
+    };
+    let args = if req.args.trim().is_empty() { "{}" } else { req.args.trim() };
+    match wasmrt::run(&bytes, &host, Some((&tool, args)), fw_data(&app.info)) {
+        Ok(run) => {
+            app.status = format!("direct: plugin {} ok", run.id);
+            PbPluginResult {
+                ok: true,
+                id: run.id,
+                name: run.name,
+                version: run.version,
+                tools: run.tools,
+                tool,
+                result: run.result,
+                log: run.log,
+                stdout: run.stdout,
+                error: String::new(),
+            }
+        }
+        Err(e) => PbPluginResult { tool, error: e, ..Default::default() },
+    }
+}
+
 /// Tiny POST that bumps the connected_client:qc_<serial> row's last_update.
 fn send_presence_heartbeat(app: &mut App) {
     if app.target.is_empty() {
@@ -4072,6 +4506,95 @@ fn upload_logs(app: &mut App) {
         Ok(_) => format!("logs: uploaded {}B - curl .../qc/preboot/{serial}/logs", body.len()),
         Err(e) => format!("logs: upload failed: {e}"),
     };
+}
+
+/// First tool name from an `mcp_tools` JSON blob (array or `{"tools":[..]}`).
+fn first_tool_name(tools_json: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(tools_json).ok()?;
+    let arr = v.as_array().or_else(|| v.get("tools").and_then(|t| t.as_array()))?;
+    arr.first()?.get("name")?.as_str().map(|s| s.to_string())
+}
+
+/// GET `/api/v1/plugins/{id}/wasm` from the upload target and stash the bytes;
+/// introspection output (id/version/tools) lands in `plugin_out`.
+fn fetch_registry_plugin(
+    app: &mut App,
+    terminal: &mut Terminal<ratatui_uefi::UefiOutputBackend>,
+) -> Result<()> {
+    if app.target.is_empty() {
+        app.status = "set a target first ('e' elsewhere)".into();
+        return Ok(());
+    }
+    let id = app.plugin_id_in.trim().to_string();
+    if id.is_empty() {
+        app.status = "set a plugin id first ('e')".into();
+        return Ok(());
+    }
+    app.status = format!("fetching {id} ...");
+    terminal.draw(|frame| render(frame, app))?;
+    let path = format!("/api/v1/plugins/{}/wasm", order::encode_path_segment(&id));
+    match http_get_json(&app.target, &path) {
+        Ok((200, bytes)) => {
+            if bytes.len() < 8 || &bytes[0..4] != b"\0asm" {
+                app.status = format!("fetch: not wasm ({} B)", bytes.len());
+                return Ok(());
+            }
+            app.plugin_wasm = bytes;
+            // Introspect without invoking: id/name/version/tools into the pane.
+            let host = {
+                let s = effective_serial(&app.info);
+                if s.is_empty() { "uefi".to_string() } else { s }
+            };
+            match wasmrt::run(&app.plugin_wasm, &host, None, fw_data(&app.info)) {
+                Ok(run) => {
+                    app.plugin_out.clear();
+                    app.plugin_out.push(format!("fetched: {} B", app.plugin_wasm.len()));
+                    app.plugin_out.push(format!("id: {}", run.id));
+                    app.plugin_out.push(format!("name: {} v{}", run.name, run.version));
+                    for chunk in wrap_text(&format!("tools: {}", run.tools), 60) {
+                        app.plugin_out.push(chunk);
+                    }
+                    app.status = format!("{id} fetched - ENTER runs its first tool");
+                }
+                Err(e) => {
+                    app.plugin_out.clear();
+                    app.plugin_out.push(format!("fetched {} B, load failed: {e}", app.plugin_wasm.len()));
+                    app.status = format!("{id}: instantiate failed: {e}");
+                }
+            }
+        }
+        Ok((code, body)) => {
+            app.status = format!(
+                "fetch HTTP {code}: {}",
+                String::from_utf8_lossy(&body[..body.len().min(80)])
+            );
+        }
+        Err(e) => app.status = format!("fetch failed: {e}"),
+    }
+    Ok(())
+}
+
+/// Run the fetched registry plugin's first advertised tool with empty args.
+fn run_fetched_plugin(
+    app: &mut App,
+    terminal: &mut Terminal<ratatui_uefi::UefiOutputBackend>,
+) -> Result<()> {
+    let bytes = app.plugin_wasm.clone();
+    let host = {
+        let s = effective_serial(&app.info);
+        if s.is_empty() { "uefi".to_string() } else { s }
+    };
+    let tool = match wasmrt::run(&bytes, &host, None, fw_data(&app.info)) {
+        Ok(probe) => first_tool_name(&probe.tools).unwrap_or_else(|| "selftest".to_string()),
+        Err(e) => {
+            app.status = format!("plugin load failed: {e}");
+            return Ok(());
+        }
+    };
+    app.status = format!("running {} ...", tool);
+    terminal.draw(|frame| render(frame, app))?;
+    run_wasm_plugin(app, &bytes, &tool, "{}");
+    Ok(())
 }
 
 /// Load and invoke a plugin, formatting the run into `app.plugin_out`.
@@ -5119,9 +5642,10 @@ fn render(frame: &mut Frame, app: &App) {
             ("q", "quit"),
         ],
         TAB_PLUGINS => &[
-            ("ENTER", "run self-test"),
+            ("e", "plugin id"),
+            ("f", "fetch"),
+            ("ENTER", "run"),
             ("Tab/->", "next"),
-            ("<-", "prev"),
             ("q", "quit"),
         ],
         _ => &[
@@ -5159,6 +5683,7 @@ enum EditField {
     None,
     Target,
     Serial,
+    Plugin,
 }
 
 struct App {
@@ -5178,6 +5703,10 @@ struct App {
     raw_net: Option<netraw::RawNet>,
     /// Rendered output from the last WASM plugin run.
     plugin_out: Vec<String>,
+    /// Registry plugin id to fetch from the upload target.
+    plugin_id_in: String,
+    /// Last fetched registry plugin (wasm bytes); Enter runs it over the demo.
+    plugin_wasm: Vec<u8>,
     /// Pre-boot TUI streaming to the admin console is active.
     streaming: bool,
     /// Monotonic streamed-frame counter.
@@ -5201,6 +5730,13 @@ struct App {
     viewer_miss: u8,
     /// 'v' stopped streaming; suppresses auto-start until the viewer leaves.
     stream_manual_off: bool,
+    /// Persistent direct socket to a console listener (bypasses the relay for
+    /// streaming); None until discovery dials one.
+    direct: Option<net_tcp::DirectLink>,
+    /// Console asked us (over the direct socket) to stream frames.
+    direct_stream: bool,
+    /// Ticks toward the next console-discovery attempt while unlinked.
+    direct_discover_tick: u32,
 }
 
 impl App {
@@ -5230,6 +5766,8 @@ fn run() -> Result<()> {
         agent_tick: 0,
         raw_net: None,
         plugin_out: Vec::new(),
+        plugin_id_in: "com.mastertech.uefi-diag".to_string(),
+        plugin_wasm: Vec::new(),
         streaming: false,
         stream_frame: 0,
         stream_tick: 0,
@@ -5242,6 +5780,9 @@ fn run() -> Result<()> {
         stream_auto: false,
         viewer_miss: 0,
         stream_manual_off: false,
+        direct: None,
+        direct_stream: false,
+        direct_discover_tick: 0,
     };
 
     terminal.clear()?;
@@ -5254,21 +5795,37 @@ fn run() -> Result<()> {
         app.stress.tick();
         // Render, and while streaming capture the just-rendered buffer into a
         // wire frame; the CompletedFrame's borrow ends when the block returns.
+        // Direct socket (preferred when a console has linked + asked to stream)
+        // or the HTTP relay (when 'v'/viewer-flag streaming is on).
+        let want_direct = app.direct.is_some() && app.direct_stream;
+        let want_relay = app.streaming && !app.target.is_empty();
         let captured = {
             let completed = terminal.draw(|frame| render(frame, &app))?;
-            if app.streaming && !app.target.is_empty() {
+            if want_direct || want_relay {
                 Some(stream::buffer_to_frame(completed.buffer, app.stream_frame))
             } else {
                 None
             }
         };
         if let Some(mut pf) = captured {
-            // POST the frame body to the relay only when the screen changed.
+            // Send the frame body only when the screen changed.
             if let Some(body) = app.stream_throttle.body_if_dirty(&mut pf) {
-                let serial = order::encode_path_segment(&effective_serial(&app.info));
-                let path = format!("/api/v1/qc/preboot/{serial}/frame");
-                if let Err(e) = http_post_json(&app.target, &path, &body) {
-                    logln(format!("stream: frame POST failed: {e}"));
+                if want_direct {
+                    if let Some(link) = app.direct.as_mut() {
+                        if let Err(e) =
+                            link.send(tcp_protocol::preboot::FRAME_TAG_PREBOOT_FRAME, &body)
+                        {
+                            logln(format!("direct: frame send failed: {e}"));
+                            app.direct = None;
+                            app.direct_stream = false;
+                        }
+                    }
+                } else {
+                    let serial = order::encode_path_segment(&effective_serial(&app.info));
+                    let path = format!("/api/v1/qc/preboot/{serial}/frame");
+                    if let Err(e) = http_post_json(&app.target, &path, &body) {
+                        logln(format!("stream: frame POST failed: {e}"));
+                    }
                 }
             }
             app.stream_frame = app.stream_frame.wrapping_add(1);
@@ -5289,7 +5846,7 @@ fn run() -> Result<()> {
         let event = if !app.injected.is_empty() {
             // FIFO: keystrokes must replay in the order they were typed.
             Some(app.injected.remove(0))
-        } else if app.stress.is_active() || app.agent || app.streaming || app.present {
+        } else if app.stress.is_active() || app.agent || app.streaming || app.present || app.direct.is_some() {
             let ev = input_reader.poll_event()?;
             if ev.is_none() {
                 uefi::boot::stall(core::time::Duration::from_millis(33));
@@ -5302,6 +5859,17 @@ fn run() -> Result<()> {
                 }
                 if app.present {
                     presence_tick(&mut app);
+                }
+                // Service the direct socket (input/stream-ctl/plugin frames), or
+                // periodically try to discover + dial a console listener.
+                if app.direct.is_some() {
+                    direct_pump(&mut app, &mut terminal)?;
+                } else if app.present {
+                    app.direct_discover_tick = app.direct_discover_tick.saturating_add(1);
+                    if app.direct_discover_tick >= DIRECT_DISCOVER_TICKS {
+                        app.direct_discover_tick = 0;
+                        direct_discover(&mut app);
+                    }
                 }
                 continue;
             }
@@ -5321,6 +5889,7 @@ fn run() -> Result<()> {
         if app.editing != EditField::None {
             let field = match app.editing {
                 EditField::Serial => &mut app.order.serial,
+                EditField::Plugin => &mut app.plugin_id_in,
                 _ => &mut app.target,
             };
             match key.code {
@@ -5371,6 +5940,8 @@ fn run() -> Result<()> {
             terminput::KeyCode::Char('e') => {
                 app.editing = if app.tab == TAB_ORDER {
                     EditField::Serial
+                } else if app.tab == TAB_PLUGINS {
+                    EditField::Plugin
                 } else {
                     EditField::Target
                 };
@@ -5474,11 +6045,18 @@ fn run() -> Result<()> {
             terminput::KeyCode::Char('b') if app.tab == TAB_STRESS => {
                 app.stress.start_preset();
             }
-            // Plugins tab: run the embedded self-test plugin.
+            // Plugins tab: run the fetched registry plugin, else the demo.
             terminput::KeyCode::Enter if app.tab == TAB_PLUGINS => {
-                app.status = "running embedded WASM plugin...".into();
-                terminal.draw(|frame| render(frame, &app))?;
-                run_wasm_plugin(&mut app, DEMO_PLUGIN, "selftest", "{}");
+                if app.plugin_wasm.is_empty() {
+                    app.status = "running embedded WASM plugin...".into();
+                    terminal.draw(|frame| render(frame, &app))?;
+                    run_wasm_plugin(&mut app, DEMO_PLUGIN, "selftest", "{}");
+                } else {
+                    run_fetched_plugin(&mut app, &mut terminal)?;
+                }
+            }
+            terminput::KeyCode::Char('f') if app.tab == TAB_PLUGINS => {
+                fetch_registry_plugin(&mut app, &mut terminal)?;
             }
             terminput::KeyCode::Char('s') if app.tab == TAB_STRESS => {
                 if app.stress.is_active() {
@@ -5688,11 +6266,14 @@ fn execute_command(
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "{}".to_string());
             match url {
-                Some(url) => match http_efi::get_capped(url, 8 << 20) {
-                    Ok((200, bytes)) => run_wasm_plugin(app, &bytes, tool, &args),
-                    Ok((code, _)) => app.status = format!("run_plugin: HTTP {code}"),
-                    Err(e) => app.status = format!("run_plugin fetch failed: {e}"),
-                },
+                Some(url) => {
+                    let target = app.target.clone();
+                    match http_get_url(&target, url) {
+                        Ok((200, bytes)) => run_wasm_plugin(app, &bytes, tool, &args),
+                        Ok((code, _)) => app.status = format!("run_plugin: HTTP {code}"),
+                        Err(e) => app.status = format!("run_plugin fetch failed: {e}"),
+                    }
+                }
                 None => app.status = "run_plugin needs a url".into(),
             }
         }
