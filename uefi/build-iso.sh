@@ -26,9 +26,9 @@ cd "$SCRIPT_DIR"
 TARGET="x86_64-unknown-uefi"
 PKG="uefi-app"
 VOLID="MTECH_UEFI"
-# Cargo target dir: this crate is a member of the parent workspace, so the
-# artifact lands in the workspace target/, not ./target.
-EFI_BIN="$(cd .. && pwd)/target/${TARGET}/release/${PKG}.efi"
+# Cargo target dir: uefi/ is its own workspace root (excluded from the parent
+# workspace), so the artifact lands in ./target, not the parent's target/.
+EFI_BIN="$SCRIPT_DIR/target/${TARGET}/release/${PKG}.efi"
 
 BUILD_DIR="$SCRIPT_DIR/build"
 STAGE="$BUILD_DIR/isoroot"
