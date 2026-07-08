@@ -88,17 +88,21 @@ fi
 #     -no-emul-boot: Prevents the use of emulated disk booting.
 #     -volid "UEFI_BOOT": Sets the volume ID of the ISO (optional).
 #     iso/: The directory containing your ISO filesystem structure.
-# Generate the ISO if not already generated or if inputs are newer
-ISO_FILE="iso/RustEfiApp.iso"
+# Generate the ISO if not already generated or if inputs are newer.
+# Output lands in dist/, outside the packaged tree; only iso/EFI is grafted in
+# so the ISO can't reference itself and stray files in iso/ are excluded.
+ISO_FILE="dist/RustEfiApp.iso"
 if [ "$FORCE_BUILD" = true ] || [ ! -f "$ISO_FILE" ] || [ "$ISO_EFI_FILE" -nt "$ISO_FILE" ]; then
     echo "Creating ISO..."
+    mkdir -p dist
     xorriso -as mkisofs \
         -o "$ISO_FILE" \
         -eltorito-alt-boot \
         -e EFI/BOOT/BOOTx64.EFI \
         -no-emul-boot \
         -volid "UEFI_BOOT" \
-        iso/
+        -graft-points \
+        /EFI=iso/EFI
 else
     echo "ISO already created: $ISO_FILE"
 fi
