@@ -311,16 +311,16 @@ pub mod preboot {
     }
 
     /// Parse a discovery beacon payload, returning the advertised `ip:port`.
-    /// Rejects anything without the magic/version so a stray datagram on the
-    /// port can't be mistaken for a console.
+    /// Rejects anything without the magic/version and anything that isn't a
+    /// real `IPv4:port` with a non-zero port, so a stray or malformed datagram
+    /// on the port can't become a dial target.
     pub fn parse_beacon(payload: &[u8]) -> Option<String> {
         if payload.len() < 6 || &payload[0..4] != BEACON_MAGIC || payload[4] != BEACON_VERSION {
             return None;
         }
         let addr = core::str::from_utf8(&payload[5..]).ok()?.trim();
-        // Must look like host:port with a plausible dotted IPv4 host.
-        let (host, port) = addr.rsplit_once(':')?;
-        if port.parse::<u16>().is_err() || host.split('.').count() != 4 {
+        let sa = addr.parse::<core::net::SocketAddrV4>().ok()?;
+        if sa.port() == 0 {
             return None;
         }
         Some(addr.to_string())
@@ -401,6 +401,12 @@ mod tests {
         assert_eq!(parse_beacon(b"random udp junk"), None);
         assert_eq!(parse_beacon(b"MTCB\x01nohost"), None); // no :port
         assert_eq!(parse_beacon(b"MTCB\x02192.168.1.1:80"), None); // wrong version
+        // Strict IPv4:port — reject non-numeric/empty octets, multi-colon, port 0.
+        assert_eq!(parse_beacon(b"MTCB\x01a.b.c.d:80"), None);
+        assert_eq!(parse_beacon(b"MTCB\x01...:80"), None);
+        assert_eq!(parse_beacon(b"MTCB\x011.2.3.4:5:9209"), None);
+        assert_eq!(parse_beacon(b"MTCB\x011.2.3.4:0"), None);
+        assert_eq!(parse_beacon(b"MTCB\x01999.1.1.1:80"), None);
     }
 
     #[test]

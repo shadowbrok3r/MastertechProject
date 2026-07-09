@@ -122,25 +122,21 @@ impl DirectHub {
     }
 
     /// Broadcast a LAN UDP discovery beacon (`ip:port`) every ~3s so firmware
-    /// can find this console without any relay round-trip.
+    /// can find this console without any relay round-trip. A fresh socket bound
+    /// to the chosen LAN IP each cycle forces egress on that interface (a
+    /// 0.0.0.0-bound limited broadcast would leave only the OS-default NIC on a
+    /// multi-homed host) and tracks DHCP address changes.
     fn beacon(&self, base: String, port: u16) {
         PlatformSpawner::spawn(async move {
-            let sock = match std::net::UdpSocket::bind("0.0.0.0:0") {
-                Ok(s) => s,
-                Err(e) => {
-                    log::warn!("preboot direct: beacon bind failed: {e}");
-                    return;
-                }
-            };
-            if let Err(e) = sock.set_broadcast(true) {
-                log::warn!("preboot direct: beacon set_broadcast failed: {e}");
-                return;
-            }
             let dest = format!("255.255.255.255:{}", tcp_protocol::preboot::DISCOVERY_PORT);
             loop {
                 if let Some(ip) = lan_ip_toward(&base) {
-                    let msg = tcp_protocol::preboot::encode_beacon(&format!("{ip}:{port}"));
-                    let _ = sock.send_to(&msg, &dest);
+                    if let Ok(sock) = std::net::UdpSocket::bind(std::net::SocketAddr::new(ip, 0)) {
+                        if sock.set_broadcast(true).is_ok() {
+                            let msg = tcp_protocol::preboot::encode_beacon(&format!("{ip}:{port}"));
+                            let _ = sock.send_to(&msg, &dest);
+                        }
+                    }
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             }
@@ -211,9 +207,13 @@ impl DirectHub {
     }
 }
 
-/// Local interface IP that routes toward `base_url`'s host. A UDP socket needs
-/// no handshake, so `connect` just picks the outbound interface; reading back
-/// `local_addr` yields the LAN IP without hardcoding it.
+/// Local interface IP that routes toward `base_url`'s host. A UDP `connect`
+/// picks the outbound interface without any handshake; reading back
+/// `local_addr` yields the LAN IP. Only IP-literal hosts are targeted directly;
+/// a hostname would force a blocking DNS lookup on the async worker, so it falls
+/// back to a public literal (learns the default-route interface). Loopback and
+/// unspecified results are rejected so a `localhost` relay can't advertise an
+/// unreachable `127.0.0.1` to firmware.
 fn lan_ip_toward(base_url: &str) -> Option<std::net::IpAddr> {
     let host = base_url
         .split("://")
@@ -225,14 +225,17 @@ fn lan_ip_toward(base_url: &str) -> Option<std::net::IpAddr> {
         .split(':')
         .next()
         .unwrap_or("");
-    let target = if host.is_empty() { "8.8.8.8:80".to_string() } else { format!("{host}:80") };
+    let target: std::net::SocketAddr = match host.parse::<std::net::IpAddr>() {
+        Ok(ip) => std::net::SocketAddr::new(ip, 80),
+        Err(_) => "8.8.8.8:80".parse().ok()?,
+    };
     let sock = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
-    // Falls back to a public IP if the relay host doesn't resolve — either way
-    // the point is only to learn our own outbound-interface address.
-    if sock.connect(&target).is_err() {
-        sock.connect("8.8.8.8:80").ok()?;
+    sock.connect(target).ok()?;
+    let ip = sock.local_addr().ok()?.ip();
+    if ip.is_loopback() || ip.is_unspecified() {
+        return None;
     }
-    sock.local_addr().ok().map(|a| a.ip())
+    Some(ip)
 }
 
 /// Frame one payload as `[u32 LE total_len][tag][body]` (total_len counts tag).

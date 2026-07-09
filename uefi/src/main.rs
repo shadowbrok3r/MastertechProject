@@ -4564,12 +4564,28 @@ fn fetch_registry_plugin(
             }
         }
         Ok((code, body)) => {
-            app.status = format!(
-                "fetch HTTP {code}: {}",
-                String::from_utf8_lossy(&body[..body.len().min(80)])
-            );
+            let snippet = String::from_utf8_lossy(&body[..body.len().min(120)]).into_owned();
+            app.plugin_out.clear();
+            app.plugin_out.push(format!("fetch '{id}' -> HTTP {code}"));
+            if code == 404 {
+                app.plugin_out.push("route/plugin not found.".into());
+                app.plugin_out.push("redeploy axum (the".into());
+                app.plugin_out.push("/api/v1/plugins/{id}/wasm".into());
+                app.plugin_out.push("route is new) + check the id.".into());
+            }
+            for chunk in wrap_text(&snippet, 56) {
+                app.plugin_out.push(chunk);
+            }
+            app.status = format!("fetch '{id}': HTTP {code} (see Output)");
         }
-        Err(e) => app.status = format!("fetch failed: {e}"),
+        Err(e) => {
+            app.plugin_out.clear();
+            app.plugin_out.push(format!("fetch '{id}' failed:"));
+            for chunk in wrap_text(&e, 56) {
+                app.plugin_out.push(chunk);
+            }
+            app.status = format!("fetch '{id}' failed (see Output)");
+        }
     }
     Ok(())
 }
@@ -6048,7 +6064,8 @@ fn run() -> Result<()> {
             // Plugins tab: run the fetched registry plugin, else the demo.
             terminput::KeyCode::Enter if app.tab == TAB_PLUGINS => {
                 if app.plugin_wasm.is_empty() {
-                    app.status = "running embedded WASM plugin...".into();
+                    app.status =
+                        format!("no fetched plugin - running demo ('f' fetches {})", app.plugin_id_in);
                     terminal.draw(|frame| render(frame, &app))?;
                     run_wasm_plugin(&mut app, DEMO_PLUGIN, "selftest", "{}");
                 } else {

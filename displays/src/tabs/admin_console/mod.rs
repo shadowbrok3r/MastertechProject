@@ -965,30 +965,11 @@ impl SharedContext {
                         .show(ui, |ui| {
                             ui.set_width(CLIENT_ROW_CONTENT_W);
                             for (serial, friendly, age, kind, direct) in &preboot_rows {
-                                ui.horizontal(|ui| {
-                                    // Heartbeat lands every ~45s; <90s = live.
-                                    let color = if *age < 90 {
-                                        Color32::from_rgb(120, 220, 130)
-                                    } else {
-                                        Color32::GRAY
-                                    };
-                                    ui.colored_label(color, serial);
-                                    ui.weak(*kind);
-                                    if *direct {
-                                        ui.colored_label(Color32::from_rgb(120, 200, 255), "direct");
-                                    }
-                                    if !friendly.is_empty() {
-                                        ui.weak(friendly);
-                                    }
-                                    ui.weak(if *age == i64::MAX {
-                                        "no heartbeat".to_string()
-                                    } else {
-                                        format!("{age}s ago")
-                                    });
-                                    if ui.button(format!("{} View", icons::EYE)).clicked() {
-                                        view_serial = Some((serial.clone(), *direct));
-                                    }
-                                });
+                                ui.add_space(4.);
+                                #[cfg(not(target_arch = "wasm32"))]
+                                if AdminConsole::preboot_card(ui, serial, friendly, *age, kind, *direct) {
+                                    view_serial = Some((serial.clone(), *direct));
+                                }
                             }
                         });
                     if let Some((s, direct)) = view_serial {

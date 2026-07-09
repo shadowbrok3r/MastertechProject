@@ -441,6 +441,152 @@ impl AdminConsole {
         collapse.store(ui.ctx());
     }
 
+    /// Render one pre-boot UEFI box in the same collapsible card style as the
+    /// connected-client rows. The collapsed title shows `{model} · {last5}`
+    /// (product model + last 5 of the OA3/MSDM key); the expanded body
+    /// enumerates the full identity. Returns `true` if View was clicked.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn preboot_card(
+        ui: &mut Ui,
+        serial: &str,
+        friendly: &str,
+        age_secs: i64,
+        kind: &str,
+        direct: bool,
+    ) -> bool {
+        let style = ui.style().clone();
+        let row_id = ui.make_persistent_id(("admin_preboot_card", serial));
+        let mut collapse = CollapsingState::load_with_default_open(ui.ctx(), row_id, false);
+
+        // Title: product model (first token of the friendly name) + last 5 of
+        // the OA3/MSDM key, e.g. "SM-6 · R3K2J".
+        let model = friendly.split_whitespace().next().unwrap_or("");
+        let key_tail: String = {
+            let n = serial.chars().count();
+            serial.chars().skip(n.saturating_sub(5)).collect()
+        };
+        let title = if model.is_empty() {
+            key_tail.clone()
+        } else {
+            format!("{model} · {key_tail}")
+        };
+        let live = age_secs < 90;
+        let (dot_color, dot_text) = if live {
+            (Color32::from_rgb(50, 205, 50), icons::STATUS_ON)
+        } else {
+            (Color32::from_rgb(110, 110, 118), icons::STATUS_OFF)
+        };
+        let arrow = if collapse.is_open() { icons::CHEV_OPEN } else { icons::CHEV_CLOSED };
+        let mut view_clicked = false;
+
+        ui.allocate_ui_with_layout(
+            Vec2::new(CLIENT_ROW_CONTENT_W, 0.0),
+            Layout::top_down(Align::Min),
+            |ui| {
+                Frame::default()
+                    .fill(theme::bg_surface(ui))
+                    .inner_margin(Margin::same(4))
+                    .outer_margin(Margin::ZERO)
+                    .corner_radius(eframe::egui::CornerRadius::same(5))
+                    .shadow(Shadow::NONE)
+                    .stroke(style.visuals.window_stroke)
+                    .show(ui, |ui| {
+                        ui.set_width(CLIENT_ROW_CONTENT_W);
+                        ui.set_max_width(CLIENT_ROW_CONTENT_W);
+                        // chevron + status + name + View chrome (mirror client rows).
+                        let name_w = CLIENT_ROW_CONTENT_W
+                            - (ROW_BTN_W * 2.0 + ROW_STATUS_W + ROW_ITEM_GAP * 3.0);
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(CLIENT_ROW_CONTENT_W, ROW_BTN_H),
+                            Layout::left_to_right(Align::Center),
+                            |ui| {
+                                ui.spacing_mut().item_spacing.x = ROW_ITEM_GAP;
+                                let chevron = ui.add_sized(
+                                    Vec2::new(ROW_BTN_W, ROW_BTN_H),
+                                    Button::new(RichText::new(arrow).strong())
+                                        .fill(ui.style().visuals.window_fill),
+                                );
+                                if chevron.clicked() {
+                                    collapse.toggle(ui);
+                                }
+                                ui.add_sized(
+                                    Vec2::new(ROW_STATUS_W, ROW_BTN_H),
+                                    eframe::egui::Label::new(
+                                        RichText::new(dot_text).color(dot_color),
+                                    ),
+                                );
+                                let name_btn = ui
+                                    .add_sized(
+                                        Vec2::new(name_w, ROW_BTN_H),
+                                        Button::new(
+                                            RichText::new(title)
+                                                .color(Color32::from_rgb(51, 255, 189)),
+                                        )
+                                        .fill(ui.style().visuals.window_fill),
+                                    )
+                                    .on_hover_text(serial);
+                                if name_btn.clicked() {
+                                    collapse.toggle(ui);
+                                }
+                                let view_btn = ui
+                                    .add_sized(
+                                        Vec2::new(ROW_BTN_W, ROW_BTN_H),
+                                        Button::new(
+                                            RichText::new(icons::EYE)
+                                                .strong()
+                                                .color(ui.style().visuals.warn_fg_color),
+                                        )
+                                        .fill(ui.style().visuals.window_fill),
+                                    )
+                                    .on_hover_text("View this booting machine's screen");
+                                if view_btn.clicked() {
+                                    view_clicked = true;
+                                }
+                            },
+                        );
+
+                        if collapse.is_open() {
+                            ui.add_space(6.);
+                            ui.separator();
+                            ui.add_space(4.);
+                            Grid::new(("preboot_card_grid", serial))
+                                .num_columns(2)
+                                .spacing(Vec2::new(8.0, 3.0))
+                                .show(ui, |ui| {
+                                    let mut row = |k: &str, v: &str, mono: bool| {
+                                        ui.label(RichText::new(k).small().color(Color32::GRAY));
+                                        let mut t = RichText::new(v)
+                                            .color(Color32::from_rgb(199, 202, 245));
+                                        if mono {
+                                            t = t.monospace();
+                                        }
+                                        ui.add(
+                                            eframe::egui::Label::new(t).wrap(),
+                                        );
+                                        ui.end_row();
+                                    };
+                                    row("OA3 key", serial, true);
+                                    row("Kind", kind, false);
+                                    row("Transport", if direct { "direct TCP" } else { "relay" }, false);
+                                    if !friendly.is_empty() {
+                                        row("Product", friendly, false);
+                                    }
+                                    let seen = if age_secs == i64::MAX {
+                                        "no heartbeat".to_string()
+                                    } else {
+                                        format!("{age_secs}s ago")
+                                    };
+                                    row("Last seen", &seen, false);
+                                });
+                        }
+                    });
+            },
+        );
+
+        collapse.store(ui.ctx());
+        view_clicked
+    }
+
     /// Central panel: always renders the focused (Docked) client session.
     /// Script Editor and Chat now live in the right panel (see `right_panel_ui`).
     pub fn ui(&mut self, ui: &mut Ui) {
