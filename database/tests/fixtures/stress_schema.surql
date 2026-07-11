@@ -1,9 +1,5 @@
 -- Minimal schema for stress persistence query tests (in-memory SurrealDB).
 
-DEFINE FUNCTION fn::embed_text($text: string) {
-    RETURN array::repeat(0.1f, 768);
-};
-
 DEFINE TABLE computer TYPE ANY SCHEMALESS;
 
 DEFINE TABLE hardware_component TYPE ANY SCHEMALESS;

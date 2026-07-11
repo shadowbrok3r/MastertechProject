@@ -12,6 +12,153 @@ use anyhow::{Error, Result};
 use web_time::Instant;
 use regex::Regex;
 
+/// Embedding endpoint formerly called DB-side by fn::embed_text.
+pub const OLLAMA_EMBEDDINGS_URL: &str = "https://ollama.shadowbroker.app/api/embeddings";
+/// Dimension of nomic-embed-text vectors; the HNSW indexes require exactly this.
+pub const EMBEDDING_DIM: usize = 768;
+
+/// 768-dim text embedding from the shared Ollama endpoint. Retries once on
+/// transient failure and rejects vectors of the wrong dimension.
+pub async fn embed_text(text: &str) -> anyhow::Result<Vec<f32>> {
+    #[derive(Deserialize)]
+    struct EmbedResponse {
+        embedding: Vec<f32>,
+    }
+    let mut last_err = anyhow::anyhow!("embed_text: no attempt made");
+    for _ in 0..2 {
+        let attempt = async {
+            let resp: EmbedResponse = reqwest::Client::new()
+                .post(OLLAMA_EMBEDDINGS_URL)
+                .json(&serde_json::json!({ "model": "nomic-embed-text", "prompt": text }))
+                .send()
+                .await?
+                .error_for_status()?
+                .json()
+                .await?;
+            if resp.embedding.len() != EMBEDDING_DIM {
+                anyhow::bail!(
+                    "embed_text: expected {EMBEDDING_DIM}-dim vector, got {}",
+                    resp.embedding.len()
+                );
+            }
+            Ok::<Vec<f32>, anyhow::Error>(resp.embedding)
+        };
+        match attempt.await {
+            Ok(v) => return Ok(v),
+            Err(e) => last_err = e,
+        }
+    }
+    Err(last_err)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+struct DiagEmbedRow {
+    id: RecordId,
+    title: Option<String>,
+    detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+struct RunEmbedRow {
+    id: RecordId,
+    tool_label: Option<String>,
+    preset_label: Option<String>,
+    target_kind: Option<String>,
+    hostname: Option<String>,
+}
+
+/// Embeds rows stored without an embedding (endpoint was unreachable at write
+/// time). Source text mirrors DiagnosticEntry::embed_source and
+/// StressTestRun::embed_source. Returns rows fixed; errors out if the
+/// endpoint goes down mid-run so the caller can retry later.
+pub async fn backfill_missing_embeddings(limit: usize) -> anyhow::Result<usize> {
+    let mut fixed = 0usize;
+
+    let diags: Vec<DiagEmbedRow> = DATABASE
+        .query(format!(
+            "SELECT id, title, detail FROM diagnostic_entry WHERE embedding == NONE LIMIT {limit}"
+        ))
+        .await?
+        .take(0)?;
+    for row in diags {
+        let title = row.title.unwrap_or_default();
+        let detail = row.detail.unwrap_or_default();
+        let src = format!("{} {}", title.trim(), detail.trim());
+        if src.trim().is_empty() {
+            continue;
+        }
+        let emb = match embed_text(&src).await {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("embedding backfill halted after {fixed} rows: {e:?}");
+                return Err(e);
+            }
+        };
+        DATABASE
+            .query("UPDATE $id SET embedding = $emb")
+            .bind(("id", row.id))
+            .bind(("emb", emb))
+            .await?;
+        fixed += 1;
+    }
+
+    let runs: Vec<RunEmbedRow> = DATABASE
+        .query(format!(
+            "SELECT id, tool_label, preset_label, target_kind, hostname FROM stress_test_run WHERE embedding == NONE LIMIT {limit}"
+        ))
+        .await?
+        .take(0)?;
+    for row in runs {
+        let src = format!(
+            "{} {} {} {}",
+            row.tool_label.unwrap_or_default(),
+            row.preset_label.unwrap_or_default(),
+            row.target_kind.unwrap_or_default(),
+            row.hostname.unwrap_or_default(),
+        );
+        if src.trim().is_empty() {
+            continue;
+        }
+        let emb = match embed_text(&src).await {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("embedding backfill halted after {fixed} rows: {e:?}");
+                return Err(e);
+            }
+        };
+        DATABASE
+            .query("UPDATE $id SET embedding = $emb")
+            .bind(("id", row.id))
+            .bind(("emb", emb))
+            .await?;
+        fixed += 1;
+    }
+
+    Ok(fixed)
+}
+
+static EMBEDDING_BACKFILL_STARTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Runs one background embedding backfill per process; re-arms on failure so
+/// a later write retries once the endpoint is reachable again.
+pub fn spawn_embedding_backfill() {
+    use std::sync::atomic::Ordering;
+    if EMBEDDING_BACKFILL_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    PlatformSpawner::spawn(async {
+        match backfill_missing_embeddings(100).await {
+            Ok(0) => {}
+            Ok(n) => log::info!("backfilled {n} missing embeddings"),
+            Err(e) => {
+                log::warn!("embedding backfill failed, will retry on a later write: {e:?}");
+                EMBEDDING_BACKFILL_STARTED.store(false, Ordering::SeqCst);
+            }
+        }
+    });
+}
+
 /// Result type for task creation operations
 #[derive(Debug, Clone)]
 pub enum TaskCreationResult {
@@ -1243,6 +1390,9 @@ pub async fn get_prestashop_payload_from_phone(phone: &str) -> anyhow::Result<Pr
 }
 
 pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<PrestashopPayload, anyhow::Error> {
+    if order_number.trim().is_empty() {
+        return Err(anyhow::anyhow!("get_prestashop_payload -> order number is empty"));
+    }
     let api_call = Prestashop::default();
     let mut query = HashMap::new();
     let customer_address = &mut Address::default();

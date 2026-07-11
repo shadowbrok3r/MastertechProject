@@ -1,6 +1,6 @@
 id = "20260701120000__user_tui_color_scheme"
 name = "user_tui_color_scheme"
-state = "planned"
+state = "completed"
 # source == target: this rollout applies already-committed .surql state to the DB.
 # Run `surrealkit rollout lint database/rollouts/20260701120000__user_tui_color_scheme.toml`
 # and paste the reported `current=` hash into both fields if lint disagrees.

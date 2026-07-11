@@ -7,7 +7,7 @@ LET $model = "AMD Ryzen 5 5600G with Radeon Graphics";
 LET $sku = NONE;
 LET $display = "AMD AMD Ryzen 5 5600G with Radeon Graphics";
 LET $specs = NONE;
-LET $embed_src = "cpu AMD AMD Ryzen 5 5600G with Radeon Graphics AMD AMD Ryzen 5 5600G with Radeon Graphics";
+LET $embedding = array::repeat(0.1f, 768);
 
 UPSERT $id MERGE {
     kind: $kind,
@@ -16,7 +16,7 @@ UPSERT $id MERGE {
     sku: $sku,
     display_name: $display,
     specs: $specs,
-    embedding: fn::embed_text($embed_src),
+    embedding: $embedding ?? embedding,
     first_seen: time::now(),
     last_seen: time::now(),
     occurrence_count: (occurrence_count ?? 0) + 1,
@@ -37,8 +37,8 @@ LET $content = {
     summary: {},
     started_at: time::now(),
 };
-LET $embed_src = "stresskit:cpu scripts:single:cpu cpu DESKTOP-3F0BA5T";
+LET $embedding = array::repeat(0.1f, 768);
 
-CREATE $run_id CONTENT ($content + { embedding: fn::embed_text($embed_src) });
+CREATE $run_id CONTENT ($content + { embedding: $embedding });
 
 RETURN record::exists($run_id);

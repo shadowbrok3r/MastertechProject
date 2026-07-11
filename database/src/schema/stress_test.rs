@@ -192,7 +192,15 @@ impl HardwareComponent {
     /// land" (permissions, missing table, etc.) becomes a hard error
     /// rather than a fake Ok the caller can't distinguish from a real one.
     pub async fn upsert_seen(component: &Self) -> anyhow::Result<RecordId> {
-        let embed_src = component.embed_source();
+        super::utilities::spawn_embedding_backfill();
+        // NONE keeps an existing embedding via `?? embedding` in the MERGE.
+        let embedding = match super::utilities::embed_text(&component.embed_source()).await {
+            Ok(v) => Some(v),
+            Err(e) => {
+                log::warn!("embed_text failed for hardware_component {:?}: {e:?}", component.id);
+                None
+            }
+        };
         let sql = stress_test_sql::HW_COMPONENT_UPSERT;
         let mut response = DATABASE
             .query(sql)
@@ -203,7 +211,7 @@ impl HardwareComponent {
             .bind(("sku", component.sku.clone()))
             .bind(("display", component.display_name.clone()))
             .bind(("specs", component.specs.clone()))
-            .bind(("embed_src", embed_src))
+            .bind(("embedding", embedding))
             .await?;
         let ids: Vec<RecordId> = response.take(0)?;
         if ids.is_empty() {
@@ -1051,13 +1059,21 @@ impl StressTestRun {
     pub async fn create(run: &Self) -> anyhow::Result<RecordId> {
         let mut content = surreal_create_content(run, true);
         ensure_run_content_objects(&mut content, run);
-        let embed_src = run.embed_source();
+        super::utilities::spawn_embedding_backfill();
+        // Embedding is optional on stress_test_run; NONE on embed failure.
+        let embedding = match super::utilities::embed_text(&run.embed_source()).await {
+            Ok(v) => Some(v),
+            Err(e) => {
+                log::warn!("embed_text failed for stress_test_run {:?}: {e:?}", run.id);
+                None
+            }
+        };
 
         let mut response = DATABASE
             .query(stress_test_sql::STRESS_RUN_CREATE)
             .bind(("id", run.id.clone()))
             .bind(("content", content))
-            .bind(("embed_src", embed_src))
+            .bind(("embedding", embedding))
             .await?;
 
         let created: Vec<RecordId> = response.take(0).map_err(|e| {

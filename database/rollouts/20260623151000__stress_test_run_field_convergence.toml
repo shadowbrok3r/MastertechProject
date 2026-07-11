@@ -1,6 +1,6 @@
 id = "20260623151000__stress_test_run_field_convergence"
 name = "stress_test_run_field_convergence"
-state = "planned"
+state = "completed"
 # Re-applies slice6 + slice10 + slice11, which were recorded `completed` but
 # used the non-executing `[complete] ddl=` format (surrealkit 0.7.0 runs only
 # [[steps]] blocks), so production never received them. Converges

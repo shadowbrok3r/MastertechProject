@@ -255,7 +255,7 @@ impl TaskModal {
                 Err(e) => log::error!("Error getting task history: {e:?}"),
             }
 
-            if let Some(service_number) = service_number {
+            if let Some(service_number) = service_number.filter(|s| !s.trim().is_empty()) {
                 match TaskNotePayload::get_prestashop_notes_from_service(&service_number, Some(id.clone())).await {
                     Ok(notes) => { let _ = notes_tx.try_send(notes); },
                     Err(e) => log::error!("Error getting notes from task ID: {e:?}"),
@@ -911,7 +911,7 @@ impl TaskModal {
 
     /// Resync order data from Prestashop
     fn resync_from_prestashop(&mut self) {
-        if let Some(service_number) = self.task.service_number.clone() {
+        if let Some(service_number) = self.task.service_number.clone().filter(|s| !s.trim().is_empty()) {
             self.resyncing = true;
             let resync_tx = self.resync_tx.clone();
             PlatformSpawner::spawn(async move {
@@ -1167,7 +1167,7 @@ impl DisplayModal for TaskModal {
                     }
                     
                     // Resync from Prestashop button
-                    if self.task.service_number.is_some() {
+                    if self.task.service_number.as_ref().is_some_and(|s| !s.trim().is_empty()) {
                         let can_resync = !self.resyncing;
                         if ui.add_enabled(can_resync, Button::new(RichText::new("🔄").heading()).min_size([22., 22.].into()))
                             .on_hover_text("Resync Order from Prestashop")

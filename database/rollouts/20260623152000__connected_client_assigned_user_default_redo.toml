@@ -1,6 +1,6 @@
 id = "20260623152000__connected_client_assigned_user_default_redo"
 name = "connected_client_assigned_user_default_redo"
-state = "planned"
+state = "completed"
 # Re-applies 20260528150000__connected_client_assigned_user_default, which was
 # recorded `completed` but used the non-executing `[complete] ddl=` format, so
 # production's assigned_user has no DEFAULT. Adds DEFAULT $auth.id back.

@@ -536,21 +536,19 @@ impl TaskLayout {
                                                     PlatformSpawner::spawn(async move {
                                                         match other {
                                                             TaskActions::MarkComplete => {
-                                                                let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
-                                                                    .bind(("record", ids.clone()))
-                                                                    .bind(("completion", true))
+                                                                let _x: Vec<Record> = DATABASE.query("UPDATE $records SET completed = true, status = 'Complete'")
+                                                                    .bind(("records", ids.clone()))
                                                                     .await.unwrap().take(0).unwrap();
                                                             },
                                                             TaskActions::MarkIncomplete => {
-                                                                let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
-                                                                    .bind(("record", ids.clone()))
-                                                                    .bind(("completion", false))
+                                                                let _x: Vec<Record> = DATABASE.query("UPDATE $records SET completed = false, status = 'Todo'")
+                                                                    .bind(("records", ids.clone()))
                                                                     .await.unwrap().take(0).unwrap();
                                                             },
                                                             TaskActions::MarkDueToday => {
-                                                                let _x: Option<Record> = DATABASE.query("fn::mark_all_due_today($ids)")
+                                                                let _x: Vec<Record> = DATABASE.query("UPDATE $ids SET due_date = time::now()")
                                                                     .bind(("ids", ids.clone())).await.unwrap().take(0).unwrap();
-                                                            }, 
+                                                            },
                                                             _ => {}
                                                         }
                                                     });

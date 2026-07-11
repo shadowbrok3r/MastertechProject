@@ -30,12 +30,13 @@ async fn main() -> anyhow::Result<()> {
     DATABASE.use_ns(database::NS).use_db(database::DB).await?;
     println!("connected to {url} ns={} db={}", database::NS, database::DB);
 
-    // Blank throwaway DBs lack fn::embed_text + table DDL; real DBs keep theirs.
+    // Blank throwaway DBs lack the stress tables; real DBs keep theirs.
     let probe_ok = DATABASE
-        .query("RETURN fn::embed_text('probe')")
+        .query("RETURN (INFO FOR DB).tables.stress_test_run != NONE")
         .await
-        .and_then(|r| r.check())
-        .is_ok();
+        .ok()
+        .and_then(|mut r| r.take::<Option<bool>>(0).ok().flatten())
+        .unwrap_or(false);
     if !probe_ok {
         DATABASE
             .query(include_str!("../../database/tests/fixtures/stress_schema.surql"))

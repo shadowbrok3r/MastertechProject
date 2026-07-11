@@ -3285,7 +3285,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "log_diagnostic_entry",
-        description = "Log an entry against an open diagnostic_session. Allowed categories: 'finding' (discovered issue), 'action' (step taken), 'note' (general observation), 'error' (tool/command failed), 'system_info', 'network_info', 'security_alert', 'performance_note', 'customer_note', 'recommendation'. Anything else is recorded as 'note'. Embeddings are computed server-side via `fn::embed_text(title + detail)` on insert (768-dim HNSW index `diag_embedding`). Requires SurrealDB embed provider + slice9 migration applied."
+        description = "Log an entry against an open diagnostic_session. Allowed categories: 'finding' (discovered issue), 'action' (step taken), 'note' (general observation), 'error' (tool/command failed), 'system_info', 'network_info', 'security_alert', 'performance_note', 'customer_note', 'recommendation'. Anything else is recorded as 'note'. Embeddings (title + detail, 768-dim HNSW index `diag_embedding`) are computed app-side via the shared Ollama endpoint on insert; entries are stored without an embedding if the endpoint is unreachable."
     )]
     async fn log_diagnostic_entry(
         &self,

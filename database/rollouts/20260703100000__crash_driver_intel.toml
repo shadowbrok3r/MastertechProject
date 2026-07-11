@@ -1,6 +1,6 @@
 id = "20260703100000__crash_driver_intel"
 name = "crash_driver_intel"
-state = "planned"
+state = "completed"
 # Pure-additive: five new SCHEMALESS tables for fleet crash-signature
 # intelligence (crash_signature/crash_sighting/crash_verdict) and the driver
 # time machine (driver_snapshot/known_bad_driver). run_sql with OVERWRITE per

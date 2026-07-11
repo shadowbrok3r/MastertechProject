@@ -1,0 +1,34 @@
+id = "20260710150000__stock_cache"
+name = "stock_cache"
+state = "completed"
+# Additive: stock_cache table backing the app-side Odoo stock pulls that
+# replace fn::store_stock / fn::find_attached_serials / fn::get_stock_extra_info.
+# Clients share one cached pull per store (1-day TTL, refreshing_since claim);
+# Refresh buttons force a re-fetch. Mirrors database/schema/stock_cache.surql.
+# Applying committed file state only: source == target. Paste the `current=`
+# hash reported by `surrealkit rollout lint` into both fields.
+source_schema_hash = "55783f89681770d956e4efb0eab45e619f380948e1aad795fbb7d7ade0ec792a"
+target_schema_hash = "55783f89681770d956e4efb0eab45e619f380948e1aad795fbb7d7ade0ec792a"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "create_stock_cache_table"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE stock_cache TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE kind             ON stock_cache TYPE string           PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE location_id      ON stock_cache TYPE none | int       PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE data             ON stock_cache TYPE none | array     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE refreshed_at     ON stock_cache TYPE none | datetime  PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE refreshing_since ON stock_cache TYPE none | datetime  PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "drop_stock_cache_table"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE TABLE IF EXISTS stock_cache;
+"""

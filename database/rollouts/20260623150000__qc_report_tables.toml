@@ -1,6 +1,6 @@
 id = "20260623150000__qc_report_tables"
 name = "qc_report_tables"
-state = "planned"
+state = "completed"
 # Additive: creates qc_report + qc_report_failure from database/schema/*.surql.
 # Both files already carry the desired state, so source == target (this rollout
 # only applies them to the DB). Run `surrealkit rollout lint` to confirm the hash.

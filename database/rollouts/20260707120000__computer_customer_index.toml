@@ -1,6 +1,6 @@
 id = "20260707120000__computer_customer_index"
 name = "computer_customer_index"
-state = "planned"
+state = "completed"
 # Additive: index computer.customer. The service_order `created` event calls
 # fn::fix_specs(), which correlates every service_order against computer via
 # `WHERE customer == ...`; with no index this full-scans computer (2.5k rows)

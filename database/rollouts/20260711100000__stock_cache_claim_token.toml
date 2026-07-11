@@ -1,0 +1,29 @@
+id = "20260711100000__stock_cache_claim_token"
+name = "stock_cache_claim_token"
+state = "completed"
+# Additive: claim_token on stock_cache. Cache writes/releases are scoped to the
+# token so a claim that was DELETE-invalidated or taken over after expiry can
+# neither resurrect stale data nor drop another client's in-flight claim.
+# Mirrors database/schema/stock_cache.surql. Applying committed file state
+# only: source == target. Paste the `current=` hash reported by
+# `surrealkit rollout lint` into both fields.
+source_schema_hash = "eabbd3b496193c11037d6902a6a8c4617584945192384011dbc180f839ead6ac"
+target_schema_hash = "eabbd3b496193c11037d6902a6a8c4617584945192384011dbc180f839ead6ac"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "add_claim_token_field"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE claim_token ON stock_cache TYPE none | string PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "drop_claim_token_field"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE FIELD IF EXISTS claim_token ON stock_cache;
+"""

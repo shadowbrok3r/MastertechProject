@@ -37,7 +37,7 @@ async fn hardware_component_upsert_sets_embedding_and_exists() {
         .bind(("sku", component.sku.clone()))
         .bind(("display", component.display_name.clone()))
         .bind(("specs", component.specs.clone()))
-        .bind(("embed_src", component.embed_source()))
+        .bind(("embedding", Some(vec![0.1f32; 768])))
         .await
         .expect("upsert query");
 
@@ -98,12 +98,11 @@ async fn stress_test_run_create_merges_content_and_embedding() {
         );
     }
 
-    let embed_src = run.embed_source();
     let mut response = db
         .query(stress_test_sql::STRESS_RUN_CREATE)
         .bind(("id", run.id.clone()))
         .bind(("content", content))
-        .bind(("embed_src", embed_src))
+        .bind(("embedding", Some(vec![0.1f32; 768])))
         .await
         .expect("create run");
 

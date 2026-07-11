@@ -402,6 +402,17 @@ impl DiagnosticEntry {
         e.id = super::random_record_id(super::DIAGNOSTIC_ENTRY_TABLE);
         e.timestamp = chrono::Utc::now().into();
 
+        super::utilities::spawn_embedding_backfill();
+
+        // Embedding is optional in the schema; store the entry without one on failure.
+        let embedding = match super::utilities::embed_text(&e.embed_source()).await {
+            Ok(v) => Some(v),
+            Err(err) => {
+                log::error!("embed_text failed; storing diagnostic_entry without embedding: {err:?}");
+                None
+            }
+        };
+
         DATABASE
             .query(
                 "CREATE $id CONTENT {
@@ -412,7 +423,7 @@ impl DiagnosticEntry {
                     detail: $detail,
                     data: $data,
                     plugins_used: $plugins_used,
-                    embedding: fn::embed_text($embed_source)
+                    embedding: $embedding
                 }",
             )
             .bind(("id", e.id.clone()))
@@ -423,7 +434,7 @@ impl DiagnosticEntry {
             .bind(("detail", e.detail.clone()))
             .bind(("data", e.data.clone()))
             .bind(("plugins_used", e.plugins_used.clone()))
-            .bind(("embed_source", e.embed_source()))
+            .bind(("embedding", embedding))
             .await?;
 
         Ok(e.id)

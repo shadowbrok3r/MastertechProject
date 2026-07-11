@@ -102,6 +102,10 @@
       "hash": "6e901642f35d0f034a60378e16167162f27d07dbc332f4c94954686b74a8002a"
     },
     {
+      "path": "database/schema/stock_cache.surql",
+      "hash": "8c01e22c2f93c9abf69fda3e084b73a96beb7cf5fb9bd279b73b427a36105bd8"
+    },
+    {
       "path": "database/schema/stress_test_event.surql",
       "hash": "18bde5df5b647bb2c40809c519fb8088179d7335f33786cdc3b7f8376a47ebb3"
     },

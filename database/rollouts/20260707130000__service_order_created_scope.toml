@@ -1,6 +1,6 @@
 id = "20260707130000__service_order_created_scope"
 name = "service_order_created_scope"
-state = "planned"
+state = "completed"
 # Rewrite the service_order `created` event so it no longer calls the global
 # fn::fix_specs() sweep (a correlated scan that ignored the index and ran ~18s
 # on every insert, blowing the 20s transaction timeout). The scoped event only

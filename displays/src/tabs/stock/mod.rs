@@ -522,7 +522,7 @@ impl StockTable {
                             if Button::new("Refresh").ui(ui).clicked() {
                                 let stock_tx = self.extra_stock_channel.0.clone();
                                 PlatformSpawner::spawn(async move {
-                                    let stock = get_extra_stock_info(stock_tx.clone()).await;
+                                    let stock = get_extra_stock_info(stock_tx.clone(), true).await;
                                     info!("Stock call: {stock:?}");
                                 });
                             }
@@ -557,7 +557,7 @@ impl StockTable {
                                 let store_selection = self.store_selection;
                                 PlatformSpawner::spawn(async move {
                                     info!("Store: {:?}", store_selection);
-                                    let stock = get_stock(stock_tx.clone(), store_selection).await;
+                                    let stock = get_stock(stock_tx.clone(), store_selection, false).await;
                                     info!("Stock call: {stock:?}");
                                 });
                                 // Re-pull the audit list for the newly selected store.
@@ -615,7 +615,7 @@ impl StockTable {
                                         let stock_tx = self.stock_channel.0.clone();
                                         let store_selection = self.store_selection;
                                         PlatformSpawner::spawn(async move {
-                                            let _ = get_stock(stock_tx, store_selection).await;
+                                            let _ = get_stock(stock_tx, store_selection, false).await;
                                         });
                                     }
                                     Some(id) => {
@@ -636,7 +636,7 @@ impl StockTable {
                                 let stock_tx = self.stock_channel.0.clone();
                                 let store_selection = self.store_selection;
                                 PlatformSpawner::spawn(async move {
-                                    let stock = get_stock(stock_tx.clone(), store_selection).await;
+                                    let stock = get_stock(stock_tx.clone(), store_selection, true).await;
                                     info!("Stock call: {stock:?}");
                                 });
                             }
@@ -646,8 +646,10 @@ impl StockTable {
                                 let tx = self.serial_channel.0.clone();
                                 let data_table = self.inventory_serials_table.iter();
                                 let sns = data_table.map(|r| r.4.clone()).collect::<Vec<String>>();
+                                let store_selection = self.store_selection;
+                                // Personal live check for the rows on screen; never writes the shared cache.
                                 PlatformSpawner::spawn(async move {
-                                    let _res = find_attached_serials(sns, tx.clone()).await;
+                                    let _res = find_attached_serials(sns, store_selection, true, false, tx.clone()).await;
                                     if let Err(e) = _res {
                                         log::error!("S/N Info call error: {e:?}");
                                     } else {
@@ -2213,14 +2215,14 @@ impl StockTable {
             self.first_run = false;
             let stock_tx = self.extra_stock_channel.0.clone();
             PlatformSpawner::spawn(async move {
-                let stock = get_extra_stock_info(stock_tx.clone()).await;
+                let stock = get_extra_stock_info(stock_tx.clone(), false).await;
                 log::info!("Stock call: {stock:?}");
             });
 
             let stock_tx = self.stock_channel.0.clone();
             let store_selection = self.store_selection;
             PlatformSpawner::spawn(async move {
-                let stock = get_stock(stock_tx.clone(), store_selection).await;
+                let stock = get_stock(stock_tx.clone(), store_selection, false).await;
                 log::info!("Stock call: {stock:?}");
             });
 
@@ -2287,10 +2289,14 @@ impl StockTable {
             let tx = self.serial_channel.0.clone();
 
             let sns = data.iter().map(|r| r.4.clone()).collect::<Vec<String>>();
+            // Location from the rows themselves; store_selection may have moved on.
+            let location = stock_data.first().map(|d| d.location_id.0 as u64);
 
-            PlatformSpawner::spawn(async move {
-                let _res = find_attached_serials(sns, tx.clone()).await;
-            });
+            if let Some(location) = location {
+                PlatformSpawner::spawn(async move {
+                    let _res = find_attached_serials(sns, location, false, true, tx.clone()).await;
+                });
+            }
 
             self.inventory_serials_table.replace(data);
             self.recompute_qty_rollup();

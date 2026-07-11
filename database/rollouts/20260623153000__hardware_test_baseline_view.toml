@@ -1,6 +1,6 @@
 id = "20260623153000__hardware_test_baseline_view"
 name = "hardware_test_baseline_view"
-state = "planned"
+state = "completed"
 # Creates the hardware_test_baseline view defined in stress_test_run.surql
 # (folded in 2026-06-12, never applied anywhere). Its original definition
 # errored at runtime — math::sum/mean over NONE summary subfields — so the

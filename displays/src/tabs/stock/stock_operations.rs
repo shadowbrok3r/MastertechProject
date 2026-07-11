@@ -1,6 +1,6 @@
 use super::store_inventory_viewer::ExtraInventoryData;
-use super::row_viewer::{RawStockData, SerialData, StockData, CostBreakdownData, SystemInStoreData, SystemType, BulkOrderData, BulkProductData};
-use database::{DATABASE, ODOO_JSONRPC_URL, schema::{Store, ComputerData, prestashop::{Customer, Order, OrderDetail, OrderState, OrderType, Prestashop, PrestashopId}}};
+use super::row_viewer::{RawStockData, SerialData, SerialInfo, CostBreakdownData, SystemInStoreData, SystemType, BulkOrderData, BulkProductData};
+use database::{DATABASE, ODOO_API_KEY, ODOO_DB, ODOO_JSONRPC_URL, ODOO_UID, schema::{Store, ComputerData, prestashop::{Customer, Order, OrderDetail, OrderState, OrderType, Prestashop, PrestashopId}}};
 use crossbeam::channel::Sender;
 use anyhow::{Error, Result};
 use serde::Deserialize;
@@ -8,76 +8,281 @@ use serde_json::json;
 use reqwest::Client;
 use log::info;
 
-pub async fn get_stock(stock_tx: Sender<Vec<RawStockData>>, location: u64) -> Result<(), Error> {
-    let res: Option<StockData> = DATABASE
-        .query("RETURN fn::store_stock($location, 5000)")
-        .bind(("location", location))
+/* ------------------------------------ Odoo stock pulls + shared cache ------------------------------------ */
+
+/// Max age of a cached Odoo pull before one client re-fetches it for everyone.
+const STOCK_CACHE_TTL: &str = "1d";
+/// Max age of a refresh claim before another client may take over a stuck refresh.
+const STOCK_CLAIM_TTL: &str = "3m";
+
+#[derive(Debug, Deserialize)]
+struct OdooEnvelope<T> {
+    #[serde(default = "Option::default")]
+    result: Option<Vec<T>>,
+    #[serde(default = "Option::default")]
+    error: Option<serde_json::Value>,
+}
+
+/// Client with a request timeout so a hung Odoo pull cannot hold a cache claim.
+fn odoo_client() -> Client {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Client::builder()
+            .timeout(std::time::Duration::from_secs(90))
+            .build()
+            .unwrap_or_else(|_| Client::new())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Client::new()
+    }
+}
+
+/// Odoo `execute_kw` search_read over JSON-RPC. `domain` is the full
+/// positional domain argument, e.g. `[[["name", "in", [...]]]]`.
+async fn odoo_search_read<T: serde::de::DeserializeOwned>(
+    model: &str,
+    domain: serde_json::Value,
+    fields: serde_json::Value,
+    limit: Option<u32>,
+) -> Result<Vec<T>, Error> {
+    let uid: u32 = ODOO_UID.parse()?;
+    let mut kwargs = json!({ "fields": fields });
+    if let Some(l) = limit {
+        kwargs["limit"] = json!(l);
+    }
+    let body = json!({
+        "jsonrpc": "2.0",
+        "method": "call",
+        "id": 1,
+        "params": {
+            "service": "object",
+            "method": "execute_kw",
+            "args": [ODOO_DB, uid, ODOO_API_KEY, model, "search_read", domain, kwargs]
+        }
+    });
+    let env: OdooEnvelope<T> = odoo_client()
+        .post(ODOO_JSONRPC_URL)
+        .json(&body)
+        .send()
         .await?
-        .take(0)?;
+        .json()
+        .await?;
+    if let Some(err) = env.error {
+        return Err(anyhow::anyhow!("Odoo {model} search_read error: {err}"));
+    }
+    Ok(env.result.unwrap_or_default())
+}
 
-    // info!("Result: {res:?}");
+/// Mirrors the retired fn::store_stock.
+async fn fetch_store_stock_from_odoo(location: u64) -> Result<Vec<RawStockData>, Error> {
+    odoo_search_read(
+        "stock.quant",
+        json!([[
+            ["location_id", "=", location],
+            ["location_id.usage", "in", ["internal", "transit"]],
+            ["product_id", "!=", false],
+            ["lot_id", "!=", false]
+        ]]),
+        json!(["location_id", "product_id", "quantity", "available_quantity", "inventory_quantity", "inventory_diff_quantity", "reserved_quantity", "lot_id"]),
+        Some(5000),
+    )
+    .await
+}
 
-    stock_tx.try_send(res.unwrap().result)?;
+/// Mirrors the retired fn::find_attached_serials.
+async fn fetch_attached_serials_from_odoo(serials: &[String]) -> Result<Vec<SerialInfo>, Error> {
+    odoo_search_read(
+        "stock.lot",
+        json!([[["name", "in", serials]]]),
+        json!(["id", "name", "product_id", "bs_sale_line_id", "bs_prest_ref"]),
+        None,
+    )
+    .await
+}
+
+/// Mirrors the retired fn::get_stock_extra_info.
+async fn fetch_extra_stock_info_from_odoo() -> Result<Vec<ExtraInventoryData>, Error> {
+    odoo_search_read(
+        "product.template",
+        json!([[["qty_available", ">", 3]]]),
+        json!(["name", "product_variant_id", "qty_available", "display_name", "virtual_available", "list_price", "standard_price"]),
+        Some(5000),
+    )
+    .await
+}
+
+/// Cached `data` from `stock_cache:<key>` when fresher than the TTL.
+async fn read_stock_cache<T: database::SurrealValue>(key: &str) -> Result<Option<Vec<T>>, Error> {
+    let mut res = DATABASE
+        .query(format!(
+            "LET $r = SELECT * FROM ONLY stock_cache:{key}; \
+             RETURN IF $r.refreshed_at != NONE AND $r.refreshed_at > (time::now() - {STOCK_CACHE_TTL}) {{ $r.data }} ELSE {{ NONE }};"
+        ))
+        .await?;
+    Ok(res.take(1)?)
+}
+
+/// Claims the refresh slot for `stock_cache:<key>`.
+/// Returns (claim token if this client won the slot, current cached data).
+async fn claim_stock_cache<T: database::SurrealValue>(key: &str) -> Result<(Option<String>, Option<Vec<T>>), Error> {
+    let mut res = DATABASE
+        .query(format!(
+            "LET $r = SELECT * FROM ONLY stock_cache:{key}; \
+             LET $tok = IF $r.refreshing_since == NONE OR $r.refreshing_since < (time::now() - {STOCK_CLAIM_TTL}) {{ (UPSERT stock_cache:{key} SET refreshing_since = time::now(), claim_token = rand::ulid() RETURN AFTER)[0].claim_token }} ELSE {{ NONE }}; \
+             RETURN $tok; \
+             RETURN $r.data;"
+        ))
+        .await?;
+    let token: Option<String> = res.take(2)?;
+    let stale: Option<Vec<T>> = res.take(3)?;
+    Ok((token, stale))
+}
+
+/// Stores a fresh pull in `stock_cache:<key>` if this client still holds the
+/// claim; a claim removed by DELETE or taken over by another client skips the
+/// write. Returns whether the cache row was written.
+async fn write_stock_cache<T: database::SurrealValue>(
+    key: &str,
+    kind: &str,
+    location: Option<u64>,
+    data: Vec<T>,
+    token: &str,
+) -> Result<bool, Error> {
+    let location_sql = location.map_or("NONE".to_string(), |l| l.to_string());
+    let mut res = DATABASE
+        .query(format!(
+            "RETURN IF (SELECT VALUE claim_token FROM ONLY stock_cache:{key}) == $tok {{ UPSERT stock_cache:{key} CONTENT {{ kind: '{kind}', location_id: {location_sql}, data: $data, refreshed_at: time::now(), refreshing_since: NONE, claim_token: NONE }}; true }} ELSE {{ false }};"
+        ))
+        .bind(("data", data))
+        .bind(("tok", token.to_string()))
+        .await?;
+    let wrote: Option<bool> = res.take(0)?;
+    Ok(wrote == Some(true))
+}
+
+/// Releases this client's claim; a claim owned by another token is untouched.
+async fn release_stock_cache_claim(key: &str, token: &str) {
+    let _ = DATABASE
+        .query(format!(
+            "UPDATE stock_cache:{key} SET refreshing_since = NONE, claim_token = NONE WHERE claim_token == $tok;"
+        ))
+        .bind(("tok", token.to_string()))
+        .await;
+}
+
+/// Cache-through pull: serve fresh cache, else claim + fetch + write, else
+/// serve the current copy while another client refreshes, else fetch without
+/// writing. Returns (rows, whether this call wrote the cache).
+async fn cached_pull<T, Fut>(
+    key: &str,
+    kind: &str,
+    location: Option<u64>,
+    force: bool,
+    fetch: impl FnOnce() -> Fut,
+) -> Result<(Vec<T>, bool), Error>
+where
+    T: database::SurrealValue + Clone,
+    Fut: std::future::Future<Output = Result<Vec<T>, Error>>,
+{
+    if !force {
+        if let Some(data) = read_stock_cache::<T>(key).await? {
+            info!("{key}: {} rows from cache", data.len());
+            return Ok((data, false));
+        }
+    }
+
+    let (token, stale) = match claim_stock_cache::<T>(key).await {
+        Ok(pair) => pair,
+        Err(e) => {
+            // Claim contention (e.g. write-conflict) degrades to a personal fetch.
+            log::warn!("{key}: cache claim failed, fetching without cache write: {e:?}");
+            (None, None)
+        }
+    };
+
+    let Some(token) = token else {
+        if let Some(data) = stale {
+            info!("{key}: refresh in progress elsewhere, serving current cache");
+            return Ok((data, false));
+        }
+        let data = fetch().await?;
+        info!("{key}: {} rows from Odoo (no cache write)", data.len());
+        return Ok((data, false));
+    };
+
+    match fetch().await {
+        Ok(data) => {
+            let wrote = match write_stock_cache(key, kind, location, data.clone(), &token).await {
+                Ok(w) => w,
+                Err(e) => {
+                    log::error!("{key}: cache write failed: {e:?}");
+                    release_stock_cache_claim(key, &token).await;
+                    false
+                }
+            };
+            info!("{key}: {} rows from Odoo (cache written: {wrote})", data.len());
+            Ok((data, wrote))
+        }
+        Err(e) => {
+            release_stock_cache_claim(key, &token).await;
+            if let Some(data) = stale {
+                log::error!("{key}: Odoo fetch failed, serving current cache: {e:?}");
+                return Ok((data, false));
+            }
+            Err(e)
+        }
+    }
+}
+
+pub async fn get_stock(stock_tx: Sender<Vec<RawStockData>>, location: u64, force: bool) -> Result<(), Error> {
+    let key = format!("store_stock_{location}");
+    let (data, wrote) = cached_pull(&key, "store_stock", Some(location), force, || {
+        fetch_store_stock_from_odoo(location)
+    })
+    .await?;
+    if wrote {
+        // Stock changed, so the per-store serial cache is no longer valid.
+        if let Err(e) = DATABASE
+            .query(format!("DELETE stock_cache:serials_{location};"))
+            .await
+            .and_then(|r| r.check())
+        {
+            log::error!("store_stock {location}: serial cache invalidation failed: {e:?}");
+        }
+    }
+    stock_tx.try_send(data)?;
     Ok(())
 }
 
-pub async fn find_attached_serial(
-    serial: String,
-    stock_tx: Sender<SerialData>,
-) -> Result<(), Error> {
-    // info!("Finding S/N info: {serial}");
-    let res: Option<SerialData> = DATABASE
-        .query("RETURN fn::find_attached_serial($serial)")
-        .bind(("serial", serial))
-        .await?
-        .take(0)?;
-
-    // info!("Result: {res:?}");
-
-    stock_tx.try_send(res.unwrap())?;
-    Ok(())
-}
-
+/// `write_cache: false` is a personal live check: it bypasses the shared
+/// per-store cache entirely (no read, no claim, no write), so audit subsets
+/// or an out-of-date table can never overwrite the store's serial cache.
 pub async fn find_attached_serials(
     serials: Vec<String>,
+    location: u64,
+    force: bool,
+    write_cache: bool,
     stock_tx: Sender<SerialData>,
 ) -> Result<(), Error> {
-    // info!("Finding S/N info: {serials:?}");
-    let res: Option<SerialData> = DATABASE
-        .query("RETURN fn::find_attached_serials($serials)")
-        .bind(("serials", serials))
-        .await?
-        .take(0)?;
-
-    // info!("Result: {res:?}");
-
-    stock_tx.try_send(res.unwrap())?;
+    if !write_cache {
+        let result = fetch_attached_serials_from_odoo(&serials).await?;
+        info!("serials (uncached check): {} rows from Odoo", result.len());
+        stock_tx.try_send(SerialData { result })?;
+        return Ok(());
+    }
+    let key = format!("serials_{location}");
+    let (result, _) = cached_pull(&key, "serials", Some(location), force, move || async move {
+        fetch_attached_serials_from_odoo(&serials).await
+    })
+    .await?;
+    stock_tx.try_send(SerialData { result })?;
     Ok(())
 }
 
-pub async fn find_products_by_name(
-    serial: String,
-    stock_tx: Sender<StockData>,
-) -> Result<(), Error> {
-    let res: Option<StockData> = DATABASE
-        .query("RETURN fn::search_stock($serial)")
-        .bind(("serial", serial))
-        .await?
-        .take(0)?;
-
-    // info!("Result: {res:?}");
-
-    stock_tx.try_send(res.unwrap())?;
-    Ok(())
-}
-
-pub async fn get_extra_stock_info(stock_tx: Sender<Vec<ExtraInventoryData>>) -> Result<(), Error> {
-    let res: Vec<ExtraInventoryData> = DATABASE
-        .query("RETURN fn::get_stock_extra_info(5000)")
-        .await?
-        .take(0)?;
-
-    stock_tx.try_send(res)?;
+pub async fn get_extra_stock_info(stock_tx: Sender<Vec<ExtraInventoryData>>, force: bool) -> Result<(), Error> {
+    let (data, _) = cached_pull("extra_info", "extra_info", None, force, fetch_extra_stock_info_from_odoo).await?;
+    stock_tx.try_send(data)?;
     Ok(())
 }
 
