@@ -1872,7 +1872,8 @@ impl PluginToolProvider {
             .unwrap_or(0);
 
         // DB heartbeat freshness; bounded by probe_timeout so a dead DB socket reports instead of hanging.
-        let heartbeat_probe = database::DATABASE
+        let dbh = database::db();
+        let heartbeat_probe = dbh
             .query("SELECT connected, last_update FROM connected_client WHERE connection_string = $cs;")
             .bind(("cs", cs.clone()));
         let heartbeat = match tokio::time::timeout(probe_timeout, heartbeat_probe).await {
@@ -3805,7 +3806,7 @@ impl PluginToolProvider {
         Parameters(p): Parameters<SearchCustomersParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let q = p.query.to_lowercase();
-        let customers: Vec<serde_json::Value> = database::DATABASE
+        let customers: Vec<serde_json::Value> = database::db()
             .query(
                 "SELECT * FROM customer WHERE \
                  string::lowercase(name) CONTAINS $q \
@@ -3840,7 +3841,7 @@ impl PluginToolProvider {
             p.customer_id.clone()
         };
         let rid = database::schema::RecordId::new("customer", key);
-        let result: Option<serde_json::Value> = database::DATABASE
+        let result: Option<serde_json::Value> = database::db()
             .query(
                 "SELECT *, \
                    (SELECT * FROM service_order WHERE customer == $rid FETCH computer) AS services \
@@ -3871,7 +3872,7 @@ impl PluginToolProvider {
     ) -> Result<CallToolResult, ErrorData> {
         // SurrealDB: `LIMIT` cannot follow `FETCH` in the same statement; omit
         // `LIMIT` here (service_number should be unique) and take the first row.
-        let result: Option<serde_json::Value> = database::DATABASE
+        let result: Option<serde_json::Value> = database::db()
             .query(
                 "SELECT * FROM service_order WHERE service_number == $sn FETCH computer, customer",
             )
@@ -3912,7 +3913,7 @@ impl PluginToolProvider {
         let sql = format!(
             "SELECT * FROM service_order WHERE {where_clause} ORDER BY created_at DESC LIMIT 25 FETCH computer, customer"
         );
-        let results: Vec<serde_json::Value> = database::DATABASE
+        let results: Vec<serde_json::Value> = database::db()
             .query(&sql)
             .bind(("q", q))
             .bind(("tech", p.tech.unwrap_or_default()))
@@ -3940,7 +3941,7 @@ impl PluginToolProvider {
         )
         .await
         .map_err(|e| ErrorData::invalid_params(e, None))?;
-        let result: Option<serde_json::Value> = database::DATABASE
+        let result: Option<serde_json::Value> = database::db()
             .query("SELECT * FROM $rid")
             .bind(("rid", rid))
             .await
@@ -4021,7 +4022,7 @@ impl PluginToolProvider {
                 "Only SELECT and RETURN queries are allowed. Mutations (CREATE, UPDATE, DELETE, etc.) are not permitted.",
             ));
         }
-        let result: Vec<serde_json::Value> = database::DATABASE
+        let result: Vec<serde_json::Value> = database::db()
             .query(trimmed)
             .await
             .map_err(to_internal)?
@@ -4053,7 +4054,7 @@ impl PluginToolProvider {
         let limit = p.limit.unwrap_or(20).clamp(1, 200) as i64;
         // Hostname compare is case-insensitive: benchmark rows store sysinfo
         // casing ("OwnerPC") while stress_test_run stores COMPUTERNAME ("OWNERPC").
-        let rows: Vec<serde_json::Value> = database::DATABASE
+        let rows: Vec<serde_json::Value> = database::db()
             .query(
                 "SELECT * FROM benchmark_result \
                  WHERE ($h = NONE OR string::lowercase(hostname ?? '') = string::lowercase($h)) \
@@ -4416,7 +4417,7 @@ impl PluginToolProvider {
 
         let grace = p.grace_secs.unwrap_or(3600).max(600);
         let cutoff = (chrono::Utc::now() - chrono::Duration::seconds(grace as i64)).to_rfc3339();
-        let rows: Vec<serde_json::Value> = database::DATABASE
+        let rows: Vec<serde_json::Value> = database::db()
             .query(if p.dry_run { REAP_SELECT } else { REAP_UPDATE })
             .bind(("cutoff", cutoff))
             .bind(("hostname", p.hostname.clone()))
@@ -4776,7 +4777,7 @@ impl PluginToolProvider {
         &self,
         Parameters(_): Parameters<ListBuildWorkersParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let mut response = database::DATABASE
+        let mut response = database::db()
             .query(
                 "SELECT * FROM connected_client \
                  WHERE client_kind = 'build_worker' \
@@ -4844,7 +4845,7 @@ impl PluginToolProvider {
         // host, transparently run the local compile inline and return the
         // result as a synthetic `done` job — the AI's deploy step works
         // unchanged because both paths populate the same ArtifactStore.
-        let workers_resp = database::DATABASE
+        let workers_resp = database::db()
             .query(
                 "SELECT count() FROM connected_client \
                  WHERE client_kind = 'build_worker' \
@@ -4915,7 +4916,7 @@ impl PluginToolProvider {
             None => None,
             Some(s) if s.contains(':') => Some(parse_record_id(s, "connected_client")),
             Some(cs) => {
-                let mut response = database::DATABASE
+                let mut response = database::db()
                     .query("SELECT id FROM connected_client WHERE connection_string = $cs AND client_kind = 'build_worker' LIMIT 1")
                     .bind(("cs", cs.to_string()))
                     .await
@@ -4996,7 +4997,7 @@ impl PluginToolProvider {
                 self.try_lock_artifacts()?.store(&job.plugin_id, bytes);
                 if p.forget_on_done.unwrap_or(false) {
                     let _: Result<Option<database::schema::BuildJob>, _> =
-                        database::DATABASE.delete(rid.clone()).await;
+                        database::db().delete(rid.clone()).await;
                 }
                 serde_json::json!({
                     "job_id": p.job_id,

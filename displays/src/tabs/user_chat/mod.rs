@@ -38,10 +38,24 @@ pub struct UserChat {
     chat_msg_rx: Receiver<UserMessage>,
     image_id: String,
     first_run:  bool,
+    /// The chat tab has been opened and wants its live streams; the shared
+    /// reconnect supervisor spawns (and re-spawns) them.
+    streams_requested: bool,
     input: String,
     edit_text: HashMap<String, UserMessage>,
     allow_edit: HashSet<String>,
     open: bool
+}
+
+impl UserChat {
+    pub fn wants_streams(&self) -> bool {
+        self.streams_requested
+    }
+
+    /// Senders the supervisor-managed chat live streams feed into.
+    pub fn live_stream_senders(&self) -> (Sender<(Action, ChatThread)>, Sender<(Action, UserMessage)>) {
+        (self.thread_listener_tx.clone(), self.message_listener_tx.clone())
+    }
 }
 
 impl Default for UserChat {
@@ -71,6 +85,7 @@ impl Default for UserChat {
             },
             store_users: vec![],
             first_run: true,
+            streams_requested: false,
             input: String::new(),
             edit_text: HashMap::new(),
             allow_edit: HashSet::new(),

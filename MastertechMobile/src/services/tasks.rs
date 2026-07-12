@@ -1,5 +1,5 @@
 use database::schema::{LiveTaskPayload, RecordId, TaskNotePayload, User, Priority, TASK_TABLE};
-use database::DATABASE;
+use database::db;
 use chrono::Utc;
 
 // pub async fn fetch_my_tasks() -> anyhow::Result<Vec<LiveTaskPayload>> {
@@ -8,7 +8,7 @@ use chrono::Utc;
 
 /// Fetch all tasks that are not completed
 pub async fn fetch_incomplete_tasks() -> anyhow::Result<Vec<LiveTaskPayload>> {
-    let tasks: Vec<LiveTaskPayload> = DATABASE
+    let tasks: Vec<LiveTaskPayload> = db()
         .query("SELECT * FROM task WHERE $this.assignee.store == $auth.store AND $this.completed IS false ")
         .await?
         .take(0)?;
@@ -17,7 +17,7 @@ pub async fn fetch_incomplete_tasks() -> anyhow::Result<Vec<LiveTaskPayload>> {
 
 /// Fetch all tasks that are completed
 pub async fn fetch_completed_tasks() -> anyhow::Result<Vec<LiveTaskPayload>> {
-    let tasks: Vec<LiveTaskPayload> = DATABASE
+    let tasks: Vec<LiveTaskPayload> = db()
         .query("SELECT * FROM task WHERE $this.assignee.store == $auth.store AND $this.completed IS true ")
         .await?
         .take(0)?;
@@ -37,7 +37,7 @@ pub async fn fetch_store_users() -> Vec<User> {
     }
 
     // Fallback: query active users
-    let users: Vec<User> = DATABASE
+    let users: Vec<User> = db()
         .query("SELECT * FROM user WHERE active == true")
         .await
         .ok()
@@ -103,7 +103,7 @@ pub async fn create_task_simple(input: NewTaskInput) -> anyhow::Result<LiveTaskP
     }
     if assignee.is_none() {
         // Fallback: query active users and match username
-        let users: Vec<User> = DATABASE
+        let users: Vec<User> = db()
             .query("SELECT * FROM user WHERE active == true")
             .await
             .ok()
@@ -133,7 +133,7 @@ pub async fn create_task_simple(input: NewTaskInput) -> anyhow::Result<LiveTaskP
     task.due_date = Utc::now().into();
     task.created_at = Utc::now().into();
 
-    let created: Option<database::schema::Record> = DATABASE
+    let created: Option<database::schema::Record> = db()
         .create(TASK_TABLE)
         .content(task.clone())
         .await?;

@@ -1,4 +1,4 @@
-use crate::{schema::{helper_traits::{parse_email_user, EmployeeHelper}, prestashop_schema::{CustomerMessage, CustomerThread}, Datetime, LiveTaskPayload, Notification, Record, RecordId, RecordIdExt, SurrealValue, TASK_NOTE_TABLE}, DATABASE};
+use crate::{schema::{helper_traits::{parse_email_user, EmployeeHelper}, prestashop_schema::{CustomerMessage, CustomerThread}, Datetime, LiveTaskPayload, Notification, Record, RecordId, RecordIdExt, SurrealValue, TASK_NOTE_TABLE}, db};
 use super::{helper_traits::PrestaResourceResponse, prestashop_schema::{self, Employee, Prestashop}, User};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use structdiff::{Difference, StructDiff};
@@ -91,7 +91,7 @@ pub struct TaskNotePayload {
 
 impl TaskNotePayload {
     pub async fn get_all_notes_in_my_store(notes_tx: crossbeam::channel::Sender<Vec<TaskNotePayload>>) -> anyhow::Result<(), anyhow::Error> {
-        let notes: Vec<Self> = DATABASE
+        let notes: Vec<Self> = db()
             .query("select * from task_note where task_id.assignee.store == $auth.store && task_id.completed == false ")
             .await?
             .take(0)?;
@@ -281,7 +281,7 @@ impl TaskNotePayload {
             let tagged_user: Option<User> = employee.find_user().await?;
             if let (Some(id), Some(tagged_user)) = (task_id.clone(), tagged_user) {
                 log::info!("task_note/mod.rs -> check_tagged_user_in_note -> There is an ID, and there IS a tagged user: {id:?} / {tagged_user:?}");
-                let task_name: Option<String> = DATABASE
+                let task_name: Option<String> = db()
                     .query("SELECT VALUE task_name FROM task WHERE id == $task_id")
                     .bind(("task_id", task_id.clone()))
                     .await?
@@ -330,7 +330,7 @@ impl TaskNotePayload {
     /// - `Err(Error)` if an error occurs during checks
     /// queries in SurrealDB to find existing notes
     pub async fn check_existing_note_record(&mut self, msg_id: &String) -> anyhow::Result<Option<RecordId>, anyhow::Error> {
-        let query_results: Vec<TaskNotePayload> = DATABASE
+        let query_results: Vec<TaskNotePayload> = db()
             .query("SELECT * FROM task_note WHERE id_customer_message == $id_customer_message")
             .bind(("id_customer_message", msg_id.clone()))
             .await?
@@ -351,7 +351,7 @@ impl TaskNotePayload {
                         note.id
                     );
 
-                    let task: Option<LiveTaskPayload> = DATABASE
+                    let task: Option<LiveTaskPayload> = db()
                         .query("SELECT * FROM task WHERE id == $id")
                         .bind(("id", existing_task_id.clone()))
                         .await?
@@ -364,13 +364,13 @@ impl TaskNotePayload {
                         log::error!("task_note/mod.rs -> check_existing_note_record -> But it was linked to a non existent Task ID, so now it is linked to {:?}", task_id);
 
                         let query = if self.service_number.as_ref().is_some_and(|v| !v.is_empty()) {
-                            DATABASE.set("service_number", self.service_number.clone().unwrap_or_default()).await?;
+                            db().set("service_number", self.service_number.clone().unwrap_or_default()).await?;
                             "UPDATE task_note SET task_id = $new_id, service_number = $service_number WHERE id == $id"
                         } else {
                             "UPDATE task_note SET task_id = $new_id WHERE id == $id"
                         };
 
-                        let updated_note_res: Option<TaskNotePayload> = DATABASE
+                        let updated_note_res: Option<TaskNotePayload> = db()
                             .query(query)
                             .bind(("id", note.id.clone()))
                             .bind(("new_id", task_id.clone()))
@@ -410,7 +410,7 @@ impl TaskNotePayload {
     /// - `Err(anyhow::Error)` if an error occurs during creation.
     pub async fn create_tagged_user_notification(&mut self, notification: Notification) -> anyhow::Result<(), anyhow::Error> {
         log::info!("task_note/mod.rs -> Creating notification: {:?}", notification);
-        let _: Option<Record> = DATABASE
+        let _: Option<Record> = db()
             .query("CREATE notification CONTENT $notif")
             .bind(("notif", notification))
             .await?
@@ -425,7 +425,7 @@ impl TaskNotePayload {
     /// - `Ok(())` if the task_note created successfully.
     /// - `Err(anyhow::Error)` if an error occurs during the creation.
     pub async fn create_task_note_in_db(&mut self) -> anyhow::Result<(), anyhow::Error> {
-        let _: Option<Record> = DATABASE
+        let _: Option<Record> = db()
             .query("CREATE task_note CONTENT $task_note")
             .bind(("task_note", self.clone()))
             .await?
@@ -498,7 +498,7 @@ impl TaskNotePayload {
             self.id.clone(),
             user_id
         );
-        let _: Option<Record> = DATABASE
+        let _: Option<Record> = db()
             .query("UPDATE task_note SET tagged_users += $user_id WHERE id == $id")
             .bind(("user_id", user_id))
             .bind(("id", self.id.clone()))
@@ -540,7 +540,7 @@ impl TaskNotePayload {
             None => {
                         // REGULAR TASK NOTE / NOT A PRESTASHOP NOTE
                 if id_customer_message.is_none() {
-                    let upsert_note_record: Option<TaskNotePayload> = DATABASE
+                    let upsert_note_record: Option<TaskNotePayload> = db()
                         .upsert(self.id.clone())
                         .content(self.clone())
                         .await?;
@@ -582,7 +582,7 @@ impl TaskNotePayload {
     pub async fn delete_task_note(&mut self) -> anyhow::Result<(), anyhow::Error> {
         let id = self.id.clone();
         log::info!("schema/task_note/mod.rs -> deleting id: {:?}", id.clone());
-        let _: Option<Record> = DATABASE
+        let _: Option<Record> = db()
             .delete((TASK_NOTE_TABLE, id.key_string()))
             .await?;
         Ok(())
@@ -605,7 +605,7 @@ impl TaskNotePayload {
 
                 log::info!("task_note/mod.rs -> Delete Result for customer message: {delete_result:?}");
 
-                let delete_res: Option<Record> = DATABASE
+                let delete_res: Option<Record> = db()
                     .query("DELETE task_note WHERE id_customer_message == $id_customer_message")
                     .bind(("id_customer_message", cust_msg_id.clone()))
                     .await?
@@ -624,7 +624,7 @@ impl TaskNotePayload {
     /// - `Err(Error)` if the order cannot be found or an error occurs.
     pub async fn get_service_number_by_task_id(&mut self) -> anyhow::Result<String> {
         if let Some(id) = self.task_id.clone() {
-            let service_number: Option<String> = DATABASE
+            let service_number: Option<String> = db()
                 .query("SELECT VALUE service_number FROM task WHERE id == $task_id")
                 .bind(("task_id", id.clone()))
                 .await?
@@ -757,7 +757,7 @@ impl TaskNotePayload {
                 match self.check_existing_note_record(&msg.id).await {
                     Ok(Some(note)) => {
                         log::warn!("task_note/mod.rs -> check_or_create_notes_from_thread -> Message already exists: {note:?}\nNOT CREATING NOTE");
-                        let query_results: Vec<TaskNotePayload> = DATABASE
+                        let query_results: Vec<TaskNotePayload> = db()
                             .query("SELECT * FROM task_note WHERE id_customer_message == $id_customer_message")
                             .bind(("id_customer_message", msg.id.clone()))
                             .await?
@@ -766,7 +766,7 @@ impl TaskNotePayload {
                         *notes = query_results.clone();
                     },
                     Ok(None) => {
-                        log::error!("task_note/mod.rs -> check_or_create_notes_from_thread -> WE NEED TO CREATE THIS MESSAGE IN OUR DATABASE: {msg:?}");
+                        log::error!("task_note/mod.rs -> check_or_create_notes_from_thread -> WE NEED TO CREATE THIS MESSAGE IN OUR db: {msg:?}");
                         
                         let customer_message: CustomerMessage = api_call
                             .request_subresources_by_id_wasm(
@@ -919,14 +919,14 @@ impl TaskNotePayload {
             return Err(anyhow::anyhow!("utilities.rs -> get_task_from_service_number -> Service Number is empty"));
         }
         
-        let query_results: Vec<Self> = DATABASE
+        let query_results: Vec<Self> = db()
             .query("SELECT * FROM task_note WHERE task_id.service_number == $service_number ")
             .bind(("service_number", service_number.clone()))
             .await?
             .take(0)?;
 
         if query_results.is_empty() {
-            let alt_query: Vec<Self> = DATABASE
+            let alt_query: Vec<Self> = db()
                 .query("SELECT * FROM task_note WHERE service_number == $service_number ")
                 .bind(("service_number", service_number))
                 .await?
@@ -942,7 +942,7 @@ impl TaskNotePayload {
     pub async fn get_db_notes_from_task_id(task_id: RecordId) -> anyhow::Result<Vec<Self>, anyhow::Error> {
         log::debug!("get_db_notes_from_task_id");
         
-        let query_results: Vec<Self> = DATABASE
+        let query_results: Vec<Self> = db()
             .query("SELECT * FROM task_note WHERE task_id == $task_id ")
             .bind(("task_id", task_id.clone()))
             .await?

@@ -101,7 +101,8 @@ fn apply_defaults(map: &mut HashMap<String, String>) {
         );
     }
     if map.get("BUCKET_URL").map_or(true, |s| s.is_empty()) {
-        map.insert("BUCKET_URL".into(), "/SurrealBuckets".into());
+        // Must match the server's SURREAL_BUCKET_FOLDER_ALLOWLIST (lowercase).
+        map.insert("BUCKET_URL".into(), "/surrealbuckets/".into());
     }
     // Local-dev URLs: only meaningful on the developer's own machine.
     // CI and production builds never select the Local DB environment at

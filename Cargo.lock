@@ -2812,6 +2812,7 @@ name = "database"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "async-trait",
  "brotli",
  "bytes",
@@ -6759,7 +6760,7 @@ dependencies = [
 
 [[package]]
 name = "mtechserver"
-version = "4.7.9"
+version = "4.8.0"
 dependencies = [
  "anyhow",
  "base64",

@@ -1,4 +1,4 @@
-use super::{DATABASE, schema::{utilities::LiveUpdate, ConnectedClient, LiveTaskPayload, RecordIdExt, TaskNotePayload, TaskPayload}};
+use super::{db, schema::{utilities::LiveUpdate, ConnectedClient, LiveTaskPayload, RecordIdExt, TaskNotePayload, TaskPayload}};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use crossbeam::channel::Sender;
 use log::{debug, error, info};
@@ -245,10 +245,12 @@ pub fn update_or_insert_layout(
 
 // In SurrealDB 3.0, live queries are handled differently
 // The new API uses a different streaming approach
+#[deprecated(note = "unfiltered `LIVE SELECT *` fans every row change to every client and is \
+    not abortable/re-issued on reconnect; use listen_data_filtered")]
 pub async fn listen_data<T: DeserializeOwned + Serialize + 'static + Debug + std::marker::Unpin + SurrealValue>(tx: Sender<(Action, T)>, resource: &str)
     -> anyhow::Result<(), anyhow::Error>
 {
-    let mut data_stream = DATABASE.select(resource).live().await?;
+    let mut data_stream = db().select(resource).live().await?;
 
     while let Some(notification) = data_stream.next().await {
         match notification {
@@ -300,6 +302,7 @@ pub async fn listen_data_filtered<T>(
     tx: Sender<(Action, T)>,
     query: String,
     bindings: Vec<(&'static str, serde_json::Value)>,
+    registered: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
 ) -> anyhow::Result<()>
 where
     T: DeserializeOwned + Serialize + 'static + Debug + std::marker::Unpin + SurrealValue,
@@ -308,7 +311,8 @@ where
         return Err(anyhow::anyhow!("query must start with LIVE SELECT"));
     }
     // 1. Issue the LIVE SELECT and apply bindings.
-    let mut q = DATABASE.query(&query);
+    let dbh = db();
+    let mut q = dbh.query(&query);
     for (name, value) in bindings {
         q = q.bind((name, value));
     }
@@ -320,6 +324,11 @@ where
     //    this task is aborted. Dropping `stream` (function return,
     //    `JoinHandle::abort()`) auto-fires the KILL.
     let mut stream = response.stream::<surrealdb::Notification<T>>(0)?;
+    // Registration confirmed: the LIVE SELECT round-tripped and the
+    // notification receiver is subscribed.
+    if let Some(counter) = registered {
+        counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
     let mut clean_exit = true;
     while let Some(notification) = stream.next().await {
         match notification {

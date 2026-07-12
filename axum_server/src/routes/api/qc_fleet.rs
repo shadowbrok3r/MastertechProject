@@ -40,7 +40,7 @@ use database::schema::{
     random_record_id, Datetime as DbDatetime, FLEET_AGENT_TABLE, FLEET_COMMAND_TABLE,
     FLEET_EVENT_TABLE,
 };
-use database::DATABASE;
+use database::db;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -520,7 +520,7 @@ pub async fn ingest_fingerprint(Json(payload): Json<serde_json::Value>) -> impl 
 pub async fn get_fingerprint(Path(serial): Path<String>) -> impl IntoResponse {
     use database::schema::qc_fingerprint::{fingerprint_record_id, HardwareFingerprint};
     let res: Result<Option<HardwareFingerprint>, _> =
-        DATABASE.select(fingerprint_record_id(&serial)).await;
+        db().select(fingerprint_record_id(&serial)).await;
     match res {
         Ok(Some(fp)) => (StatusCode::OK, Json(serde_json::to_value(&fp).unwrap_or_default())),
         Ok(None) => (
@@ -540,7 +540,7 @@ pub async fn get_fingerprint(Path(serial): Path<String>) -> impl IntoResponse {
 /// between boots, or `pcie_degraded`/`bert_error`/`mca`/`mem_errors` appearing.
 pub async fn get_fingerprint_history(Path(serial): Path<String>) -> impl IntoResponse {
     use database::schema::fleet::{FleetEvent, FleetEventKind};
-    let rows: Vec<FleetEvent> = match DATABASE.select(FLEET_EVENT_TABLE).await {
+    let rows: Vec<FleetEvent> = match db().select(FLEET_EVENT_TABLE).await {
         Ok(r) => r,
         Err(e) => {
             return (
@@ -721,7 +721,7 @@ pub async fn store_fingerprint(
     };
 
     let res: Result<Option<HardwareFingerprint>, _> =
-        DATABASE.upsert(fingerprint_record_id(&serial)).content(rec).await;
+        db().upsert(fingerprint_record_id(&serial)).content(rec).await;
 
     // Project the hardware fields into a `computer` record keyed by serial.
     // OS/business fields are left blank for the Windows agent / order linkage.
@@ -807,7 +807,7 @@ pub async fn store_fingerprint(
             patch["oa3_key"] = serde_json::json!(k);
         }
         let cid = RecordId::new(COMPUTER_TABLE, serial.clone());
-        let r: Result<Option<serde_json::Value>, _> = DATABASE.upsert(cid).merge(patch).await;
+        let r: Result<Option<serde_json::Value>, _> = db().upsert(cid).merge(patch).await;
         if let Err(e) = r {
             tracing::warn!(serial = %serial, error = %e, "qc.fingerprint computer upsert failed");
         }
@@ -838,7 +838,7 @@ pub async fn store_fingerprint(
             client_kind: String,
         }
         let rid = RecordId::new(CONNECTED_CLIENT_TABLE, format!("qc_{serial}"));
-        let r: Result<Option<serde_json::Value>, _> = DATABASE
+        let r: Result<Option<serde_json::Value>, _> = db()
             .upsert(rid)
             .merge(CcMerge {
                 connection_string: serial.clone(),
@@ -900,7 +900,7 @@ fn mirror_agent_upsert(rec: AgentRecord) {
             hostname: None,
         };
 
-        let res: Result<Option<FleetAgent>, _> = DATABASE.upsert(id).content(agent).await;
+        let res: Result<Option<FleetAgent>, _> = db().upsert(id).content(agent).await;
         if let Err(e) = res {
             tracing::warn!(
                 machine_id = %rec.machine_id,
@@ -923,7 +923,7 @@ fn mirror_event(machine_id: String, kind: FleetEventKind, payload: Option<serde_
             payload,
         };
         let res: Result<Option<FleetEvent>, _> =
-            DATABASE.create(FLEET_EVENT_TABLE).content(event).await;
+            db().create(FLEET_EVENT_TABLE).content(event).await;
         if let Err(e) = res {
             tracing::warn!(
                 machine_id = %machine_id,
@@ -953,7 +953,7 @@ fn mirror_command_issued(machine_id: &str, cmd: &FleetCommand) {
             payload,
         };
         let res: Result<Option<DbFleetCommand>, _> =
-            DATABASE.create(FLEET_COMMAND_TABLE).content(row).await;
+            db().create(FLEET_COMMAND_TABLE).content(row).await;
         if let Err(e) = res {
             tracing::warn!(
                 machine_id = %machine_id,
@@ -976,7 +976,7 @@ fn mirror_command_acked(external_id: &str) {
              WHERE external_id = $eid AND status = 'pending'",
             table = FLEET_COMMAND_TABLE
         );
-        if let Err(e) = DATABASE.query(q).bind(("eid", external_id.clone())).await {
+        if let Err(e) = db().query(q).bind(("eid", external_id.clone())).await {
             tracing::warn!(
                 external_id = %external_id,
                 error = %e,
@@ -1010,7 +1010,7 @@ fn now_db_datetime() -> DbDatetime {
 /// Called once on axum_server startup so a server restart doesn't black-hole
 /// the admin dashboard until every agent re-registers.
 pub async fn hydrate_from_db(state: &SharedFleetState) -> anyhow::Result<usize> {
-    let mut rows: Vec<FleetAgent> = DATABASE.select(FLEET_AGENT_TABLE).await?;
+    let mut rows: Vec<FleetAgent> = db().select(FLEET_AGENT_TABLE).await?;
     let count = rows.len();
     let mut guard = state.lock().await;
     for r in rows.drain(..) {

@@ -46,8 +46,9 @@ pub enum ReconnectOutcome {
     /// Socket usable and `$auth` matches the logged-in user. `socket_was_down`
     /// distinguishes a genuine connection outage (streams died with the
     /// socket; snapshot must be refetched) from a live-but-single-stream
-    /// failure (socket was fine; a poisoned/errored stream).
-    Ok { socket_was_down: bool },
+    /// failure (socket was fine; a poisoned/errored stream). `rebuilt` marks
+    /// a tier-2 recovery that replaced the whole SurrealDB client.
+    Ok { socket_was_down: bool, rebuilt: bool },
     /// Socket usable but `$auth` can't be restored (expired token, no cached
     /// password) — the operator must sign in again.
     AuthLost,
@@ -194,9 +195,26 @@ pub struct SharedContext {
     pub reconnect_started_at: Option<web_time::Instant>,
     /// Consecutive reconnect failures; drives the retry backoff. Reset to 0
     /// only on a genuine socket-level recovery (never by the canary, so a
-    /// permanently-failing single stream can't defeat the backoff).
+    /// permanently-failing single stream can't defeat the backoff). Also the
+    /// tier selector: attempts past `TIER2_AFTER_FAILURES` rebuild the client.
     #[serde(skip)]
     pub reconnect_attempts: u32,
+    /// The in-flight attempt is a tier-2 client rebuild (longer stall budget).
+    #[serde(skip)]
+    pub reconnect_rebuilding: bool,
+    /// LIVE registrations confirmed for the current stream generation.
+    #[serde(skip)]
+    pub live_registered: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// Streams spawned in the current generation; the first canary waits for
+    /// this many confirmed registrations (or the registration grace window).
+    #[serde(skip)]
+    pub live_streams_expected: usize,
+    /// When the current stream generation was spawned.
+    #[serde(skip)]
+    pub live_spawned_at: Option<web_time::Instant>,
+    /// The chat live streams are running in the current generation.
+    #[serde(skip)]
+    pub chat_streams_active: bool,
     /// Forces the next `load_data` to refetch tasks/users/notifications.
     #[serde(skip)]
     pub force_data_refetch: bool,
@@ -624,6 +642,11 @@ impl SharedContext {
             reconnect_in_progress: false,
             reconnect_started_at: None,
             reconnect_attempts: 0,
+            reconnect_rebuilding: false,
+            live_registered: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            live_streams_expected: 0,
+            live_spawned_at: None,
+            chat_streams_active: false,
             force_data_refetch: false,
             live_epoch: 0,
             live_stream_aborts: Vec::new(),

@@ -1,5 +1,5 @@
 use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
-use crate::{DATABASE, SCAFFOLD_PASS, SCAFFOLD_USER, schema::prestashop::Order};
+use crate::{db, SCAFFOLD_PASS, SCAFFOLD_USER, schema::prestashop::Order};
 use helper_traits::GetAssociatedDataFromId;
 use structdiff::{Difference, StructDiff};
 use serde::{Deserialize, Serialize};
@@ -149,7 +149,7 @@ impl<D: SurrealValue> GetAssociatedDataFromId<D> for RecordId {
     {
         let id = self.clone();
 
-        let data: D = DATABASE.select(id).await?.unwrap();
+        let data: D = db().select(id).await?.unwrap();
         Ok(data)
     }
 }

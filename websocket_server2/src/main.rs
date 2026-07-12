@@ -7,7 +7,7 @@ use axum::{
     routing::get,
     serve, Router,
 };
-use database::{init_database, schema::{ConnectedClient, User}, Database, DATABASE};
+use database::{init_database, schema::{ConnectedClient, User}, Database, db};
 use futures::{stream::SplitSink, SinkExt, StreamExt};
 use std::{collections::HashMap, sync::Arc};
 use std::net::SocketAddr;
@@ -192,7 +192,7 @@ impl ChatServer {
             if let Ok(client) = get_client(&room_id_clone2).await {
                 if let Some(user_id) = client.assigned_user {
                     // Query the User by id
-                    if let Ok(Some(user)) = DATABASE
+                    if let Ok(Some(user)) = db()
                         .query("SELECT * FROM user WHERE id == $user_id")
                         .bind(("user_id", user_id.clone()))
                         .await
@@ -316,7 +316,7 @@ impl ChatServer {
                 if per_room_ok && global_write_allowed() {
                     let room_id_for_db = room_id_for_ping.clone();
                     tokio::spawn(async move {
-                        let result: Result<Option<ConnectedClient>, _> = DATABASE
+                        let result: Result<Option<ConnectedClient>, _> = db()
                             .query("UPDATE connected_client SET last_update = time::now() WHERE connection_string == $room_id")
                             .bind(("room_id", room_id_for_db.clone()))
                             .await
@@ -378,7 +378,7 @@ impl ChatServer {
                     if should_update_db && global_write_allowed() {
                         let room_id_for_db = room_id.clone();
                         tokio::spawn(async move {
-                            let result: Result<Option<ConnectedClient>, _> = DATABASE
+                            let result: Result<Option<ConnectedClient>, _> = db()
                                 .query("UPDATE connected_client SET last_update = time::now() WHERE connection_string == $room_id")
                                 .bind(("room_id", room_id_for_db.clone()))
                                 .await
@@ -586,7 +586,7 @@ impl ChatServer {
         // CLIENT role drops. When the MASTER (admin console) disconnects (e.g. switching
         // to a different client), the remote client is still running and connected.
         if role == "client" {
-            let client: Option<ConnectedClient> = DATABASE
+            let client: Option<ConnectedClient> = db()
                 .query("UPDATE connected_client SET connected = false WHERE connection_string == $connection_id")
                 .bind(("connection_id", room_id.clone()))
                 .await?
@@ -710,7 +710,7 @@ async fn websocket_handler(
 }
 
 async fn get_client(room_id: &String) -> anyhow::Result<ConnectedClient, anyhow::Error> {
-    let potential_client: Option<ConnectedClient> = DATABASE
+    let potential_client: Option<ConnectedClient> = db()
         .query("SELECT * FROM connected_client WHERE connection_string == $room_id")
         .bind(("room_id", room_id.clone()))
         .await?
@@ -732,7 +732,7 @@ async fn get_client(room_id: &String) -> anyhow::Result<ConnectedClient, anyhow:
 /// window catches that case as a safety net; removing the redundant
 /// writer here is the primary fix.
 pub async fn connect_client(room_id: String) -> anyhow::Result<(), anyhow::Error> {
-    let potential_client: Option<ConnectedClient> = DATABASE
+    let potential_client: Option<ConnectedClient> = db()
         .query("SELECT * FROM connected_client WHERE connection_string == $room_id")
         .bind(("room_id", room_id.clone()))
         .await?

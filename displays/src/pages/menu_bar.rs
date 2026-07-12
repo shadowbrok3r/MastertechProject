@@ -1,6 +1,6 @@
 #![allow(deprecated)]
 use crate::{app_state::{default_tree, default_tree_wasm, AppState, MainPages, SharedContext}, pages::view_menu, tabs::{github::get_github_releases, TabContext}, ui_tools::theme, PlatformSpawner, Spawner, TaskUiActions};
-use database::{schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, FilterLiveTasks, LiveTaskPayload, Notification, Store}, DATABASE};
+use database::{schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, FilterLiveTasks, LiveTaskPayload, Notification, Store}, db};
 use eframe::egui::{containers::menu::MenuConfig, *};
 
 impl SharedContext {
@@ -20,7 +20,21 @@ impl SharedContext {
                             view_menu(ui, &mut self.dock, tab_ctx, None);
                         });
 
-                        ui.add_space(30.0);
+                        ui.add_space(10.0);
+
+                        let create_task = Button::new(
+                            RichText::new(format!("Create Task {}", crate::ui_tools::icons::PLUS))
+                                .color(ui.global_style().visuals.warn_fg_color)
+                                .strong(),
+                        )
+                        .corner_radius(ui.global_style().visuals.menu_corner_radius)
+                        .ui(ui)
+                        .on_hover_text("Create a new task");
+                        if create_task.clicked() {
+                            let _ = self.ui_actions_tx.try_send(TaskUiActions::CreateTaskModal(None));
+                        }
+
+                        ui.add_space(20.0);
 
                         // Populate inputs with task names and service numbers
                         for task in self.task_index.values() {
@@ -263,7 +277,7 @@ impl SharedContext {
                                         wasm_cookies::delete("jwt");
                                     }
                                     PlatformSpawner::spawn(async move {
-                                        let invalidation = DATABASE.invalidate().await;
+                                        let invalidation = db().invalidate().await;
                                         log::info!("invalidated connection: {:?}", invalidation);
                                     });
 

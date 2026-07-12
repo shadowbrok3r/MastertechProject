@@ -1,5 +1,5 @@
 use crate::{
-    DATABASE, live_data::Action, schema::{LiveTaskPayload, RecordId, SurrealValue, TaskPayload, TicketPayload, helper_traits::PrestashopPayloadHelper, prestashop_schema::{CustomerMessage, CustomerThread, MissedCallOrder, Prestashop}, utilities::get_missing_call_days}
+    db, live_data::Action, schema::{LiveTaskPayload, RecordId, SurrealValue, TaskPayload, TicketPayload, helper_traits::PrestashopPayloadHelper, prestashop_schema::{CustomerMessage, CustomerThread, MissedCallOrder, Prestashop}, utilities::get_missing_call_days}
 };
 use log::debug;
 use serde::{Deserialize, Serialize};
@@ -23,7 +23,7 @@ pub async fn get_associated_ticket(
 ) -> Result<(), Error> {
     debug!("get_associated_ticket");
     let service_num = new_task.1.clone().service_number.unwrap_or_default();
-    let ticket: Option<TicketPayload> = DATABASE
+    let ticket: Option<TicketPayload> = db()
         .query(
             "SELECT * FROM service_order WHERE service_number == $service_num FETCH computer, customer"
         )
@@ -156,7 +156,7 @@ impl Task for TaskPayload {
         &mut self,
     ) -> Result<Option<T>, Error> {
         let id: RecordId = self.id.clone();
-        let get_data: Option<T> = DATABASE
+        let get_data: Option<T> = db()
             .query("SELECT service_ticket.computer FROM task WHERE id == $id FETCH service_ticket.computer")
             .bind(("id", id))
             .await?
@@ -169,7 +169,7 @@ impl Task for TaskPayload {
         &mut self,
     ) -> Result<Option<T>, Error> {
         let id: RecordId = self.id.clone();
-        let get_data: Option<T> = DATABASE
+        let get_data: Option<T> = db()
             .query("SELECT service_ticket.customer FROM task WHERE id == $id FETCH service_ticket.customer")
             .bind(("id", id))
             .await?
@@ -182,7 +182,7 @@ impl Task for TaskPayload {
         &mut self,
     ) -> Result<Option<T>, Error> {
         let id: RecordId = self.id.clone();
-        let get_data: Option<T> = DATABASE
+        let get_data: Option<T> = db()
             .query("SELECT * FROM task_note WHERE id == $id")
             .bind(("id", id))
             .await?
@@ -196,7 +196,7 @@ impl Task for TaskPayload {
     ) -> Result<Option<T>, Error> {
         let id: RecordId = self.id.clone();
 
-        let get_data: Option<T> = DATABASE
+        let get_data: Option<T> = db()
                 .query(
                     "SELECT service_ticket.*, service_ticket.customer.*, service_ticket.computer.* FROM task WHERE id == $id"
                 )

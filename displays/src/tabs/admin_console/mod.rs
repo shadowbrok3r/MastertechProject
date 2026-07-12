@@ -121,7 +121,7 @@ pub struct AdminConsole {
     /// `Cmd::SecurityInventoryResponse` handler on the admin side
     /// every time a session is opened and the client replies. Also
     /// persisted to the linked `computer` row's `current_antivirus`
-    /// field via a `DATABASE.query("UPDATE …")`, so a later session
+    /// field via a `db().query("UPDATE …")`, so a later session
     /// on a different admin still sees the data; the in-memory copy
     /// just lets the expanded client-row body render without a DB
     /// round trip per frame.
@@ -396,7 +396,7 @@ impl AdminConsole {
                     // field — avoids reading the whole ComputerData,
                     // mutating, and re-upserting (which is racy if
                     // anything else writes the row concurrently).
-                    let res: Result<_, surrealdb::Error> = database::DATABASE
+                    let res: Result<_, surrealdb::Error> = database::db()
                         .query("UPDATE $id SET current_antivirus = $products")
                         .bind(("id", id))
                         .bind(("products", products))

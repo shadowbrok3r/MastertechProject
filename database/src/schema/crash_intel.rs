@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::DATABASE;
+use crate::db;
 
 use super::{Datetime, RecordId, SurrealValue};
 
@@ -384,7 +384,7 @@ impl CrashSignature {
 
         if let (Some(cs), Some(dn)) = (ctx.connection_string.as_deref(), parsed.dump_name.as_deref())
         {
-            let existing: Vec<CrashSighting> = DATABASE
+            let existing: Vec<CrashSighting> = db()
                 .query(
                     "SELECT * FROM crash_sighting WHERE signature == $sig \
                      AND connection_string == $cs AND dump_name == $dn LIMIT 1",
@@ -395,7 +395,7 @@ impl CrashSignature {
                 .await?
                 .take(0)?;
             if let Some(prior) = existing.into_iter().next() {
-                if let Some(signature) = DATABASE.select::<Option<Self>>(id.clone()).await? {
+                if let Some(signature) = db().select::<Option<Self>>(id.clone()).await? {
                     let verdicts = Self::verdicts(&signature.id, 5).await?;
                     return Ok(CrashIngest {
                         previously_seen: true,
@@ -413,7 +413,7 @@ impl CrashSignature {
         let offsets: Vec<String> = parsed.offset.iter().cloned().collect();
         let buckets: Vec<String> = parsed.failure_bucket.iter().cloned().collect();
 
-        let mut response = DATABASE
+        let mut response = db()
             .query(SIGNATURE_UPSERT)
             .bind(("id", id.clone()))
             .bind(("bugcheck_code", parsed.bugcheck_code.clone()))
@@ -461,7 +461,7 @@ impl CrashSignature {
             raw_excerpt: parsed.raw_excerpt.chars().take(2000).collect(),
             created_at: chrono::Utc::now().into(),
         };
-        let created: Option<CrashSighting> = DATABASE
+        let created: Option<CrashSighting> = db()
             .create(sighting.id.clone())
             .content(sighting.clone())
             .await?;
@@ -488,10 +488,10 @@ impl CrashSignature {
             anyhow::bail!("module is required");
         }
         let id = crash_signature_record_id(&code, &module);
-        if let Some(existing) = DATABASE.select(id.clone()).await? {
+        if let Some(existing) = db().select(id.clone()).await? {
             return Ok(existing);
         }
-        let mut response = DATABASE
+        let mut response = db()
             .query(
                 "UPSERT $id MERGE { bugcheck_code: $code, module: $module, \
                  sighting_count: sighting_count ?? 0, \
@@ -514,12 +514,12 @@ impl CrashSignature {
             return Ok(None);
         };
         let id = crash_signature_record_id(&code, module);
-        Ok(DATABASE.select(id).await?)
+        Ok(db().select(id).await?)
     }
 
     /// Newest verdicts for a signature.
     pub async fn verdicts(signature: &RecordId, limit: u32) -> anyhow::Result<Vec<CrashVerdict>> {
-        let verdicts: Vec<CrashVerdict> = DATABASE
+        let verdicts: Vec<CrashVerdict> = db()
             .query("SELECT * FROM crash_verdict WHERE signature == $sig ORDER BY created_at DESC LIMIT $limit")
             .bind(("sig", signature.clone()))
             .bind(("limit", limit as i64))
@@ -530,7 +530,7 @@ impl CrashSignature {
 
     /// Most recently seen signatures, for the intel browser.
     pub async fn recent(limit: u32) -> anyhow::Result<Vec<Self>> {
-        let rows: Vec<Self> = DATABASE
+        let rows: Vec<Self> = db()
             .query("SELECT * FROM crash_signature ORDER BY last_seen DESC LIMIT $limit")
             .bind(("limit", limit as i64))
             .await?
@@ -540,7 +540,7 @@ impl CrashSignature {
 
     /// Case-insensitive substring search over module and bucket names.
     pub async fn search(term: &str, limit: u32) -> anyhow::Result<Vec<Self>> {
-        let rows: Vec<Self> = DATABASE
+        let rows: Vec<Self> = db()
             .query(
                 "SELECT * FROM crash_signature \
                  WHERE string::contains(string::lowercase(module), string::lowercase($term)) \
@@ -557,7 +557,7 @@ impl CrashSignature {
 
     /// Sightings for a signature, newest first.
     pub async fn sightings(signature: &RecordId, limit: u32) -> anyhow::Result<Vec<CrashSighting>> {
-        let rows: Vec<CrashSighting> = DATABASE
+        let rows: Vec<CrashSighting> = db()
             .query("SELECT * FROM crash_sighting WHERE signature == $sig ORDER BY created_at DESC LIMIT $limit")
             .bind(("sig", signature.clone()))
             .bind(("limit", limit as i64))
@@ -589,10 +589,10 @@ impl CrashVerdict {
             task_ref,
             created_at: chrono::Utc::now().into(),
         };
-        let created: Option<Self> = DATABASE.create(row.id.clone()).content(row.clone()).await?;
+        let created: Option<Self> = db().create(row.id.clone()).content(row.clone()).await?;
         let id = created.map(|v| v.id).unwrap_or(row.id);
 
-        DATABASE
+        db()
             .query("UPDATE $sig SET latest_verdict = $verdict")
             .bind(("sig", signature.clone()))
             .bind(("verdict", id.clone()))

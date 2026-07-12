@@ -305,7 +305,7 @@ impl MasterTechApp {
                     use crate::filesystem::customer_lookup::lookup_customer_by_serial;
                     use database::schema::utilities::query_id;
                     use database::schema::client::ConnectedClient;
-                    use database::DATABASE;
+                    use database::db;
 
                     // Ensure client_hash + computer exist before the
                     // friendly_name UPSERT below, which would otherwise create
@@ -353,7 +353,7 @@ impl MasterTechApp {
                                     // gate on that assumption: a missed UPSERT here
                                     // means the client appears anonymously every run
                                     // because the OA3 cache check above never hits.
-                                    let res = DATABASE
+                                    let res = db()
                                         .query(
                                             "UPSERT $id SET friendly_name = $name, \
                                              last_update = time::now()",
@@ -423,7 +423,7 @@ impl MasterTechApp {
                                         // PrestaShop branch above — Everest is the
                                         // fallback, so the only chance to persist a
                                         // friendly_name on this run is here.
-                                        let res = DATABASE
+                                        let res = db()
                                             .query(
                                                 "UPSERT $id SET friendly_name = $name, \
                                                  last_update = time::now()",

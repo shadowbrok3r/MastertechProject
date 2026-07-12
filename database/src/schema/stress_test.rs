@@ -19,7 +19,7 @@
 //! population baselines to decide if the observed temps / errors /
 //! throughput are normal or anomalous.
 
-use crate::DATABASE;
+use crate::db;
 use super::stress_test_sql;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -202,7 +202,7 @@ impl HardwareComponent {
             }
         };
         let sql = stress_test_sql::HW_COMPONENT_UPSERT;
-        let mut response = DATABASE
+        let mut response = db()
             .query(sql)
             .bind(("id", component.id.clone()))
             .bind(("kind", component.kind.as_str().to_string()))
@@ -237,7 +237,7 @@ impl HardwareComponent {
     }
 
     pub async fn list_by_kind(kind: HardwareKind) -> anyhow::Result<Vec<Self>> {
-        let rows: Vec<Self> = DATABASE
+        let rows: Vec<Self> = db()
             .query(
                 "SELECT * FROM hardware_component \
                  WHERE kind == $k ORDER BY display_name LIMIT 500",
@@ -1069,7 +1069,7 @@ impl StressTestRun {
             }
         };
 
-        let mut response = DATABASE
+        let mut response = db()
             .query(stress_test_sql::STRESS_RUN_CREATE)
             .bind(("id", run.id.clone()))
             .bind(("content", content))
@@ -1141,7 +1141,7 @@ impl StressTestRun {
                 ended_at = $ended_at, \
                 duration_actual_secs = <float> duration::secs(($ended_at ?? time::now()) - started_at)";
         let failure_kind = failure_mode.kind().to_string();
-        DATABASE
+        db()
             .query(sql)
             .bind(("id", run_id.clone()))
             .bind(("result", result.as_str().to_string()))
@@ -1157,7 +1157,7 @@ impl StressTestRun {
 
     /// One run by id, with the float cast `list_for_computer` uses.
     pub async fn get(run_id: &RecordId) -> anyhow::Result<Option<Self>> {
-        let run: Option<Self> = DATABASE
+        let run: Option<Self> = db()
             .query(
                 "SELECT *, <float> duration_actual_secs AS duration_actual_secs \
                  FROM ONLY $id",
@@ -1170,7 +1170,7 @@ impl StressTestRun {
 
     /// History for one machine, newest first.
     pub async fn list_for_computer(computer: &RecordId) -> anyhow::Result<Vec<Self>> {
-        let runs: Vec<Self> = DATABASE
+        let runs: Vec<Self> = db()
             .query(
                 "SELECT *, (IF duration_actual_secs != NONE THEN <float> duration_actual_secs END) AS duration_actual_secs \
                  FROM stress_test_run \
@@ -1185,7 +1185,7 @@ impl StressTestRun {
     /// Every run that exercised this component (primary or touched).
     /// Drives "across all RTX 4070 SUPER tests, what shows up?".
     pub async fn list_for_component(component: &RecordId) -> anyhow::Result<Vec<Self>> {
-        let runs: Vec<Self> = DATABASE
+        let runs: Vec<Self> = db()
             .query(
                 "SELECT *, (IF duration_actual_secs != NONE THEN <float> duration_actual_secs END) AS duration_actual_secs \
                  FROM stress_test_run \
@@ -1199,7 +1199,7 @@ impl StressTestRun {
     }
 
     pub async fn list_for_session(session: &RecordId) -> anyhow::Result<Vec<Self>> {
-        let runs: Vec<Self> = DATABASE
+        let runs: Vec<Self> = db()
             .query(
                 "SELECT *, <float> duration_actual_secs AS duration_actual_secs \
                  FROM stress_test_run \
@@ -1329,7 +1329,7 @@ impl StressTestMetric {
     pub async fn create(metric: &Self) -> anyhow::Result<RecordId> {
         metric.validate_for_insert().await?;
         let value = surreal_create_content(metric, false);
-        let created: Option<Self> = DATABASE
+        let created: Option<Self> = db()
             .create(metric.id.clone())
             .content(value)
             .await?;
@@ -1379,7 +1379,7 @@ impl StressTestMetric {
                      AND captured_at >= ($start ?? d'1970-01-01T00:00:00Z') \
                      AND captured_at <= ($end ?? time::now()) \
                    ORDER BY captured_at ASC";
-        let rows: Vec<Self> = DATABASE
+        let rows: Vec<Self> = db()
             .query(sql)
             .bind(("r", run_ref.clone()))
             .bind(("start", start))
@@ -1496,7 +1496,7 @@ impl StressTestEvent {
             );
         }
         let value = surreal_create_content(event, false);
-        let created: Option<Self> = DATABASE
+        let created: Option<Self> = db()
             .create(event.id.clone())
             .content(value)
             .await?;
@@ -1504,7 +1504,7 @@ impl StressTestEvent {
     }
 
     pub async fn list_for_run(run_ref: &RecordId) -> anyhow::Result<Vec<Self>> {
-        let rows: Vec<Self> = DATABASE
+        let rows: Vec<Self> = db()
             .query(
                 "SELECT * FROM stress_test_event \
                  WHERE run_ref = $r ORDER BY at ASC",
@@ -1550,7 +1550,7 @@ impl HardwareTestBaseline {
     pub async fn for_component(
         component: &RecordId,
     ) -> anyhow::Result<Vec<Self>> {
-        let rows: Vec<Self> = DATABASE
+        let rows: Vec<Self> = db()
             .query(
                 "SELECT * FROM hardware_test_baseline \
                  WHERE component = $c",
@@ -1567,7 +1567,7 @@ impl HardwareTestBaseline {
         component: &RecordId,
         tool_label: &str,
     ) -> anyhow::Result<Option<Self>> {
-        let rows: Vec<Self> = DATABASE
+        let rows: Vec<Self> = db()
             .query(
                 "SELECT * FROM hardware_test_baseline \
                  WHERE component = $c AND tool = $t LIMIT 1",

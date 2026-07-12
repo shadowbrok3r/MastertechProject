@@ -468,7 +468,7 @@ async fn fetch_record(id_str: &str) -> Result<JsonValue, String> {
     let (tbl, key) = parse_record_id_components(id_str)
         .ok_or_else(|| format!("not a parseable RecordID: {id_str:?}"))?;
     let rid = database::schema::RecordId::new(tbl, key);
-    let result: Option<JsonValue> = database::DATABASE
+    let result: Option<JsonValue> = database::db()
         .query("SELECT * FROM $rid")
         .bind(("rid", rid))
         .await

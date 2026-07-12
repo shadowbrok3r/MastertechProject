@@ -8,6 +8,7 @@ default = []
 desktop = ["rfd"]  # Include GUI dependencies for desktop builds
 
 [dependencies]
+arc-swap = "1"
 reqwest = { version = "0.13", default-features = false, features = ["json", "query"] }
 thiserror = "2"
 xml = "1"

@@ -1,4 +1,4 @@
-use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TaskCreationResult, TicketData, User, prestashop::OrderType, entity_link::computer_has_minimal_hardware},DATABASE};
+use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TaskCreationResult, TicketData, User, prestashop::OrderType, entity_link::computer_has_minimal_hardware},db};
 use crate::{get_current_user_from_auth, get_toast_sender, ui_tools::autocomplete::AutoCompleteTextEdit, ui_tools::icons, DisplayModal, PlatformSpawner, Spawner, ToastMessage};
 use eframe::egui::{Align, Button, Color32, ComboBox, Frame, RichText, Spinner, Stroke, TextEdit, Ui, Vec2, Widget, vec2};
 use database::schema::utilities::create_full_task_payload;
@@ -601,7 +601,7 @@ impl CreateTaskModal {
                                 payload.task_data.assignee = user.get_id();
 
                                 log::info!("Payload: {payload:?}");
-                                let query: Result<_, surrealdb::Error> = DATABASE
+                                let query: Result<_, surrealdb::Error> = db()
                                     .query("CREATE task CONTENT $content")
                                     .bind(("content", payload.task_data))
                                     .await;

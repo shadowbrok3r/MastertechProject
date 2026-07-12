@@ -1,4 +1,4 @@
-use crate::{schema::{Record, User, TASK_TABLE}, DATABASE};
+use crate::{schema::{Record, User, TASK_TABLE}, db};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use structdiff::{Difference, StructDiff};
 use chrono::Utc;
@@ -239,7 +239,7 @@ impl LiveTaskPayload {
     }
 
     pub async fn get_associated_computer(&self) -> anyhow::Result<ComputerData, anyhow::Error> {
-        let computer: Option<ComputerData> = DATABASE
+        let computer: Option<ComputerData> = db()
             .query("SELECT service_ticket FROM $id FETCH service_ticket.computer")
             .bind(("id", self.id.clone()))
             .await?
@@ -249,7 +249,7 @@ impl LiveTaskPayload {
     }
 
     pub async fn get_associated_service(&self) -> anyhow::Result<TicketData, anyhow::Error> {
-        let ticket: Option<TicketData> = DATABASE
+        let ticket: Option<TicketData> = db()
             .query("SELECT service_ticket FROM $id FETCH service_ticket")
             .bind(("id", self.id.clone()))
             .await?
@@ -259,7 +259,7 @@ impl LiveTaskPayload {
     }
 
     pub async fn get_associated_customer(&self) -> anyhow::Result<CustomerData, anyhow::Error> {
-        let customer: Option<CustomerData> = DATABASE
+        let customer: Option<CustomerData> = db()
             .query("SELECT service_ticket FROM $id FETCH service_ticket.customer")
             .bind(("id", self.id.clone()))
             .await?
@@ -269,7 +269,7 @@ impl LiveTaskPayload {
     }
 
     pub async fn get_associated_notes(&self) -> anyhow::Result<Vec<TaskNotePayload>, anyhow::Error> {
-        let notes: Vec<TaskNotePayload> = DATABASE
+        let notes: Vec<TaskNotePayload> = db()
             .query("SELECT * FROM task_note WHERE task_id == $id")
             .bind(("id", self.id.clone()))
             .await?
@@ -279,7 +279,7 @@ impl LiveTaskPayload {
     }
 
     pub async fn get_tasks(start: i32) -> anyhow::Result<Vec<Self>, anyhow::Error> {
-        let tasks: Vec<Self> = DATABASE
+        let tasks: Vec<Self> = db()
             .query("SELECT * FROM task ORDER BY due_date DESC START $start LIMIT 200")
             .bind(("start", start))
             .await?
@@ -290,7 +290,7 @@ impl LiveTaskPayload {
 
     /// Fetch all tasks linked to a specific customer (via service_ticket.customer)
     pub async fn get_tasks_by_customer_id(customer_id: &RecordId) -> anyhow::Result<Vec<Self>, anyhow::Error> {
-        let tasks: Vec<Self> = DATABASE
+        let tasks: Vec<Self> = db()
             .query("SELECT * FROM task WHERE service_ticket.customer = $cust_id ORDER BY due_date DESC LIMIT 50")
             .bind(("cust_id", customer_id.clone()))
             .await?
@@ -300,7 +300,7 @@ impl LiveTaskPayload {
 
     /// Fetch all tasks linked to a specific computer (via service_ticket.computer)
     pub async fn get_tasks_by_computer_id(computer_id: &RecordId) -> anyhow::Result<Vec<Self>, anyhow::Error> {
-        let tasks: Vec<Self> = DATABASE
+        let tasks: Vec<Self> = db()
             .query("SELECT * FROM task WHERE service_ticket.computer = $comp_id ORDER BY due_date DESC LIMIT 50")
             .bind(("comp_id", computer_id.clone()))
             .await?
@@ -312,7 +312,7 @@ impl LiveTaskPayload {
     /// (via service_ticket.computer.hostname). Used to match a connected
     /// client to its service history when no direct computer link exists.
     pub async fn get_tasks_by_hostname(hostname: &str) -> anyhow::Result<Vec<Self>, anyhow::Error> {
-        let tasks: Vec<Self> = DATABASE
+        let tasks: Vec<Self> = db()
             .query("SELECT * FROM task WHERE service_ticket.computer.hostname = $hostname ORDER BY due_date DESC LIMIT 50")
             .bind(("hostname", hostname.to_string()))
             .await?
@@ -362,7 +362,7 @@ impl LiveTaskPayload {
         // }
     
         log::info!("schema/utilities.rs -> cust_record: {customer_data:?}");
-        let update_customer: Result<Option<Record>, surrealdb::Error> = DATABASE
+        let update_customer: Result<Option<Record>, surrealdb::Error> = db()
             .upsert(customer_id)
             .content(customer_data.clone())
             .await;
@@ -378,7 +378,7 @@ impl LiveTaskPayload {
     
         // panic!("");
         if send_specs {
-            let create_computer_record: Option<Record> = DATABASE
+            let create_computer_record: Option<Record> = db()
                 .upsert(computer_id)
                 .content(computer_data)
                 .await?;
@@ -386,7 +386,7 @@ impl LiveTaskPayload {
         }
     
         log::info!("schema/utilities.rs -> ticket record: {ticket_data:?}");
-        let service_ticket_record: Option<Record> = DATABASE
+        let service_ticket_record: Option<Record> = db()
             .upsert(ticket_id)
             .content(ticket_data)
             .await?;
@@ -395,7 +395,7 @@ impl LiveTaskPayload {
         log::info!("schema/utilities.rs -> Task Data: {:?}", &task_data);
     
         
-        let check_task_record: Vec<LiveTaskPayload> = DATABASE
+        let check_task_record: Vec<LiveTaskPayload> = db()
             .query("SELECT * FROM task WHERE service_number == $service_number")
             .bind(("service_number", service_number.clone()))
             .await?
@@ -406,7 +406,7 @@ impl LiveTaskPayload {
         if !check_task_record.is_empty() {
             for task in check_task_record.iter() {
                 if task.id == task_data.id {
-                    let upsert_task_record: Option<Record> = DATABASE
+                    let upsert_task_record: Option<Record> = db()
                         .update(task.id.clone())
                         .content(LiveTaskPayload {
                             id: task.id.clone(),
@@ -423,7 +423,7 @@ impl LiveTaskPayload {
     
             } 
         } else {
-            let create_task_record: Option<Record> = DATABASE
+            let create_task_record: Option<Record> = db()
                 .create(TASK_TABLE)
                 .content(task_data).await?;
             log::info!("schema/utilities.rs -> create_task_record: {create_task_record:?}");
@@ -719,7 +719,7 @@ impl TaskHistory {
 
     /// Save this history record to the database
     pub async fn save(&self) -> anyhow::Result<Option<Record>, anyhow::Error> {
-        let record: Option<Record> = DATABASE
+        let record: Option<Record> = db()
             .create(TASK_HISTORY_TABLE)
             .content(self.clone())
             .await?;
@@ -729,7 +729,7 @@ impl TaskHistory {
 
     /// Get all history records for a specific task
     pub async fn get_history_for_task(task_id: RecordId) -> anyhow::Result<Vec<Self>, anyhow::Error> {
-        let history: Vec<Self> = DATABASE
+        let history: Vec<Self> = db()
             .query("SELECT * FROM task_history WHERE task_id == $task_id ORDER BY created_at DESC")
             .bind(("task_id", task_id))
             .await?

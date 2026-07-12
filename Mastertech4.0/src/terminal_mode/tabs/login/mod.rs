@@ -1,7 +1,7 @@
 use crate::{terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, systems::{communication_system::{DataMessage, Message}, notification_system::{Notification, NotificationType}}, styling::ThemeRole, widgets::{button::{Button, ButtonState}, input_field::InputField, ButtonType}}, utilities::save_encrypted_user_data};
 use displays::pages::login_page::{Login, HASH};
 use std::{cell::RefCell, sync::{Arc, Mutex}};
-use database::{schema::User, Database, DATABASE};
+use database::{schema::User, Database, db};
 use crossbeam::channel::Sender;
 use displays::app_state::{AppState, MainPages};
 use reqwest::Client;
@@ -104,9 +104,9 @@ impl <'a> LoginTab <'a> {
                         data_tx.send(Box::new(
                             DataMessage(usr.clone())
                         )).unwrap();
-                    }else{ 
-                        log::info!("no usr"); 
-                        let _ = DATABASE.invalidate().await;
+                    }else{
+                        log::info!("no usr");
+                        let _ = database::db().invalidate().await;
                         appstate_tx.try_send(AppState::NoAuth("No User".to_string()))?;
                     }
                     appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks))?;
@@ -116,7 +116,7 @@ impl <'a> LoginTab <'a> {
                     let check = e.to_string().contains("Already connected");
                     log::info!("db check: {check}");
                     if check { 
-                        let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE id == $auth.id")
+                        let user: Option<User> = db().query("SELECT * FROM user WHERE id == $auth.id")
                             .await?
                             .take(0)?;
                         log::info!("user: {user:?}");

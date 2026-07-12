@@ -26,8 +26,25 @@ pub mod xbm;
 pub use platform::PlatformSpawner;
 
 use crate::schema::{NOTIFICATION_TABLE, Notification, file_storage};
+use arc_swap::ArcSwap;
+use std::sync::Arc;
 
-pub static DATABASE: Lazy<Surreal<WsClient>> = Lazy::new(Surreal::init);
+/// Current SurrealDB client. Swapped wholesale by [`rebuild_database_client`]
+/// when the SDK's internal reconnect wedges on a zombie socket.
+static CURRENT_DB: Lazy<ArcSwap<Surreal<WsClient>>> =
+    Lazy::new(|| ArcSwap::from_pointee(Surreal::init()));
+
+/// Handle to the current SurrealDB client. Safe to hold across awaits; a
+/// swap during an in-flight call leaves that call on the old client, which
+/// fails fast once its router notices the dead socket.
+pub fn db() -> Arc<Surreal<WsClient>> {
+    CURRENT_DB.load_full()
+}
+
+/// Installs a fresh client and returns the previous one.
+fn install_client(new: Surreal<WsClient>) -> Arc<Surreal<WsClient>> {
+    CURRENT_DB.swap(Arc::new(new))
+}
 
 pub const USER_SCOPE: &str = env!("USER_SCOPE");
 pub const DB: &str = env!("DB");
@@ -272,24 +289,9 @@ impl DatabaseSelection {
         }
     }
 
-    pub async fn set_database(&self) -> anyhow::Result<(), anyhow::Error>{
-        let inv = DATABASE.invalidate().await;
-        match inv {
-            Ok(_) => {
-                let db = DATABASE.clone();
-                drop(db);
-                let url = self.get_db_url();
-                match self {
-                    Self::Stable => DATABASE.connect::<Wss>(url).await?,
-                    Self::Beta => DATABASE.connect::<Wss>(url).await?,
-                    Self::Local => DATABASE.connect::<Ws>(url).await?,
-                };
-
-                DATABASE.use_ns(NS).use_db(DB).await?;
-            },
-            Err(e) => log::error!("Failed to invalidate database connection: {e}"),
-        }
-        Ok(())
+    pub async fn set_database(&self) -> anyhow::Result<(), anyhow::Error> {
+        let secure = !matches!(self, Self::Local);
+        rebuild_database_client_to(self.get_db_url(), secure, false).await
     }
 }
 
@@ -299,32 +301,33 @@ impl Database {
         password: String,
         jwt: Option<String>,
     ) -> anyhow::Result<Self, anyhow::Error> {
+        let dbh = db();
         if cfg!(debug_assertions) {
-            let try_local = DATABASE.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;
+            let try_local = dbh.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;
             log::info!("Attempting to connect to local DB: {try_local:?}");
         } else {
-            match DATABASE.connect::<surrealdb::engine::remote::ws::Wss>(DB_URL_DEV).await {
+            match dbh.connect::<surrealdb::engine::remote::ws::Wss>(DB_URL_DEV).await {
                 Ok(_) => log::info!("Connected to {DB_URL_DEV:?}"),
                 Err(e) => log::error!("Failed connecting to: {DB_URL_DEV:?}\n{e:?}"),
             }
         }
 
-        match DATABASE.use_ns(NS).use_db(DB).await {
+        match dbh.use_ns(NS).use_db(DB).await {
             Ok(_) => log::info!("Using NS: {NS:?}\nUsing DB: {DB:?}"),
             Err(e) => log::error!("Failed Using NS: {NS:?}\nFailed Using DB: {DB:?}\nE: {e:?}"),
         }
 
-        log::info!("About to query DB. DATABASE ptr: {:p}", &*DATABASE);
-        
+        log::info!("About to query DB. client ptr: {:?}", Arc::as_ptr(&dbh));
+
         match jwt {
             Some(jwt) => {
                 info!("Have a JWT, attempting token auth");
-                DATABASE.authenticate(jwt.clone()).await?;
+                dbh.authenticate(jwt.clone()).await?;
                 // Cache the JWT so `ensure_db_connected` can replay it
                 // after a DB blip without dropping the operator to guest.
                 cache_auth(Some(jwt.clone()), None, None);
-                let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
-                let users: Vec<User> = DATABASE.query("SELECT * FROM user WHERE active == true").await?.take(0)?;
+                let user: Option<User> = dbh.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
+                let users: Vec<User> = dbh.query("SELECT * FROM user WHERE active == true").await?.take(0)?;
                 // let sess = DATABASE.query("RETURN <string>$session").await?.take::<Option<String>>(0)?;
                 // log::info!("Session: {:?}", sess);
  
@@ -357,7 +360,7 @@ impl Database {
                 info!("No JWT, sigining in: {:?}\n{:?}\n{:?}\n{:?}\n", full_email, creds.namespace, creds.database, creds.access);
 
                 // Select a specific namespace / database
-                let jwt = DATABASE
+                let jwt = dbh
                     .signin(creds)
                     .await?;
 
@@ -367,37 +370,15 @@ impl Database {
                 let jwt_str = jwt.access.as_insecure_token().to_string();
                 cache_auth(Some(jwt_str.clone()), Some(full_email.clone()), Some(password));
 
-                let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
-                let users: Vec<User> = DATABASE.query("SELECT * FROM user WHERE active == true").await?.take(0)?;
-                // let sess = DATABASE.query("RETURN <string>$session").await?.take::<Option<String>>(0)?;
-                // log::info!("Session: {:?}", sess);
+                let user: Option<User> = dbh.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
+                let users: Vec<User> = dbh.query("SELECT * FROM user WHERE active == true").await?.take(0)?;
                 if !users.is_empty() {
                     if let Ok(mut users_guard) = STORE_USERS.try_lock() {
-                        *users_guard = users.clone(); 
+                        *users_guard = users.clone();
                     }
                 }
 
                 if let Some(u) = user.clone() {
-                    if cfg!(debug_assertions)  {
-                        if cfg!(target_os = "windows") {
-                            let bucket_url = format!("{}{}", BUCKET_DEV_WINDOWS_URL, u.get_user_bucket_name());
-                            if let Err(e) = file_storage::define_bucket(&u.get_user_bucket_name(), &bucket_url).await {
-                                log::warn!("Failed to define user bucket: {e}");
-                            }
-                        } else if cfg!(target_os = "linux") {
-                            let bucket_url = format!("{}{}", BUCKET_DEV_LINUX_URL, u.get_user_bucket_name());
-                            if let Err(e) = file_storage::define_bucket(&u.get_user_bucket_name(), &bucket_url).await {
-                                log::warn!("Failed to define user bucket: {e}");
-                            }
-                        }
-                    } else {
-                        let bucket_url = format!("{}{}", BUCKET_URL, u.get_user_bucket_name());
-                        if let Err(e) = file_storage::define_bucket(&u.get_user_bucket_name(), &bucket_url).await {
-                            log::warn!("Failed to define user bucket: {e}");
-                        }
-                    }
-                
-                    // lock only after await
                     if let Ok(mut user_info_guard) = CURRENT_USER_INFO.try_lock() {
                         *user_info_guard = Some(u);
                     }
@@ -412,20 +393,20 @@ impl Database {
         signup: T,
         email: String,
     ) -> anyhow::Result<Self, anyhow::Error> {
+        let dbh = db();
         if cfg!(debug_assertions) {
-            let try_local = DATABASE.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;
+            let try_local = dbh.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;
             log::info!("Attempting to connect to local DB: {try_local:?}");
         } else {
-            match DATABASE.connect::<surrealdb::engine::remote::ws::Wss>(DB_URL_DEV).await {
+            match dbh.connect::<surrealdb::engine::remote::ws::Wss>(DB_URL_DEV).await {
                 Ok(_) => log::info!("Connected to {DB_URL_DEV:?}"),
                 Err(e) => {
-                    let try_local = DATABASE.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;
+                    let try_local = dbh.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;
                     log::error!("Failed connecting to: {DB_URL_DEV:?}\n{e:?}\nattempting to connect to local DB: {try_local:?}");
                 },
             }
         }
-        // let _ = DATABASE.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;
-        match DATABASE.use_ns(NS).use_db(DB).await {
+        match dbh.use_ns(NS).use_db(DB).await {
             Ok(_) => log::info!("Using NS: {NS:?}\nUsing DB: {DB:?}"),
             Err(e) => log::error!("Failed Using NS: {NS:?}\nFailed Using DB: {DB:?}\nE: {e:?}"),
         }
@@ -435,7 +416,7 @@ impl Database {
         }
 
         // Select a specific namespace / database
-        let jwt = DATABASE
+        let jwt = dbh
             .signup(SurrealRec {
                 namespace: NS.to_string(),
                 database: DB.to_string(),
@@ -447,8 +428,8 @@ impl Database {
         match jwt {
             Ok(j) => {
                 let query = "SELECT * FROM user WHERE email == $email";
-                DATABASE.set("email", email).await?;
-                let user: Option<User> = DATABASE.query(query).await?.take(0)?;
+                dbh.set("email", email).await?;
+                let user: Option<User> = dbh.query(query).await?.take(0)?;
                 Ok(Self {
                     jwt: Some(j.access.as_insecure_token().to_string()),
                     user,
@@ -460,29 +441,6 @@ impl Database {
             },
         }
     }
-}
-
-/// Force-rebuild the SurrealDB websocket and re-authenticate with the cached
-/// JWT. Used by the WASM client after a Cloudflare-Tunnel-driven WS reset.
-///
-/// `DATABASE` is a `Lazy<Surreal<WsClient>>` singleton, so after a transport
-/// drop the SDK can end up in a state where `.connect()` returns
-/// `"Already connected"` even though the underlying socket is dead. Calling
-/// `invalidate()` first clears that stale state so the subsequent `.connect()`
-/// builds a fresh socket.
-pub async fn reconnect_with_jwt(jwt: Option<String>) -> anyhow::Result<()> {
-    let jwt = jwt.ok_or_else(|| anyhow::anyhow!("reconnect_with_jwt: no JWT cached"))?;
-    let _ = DATABASE.invalidate().await;
-    if cfg!(debug_assertions) {
-        DATABASE.connect::<Ws>(DB_URL_LOCAL).await?;
-    } else {
-        DATABASE.connect::<Wss>(DB_URL_DEV).await?;
-    }
-    DATABASE.use_ns(NS).use_db(DB).await?;
-    DATABASE.authenticate(jwt.clone()).await?;
-    cache_auth(Some(jwt), None, None);
-    log::info!("reconnect_with_jwt: WS reconnected and re-authenticated");
-    Ok(())
 }
 
 pub fn get_current_user_from_auth() -> Option<User> {
@@ -506,27 +464,147 @@ pub fn get_database_users() -> Vec<User> {
 }
 
 pub async fn init_database() -> anyhow::Result<(), anyhow::Error> {
+    let dbh = db();
     if cfg!(debug_assertions) {
-        let try_local = DATABASE.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;
+        let try_local = dbh.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;
         log::info!("Attempting to connect to local DB: {try_local:?}");
     } else {
-        match DATABASE.connect::<surrealdb::engine::remote::ws::Wss>(DB_URL_DEV).await {
+        match dbh.connect::<surrealdb::engine::remote::ws::Wss>(DB_URL_DEV).await {
             Ok(_) => log::info!("Connected to {DB_URL_DEV:?}"),
             Err(e) => log::error!("Failed connecting to: {DB_URL_DEV:?}\n{e:?}"),
         }
     }
-    DATABASE.use_ns(NS).use_db(DB).await?;
+    dbh.use_ns(NS).use_db(DB).await?;
 
-    DATABASE.signin(SurrealRec {
+    dbh.signin(guest_credentials()).await?;
+
+    Ok(())
+}
+
+/// Defines the signed-in user's file bucket (idempotent via `IF NOT EXISTS`).
+/// Runs off the login hot path: spawned from `load_data` on first load and
+/// retried on first File Browser use.
+pub async fn ensure_user_bucket(user: &User) -> anyhow::Result<()> {
+    let name = user.get_user_bucket_name();
+    let base = if cfg!(debug_assertions) {
+        if cfg!(target_os = "windows") {
+            BUCKET_DEV_WINDOWS_URL
+        } else if cfg!(target_os = "linux") {
+            BUCKET_DEV_LINUX_URL
+        } else {
+            BUCKET_URL
+        }
+    } else {
+        BUCKET_URL
+    };
+    let bucket_url = file_storage::join_bucket_path(base, &name);
+    file_storage::define_bucket(&name, &bucket_url).await
+}
+
+/// Guest record-access credentials used by pre-login binaries.
+fn guest_credentials() -> SurrealRec<Credentials> {
+    SurrealRec {
         namespace: NS.to_string(),
         database: DB.to_string(),
         access: "guest".to_string(),
         params: Credentials {
             username: "guest".to_string(),
-            password: SURREAL_GUEST_PASSWORD.to_string()
-        }
-    }).await?;
+            password: SURREAL_GUEST_PASSWORD.to_string(),
+        },
+    }
+}
 
+/// Uniform random duration in `[0, max)`; native + wasm.
+pub fn random_jitter(max: std::time::Duration) -> std::time::Duration {
+    let r = uuid::Uuid::new_v4().as_u128();
+    std::time::Duration::from_millis((r % max.as_millis().max(1)) as u64)
+}
+
+static REBUILDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Tier-2 recovery: abandon the current (presumed-wedged) client and install
+/// a freshly built, freshly authenticated one. Single-flight; a concurrent
+/// call errors immediately. Sleeps a random 0-20s jitter first so a fleet of
+/// recovering clients does not stampede the server.
+pub async fn rebuild_database_client() -> anyhow::Result<()> {
+    let (url, secure) = if cfg!(debug_assertions) {
+        (DB_URL_LOCAL, false)
+    } else {
+        (DB_URL_DEV, true)
+    };
+    rebuild_database_client_to(url, secure, true).await
+}
+
+/// Builds, authenticates, and installs a fresh client against `url`.
+pub async fn rebuild_database_client_to(url: &str, secure: bool, jitter: bool) -> anyhow::Result<()> {
+    use std::sync::atomic::Ordering;
+    if REBUILDING.swap(true, Ordering::SeqCst) {
+        anyhow::bail!("client rebuild already in progress");
+    }
+    let result = rebuild_client_inner(url, secure, jitter).await;
+    REBUILDING.store(false, Ordering::SeqCst);
+    result
+}
+
+async fn rebuild_client_inner(url: &str, secure: bool, jitter: bool) -> anyhow::Result<()> {
+    if jitter {
+        let wait = random_jitter(std::time::Duration::from_secs(20));
+        log::info!("rebuild_database_client: waiting {wait:?} before rebuild (stampede spreading)");
+        sleep_compat(wait).await;
+    }
+
+    let fresh: Surreal<WsClient> = Surreal::init();
+    if secure {
+        with_timeout(std::time::Duration::from_secs(10), fresh.connect::<Wss>(url.to_string())).await??;
+    } else {
+        with_timeout(std::time::Duration::from_secs(10), fresh.connect::<Ws>(url.to_string())).await??;
+    }
+    with_timeout(std::time::Duration::from_secs(5), fresh.use_ns(NS).use_db(DB)).await??;
+
+    // Auth ladder: cached JWT → cached email/password → guest (pre-login
+    // binaries only). With cached auth present but every rung failing, the
+    // fresh client is installed unauthenticated so the supervisor's
+    // restore_auth_if_needed can verify and route to login.
+    let cached: Option<CachedAuth> = CACHED_AUTH.try_lock().ok().and_then(|g| g.clone());
+    let mut authed = false;
+    if let Some(CachedAuth { jwt: Some(token), .. }) = cached.as_ref() {
+        match with_timeout(std::time::Duration::from_secs(10), fresh.authenticate(token.clone())).await {
+            Ok(Ok(_)) => authed = true,
+            Ok(Err(e)) => log::warn!("rebuild_database_client: cached JWT rejected: {e}"),
+            Err(e) => log::warn!("rebuild_database_client: JWT auth timed out: {e}"),
+        }
+    }
+    if !authed {
+        if let Some(CachedAuth { email: Some(em), password: Some(pw), .. }) = cached.as_ref() {
+            let creds = SurrealRec {
+                namespace: NS.to_string(),
+                database: DB.to_string(),
+                access: USER_SCOPE.to_string(),
+                params: Auth { email: em.clone(), password: pw.clone() },
+            };
+            match with_timeout(std::time::Duration::from_secs(10), fresh.signin(creds)).await? {
+                Ok(jwt) => {
+                    cache_auth(Some(jwt.access.as_insecure_token().to_string()), None, None);
+                    authed = true;
+                }
+                Err(e) => log::warn!("rebuild_database_client: cached credential signin failed: {e}"),
+            }
+        }
+    }
+    if !authed {
+        if cached.is_none() {
+            with_timeout(std::time::Duration::from_secs(10), fresh.signin(guest_credentials())).await??;
+        } else {
+            log::warn!("rebuild_database_client: no auth rung succeeded; installing unauthenticated client");
+        }
+    }
+
+    let old = install_client(fresh);
+    log::info!(
+        "rebuild_database_client: installed fresh client (old {:?} -> new {:?})",
+        Arc::as_ptr(&old),
+        Arc::as_ptr(&db())
+    );
     Ok(())
 }
 
@@ -563,9 +641,10 @@ pub fn new_live_session_id() -> String {
 /// Record id bound to `$auth` on the current connection; `None` when
 /// unauthenticated or signed in as something other than a record user.
 pub async fn current_auth_id() -> anyhow::Result<Option<schema::RecordId>> {
+    let dbh = db();
     let mut response = with_timeout(
         std::time::Duration::from_secs(10),
-        DATABASE.query("RETURN $auth.id"),
+        dbh.query("RETURN $auth.id"),
     )
     .await??;
     Ok(response.take::<Option<schema::RecordId>>(0)?)
@@ -575,9 +654,10 @@ pub async fn current_auth_id() -> anyhow::Result<Option<schema::RecordId>> {
 /// Returns true if connected, false if connection is dead
 pub async fn is_db_connected() -> bool {
     // A dead websocket black-holes queries; bound the probe so the check can fail.
+    let dbh = db();
     match with_timeout(
         std::time::Duration::from_secs(3),
-        DATABASE.query("RETURN true"),
+        dbh.query("RETURN true"),
     )
     .await
     {
@@ -601,18 +681,19 @@ pub async fn is_db_connected() -> bool {
 /// whether the socket had actually dropped (`true`) vs was already healthy
 /// (`false`).
 ///
-/// The SDK owns the socket: its `router` is a process-lifetime `OnceLock`,
-/// so `DATABASE.connect()` on the singleton only ever returns
-/// `Err(AlreadyConnected)`. On a drop the SDK's own `router_reconnect` loop
-/// rebuilds the socket every ~1s and replays `Signin`/`Authenticate`/`Use`.
-/// The app's job is only to wait for that, then re-issue its LIVE queries
-/// (which the SDK does not replay).
+/// Tier-1 recovery: a client's `connect()` can never rebuild its own socket
+/// (`AlreadyConnected`; the router `OnceLock` never re-arms), so this waits
+/// for the SDK's `router_reconnect` loop (~1s) to heal the socket and replay
+/// `Signin`/`Authenticate`/`Use`. The SDK's reconnect can wedge on a zombie
+/// socket — callers escalate to [`rebuild_database_client`] (tier 2) after
+/// repeated failures. Worst case here is ~35s so a failure reports inside
+/// the supervisor's 45s stall watchdog instead of being abandoned.
 pub async fn await_db_socket() -> anyhow::Result<bool> {
     if is_db_connected().await {
         return Ok(false);
     }
     log::warn!("Database socket down; waiting for SDK auto-reconnect");
-    for attempt in 0..8u32 {
+    for attempt in 0..6u32 {
         let delay = std::time::Duration::from_millis((250u64 << attempt.min(5)).min(8000));
         sleep_compat(delay).await;
         if is_db_connected().await {
@@ -633,9 +714,10 @@ pub async fn restore_auth_if_needed(expected: schema::RecordId) -> anyhow::Resul
         return Ok(true);
     }
     let cached: Option<CachedAuth> = CACHED_AUTH.try_lock().ok().and_then(|g| g.clone());
+    let dbh = db();
 
     if let Some(CachedAuth { jwt: Some(token), .. }) = cached.as_ref() {
-        if DATABASE.authenticate(token.clone()).await.is_ok()
+        if dbh.authenticate(token.clone()).await.is_ok()
             && current_auth_id().await? == Some(expected.clone())
         {
             log::info!("Restored auth via cached JWT after reconnect");
@@ -650,7 +732,7 @@ pub async fn restore_auth_if_needed(expected: schema::RecordId) -> anyhow::Resul
             access: USER_SCOPE.to_string(),
             params: Auth { email: em.clone(), password: pw.clone() },
         };
-        match DATABASE.signin(creds).await {
+        match dbh.signin(creds).await {
             Ok(jwt) => {
                 cache_auth(Some(jwt.access.as_insecure_token().to_string()), None, None);
                 if current_auth_id().await? == Some(expected) {
@@ -769,7 +851,8 @@ pub async fn test_database_wasm() -> anyhow::Result<String, anyhow::Error> {
     results.push_str("[Step 2] Setting namespace and database...\n");
     log::info!("[test_database_wasm] Step 2: Setting NS={} DB={}", NS, DB);
     
-    match DATABASE.use_ns(NS).use_db(DB).await {
+    let dbh = db();
+    match dbh.use_ns(NS).use_db(DB).await {
         Ok(_) => {
             results.push_str(&format!("[Step 2] ✓ Using NS={} DB={}\n", NS, DB));
             log::info!("[test_database_wasm] Step 2: NS/DB set successfully");
@@ -785,15 +868,7 @@ pub async fn test_database_wasm() -> anyhow::Result<String, anyhow::Error> {
     results.push_str("[Step 3] Signing in as guest...\n");
     log::info!("[test_database_wasm] Step 3: Signing in as guest");
     
-    match DATABASE.signin(SurrealRec {
-        namespace: NS.to_string(),
-        database: DB.to_string(),
-        access: "guest".to_string(),
-        params: Credentials {
-            username: "guest".to_string(),
-            password: SURREAL_GUEST_PASSWORD.to_string()
-        }
-    }).await {
+    match dbh.signin(guest_credentials()).await {
         Ok(_) => {
             results.push_str("[Step 3] ✓ Signed in successfully\n");
             log::info!("[test_database_wasm] Step 3: Signed in successfully");
@@ -809,7 +884,7 @@ pub async fn test_database_wasm() -> anyhow::Result<String, anyhow::Error> {
     results.push_str("[Step 4] Running query: RETURN $auth...\n");
     log::info!("[test_database_wasm] Step 4: Running RETURN $auth query");
     
-    match DATABASE.query("RETURN $auth").await {
+    match dbh.query("RETURN $auth").await {
         Ok(mut response) => {
             match response.take::<Option<serde_json::Value>>(0) {
                 Ok(auth_value) => {
@@ -833,7 +908,7 @@ pub async fn test_database_wasm() -> anyhow::Result<String, anyhow::Error> {
     results.push_str("[Step 5] Running query: RETURN time::now()...\n");
     log::info!("[test_database_wasm] Step 5: Running time::now() query");
     
-    match DATABASE.query("RETURN time::now()").await {
+    match dbh.query("RETURN time::now()").await {
         Ok(mut response) => {
             match response.take::<Option<serde_json::Value>>(0) {
                 Ok(time_value) => {
@@ -862,7 +937,7 @@ pub async fn create_guest_notification(notification: Notification) -> anyhow::Re
     let try_guest = init_database().await;
     match try_guest {
         Ok(_) => {
-            DATABASE.create::<Option<Notification>>(NOTIFICATION_TABLE)
+            db().create::<Option<Notification>>(NOTIFICATION_TABLE)
             .content(notification)
             .await?;
         },
@@ -878,7 +953,8 @@ struct Credentials {
 }
 
 pub async fn login(email: String, password: String) -> anyhow::Result<Session> {
-    let jwt = DATABASE
+    let dbh = db();
+    let jwt = dbh
         .signin(SurrealRec {
             namespace: NS.to_string(),
             database: DB.to_string(),
@@ -887,7 +963,7 @@ pub async fn login(email: String, password: String) -> anyhow::Result<Session> {
         })
         .await?;
 
-    let user: User = DATABASE
+    let user: User = dbh
         .query("SELECT * FROM user WHERE id == $auth.id")
         .await?
         .take::<Option<User>>(0)?
@@ -897,7 +973,8 @@ pub async fn login(email: String, password: String) -> anyhow::Result<Session> {
 }
 
 pub async fn signup<T: Serialize + SurrealValue>(signup_data: T) -> anyhow::Result<Session> {
-    let jwt = DATABASE
+    let dbh = db();
+    let jwt = dbh
         .signup(SurrealRec {
             namespace: NS.to_string(),
             database: DB.to_string(),
@@ -906,7 +983,7 @@ pub async fn signup<T: Serialize + SurrealValue>(signup_data: T) -> anyhow::Resu
         })
         .await?;
 
-    let user: User = DATABASE
+    let user: User = dbh
         .query("SELECT * FROM user WHERE id == $auth.id")
         .await?
         .take::<Option<User>>(0)?
@@ -916,8 +993,9 @@ pub async fn signup<T: Serialize + SurrealValue>(signup_data: T) -> anyhow::Resu
 }
 
 pub async fn token_login(jwt: &str) -> anyhow::Result<Session> {
-    DATABASE.authenticate(jwt).await?;
-    let user: User = DATABASE
+    let dbh = db();
+    dbh.authenticate(jwt).await?;
+    let user: User = dbh
         .query("SELECT * FROM user WHERE id == $auth.id")
         .await?
         .take::<Option<User>>(0)?

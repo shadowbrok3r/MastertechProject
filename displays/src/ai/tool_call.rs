@@ -22,7 +22,7 @@ use crossbeam::channel::Sender;
 use serde_json::{json, Value};
 use anyhow::{Error, Result};
 use database::schema::RecordId;
-use database::{DATABASE, SurrealValue};
+use database::{db, SurrealValue};
 use futures::StreamExt;
 use std::sync::Arc;
 use log::info;
@@ -116,7 +116,7 @@ pub struct TaskSummary {
 
 pub async fn get_task_summary(params: GetTaskSummaryParams) -> Result<TaskSummary, String> {
     log::info!("Calling task");
-    let task: Option<TaskSummary> = DATABASE
+    let task: Option<TaskSummary> = db()
         .query("SELECT id, task_name, task_description FROM task WHERE service_number == $task_id")
         .bind(("task_id", params.task_id))
         .await

@@ -5,7 +5,7 @@
 //! full 1 Hz telemetry stays queryable; one-shot measurements like the
 //! memory-latency ladder persist standalone with `run_ref = NONE`.
 
-use crate::DATABASE;
+use crate::db;
 use serde::{Deserialize, Serialize};
 
 use super::{random_record_id, Datetime, RecordId, SurrealValue, BENCHMARK_RESULT_TABLE};
@@ -159,7 +159,7 @@ impl BenchmarkResult {
 
     pub async fn create(result: &Self) -> anyhow::Result<RecordId> {
         let value = result.clone().into_value();
-        let created: Option<Self> = DATABASE
+        let created: Option<Self> = db()
             .create(result.id.clone())
             .content(value)
             .await?;
@@ -172,7 +172,7 @@ impl BenchmarkResult {
         kind: Option<BenchmarkKind>,
         limit: usize,
     ) -> anyhow::Result<Vec<Self>> {
-        let rows: Vec<Self> = DATABASE
+        let rows: Vec<Self> = db()
             .query(
                 "SELECT * FROM benchmark_result \
                  WHERE computer = $c AND ($k = NONE OR kind_label = $k) \
@@ -188,7 +188,7 @@ impl BenchmarkResult {
 
     /// Cross-machine history for one benchmark kind (population comparison).
     pub async fn list_for_kind(kind: BenchmarkKind, limit: usize) -> anyhow::Result<Vec<Self>> {
-        let rows: Vec<Self> = DATABASE
+        let rows: Vec<Self> = db()
             .query(
                 "SELECT * FROM benchmark_result \
                  WHERE kind_label = $k ORDER BY captured_at DESC LIMIT $l",

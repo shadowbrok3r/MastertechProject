@@ -1,5 +1,5 @@
 use eframe::egui::{Button, Color32, ComboBox, Context, FontId, Frame, Key, Layout, RichText, Separator, Stroke, TextEdit, Vec2, Widget, vec2};
-use database::{schema::{utilities::{get_store_users, get_tasks_for_store}, FilterLiveTasks, LiveTaskPayload, Store}, DATABASE};
+use database::{schema::{utilities::{get_store_users, get_tasks_for_store}, FilterLiveTasks, LiveTaskPayload, Store}, db};
 use egui::{PopupCloseBehavior, UiKind, containers::menu::{MenuButton, MenuConfig}, style::StyleModifier};
 use crate::{tabs::github::{get_github_releases, self_updater::run}};
 use displays::{app_state::{default_tree, AppState, MainPages}, pages::view_menu, plugins::push_widget_anchor, tabs::TabContext, ui_tools::theme, TaskUiActions};
@@ -286,7 +286,7 @@ impl MasterTechApp {
 
                                     let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::NoAuth("Login".to_string()));
                                     spawn(async move {
-                                        let invalidation = DATABASE.invalidate().await;
+                                        let invalidation = db().invalidate().await;
                                         info!("invalidated connection: {:?}", invalidation);
                                     });
 

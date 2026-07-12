@@ -14,7 +14,7 @@ use eframe::{egui::{Color32, Context, Margin, Stroke, Vec2, Window}, Frame};
 use crate::{app_state::MtechServer, webworker::decode_task_payload};
 use wasm_bindgen_futures::spawn_local;
 use egui_dock::DockState;
-use database::DATABASE;
+use database::db;
 #[cfg(target_arch="wasm32")]
 use crate::app_state::check_authentication;
 
@@ -23,6 +23,7 @@ impl MtechServer {
         self.shared_ctx.first_run = false;
         let current_version = env!("CARGO_PKG_VERSION");
         bootstrap_startup_theme(ctx);
+        Self::sweep_stale_service_workers();
         
         if let Some(storage) = frame.storage_mut() {
             gloo_console::info!("We have Storage Mut Access");
@@ -149,7 +150,7 @@ impl MtechServer {
                     toast.add(error_toast);
                 }else {
                     spawn_local(async move {
-                        match DATABASE.health().await {
+                        match db().health().await {
                             Ok(_) => log::info!("Healthy connection"),
                             Err(e) => log::error!("Database connection health: {e:?}"),
                         }
@@ -206,6 +207,51 @@ impl MtechServer {
         // });
     }
 
+    /// One-shot boot sweep: unregisters any service worker left behind by an
+    /// old deployed build and purges its caches. Reloads only when a
+    /// registration was actually removed, so healed clients never loop.
+    fn sweep_stale_service_workers() {
+        spawn_local(async move {
+            use js_sys::wasm_bindgen::JsCast;
+            use wasm_bindgen_futures::JsFuture;
+
+            let Some(win) = web_sys::window() else { return };
+            let mut removed = false;
+            let swc = win.navigator().service_worker();
+            if let Ok(regs_js) = JsFuture::from(swc.get_registrations()).await {
+                let regs = js_sys::Array::from(&regs_js);
+                for reg_val in regs.iter() {
+                    if let Ok(reg) = reg_val.dyn_into::<web_sys::ServiceWorkerRegistration>() {
+                        if let Ok(promise) = reg.unregister() {
+                            if JsFuture::from(promise)
+                                .await
+                                .ok()
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false)
+                            {
+                                removed = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if removed {
+                if let Ok(caches) = win.caches() {
+                    if let Ok(keys_js) = JsFuture::from(caches.keys()).await {
+                        let keys = js_sys::Array::from(&keys_js);
+                        for key in keys.iter() {
+                            if let Some(k) = key.as_string() {
+                                let _ = JsFuture::from(caches.delete(&k)).await;
+                            }
+                        }
+                    }
+                }
+                gloo_console::warn!("Stale service worker removed — reloading for a clean boot");
+                let _ = win.location().reload();
+            }
+        });
+    }
+
     pub fn invalidate(&mut self) {
         gloo_console::info!("Invalidating");
         #[cfg(target_arch = "wasm32")]
@@ -214,28 +260,53 @@ impl MtechServer {
             wasm_cookies::delete("jwt");
         }
 
-        spawn_local(async move {
-            let invalidation = DATABASE.invalidate().await;
-            gloo_console::info!(format!("invalidated connection: {:?}", invalidation));
-        });
-
         if let Some(window) = web_sys::window() {
             if let Ok(Some(storage)) = window.local_storage() {
                 let clear = storage.clear();
-                gloo_console::info!(format!("Clearing storage: {clear:?}"));
+                gloo_console::info!(format!("Clearing localStorage: {clear:?}"));
             }
-            if let Ok(caches) = window.caches() {
-                gloo_console::error!(format!("Caches: {:?}", caches.keys().as_string()));
-                // for cache in caches.keys().then(cb)
-                //     let success_closure = Closure::wrap(Box::new(move |_value: JsValue| {
-                //         gloo_console::info!(format!("Initialized worker with {} threads", num_threads));
-                //     }) as Box<dyn FnMut(JsValue)>);
+            if let Ok(Some(storage)) = window.session_storage() {
+                let clear = storage.clear();
+                gloo_console::info!(format!("Clearing sessionStorage: {clear:?}"));
             }
-            let reload = window.location().reload();
-            gloo_console::info!(format!("Reloading window: {reload:?}"));
-        } else {
-            gloo_console::info!(format!("No window"));
         }
+
+        // Async teardown, reload only after every step completed: DB session,
+        // CacheStorage, and any lingering service-worker registrations.
+        spawn_local(async move {
+            use js_sys::wasm_bindgen::JsCast;
+            use wasm_bindgen_futures::JsFuture;
+
+            let invalidation = db().invalidate().await;
+            gloo_console::info!(format!("invalidated connection: {:?}", invalidation));
+
+            let Some(win) = web_sys::window() else { return };
+            if let Ok(caches) = win.caches() {
+                if let Ok(keys_js) = JsFuture::from(caches.keys()).await {
+                    let keys = js_sys::Array::from(&keys_js);
+                    for key in keys.iter() {
+                        if let Some(k) = key.as_string() {
+                            let deleted = JsFuture::from(caches.delete(&k)).await;
+                            gloo_console::info!(format!("Deleted cache {k}: {deleted:?}"));
+                        }
+                    }
+                }
+            }
+            let swc = win.navigator().service_worker();
+            if let Ok(regs_js) = JsFuture::from(swc.get_registrations()).await {
+                let regs = js_sys::Array::from(&regs_js);
+                for reg_val in regs.iter() {
+                    if let Ok(reg) = reg_val.dyn_into::<web_sys::ServiceWorkerRegistration>() {
+                        if let Ok(promise) = reg.unregister() {
+                            let _ = JsFuture::from(promise).await;
+                        }
+                    }
+                }
+            }
+            let reload = win.location().reload();
+            gloo_console::info!(format!("Reloading window: {reload:?}"));
+        });
+
         let logout_msg = "Logged out".to_string();
         self.shared_ctx.state = AppState::NoAuth(logout_msg.clone());
         let _ = self.shared_ctx.app_state_tx.try_send(AppState::NoAuth(logout_msg));

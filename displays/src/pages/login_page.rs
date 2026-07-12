@@ -1,7 +1,7 @@
 #![allow(deprecated)]
 use anyhow::{Error, Result};
 use crossbeam::channel::Sender;
-use database::{Database, DATABASE};
+use database::{Database, db};
 use serde::{Deserialize, Serialize};
 use crate::{PlatformSpawner, Spawner};
 use eframe::egui::{
@@ -78,7 +78,7 @@ impl Login {
                     db_tx.try_send(Ok(db))?;
                 } else {
                     info!("no usr or no cookie");
-                    let _ = DATABASE.invalidate().await;
+                    let _ = database::db().invalidate().await;
                     appstate_tx.try_send(AppState::NoAuth("No cookie or user was found".to_string()))?;
                 }
             }

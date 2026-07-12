@@ -652,7 +652,7 @@ async fn writer_task(
 /// SurrealValue deserialization and terminates the store-wide admin LIVE
 /// query for every client, so every create path funnels through here.
 pub async fn upsert_self_identity(connected: bool) {
-    use database::DATABASE;
+    use database::db;
 
     let identity = get_client_hash();
     if identity.client_hash.is_empty() {
@@ -664,7 +664,7 @@ pub async fn upsert_self_identity(connected: bool) {
         return;
     };
 
-    let res = DATABASE
+    let res = db()
         .query(
             "UPSERT $id SET client_hash = $client_hash, \
              connection_string = $cs, computer = $computer, \
@@ -691,7 +691,7 @@ pub async fn upsert_self_identity(connected: bool) {
 /// direct-TCP admin connections.
 pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) {
     use crate::utilities::network::{detect_local_ipv4, try_add_firewall_rule};
-    use database::DATABASE;
+    use database::db;
 
     if is_self_update_child() {
         wait_for_preferred_port_available().await;
@@ -761,7 +761,7 @@ pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) 
         for attempt in 0..5u32 {
             // Create-or-update: sole writer of this client's row in GUI mode,
             // so it sets every required identity field, not just TCP coords.
-            let res = DATABASE
+            let res = db()
                 .query(
                     "UPSERT $client SET local_ip = $ip, tcp_port = $port, \
                      connection_string = $cs, client_hash = $client_hash, \
@@ -817,7 +817,7 @@ pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) 
                     return;
                 }
                 _ = tokio::time::sleep(Duration::from_secs(15 * 60)) => {
-                    let res = DATABASE
+                    let res = db()
                         .query("UPDATE $client SET connected = true, last_update = time::now()")
                         .bind(("client", heartbeat_uuid.clone()))
                         .await;

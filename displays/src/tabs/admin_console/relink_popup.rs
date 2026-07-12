@@ -27,7 +27,7 @@ use database::{
         utilities::{get_prestashop_payload, get_prestashop_payload_from_phone},
         ConnectedClient, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE,
     },
-    DATABASE,
+    db,
 };
 use eframe::egui::{
     self, Align, Button, Color32, Layout, RichText, ScrollArea, TextEdit, Ui, Window,
@@ -469,7 +469,7 @@ impl RelinkClientPopup {
         PlatformSpawner::spawn(async move {
             // 1) Upsert the customer row so it exists / is fresh.
             let cust_upsert: Result<Option<database::schema::CustomerData>, surrealdb::Error> =
-                DATABASE
+                db()
                     .upsert(new_customer_id.clone())
                     .content(new_customer.clone())
                     .await;
@@ -486,7 +486,7 @@ impl RelinkClientPopup {
             //    targeted UPDATE rather than `.content(...)` to avoid
             //    clobbering fields the popup doesn't know about.
             let cc_table = CONNECTED_CLIENT_TABLE;
-            let cc_update = DATABASE
+            let cc_update = db()
                 .query(
                     "UPDATE $id SET customer = $customer, \
                                     friendly_name = $name, \
@@ -509,7 +509,7 @@ impl RelinkClientPopup {
             //    still resolves to the previous (wrong) owner.
             if let Some(computer_id) = computer_link {
                 let comp_table = COMPUTER_TABLE;
-                let comp_update = DATABASE
+                let comp_update = db()
                     .query("UPDATE $id SET customer = $customer")
                     .bind(("id", computer_id.clone()))
                     .bind(("customer", new_customer_id.clone()))

@@ -1,7 +1,7 @@
 use crate::{file_viewer::{ColorTheme, FileViewer, Syntax}, PlatformSpawner, Spawner};
 use eframe::egui::{CentralPanel, ScrollArea, Ui};
 use crossbeam::channel::{Receiver, Sender};
-use database::DATABASE;
+use database::db;
 use serde_json::Value;
 use std::fmt::Display;
 use serde::Serialize;
@@ -81,7 +81,7 @@ impl QueryEditor {
     }
 
     pub async fn execute_query(tx: Sender<Value>, query: impl Display) -> anyhow::Result<(), anyhow::Error> {
-        let val = DATABASE.query(query.to_string()).await?.take::<database::schema::SurrealDBValue>(0)?;
+        let val = db().query(query.to_string()).await?.take::<database::schema::SurrealDBValue>(0)?;
         let value = serde_json::to_value(&val)?;
         // log::info!("Query executed: {val:?}\nValue: {value:?}");
         let _ = tx.try_send(value);

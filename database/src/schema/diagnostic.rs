@@ -1,4 +1,4 @@
-use crate::DATABASE;
+use crate::db;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use super::{Datetime, RecordId, SurrealValue};
 use surrealdb_types::{Kind, Value};
@@ -218,7 +218,7 @@ impl DiagnosticSession {
         s.started_at = chrono::Utc::now().into();
         s.status = "open".to_string();
 
-        let created: Option<Self> = DATABASE
+        let created: Option<Self> = db()
             .create(s.id.clone())
             .content(s.clone())
             .await?;
@@ -234,7 +234,8 @@ impl DiagnosticSession {
         if tags.is_some() {
             query_str.push_str(", tags = $tags");
         }
-        let mut q = DATABASE.query(&query_str)
+        let dbh = db();
+        let mut q = dbh.query(&query_str)
             .bind(("sid", sid))
             .bind(("status", status.to_string()))
             .bind(("summary", summary.to_string()));
@@ -247,10 +248,10 @@ impl DiagnosticSession {
 
     pub async fn get_full(session_id: &str) -> anyhow::Result<Option<DiagnosticSessionFull>> {
         let sid = RecordId::new(super::DIAGNOSTIC_SESSION_TABLE, session_id);
-        let session: Option<DiagnosticSession> = DATABASE.select(sid.clone()).await?;
+        let session: Option<DiagnosticSession> = db().select(sid.clone()).await?;
         let Some(session) = session else { return Ok(None) };
 
-        let entries: Vec<DiagnosticEntry> = DATABASE
+        let entries: Vec<DiagnosticEntry> = db()
             .query("SELECT * FROM diagnostic_entry WHERE session_ref == $sid ORDER BY timestamp ASC")
             .bind(("sid", sid))
             .await?
@@ -260,7 +261,7 @@ impl DiagnosticSession {
     }
 
     pub async fn list_all(start: i32) -> anyhow::Result<Vec<Self>> {
-        let sessions: Vec<Self> = DATABASE
+        let sessions: Vec<Self> = db()
             .query("SELECT * FROM diagnostic_session ORDER BY started_at DESC LIMIT 200 START $start")
             .bind(("start", start))
             .await?
@@ -281,7 +282,7 @@ impl DiagnosticSession {
         let sql = "SELECT * FROM diagnostic_session \
                    WHERE connection_string == $cs \
                    ORDER BY started_at DESC LIMIT 50";
-        let sessions: Vec<Self> = DATABASE
+        let sessions: Vec<Self> = db()
             .query(sql)
             .bind(("cs", connection_string.to_string()))
             .await?
@@ -310,7 +311,8 @@ impl DiagnosticSession {
             "SELECT * FROM diagnostic_session WHERE {} ORDER BY started_at DESC LIMIT 50",
             conditions.join(" OR ")
         );
-        let mut q = DATABASE.query(&sql);
+        let dbh = db();
+        let mut q = dbh.query(&sql);
         if let Some(t) = task_id { q = q.bind(("task", t.clone())); }
         if let Some(c) = computer_id { q = q.bind(("computer", c.clone())); }
         let sessions: Vec<Self> = q.await?.take(0)?;
@@ -336,7 +338,8 @@ impl DiagnosticSession {
             return Ok(());
         }
         let sql = format!("UPDATE $sid SET {}", sets.join(", "));
-        let mut q = DATABASE.query(&sql).bind(("sid", session_id.clone()));
+        let dbh = db();
+        let mut q = dbh.query(&sql).bind(("sid", session_id.clone()));
         if let Some(t) = task_ref { q = q.bind(("task", t.clone())); }
         if let Some(s) = service_order { q = q.bind(("svc", s.clone())); }
         q.await?;
@@ -370,7 +373,7 @@ impl DiagnosticSession {
             "SELECT * FROM diagnostic_session WHERE {where_clause} ORDER BY started_at DESC LIMIT 25"
         );
 
-        let sessions: Vec<Self> = DATABASE
+        let sessions: Vec<Self> = db()
             .query(&sql)
             .bind(("q", q))
             .bind(("host", hostname.unwrap_or("").to_string()))
@@ -389,7 +392,7 @@ impl DiagnosticEntry {
     }
 
     pub async fn list_all(start: i32) -> anyhow::Result<Vec<Self>> {
-        let entries: Vec<Self> = DATABASE
+        let entries: Vec<Self> = db()
             .query("SELECT * FROM diagnostic_entry ORDER BY timestamp DESC LIMIT 200 START $start")
             .bind(("start", start))
             .await?
@@ -413,7 +416,7 @@ impl DiagnosticEntry {
             }
         };
 
-        DATABASE
+        db()
             .query(
                 "CREATE $id CONTENT {
                     session_ref: $session_ref,

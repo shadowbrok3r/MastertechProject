@@ -46,7 +46,7 @@ fn canonical_id_string(raw: &str, table: &'static str) -> String {
 
 /// Resolve `computer:<HOST:hash9>` from a Web Console connection string.
 pub async fn computer_id_for_connection(connection_string: &str) -> Option<String> {
-    let mut response = database::DATABASE
+    let mut response = database::db()
         .query(
             "SELECT computer FROM connected_client \
              WHERE connection_string = $cs LIMIT 1",
@@ -186,7 +186,7 @@ pub async fn verify_stress_test_persistence(
 }
 
 async fn query_run_by_id(id: &RecordId) -> Option<serde_json::Value> {
-    let mut response = database::DATABASE
+    let mut response = database::db()
         .query("SELECT id, result, failure_kind, target_component, session_ref, tool_label, started_at FROM $id")
         .bind(("id", id.clone()))
         .await
@@ -197,7 +197,7 @@ async fn query_run_by_id(id: &RecordId) -> Option<serde_json::Value> {
 
 async fn query_latest_run_for_computer(computer_key: &str) -> Option<serde_json::Value> {
     let cid = parse_record_id(computer_key, COMPUTER_TABLE);
-    let mut response = database::DATABASE
+    let mut response = database::db()
         .query(
             "SELECT id, result, failure_kind, target_component, session_ref, tool_label, started_at FROM stress_test_run \
              WHERE computer = $c ORDER BY started_at DESC LIMIT 1",
@@ -210,7 +210,7 @@ async fn query_latest_run_for_computer(computer_key: &str) -> Option<serde_json:
 }
 
 async fn count_events_for_run(run_ref: &RecordId) -> Option<u64> {
-    let mut response = database::DATABASE
+    let mut response = database::db()
         .query("SELECT count() FROM stress_test_event WHERE run_ref = $r GROUP ALL")
         .bind(("r", run_ref.clone()))
         .await
@@ -223,7 +223,7 @@ async fn count_events_for_run(run_ref: &RecordId) -> Option<u64> {
 
 async fn hardware_component_exists(component_key: &str) -> bool {
     let cid = parse_record_id(component_key, HARDWARE_COMPONENT_TABLE);
-    let response = database::DATABASE
+    let response = database::db()
         .query("SELECT id FROM $id")
         .bind(("id", cid))
         .await

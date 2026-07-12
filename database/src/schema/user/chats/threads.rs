@@ -1,4 +1,4 @@
-use crate::{schema::{random_record_id, Datetime, RecordId, SurrealValue, User, CHAT_THREAD_TABLE}, DATABASE};
+use crate::{schema::{random_record_id, Datetime, RecordId, SurrealValue, User, CHAT_THREAD_TABLE}, db};
 use chrono::Utc;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, SurrealValue)]
@@ -55,7 +55,7 @@ impl ChatThread {
     pub async fn get_thread_users(&self) -> anyhow::Result<Vec<User>, anyhow::Error> {
         let usrs = &mut vec![];
         for user in &self.thread_users {
-            let usr_record: Option<User> = DATABASE
+            let usr_record: Option<User> = db()
                 .query("SELECT * FROM user WHERE id == $id")
                 .bind(("id", user.clone()))
                 .await?
@@ -70,7 +70,7 @@ impl ChatThread {
     }
 
     pub async fn get_thread_owner(&self) -> anyhow::Result<Option<User>, anyhow::Error> {
-        let usr_record: Option<User> = DATABASE
+        let usr_record: Option<User> = db()
             .query("SELECT * FROM user WHERE id == $id")
             .bind(("id", self.user_created.clone()))
             .await?
@@ -80,7 +80,7 @@ impl ChatThread {
     }
 
     pub async fn get_thread_from_id(id: RecordId) -> anyhow::Result<Option<Self>, anyhow::Error> {
-        let thread_record: Option<Self> = DATABASE
+        let thread_record: Option<Self> = db()
             .query("SELECT * FROM chat_thread WHERE id == $id")
             .bind(("id", id.clone()))
             .await?
@@ -90,7 +90,7 @@ impl ChatThread {
     }
 
     pub async fn submit_user_to_thread(&mut self, user: User) -> anyhow::Result<Option<Self>, anyhow::Error> {
-        let thread_record: Option<Self> = DATABASE
+        let thread_record: Option<Self> = db()
             .query("UPDATE $id SET thread_users += $user")
             .bind(("id", self.id.clone()))
             .bind(("user", user.clone()))
@@ -102,7 +102,7 @@ impl ChatThread {
 
     pub async fn create_thread(self) -> anyhow::Result<Option<Self>, anyhow::Error> {
         log::info!("Creating thread: {:?}", &self);
-        let thread_record: Option<Self> = DATABASE
+        let thread_record: Option<Self> = db()
             .create(CHAT_THREAD_TABLE)
             .content(self.clone())
             .await?;
@@ -111,7 +111,7 @@ impl ChatThread {
     }
 
     pub async fn update_thread(&mut self) -> anyhow::Result<Option<Self>, anyhow::Error> {
-        let message_record: Option<Self> = DATABASE
+        let message_record: Option<Self> = db()
             .update(self.id.clone())
             .content(self.clone())
             .await?;
@@ -120,7 +120,7 @@ impl ChatThread {
     }
 
     pub async fn delete_thread(&mut self) -> anyhow::Result<Option<Self>, anyhow::Error> {
-        let message_record: Option<Self> = DATABASE
+        let message_record: Option<Self> = db()
             .delete(self.id.clone())
             .await?;
 
@@ -129,7 +129,7 @@ impl ChatThread {
 
     pub async fn load_threads(user_id: RecordId) -> anyhow::Result<Vec<Self>, anyhow::Error> {
         let query = "SELECT * FROM chat_thread WHERE thread_users CONTAINS $user_id";
-        let threads: Vec<Self> = DATABASE
+        let threads: Vec<Self> = db()
             .query(query)
             .bind(("user_id", user_id))
             .await?
@@ -171,7 +171,7 @@ impl ChatThread {
         thread_users.sort();
 
         // Query for an existing thread with exactly these users
-        let existing_thread: Option<Self> = DATABASE
+        let existing_thread: Option<Self> = db()
             .query("SELECT * FROM chat_thread WHERE thread_users = $users")
             .bind(("users", thread_users.clone()))
             .await?
@@ -190,7 +190,7 @@ impl ChatThread {
 
             log::info!("New Thread: {new_thread:?}");
 
-            let created_thread = DATABASE
+            let created_thread = db()
                 .create(new_thread.clone().id)
                 .content(new_thread.clone())
                 .await?;

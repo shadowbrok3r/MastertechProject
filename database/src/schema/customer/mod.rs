@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use structdiff::{Difference, StructDiff};
-use crate::{schema::{prestashop::{Address, Customer, Prestashop}, CUSTOMER_TABLE}, DATABASE};
+use crate::{schema::{prestashop::{Address, Customer, Prestashop}, CUSTOMER_TABLE}, db};
 
 use super::{random_record_id, RecordId, SurrealValue};
 
@@ -39,7 +39,7 @@ impl Default for CustomerData {
 
 impl CustomerData {
     pub async fn get_associated_customer(id: RecordId) -> anyhow::Result<Self, anyhow::Error> {
-        let customer: Option<Self> = DATABASE
+        let customer: Option<Self> = db()
             .query("SELECT VALUE service_ticket.customer.* FROM task WHERE id == $id")
             .bind(("id", id))
             .await?
@@ -48,7 +48,7 @@ impl CustomerData {
     }
 
     pub async fn get_customers(start: i32) -> anyhow::Result<Vec<Self>, anyhow::Error> {
-        let customers: Vec<Self> = DATABASE
+        let customers: Vec<Self> = db()
             .query("SELECT * FROM customer START $start LIMIT 200")
             .bind(("start", start))
             .await?

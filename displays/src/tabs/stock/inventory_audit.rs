@@ -13,7 +13,7 @@ use anyhow::{anyhow, Result};
 use crossbeam::channel::Sender;
 use database::schema::{random_record_id, Datetime, RecordId, Store};
 use database::SurrealValue;
-use database::{DATABASE, ODOO_API_KEY, ODOO_JSONRPC_URL};
+use database::{db, ODOO_API_KEY, ODOO_JSONRPC_URL};
 use eframe::egui::{Button, Color32, Link, OpenUrl, Response, RichText, Spinner, Ui, Widget};
 use egui_data_table::{
     viewer::{DecodeErrorBehavior, RowCodec},
@@ -618,7 +618,7 @@ pub async fn save_audit(
         serials: rows.clone(),
     };
 
-    let _: Option<NewAuditPayload> = DATABASE.create(id.clone()).content(payload).await?;
+    let _: Option<NewAuditPayload> = db().create(id.clone()).content(payload).await?;
 
     let meta = InventoryAuditMeta {
         id,
@@ -650,7 +650,7 @@ pub async fn list_audits(
     store_id: i32,
     tx: Sender<Vec<InventoryAuditMeta>>,
 ) -> Result<()> {
-    let mut response = DATABASE
+    let mut response = db()
         .query(
             "SELECT id, label, created_at, array::len(serials) AS serial_count \
              FROM inventory_audit \
@@ -696,7 +696,7 @@ fn format_datetime(dt: &Datetime) -> String {
 
 /// Load a single audit's full serial list.
 ///
-/// Uses `DATABASE.select(id)` instead of a SELECT projection so we don't
+/// Uses `db().select(id)` instead of a SELECT projection so we don't
 /// have to mirror every field in a Rust struct — and so a single
 /// type-mismatched field can't silently null out the whole row (which
 /// is what was producing the `load_audit: audit not found` error).
@@ -721,7 +721,7 @@ pub async fn load_audit(
         serials: Vec<AuditSerialRow>,
     }
 
-    let row: Option<AuditFullRow> = DATABASE.select(id.clone()).await?;
+    let row: Option<AuditFullRow> = db().select(id.clone()).await?;
     let row = row.ok_or_else(|| anyhow!("load_audit: audit not found"))?;
 
     let serial_count = row.serials.len();
@@ -748,7 +748,7 @@ pub async fn load_audit(
 pub async fn mark_found(id: RecordId, serial: String, found: bool) -> Result<()> {
     // SurrealDB supports `serials[WHERE serial = $s].found = $v` for
     // targeted array mutation.
-    let _ = DATABASE
+    let _ = db()
         .query(
             "UPDATE $id SET serials[WHERE serial = $serial].found = $found",
         )

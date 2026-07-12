@@ -4,7 +4,7 @@ use database::schema::{
     HardwareComponent, HardwareKind, HardwareTestBaseline, RecordId, RecordIdExt,
     StressTestEvent, StressTestMetric, StressTestRun,
 };
-use database::DATABASE;
+use database::db;
 
 use super::{ComponentRow, RunRow};
 
@@ -12,7 +12,7 @@ pub async fn fetch_components(kind_filter: Option<HardwareKind>) -> anyhow::Resu
     let rows: Vec<HardwareComponent> = if let Some(kind) = kind_filter {
         HardwareComponent::list_by_kind(kind).await?
     } else {
-        let mut response = DATABASE
+        let mut response = db()
             .query(
                 "SELECT * FROM hardware_component ORDER BY last_seen DESC LIMIT 300",
             )
@@ -48,7 +48,7 @@ pub async fn fetch_recent_runs(limit: u64) -> anyhow::Result<Vec<RunRow>> {
     // before the write-side `<float>` cast (where `duration::secs` could
     // land as an integer) deserialize into the Rust `Option<f64>` field
     // without "Expected float, got number" errors.
-    let mut response = DATABASE
+    let mut response = db()
         .query(
             "SELECT *, <float> duration_actual_secs AS duration_actual_secs \
              FROM stress_test_run ORDER BY started_at DESC LIMIT $limit",

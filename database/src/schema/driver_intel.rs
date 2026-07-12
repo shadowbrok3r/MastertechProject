@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::DATABASE;
+use crate::db;
 
 use super::{crash_intel::module_stem, Datetime, RecordId, SurrealValue};
 
@@ -258,7 +258,7 @@ impl DriverSnapshot {
         s.id = super::random_record_id(super::DRIVER_SNAPSHOT_TABLE);
         s.taken_at = chrono::Utc::now().into();
         s.driver_count = s.drivers.len() as u32;
-        let created: Option<Self> = DATABASE.create(s.id.clone()).content(s.clone()).await?;
+        let created: Option<Self> = db().create(s.id.clone()).content(s.clone()).await?;
         Ok(created.map(|c| c.id).unwrap_or(s.id))
     }
 
@@ -267,7 +267,7 @@ impl DriverSnapshot {
         connection_string: &str,
         limit: u32,
     ) -> anyhow::Result<Vec<Self>> {
-        let rows: Vec<Self> = DATABASE
+        let rows: Vec<Self> = db()
             .query("SELECT * FROM driver_snapshot WHERE connection_string == $cs ORDER BY taken_at DESC LIMIT $limit")
             .bind(("cs", connection_string.to_string()))
             .bind(("limit", limit as i64))
@@ -277,7 +277,7 @@ impl DriverSnapshot {
     }
 
     pub async fn get(id: &RecordId) -> anyhow::Result<Option<Self>> {
-        Ok(DATABASE.select(id.clone()).await?)
+        Ok(db().select(id.clone()).await?)
     }
 
     /// Snapshot metadata (no inventories) for a machine, newest first.
@@ -285,7 +285,7 @@ impl DriverSnapshot {
         connection_string: &str,
         limit: u32,
     ) -> anyhow::Result<Vec<serde_json::Value>> {
-        let rows: Vec<serde_json::Value> = DATABASE
+        let rows: Vec<serde_json::Value> = db()
             .query(
                 "SELECT id, label, source, taken_at, driver_count, notes \
                  FROM driver_snapshot WHERE connection_string == $cs \
@@ -302,7 +302,7 @@ impl DriverSnapshot {
 impl KnownBadDriver {
     /// All active blocklist entries.
     pub async fn active() -> anyhow::Result<Vec<Self>> {
-        let rows: Vec<Self> = DATABASE
+        let rows: Vec<Self> = db()
             .query("SELECT * FROM known_bad_driver WHERE active == true ORDER BY module ASC")
             .await?
             .take(0)?;
@@ -315,12 +315,12 @@ impl KnownBadDriver {
         e.module = module_stem(&e.module);
         e.created_at = chrono::Utc::now().into();
         e.updated_at = e.created_at.clone();
-        let created: Option<Self> = DATABASE.create(e.id.clone()).content(e.clone()).await?;
+        let created: Option<Self> = db().create(e.id.clone()).content(e.clone()).await?;
         Ok(created.map(|c| c.id).unwrap_or(e.id))
     }
 
     pub async fn set_active(id: &RecordId, active: bool) -> anyhow::Result<()> {
-        DATABASE
+        db()
             .query("UPDATE $id SET active = $active, updated_at = time::now()")
             .bind(("id", id.clone()))
             .bind(("active", active))
@@ -331,7 +331,7 @@ impl KnownBadDriver {
     /// Blocklist entries whose module stem matches a crash module.
     pub async fn matching_module(module: &str) -> anyhow::Result<Vec<Self>> {
         let stem = module_stem(module);
-        let rows: Vec<Self> = DATABASE
+        let rows: Vec<Self> = db()
             .query("SELECT * FROM known_bad_driver WHERE active == true AND module == $stem")
             .bind(("stem", stem))
             .await?

@@ -456,7 +456,7 @@ pub enum Cmd {
     /// Response payload from the remote client carrying the
     /// gathered list. Uses the `InstalledSecurityProduct` struct
     /// (re-exported from `database::schema::computer`) directly so
-    /// the admin can `DATABASE.update(...)` it onto the `computer`
+    /// the admin can `db().update(...)` it onto the `computer`
     /// row without any field-by-field copying.
     SecurityInventoryResponse(Vec<database::schema::InstalledSecurityProduct>),
 

@@ -2,7 +2,7 @@
 use super::{
     prestashop_schema::{self, Employee, Prestashop, PrestashopPayload}, ComputerData, ConnectedClient, CustomerData, RecordId, SurrealValue, Store, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, TASK_NOTE_TABLE
 };
-use crate::{DATABASE, PlatformSpawner, Spawner, schema::{CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE, parse_msg_date, prestashop::{OrderState, OrderType, PrestashopId}}};
+use crate::{db, PlatformSpawner, Spawner, schema::{CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE, parse_msg_date, prestashop::{OrderState, OrderType, PrestashopId}}};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Debug};
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
@@ -103,8 +103,8 @@ pub trait OrderHelper {
 impl EmployeeHelper for Employee {
     async fn find_user(&mut self) -> Result<Option<User>, Error> {
         log::warn!("EmployeeHelper -> find_user");
-        DATABASE.set("email", self.email.clone()).await?;
-        let usr: Option<User> = DATABASE
+        db().set("email", self.email.clone()).await?;
+        let usr: Option<User> = db()
             .query("SELECT * FROM user WHERE email == $email")
             .await?
             .take(0)?;
@@ -535,10 +535,10 @@ impl ComputerDataHelper for ComputerData {
     }
 
     async fn find_associated_customer(&mut self) -> Result<CustomerData, Error> {
-        DATABASE
+        db()
             .set("cust_id", self.customer.clone())
             .await?;
-        let customer: Option<CustomerData> = DATABASE
+        let customer: Option<CustomerData> = db()
             .query("SELECT * FROM customer WHERE id == $cust_id")
             .await?
             .take(0)?;

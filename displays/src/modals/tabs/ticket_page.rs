@@ -3,7 +3,7 @@ use database::schema::{CarboniteResponse, ComputerData, CustomerData, LiveTaskPa
 use database::schema::prestashop::{OrderState, Prestashop};
 use database::schema::prestashop::xml::{modify_xml, remove_xml_tag};
 // use database::schema::helper_traits::parse_email_user;
-use database::DATABASE;
+use database::db;
 use database::xidax_order_url;
 use reqwest::Client;
 use crate::{Interaction, PlatformSpawner, Spawner};
@@ -368,7 +368,7 @@ pub fn display_ticket_page(
                             let task_description = task.task_description.clone();
                             let task_id = task.id.clone();
                             PlatformSpawner::spawn(async move {
-                                match DATABASE
+                                match db()
                                 .query("UPDATE $id SET task_description=$description")
                                 .bind(("id", task_id))
                                 .bind(("description", task_description.clone()))
@@ -450,7 +450,7 @@ pub fn display_ticket_page(
                                 let task_description = task.task_description.clone();
                                 let task_id = task.id.clone();
                                 PlatformSpawner::spawn(async move {
-                                    match DATABASE
+                                    match db()
                                     .query("UPDATE $id SET task_description=$description")
                                     .bind(("id", task_id))
                                     .bind(("description", task_description.clone()))

@@ -676,9 +676,9 @@ async fn shutdown_aware_sleep(shutdown: &Arc<AtomicBool>, dur: Duration) -> bool
 
 #[cfg(not(target_arch = "wasm32"))]
 async fn fetch_tcp_target(connection_string: &str) -> Option<String> {
-    use database::DATABASE;
+    use database::db;
 
-    let mut response = DATABASE
+    let mut response = db()
         .query(
             "SELECT local_ip, tcp_port FROM connected_client \
              WHERE connection_string = $cs LIMIT 1",

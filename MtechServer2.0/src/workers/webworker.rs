@@ -1,5 +1,5 @@
 use anyhow::Context;
-use database::{schema::LiveTaskPayload, Database, DATABASE};
+use database::{schema::LiveTaskPayload, Database, db};
 use gloo_worker::{HandlerId, WorkerScope};
 use wasm_bindgen_futures::spawn_local;
 use serde::{Deserialize, Serialize};
@@ -78,7 +78,7 @@ pub async fn get_completed_tasks_for_store() -> anyhow::Result<Vec<LiveTaskPaylo
 
     let start_query = web_time::Instant::now();
 
-    let query_results: Vec<LiveTaskPayload> = DATABASE
+    let query_results: Vec<LiveTaskPayload> = db()
         .query(query)   
         .await?
         .take(0)?;

@@ -1,5 +1,5 @@
 use crate::{terminal_mode::{systems::{communication_system::DataMessage, notification_system::{Notification, NotificationType}}, TerminalApp}, utilities::load_encrypted_user_data};
-use database::{schema::User, Database, DATABASE};
+use database::{schema::User, Database, db};
 use displays::{app_state::{AppState, MainPages}, pages::login_page::HASH};
 
 impl <'a>TerminalApp<'a> {
@@ -49,9 +49,9 @@ impl <'a>TerminalApp<'a> {
                                     data_tx.send(Box::new(
                                         DataMessage(usr.clone())
                                     ))?;
-                                } else { 
-                                    log::info!("no usr"); 
-                                    let _ = DATABASE.invalidate().await;
+                                } else {
+                                    log::info!("no usr");
+                                    let _ = database::db().invalidate().await;
                                     app_state_tx.try_send(AppState::NoAuth("Login".to_string()))?;
                                 }
                                 app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks))?;

@@ -149,7 +149,7 @@ pub fn pending_probe_count(
 /// spawn it once, hence the `prober_spawned` guard on
 /// `SharedContext`.
 ///
-/// The prober uses `database::DATABASE` directly to fetch the
+/// The prober uses `database::db` directly to fetch the
 /// live client list each round — that's the source of truth
 /// and avoids racing with the UI thread's in-memory snapshot.
 ///

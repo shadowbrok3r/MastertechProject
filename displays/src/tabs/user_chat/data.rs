@@ -1,6 +1,6 @@
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 use bytes::Bytes;
-use database::{live_data::{listen_data, Action}, schema::{ChatAction, ChatMessageType, ChatThread, RecordId, User, UserMessage, CHAT_THREAD_TABLE, USER_MESSAGE_TABLE}};
+use database::{live_data::Action, schema::{ChatAction, ChatMessageType, ChatThread, RecordId, User, UserMessage}};
 use crate::{get_current_user_from_auth, get_database_users, PlatformSpawner, Spawner};
 use eframe::egui::Ui;
 use super::UserChat;
@@ -11,14 +11,9 @@ impl UserChat {
             self.set_users();
         } else {
             self.first_run = false;
-            let tx = self.thread_listener_tx.clone();
-            let msg_tx = self.message_listener_tx.clone();
-            PlatformSpawner::spawn(async move {
-                let _ = listen_data(tx, CHAT_THREAD_TABLE).await;
-            }); 
-            PlatformSpawner::spawn(async move {
-                let _ = listen_data(msg_tx, USER_MESSAGE_TABLE).await;
-            });
+            // Live streams are spawned by the shared reconnect supervisor
+            // (participant-filtered, abortable, re-issued after reconnects).
+            self.streams_requested = true;
         }
     }
 

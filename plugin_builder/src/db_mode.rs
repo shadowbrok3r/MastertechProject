@@ -23,7 +23,7 @@ use database::live_data::Action;
 use database::schema::{
     BuildJob, ClientKind, ConnectedClient, RecordId, CONNECTED_CLIENT_TABLE,
 };
-use database::DATABASE;
+use database::db;
 
 use crate::compile::{compile_one, BuildArtifact, BuildFailure};
 use crate::Config;
@@ -78,7 +78,7 @@ pub async fn run(cfg: Config) -> Result<()> {
     // tokio runtime.
     tokio::spawn(async move {
         if let Err(e) = database::live_data::listen_data_filtered::<BuildJob>(
-            tx, live_query, bindings,
+            tx, live_query, bindings, None,
         )
         .await
         {
@@ -236,7 +236,7 @@ async fn upsert_self(worker_id: &RecordId, cfg: &Config) -> Result<()> {
         created_at: Some(now),
         ..ConnectedClient::default()
     };
-    let _: Option<ConnectedClient> = DATABASE
+    let _: Option<ConnectedClient> = db()
         .upsert(worker_id.clone())
         .content(row)
         .await
@@ -245,7 +245,7 @@ async fn upsert_self(worker_id: &RecordId, cfg: &Config) -> Result<()> {
 }
 
 async fn touch_last_update(worker_id: &RecordId) -> Result<()> {
-    let _: Option<ConnectedClient> = DATABASE
+    let _: Option<ConnectedClient> = db()
         .query("UPDATE $id SET last_update = time::now(), connected = true RETURN AFTER")
         .bind(("id", worker_id.clone()))
         .await

@@ -1,6 +1,6 @@
 use super::store_inventory_viewer::ExtraInventoryData;
 use super::row_viewer::{RawStockData, SerialData, SerialInfo, CostBreakdownData, SystemInStoreData, SystemType, BulkOrderData, BulkProductData};
-use database::{DATABASE, ODOO_API_KEY, ODOO_DB, ODOO_JSONRPC_URL, ODOO_UID, schema::{Store, ComputerData, prestashop::{Customer, Order, OrderDetail, OrderState, OrderType, Prestashop, PrestashopId}}};
+use database::{db, ODOO_API_KEY, ODOO_DB, ODOO_JSONRPC_URL, ODOO_UID, schema::{Store, ComputerData, prestashop::{Customer, Order, OrderDetail, OrderState, OrderType, Prestashop, PrestashopId}}};
 use crossbeam::channel::Sender;
 use anyhow::{Error, Result};
 use serde::Deserialize;
@@ -114,7 +114,7 @@ async fn fetch_extra_stock_info_from_odoo() -> Result<Vec<ExtraInventoryData>, E
 
 /// Cached `data` from `stock_cache:<key>` when fresher than the TTL.
 async fn read_stock_cache<T: database::SurrealValue>(key: &str) -> Result<Option<Vec<T>>, Error> {
-    let mut res = DATABASE
+    let mut res = db()
         .query(format!(
             "LET $r = SELECT * FROM ONLY stock_cache:{key}; \
              RETURN IF $r.refreshed_at != NONE AND $r.refreshed_at > (time::now() - {STOCK_CACHE_TTL}) {{ $r.data }} ELSE {{ NONE }};"
@@ -126,7 +126,7 @@ async fn read_stock_cache<T: database::SurrealValue>(key: &str) -> Result<Option
 /// Claims the refresh slot for `stock_cache:<key>`.
 /// Returns (claim token if this client won the slot, current cached data).
 async fn claim_stock_cache<T: database::SurrealValue>(key: &str) -> Result<(Option<String>, Option<Vec<T>>), Error> {
-    let mut res = DATABASE
+    let mut res = db()
         .query(format!(
             "LET $r = SELECT * FROM ONLY stock_cache:{key}; \
              LET $tok = IF $r.refreshing_since == NONE OR $r.refreshing_since < (time::now() - {STOCK_CLAIM_TTL}) {{ (UPSERT stock_cache:{key} SET refreshing_since = time::now(), claim_token = rand::ulid() RETURN AFTER)[0].claim_token }} ELSE {{ NONE }}; \
@@ -150,7 +150,7 @@ async fn write_stock_cache<T: database::SurrealValue>(
     token: &str,
 ) -> Result<bool, Error> {
     let location_sql = location.map_or("NONE".to_string(), |l| l.to_string());
-    let mut res = DATABASE
+    let mut res = db()
         .query(format!(
             "RETURN IF (SELECT VALUE claim_token FROM ONLY stock_cache:{key}) == $tok {{ UPSERT stock_cache:{key} CONTENT {{ kind: '{kind}', location_id: {location_sql}, data: $data, refreshed_at: time::now(), refreshing_since: NONE, claim_token: NONE }}; true }} ELSE {{ false }};"
         ))
@@ -163,7 +163,7 @@ async fn write_stock_cache<T: database::SurrealValue>(
 
 /// Releases this client's claim; a claim owned by another token is untouched.
 async fn release_stock_cache_claim(key: &str, token: &str) {
-    let _ = DATABASE
+    let _ = db()
         .query(format!(
             "UPDATE stock_cache:{key} SET refreshing_since = NONE, claim_token = NONE WHERE claim_token == $tok;"
         ))
@@ -243,7 +243,7 @@ pub async fn get_stock(stock_tx: Sender<Vec<RawStockData>>, location: u64, force
     .await?;
     if wrote {
         // Stock changed, so the per-store serial cache is no longer valid.
-        if let Err(e) = DATABASE
+        if let Err(e) = db()
             .query(format!("DELETE stock_cache:serials_{location};"))
             .await
             .and_then(|r| r.check())

@@ -8,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::DATABASE;
+use crate::db;
 
 use super::{random_record_id, Datetime, RecordId, SurrealValue, BUILD_JOB_TABLE};
 
@@ -87,12 +87,12 @@ impl BuildJob {
             assigned_worker_id,
             ..Self::default()
         };
-        let created: Option<Self> = DATABASE.create(row.id.clone()).content(row).await?;
+        let created: Option<Self> = db().create(row.id.clone()).content(row).await?;
         created.ok_or_else(|| anyhow::anyhow!("CREATE build_job returned None"))
     }
 
     pub async fn get(id: &RecordId) -> anyhow::Result<Option<Self>> {
-        let row: Option<Self> = DATABASE.select(id.clone()).await?;
+        let row: Option<Self> = db().select(id.clone()).await?;
         Ok(row)
     }
 
@@ -103,7 +103,7 @@ impl BuildJob {
     /// state). This is the only operation that must be race-safe:
     /// SurrealDB's per-record write lock guarantees a single winner.
     pub async fn claim(id: &RecordId, worker_id: &RecordId) -> anyhow::Result<Option<Self>> {
-        let mut response = DATABASE
+        let mut response = db()
             .query(
                 "UPDATE $id SET status = 'claimed', \
                                 claimed_worker_id = $worker, \
@@ -126,7 +126,7 @@ impl BuildJob {
         stderr: String,
         duration_ms: u64,
     ) -> anyhow::Result<()> {
-        let _: Option<Self> = DATABASE
+        let _: Option<Self> = db()
             .query(
                 "UPDATE $id SET status = 'done', \
                                 wasm_bytes = $bytes, \
@@ -151,7 +151,7 @@ impl BuildJob {
         stderr: String,
         duration_ms: u64,
     ) -> anyhow::Result<()> {
-        let _: Option<Self> = DATABASE
+        let _: Option<Self> = db()
             .query(
                 "UPDATE $id SET status = 'failed', \
                                 stdout = $stdout, \
@@ -173,7 +173,7 @@ impl BuildJob {
     /// on startup to drain any jobs that arrived before its live
     /// subscription was active.
     pub async fn pending_for_worker(worker_id: &RecordId) -> anyhow::Result<Vec<Self>> {
-        let mut response = DATABASE
+        let mut response = db()
             .query(
                 "SELECT * FROM build_job \
                  WHERE status = 'pending' \

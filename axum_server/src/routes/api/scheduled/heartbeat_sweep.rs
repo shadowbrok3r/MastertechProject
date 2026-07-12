@@ -30,7 +30,7 @@ pub async fn register(sched: &JobScheduler) -> Result<()> {
                 // Send through the shared DATABASE client so a DB outage
                 // simply delays the sweep until the connection recovers —
                 // no missed-tick fan-out, no panicked job.
-                let res = database::DATABASE
+                let res = database::db()
                     .query(
                         "UPDATE connected_client \
                          SET connected = false \

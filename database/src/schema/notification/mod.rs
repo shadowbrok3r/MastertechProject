@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use surrealdb::types::Value;
 use surrealdb_types::Datetime;
 
-use crate::DATABASE;
+use crate::db;
 
 use super::{random_record_id, RecordId, RecordIdExt, SurrealValue, NOTIFICATION_TABLE, USER_TABLE};
 
@@ -79,7 +79,7 @@ impl Notification {
     }
 
     pub async fn create(&self) -> anyhow::Result<(), anyhow::Error> {
-        let notif: Value = DATABASE
+        let notif: Value = db()
             .query("CREATE notification CONTENT $notif")
             .bind(("notif", self.clone()))
             .await?
@@ -103,7 +103,7 @@ impl Notification {
             NOTIFICATION_TABLE,
             format!("canary_{}_{}", user.key_string(), session),
         );
-        DATABASE
+        db()
             .query("UPSERT $id SET user = $user, notification_type = 'live_query_check', notification_description = $nonce, status = 'Read', created_at = time::now()")
             .bind(("id", id))
             .bind(("user", user))
@@ -114,7 +114,7 @@ impl Notification {
 
     /// Deletes this user's canary records older than a day (dead sessions).
     pub async fn purge_stale_canaries(user: RecordId) -> anyhow::Result<()> {
-        DATABASE
+        db()
             .query("DELETE notification WHERE notification_type = 'live_query_check' AND user = $user AND created_at < time::now() - 1d")
             .bind(("user", user))
             .await?;

@@ -224,7 +224,7 @@ async fn alive(State(app): State<AppState>, Path(serial): Path<String>) -> impl 
         connection_string: String,
     }
     let rid = RecordId::new("connected_client", format!("qc_{serial}"));
-    let up: Result<Option<serde_json::Value>, _> = database::DATABASE
+    let up: Result<Option<serde_json::Value>, _> = database::db()
         .upsert(rid)
         .merge(AliveMerge {
             connected: true,
@@ -247,7 +247,7 @@ async fn alive(State(app): State<AppState>, Path(serial): Path<String>) -> impl 
                  UPDATE connected_client SET computer = $comp.id, customer = $comp.customer \
                  WHERE connection_string = $cs AND client_kind = 'uefi' AND computer IS NONE; \
              };";
-    match database::DATABASE
+    match database::db()
         .query(q)
         .bind(("cs", serial.clone()))
         .await

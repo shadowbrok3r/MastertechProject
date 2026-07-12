@@ -21,7 +21,7 @@
 //! let entries = file_storage::list_files("default_bucket", "/").await?;
 //! ```
 
-use crate::{DATABASE, ensure_connected_or_reconnect};
+use crate::{db, ensure_connected_or_reconnect};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use chrono::{DateTime, Utc};
@@ -71,7 +71,7 @@ impl FileEntry {
     pub fn filename(&self) -> String {
         let path = self.file.as_deref().unwrap_or(&self.key);
         // Parse f"bucket:/path/to/file.txt" to get "file.txt"
-        path.rsplit('/').next().unwrap_or(path).to_string()
+        path.rsplit('/').next().unwrap_or(path).trim_end_matches('"').to_string()
     }
     
     /// Extract the full path from the file pointer
@@ -89,21 +89,21 @@ impl FileEntry {
 /// Define or initialize a bucket.
 ///
 /// Automatically prepends `file:/` to file-system paths and appends `PERMISSIONS FULL`.
-/// Uses `OVERWRITE` so the definition is always refreshed on login.
+/// Uses `IF NOT EXISTS`, so an already-defined bucket is left untouched.
 ///
 /// # Arguments
 /// * `bucket_name` - The bucket name
 /// * `backend` - The backend path (e.g., "file:/path/to/storage/", "C:/SurrealBuckets/user", or "memory")
 pub async fn define_bucket(bucket_name: &str, backend: &str) -> anyhow::Result<(), anyhow::Error> {
     let sanitized = sanitize_bucket_name(bucket_name);
-    log::info!("About to query DB. DATABASE ptr: {:p}", &*DATABASE);
+    log::info!("About to query DB. client ptr: {:?}", std::sync::Arc::as_ptr(&db()));
 
     let resolved_backend = resolve_backend(backend);
     let query = format!(
         r#"DEFINE BUCKET IF NOT EXISTS {sanitized} BACKEND '{resolved_backend}' PERMISSIONS FULL"#
     );
     log::info!("define_bucket query: {}", query);
-    DATABASE.query(&query).await?;
+    db().query(&query).await?;
     log::info!("Defined bucket: {} with backend: {}", sanitized, resolved_backend);
     Ok(())
 }
@@ -112,10 +112,10 @@ pub async fn define_bucket(bucket_name: &str, backend: &str) -> anyhow::Result<(
 /// Uses a file backend at the default storage location
 pub async fn init_user_bucket(username: &str) -> anyhow::Result<(), anyhow::Error> {
     let bucket_name = sanitize_bucket_name(username);
-    log::info!("About to query DB. DATABASE ptr: {:p}", &*DATABASE);
+    log::info!("About to query DB. client ptr: {:?}", std::sync::Arc::as_ptr(&db()));
     // Use memory backend for user buckets by default (can be changed to file backend)
     let query = format!(r#"DEFINE BUCKET IF NOT EXISTS {} PERMISSIONS FULL"#, bucket_name);
-    DATABASE.query(&query).await?;
+    db().query(&query).await?;
     log::info!("Initialized user bucket: {}", bucket_name);
     Ok(())
 }
@@ -123,7 +123,9 @@ pub async fn init_user_bucket(username: &str) -> anyhow::Result<(), anyhow::Erro
 /// Resolve a backend string to a valid SurrealDB BACKEND value.
 /// - `"memory"` is passed through as-is.
 /// - Paths already prefixed with `file:` / `file:/` are passed through.
-/// - Bare filesystem paths (e.g. `C:/SurrealBuckets/user`) get `file:/` prepended.
+/// - Absolute unix-style paths (leading `/`) become `file:<path>` — a single
+///   slash, matching the server catalog's `file:/surrealbuckets/<user>` form.
+/// - Other bare paths (e.g. `C:/SurrealBuckets/user`) get `file:/` prepended.
 fn resolve_backend(backend: &str) -> String {
     let trimmed = backend.trim();
     if trimmed.eq_ignore_ascii_case("memory") {
@@ -135,7 +137,19 @@ fn resolve_backend(backend: &str) -> String {
     if trimmed.starts_with("file:") {
         return format!("file:/{}", &trimmed["file:".len()..]);
     }
+    if trimmed.starts_with('/') {
+        return format!("file:{trimmed}");
+    }
     format!("file:/{}", trimmed)
+}
+
+/// Joins a bucket base path and a segment with exactly one `/` between them.
+pub fn join_bucket_path(base: &str, segment: &str) -> String {
+    format!(
+        "{}/{}",
+        base.trim_end_matches(['/', '\\']),
+        segment.trim_start_matches(['/', '\\'])
+    )
 }
 
 /// Put a file into the bucket
@@ -165,7 +179,7 @@ pub async fn put_file(bucket: &str, path: &str, data: Vec<u8>) -> anyhow::Result
         let timeout_duration = std::time::Duration::from_secs(60); // 60 second timeout for uploads
         let result = tokio::time::timeout(
             timeout_duration,
-            DATABASE
+            db()
                 .query(&query)
                 .bind(("data", data))
         ).await;
@@ -190,7 +204,7 @@ pub async fn put_file(bucket: &str, path: &str, data: Vec<u8>) -> anyhow::Result
     
     #[cfg(target_arch = "wasm32")]
     {
-        DATABASE
+        db()
             .query(&query)
             .bind(("data", data))
             .await?;
@@ -206,8 +220,8 @@ pub async fn put_file_if_not_exists(bucket: &str, path: &str, data: Vec<u8>) -> 
     
     // SurrealQL method syntax: f"bucket:/path".put_if_not_exists(data)
     let query = format!(r#"f"{}:{}".put_if_not_exists($data)"#, bucket_name, normalized_path);
-    log::info!("About to query DB. DATABASE ptr: {:p}", &*DATABASE);
-    DATABASE
+    log::info!("About to query DB. client ptr: {:?}", std::sync::Arc::as_ptr(&db()));
+    db()
         .query(&query)
         .bind(("data", data))
         .await?;
@@ -222,7 +236,7 @@ pub async fn put_file_if_not_exists(bucket: &str, path: &str, data: Vec<u8>) -> 
 pub async fn get_file(bucket: &str, path: &str) -> anyhow::Result<Option<Vec<u8>>, anyhow::Error> {
     let bucket_name = sanitize_bucket_name(bucket);
     let normalized_path = normalize_path(path);
-    log::info!("About to query DB. DATABASE ptr: {:p}", &*DATABASE);
+    log::info!("About to query DB. client ptr: {:?}", std::sync::Arc::as_ptr(&db()));
     
     // Ensure connection is alive before querying
     if let Err(e) = ensure_connected_or_reconnect().await {
@@ -233,7 +247,7 @@ pub async fn get_file(bucket: &str, path: &str) -> anyhow::Result<Option<Vec<u8>
     // Use RETURN to wrap the result properly
     let query = format!(r#"RETURN f"{}:{}".get()"#, bucket_name, normalized_path);
     
-    let mut response = DATABASE.query(&query).await?;
+    let mut response = db().query(&query).await?;
     // Use surrealdb_types::Bytes for proper deserialization of SurrealDB bytes type
     let data: Option<SurrealBytes> = response.take(0)?;
     
@@ -248,7 +262,7 @@ pub async fn get_file(bucket: &str, path: &str) -> anyhow::Result<Option<Vec<u8>
 pub async fn get_file_as_string(bucket: &str, path: &str) -> anyhow::Result<Option<String>, anyhow::Error> {
     let bucket_name = sanitize_bucket_name(bucket);
     let normalized_path = normalize_path(path);
-    log::info!("About to query DB. DATABASE ptr: {:p}", &*DATABASE);
+    log::info!("About to query DB. client ptr: {:?}", std::sync::Arc::as_ptr(&db()));
     
     // Ensure connection is alive before querying
     if let Err(e) = ensure_connected_or_reconnect().await {
@@ -258,7 +272,7 @@ pub async fn get_file_as_string(bucket: &str, path: &str) -> anyhow::Result<Opti
     // SurrealQL: <string>f"bucket:/path".get() casts bytes to string
     let query = format!(r#"<string>f"{}:{}".get()"#, bucket_name, normalized_path);
     
-    let mut response = DATABASE.query(&query).await?;
+    let mut response = db().query(&query).await?;
     let data: Option<String> = response.take(0)?;
     
     Ok(data)
@@ -268,11 +282,11 @@ pub async fn get_file_as_string(bucket: &str, path: &str) -> anyhow::Result<Opti
 pub async fn head_file(bucket: &str, path: &str) -> anyhow::Result<Option<FileMetadata>, anyhow::Error> {
     let bucket_name = sanitize_bucket_name(bucket);
     let normalized_path = normalize_path(path);
-    log::info!("About to query DB. DATABASE ptr: {:p}", &*DATABASE);
+    log::info!("About to query DB. client ptr: {:?}", std::sync::Arc::as_ptr(&db()));
     // SurrealQL method syntax: f"bucket:/path".head()
     let query = format!(r#"f"{}:{}".head()"#, bucket_name, normalized_path);
     
-    let mut response = DATABASE.query(&query).await?;
+    let mut response = db().query(&query).await?;
     let metadata: Option<Value> = response.take(0)?;
     
     match metadata {
@@ -288,11 +302,11 @@ pub async fn head_file(bucket: &str, path: &str) -> anyhow::Result<Option<FileMe
 pub async fn delete_file(bucket: &str, path: &str) -> anyhow::Result<(), anyhow::Error> {
     let bucket_name = sanitize_bucket_name(bucket);
     let normalized_path = normalize_path(path);
-    log::info!("About to query DB. DATABASE ptr: {:p}", &*DATABASE);
+    log::info!("About to query DB. client ptr: {:?}", std::sync::Arc::as_ptr(&db()));
     // SurrealQL method syntax: f"bucket:/path".delete()
     let query = format!(r#"f"{}:{}".delete()"#, bucket_name, normalized_path);
     
-    DATABASE.query(&query).await?;
+    db().query(&query).await?;
     
     log::info!("file_storage::delete_file -> {}:{}", bucket_name, normalized_path);
     Ok(())
@@ -302,11 +316,11 @@ pub async fn delete_file(bucket: &str, path: &str) -> anyhow::Result<(), anyhow:
 pub async fn file_exists(bucket: &str, path: &str) -> anyhow::Result<bool, anyhow::Error> {
     let bucket_name = sanitize_bucket_name(bucket);
     let normalized_path = normalize_path(path);
-    log::info!("About to query DB. DATABASE ptr: {:p}", &*DATABASE);
+    log::info!("About to query DB. client ptr: {:?}", std::sync::Arc::as_ptr(&db()));
     // SurrealQL method syntax: f"bucket:/path".exists()
     let query = format!(r#"f"{}:{}".exists()"#, bucket_name, normalized_path);
     
-    let mut response = DATABASE.query(&query).await?;
+    let mut response = db().query(&query).await?;
     let exists: Option<bool> = response.take(0)?;
     
     Ok(exists.unwrap_or(false))
@@ -344,7 +358,7 @@ pub async fn list_files(bucket: &str, prefix: &str) -> anyhow::Result<Vec<FileEn
     
     log::info!("file_storage::list_files -> query: {}", query);
     
-    let mut response = DATABASE.query(&query).await?;
+    let mut response = db().query(&query).await?;
     let entries: Vec<SurrealFileEntry> = response.take(0)?;
     
     if entries.is_empty() {
@@ -395,7 +409,7 @@ pub async fn list_files_with_options(
     
     log::debug!("file_storage::list_files_with_options -> query: {}", query);
     
-    let mut response = DATABASE.query(&query).await?;
+    let mut response = db().query(&query).await?;
     let entries: Vec<SurrealFileEntry> = response.take(0)?;
     
     if entries.is_empty() {
@@ -482,7 +496,7 @@ pub async fn copy_file(
     // SurrealQL method syntax: f"bucket:/path".copy("new_name")
     let query = format!(r#"f"{}:{}".copy("{}")"#, bucket_name, src_normalized, dst_key);
     
-    DATABASE.query(&query).await?;
+    db().query(&query).await?;
     
     log::info!("file_storage::copy_file -> {}:{} to {}", bucket_name, src_normalized, dst_key);
     Ok(())
@@ -501,7 +515,7 @@ pub async fn copy_file_if_not_exists(
     // SurrealQL method syntax: f"bucket:/path".copy_if_not_exists("new_name")
     let query = format!(r#"f"{}:{}".copy_if_not_exists("{}")"#, bucket_name, src_normalized, dst_key);
     
-    DATABASE.query(&query).await?;
+    db().query(&query).await?;
     
     log::info!("file_storage::copy_file_if_not_exists -> {}:{} to {}", bucket_name, src_normalized, dst_key);
     Ok(())
@@ -521,7 +535,7 @@ pub async fn rename_file(
     // SurrealQL method syntax: f"bucket:/path".rename("new_name")
     let query = format!(r#"f"{}:{}".rename("{}")"#, bucket_name, old_normalized, new_key);
     
-    DATABASE.query(&query).await?;
+    db().query(&query).await?;
     
     log::info!("file_storage::rename_file -> {}:{} to {}", bucket_name, old_normalized, new_key);
     Ok(())
@@ -540,7 +554,7 @@ pub async fn rename_file_if_not_exists(
     // SurrealQL method syntax: f"bucket:/path".rename_if_not_exists("new_name")
     let query = format!(r#"f"{}:{}".rename_if_not_exists("{}")"#, bucket_name, old_normalized, new_key);
     
-    DATABASE.query(&query).await?;
+    db().query(&query).await?;
     
     log::info!("file_storage::rename_file_if_not_exists -> {}:{} to {}", bucket_name, old_normalized, new_key);
     Ok(())
@@ -549,7 +563,7 @@ pub async fn rename_file_if_not_exists(
 /// Get the bucket name from a file pointer
 pub async fn get_bucket_name(file_pointer: &str) -> anyhow::Result<String, anyhow::Error> {
     let query = format!(r#"file::bucket({})"#, file_pointer);
-    let mut response = DATABASE.query(&query).await?;
+    let mut response = db().query(&query).await?;
     let bucket: Option<String> = response.take(0)?;
     bucket.ok_or_else(|| anyhow::anyhow!("Could not get bucket name from file pointer"))
 }
@@ -557,7 +571,7 @@ pub async fn get_bucket_name(file_pointer: &str) -> anyhow::Result<String, anyho
 /// Get the key (path) from a file pointer
 pub async fn get_file_key(file_pointer: &str) -> anyhow::Result<String, anyhow::Error> {
     let query = format!(r#"file::key({})"#, file_pointer);
-    let mut response = DATABASE.query(&query).await?;
+    let mut response = db().query(&query).await?;
     let key: Option<String> = response.take(0)?;
     key.ok_or_else(|| anyhow::anyhow!("Could not get key from file pointer"))
 }
@@ -802,7 +816,21 @@ mod tests {
         assert_eq!(resolve_backend("file:/C:/SurrealBuckets/user"), "file:/C:/SurrealBuckets/user");
         assert_eq!(resolve_backend("file:C:/SurrealBuckets/user"), "file:/C:/SurrealBuckets/user");
         assert_eq!(resolve_backend("C:/SurrealBuckets/user"), "file:/C:/SurrealBuckets/user");
-        assert_eq!(resolve_backend("/home/user/buckets"), "file://home/user/buckets");
+        assert_eq!(resolve_backend("/home/user/buckets"), "file:/home/user/buckets");
+        assert_eq!(resolve_backend("/surrealbuckets/logan_lees"), "file:/surrealbuckets/logan_lees");
+        assert_eq!(resolve_backend("file:/surrealbuckets/logan_lees"), "file:/surrealbuckets/logan_lees");
+    }
+
+    #[test]
+    fn test_join_bucket_path() {
+        assert_eq!(join_bucket_path("/surrealbuckets/", "logan_lees"), "/surrealbuckets/logan_lees");
+        assert_eq!(join_bucket_path("/surrealbuckets", "logan_lees"), "/surrealbuckets/logan_lees");
+        assert_eq!(join_bucket_path("/surrealbuckets/", "/logan_lees"), "/surrealbuckets/logan_lees");
+        assert_eq!(join_bucket_path("C:/SurrealBuckets/", "logan_lees"), "C:/SurrealBuckets/logan_lees");
+        assert_eq!(
+            resolve_backend(&join_bucket_path("/surrealbuckets/", "logan_lees")),
+            "file:/surrealbuckets/logan_lees"
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@ use crate::{
     schema::{
         helper_traits::EmployeeHelper, prestashop_schema::{CustomerMessage, CustomerThread, Employee, Order, Prestashop}, Datetime, LiveTaskPayload, Notification, Record, RecordId, RecordIdExt, SurrealValue, User, TASK_NOTE_TABLE
     },
-    DATABASE,
+    db,
 };
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
@@ -142,7 +142,7 @@ impl TaskNoteBuilder {
 
     /// Checks for existing notes to prevent duplicates.
     async fn check_existing_note(&self, id_customer_message: &str) -> Result<Option<RecordId>> {
-        let query_results: Vec<TaskNote> = DATABASE
+        let query_results: Vec<TaskNote> = db()
             .query("SELECT * FROM task_note WHERE id_customer_message == $id_customer_message")
             .bind(("id_customer_message", id_customer_message.to_string()))
             .await?
@@ -150,7 +150,7 @@ impl TaskNoteBuilder {
 
         if let Some(note) = query_results.first() {
             if note.task_id != self.task_id {
-                let task: Option<LiveTaskPayload> = DATABASE
+                let task: Option<LiveTaskPayload> = db()
                     .query("SELECT * FROM task WHERE id == $id")
                     .bind(("id", note.task_id.clone()))
                     .await?
@@ -158,13 +158,13 @@ impl TaskNoteBuilder {
 
                 if task.is_some() {
                     let query = if self.service_number.is_some() {
-                        DATABASE.set("service_number", self.service_number.clone().unwrap_or_default()).await?;
+                        db().set("service_number", self.service_number.clone().unwrap_or_default()).await?;
                         "UPDATE task_note SET task_id = $new_id, service_number = $service_number WHERE id == $id"
                     } else {
                         "UPDATE task_note SET task_id = $new_id WHERE id == $id"
                     };
 
-                    let updated_note: Option<TaskNote> = DATABASE
+                    let updated_note: Option<TaskNote> = db()
                         .query(query)
                         .bind(("id", note.id.clone()))
                         .bind(("new_id", self.task_id.clone()))
@@ -191,7 +191,7 @@ impl TaskNoteBuilder {
             let mut employee = Employee::default();
             employee.email = email;
             if let Some(tagged_user) = employee.find_user().await? {
-                let task_name: Option<String> = DATABASE
+                let task_name: Option<String> = db()
                     .query("SELECT VALUE task_name FROM task WHERE id == $task_id")
                     .bind(("task_id", note.task_id.clone()))
                     .await?
@@ -210,13 +210,13 @@ impl TaskNoteBuilder {
                     ..Default::default()
                 };
 
-                DATABASE
+                db()
                     .query("CREATE notification CONTENT $notif")
                     .bind(("notif", notification))
                     .await?
                     .take::<Option<Record>>(0)?;
 
-                DATABASE
+                db()
                     .query("UPDATE task_note SET tagged_users += $user_id WHERE id == $id")
                     .bind(("user_id", tagged_user.get_id()))
                     .bind(("id", note.id.clone()))
@@ -281,7 +281,7 @@ impl TaskNoteBuilder {
         };
 
         // Persist to database
-        DATABASE
+        db()
             .query("CREATE task_note CONTENT $task_note")
             .bind(("task_note", task_note.clone()))
             .await?
@@ -311,7 +311,7 @@ impl TaskNote {
                 .await?;
         }
 
-        let _: Option<TaskNote> = DATABASE
+        let _: Option<TaskNote> = db()
             .upsert(self.id.clone())
             .content(self.clone())
             .await?;
@@ -332,7 +332,7 @@ impl TaskNote {
             }
         }
 
-        let _: Option<TaskNote> = DATABASE
+        let _: Option<TaskNote> = db()
             .delete((TASK_NOTE_TABLE, self.id.key_string()))
             .await?;
 
@@ -385,7 +385,7 @@ impl TaskNote {
                     };
 
                     if task_id.is_some() {
-                        DATABASE
+                        db()
                             .query("CREATE task_note CONTENT $task_note")
                             .bind(("task_note", task_note.clone()))
                             .await?
@@ -404,14 +404,14 @@ impl TaskNote {
             return Err(anyhow::anyhow!("Service number is empty"));
         }
 
-        let query_results: Vec<Self> = DATABASE
+        let query_results: Vec<Self> = db()
             .query("SELECT * FROM task_note WHERE task_id.service_number == $service_number ")
             .bind(("service_number", service_number.to_string()))
             .await?
             .take(0)?;
 
         if query_results.is_empty() {
-            Ok(DATABASE
+            Ok(db()
                 .query("SELECT * FROM task_note WHERE service_number == $service_number ")
                 .bind(("service_number", service_number.to_string()))
                 .await?
@@ -423,7 +423,7 @@ impl TaskNote {
 
     /// Retrieves database notes for a task ID.
     pub async fn get_db_notes_by_task_id(task_id: RecordId) -> Result<Vec<Self>> {
-        Ok(DATABASE
+        Ok(db()
             .query("SELECT * FROM task_note WHERE task_id == $task_id ")
             .bind(("task_id", task_id))
             .await?
@@ -446,7 +446,7 @@ mod tests {
             helper_traits::EmployeeHelper,
             prestashop_schema::{CustomerMessage, CustomerThread, Employee, Order, PrestashopResponse},
         },
-        DATABASE,
+        db,
     };
     use async_trait::async_trait;
     use mockall::{mock, predicate::*};
@@ -527,8 +527,8 @@ mod tests {
         let builder = TaskNoteBuilder::new(task_id, user_id, id_employee)
             .note("Test note");
 
-        // Mock DATABASE to avoid actual DB calls
-        DATABASE
+        // Mock db to avoid actual DB calls
+        db()
             .expect_query()
             .times(1)
             .returning(|_| Ok(vec![Record { id: RecordId::new("task_note", Uuid::new_v4().to_string()) }]));
@@ -565,7 +565,7 @@ mod tests {
                 })
             });
 
-        DATABASE
+        db()
             .expect_query()
             .with(always())
             .times(2) // check_existing_note and create
@@ -591,7 +591,7 @@ mod tests {
     async fn test_private_note_no_prestashop() {
         let (task_id, user_id, id_employee) = setup_test_data();
 
-        DATABASE
+        db()
             .expect_query()
             .times(1)
             .returning(|_| Ok(vec![Record { id: RecordId::new("task_note", Uuid::new_v4().to_string()) }]));
@@ -637,7 +637,7 @@ mod tests {
                 })
             });
 
-        DATABASE
+        db()
             .expect_query()
             .with(always())
             .times(1)
@@ -674,7 +674,7 @@ mod tests {
                 Ok(Some(user))
             });
 
-        DATABASE
+        db()
             .expect_query()
             .with(always())
             .times(3) // create note, task_name, create notification
@@ -704,7 +704,7 @@ mod tests {
             .times(1)
             .returning(|_, _, _, _| Ok(PrestashopResponse { id: message_id.to_string(), ..Default::default() }));
 
-        DATABASE
+        db()
             .expect_upsert()
             .times(1)
             .returning(|_| Ok(Some(TaskNote { id: RecordId::new("task_note", message_id), ..Default::default() })));
@@ -740,7 +740,7 @@ mod tests {
             .times(1)
             .returning(|_, _| Ok(()));
 
-        DATABASE
+        db()
             .expect_delete()
             .times(1)
             .returning(|_| Ok(Some(TaskNote { id: RecordId::new("task_note", message_id), ..Default::default() })));

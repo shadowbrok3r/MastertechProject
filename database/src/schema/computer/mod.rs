@@ -1,4 +1,4 @@
-use crate::{DATABASE, schema::COMPUTER_TABLE};
+use crate::{db, schema::COMPUTER_TABLE};
 use structdiff::{Difference, StructDiff};
 use serde_json::Value;
 
@@ -220,7 +220,7 @@ impl ComputerData {
     }
 
     pub async fn get_associated_computer(id: RecordId) -> anyhow::Result<Self, anyhow::Error> {
-        let computer: Option<Self> = DATABASE
+        let computer: Option<Self> = db()
             .query("SELECT VALUE service_ticket.computer.* FROM task WHERE id == $id")
             .bind(("id", id))
             .await?
@@ -229,7 +229,7 @@ impl ComputerData {
     }
 
     pub async fn get_computers_by_customer_id(customer_id: String) -> anyhow::Result<Vec<Self>, anyhow::Error> {
-        let computers: Vec<Self> = DATABASE
+        let computers: Vec<Self> = db()
             .query("SELECT * FROM computer WHERE customer.cust_code == $customer_id")
             .bind(("customer_id", customer_id))
             .await?
@@ -239,7 +239,7 @@ impl ComputerData {
     }
 
     pub async fn get_computers(start: i32) -> anyhow::Result<Vec<Self>, anyhow::Error> {
-        let computers: Vec<Self> = DATABASE
+        let computers: Vec<Self> = db()
             .query("SELECT * FROM computer START $start LIMIT 200")
             .bind(("start", start))
             .await?
@@ -249,7 +249,7 @@ impl ComputerData {
     }
 
     pub async fn create_computer(&self) -> anyhow::Result<Option<Self>, anyhow::Error> {
-        let computer: Option<Self> = DATABASE
+        let computer: Option<Self> = db()
             .create(self.id.clone())
             .content(self.clone())
             .await?;
@@ -258,7 +258,7 @@ impl ComputerData {
     }
 
     pub async fn update_computer(&self) -> anyhow::Result<Option<Self>, anyhow::Error> {
-        let computer: Option<Self> = DATABASE
+        let computer: Option<Self> = db()
             .upsert(self.id.clone())
             .content(self.clone())
             .await?;

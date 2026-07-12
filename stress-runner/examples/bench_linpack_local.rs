@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 
-use database::DATABASE;
+use database::db;
 use stress_runner::{
     local_computer_record, parse_benchmark_kind, run_benchmark, BenchmarkKind, TelemetryAgent,
 };
@@ -23,22 +23,22 @@ async fn main() -> anyhow::Result<()> {
     let user = std::env::var("DB_ROOT_USER").unwrap_or_else(|_| "root".into());
     let pass = std::env::var("DB_ROOT_PASS").unwrap_or_else(|_| "root".into());
 
-    DATABASE.connect::<surrealdb::engine::remote::ws::Ws>(url.clone()).await?;
-    DATABASE
+    db().connect::<surrealdb::engine::remote::ws::Ws>(url.clone()).await?;
+    db()
         .signin(surrealdb::opt::auth::Root { username: user, password: pass })
         .await?;
-    DATABASE.use_ns(database::NS).use_db(database::DB).await?;
+    db().use_ns(database::NS).use_db(database::DB).await?;
     println!("connected to {url} ns={} db={}", database::NS, database::DB);
 
     // Blank throwaway DBs lack the stress tables; real DBs keep theirs.
-    let probe_ok = DATABASE
+    let probe_ok = db()
         .query("RETURN (INFO FOR DB).tables.stress_test_run != NONE")
         .await
         .ok()
         .and_then(|mut r| r.take::<Option<bool>>(0).ok().flatten())
         .unwrap_or(false);
     if !probe_ok {
-        DATABASE
+        db()
             .query(include_str!("../../database/tests/fixtures/stress_schema.surql"))
             .await?
             .check()?;
@@ -66,7 +66,7 @@ async fn main() -> anyhow::Result<()> {
             .await?;
     println!("outcome: {}", serde_json::to_string_pretty(&outcome)?);
 
-    let rows: Vec<serde_json::Value> = DATABASE
+    let rows: Vec<serde_json::Value> = db()
         .query(
             "SELECT kind_label, score, unit, samples, threads, duration_secs, errors, notes, \
              hostname, captured_at FROM benchmark_result ORDER BY captured_at DESC",

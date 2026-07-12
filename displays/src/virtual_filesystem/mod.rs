@@ -336,6 +336,7 @@ impl Clone for FileSystem {
             rename_new_name: self.rename_new_name.clone(),
             run_on_remote_tx: self.run_on_remote_tx.clone(),
             run_on_remote_rx: self.run_on_remote_rx.clone(),
+            contents_requested: self.contents_requested,
         }
     }
     
@@ -394,6 +395,8 @@ pub struct FileSystem {
     /// Signals that the user wants to run a script on a remote client: (filename, content)
     pub run_on_remote_tx: Sender<(String, String)>,
     pub run_on_remote_rx: Receiver<(String, String)>,
+    /// A first-render contents fetch has been kicked off.
+    pub contents_requested: bool,
 }
 
 impl FileSystem {
@@ -441,6 +444,7 @@ impl FileSystem {
             rename_new_name: String::new(),
             run_on_remote_tx,
             run_on_remote_rx,
+            contents_requested: false,
         }
     }
     
@@ -544,6 +548,11 @@ impl FileSystem {
     }
 
     pub fn display(&mut self, ui: &mut Ui){
+        // Lazy first-render fetch keeps bucket listings off the login hot path.
+        if !self.contents_requested && self.paths.is_empty() {
+            self.contents_requested = true;
+            let _ = self.request_contents("");
+        }
         let size = ui.available_size_before_wrap();
         let mut inner_margin_top = Margin::default();
         inner_margin_top.bottom = 5;
@@ -921,16 +930,20 @@ impl FileSystem {
         
         match backend {
             StorageBackend::SurrealDb => {
+                let bucket_user = self.user.clone();
                 PlatformSpawner::spawn(async move {
                     let fetcher = SurrealDbFetcher::new(&name);
-                    
+
                     // Retry up to 3 times with small delays (native only)
                     let mut attempts = 0;
                     #[cfg(not(target_arch = "wasm32"))]
                     let max_attempts = 3;
                     #[cfg(target_arch = "wasm32")]
                     let max_attempts = 1; // No retry on WASM
-                    
+                    // One bucket (re)definition attempt when listing fails
+                    // for a reason other than a not-yet-ready connection.
+                    let mut bucket_ensured = false;
+
                     loop {
                         attempts += 1;
                         match fetcher.request_bucket_contents(&folder_pref).await {
@@ -944,6 +957,13 @@ impl FileSystem {
                                     log::warn!("SurrealDB connection not ready (attempt {}/{}), retrying...", attempts, max_attempts);
                                     #[cfg(not(target_arch = "wasm32"))]
                                     tokio::time::sleep(std::time::Duration::from_millis(100 * attempts as u64)).await;
+                                } else if !bucket_ensured {
+                                    bucket_ensured = true;
+                                    log::warn!("Bucket listing failed ({e:?}); defining bucket and retrying once");
+                                    if let Err(be) = database::ensure_user_bucket(&bucket_user).await {
+                                        log::warn!("ensure_user_bucket failed: {be:?}");
+                                        break;
+                                    }
                                 } else {
                                     log::warn!("Error getting node from SurrealDB after {} attempts: {e:?}", attempts);
                                     break;

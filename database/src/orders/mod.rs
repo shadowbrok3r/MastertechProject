@@ -509,7 +509,7 @@ pub async fn persist_qc_report(report: &QcReportPayload) -> anyhow::Result<Recor
         created_at: chrono::Utc::now().into(),
         report: report.clone(),
     };
-    let created: Option<QcReportRecord> = crate::DATABASE
+    let created: Option<QcReportRecord> = crate::db()
         .create(QC_REPORT_TABLE)
         .content(record)
         .await?;
@@ -543,7 +543,7 @@ pub async fn persist_qc_failures(report_ref: &RecordId, report: &QcReportPayload
             created_at: now.clone(),
             failure: failure.clone(),
         };
-        let created: Option<QcReportFailureRecord> = crate::DATABASE
+        let created: Option<QcReportFailureRecord> = crate::db()
             .create(QC_REPORT_FAILURE_TABLE)
             .content(record)
             .await?;

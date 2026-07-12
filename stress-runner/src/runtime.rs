@@ -2,7 +2,7 @@
 //!
 //! `RunController`'s worker thread is `std::thread`-spawned (not a tokio
 //! context), so it can't `tokio::spawn` directly.  At the same time, the
-//! SurrealDB connection in `database::DATABASE` is opened on **whichever
+//! SurrealDB connection in `database::db` is opened on **whichever
 //! runtime called `init_database()` first** — typically the host app's
 //! `#[tokio::main]` runtime.  Async futures driven on a *different* runtime
 //! often hang because their reactor lives elsewhere.

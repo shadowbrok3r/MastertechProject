@@ -33,8 +33,10 @@ impl crate::app_state::SharedContext {
     {
         let epoch = self.live_epoch;
         let error_tx = self.live_query_error_tx.clone();
+        let registered = self.live_registered.clone();
+        self.live_streams_expected += 1;
         let (fut, handle) = futures::future::abortable(async move {
-            let res = listen_data_filtered::<T>(tx, query.clone(), vec![]).await;
+            let res = listen_data_filtered::<T>(tx, query.clone(), vec![], Some(registered)).await;
             log::info!("live stream ended (`{query}`): {res:?}");
             if let Err(e) = res {
                 let _ = error_tx.try_send((epoch, e.to_string()));
@@ -54,6 +56,27 @@ impl crate::app_state::SharedContext {
         }
         self.live_epoch = self.live_epoch.wrapping_add(1);
         self.live_queries_active = false;
+        self.chat_streams_active = false;
+        // Fresh counter per generation so an aborted stream's late increment
+        // can never inflate the next generation's registration count.
+        self.live_registered = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        self.live_streams_expected = 0;
+        self.live_spawned_at = None;
+    }
+
+    /// Spawns the chat live streams (participant-filtered) once the chat tab
+    /// has requested them; re-run after each reconnect generation.
+    fn spawn_chat_streams(&mut self) {
+        let (thread_tx, msg_tx) = self.user_chat.live_stream_senders();
+        self.spawn_live_stream::<database::schema::ChatThread>(
+            thread_tx,
+            "LIVE SELECT * FROM chat_thread WHERE thread_users CONTAINS $auth.id".to_string(),
+        );
+        self.spawn_live_stream::<database::schema::UserMessage>(
+            msg_tx,
+            "LIVE SELECT * FROM user_message WHERE thread_id.thread_users CONTAINS $auth.id".to_string(),
+        );
+        self.chat_streams_active = true;
     }
 
     pub fn load_data(&mut self, ctx: &eframe::egui::Context, user: &User) {
@@ -66,6 +89,14 @@ impl crate::app_state::SharedContext {
             self.last_stream_error_at = None;
             self.last_live_respawn_at = None;
             self.last_force_refetch_at = None;
+            // Bucket definition runs off the login hot path; covers both
+            // fresh-signin and JWT-cookie-restore sessions.
+            let bucket_user = user.clone();
+            PlatformSpawner::spawn(async move {
+                if let Err(e) = database::ensure_user_bucket(&bucket_user).await {
+                    log::warn!("ensure_user_bucket failed (retried on File Browser use): {e:?}");
+                }
+            });
         }
         self.refresh_client_list();
         self.timer = Some(web_time::Instant::now());
@@ -81,15 +112,14 @@ impl crate::app_state::SharedContext {
         let name = user.get_name();
         log::info!("Getting Initial data: {}", self.store_selection);
 
+        // Bucket listings are lazy: the File Browser / web-console explorer
+        // request contents on first render instead of during login.
         if self.filesystem.paths.is_empty() {
             self.filesystem.set_user(user.clone());
-            let _ = self.filesystem.request_contents("");
         }
 
         if self.web_console_layout.filesystem.paths.is_empty() {
             self.web_console_layout.filesystem.set_user(user.clone());
-            let _ = self.web_console_layout.filesystem.request_contents("");
-            // self.web_console_layout.set_filesystem(self.filesystem.clone());
         }
 
         // A reconnect sets `force_data_refetch`: live events missed during
@@ -140,6 +170,9 @@ impl crate::app_state::SharedContext {
         // second set of subscriptions is never stacked on the first.
         if !self.live_queries_active {
             self.live_queries_active = true;
+            self.live_registered = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            self.live_streams_expected = 0;
+            self.live_spawned_at = Some(web_time::Instant::now());
 
             // task_note → joined through task.assignee.store so a note's
             // visibility tracks the task it's attached to.
@@ -268,9 +301,10 @@ impl crate::app_state::SharedContext {
             }
             self.reconnect_in_progress = false;
             self.reconnect_started_at = None;
+            self.reconnect_rebuilding = false;
             match outcome {
-                ReconnectOutcome::Ok { socket_was_down } => {
-                    log::info!("Reconnect OK (socket_was_down={socket_was_down}) — re-issuing live queries");
+                ReconnectOutcome::Ok { socket_was_down, rebuilt } => {
+                    log::info!("Reconnect OK (socket_was_down={socket_was_down}, rebuilt={rebuilt}) — re-issuing live queries");
                     // Re-issuing tears down all five streams, so a snapshot
                     // refetch is needed to fill the kill→resubscribe gap. A
                     // genuine outage always refetches; a socket-healthy
@@ -324,18 +358,33 @@ impl crate::app_state::SharedContext {
 
         // Stall watchdog + retry pump: a wedged attempt is abandoned, and a
         // pending retry re-fires once `trigger_live_reconnect`'s backoff allows.
+        // Tier-2 rebuilds carry up to 20s jitter plus timeboxed connect/auth,
+        // so they get a longer stall budget than tier-1 socket waits.
         const RECONNECT_STALL: web_time::Duration = web_time::Duration::from_secs(45);
+        const RECONNECT_STALL_REBUILD: web_time::Duration = web_time::Duration::from_secs(75);
         if self.reconnect_in_progress {
             if let Some(started) = self.reconnect_started_at {
-                if web_time::Instant::now().duration_since(started) >= RECONNECT_STALL {
-                    log::warn!("Reconnect attempt stalled for {RECONNECT_STALL:?} — abandoning it");
+                let stall = if self.reconnect_rebuilding { RECONNECT_STALL_REBUILD } else { RECONNECT_STALL };
+                if web_time::Instant::now().duration_since(started) >= stall {
+                    log::warn!("Reconnect attempt stalled for {stall:?} — abandoning it");
                     self.reconnect_in_progress = false;
                     self.reconnect_started_at = None;
+                    self.reconnect_rebuilding = false;
                     self.needs_reconnect = true;
                 }
             }
         } else if self.needs_reconnect {
             self.trigger_live_reconnect(ctx);
+        }
+
+        // Chat streams ride the same generation/epoch as the core five; the
+        // chat tab requests them once and they re-spawn after reconnects.
+        if self.user_chat.wants_streams()
+            && !self.chat_streams_active
+            && self.live_queries_active
+            && !self.reconnect_in_progress
+        {
+            self.spawn_chat_streams();
         }
 
         self.tick_live_query_health(ctx);
@@ -477,12 +526,17 @@ impl crate::app_state::SharedContext {
         }
     }
 
-    /// Waits for the SDK's socket self-heal off-thread, restores the
-    /// operator's identity, and reports the outcome to the `reconnect_result_rx`
-    /// drain (which re-issues the LIVE SELECTs). Retries with exponential
-    /// backoff — a pending retry parks on `needs_reconnect` until the backoff
-    /// elapses; one attempt at a time; the operator is never blocked.
+    /// Tier 1 waits for the SDK's socket self-heal off-thread and restores
+    /// the operator's identity. After `TIER2_AFTER_FAILURES` consecutive
+    /// failures the SDK's reconnect is presumed wedged on a zombie socket and
+    /// tier 2 rebuilds the whole SurrealDB client instead. Outcomes report to
+    /// the `reconnect_result_rx` drain (which re-issues the LIVE SELECTs).
+    /// Retries with exponential backoff — a pending retry parks on
+    /// `needs_reconnect` until the backoff elapses; one attempt at a time;
+    /// the operator is never blocked.
     fn trigger_live_reconnect(&mut self, _ctx: &eframe::egui::Context) {
+        // Tier-1 attempts before escalating to a full client rebuild.
+        const TIER2_AFTER_FAILURES: u32 = 2;
         if self.reconnect_in_progress {
             return;
         }
@@ -501,27 +555,54 @@ impl crate::app_state::SharedContext {
             }
         }
 
+        let rebuild = self.reconnect_attempts >= TIER2_AFTER_FAILURES;
+        self.reconnect_rebuilding = rebuild;
         self.reconnect_attempts = self.reconnect_attempts.saturating_add(1);
         self.reconnect_token = self.reconnect_token.wrapping_add(1);
         self.reconnect_in_progress = true;
         self.reconnect_started_at = Some(now);
         self.needs_reconnect = false;
         self.last_live_respawn_at = Some(now);
-        log::warn!("Live-query reconnect attempt {}", self.reconnect_attempts);
+        log::warn!(
+            "Live-query reconnect attempt {}{}",
+            self.reconnect_attempts,
+            if rebuild { " (tier 2: full client rebuild)" } else { "" }
+        );
 
         let tx = self.reconnect_result_tx.clone();
         let token = self.reconnect_token;
         let expected = user.get_id();
         PlatformSpawner::spawn(async move {
-            let outcome = match database::await_db_socket().await {
-                Ok(socket_was_down) => {
-                    match database::restore_auth_if_needed(expected).await {
-                        Ok(true) => ReconnectOutcome::Ok { socket_was_down },
+            let outcome = if rebuild {
+                // rebuild_database_client sleeps its own 0-20s jitter.
+                match database::rebuild_database_client().await {
+                    Ok(()) => match database::restore_auth_if_needed(expected).await {
+                        Ok(true) => ReconnectOutcome::Ok { socket_was_down: true, rebuilt: true },
                         Ok(false) => ReconnectOutcome::AuthLost,
-                        Err(e) => ReconnectOutcome::Failed(format!("auth restore failed: {e}")),
-                    }
+                        Err(e) => ReconnectOutcome::Failed(format!("post-rebuild auth check: {e}")),
+                    },
+                    Err(e) => ReconnectOutcome::Failed(format!("client rebuild failed: {e}")),
                 }
-                Err(e) => ReconnectOutcome::Failed(e.to_string()),
+            } else {
+                match database::await_db_socket().await {
+                    Ok(socket_was_down) => {
+                        if socket_was_down {
+                            // Every client's probes cluster on the same backoff
+                            // grid, so a recovered server would otherwise be hit
+                            // by simultaneous re-auth + LIVE re-registration
+                            // from the whole fleet.
+                            let wait = database::random_jitter(std::time::Duration::from_secs(20));
+                            log::info!("Socket recovered; waiting {wait:?} before re-auth (stampede spreading)");
+                            database::sleep_compat(wait).await;
+                        }
+                        match database::restore_auth_if_needed(expected).await {
+                            Ok(true) => ReconnectOutcome::Ok { socket_was_down, rebuilt: false },
+                            Ok(false) => ReconnectOutcome::AuthLost,
+                            Err(e) => ReconnectOutcome::Failed(format!("auth restore failed: {e}")),
+                        }
+                    }
+                    Err(e) => ReconnectOutcome::Failed(e.to_string()),
+                }
             };
             let _ = tx.try_send((token, outcome));
         });
@@ -557,6 +638,26 @@ impl crate::app_state::SharedContext {
                 self.trigger_live_reconnect(ctx);
             }
             return;
+        }
+
+        // The first canary of a stream generation waits until every LIVE
+        // registration round-trip has confirmed (or a grace window passes):
+        // a canary written before the notification stream is registered can
+        // never echo back and would false-positive as a dead subscription.
+        const REGISTRATION_GRACE: web_time::Duration = web_time::Duration::from_secs(15);
+        if self.last_canary_at.is_none() {
+            let all_registered = self
+                .live_registered
+                .load(std::sync::atomic::Ordering::SeqCst)
+                >= self.live_streams_expected;
+            let grace_over = self
+                .live_spawned_at
+                .map(|t| now.duration_since(t) >= REGISTRATION_GRACE)
+                .unwrap_or(true);
+            if !all_registered && !grace_over {
+                ctx.request_repaint_after(web_time::Duration::from_millis(500));
+                return;
+            }
         }
 
         let due = self

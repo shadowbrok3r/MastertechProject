@@ -35,20 +35,33 @@ impl Interaction for LiveTaskPayload {
     fn interact_task_name(&mut self, ui: &mut Ui) -> Response {
         ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12, 12, 14);
         ui.style_mut().override_font_id = Some(FontId::monospace(12.0));
-        // ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(0.5_f32, Color32::from_additive_luminance(110));
-        let text_edit = TextEdit::singleline(&mut self.task_name)
+
+        // Focused edits type into a buffer so per-frame live refreshes can't wipe keystrokes.
+        let buf_id = Id::new(("task_name_edit", self.id.key_string()));
+        let buffered: Option<String> = ui.data_mut(|d| d.get_temp(buf_id));
+        let had_buffer = buffered.is_some();
+        let mut text = buffered.unwrap_or_else(|| self.task_name.clone());
+
+        let text_edit = TextEdit::singleline(&mut text)
             .desired_width(320.)
             .margin(Margin::symmetric(6, 3))
             .horizontal_align(Align::Min)
             .vertical_align(Align::Center)
             .ui(ui);
 
-        if text_edit.lost_focus() {
-            let task = self.clone(); 
-            PlatformSpawner::spawn(async move { 
-                let update = task.update_task_name(task.task_name.clone()).await;
-                info!("Update: {update:?}"); 
-            });
+        if text_edit.has_focus() {
+            ui.data_mut(|d| d.insert_temp(buf_id, text.clone()));
+        } else if text_edit.lost_focus() || had_buffer {
+            ui.data_mut(|d| d.remove_temp::<String>(buf_id));
+            // Save only when the edit actually changed the value.
+            if text != self.task_name {
+                self.task_name = text;
+                let task = self.clone();
+                PlatformSpawner::spawn(async move {
+                    let update = task.update_task_name(task.task_name.clone()).await;
+                    info!("Update: {update:?}");
+                });
+            }
         }
 
         text_edit
@@ -56,21 +69,33 @@ impl Interaction for LiveTaskPayload {
 
     fn interact_task_description(&mut self, ui: &mut Ui) -> Response {
         ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12, 12, 14);
-        // ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0_f32, Color32::from_additive_luminance(80));
 
-        let text_edit = TextEdit::multiline(&mut self.task_description)
+        // Focused edits type into a buffer so per-frame live refreshes can't wipe keystrokes.
+        let buf_id = Id::new(("task_description_edit", self.id.key_string()));
+        let buffered: Option<String> = ui.data_mut(|d| d.get_temp(buf_id));
+        let had_buffer = buffered.is_some();
+        let mut text = buffered.unwrap_or_else(|| self.task_description.clone());
+
+        let text_edit = TextEdit::multiline(&mut text)
             .desired_rows(6)
             .margin(Margin::symmetric(6, 3))
             .desired_width(445.)
             .horizontal_align(Align::Center)
             .ui(ui);
 
-        if text_edit.lost_focus() {
-            let task = self.clone(); 
-            PlatformSpawner::spawn(async move { 
-                let update = task.update_task_description().await;
-                info!("Update: {update:?}"); 
-            });
+        if text_edit.has_focus() {
+            ui.data_mut(|d| d.insert_temp(buf_id, text.clone()));
+        } else if text_edit.lost_focus() || had_buffer {
+            ui.data_mut(|d| d.remove_temp::<String>(buf_id));
+            // Save only when the edit actually changed the value.
+            if text != self.task_description {
+                self.task_description = text;
+                let task = self.clone();
+                PlatformSpawner::spawn(async move {
+                    let update = task.update_task_description().await;
+                    info!("Update: {update:?}");
+                });
+            }
         }
 
         text_edit

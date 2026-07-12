@@ -27,7 +27,7 @@ use crate::ui_tools::{icons, theme};
 use crate::Cmd;
 use crate::{PlatformSpawner, Spawner};
 use database::schema::{HardwareComponent, HardwareKind, RecordId, RecordIdExt, SystemInformation};
-use database::DATABASE;
+use database::db;
 use eframe::egui::{
     Align, Color32, Layout, ProgressBar, RichText, ScrollArea, Ui, Vec2,
 };
@@ -968,7 +968,7 @@ async fn fetch_active_runs(computer: &RecordId) -> Result<Vec<ActiveRun>, String
     // `array::map(... |$c| type::string($c))` so the JSON we get back
     // is a flat array of canonical "table:key" strings rather than
     // SurrealDB's nested RecordId-as-object shape.
-    let rows: Vec<serde_json::Value> = DATABASE
+    let rows: Vec<serde_json::Value> = db()
         .query(
             "SELECT type::string(id) AS id, tool_label, started_at, \
                  duration_planned_secs, \
@@ -1062,7 +1062,7 @@ async fn fetch_inventory(computer: &RecordId) -> Result<Vec<InventoryCard>, Stri
     //    flattened nested array doesn't have a clean SurrealDB 3.x
     //    expression and previous attempts (`touched_components[*]`)
     //    silently returned empty.
-    let run_rows: Vec<serde_json::Value> = DATABASE
+    let run_rows: Vec<serde_json::Value> = db()
         .query(
             "SELECT type::string(id) AS id, tool_label, result, started_at, \
                  type::string(target_component) AS target_component, \
@@ -1168,7 +1168,7 @@ async fn fetch_inventory(computer: &RecordId) -> Result<Vec<InventoryCard>, Stri
         .collect();
 
     // 4. Fetch the hardware_component rows in one query.
-    let comp_rows: Vec<serde_json::Value> = DATABASE
+    let comp_rows: Vec<serde_json::Value> = db()
         .query(
             "SELECT type::string(id) AS id, kind, vendor, model, display_name \
              FROM hardware_component \

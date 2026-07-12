@@ -1,4 +1,4 @@
-use crate::{schema::{helper_traits::{parse_email_user, EmployeeHelper}, prestashop_schema::{CustomerMessage, CustomerThread}, LiveTaskPayload, Notification, Record, TASK_NOTE_TABLE}, DATABASE};
+use crate::{schema::{helper_traits::{parse_email_user, EmployeeHelper}, prestashop_schema::{CustomerMessage, CustomerThread}, LiveTaskPayload, Notification, Record, TASK_NOTE_TABLE}, db};
 use super::{helper_traits::PrestaResourceResponse, prestashop_schema::{self, Employee, Prestashop}, TaskNotePayload, User};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use surrealdb::{sql::Datetime, RecordId};

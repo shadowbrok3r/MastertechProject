@@ -5,7 +5,7 @@ use super::{
     utilities::record_exists, ComputerData, ConnectedClient, CustomerData, RecordId,
     RecordIdExt,     COMPUTER_TABLE, CUSTOMER_TABLE,
 };
-use crate::DATABASE;
+use crate::db;
 use serde::{Deserialize, Serialize};
 use surrealdb::Error;
 
@@ -105,7 +105,7 @@ pub async fn load_connected_client_graph(
     connection_string: &str,
 ) -> Result<ConnectedClientGraph, Error> {
     let cs = connection_string.trim();
-    let clients: Vec<ConnectedClient> = DATABASE
+    let clients: Vec<ConnectedClient> = db()
         .query(
             "SELECT * FROM connected_client WHERE connection_string == $cs LIMIT 1",
         )
@@ -118,7 +118,7 @@ pub async fn load_connected_client_graph(
     };
 
     let computer = if let Some(ref cid) = client.computer {
-        DATABASE
+        db()
             .select::<Option<ComputerData>>(cid.clone())
             .await
             .ok()
@@ -128,14 +128,14 @@ pub async fn load_connected_client_graph(
     };
 
     let customer = if let Some(ref cust_id) = client.customer {
-        DATABASE
+        db()
             .select::<Option<CustomerData>>(cust_id.clone())
             .await
             .ok()
             .flatten()
     } else if let Some(ref comp) = computer {
         if let Some(ref cust_id) = comp.customer {
-            DATABASE
+            db()
                 .select::<Option<CustomerData>>(cust_id.clone())
                 .await
                 .ok()
@@ -230,7 +230,7 @@ pub async fn validate_link_bundle(bundle: &LinkBundle) -> LinkValidationResult {
     }
 
     if let (Some(cust), Some(comp_id)) = (&resolved_customer_id, &resolved_computer_id) {
-        if let Ok(Some(comp)) = DATABASE.select::<Option<ComputerData>>(comp_id.clone()).await {
+        if let Ok(Some(comp)) = db().select::<Option<ComputerData>>(comp_id.clone()).await {
             if let Some(comp_cust) = &comp.customer {
                 if comp_cust.key_string() != cust.key_string() {
                     issues.push(LinkValidationIssue::CustomerComputerMismatch {
@@ -284,7 +284,7 @@ pub struct CascadeReport {
 }
 
 async fn count_updated(query: &str, old: &RecordId, new: &RecordId) -> Result<u64, Error> {
-    let rows: Vec<RecordId> = DATABASE
+    let rows: Vec<RecordId> = db()
         .query(query)
         .bind(("old", old.clone()))
         .bind(("new", new.clone()))
@@ -339,7 +339,7 @@ pub async fn cascade_repoint_customer(
 
     let mut report = CascadeReport::default();
 
-    let _: Vec<RecordId> = DATABASE
+    let _: Vec<RecordId> = db()
         .query("UPDATE connected_client SET customer = $new WHERE customer == $old RETURN id")
         .bind(("old", old_id.clone()))
         .bind(("new", new_id.clone()))
@@ -372,7 +372,7 @@ pub async fn cascade_repoint_customer(
 
 /// Delete a computer row after cascade repoint when safe.
 pub async fn delete_computer_if_unreferenced(id: &RecordId) -> Result<bool, Error> {
-    let still_linked: bool = DATABASE
+    let still_linked: bool = db()
         .query(
             "RETURN (
                 (SELECT count() FROM connected_client WHERE computer == $id)[0].count > 0
@@ -389,7 +389,7 @@ pub async fn delete_computer_if_unreferenced(id: &RecordId) -> Result<bool, Erro
         return Ok(false);
     }
 
-    let _: Option<ComputerData> = DATABASE.delete(id.clone()).await?;
+    let _: Option<ComputerData> = db().delete(id.clone()).await?;
     Ok(true)
 }
 
@@ -463,7 +463,7 @@ pub async fn repair_connection_links(
         }
     }
 
-    DATABASE
+    db()
         .query("UPDATE connected_client SET computer = $cid WHERE connection_string == $cs RETURN AFTER")
         .bind(("cid", canonical.clone()))
         .bind(("cs", connection_string.to_string()))
@@ -472,7 +472,7 @@ pub async fn repair_connection_links(
         .take::<Option<ConnectedClient>>(0)?;
 
     // Repoint diagnostic sessions on this connection_string with wrong computer_id
-    let sessions: Vec<RecordId> = DATABASE
+    let sessions: Vec<RecordId> = db()
         .query(
             "UPDATE diagnostic_session SET computer_id = $cid \
              WHERE connection_string == $cs AND computer_id != $cid RETURN id",
@@ -487,7 +487,7 @@ pub async fn repair_connection_links(
 
     if let Some(cust) = client.customer.clone() {
         if matches!(record_exists(cust.clone()).await, Ok(Some(true))) {
-            DATABASE
+            db()
                 .query("UPDATE $cid SET customer = $cust RETURN AFTER")
                 .bind(("cid", canonical.clone()))
                 .bind(("cust", cust))
@@ -534,7 +534,7 @@ pub async fn link_connected_client_record(
     }
     let computer_existed = graph.computer.is_some();
 
-    DATABASE
+    db()
         .query("UPSERT $cid SET customer = $cust, hostname = $host")
         .bind(("cid", canonical.clone()))
         .bind(("cust", customer.clone()))
@@ -543,7 +543,7 @@ pub async fn link_connected_client_record(
         .map_err(|e| anyhow::anyhow!("{e}"))?
         .take::<Option<ComputerData>>(0)?;
 
-    DATABASE
+    db()
         .query(
             "UPDATE connected_client \
              SET customer = $cust, computer = $cid, friendly_name = $fname ?? friendly_name \

@@ -1,7 +1,7 @@
 use super::{random_record_id, ComputerData, CustomerData, Datetime, HardwareTests, Job, RecordId, SurrealValue, TICKET_TABLE};
 use structdiff::{Difference, StructDiff};
 use serde::{Deserialize, Serialize};
-use crate::DATABASE;
+use crate::db;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference, SurrealValue)]
 pub struct TicketPayload {
@@ -73,7 +73,7 @@ pub struct TicketData {
 
 impl TicketPayload {
     pub async fn get_services(start: i32) -> anyhow::Result<Vec<Self>, anyhow::Error> {
-        let services: Vec<Self> = DATABASE
+        let services: Vec<Self> = db()
             .query("SELECT * FROM service_order START $start LIMIT 200 FETCH computer, customer")
             
             .bind(("start", start))
@@ -87,7 +87,7 @@ impl TicketPayload {
 impl TicketData {
     pub async fn get_associated_ticket(id: RecordId) -> anyhow::Result<Self, anyhow::Error> {
         log::info!("task id: {id:?}");
-        let ticket: Option<Self> = DATABASE
+        let ticket: Option<Self> = db()
             .query("SELECT VALUE service_ticket.* FROM task WHERE id == $id")
             .bind(("id", id))
             .await?

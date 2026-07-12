@@ -1,5 +1,5 @@
 use eframe::egui::{Align, Button, Color32, ComboBox, Frame, Layout, Margin, NumExt, Popup, PopupCloseBehavior, RectAlign, RichText, ScrollArea, Shadow, Spinner, TextEdit, Ui, Vec2, Widget};
-use database::{self, DATABASE, SurrealValue, schema::{LiveTaskPayload, Record, SortDirection, Sortable, Store, TaskNotePayload, User}};
+use database::{self, db, SurrealValue, schema::{LiveTaskPayload, Record, SortDirection, Sortable, Store, TaskNotePayload, User}};
 use crate::{PlatformSpawner, Spawner, Displayable, TaskUiActions, tabs::tasks::client_cards::ClientCardData};
 use crate::ui_tools::icons;
 use std::{collections::{BTreeMap, HashMap, HashSet}, f32};
@@ -536,17 +536,17 @@ impl TaskLayout {
                                                     PlatformSpawner::spawn(async move {
                                                         match other {
                                                             TaskActions::MarkComplete => {
-                                                                let _x: Vec<Record> = DATABASE.query("UPDATE $records SET completed = true, status = 'Complete'")
+                                                                let _x: Vec<Record> = db().query("UPDATE $records SET completed = true, status = 'Complete'")
                                                                     .bind(("records", ids.clone()))
                                                                     .await.unwrap().take(0).unwrap();
                                                             },
                                                             TaskActions::MarkIncomplete => {
-                                                                let _x: Vec<Record> = DATABASE.query("UPDATE $records SET completed = false, status = 'Todo'")
+                                                                let _x: Vec<Record> = db().query("UPDATE $records SET completed = false, status = 'Todo'")
                                                                     .bind(("records", ids.clone()))
                                                                     .await.unwrap().take(0).unwrap();
                                                             },
                                                             TaskActions::MarkDueToday => {
-                                                                let _x: Vec<Record> = DATABASE.query("UPDATE $ids SET due_date = time::now()")
+                                                                let _x: Vec<Record> = db().query("UPDATE $ids SET due_date = time::now()")
                                                                     .bind(("ids", ids.clone())).await.unwrap().take(0).unwrap();
                                                             },
                                                             _ => {}
@@ -557,23 +557,8 @@ impl TaskLayout {
                                         }
                                     });
                                     
-                                    ui.with_layout(Layout::right_to_left(Align::Max), |ui| 
+                                    ui.with_layout(Layout::right_to_left(Align::Max), |ui|
                                     {
-                                        let button = Button::new(
-                                            RichText::new("✚")
-                                                .color(style.visuals.warn_fg_color)
-                                            )
-                                            .corner_radius(style.visuals.menu_corner_radius)
-                                            .fill(Color32::from_rgb(22,22,22))
-                                            .min_size(Vec2::new(30.0, 15.0))
-                                            .ui(ui);
-
-                                        ui.add_space(20.0);
-
-                                        if button.clicked(){
-                                            let _ = ui_actions_tx.try_send(TaskUiActions::CreateTaskModal(None));
-                                        }
-
                                         let selected = self.sort_by.entry(name.clone()).or_default();
                                         let txt = match selected.direction {
                                             SortDirection::Asc => ("↗", ui.style().visuals.warn_fg_color),

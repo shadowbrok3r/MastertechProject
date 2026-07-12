@@ -197,7 +197,7 @@ async fn list_workers() -> Result<Json<Vec<WorkerSummary>>, (StatusCode, String)
     // event refreshes `last_update` on every UPDATE so this is the
     // cheapest liveness signal we have without a dedicated heartbeat
     // route.
-    let mut response = database::DATABASE
+    let mut response = database::db()
         .query(
             "SELECT * FROM connected_client
              WHERE client_kind = 'build_worker'

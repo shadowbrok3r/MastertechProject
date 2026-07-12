@@ -1,5 +1,5 @@
 #[allow(unused_imports)]
-use crate::{schema::{prestashop::xml::{modify_xml, remove_xml_tag}, prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ConnectedClient, Priority, Qc, Record, RecordId, RecordIdExt, SurrealValue, Store, TaskNotePayload, User, UserAuthorization, CUSTOMER_TABLE, TASK_TABLE}, PlatformSpawner, Spawner, DATABASE};
+use crate::{schema::{prestashop::xml::{modify_xml, remove_xml_tag}, prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ConnectedClient, Priority, Qc, Record, RecordId, RecordIdExt, SurrealValue, Store, TaskNotePayload, User, UserAuthorization, CUSTOMER_TABLE, TASK_TABLE}, PlatformSpawner, Spawner, db};
 #[allow(unused_imports)]
 use super::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, LocalSebData, Notification, TicketData};
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, Utc, Weekday};
@@ -74,7 +74,7 @@ struct RunEmbedRow {
 pub async fn backfill_missing_embeddings(limit: usize) -> anyhow::Result<usize> {
     let mut fixed = 0usize;
 
-    let diags: Vec<DiagEmbedRow> = DATABASE
+    let diags: Vec<DiagEmbedRow> = db()
         .query(format!(
             "SELECT id, title, detail FROM diagnostic_entry WHERE embedding == NONE LIMIT {limit}"
         ))
@@ -94,7 +94,7 @@ pub async fn backfill_missing_embeddings(limit: usize) -> anyhow::Result<usize> 
                 return Err(e);
             }
         };
-        DATABASE
+        db()
             .query("UPDATE $id SET embedding = $emb")
             .bind(("id", row.id))
             .bind(("emb", emb))
@@ -102,7 +102,7 @@ pub async fn backfill_missing_embeddings(limit: usize) -> anyhow::Result<usize> 
         fixed += 1;
     }
 
-    let runs: Vec<RunEmbedRow> = DATABASE
+    let runs: Vec<RunEmbedRow> = db()
         .query(format!(
             "SELECT id, tool_label, preset_label, target_kind, hostname FROM stress_test_run WHERE embedding == NONE LIMIT {limit}"
         ))
@@ -126,7 +126,7 @@ pub async fn backfill_missing_embeddings(limit: usize) -> anyhow::Result<usize> 
                 return Err(e);
             }
         };
-        DATABASE
+        db()
             .query("UPDATE $id SET embedding = $emb")
             .bind(("id", row.id))
             .bind(("emb", emb))
@@ -211,7 +211,7 @@ where
     // Selecting by record id sidesteps the table-binding problem entirely
     // and is more efficient (no scan + filter).  `_table` is kept in the
     // signature so the 30+ callers compile unchanged.
-    let record: Option<T> = DATABASE
+    let record: Option<T> = db()
         .query("SELECT * FROM ONLY $id")
         .bind(("id", id.clone()))
         .await?
@@ -231,7 +231,7 @@ where
             IF $query != NULL || NONE {{ true }} ELSE {{ false }};
         "#
     );
-    let record: Option<bool> = DATABASE
+    let record: Option<bool> = db()
         .query(query.clone())
         .bind(("id", id))
         .await?
@@ -243,7 +243,7 @@ where
 
 pub async fn record_exists(id: RecordId) -> Result<Option<bool>, Error>
 {
-    let record_exists: Option<bool> = DATABASE
+    let record_exists: Option<bool> = db()
         .query("RETURN record::exists($id)")
         .bind(("id", id))
         .await?
@@ -256,7 +256,7 @@ pub async fn record_exists(id: RecordId) -> Result<Option<bool>, Error>
 }
 
 pub async fn get_qcs() -> anyhow::Result<Vec<Qc>, anyhow::Error> {
-    let qcs: Vec<Qc> = DATABASE
+    let qcs: Vec<Qc> = db()
         .query("SELECT * FROM qc")
         .await?
         .take(0)?;
@@ -286,7 +286,7 @@ pub async fn get_tasks_for_store(tx: Sender<Vec<LiveTaskPayload>>, store: String
      */
     let start_query = Instant::now(); // Start timing the query
 
-    let query_results: Vec<LiveTaskPayload> = DATABASE
+    let query_results: Vec<LiveTaskPayload> = db()
         .query(query)
         .bind(("store", store.clone()))
         .await?
@@ -323,7 +323,7 @@ pub async fn get_completed_tasks_for_store(tx: Sender<Vec<LiveTaskPayload>>, sto
     
     let start_query = Instant::now(); // Start timing the query
 
-    let query_results: Vec<LiveTaskPayload> = DATABASE
+    let query_results: Vec<LiveTaskPayload> = db()
         .query(query)
         .bind(("store", store.clone()))
         .await?
@@ -343,7 +343,7 @@ pub async fn get_associated_task_notes(
 ) -> Result<(), Error> {
     debug!("get_associated_task_notes");
     let query = "SELECT * FROM task_note WHERE task_id == $id"; 
-    let query_results: Vec<TaskNotePayload> = DATABASE
+    let query_results: Vec<TaskNotePayload> = db()
         .query(query)
         .bind(("id", task_id))
         .await?
@@ -355,7 +355,7 @@ pub async fn get_associated_task_notes(
 
 pub async fn get_store_users(tx: Sender<Vec<User>>, store: Store) -> Result<(), Error> {
     debug!("get_store_users");
-    let data: Vec<User> = DATABASE
+    let data: Vec<User> = db()
         .query("SELECT * FROM user WHERE store == $store AND active == true ")
         .bind(("store", store))
         .await?
@@ -423,7 +423,7 @@ pub async fn get_connected_clients(tx: Sender<Vec<ConnectedClient>>) -> Result<(
     const LIST_FILTER: &str = "(client_kind IS NONE OR client_kind = 'machine') AND connected == true";
 
     if is_root {
-        let query: Vec<ConnectedClient> = DATABASE
+        let query: Vec<ConnectedClient> = db()
             .query(&format!(
                 "SELECT * FROM connected_client \
                  WHERE (({LIST_FILTER} AND assigned_user.id_store == $auth.id_store) \
@@ -434,7 +434,7 @@ pub async fn get_connected_clients(tx: Sender<Vec<ConnectedClient>>) -> Result<(
             .take(0)?;
         tx.try_send(dedupe_connected_clients_by_connection_string(query))?;
     } else {
-        let query: Vec<ConnectedClient> = DATABASE
+        let query: Vec<ConnectedClient> = db()
             .query(&format!(
                 "SELECT * FROM connected_client \
                  WHERE assigned_user == $auth.id \
@@ -450,7 +450,7 @@ pub async fn get_connected_clients(tx: Sender<Vec<ConnectedClient>>) -> Result<(
 }
 
 pub async fn disconnect_client(tx: Sender<Vec<RecordId>>, id: RecordId) -> Result<(), Error> {
-    let query: Vec<RecordId> = DATABASE
+    let query: Vec<RecordId> = db()
         .query("UPDATE connected_client SET connected = false WHERE id == $id")
         .bind(("id", id.key_string()))
         .await?
@@ -468,12 +468,12 @@ pub async fn modify_connected_client(tx: Sender<Vec<ConnectedClient>>) -> Result
     };
 
     let query: Vec<ConnectedClient> = if is_root {
-        DATABASE
+        db()
             .query("SELECT * FROM connected_client")
             .await?
             .take(0)?
     } else {
-        DATABASE
+        db()
             .query("SELECT * FROM connected_client WHERE assigned_user == $auth.id")
             .await?
             .take(0)?
@@ -485,7 +485,7 @@ pub async fn modify_connected_client(tx: Sender<Vec<ConnectedClient>>) -> Result
 pub async fn delete_task(id: RecordId) -> Result<(), Error> {
     info!("schema/utilities.rs -> deleting id: {id:?}");
     let x = id.clone();
-    let delete_result: Option<Record> = DATABASE.delete(
+    let delete_result: Option<Record> = db().delete(
         (TASK_TABLE, id.key_string())
     )
     .await?;
@@ -497,7 +497,7 @@ pub async fn delete_task(id: RecordId) -> Result<(), Error> {
 
 pub async fn get_notifications(tx: Sender<Vec<Notification>>) -> anyhow::Result<(), anyhow::Error> {
     debug!("get_notifications");
-    let notifications: Vec<Notification> = DATABASE
+    let notifications: Vec<Notification> = db()
         .query(
             "SELECT * FROM notification WHERE user == $auth.id ORDER BY created_at DESC LIMIT 50 "
         )
@@ -511,8 +511,8 @@ pub async fn get_notifications(tx: Sender<Vec<Notification>>) -> anyhow::Result<
 // pub async fn get_associated_ticket(tx: Sender<NewTicketChannel>, new_task: (Action, LiveTaskPayload)) -> Result<(), Error> {
 //     debug!("get_associated_ticket");
 //     let service_num = new_task.1.clone().service_number.unwrap_or_default();
-//     DATABASE.set("service_num", service_num).await?;
-//     let ticket: Option<TicketPayload> = DATABASE.query(format!("SELECT * FROM service_order WHERE service_number == $service_num FETCH computer, customer")).await?.take(0)?;
+//     db().set("service_num", service_num).await?;
+//     let ticket: Option<TicketPayload> = db().query(format!("SELECT * FROM service_order WHERE service_number == $service_num FETCH computer, customer")).await?.take(0)?;
 //     debug!("ticket: {:?}", ticket);
 //     let new_ticket = ticket.unwrap_or_default();
 //     let chnnl = NewTicketChannel { new_ticket, new_task };
@@ -530,7 +530,7 @@ pub trait NotificationMod {
 #[async_trait]
 impl NotificationMod for Notification {
     async fn delete_notification(&mut self) -> Result<(), Error> {
-        let query: Option<Record> = DATABASE
+        let query: Option<Record> = db()
             .delete(("notification", self.id.key_string()))
             .await?;
         info!("schema/utilities.rs -> Deleted notification: {query:?}");
@@ -538,7 +538,7 @@ impl NotificationMod for Notification {
     }
 
     async fn mark_notification(&mut self, read: bool) -> Result<(), Error> {
-        let query: Option<Record> = DATABASE
+        let query: Option<Record> = db()
             .query("UPDATE notification SET status = $read WHERE id == $id")
             .bind(("id", self.id.clone()))
             .bind(("read", if read { "Read" } else { "Unread" }))
@@ -633,7 +633,7 @@ pub async fn create_full_task_payload(
     // with the same number, so reuse the existing record's id and turn the
     // write into an in-place update instead of a conflicting insert.
     if !service_number.is_empty() {
-        let existing_service_order: Option<RecordId> = match DATABASE
+        let existing_service_order: Option<RecordId> = match db()
             .query("SELECT VALUE id FROM service_order WHERE service_number == $service_number LIMIT 1")
             .bind(("service_number", service_number.clone()))
             .await
@@ -667,7 +667,7 @@ pub async fn create_full_task_payload(
     ticket_data.computer = Some(computer_id.clone());
 
     info!("schema/utilities.rs -> cust_record: {customer_data:?}");
-    let update_customer: std::result::Result<Option<Record>, surrealdb::Error> = DATABASE
+    let update_customer: std::result::Result<Option<Record>, surrealdb::Error> = db()
         .upsert(customer_id.clone())
         .content(customer_data.clone())
         .await;
@@ -691,7 +691,7 @@ pub async fn create_full_task_payload(
     }
 
     if send_specs {
-        let create_computer_record: std::result::Result<Option<Record>, surrealdb::Error> = DATABASE
+        let create_computer_record: std::result::Result<Option<Record>, surrealdb::Error> = db()
             .upsert(computer_id)
             .content(computer_data)
             .await;
@@ -702,7 +702,7 @@ pub async fn create_full_task_payload(
     }
 
     info!("schema/utilities.rs -> ticket record: {ticket_data:?}");
-    let service_ticket_record: std::result::Result<Option<Record>, surrealdb::Error> = DATABASE
+    let service_ticket_record: std::result::Result<Option<Record>, surrealdb::Error> = db()
         .upsert(ticket_id)
         .content(ticket_data)
         .await;
@@ -729,7 +729,7 @@ pub async fn create_full_task_payload(
     info!("schema/utilities.rs -> Task Data: {:?}", &task_data);
 
     
-    let check_task_record: Vec<LiveTaskPayload> = match DATABASE
+    let check_task_record: Vec<LiveTaskPayload> = match db()
         .query("SELECT * FROM task WHERE service_number == $service_number")
         .bind(("service_number", service_number.clone()))
         .await
@@ -746,7 +746,7 @@ pub async fn create_full_task_payload(
         for task in check_task_record.iter() {
             if task.id == task_data.id {
                 // Same task ID - this is an update
-                let upsert_result: std::result::Result<Option<Record>, surrealdb::Error> = DATABASE
+                let upsert_result: std::result::Result<Option<Record>, surrealdb::Error> = db()
                     .update(task.id.clone())
                     .content(LiveTaskPayload {
                         id: task.id.clone(),
@@ -776,7 +776,7 @@ pub async fn create_full_task_payload(
         }
     } else {
         // No existing task - create new one
-        let create_result: std::result::Result<Option<Record>, surrealdb::Error> = DATABASE
+        let create_result: std::result::Result<Option<Record>, surrealdb::Error> = db()
             .create(TASK_TABLE)
             .content(task_data).await;
         match create_result {
@@ -819,7 +819,7 @@ pub async fn create_and_link_records(
 
     let customer_id = customer_data.id.clone();
     info!("schema/utilities.rs -> create_and_link_records cust_record: {customer_data:?}");
-    let update_customer: std::result::Result<Option<Record>, surrealdb::Error> = DATABASE
+    let update_customer: std::result::Result<Option<Record>, surrealdb::Error> = db()
         .upsert(customer_id.clone())
         .content(customer_data.clone())
         .await;
@@ -840,7 +840,7 @@ pub async fn create_and_link_records(
 
     if super::entity_link::computer_has_minimal_hardware(&computer_data) {
         let create_computer_record: std::result::Result<Option<Record>, surrealdb::Error> =
-            DATABASE.upsert(canonical.clone()).content(computer_data).await;
+            db().upsert(canonical.clone()).content(computer_data).await;
         match create_computer_record {
             Ok(record) => info!("schema/utilities.rs -> create_computer_record: {record:?}"),
             Err(e) => {
@@ -855,7 +855,7 @@ pub async fn create_and_link_records(
             .next()
             .unwrap_or(&connection_string)
             .to_string();
-        let upsert_computer: std::result::Result<Option<ComputerData>, surrealdb::Error> = DATABASE
+        let upsert_computer: std::result::Result<Option<ComputerData>, surrealdb::Error> = db()
             .query("UPSERT $cid SET customer = $cust, hostname = $host")
             .bind(("cid", canonical.clone()))
             .bind(("cust", computer_data.customer.clone()))
@@ -872,7 +872,7 @@ pub async fn create_and_link_records(
         }
     }
 
-    let existing_service_order: Option<RecordId> = match DATABASE
+    let existing_service_order: Option<RecordId> = match db()
         .query("SELECT VALUE id FROM service_order WHERE service_number == $service_number LIMIT 1")
         .bind(("service_number", service_number.clone()))
         .await
@@ -891,7 +891,7 @@ pub async fn create_and_link_records(
 
     let ticket_id = ticket_data.id.clone();
     info!("schema/utilities.rs -> create_and_link_records ticket record: {ticket_data:?}");
-    let service_ticket_record: std::result::Result<Option<Record>, surrealdb::Error> = DATABASE
+    let service_ticket_record: std::result::Result<Option<Record>, surrealdb::Error> = db()
         .upsert(ticket_id)
         .content(ticket_data)
         .await;
@@ -932,7 +932,7 @@ pub async fn check_for_duplicates(
     let service_number_owned = service_number.to_string();
     
     // 1. Check for existing task by service_number
-    let existing_tasks: Vec<LiveTaskPayload> = DATABASE
+    let existing_tasks: Vec<LiveTaskPayload> = db()
         .query("SELECT * FROM task WHERE service_number == $service_number")
         .bind(("service_number", service_number_owned.clone()))
         .await?
@@ -943,14 +943,14 @@ pub async fn check_for_duplicates(
         
         // 2. If task exists, fetch associated service order
         if let Some(ref ticket_id) = existing_task.service_ticket {
-            let existing_ticket: Option<TicketData> = DATABASE
+            let existing_ticket: Option<TicketData> = db()
                 .select(ticket_id.clone())
                 .await?;
             
             if let Some(existing) = existing_ticket {
                 // Also fetch the computer linked to this service order if it exists
                 if let Some(ref computer_id) = existing.computer {
-                    let existing_computer: Option<ComputerData> = DATABASE
+                    let existing_computer: Option<ComputerData> = db()
                         .select(computer_id.clone())
                         .await?;
                     
@@ -969,7 +969,7 @@ pub async fn check_for_duplicates(
         }
     } else {
         // No existing task, but still check for service order by service_number
-        let existing_tickets: Vec<TicketData> = DATABASE
+        let existing_tickets: Vec<TicketData> = db()
             .query("SELECT * FROM service_order WHERE service_number == $service_number")
             .bind(("service_number", service_number_owned.clone()))
             .await?
@@ -978,7 +978,7 @@ pub async fn check_for_duplicates(
         if let Some(existing) = existing_tickets.first() {
             // Also fetch the computer linked to this service order if it exists
             if let Some(ref computer_id) = existing.computer {
-                let existing_computer: Option<ComputerData> = DATABASE
+                let existing_computer: Option<ComputerData> = db()
                     .select(computer_id.clone())
                     .await?;
                 
@@ -1007,7 +1007,7 @@ pub async fn check_for_duplicates(
         LIMIT 1
     "#;
     
-    let existing_customers: Vec<CustomerData> = DATABASE
+    let existing_customers: Vec<CustomerData> = db()
         .query(customer_query)
         .bind(("phone", phone))
         .bind(("email", email))
@@ -1043,7 +1043,7 @@ pub async fn check_for_duplicates(
                     LIMIT 1
                 "#;
                 
-                let scoped_computers: Vec<ComputerData> = DATABASE
+                let scoped_computers: Vec<ComputerData> = db()
                     .query(customer_scoped_query)
                     .bind(("customer_id", customer_id))
                     .bind(("hostname", hostname.clone()))
@@ -1064,7 +1064,7 @@ pub async fn check_for_duplicates(
                     LIMIT 1
                 "#;
                 
-                let strict_computers: Vec<ComputerData> = DATABASE
+                let strict_computers: Vec<ComputerData> = db()
                     .query(strict_computer_query)
                     .bind(("product_serial", product_serial.clone()))
                     .bind(("motherboard_serial", motherboard_serial.clone()))

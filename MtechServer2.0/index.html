@@ -65,7 +65,9 @@
     <base data-trunk-public-url />
 
     <link data-trunk rel="icon" href="assets/favicon.ico" />
-    <!-- <link data-trunk rel="copy-file" href="assets/sw.js" /> -->
+    <!-- Kill-switch worker served un-hashed at /sw.js so stale clients'
+         legacy registrations pick it up and self-destruct. Never register it. -->
+    <link data-trunk rel="copy-file" href="assets/sw.js" />
 
     <link data-trunk rel="copy-file" href="assets/manifest.json" />
     <link data-trunk rel="copy-file" href="assets/pcllogo.png" />
@@ -176,56 +178,5 @@
     <!--   import "./worker_loader.js"; -->
     <!--   console.log("Main Wasm and thread pool initialized."); -->
     <!-- </script> -->
-    <!--Register Service Worker with automatic update handling -->
-    <script>
-      // Service worker registration with update handling
-      // if ("serviceWorker" in navigator && window.location.hash !== "#dev") {
-      //   window.addEventListener("load", async function () {
-      //     try {
-      //       const registration = await navigator.serviceWorker.register("sw.js", {
-      //         updateViaCache: 'none' // Always check for SW updates
-      //       });
-            
-      //       console.log("[App] Service Worker registered");
-            
-            // // Check for updates periodically (every 5 minutes)
-            // setInterval(() => {
-            //   registration.update();
-            // }, 24 * 60 * 60 * 1000);
-            
-            // // Handle new service worker waiting to activate
-            // registration.addEventListener('updatefound', () => {
-            //   const newWorker = registration.installing;
-            //   console.log("[App] New Service Worker found, installing...");
-              
-            //   newWorker.addEventListener('statechange', () => {
-            //     if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-            //       // New content available, prompt user to reload
-            //       console.log("[App] New version available!");
-                  
-            //       // Auto-reload for seamless updates (or show a toast/banner)
-            //       if (confirm("A new version is available! Click OK to update.")) {
-            //         newWorker.postMessage('skipWaiting');
-            //         window.location.reload();
-            //       }
-            //     }
-            //   });
-            // });
-            
-            // Reload when new SW takes control
-            // let refreshing = false;
-            // navigator.serviceWorker.addEventListener('controllerchange', () => {
-            //   if (!refreshing) {
-            //     refreshing = true;
-            //     window.location.reload();
-            //   }
-            // });
-            
-          // } catch (error) {
-          //   console.error("[App] Service Worker registration failed:", error);
-          // }
-      //   });
-      // }
-    </script>
   </body>
 </html>

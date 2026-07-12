@@ -1,4 +1,4 @@
-use crate::DATABASE;
+use crate::db;
 use serde::{Deserialize, Serialize};
 use super::{Datetime, RecordId, SurrealValue};
 
@@ -85,7 +85,8 @@ impl PluginRegistryEntry {
             "SELECT * FROM plugin_registry WHERE {token_clause}{tag_clause} LIMIT 25"
         );
 
-        let mut q = DATABASE.query(sql);
+        let dbh = db();
+        let mut q = dbh.query(sql);
         for (i, token) in tokens.iter().enumerate() {
             q = q.bind((format!("t{i}"), token.clone()));
         }
@@ -100,7 +101,7 @@ impl PluginRegistryEntry {
     /// Get a plugin registry entry by plugin_id (uses plugin_id as record key).
     pub async fn get_by_plugin_id(plugin_id: &str) -> anyhow::Result<Option<Self>> {
         let rid = RecordId::new(super::PLUGIN_REGISTRY_TABLE, plugin_id);
-        let entry: Option<Self> = DATABASE.select(rid).await?;
+        let entry: Option<Self> = db().select(rid).await?;
         Ok(entry)
     }
 
@@ -111,13 +112,13 @@ impl PluginRegistryEntry {
         let mut e = entry.clone();
         e.id = rid.clone();
         e.updated_at = chrono::Utc::now().into();
-        let _: Option<Self> = DATABASE.upsert(rid).content(e).await?;
+        let _: Option<Self> = db().upsert(rid).content(e).await?;
         Ok(())
     }
 
     /// List all plugins in the registry.
     pub async fn list_all() -> anyhow::Result<Vec<Self>> {
-        let entries: Vec<Self> = DATABASE
+        let entries: Vec<Self> = db()
             .query("SELECT * FROM plugin_registry ORDER BY updated_at DESC LIMIT 50")
             .await?
             .take(0)?;

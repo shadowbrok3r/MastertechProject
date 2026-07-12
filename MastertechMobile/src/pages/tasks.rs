@@ -580,6 +580,6 @@ fn parse_priority(s: &str) -> Priority { match s { "Express" => Priority::Expres
 
 async fn current_user() -> anyhow::Result<User> {
     if let Ok(guard) = database::CURRENT_USER_INFO.try_lock() { if let Some(u) = guard.clone() { return Ok(u); } }
-    let user: Option<User> = database::DATABASE.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
+    let user: Option<User> = database::db().query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
     user.ok_or_else(|| anyhow::anyhow!("No current user"))
 }

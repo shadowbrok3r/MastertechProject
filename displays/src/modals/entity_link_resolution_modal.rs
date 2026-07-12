@@ -14,7 +14,7 @@ use database::schema::{
     utilities::get_prestashop_payload, ComputerData, CustomerData, RecordId, RecordIdExt,
     TicketData, COMPUTER_TABLE, CUSTOMER_TABLE,
 };
-use database::DATABASE;
+use database::db;
 use eframe::egui::{Color32, Context, RichText, ScrollArea, TextEdit, Ui, Vec2, Window};
 
 use crate::plugins::entity_link_pending::{
@@ -684,7 +684,7 @@ impl EntityLinkResolutionModal {
                 }
                 let cust_id = customer.id.clone();
                 if update_customer || existing_customer.is_none() {
-                    let merge_res: Result<(), surrealdb::Error> = DATABASE
+                    let merge_res: Result<(), surrealdb::Error> = db()
                         .query(
                             "UPSERT $id MERGE { \
                                 cust_code: $cust_code, \
@@ -729,7 +729,7 @@ impl EntityLinkResolutionModal {
 
                 // Merge over the existing (live-client) row so suggestion specs
                 // fill gaps without wiping hardware the client already reported.
-                let mut merged = match DATABASE
+                let mut merged = match db()
                     .select::<Option<ComputerData>>(computer.id.clone())
                     .await
                 {
@@ -743,7 +743,7 @@ impl EntityLinkResolutionModal {
                 merged.id = computer.id.clone();
                 merged.customer = Some(resolved_customer_id.clone());
 
-                let upsert: Result<Option<ComputerData>, surrealdb::Error> = DATABASE
+                let upsert: Result<Option<ComputerData>, surrealdb::Error> = db()
                     .upsert(merged.id.clone())
                     .content(merged.clone())
                     .await;
@@ -765,7 +765,7 @@ impl EntityLinkResolutionModal {
                 // the right owner — mirrors the relink_popup behaviour.
                 if let Some(ref old) = old_computer_id {
                     if !old.key_string().is_empty() {
-                        let _: Result<(), surrealdb::Error> = DATABASE
+                        let _: Result<(), surrealdb::Error> = db()
                             .query("UPDATE $id SET customer = $cid")
                             .bind(("id", old.clone()))
                             .bind(("cid", resolved_customer_id.clone()))
@@ -822,7 +822,7 @@ impl EntityLinkResolutionModal {
                      customer_locked = true WHERE connection_string == $cs"
                 }
             };
-            let _: Result<(), surrealdb::Error> = DATABASE
+            let _: Result<(), surrealdb::Error> = db()
                 .query(cc_sql)
                 .bind(("compid", computer.id.clone()))
                 .bind(("custid", resolved_customer_id.clone()))
@@ -990,7 +990,7 @@ async fn fetch_existing_customer_lenient(
     // produces. We pass the key as a bound param so SurrealDB doesn't
     // interpret backticks / colons in the key as syntax.
     let rid = RecordId::new(CUSTOMER_TABLE, key);
-    let rows: Vec<serde_json::Value> = DATABASE
+    let rows: Vec<serde_json::Value> = db()
         .query("SELECT * FROM $id")
         .bind(("id", rid))
         .await
@@ -1008,7 +1008,7 @@ async fn fetch_existing_customer_lenient(
     // for that record id; this is the only way to find legacy rows.
     if let Ok(n) = key.parse::<i64>() {
         let q = format!("SELECT * FROM customer:{n}");
-        let rows: Vec<serde_json::Value> = DATABASE
+        let rows: Vec<serde_json::Value> = db()
             .query(q)
             .await
             .map_err(|e| e.to_string())?

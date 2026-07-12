@@ -1,4 +1,4 @@
-use database::{live_data::{handle_live_delete_client, update_or_insert_client}, schema::{ConnectedClient, ComputerData, RecordId, UserAuthorization}, DATABASE};
+use database::{live_data::{handle_live_delete_client, update_or_insert_client}, schema::{ConnectedClient, ComputerData, RecordId, UserAuthorization}, db};
 use crate::{app_state::SharedContext, ui_tools::toasts::{Toast, ToastKind, ToastOptions, ToastStyle}, PlatformSpawner, Spawner};
 use eframe::egui::{Color32, RichText};
 use std::collections::BTreeMap;
@@ -179,7 +179,7 @@ impl SharedContext {
             let mut resolved: Vec<(String, RecordId)> = Vec::new();
             for (cs, computer_id) in pending {
                 let computer: Result<Option<ComputerData>, surrealdb::Error> =
-                    DATABASE.select(computer_id).await;
+                    db().select(computer_id).await;
                 if let Ok(Some(comp)) = computer {
                     if let Some(customer) = comp.customer {
                         resolved.push((cs, customer));

@@ -1,4 +1,4 @@
-use crate::DATABASE;
+use crate::db;
 use crossbeam::channel::Sender;
 use serde::{Deserialize, Serialize};
 
@@ -29,7 +29,7 @@ impl TaskNoteRead {
     pub async fn fetch_all_for_user(
         tx: Sender<Vec<Self>>,
     ) -> anyhow::Result<(), anyhow::Error> {
-        let rows: Vec<Self> = DATABASE
+        let rows: Vec<Self> = db()
             .query("SELECT task, read_at FROM task_note_read WHERE user == $auth.id")
             .await?
             .take(0)?;
@@ -41,7 +41,7 @@ impl TaskNoteRead {
     /// Upsert the read marker for `(task_id, $auth.id)`. Uses the unique index
     /// so no full-table scan is needed even as the table grows.
     pub async fn mark_read(task_id: RecordId) -> anyhow::Result<(), anyhow::Error> {
-        DATABASE
+        db()
             .query(
                 "UPSERT task_note_read \
                  SET task = $task, user = $auth.id, read_at = time::now() \

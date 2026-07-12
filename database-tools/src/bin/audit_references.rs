@@ -247,7 +247,7 @@ async fn main() -> Result<()> {
 /// efficient at the wire level but harder to reason about — and we're
 /// nowhere near the row counts where the wire-level cost matters.
 async fn audit_single(fk: Fk, sample_size: usize) -> Result<FkReport> {
-    let db = &*database::DATABASE;
+    let db = database::db();
 
     let select_sources = format!("SELECT id, {field} AS fk FROM {src}", field = fk.field, src = fk.source);
     let select_targets = format!("SELECT VALUE id FROM {tgt}", tgt = fk.target);
@@ -315,7 +315,7 @@ async fn audit_single(fk: Fk, sample_size: usize) -> Result<FkReport> {
 /// `source_id [idx] orphan_value` triples so the cleanup script knows
 /// exactly which slot to null out.
 async fn audit_array(fk: Fk, sample_size: usize) -> Result<FkReport> {
-    let db = &*database::DATABASE;
+    let db = database::db();
 
     let select_sources = format!("SELECT id, {field} AS fk FROM {src}", field = fk.field, src = fk.source);
     let select_targets = format!("SELECT VALUE id FROM {tgt}", tgt = fk.target);

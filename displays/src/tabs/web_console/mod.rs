@@ -337,8 +337,8 @@ impl WebConsole {
         
         // Delete from database
         PlatformSpawner::spawn(async move {
-            use database::{DATABASE, schema::CONNECTED_CLIENT_TABLE};
-            let result: Result<Option<database::schema::Record>, _> = DATABASE
+            use database::{db, schema::CONNECTED_CLIENT_TABLE};
+            let result: Result<Option<database::schema::Record>, _> = db()
                 .delete((CONNECTED_CLIENT_TABLE, id.key_string()))
                 .await;
             match result {
@@ -364,8 +364,8 @@ impl WebConsole {
             let cache_tx = self.computer_tx.clone();
 
             PlatformSpawner::spawn(async move {
-                use database::DATABASE;
-                let result: Result<Option<ComputerData>, _> = DATABASE
+                use database::db;
+                let result: Result<Option<ComputerData>, _> = db()
                     .select(computer_id)
                     .await;
                 match result {
@@ -459,8 +459,8 @@ impl WebConsole {
 
         // Update database
         PlatformSpawner::spawn(async move {
-            use database::DATABASE;
-            let _: Result<_, _> = DATABASE
+            use database::db;
+            let _: Result<_, _> = db()
                 .query("UPDATE connected_client SET connected = false WHERE connection_string == $conn")
                 .bind(("conn", conn_string.clone()))
                 .await;

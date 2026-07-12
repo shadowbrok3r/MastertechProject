@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use anyhow::{Error, Result};
 use rpc_router::RpcParams;
 use database::schema::RecordId;
-use database::{DATABASE, SurrealValue};
+use database::{db, SurrealValue};
 
 use super::{tool_spec, ToolSpec};
 
@@ -34,7 +34,7 @@ pub async fn get_task_summary(
     params: GetTaskSummaryParams,
 ) -> Result<TaskSummary, String> {
     log::info!("Calling task");
-    let task: Option<TaskSummary> = DATABASE
+    let task: Option<TaskSummary> = db()
         .query("SELECT id, task_name, task_description FROM task WHERE service_number == $task_id")
         .bind(("task_id", params.task_id))
         .await

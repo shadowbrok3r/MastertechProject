@@ -2,7 +2,7 @@ use super::{random_record_id, RecordId, SurrealValue};
 use serde::{Deserialize, Serialize};
 use crate::schema::SALES_NOTE_TABLE;
 use crate::schema::user::User;
-use crate::DATABASE;
+use crate::db;
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 pub struct SalesNote {
@@ -26,7 +26,7 @@ impl SalesNote {
 pub async fn get_sales_notes_for_user(user: &User, order_ids: Vec<String>) -> anyhow::Result<Vec<SalesNote>, anyhow::Error> {
     if order_ids.is_empty() { return Ok(Vec::new()); }
     let ids_param = order_ids.clone();
-    let results: Vec<SalesNote> = DATABASE
+    let results: Vec<SalesNote> = db()
         .query("SELECT * FROM sales_note WHERE user == $user AND order_id IN $order_ids")
         .bind(("user", user.get_id()))
         .bind(("order_ids", ids_param))
@@ -36,7 +36,7 @@ pub async fn get_sales_notes_for_user(user: &User, order_ids: Vec<String>) -> an
 }
 
 pub async fn upsert_sales_note(user: &User, order_id: &str, note: &str) -> anyhow::Result<(), anyhow::Error> {
-    let _res: Option<SalesNote> = DATABASE
+    let _res: Option<SalesNote> = db()
         .query(
             "IF (SELECT * FROM sales_note WHERE user == $user AND order_id == $order_id)[0] != NONE THEN \
              UPDATE sales_note SET note = $note WHERE user == $user AND order_id == $order_id \

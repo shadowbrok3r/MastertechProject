@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Display};
 use serde_json::Value;
-use crate::DATABASE;
+use crate::db;
 
 use super::{prestashop_schema::{self, Prestashop}, random_record_id, Bytes, RecordId, Status, Store, SurrealValue, USER_TABLE};
 
@@ -357,7 +357,7 @@ impl User {
     }
 
     pub async fn get_user_record_from_id(id: RecordId) -> anyhow::Result<Self, anyhow::Error> {
-        let user: Option<Self> = DATABASE
+        let user: Option<Self> = db()
             .query("SELECT * FROM user WHERE id == $id")
             .bind(("id", id))
             .await?
@@ -394,7 +394,7 @@ impl User {
     /// - `Err(Error)` if an error occurs while saving the settings.
     pub async fn save_mastertech_ui_layout(&mut self, settings: Value) -> anyhow::Result<(), anyhow::Error>{
         log::info!("helper_traits -> Settings for MASTERTECH: {:?}", settings.clone());
-        match DATABASE
+        match db()
             .query("UPDATE $auth.id SET user_settings.ui_layout.mastertech = $settings")
             .bind(("settings", settings))
             .await
@@ -407,7 +407,7 @@ impl User {
     
     pub async fn save_version(&mut self, version: impl Display + Serialize + 'static + SurrealValue) -> anyhow::Result<(), anyhow::Error> {
         log::info!("helper_traits -> save_version -> {version}");
-        match DATABASE
+        match db()
             .query("UPDATE $auth.id SET version = $version")
             .bind(("version", version))
             .await
@@ -425,7 +425,7 @@ impl User {
     /// - `Err(Error)` if an error occurs while saving the settings.
     pub async fn save_mtechserver_ui_layout(&mut self, settings: Value) -> anyhow::Result<(), anyhow::Error>{
         log::info!("helper_traits -> Settings for MTECHSERVER: {:?}", settings.clone());
-        match DATABASE
+        match db()
             .query("UPDATE $auth.id SET user_settings.ui_layout.mtechserver = $settings")
             .bind(("settings", settings))
             .await
@@ -448,7 +448,7 @@ impl User {
         root.insert(page.to_string(), serde_json::Value::Array(order.into_iter().map(serde_json::Value::from).collect()));
         let settings = serde_json::Value::Object(root);
 
-        match DATABASE
+        match db()
             .query("UPDATE $auth.id SET user_settings.ui_layout.task_column_layout = $settings")
             .bind(("settings", settings.clone()))
             .await
@@ -493,7 +493,7 @@ impl User {
     }
 
     pub async fn get_current_user_from_auth() -> anyhow::Result<Option<Self>, anyhow::Error> {
-        let user_record: Option<Self> = DATABASE
+        let user_record: Option<Self> = db()
             .query("SELECT * FROM user WHERE id == $auth.id")
             .await?
             .take(0)?;
@@ -502,7 +502,7 @@ impl User {
     }
 
     pub async fn get_users() -> anyhow::Result<Vec<Self>, anyhow::Error> {
-        let user_records: Vec<Self> = DATABASE
+        let user_records: Vec<Self> = db()
             .query("SELECT * FROM user ")
             .await?
             .take(0)?;
@@ -517,7 +517,7 @@ impl User {
     /// [`User::query_user_or_employee_from_email`].
     pub async fn query_user_from_email(email: String) -> anyhow::Result<Self, anyhow::Error> {
         if email.contains("checkinshelf") || email.is_empty() {
-            let user: Option<Self> = DATABASE
+            let user: Option<Self> = db()
                 .query("SELECT * FROM user WHERE id == $auth.id")
                 .await?
                 .take(0)?;
@@ -530,7 +530,7 @@ impl User {
             format!("{email}@pclaptops.com")
         };
 
-        let user: Option<Self> = DATABASE
+        let user: Option<Self> = db()
             .query("SELECT * FROM user WHERE email == $email")
             .bind(("email", full_email.clone()))
             .await?
@@ -580,7 +580,7 @@ impl User {
             format!("{username}@pclaptops.com")
         };
 
-        let emails: Vec<String> = DATABASE
+        let emails: Vec<String> = db()
             .query("RETURN (SELECT VALUE email FROM user WHERE email == $email)")
             .bind(("email", full_email))
             .await?
@@ -590,7 +590,7 @@ impl User {
     }
 
     pub async fn add_custom_status(status: &str) -> anyhow::Result<(), anyhow::Error> {
-        let _: Option<User> = DATABASE
+        let _: Option<User> = db()
             .query(r#"
                 LET $statuses = $auth.id.user_statuses;
                 IF $statuses.is_empty() {
@@ -611,7 +611,7 @@ impl User {
     }
 
     pub async fn remove_custom_status(status: &str) -> anyhow::Result<(), anyhow::Error> {
-        let _: Option<User> = DATABASE
+        let _: Option<User> = db()
             .query(r#"
                 LET $idx = array::find_index($auth.id.user_statuses, $status);
                 IF $idx != NONE {
@@ -629,7 +629,7 @@ impl User {
     pub async fn update_color_scheme(color_scheme: Bytes) -> anyhow::Result<(), anyhow::Error> {
         log::error!("color_scheme BYTES: {color_scheme:?}");
 
-        match DATABASE  
+        match db()  
             .query("UPDATE $auth.id SET user_settings.color_scheme = $color_scheme")
             .bind(("color_scheme", color_scheme))
             .await 
@@ -644,7 +644,7 @@ impl User {
     /// Update just the mobile color scheme (serialized egui::Style bytes) in the database
     pub async fn update_mobile_color_scheme(color_scheme: Bytes) -> anyhow::Result<(), anyhow::Error> {
         log::info!("mobile_color_scheme BYTES: {color_scheme:?}");
-        match DATABASE
+        match db()
             .query("UPDATE $auth.id SET user_settings.mobile_color_scheme = $color_scheme")
             .bind(("color_scheme", color_scheme))
             .await
@@ -658,7 +658,7 @@ impl User {
     /// Update just the terminal-mode color scheme (serialized TuiColorScheme JSON) in the database.
     /// Errors propagate so callers can surface save failures.
     pub async fn update_tui_color_scheme(color_scheme: Bytes) -> anyhow::Result<(), anyhow::Error> {
-        DATABASE
+        db()
             .query("UPDATE $auth.id SET user_settings.tui_color_scheme = $color_scheme")
             .bind(("color_scheme", color_scheme))
             .await?
@@ -667,7 +667,7 @@ impl User {
     }
 
     pub async fn save_mcp_settings(settings: McpSettings) -> anyhow::Result<(), anyhow::Error> {
-        match DATABASE
+        match db()
             .query("UPDATE $auth.id SET mcp_settings = $settings")
             .bind(("settings", settings))
             .await
@@ -685,7 +685,7 @@ impl User {
         title: &str,
         messages: serde_json::Value,
     ) -> anyhow::Result<(), anyhow::Error> {
-        DATABASE
+        db()
             .query("UPSERT type::record('ai_chat', $tid) SET user = $auth.id, title = $title, messages = $messages, updated_at = time::now()")
             .bind(("tid", thread_id.to_string()))
             .bind(("title", title.to_string()))
@@ -697,7 +697,7 @@ impl User {
     /// Loads the current user's AI-playground chat threads, newest first, as an
     /// array of `{ thread_id, title, messages }` objects.
     pub async fn load_ai_chat_threads() -> anyhow::Result<serde_json::Value, anyhow::Error> {
-        let rows: Vec<serde_json::Value> = DATABASE
+        let rows: Vec<serde_json::Value> = db()
             .query("SELECT record::id(id) AS thread_id, title, messages, updated_at FROM ai_chat WHERE user = $auth.id ORDER BY updated_at DESC")
             .await?
             .take(0)?;
@@ -705,7 +705,7 @@ impl User {
     }
 
     pub async fn load_user_threads() -> anyhow::Result<Vec<ChatThread>, anyhow::Error> {
-        let user_threads: Vec<ChatThread> = DATABASE
+        let user_threads: Vec<ChatThread> = db()
             .query("SELECT * FROM chat_thread WHERE user == $auth.id")
             .await?
             .take(0)?;

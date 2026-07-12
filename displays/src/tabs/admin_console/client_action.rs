@@ -1,7 +1,7 @@
 use super::{client_interface::tabs::command_shell::History, AdminConsole, SessionLayout};
 use database::{
     schema::{ConnectedClient, Record, RecordIdExt, CONNECTED_CLIENT_TABLE},
-    websocket_url_with_room, DATABASE, WS_MASTER_URL, WS_MASTER_URL_LOCAL,
+    websocket_url_with_room, db, WS_MASTER_URL, WS_MASTER_URL_LOCAL,
 };
 use crate::tabs::admin_console::client_interface::{AdminTransport, WebSocketClient};
 use crate::{Cmd, PlatformSpawner, Spawner};
@@ -248,10 +248,10 @@ impl ClientHandler for ConnectedClient {
     fn export_logs(&mut self, history: Vec<History>) {
         let id = self.id.clone();
         PlatformSpawner::spawn(async move {
-            DATABASE.set("id", id).await.unwrap();
-            DATABASE.set("history", Some(history.clone())).await.unwrap();
+            db().set("id", id).await.unwrap();
+            db().set("history", Some(history.clone())).await.unwrap();
             let query = "UPDATE $id SET command_history += $history";
-            let update_history: Result<_, surrealdb::Error> = DATABASE
+            let update_history: Result<_, surrealdb::Error> = db()
                 .query(query)
                 .await;
 
@@ -263,7 +263,7 @@ impl ClientHandler for ConnectedClient {
     fn delete_client(&mut self) {
         let id = self.id.clone();
         PlatformSpawner::spawn(async move {
-            let update_history: Result<Option<Record>, surrealdb::Error> = DATABASE
+            let update_history: Result<Option<Record>, surrealdb::Error> = db()
                 .delete((CONNECTED_CLIENT_TABLE, id.key_string()))
                 .await;
 
@@ -274,7 +274,7 @@ impl ClientHandler for ConnectedClient {
     fn disconnect_client(&mut self) {
         let id = self.id.clone();
         PlatformSpawner::spawn(async move {
-            let update_history: Result<_, surrealdb::Error> = DATABASE
+            let update_history: Result<_, surrealdb::Error> = db()
                 .query("UPDATE $id SET connected = false")
                 .bind(("id", id))
                 .await;

@@ -6,7 +6,7 @@ use database::schema::service_match::PrestaSpecsSnapshot;
 use database::schema::{
     ComputerData, CustomerData, RecordId, CUSTOMER_TABLE, TICKET_TABLE,
 };
-use database::DATABASE;
+use database::db;
 
 pub async fn apply_open_service_confirm(apply: &OpenServiceConfirmApply) -> Result<(), String> {
     let customer_id = parse_record_id(&apply.customer_id, CUSTOMER_TABLE);
@@ -31,7 +31,7 @@ pub async fn apply_open_service_confirm(apply: &OpenServiceConfirmApply) -> Resu
         ..CustomerData::default()
     };
 
-    let _: Option<CustomerData> = DATABASE
+    let _: Option<CustomerData> = db()
         .upsert(customer.id.clone())
         .content(customer)
         .await
@@ -40,7 +40,7 @@ pub async fn apply_open_service_confirm(apply: &OpenServiceConfirmApply) -> Resu
     // Start from the existing (live-client) computer row so empty order
     // specs fall back to the hardware the client already reported; overlay
     // any non-empty order specs on top.
-    let mut computer = match DATABASE
+    let mut computer = match db()
         .select::<Option<ComputerData>>(computer_id.clone())
         .await
     {
@@ -59,7 +59,7 @@ pub async fn apply_open_service_confirm(apply: &OpenServiceConfirmApply) -> Resu
         }
     }
 
-    let _: Option<ComputerData> = DATABASE
+    let _: Option<ComputerData> = db()
         .upsert(computer.id.clone())
         .content(computer)
         .await
@@ -71,7 +71,7 @@ pub async fn apply_open_service_confirm(apply: &OpenServiceConfirmApply) -> Resu
         apply.friendly_name.clone()
     };
 
-    DATABASE
+    db()
         .query(
             "UPDATE connected_client SET \
              customer = $cust, computer = $comp, friendly_name = $fname, \
@@ -90,7 +90,7 @@ pub async fn apply_open_service_confirm(apply: &OpenServiceConfirmApply) -> Resu
     // (sales_rep, checkin_rep, terms, ticket_total, etc.) those are left
     // intact; we only link the customer / computer records.
     let ticket_id = RecordId::new(TICKET_TABLE, apply.candidate.service_number.clone());
-    DATABASE
+    db()
         .query(
             "UPSERT $id SET \
              service_number = $sn, doc_alias = $alias, \
