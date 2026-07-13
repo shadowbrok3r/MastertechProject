@@ -57,6 +57,39 @@ impl SharedContext {
             }
         }
     
+        // Remote-desktop popouts: one OS window per client with desktop_popout set.
+        #[cfg(all(feature = "tokio", not(target_arch = "wasm32")))]
+        {
+            let popped: Vec<String> = ws_layout
+                .ws_clients
+                .iter()
+                .filter(|(_, client)| client.desktop_popout)
+                .map(|(id, _)| id.clone())
+                .collect();
+
+            for client_id in popped.iter() {
+                let viewport_id = ViewportId::from_hash_of(("remote_desktop_popout", client_id.as_str()));
+                let viewport_builder = ViewportBuilder::default()
+                    .with_title(format!("Remote Desktop — {client_id}"))
+                    .with_inner_size([1280., 800.])
+                    .with_resizable(true)
+                    .with_taskbar(true);
+
+                ctx.show_viewport_immediate(viewport_id, viewport_builder, |ctx, _class| {
+                    CentralPanel::default().show(ctx, |ui| {
+                        if let Some(client) = ws_layout.ws_clients.get_mut(client_id) {
+                            client.desktop_popout_ui(ui);
+                        }
+                    });
+                    if ctx.input(|i| i.viewport().close_requested()) {
+                        if let Some(client) = ws_layout.ws_clients.get_mut(client_id) {
+                            client.desktop_popout = false;
+                        }
+                    }
+                });
+            }
+        }
+
         for (id, viewport_data) in self.show_tasks_viewport.iter_mut() {
             info!("ID: {id:?}\nviewport: {:?}", viewport_data.is_visible);
             if viewport_data.is_visible.load(Ordering::Relaxed) {

@@ -86,7 +86,60 @@ pub fn stop_desktop_stream() {
     STOP_FLAG.store(true, Ordering::SeqCst);
 }
 
+/// Blocks or restores system sleep/hibernation and display timeout for the
+/// calling thread; the OS drops the requirement automatically if the thread dies.
+#[cfg(target_os = "windows")]
+fn set_keep_awake(active: bool) {
+    use windows::Win32::System::Power::{
+        SetThreadExecutionState, ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED,
+    };
+    let state = if active {
+        ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
+    } else {
+        ES_CONTINUOUS
+    };
+    unsafe { SetThreadExecutionState(state) };
+    log::info!(
+        "remote desktop: keep-awake {}",
+        if active { "enabled" } else { "released" }
+    );
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_keep_awake(_active: bool) {}
+
+/// Wakes a powered-off display by injecting a 1px mouse jiggle.
+#[cfg(target_os = "windows")]
+fn wake_display() {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_MOVE, MOUSEINPUT,
+    };
+    let jiggle = |dx: i32, dy: i32| INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx,
+                dy,
+                mouseData: 0,
+                dwFlags: MOUSEEVENTF_MOVE,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let inputs = [jiggle(1, 0), jiggle(-1, 0)];
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent != inputs.len() as u32 {
+        log::warn!("remote desktop: wake_display SendInput injected {sent}/2 events");
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn wake_display() {}
+
 fn capture_loop() {
+    set_keep_awake(true);
+    wake_display();
     let mut frame_count: u64 = 0;
     let mut idle_ticks: u32 = 0;
     while !STOP_FLAG.load(Ordering::Relaxed) {
@@ -125,6 +178,7 @@ fn capture_loop() {
             std::thread::sleep(target_dt - elapsed);
         }
     }
+    set_keep_awake(false);
     CAPTURE_RUNNING.store(false, Ordering::SeqCst);
     log::info!("remote desktop: capture stopped");
 }

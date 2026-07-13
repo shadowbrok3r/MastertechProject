@@ -150,7 +150,9 @@ windows = {version = "0.62", features = [
     "Win32_Devices",
     "Win32_Devices_DeviceAndDriverInstallation",
     "Win32_Devices_Properties",
-    "Win32_UI_WindowsAndMessaging"
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_Power"
 ]}
 winapi = { version = "0.3", features = ["processthreadsapi"] }
 minidump-processor = { version = "0.26", features = ["http"] }

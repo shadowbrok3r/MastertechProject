@@ -50,6 +50,10 @@ pub const STOP: &str = p::STOP;
 pub const PLAY: &str = p::PLAY;
 pub const PAUSE: &str = p::PAUSE;
 
+pub const POPOUT: &str = p::ARROW_SQUARE_OUT;
+pub const FULLSCREEN_ENTER: &str = p::CORNERS_OUT;
+pub const FULLSCREEN_EXIT: &str = p::CORNERS_IN;
+
 pub const UP: &str = p::ARROW_UP;
 pub const REFRESH: &str = p::ARROW_CLOCKWISE;
 pub const HOME: &str = p::HOUSE;

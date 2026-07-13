@@ -631,6 +631,7 @@ impl WebSocketClient {
                     let mut quality = self.desktop_quality;
                     let mut scale = self.desktop_scale;
                     let mut streaming = self.desktop_streaming;
+                    let mut popout = self.desktop_popout;
                     let mut restart = false;
                     let mut stop = false;
                     let frames = self.desktop_viewer.frames_shown;
@@ -695,6 +696,9 @@ impl WebSocketClient {
                             streaming = true;
                             restart = true;
                         }
+                        if ui.button(format!("{} Pop out", icons::POPOUT)).clicked() {
+                            popout = true;
+                        }
                         ui.separator();
                         ui.label(
                             RichText::new(format!(
@@ -711,6 +715,7 @@ impl WebSocketClient {
                     self.desktop_quality = quality;
                     self.desktop_scale = scale;
                     self.desktop_streaming = streaming;
+                    self.desktop_popout = popout;
                     if stop {
                         let _ = self.send_cmd_tx.try_send(Cmd::DesktopStreamStop);
                     }
@@ -724,22 +729,91 @@ impl WebSocketClient {
                     }
 
                     ui.separator();
-                    let Self { desktop_viewer, transport, .. } = self;
-                    desktop_viewer.ui(ui, |ev| {
-                        match bincode::serde::encode_to_vec(&ev, standard()) {
-                            Ok(ser) => {
-                                let mut v = vec![crate::DESKTOP_INPUT_TAG];
-                                v.extend(ser);
-                                transport.send(WsMessage::Binary(v));
+                    if self.desktop_popout {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(30.0);
+                            ui.label(
+                                RichText::new("Remote desktop is popped out to its own window.")
+                                    .color(Color32::GRAY),
+                            );
+                            ui.add_space(8.0);
+                            if ui.button("Return to tab").clicked() {
+                                self.desktop_popout = false;
                             }
-                            Err(e) => {
-                                log::warn!(target: "remote_desktop", "encode input failed: {e}");
+                        });
+                    } else {
+                        let Self { desktop_viewer, transport, .. } = self;
+                        desktop_viewer.ui(ui, |ev| {
+                            match bincode::serde::encode_to_vec(&ev, standard()) {
+                                Ok(ser) => {
+                                    let mut v = vec![crate::DESKTOP_INPUT_TAG];
+                                    v.extend(ser);
+                                    transport.send(WsMessage::Binary(v));
+                                }
+                                Err(e) => {
+                                    log::warn!(target: "remote_desktop", "encode input failed: {e}");
+                                }
                             }
-                        }
-                    });
+                        });
+                    }
                 }
             },
         };
+    }
+
+    /// Remote-desktop content for the popped-out OS window.
+    #[cfg(all(feature = "tokio", not(target_arch = "wasm32")))]
+    pub fn desktop_popout_ui(&mut self, ui: &mut eframe::egui::Ui) {
+        let fullscreen = ui
+            .ctx()
+            .input(|i| i.viewport().fullscreen.unwrap_or(false));
+        let mut toggle_fullscreen = false;
+        let mut return_to_tab = false;
+        let frames = self.desktop_viewer.frames_shown;
+        let latency = self.desktop_viewer.last_latency_ms;
+
+        ui.horizontal(|ui| {
+            let (icon, label) = if fullscreen {
+                (icons::FULLSCREEN_EXIT, "Exit Full Screen")
+            } else {
+                (icons::FULLSCREEN_ENTER, "Full Screen")
+            };
+            if ui.button(format!("{icon} {label}")).clicked() {
+                toggle_fullscreen = true;
+            }
+            if ui.button("Return to tab").clicked() {
+                return_to_tab = true;
+            }
+            ui.separator();
+            ui.label(
+                RichText::new(format!("{frames} frames | {latency} ms"))
+                    .small()
+                    .color(Color32::from_rgb(140, 180, 140)),
+            );
+        });
+
+        if toggle_fullscreen {
+            ui.ctx()
+                .send_viewport_cmd(eframe::egui::ViewportCommand::Fullscreen(!fullscreen));
+        }
+        if return_to_tab {
+            self.desktop_popout = false;
+        }
+
+        ui.separator();
+        let Self { desktop_viewer, transport, .. } = self;
+        desktop_viewer.ui(ui, |ev| {
+            match bincode::serde::encode_to_vec(&ev, standard()) {
+                Ok(ser) => {
+                    let mut v = vec![crate::DESKTOP_INPUT_TAG];
+                    v.extend(ser);
+                    transport.send(WsMessage::Binary(v));
+                }
+                Err(e) => {
+                    log::warn!(target: "remote_desktop", "encode input failed: {e}");
+                }
+            }
+        });
     }
 
     /// Read a file in 512 KB chunks and send each as a `Cmd::DirectFileTransfer`.

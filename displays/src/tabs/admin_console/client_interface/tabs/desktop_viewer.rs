@@ -28,6 +28,40 @@ pub struct DesktopViewer {
     pub last_frame_bytes: usize,
 }
 
+/// Whether an unmodified press of `key` emits a companion `Event::Text`.
+fn key_produces_text(key: egui::Key) -> bool {
+    use egui::Key as K;
+    !matches!(
+        key,
+        K::ArrowDown
+            | K::ArrowLeft
+            | K::ArrowRight
+            | K::ArrowUp
+            | K::Escape
+            | K::Tab
+            | K::Backspace
+            | K::Enter
+            | K::Insert
+            | K::Delete
+            | K::Home
+            | K::End
+            | K::PageUp
+            | K::PageDown
+            | K::F1
+            | K::F2
+            | K::F3
+            | K::F4
+            | K::F5
+            | K::F6
+            | K::F7
+            | K::F8
+            | K::F9
+            | K::F10
+            | K::F11
+            | K::F12
+    )
+}
+
 impl DesktopViewer {
     pub fn new() -> Self {
         let (frame_tx, frame_rx) = crossbeam::channel::bounded(4);
@@ -202,16 +236,23 @@ impl DesktopViewer {
                     });
                 }
                 Event::Key { key, pressed, modifiers, .. } if self.kb_focus => {
-                    send_input(DesktopInputEvent::Key {
-                        key_name: key.name().to_string(),
-                        pressed: *pressed,
-                        modifiers: DesktopModifiers {
-                            ctrl: modifiers.ctrl,
-                            shift: modifiers.shift,
-                            alt: modifiers.alt,
-                            meta: modifiers.mac_cmd,
-                        },
-                    });
+                    // Printable presses also arrive as `Event::Text`, which carries the
+                    // typing; forwarding both injects each character twice. Presses go
+                    // through only for chords and non-text keys; releases always go
+                    // through so a chorded press can't leave a key held.
+                    let chorded = modifiers.ctrl || modifiers.alt || modifiers.command || modifiers.mac_cmd;
+                    if !*pressed || chorded || !key_produces_text(*key) {
+                        send_input(DesktopInputEvent::Key {
+                            key_name: key.name().to_string(),
+                            pressed: *pressed,
+                            modifiers: DesktopModifiers {
+                                ctrl: modifiers.ctrl,
+                                shift: modifiers.shift,
+                                alt: modifiers.alt,
+                                meta: modifiers.mac_cmd,
+                            },
+                        });
+                    }
                 }
                 Event::Text(t) if self.kb_focus => {
                     send_input(DesktopInputEvent::Text(t.clone()));

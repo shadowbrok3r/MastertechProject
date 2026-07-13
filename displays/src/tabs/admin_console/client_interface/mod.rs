@@ -105,6 +105,9 @@ pub struct WebSocketClient {
     pub egui_viewer: InlineEguiViewer,
     #[cfg(not(target_arch="wasm32"))]
     pub desktop_viewer: DesktopViewer,
+    /// Remote desktop renders in its own OS window instead of the tab.
+    #[cfg(not(target_arch="wasm32"))]
+    pub desktop_popout: bool,
     /// Full remote-desktop stream state and capture parameters.
     pub desktop_streaming: bool,
     pub desktop_monitors: Vec<crate::remote_desktop::DesktopMonitorInfo>,
@@ -269,6 +272,8 @@ Get-WmiObject")
             egui_viewer: InlineEguiViewer::new(),
             #[cfg(not(target_arch="wasm32"))]
             desktop_viewer: DesktopViewer::new(),
+            #[cfg(not(target_arch="wasm32"))]
+            desktop_popout: false,
             desktop_streaming: false,
             desktop_monitors: Vec::new(),
             desktop_monitor: 0,
