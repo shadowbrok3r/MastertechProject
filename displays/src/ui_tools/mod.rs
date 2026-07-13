@@ -8,6 +8,7 @@ use crate::TaskUiActions;
 
 pub mod autocomplete;
 pub mod carl_dark;
+pub mod font_atlas_watch;
 pub mod mention_handler;
 pub mod toasts;
 pub mod tokyo_dark;

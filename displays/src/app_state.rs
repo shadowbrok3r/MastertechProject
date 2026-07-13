@@ -1056,6 +1056,12 @@ impl SharedContext {
     }
 }
 
+/// Reinstalls the font definitions, forcing a fresh glyph atlas and a full
+/// font-texture upload.
+pub fn reinstall_custom_fonts(ctx: &Context) {
+    setup_custom_fonts(ctx);
+}
+
 fn setup_custom_fonts(ctx: &Context) {
     // Start with the default fonts (we will be adding to them rather than replacing them).
     let mut fonts = FontDefinitions::default();

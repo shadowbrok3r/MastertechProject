@@ -6,6 +6,7 @@ use log::info;
 
 impl eframe::App for MtechServer {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        displays::ui_tools::font_atlas_watch::watch(ctx);
         self.receive(frame, ctx);
 
         if let AppState::NoAuth(reason) = &self.shared_ctx.state {

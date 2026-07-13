@@ -63,6 +63,14 @@ impl ModalWindow for ModalType {
             modal_action = Some(action); // Capture the action
         };
 
+        // Window width matches the active modal's fixed content width plus the frame margins.
+        let window_width = match self {
+            ModalType::CreateTaskModal(create_task_modal) => {
+                create_task_modal.min_width.unwrap_or(500.0) + 8.0
+            }
+            _ => 723.0,
+        };
+
         Window::new(title_color)
             .frame(
                 Frame::default()
@@ -74,10 +82,9 @@ impl ModalWindow for ModalType {
             )
             .drag_to_scroll(eframe::egui::scroll_area::DragScroll::Never)
             .pivot(Align2::CENTER_CENTER)
-            .max_width(750.)
             .default_height(715.)
-            .max_width(723.0)
-            .min_width(723.0)
+            .max_width(window_width)
+            .min_width(window_width)
             .open(&mut open)
             .title_bar(true)
             .show(ctx, |ui| 
