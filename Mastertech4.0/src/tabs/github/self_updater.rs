@@ -83,49 +83,69 @@ pub async fn run(client: Client, tx: Sender<(u64, u64)>) -> anyhow::Result<(), a
 
         let url = proxied_github_asset_url(url);
 
-        if !url.is_empty() {
-            let response = client
-                .get(&url)
-                .header(ACCEPT, "application/octet-stream")
-                .header(CONTENT_TYPE, "application/octet-stream")
-                .header("X-GitHub-Api-Version", "2022-11-28")
-                .header(USER_AGENT, "shadowbrok3r/Mastertech")
-                .send()
-                .await
-                .map_err(|e| {
-                    error!("e.source() {:?}", e.to_string());
-                    info!("URL: {:?}", e.url());
-                    info!("{}", e.to_string());
-                })
-                .unwrap();
+        let response = client
+            .get(&url)
+            .header(ACCEPT, "application/octet-stream")
+            .header(CONTENT_TYPE, "application/octet-stream")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header(USER_AGENT, "shadowbrok3r/Mastertech")
+            .send()
+            .await?
+            .error_for_status()?;
 
-            info!("response: {response:?}");
+        info!("response: {response:?}");
 
-            let tmp_dir = ::std::env::current_dir()?;
-            info!("tmp_tarball_path: {tmp_dir:?}");
-            let tmp_tarball_path = tmp_dir.as_path().join(&"git-MasterTech.exe");
-            info!("tmp_tarball_path: {tmp_tarball_path:?}");
-            let mut tmp_file = File::create(&tmp_tarball_path).await?;
+        let staged = crate::utilities::safe_swap::staged_update_path()?;
+        info!("staged update path: {staged:?}");
+        let mut staged_file = File::create(&staged).await?;
 
-            // Copy the response content into the file
-            let mut stream = response.bytes_stream();
-
-            while let Some(item) = stream.next().await {
-                let chunk = item?;
-                tmp_file.write_all(&chunk).await?;
-                downloaded_bytes += chunk.len() as u64;
-                let sender = (downloaded_bytes, total_length);
-
-                if let Err(e) = tx.try_send(sender) {
-                    error!("Error sending bytes: {e}");
+        let mut stream = response.bytes_stream();
+        let mut stream_result: anyhow::Result<()> = Ok(());
+        while let Some(item) = stream.next().await {
+            let chunk = match item {
+                Ok(chunk) => chunk,
+                Err(e) => {
+                    stream_result = Err(e.into());
+                    break;
                 }
+            };
+            if let Err(e) = staged_file.write_all(&chunk).await {
+                stream_result = Err(e.into());
+                break;
             }
-
-            if downloaded_bytes == total_length {
-                drop(tx);
-                info!("DONE");
+            downloaded_bytes += chunk.len() as u64;
+            // The completion message is sent once, after validation below.
+            if downloaded_bytes != total_length {
+                let _ = tx.try_send((downloaded_bytes, total_length));
             }
         }
+
+        if stream_result.is_ok() {
+            if let Err(e) = staged_file.flush().await {
+                stream_result = Err(e.into());
+            }
+        }
+        drop(staged_file);
+
+        if let Err(e) = stream_result {
+            let _ = tokio::fs::remove_file(&staged).await;
+            return Err(e);
+        }
+        if total_length > 0 && downloaded_bytes != total_length {
+            let _ = tokio::fs::remove_file(&staged).await;
+            anyhow::bail!("update download incomplete: {downloaded_bytes}/{total_length} bytes");
+        }
+
+        // Equal fields signal the receiver to install the staged update.
+        let final_total = if total_length > 0 {
+            total_length
+        } else {
+            downloaded_bytes
+        };
+        if let Err(e) = tx.send((downloaded_bytes, final_total)) {
+            error!("Error sending completion: {e}");
+        }
+        info!("DONE");
     }
 
     Ok(())

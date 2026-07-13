@@ -1,5 +1,4 @@
 use displays::app_state::{AppState, MainPages};
-use std::ffi::OsStr;
 use log::{error, info};
 
 #[cfg(target_os = "windows")]
@@ -431,15 +430,7 @@ async fn main() -> eframe::Result<()> {
         eprintln!("Mastertech logging to {}", output_log_path().display());
     }
 
-    match check_old_exe() {
-        Ok(_) => log::info!("check_old_exe ran ok"),
-        Err(e) => {
-            if log_to_file {
-                eprintln!("check_old_exe failed: {e:?}");
-            }
-            log::error!("check_old_exe Err: {e:?}");
-        }
-    }
+    utilities::safe_swap::cleanup_update_leftovers();
 
     // ── --mcp-stdio: headless single-session MCP for Claude Desktop ────────────
     //
@@ -486,29 +477,6 @@ async fn main() -> eframe::Result<()> {
         run_gui(log_to_file, matches.get_flag("cpu")).await?;
     }
     
-    Ok(())
-}
-
-fn check_old_exe() -> anyhow::Result<(), anyhow::Error> {
-    let old_exe = std::env::current_dir()?;
-    // for dir in old_exe.read_dir()? {
-    //     let entry = dir?;
-    //     let file_name = entry.file_name().into_string().unwrap_or_default();
-    //     let file = entry.path();
-    //     if file_name.contains("__selfdelete__") {
-    //         std::fs::remove_file(file)?;
-    //     }
-    // }
-
-    if std::env::current_exe()?.file_name() == Some(OsStr::new("git-MasterTech.exe")) && old_exe.join("MasterTech.exe").exists() {
-        match std::fs::remove_file(old_exe) {
-            Ok(_) => {
-                log::info!("Removed old exe");
-                std::fs::rename(std::env::current_exe()?, "Mastertech.exe")?;
-            },
-            Err(e) => log::error!("Error removing old exe: {e:?}"),
-        }
-    }
     Ok(())
 }
 

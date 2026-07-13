@@ -1,4 +1,5 @@
 pub mod app_restart;
+pub mod safe_swap;
 pub mod crypto;
 pub mod ui_action;
 pub mod scripts;
