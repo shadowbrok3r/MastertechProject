@@ -86,7 +86,10 @@ impl ComputerInfo for ComputerData {
         self.product_serial = Product::serial_number().unwrap_or_default();
         self.product_vendor = Product::vendor_name().unwrap_or_default();
         // Same identity the pre-boot UEFI app reads from ACPI MSDM.
-        self.oa3_key = crate::filesystem::oa_serial::get_oa3_msdm_key().ok();
+        #[cfg(target_os = "windows")]
+        {
+            self.oa3_key = crate::filesystem::oa_serial::get_oa3_msdm_key().ok();
+        }
 
         info!("Filesystem -> get_computer_data -> Pulling Drive information");
         let mut disks = Disks::new_with_refreshed_list();

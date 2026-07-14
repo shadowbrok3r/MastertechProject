@@ -43,3 +43,5 @@ laptops.txt
 .claude
 dev-audit.json
 .cursor
+target-linux-compat
+.cache/cargo-linux-compat

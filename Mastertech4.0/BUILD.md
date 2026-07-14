@@ -1,4 +1,35 @@
-# Building Mastertech4.0 natively on Windows
+# Building Mastertech4.0
+
+## Linux release builds — use the container
+
+Binaries take on the glibc symbol versions of the machine that links them.
+Build on a rolling-release host (Manjaro/Arch) and the result dies on
+customer machines with:
+
+```
+version 'GLIBC_2.43' not found (required by ./MasterTech-linux)
+```
+
+glibc can't be statically linked (NSS/dlopen, and the GPU drivers the app
+must dlopen are glibc-linked .so files) — the Linux equivalent of static
+vcruntime is building against the **oldest** glibc you ship to. glibc is
+forward-compatible, so a binary linked against 2.35 runs everywhere newer.
+
+From the workspace root:
+
+```bash
+./build-linux-compat.sh                  # release-fast (default)
+./build-linux-compat.sh release          # or any other profile
+```
+
+This builds `Mastertech4.0/docker/linux-x64/Dockerfile` (Ubuntu 22.04,
+glibc 2.35) and compiles inside it via podman (set `CONTAINER_ENGINE=docker`
+to use docker). Output: `target-linux-compat/<profile>/MasterTech`. The
+script prints the binary's actual glibc floor at the end; ship only
+binaries from this path, never from a native `cargo build` on a rolling
+host. Native `cargo build` stays fine for local dev.
+
+# Building natively on Windows
 
 Skia (the `egui_skia` CPU/software renderer fallback for machines with no working
 GPU GL stack) is behind the `skia-render` Cargo feature and **off by default**.
