@@ -125,15 +125,22 @@ async fn read_stock_cache<T: database::SurrealValue>(key: &str) -> Result<Option
 
 /// Claims the refresh slot for `stock_cache:<key>`.
 /// Returns (claim token if this client won the slot, current cached data).
-async fn claim_stock_cache<T: database::SurrealValue>(key: &str) -> Result<(Option<String>, Option<Vec<T>>), Error> {
+async fn claim_stock_cache<T: database::SurrealValue>(
+    key: &str,
+    kind: &str,
+    location: Option<u64>,
+) -> Result<(Option<String>, Option<Vec<T>>), Error> {
+    let location_sql = location.map_or("NONE".to_string(), |l| l.to_string());
+    // Claim UPSERT sets the required `kind` field; check() surfaces errors take() never reads.
     let mut res = db()
         .query(format!(
             "LET $r = SELECT * FROM ONLY stock_cache:{key}; \
-             LET $tok = IF $r.refreshing_since == NONE OR $r.refreshing_since < (time::now() - {STOCK_CLAIM_TTL}) {{ (UPSERT stock_cache:{key} SET refreshing_since = time::now(), claim_token = rand::ulid() RETURN AFTER)[0].claim_token }} ELSE {{ NONE }}; \
+             LET $tok = IF $r.refreshing_since == NONE OR $r.refreshing_since < (time::now() - {STOCK_CLAIM_TTL}) {{ (UPSERT stock_cache:{key} SET kind = '{kind}', location_id = {location_sql}, refreshing_since = time::now(), claim_token = rand::ulid() RETURN AFTER)[0].claim_token }} ELSE {{ NONE }}; \
              RETURN $tok; \
              RETURN $r.data;"
         ))
-        .await?;
+        .await?
+        .check()?;
     let token: Option<String> = res.take(2)?;
     let stale: Option<Vec<T>> = res.take(3)?;
     Ok((token, stale))
@@ -192,7 +199,7 @@ where
         }
     }
 
-    let (token, stale) = match claim_stock_cache::<T>(key).await {
+    let (token, stale) = match claim_stock_cache::<T>(key, kind, location).await {
         Ok(pair) => pair,
         Err(e) => {
             // Claim contention (e.g. write-conflict) degrades to a personal fetch.
