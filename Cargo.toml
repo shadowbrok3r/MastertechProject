@@ -57,13 +57,13 @@ database = { path = "database" }
 tcp_protocol = { path = "tcp_protocol" }
 eframe = { version="0.35", features=["serde",  "default_fonts", "glow"], default-features=false } 
 ratatui = { version = "0.30", default-features = true, features = [ "crossterm", "unstable", "serde", "layout-cache" ]}
-surrealdb = { version = "3.2.0", features = ["protocol-ws"] }
-surrealdb-types = { version = "3.2.0" }
+surrealdb = { version = "3.2.1", features = ["protocol-ws"] }
+surrealdb-types = { version = "3.2.1" }
 egui_extras = { version = "0.35", features = ["datepicker", "syntect", "serde", "image", "all_loaders" ]}
 egui-data-table = { git = "https://github.com/shadowbrok3r/egui-data-table", features = ["persistency"]}
 egui_json_tree = { version = "0.16", features = ["serde_json"] }
 egui_dock = { git = "https://github.com/shadowbrok3r/egui_dock",  features = [ "serde" ] }
-rmcp = { version = "2", features = ["server", "client", "transport-async-rw", "transport-streamable-http-server"] }
+rmcp = { version = "2.2.0", features = ["server", "client", "transport-async-rw", "transport-streamable-http-server"] }
 axum = { version = "0.8", default-features = true, features = ["tokio"] }
 chrono = { version = "0.4", default-features = false, features = ["now"] } 
 tokio = { version = "1", features = ["full", "tracing"] }
@@ -95,7 +95,7 @@ fuzzy-matcher = "0.3"
 rusty-s3 = "0.10.0"
 wasmtime = "46.0.1"
 wasmtime-wasi = "46.0.1"
-wat = "1.2"
+wat = "1"
 rfd = "0.17.2"
 regex = "1.13.0"
 async-trait = "0.1"

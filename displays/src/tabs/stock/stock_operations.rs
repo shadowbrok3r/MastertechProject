@@ -113,14 +113,23 @@ async fn fetch_extra_stock_info_from_odoo() -> Result<Vec<ExtraInventoryData>, E
 }
 
 /// Cached `data` from `stock_cache:<key>` when fresher than the TTL.
+/// Freshness is a scalar RETURN; the array is taken as `Vec<T>` (the SDK
+/// rejects an array RETURN taken into `Option<Vec<T>>`).
 async fn read_stock_cache<T: database::SurrealValue>(key: &str) -> Result<Option<Vec<T>>, Error> {
     let mut res = db()
         .query(format!(
             "LET $r = SELECT * FROM ONLY stock_cache:{key}; \
-             RETURN IF $r.refreshed_at != NONE AND $r.refreshed_at > (time::now() - {STOCK_CACHE_TTL}) {{ $r.data }} ELSE {{ NONE }};"
+             RETURN $r.refreshed_at != NONE AND $r.refreshed_at > (time::now() - {STOCK_CACHE_TTL}); \
+             RETURN $r.data ?? [];"
         ))
-        .await?;
-    Ok(res.take(1)?)
+        .await?
+        .check()?;
+    let fresh: Option<bool> = res.take(1)?;
+    if fresh != Some(true) {
+        return Ok(None);
+    }
+    let data: Vec<T> = res.take(2)?;
+    Ok(Some(data))
 }
 
 /// Claims the refresh slot for `stock_cache:<key>`.
@@ -137,12 +146,13 @@ async fn claim_stock_cache<T: database::SurrealValue>(
             "LET $r = SELECT * FROM ONLY stock_cache:{key}; \
              LET $tok = IF $r.refreshing_since == NONE OR $r.refreshing_since < (time::now() - {STOCK_CLAIM_TTL}) {{ (UPSERT stock_cache:{key} SET kind = '{kind}', location_id = {location_sql}, refreshing_since = time::now(), claim_token = rand::ulid() RETURN AFTER)[0].claim_token }} ELSE {{ NONE }}; \
              RETURN $tok; \
-             RETURN $r.data;"
+             RETURN $r.data ?? [];"
         ))
         .await?
         .check()?;
     let token: Option<String> = res.take(2)?;
-    let stale: Option<Vec<T>> = res.take(3)?;
+    let stale_rows: Vec<T> = res.take(3)?;
+    let stale = (!stale_rows.is_empty()).then_some(stale_rows);
     Ok((token, stale))
 }
 

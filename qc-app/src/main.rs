@@ -22,6 +22,7 @@ mod oa3_sager;
 mod report_view;
 mod reporting;
 mod schema;
+#[cfg(feature = "skia-render")]
 mod software_gui;
 mod spec_check;
 mod stress_panel;
@@ -31,6 +32,25 @@ mod update_check;
 
 pub(crate) static LAUNCH_TERMINAL: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(feature = "skia-render")]
+fn try_software_gui() -> bool {
+    match software_gui::run() {
+        Ok(()) => true,
+        Err(e) => {
+            log::error!("qc-app: software renderer failed ({e:?})");
+            false
+        }
+    }
+}
+
+#[cfg(not(feature = "skia-render"))]
+fn try_software_gui() -> bool {
+    log::error!(
+        "qc-app: egui_skia software renderer not compiled into this build (enable the `skia-render` feature)"
+    );
+    false
+}
 
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
@@ -123,10 +143,7 @@ async fn main() -> eframe::Result<()> {
     let mut gui_ok = false;
     if force_cpu {
         log::info!("qc-app: --cpu set; forcing the egui_skia software renderer");
-        match software_gui::run() {
-            Ok(()) => gui_ok = true,
-            Err(e) => log::error!("qc-app: software renderer failed ({e:?})"),
-        }
+        gui_ok = try_software_gui();
     } else {
         match eframe::run_native(
             "Mastertech QC",
@@ -141,10 +158,7 @@ async fn main() -> eframe::Result<()> {
                 log::warn!(
                     "qc-app: hardware GL (glow) init failed ({e:?}); falling back to software renderer (egui_skia)"
                 );
-                match software_gui::run() {
-                    Ok(()) => gui_ok = true,
-                    Err(e2) => log::error!("qc-app: software renderer failed ({e2:?})"),
-                }
+                gui_ok = try_software_gui();
             }
         }
     }

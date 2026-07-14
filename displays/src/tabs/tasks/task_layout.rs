@@ -390,6 +390,9 @@ impl TaskLayout {
                             column_frame.show(col_ui, |fui| {
                                 fui.set_min_width(content_w);
                                 fui.set_max_width(content_w);
+                                let column_h = (viewport_h - Self::HEADER_H).at_least(0.0);
+                                fui.set_min_height(column_h);
+                                fui.set_max_height(column_h);
                                 ScrollArea::vertical()
                                     .id_salt(("connected_clients_scroll", i))
                                     .max_height(viewport_h - Self::HEADER_H)
