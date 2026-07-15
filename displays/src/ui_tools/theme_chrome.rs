@@ -3,12 +3,14 @@
 use eframe::egui::{Style, Visuals};
 use once_cell::sync::Lazy;
 
+// style_from_json migrates styles saved under older egui versions instead of failing strict decode.
 static SHIPPED_CHROME: Lazy<Style> = Lazy::new(|| {
-    serde_json::from_str(crate::STYLE).expect("STYLE JSON must deserialize to egui::Style")
+    crate::ui_tools::style_from_json(crate::STYLE.as_bytes())
+        .expect("STYLE JSON must deserialize to egui::Style")
 });
 
 static LEGACY_CLASSIC_CHROME: Lazy<Style> = Lazy::new(|| {
-    serde_json::from_str(include_str!("legacy_classic_style.json"))
+    crate::ui_tools::style_from_json(include_bytes!("legacy_classic_style.json"))
         .expect("legacy_classic_style.json must deserialize to egui::Style")
 });
 
@@ -37,6 +39,12 @@ pub fn default_egui_chrome() -> Style {
 mod tests {
     use super::*;
     use eframe::egui::{FontFamily, TextStyle};
+
+    // Fails if legacy_classic_style.json stops migrating to the current egui Style schema.
+    #[test]
+    fn legacy_classic_chrome_migrates_across_egui_versions() {
+        assert_ne!(legacy_classic_chrome(), Style::default());
+    }
 
     #[test]
     fn shipped_chrome_is_not_default_egui() {

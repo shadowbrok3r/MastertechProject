@@ -577,7 +577,7 @@ impl QcToolProvider {
             .lock()
             .ok()
             .and_then(|g| g.clone())
-            .and_then(|a| a.snapshot().whea.map(|w| w.absolute_since_boot));
+            .and_then(|a| a.snapshot().whea.map(|w| w.total_retained));
 
         let mult = args.duration_multiplier.unwrap_or(1.0).max(0.1).min(10.0);
         let stages = qc_benchmark_stages(mult);
@@ -625,7 +625,7 @@ impl QcToolProvider {
             .lock()
             .ok()
             .and_then(|g| g.clone())
-            .and_then(|a| a.snapshot().whea.map(|w| w.absolute_since_boot));
+            .and_then(|a| a.snapshot().whea.map(|w| w.total_retained));
         let whea_delta = match (whea_before, whea_after) {
             (Some(b), Some(a)) => Some(a.saturating_sub(b)),
             _ => None,
@@ -2353,7 +2353,7 @@ impl QcToolProvider {
     ) -> Result<VerifiedTestReport, ErrorData> {
         let duration_secs = duration_secs.clamp(5, 24 * 3600);
         let telemetry = self.telemetry_or_err()?;
-        let whea_before = telemetry.snapshot().whea.map(|w| w.absolute_since_boot);
+        let whea_before = telemetry.snapshot().whea.map(|w| w.total_retained);
         let computer = self.state.computer.clone();
         let slot = self.state.run_slot.clone();
         let label = stressor.label().to_string();
@@ -2382,7 +2382,7 @@ impl QcToolProvider {
         .await
         .map_err(|e| to_internal(format!("{test} task join: {e}")))?;
 
-        let whea_after = telemetry.snapshot().whea.map(|w| w.absolute_since_boot);
+        let whea_after = telemetry.snapshot().whea.map(|w| w.total_retained);
         let whea_delta = match (whea_before, whea_after) {
             (Some(b), Some(a)) => Some(a.saturating_sub(b)),
             _ => None,

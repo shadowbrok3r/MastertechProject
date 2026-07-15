@@ -439,7 +439,8 @@ impl MtechServer {
         if let Some(window_res) = theme_res {
             if let Some(r) = window_res.inner {
                 if r.0 {
-                    if let Some(user) = self.shared_ctx.current_user.clone().as_mut() {
+                    // Mutates the stored user so reconnect re-applies the saved scheme, not stale bytes.
+                    if let Some(user) = self.shared_ctx.current_user.as_mut() {
                         user.set_color_scheme(encode_style(&r.1.clone()).unwrap_or_default());
                         ctx.set_global_style(r.1.clone());
                         if let Some(storage) = frame.storage_mut() {

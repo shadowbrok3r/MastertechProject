@@ -13,6 +13,7 @@ pub mod mention_handler;
 pub mod toasts;
 pub mod tokyo_dark;
 pub mod rerun_mtech;
+pub mod mtech_glass;
 pub mod theme_chrome;
 pub mod theme_config;
 pub mod notification_center;

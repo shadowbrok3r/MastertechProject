@@ -229,10 +229,10 @@ pub fn show_whea(ui: &mut egui::Ui, whea: &Option<WheaCounters>) {
                     );
                 });
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Absolute since last boot:").strong());
+                    ui.label(RichText::new("Total retained (spans reboots):").strong());
                     ui.colored_label(
                         theme::weak_text(ui),
-                        format!("{}", w.absolute_since_boot),
+                        format!("{}", w.total_retained),
                     );
                 });
             });

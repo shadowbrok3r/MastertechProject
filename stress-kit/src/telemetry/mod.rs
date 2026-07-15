@@ -45,7 +45,15 @@ pub use self::processes::ProcessSample;
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WheaCounters {
     pub delta_since_program_start: u64,
-    pub absolute_since_boot: u64,
+    /// Total WHEA error records retained in the log; spans reboots.
+    #[serde(alias = "absolute_since_boot")]
+    pub total_retained: u64,
+    /// Corrected (Level 3) errors within `delta_since_program_start`.
+    #[serde(default)]
+    pub corrected_delta: u64,
+    /// Fatal/uncorrected (Level 1/2) errors within `delta_since_program_start`.
+    #[serde(default)]
+    pub fatal_delta: u64,
 }
 
 #[cfg(target_os = "windows")]
@@ -70,6 +78,11 @@ pub struct TelemetrySnapshot {
     #[serde(default)]
     pub gpus: Vec<GpuSample>,
     pub whea: Option<WheaCounters>,
+    /// Windows run where the WHEA event source couldn't be opened, so `whea`
+    /// is absent for a reason (not a clean "no errors"). Always false
+    /// off-Windows and on the one-shot capture path.
+    #[serde(default)]
+    pub whea_unavailable: bool,
     #[serde(default)]
     pub tdr: Option<TdrCounters>,
     /// ACPI thermal-zone readings on Windows (sysinfo's per-component
@@ -178,6 +191,7 @@ fn capture_snapshot_blocking() -> TelemetrySnapshot {
         processes: Vec::new(),
         gpus: gpu::sample_gpus(&components),
         whea: None,
+        whea_unavailable: false,
         tdr: None,
         // capture_now is the synchronous one-shot path; it skips
         // building a WMI connection (COM init isn't cheap) and lets
@@ -203,6 +217,8 @@ fn sampler_loop(
 
     #[cfg(target_os = "windows")]
     let mut whea = whea_windows::WheaMonitor::open();
+    #[cfg(target_os = "windows")]
+    let whea_unavailable = whea.is_none();
     #[cfg(not(target_os = "windows"))]
     let whea: Option<()> = None;
 
@@ -259,6 +275,10 @@ fn sampler_loop(
                 let _ = whea;
                 None
             },
+            #[cfg(target_os = "windows")]
+            whea_unavailable,
+            #[cfg(not(target_os = "windows"))]
+            whea_unavailable: false,
             #[cfg(target_os = "windows")]
             tdr: tdr.as_mut().map(|t| t.poll()),
             #[cfg(not(target_os = "windows"))]

@@ -9,6 +9,7 @@ use serde_json::to_vec;
 use std::sync::Arc;
 
 use super::carl_dark::{paint_aesthetix_colors, Aesthetix, CarlDark};
+use super::mtech_glass::{glassify, MtechGlass};
 use super::decode_style;
 
 /// Applies shipped [`crate::STYLE`] before login or when no saved scheme exists.
@@ -27,12 +28,7 @@ pub fn apply_user_color_scheme(ctx: &Context, bytes: &[u8]) {
             log::info!("Saved color scheme is egui default; using shipped theme");
             bootstrap_startup_theme(ctx);
         }
-        Ok(style) => {
-            ctx.set_global_style(Arc::new(style));
-            let (success, accent2) = semantic_colors_for_preset(PresetStyles::ShippedClassic);
-            crate::ui_tools::theme::set_success_color(ctx, success);
-            crate::ui_tools::theme::set_accent_secondary(ctx, accent2);
-        }
+        Ok(style) => apply_style_with_semantics(ctx, style),
         Err(e) => {
             log::error!("Saved color scheme decode failed: {e:?}");
             bootstrap_startup_theme(ctx);
@@ -40,13 +36,51 @@ pub fn apply_user_color_scheme(ctx: &Context, bytes: &[u8]) {
     }
 }
 
+/// Applies a style and restores its preset's semantic colors when recognizable.
+pub fn apply_style_with_semantics(ctx: &Context, style: Style) {
+    let preset = preset_matching_style(&style).unwrap_or(PresetStyles::ShippedClassic);
+    ctx.set_global_style(Arc::new(style));
+    let (success, accent2) = semantic_colors_for_preset(preset);
+    crate::ui_tools::theme::set_success_color(ctx, success);
+    crate::ui_tools::theme::set_accent_secondary(ctx, accent2);
+}
+
+/// Compares styles ignoring `number_formatter`, whose PartialEq is Arc pointer identity.
+fn styles_visually_equal(a: &Style, b: &Style) -> bool {
+    let mut a = a.clone();
+    a.number_formatter = b.number_formatter.clone();
+    a == *b
+}
+
+/// Recovers the preset a saved style was built from, so its semantic colors survive restart.
+fn preset_matching_style(style: &Style) -> Option<PresetStyles> {
+    const PRESETS: [PresetStyles; 15] = [
+        PresetStyles::ShippedClassic,
+        PresetStyles::LegacyClassic,
+        PresetStyles::DefaultEgui,
+        PresetStyles::CarlDarkColors,
+        PresetStyles::CarlDarkFull,
+        PresetStyles::TokyoNightStormColors,
+        PresetStyles::TokyoNightStormFull,
+        PresetStyles::TokyoNightColors,
+        PresetStyles::TokyoNightFull,
+        PresetStyles::RerunMtechColors,
+        PresetStyles::RerunMtechFull,
+        PresetStyles::RerunMtechOledColors,
+        PresetStyles::RerunMtechOledFull,
+        PresetStyles::MtechGlassColors,
+        PresetStyles::MtechGlassFull,
+    ];
+    PRESETS.into_iter().find(|p| styles_visually_equal(&style_for_preset(*p), style))
+}
+
 fn is_blank_default_style(style: &Style) -> bool {
-    if *style == Style::default() {
+    if styles_visually_equal(style, &Style::default()) {
         return true;
     }
     let mut dark_default = Style::default();
     dark_default.visuals = Visuals::dark();
-    *style == dark_default
+    styles_visually_equal(style, &dark_default)
 }
 
 #[derive(Serialize, Clone, Deserialize, Debug, Derivative)]
@@ -188,6 +222,8 @@ pub fn style_for_preset(preset: PresetStyles) -> Style {
         PresetStyles::RerunMtechFull => RerunMtech.custom_style(),
         PresetStyles::RerunMtechOledColors => colors_only(&RerunMtechOled),
         PresetStyles::RerunMtechOledFull => RerunMtechOled.custom_style(),
+        PresetStyles::MtechGlassColors => colors_only(&MtechGlass),
+        PresetStyles::MtechGlassFull => MtechGlass.custom_style(),
         PresetStyles::Custom => ThemeConfig::default().to_style(),
     }
 }
@@ -222,6 +258,10 @@ pub fn semantic_colors_for_preset(preset: PresetStyles) -> (Color32, Color32) {
         PresetStyles::RerunMtechOledColors | PresetStyles::RerunMtechOledFull => (
             RerunMtechOled.fg_success_text_color_visuals(),
             RerunMtechOled.secondary_accent_color_visuals(),
+        ),
+        PresetStyles::MtechGlassColors | PresetStyles::MtechGlassFull => (
+            MtechGlass.fg_success_text_color_visuals(),
+            MtechGlass.secondary_accent_color_visuals(),
         ),
         PresetStyles::Custom => (Color32::from_rgb(72, 199, 142), Color32::from_rgb(191, 33, 101)),
     }
@@ -269,28 +309,20 @@ impl ThemeConfig {
     pub fn edit_ui(&mut self, ui: &mut Ui, ctx: &Context, tx: Sender<Style>) -> (bool, Arc<Style>) {
         let mut ret = (false, ctx.global_style());
         eframe::egui::Panel::top("Theme Menu top bar")
-        .exact_size(30.)
+        .exact_size(58.)
         .show_inside(ui, |ui| {
             ui.horizontal(|ui|{
                 let reset = Button::new("Reset to Default")
                     .min_size(Vec2::new(70., 25.))
                     .stroke(Stroke::new(1.0_f32, self.warn_color))
-                    .ui(ui);
-                
+                    .ui(ui)
+                    .on_hover_text("Preview the shipped default theme. Nothing is saved until you click Save.");
+
+                // Preview only: the account's saved scheme stays untouched until Save.
                 if reset.clicked() {
-                    PlatformSpawner::spawn(async move {
-                        let theme = style_for_preset(PresetStyles::ShippedClassic);
-                            match User::update_color_scheme(
-                                encode_style(
-                                    &theme
-                                ).unwrap_or_default().into()
-                            ).await {
-                                Ok(_) => log::info!("Updated Color Settings"),
-                                Err(e) => log::error!("Error updating color settings: {e:?}"),
-                            }
-                    });
                     apply_preset(ctx, PresetStyles::ShippedClassic);
-                    ret = (true, Arc::new(style_for_preset(PresetStyles::ShippedClassic)));
+                    sync_config_from_style(self, &style_for_preset(PresetStyles::ShippedClassic));
+                    self.preset_style = PresetStyles::ShippedClassic;
                 }
 
                 ui.add_space(10.);
@@ -311,6 +343,7 @@ impl ThemeConfig {
                     ui.selectable_value(&mut self.preset_style, PresetStyles::TokyoNightColors, "TokyoNight · Colors");
                     ui.selectable_value(&mut self.preset_style, PresetStyles::RerunMtechColors, "Rerun MTech · Colors");
                     ui.selectable_value(&mut self.preset_style, PresetStyles::RerunMtechOledColors, "Rerun MTech OLED · Colors");
+                    ui.selectable_value(&mut self.preset_style, PresetStyles::MtechGlassColors, "MTech Glass · Colors");
                     ui.separator();
                     ui.label("Colors + widget chrome");
                     ui.selectable_value(&mut self.preset_style, PresetStyles::CarlDarkFull, "Carl Dark · Full");
@@ -318,6 +351,7 @@ impl ThemeConfig {
                     ui.selectable_value(&mut self.preset_style, PresetStyles::TokyoNightFull, "TokyoNight · Full");
                     ui.selectable_value(&mut self.preset_style, PresetStyles::RerunMtechFull, "Rerun MTech · Full");
                     ui.selectable_value(&mut self.preset_style, PresetStyles::RerunMtechOledFull, "Rerun MTech OLED · Full");
+                    ui.selectable_value(&mut self.preset_style, PresetStyles::MtechGlassFull, "MTech Glass · Full");
                     ui.separator();
                     ui.selectable_value(&mut self.preset_style, PresetStyles::Custom, "Custom");
                 });
@@ -431,6 +465,56 @@ impl ThemeConfig {
                     let _ = &tx;
 
                 });
+            });
+
+            ui.horizontal(|ui| {
+                let glassify_btn = Button::new("Glassify current theme")
+                    .min_size(Vec2::new(70., 25.))
+                    .stroke(Stroke::new(1.0_f32, self.link_color))
+                    .ui(ui)
+                    .on_hover_text(
+                        "Re-style the applied theme as tinted glass using its own colors: \
+                         translucent widget fills with outlines a step brighter than each fill. \
+                         Backgrounds, rounding, and fonts stay as they are. Click Save to keep.",
+                    );
+
+                if glassify_btn.clicked() {
+                    let glassified = glassify(&ctx.global_style());
+                    sync_config_from_style(self, &glassified);
+                    self.preset_style = PresetStyles::Custom;
+                    ctx.set_global_style(Arc::new(glassified));
+                }
+
+                ui.add_space(10.);
+
+                let restore = Button::new("Restore saved theme")
+                    .min_size(Vec2::new(70., 25.))
+                    .stroke(Stroke::new(1.0_f32, self.link_color))
+                    .ui(ui)
+                    .on_hover_text("Re-apply the color scheme saved to your account.");
+
+                if restore.clicked() {
+                    let tx = tx.clone();
+                    PlatformSpawner::spawn(async move {
+                        match User::get_current_user_from_auth().await {
+                            Ok(Some(user)) => {
+                                let bytes = user.get_color_scheme();
+                                if bytes.is_empty() {
+                                    log::warn!("No color scheme saved on this account");
+                                    return;
+                                }
+                                match decode_style(&bytes) {
+                                    Ok(style) => {
+                                        let _ = tx.try_send(style);
+                                    }
+                                    Err(e) => log::error!("Saved color scheme decode failed: {e:?}"),
+                                }
+                            }
+                            Ok(None) => log::warn!("Not signed in; cannot restore saved theme"),
+                            Err(e) => log::error!("Error fetching user for saved theme: {e:?}"),
+                        }
+                    });
+                }
             });
 
         });
@@ -845,6 +929,8 @@ pub enum PresetStyles {
     RerunMtechFull,
     RerunMtechOledColors,
     RerunMtechOledFull,
+    MtechGlassColors,
+    MtechGlassFull,
     Custom,
 }
 
@@ -870,6 +956,8 @@ impl PresetStyles {
             PresetStyles::RerunMtechFull => "Rerun MTech · Full",
             PresetStyles::RerunMtechOledColors => "Rerun MTech OLED · Colors",
             PresetStyles::RerunMtechOledFull => "Rerun MTech OLED · Full",
+            PresetStyles::MtechGlassColors => "MTech Glass · Colors",
+            PresetStyles::MtechGlassFull => "MTech Glass · Full",
             PresetStyles::Custom => "Custom",
         }
     }
@@ -889,6 +977,8 @@ impl PresetStyles {
             "Rerun MTech · Full" => Self::RerunMtechFull,
             "Rerun MTech OLED · Colors" => Self::RerunMtechOledColors,
             "Rerun MTech OLED · Full" => Self::RerunMtechOledFull,
+            "MTech Glass · Colors" => Self::MtechGlassColors,
+            "MTech Glass · Full" | "MTech Glass" => Self::MtechGlassFull,
             "Custom" => Self::Custom,
             _ => Self::Custom,
         }
@@ -1055,6 +1145,23 @@ impl ThemeConfig {
         var!("rounding", format!("{:.2}px", self.rounding.ne));
         out.push_str("}\n");
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Builds every preset style (the startup restore path); none may panic on decode,
+    // and a saved preset must be recovered through the encode/decode round trip.
+    #[test]
+    fn preset_matching_style_round_trips_all_presets() {
+        let saved = encode_style(&style_for_preset(PresetStyles::MtechGlassFull)).unwrap();
+        let decoded = decode_style(&saved).unwrap();
+        assert_eq!(
+            preset_matching_style(&decoded),
+            Some(PresetStyles::MtechGlassFull),
+        );
     }
 }
 

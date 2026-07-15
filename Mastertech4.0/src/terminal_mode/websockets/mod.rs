@@ -3706,7 +3706,7 @@ pub async fn live_computer_stats(tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>
                         if let Some(w) = snapshot.whea {
                             systeminfo.whea = Some(database::schema::WheaCounters {
                                 delta_since_program_start: w.delta_since_program_start,
-                                absolute_since_boot: w.absolute_since_boot,
+                                absolute_since_boot: w.total_retained,
                             });
                         }
                         if let Some(t) = snapshot.tdr {

@@ -529,7 +529,8 @@ impl MasterTechApp {
         if let Some(window_res) = theme_res {
             if let Some(r) = window_res.inner {
                 if r.0 {
-                    if let Some(user) = self.context.shared_ctx.current_user.clone().as_mut() {
+                    // Mutates the stored user so reconnect re-applies the saved scheme, not stale bytes.
+                    if let Some(user) = self.context.shared_ctx.current_user.as_mut() {
                         user.set_color_scheme(encode_style(&r.1).unwrap_or_default());
                         if let Some(storage) = frame.storage_mut() {
                             storage.set_string("user_settings", serde_json::to_string(&r.1).unwrap_or_default());

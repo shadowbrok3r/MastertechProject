@@ -8,9 +8,8 @@ impl SharedContext {
     pub fn receive_users(&mut self) {
         if let Ok((action, user)) = self.live_user_rx.try_recv() {
             if let Action::Update = action {
-                let current_user = &mut self.current_user.clone().unwrap_or_default();
-                if user.get_id() == current_user.get_id() {
-                    *current_user = user.clone();
+                if self.current_user.as_ref().is_some_and(|cu| cu.get_id() == user.get_id()) {
+                    self.current_user = Some(user);
                     self.layout_configs = None;
                     self.init_layout_configs();
                 } else {

@@ -522,7 +522,7 @@ impl crate::app_state::SharedContext {
 
         if let Ok(settings) = self.settings_receiver.try_recv() {
             ctx.request_repaint();
-            ctx.set_global_style(Arc::new(settings));
+            crate::ui_tools::theme_config::apply_style_with_semantics(ctx, settings);
         }
     }
 

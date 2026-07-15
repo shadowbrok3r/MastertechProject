@@ -825,9 +825,7 @@ fn drive_single(
         verdict.as_ref(),
     );
     if let Some(v) = &verdict {
-        if !v.pass {
-            persist_stage_verdict_event(run_id, v);
-        }
+        persist_stage_verdict_events(run_id, v);
     }
     outcomes.push(StageOutcome { summary, verdict });
 }
@@ -1058,9 +1056,7 @@ fn drive_concurrent(
             verdict.as_ref(),
         );
         if let Some(v) = &verdict {
-            if !v.pass {
-                persist_stage_verdict_event(run_id, v);
-            }
+            persist_stage_verdict_events(run_id, v);
         }
         outcomes.push(StageOutcome { summary, verdict });
         emit_stage_verdict(update_tx, outcomes.last());
@@ -1192,9 +1188,7 @@ fn drive_scenario(
                         verdict.as_ref(),
                     );
                     if let Some(v) = &verdict {
-                        if !v.pass {
-                            persist_stage_verdict_event(run_id, v);
-                        }
+                        persist_stage_verdict_events(run_id, v);
                     }
                     outcomes.push(StageOutcome { summary, verdict });
 
@@ -1456,6 +1450,25 @@ fn persist_counter_events(
         runtime::spawn(async move {
             if let Err(err) = DbStressTestEvent::create(&event).await {
                 log::warn!("stress-runner: failed to persist tdr event: {err}");
+            }
+        });
+    }
+}
+
+/// Persist verdict-derived events: the failure event for a failed stage and a
+/// warning event per verdict advisory (e.g. WHEA source unavailable).
+fn persist_stage_verdict_events(run_id: &RecordId, verdict: &StageVerdict) {
+    if !verdict.pass {
+        persist_stage_verdict_event(run_id, verdict);
+    }
+    for warning in &verdict.warnings {
+        log::warn!("stress-runner: stage '{}' — {warning}", verdict.label);
+        let mut event = DbStressTestEvent::new(run_id.clone(), DbEventKind::Custom, "verdict-rules");
+        event.code = Some("warning".to_string());
+        event.detail = format!("stage '{}': {warning}", verdict.label);
+        runtime::spawn(async move {
+            if let Err(err) = DbStressTestEvent::create(&event).await {
+                log::warn!("stress-runner: failed to persist stage warning event: {err}");
             }
         });
     }
@@ -1810,8 +1823,8 @@ fn rules_failure_mode(
             .any(|v| matches!(v, RuleViolation::CpuTemp { .. } | RuleViolation::GpuTemp { .. }));
         for violation in &verdict.violations {
             match violation {
-                RuleViolation::Whea { delta } => {
-                    return Some(FailureMode::WheaError { count: *delta });
+                RuleViolation::Whea { corrected, fatal } => {
+                    return Some(FailureMode::WheaError { count: corrected + fatal });
                 }
                 RuleViolation::Tdr { delta } => {
                     tdr.get_or_insert(FailureMode::Tdr { count: *delta });

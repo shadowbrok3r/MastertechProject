@@ -113,7 +113,8 @@ pub fn sysinfo_to_telemetry(info: &SystemInformation) -> TelemetrySnapshot {
     if let Some(w) = info.whea.as_ref() {
         snap.whea = Some(stress_kit::telemetry::WheaCounters {
             delta_since_program_start: w.delta_since_program_start,
-            absolute_since_boot: w.absolute_since_boot,
+            total_retained: w.absolute_since_boot,
+            ..Default::default()
         });
     }
     if let Some(t) = info.tdr.as_ref() {

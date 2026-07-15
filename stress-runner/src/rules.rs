@@ -115,7 +115,7 @@ impl VerdictRules {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RuleViolation {
-    Whea { delta: u32 },
+    Whea { corrected: u32, fatal: u32 },
     Tdr { delta: u32 },
     StressorErrors { count: u64 },
     CpuTemp { limit_c: f32, peak_c: f32, sustained_ticks: u32 },
@@ -127,7 +127,14 @@ pub enum RuleViolation {
 impl RuleViolation {
     pub fn describe(&self) -> String {
         match self {
-            Self::Whea { delta } => format!("{delta} WHEA hardware error(s)"),
+            Self::Whea { corrected, fatal } => match (*fatal, *corrected) {
+                (0, c) => format!("{c} corrected WHEA hardware error(s)"),
+                (f, 0) => format!("{f} fatal WHEA hardware error(s)"),
+                (f, c) => format!(
+                    "{} WHEA hardware error(s): {f} fatal, {c} corrected",
+                    f + c
+                ),
+            },
             Self::Tdr { delta } => format!("{delta} GPU driver reset(s) (TDR)"),
             Self::StressorErrors { count } => format!("{count} stressor data error(s)"),
             Self::CpuTemp { limit_c, peak_c, sustained_ticks } => format!(
@@ -154,6 +161,10 @@ pub struct StageVerdict {
     pub label: String,
     pub pass: bool,
     pub violations: Vec<RuleViolation>,
+    /// Non-failing advisories (e.g. WHEA source unavailable) surfaced so a
+    /// pass isn't mistaken for a fully-monitored run.
+    #[serde(default)]
+    pub warnings: Vec<String>,
 }
 
 impl StageVerdict {
@@ -187,6 +198,12 @@ pub struct StageStats {
     pub errors: u64,
     whea_baseline: u32,
     pub whea_delta: u32,
+    whea_corrected_baseline: u32,
+    pub whea_corrected_delta: u32,
+    whea_fatal_baseline: u32,
+    pub whea_fatal_delta: u32,
+    /// WHEA source was unavailable at any point this stage (Windows only).
+    pub whea_unavailable: bool,
     tdr_baseline: u32,
     pub tdr_delta: u32,
     pub gpu_throttle_ticks: u32,
@@ -218,6 +235,11 @@ impl StageStats {
             errors: 0,
             whea_baseline: whea_count(snapshot),
             whea_delta: 0,
+            whea_corrected_baseline: whea_corrected(snapshot),
+            whea_corrected_delta: 0,
+            whea_fatal_baseline: whea_fatal(snapshot),
+            whea_fatal_delta: 0,
+            whea_unavailable: snapshot.whea_unavailable,
             tdr_baseline: tdr_count(snapshot),
             tdr_delta: 0,
             gpu_throttle_ticks: 0,
@@ -237,6 +259,10 @@ impl StageStats {
         self.errors = self.errors.max(metrics.errors);
 
         self.whea_delta = whea_count(snapshot).saturating_sub(self.whea_baseline);
+        self.whea_corrected_delta =
+            whea_corrected(snapshot).saturating_sub(self.whea_corrected_baseline);
+        self.whea_fatal_delta = whea_fatal(snapshot).saturating_sub(self.whea_fatal_baseline);
+        self.whea_unavailable |= snapshot.whea_unavailable;
         self.tdr_delta = tdr_count(snapshot).saturating_sub(self.tdr_baseline);
 
         let tick_max_cpu_temp = snapshot.cpu_package_temp_c().or_else(|| {
@@ -334,6 +360,10 @@ impl StageStats {
     /// Close WHEA/TDR deltas against the freshest snapshot at stage end.
     pub fn finish(&mut self, snapshot: &TelemetrySnapshot) {
         self.whea_delta = whea_count(snapshot).saturating_sub(self.whea_baseline);
+        self.whea_corrected_delta =
+            whea_corrected(snapshot).saturating_sub(self.whea_corrected_baseline);
+        self.whea_fatal_delta = whea_fatal(snapshot).saturating_sub(self.whea_fatal_baseline);
+        self.whea_unavailable |= snapshot.whea_unavailable;
         self.tdr_delta = tdr_count(snapshot).saturating_sub(self.tdr_baseline);
     }
 
@@ -379,6 +409,22 @@ fn whea_count(snapshot: &TelemetrySnapshot) -> u32 {
         .unwrap_or(0)
 }
 
+fn whea_corrected(snapshot: &TelemetrySnapshot) -> u32 {
+    snapshot
+        .whea
+        .as_ref()
+        .map(|w| w.corrected_delta as u32)
+        .unwrap_or(0)
+}
+
+fn whea_fatal(snapshot: &TelemetrySnapshot) -> u32 {
+    snapshot
+        .whea
+        .as_ref()
+        .map(|w| w.fatal_delta as u32)
+        .unwrap_or(0)
+}
+
 fn tdr_count(snapshot: &TelemetrySnapshot) -> u32 {
     snapshot
         .tdr
@@ -399,9 +445,26 @@ fn cv_exempt(stressor: Stressor) -> bool {
 /// Evaluate one finished stage against the rules.
 pub fn evaluate_stage(stats: &StageStats, rules: &VerdictRules) -> StageVerdict {
     let mut violations = Vec::new();
+    let mut warnings = Vec::new();
 
-    if rules.whea_fails && stats.whea_delta > 0 {
-        violations.push(RuleViolation::Whea { delta: stats.whea_delta });
+    if rules.whea_fails {
+        if stats.whea_corrected_delta > 0 || stats.whea_fatal_delta > 0 {
+            violations.push(RuleViolation::Whea {
+                corrected: stats.whea_corrected_delta,
+                fatal: stats.whea_fatal_delta,
+            });
+        } else if stats.whea_delta > 0 {
+            // Counter moved but severity wasn't classified: still a hit.
+            violations.push(RuleViolation::Whea {
+                corrected: stats.whea_delta,
+                fatal: 0,
+            });
+        }
+        if stats.whea_unavailable {
+            warnings.push(
+                "WHEA monitoring unavailable — machine-check errors not checked".to_string(),
+            );
+        }
     }
     if rules.tdr_fails && stats.tdr_delta > 0 {
         violations.push(RuleViolation::Tdr { delta: stats.tdr_delta });
@@ -453,6 +516,7 @@ pub fn evaluate_stage(stats: &StageStats, rules: &VerdictRules) -> StageVerdict 
         label: stats.label.clone(),
         pass: violations.is_empty(),
         violations,
+        warnings,
     }
 }
 
@@ -545,19 +609,43 @@ mod tests {
         let mut snap = snapshot(70.0, 4000, 95.0);
         snap.whea = Some(WheaCounters {
             delta_since_program_start: 2,
+            fatal_delta: 1,
+            corrected_delta: 1,
             ..Default::default()
         });
         stats.absorb_tick(&metrics(100.0, 0), &snap, &rules);
         stats.finish(&snap);
         let verdict = evaluate_stage(&stats, &rules);
         assert!(!verdict.pass);
-        assert!(matches!(verdict.violations[0], RuleViolation::Whea { delta: 2 }));
+        assert!(matches!(
+            verdict.violations[0],
+            RuleViolation::Whea { corrected: 1, fatal: 1 }
+        ));
 
         // No whea/tdr source at all: vacuous pass.
         let mut bare = stats_for(&rules);
         bare.absorb_tick(&metrics(100.0, 0), &snapshot(70.0, 4000, 95.0), &rules);
         bare.finish(&snapshot(70.0, 4000, 95.0));
         assert!(evaluate_stage(&bare, &rules).pass);
+    }
+
+    #[test]
+    fn whea_unavailable_warns_without_failing() {
+        let rules = VerdictRules::certification();
+        let mut snap = snapshot(70.0, 4000, 95.0);
+        snap.whea = None;
+        snap.whea_unavailable = true;
+
+        let mut stats = stats_for(&rules);
+        stats.absorb_tick(&metrics(100.0, 0), &snap, &rules);
+        stats.finish(&snap);
+        let verdict = evaluate_stage(&stats, &rules);
+        assert!(verdict.pass, "unavailable WHEA must not fail the stage");
+        assert!(
+            verdict.warnings.iter().any(|w| w.contains("WHEA monitoring unavailable")),
+            "warnings: {:?}",
+            verdict.warnings
+        );
     }
 
     #[test]

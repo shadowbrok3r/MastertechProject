@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "MasterTech"
-version = "4.7.9"
+version = "4.8.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -1044,7 +1044,7 @@ dependencies = [
 
 [[package]]
 name = "axum_server"
-version = "4.7.9"
+version = "4.8.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1061,7 +1061,7 @@ dependencies = [
  "surrealdb",
  "tokio",
  "tokio-cron-scheduler",
- "tower-http",
+ "tower-http 0.7.0",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -3192,7 +3192,7 @@ dependencies = [
 
 [[package]]
 name = "displays"
-version = "4.7.9"
+version = "4.8.0"
 dependencies = [
  "anyhow",
  "async-openai",
@@ -8463,7 +8463,7 @@ dependencies = [
 
 [[package]]
 name = "plugin_builder"
-version = "4.7.9"
+version = "4.8.0"
 dependencies = [
  "anyhow",
  "bincode 2.0.1",
@@ -9572,7 +9572,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower",
- "tower-http",
+ "tower-http 0.6.11",
  "tower-service",
  "url",
  "wasm-bindgen",
@@ -9622,7 +9622,7 @@ dependencies = [
  "tokio-rustls",
  "tokio-util",
  "tower",
- "tower-http",
+ "tower-http 0.6.11",
  "tower-service",
  "url",
  "wasm-bindgen",
@@ -12378,6 +12378,29 @@ name = "tower-http"
 version = "0.6.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4cfcf7e2740e6fc6d4d688b4ef00650406bb94adf4731e43c096c3a19fe40840"
+dependencies = [
+ "async-compression",
+ "bitflags 2.13.0",
+ "bytes",
+ "futures-core",
+ "futures-util",
+ "http",
+ "http-body",
+ "http-body-util",
+ "pin-project-lite",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tower-layer",
+ "tower-service",
+ "url",
+]
+
+[[package]]
+name = "tower-http"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b11f75e912b0c2be01b63d8cf8057b8c3f97cf34abb3d431a3a4c8675498e233"
 dependencies = [
  "async-compression",
  "base64",
