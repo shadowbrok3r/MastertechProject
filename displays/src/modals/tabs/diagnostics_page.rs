@@ -33,6 +33,9 @@ pub fn display_diagnostics_page(
     let total_w = avail_size.x.max(700.0);
     let left_w = (total_w * 0.32).clamp(220.0, 320.0);
     let right_w = (total_w - left_w - 12.0).max(380.0);
+    // Cap the check-in notes so a long expanded note can't grow the modal;
+    // the sessions list below fills whatever vertical space remains.
+    let notes_h = 120.0;
 
     ui.vertical_centered_justified(|ui| {
         ui.collapsing("Check-in Notes", |ui| {
@@ -42,14 +45,21 @@ pub fn display_diagnostics_page(
                     "No check-in notes recorded.",
                 );
             } else {
-                ui.label(checkin_notes);
+                ScrollArea::vertical()
+                    .id_salt("diag_checkin_scroll")
+                    .max_height(notes_h)
+                    .show(ui, |ui| {
+                        ui.label(checkin_notes);
+                    });
             }
         });
 
         ui.add_space(8.0);
 
+        // Fill nearly all remaining vertical space with the sessions list.
+        let list_h = ui.available_height() * 0.99;
         ui.allocate_ui_with_layout(
-            Vec2::new(right_w, avail_size.y.max(560.0)),
+            Vec2::new(right_w, list_h),
             eframe::egui::Layout::top_down(eframe::egui::Align::LEFT),
             |ui| {
                 ui.horizontal(|ui| {
@@ -80,7 +90,7 @@ pub fn display_diagnostics_page(
                 ScrollArea::vertical()
                     .id_salt("diag_sessions_scroll")
                     .auto_shrink([false; 2])
-                    .max_height(avail_size.y.max(560.0))
+                    .max_height(ui.available_height() * 0.99)
                     .show(ui, |ui| {
                         for (idx, view) in sessions.iter().enumerate() {
                             let is_selected = selected
@@ -105,7 +115,7 @@ fn render_session(
     mut on_select: impl FnMut(RecordId),
 ) {
     let session = &view.session;
-    let started = session.started_at.to_string();
+    let started = format_datetime(&session.started_at);
     let header = format!(
         "{} • {} • {}",
         started,
@@ -141,7 +151,7 @@ fn render_session(
                     }
                     if let Some(end) = session.ended_at.as_ref() {
                         ui.label(RichText::new("Ended").weak());
-                        ui.label(end.to_string());
+                        ui.label(format_datetime(end));
                         ui.end_row();
                     }
                     if !session.tags.is_empty() {
@@ -199,15 +209,10 @@ fn render_entry(ui: &mut Ui, entry: &DiagnosticEntry, idx: usize) {
         _ => Color32::GRAY,
     };
 
+    ui.label(RichText::new(format_datetime(&entry.timestamp)).weak().small());
     ui.horizontal_wrapped(|ui| {
         ui.colored_label(cat_color, format!("[{}]", cat_str));
         ui.label(RichText::new(&entry.title).strong());
-        ui.with_layout(
-            eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
-            |ui| {
-                ui.label(RichText::new(entry.timestamp.to_string()).weak().small());
-            },
-        );
     });
 
     if !entry.detail.trim().is_empty() {
@@ -237,4 +242,10 @@ fn render_entry(ui: &mut Ui, entry: &DiagnosticEntry, idx: usize) {
                 ui.code(pretty);
             });
     }
+}
+
+fn format_datetime(dt: &database::schema::Datetime) -> String {
+    chrono::DateTime::<chrono::Utc>::from(*dt)
+        .format("%m/%d/%Y %H:%M")
+        .to_string()
 }

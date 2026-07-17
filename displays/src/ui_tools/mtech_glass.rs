@@ -91,7 +91,8 @@ fn glassify_state(
     wv.bg_fill = pane_over(tint, fill, base);
     wv.weak_bg_fill = pane(tint, weak_fill);
     wv.bg_stroke.color = edge(tint, edge_opacity);
-    if wv.bg_stroke.width <= 0.0 {
+    // Lift sub-pixel widths to a full pixel; epaint fades thin strokes toward transparent.
+    if wv.bg_stroke.width < 1.0 {
         wv.bg_stroke.width = 1.0;
     }
 }
@@ -125,7 +126,7 @@ pub fn glassify(style: &eframe::egui::Style) -> eframe::egui::Style {
         .unwrap_or(fallback);
     v.selection.bg_fill = pane(sel_tint, 0.32);
     v.selection.stroke.color = edge(sel_tint, 0.85);
-    if v.selection.stroke.width <= 0.0 {
+    if v.selection.stroke.width < 1.0 {
         v.selection.stroke.width = 1.0;
     }
 
@@ -135,7 +136,7 @@ pub fn glassify(style: &eframe::egui::Style) -> eframe::egui::Style {
         .filter(|c| chroma(*c) >= TINT_CHROMA_MIN)
         .unwrap_or(fallback);
     v.window_stroke.color = edge(window_tint, 0.50);
-    if v.window_stroke.width <= 0.0 {
+    if v.window_stroke.width < 1.0 {
         v.window_stroke.width = 1.0;
     }
 

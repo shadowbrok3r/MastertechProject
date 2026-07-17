@@ -37,12 +37,21 @@ pub fn apply_user_color_scheme(ctx: &Context, bytes: &[u8]) {
 }
 
 /// Applies a style and restores its preset's semantic colors when recognizable.
+/// Unrecognized styles (glassified / uploaded) fall back to the Custom semantics,
+/// which match the app-wide defaults, rather than ShippedClassic's teal/blue.
 pub fn apply_style_with_semantics(ctx: &Context, style: Style) {
-    let preset = preset_matching_style(&style).unwrap_or(PresetStyles::ShippedClassic);
+    let preset = preset_matching_style(&style).unwrap_or(PresetStyles::Custom);
     ctx.set_global_style(Arc::new(style));
     let (success, accent2) = semantic_colors_for_preset(preset);
     crate::ui_tools::theme::set_success_color(ctx, success);
     crate::ui_tools::theme::set_accent_secondary(ctx, accent2);
+}
+
+/// Syncs the theme editor's config (combo label + fields) to a style applied
+/// out-of-band via the settings channel, so the editor stops showing a stale preset.
+pub fn sync_editor_config(config: &mut ThemeConfig, style: &Style) {
+    sync_config_from_style(config, style);
+    config.preset_style = preset_matching_style(style).unwrap_or(PresetStyles::Custom);
 }
 
 /// Compares styles ignoring `number_formatter`, whose PartialEq is Arc pointer identity.
@@ -308,8 +317,15 @@ fn sync_config_from_style(config: &mut ThemeConfig, style: &Style) {
 impl ThemeConfig {
     pub fn edit_ui(&mut self, ui: &mut Ui, ctx: &Context, tx: Sender<Style>) -> (bool, Arc<Style>) {
         let mut ret = (false, ctx.global_style());
+        // Two button rows; size from the active style so tall presets don't clip row 2.
+        let panel_h = {
+            let style = ctx.global_style();
+            let sp = &style.spacing;
+            let row_h = sp.interact_size.y.max(25.0) + 2.0 * sp.button_padding.y;
+            2.0 * row_h + sp.item_spacing.y + 8.0
+        };
         eframe::egui::Panel::top("Theme Menu top bar")
-        .exact_size(58.)
+        .exact_size(panel_h)
         .show_inside(ui, |ui| {
             ui.horizontal(|ui|{
                 let reset = Button::new("Reset to Default")
@@ -501,17 +517,37 @@ impl ThemeConfig {
                                 let bytes = user.get_color_scheme();
                                 if bytes.is_empty() {
                                     log::warn!("No color scheme saved on this account");
+                                    let _ = crate::get_toast_sender()
+                                        .try_send(crate::ToastMessage::Warning("No saved theme on this account".into()));
                                     return;
                                 }
                                 match decode_style(&bytes) {
                                     Ok(style) => {
+                                        // Match the login guard: a legacy egui-default record restores the shipped theme.
+                                        let style = if is_blank_default_style(&style) {
+                                            style_for_preset(PresetStyles::ShippedClassic)
+                                        } else {
+                                            style
+                                        };
                                         let _ = tx.try_send(style);
                                     }
-                                    Err(e) => log::error!("Saved color scheme decode failed: {e:?}"),
+                                    Err(e) => {
+                                        log::error!("Saved color scheme decode failed: {e:?}");
+                                        let _ = crate::get_toast_sender()
+                                            .try_send(crate::ToastMessage::Error("Saved theme could not be read".into()));
+                                    }
                                 }
                             }
-                            Ok(None) => log::warn!("Not signed in; cannot restore saved theme"),
-                            Err(e) => log::error!("Error fetching user for saved theme: {e:?}"),
+                            Ok(None) => {
+                                log::warn!("Not signed in; cannot restore saved theme");
+                                let _ = crate::get_toast_sender()
+                                    .try_send(crate::ToastMessage::Warning("Sign in to restore your saved theme".into()));
+                            }
+                            Err(e) => {
+                                log::error!("Error fetching user for saved theme: {e:?}");
+                                let _ = crate::get_toast_sender()
+                                    .try_send(crate::ToastMessage::Error("Could not reach the server to restore your theme".into()));
+                            }
                         }
                     });
                 }

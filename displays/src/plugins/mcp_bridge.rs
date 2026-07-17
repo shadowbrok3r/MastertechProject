@@ -809,6 +809,12 @@ pub struct SearchPluginsParams {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct ListRegistryPluginsParams {
+    #[schemars(description = "Max plugins to return, newest-updated first. Default 200 (the registry is small), cap 1000.")]
+    pub limit: Option<u32>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct GetPluginInfoParams {
     #[schemars(description = "Plugin ID to look up (e.g. 'com.mastertech.hw-diag')")]
     pub plugin_id: String,
@@ -2975,6 +2981,32 @@ impl PluginToolProvider {
                 ContentBlock::text(format!("No plugin found with ID '{}'", p.plugin_id))
             ])),
         }
+    }
+
+    #[tool(
+        name = "list_registry_plugins",
+        description = "List EVERY plugin in the SurrealDB plugin_registry (id, plugin_id, name, description, version, author, tags, tools, wasm_bucket_path, created_at, updated_at) — the whole catalog MINUS the heavy source_code. The registry is small, so this is the cheap way to see all available plugins at a glance and avoid missing one (search_plugins only returns keyword matches). Distinct from `list_plugins`, which lists plugins currently loaded in THIS process. Flow: discover here → fetch_plugin → plugin_deploy / plugin_deploy_remote."
+    )]
+    async fn list_registry_plugins(
+        &self,
+        Parameters(p): Parameters<ListRegistryPluginsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let limit = p.limit.unwrap_or(200).clamp(1, 1000) as i64;
+        let rows: Vec<serde_json::Value> = database::db()
+            .query(
+                "SELECT id, plugin_id, name, description, version, author, tags, tools, \
+                        wasm_bucket_path, created_at, updated_at \
+                 FROM plugin_registry ORDER BY updated_at DESC LIMIT $limit",
+            )
+            .bind(("limit", limit))
+            .await
+            .map_err(to_internal)?
+            .take(0)
+            .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(
+            serde_json::json!({ "count": rows.len(), "plugins": rows }),
+        )
+        .map_err(to_internal)?]))
     }
 
     #[tool(
@@ -5442,6 +5474,7 @@ Use query_surrealdb for any ad-hoc read-only data needs (SELECT/RETURN only).
 - plugin_source → plugin_compile (wasm32-wasip1) → plugin_deploy (local) or plugin_deploy_remote (to a connected client); or plugin_emit_clock_wasm / plugin_compile_wat → plugin_deploy / plugin_deploy_remote; plugin_rollback; plugin_watch.
 
 === Plugin Registry (SurrealDB) ===
+- list_registry_plugins — list the WHOLE registry catalog (all metadata + tool lists, minus the heavy source_code). Cheap; use to see every published plugin at a glance instead of relying on search_plugins keyword hits.
 - search_plugins — search by keyword/tags before writing new plugins.
 - get_plugin_info — full details including source code for a registered plugin.
 - publish_plugin — store compiled WASM + metadata after plugin_compile.

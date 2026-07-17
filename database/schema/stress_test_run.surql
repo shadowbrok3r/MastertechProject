@@ -165,4 +165,5 @@ DEFINE TABLE hardware_test_baseline TYPE NORMAL AS
     FROM stress_test_run
     WHERE target_component != NONE
         AND result != 'in_progress'
-    GROUP BY component, tool;
+    GROUP BY component, tool
+    PERMISSIONS FULL;

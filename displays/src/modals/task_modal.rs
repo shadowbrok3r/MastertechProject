@@ -1,6 +1,6 @@
 use eframe::egui::{Align, Align2, Area, Button, Color32, ComboBox, Direction, FontId, Frame, Id, Layout, Margin, Order, RichText, ScrollArea, Spinner, TextEdit, Ui, UiBuilder, Vec2, Widget};
 use crate::{chats::ChatView, get_current_user_from_auth, get_database_users, ui_tools::theme, DisplayModal, Interaction, PlatformSpawner, Spawner};
-use database::{SCAFFOLD_PASS, SCAFFOLD_URL, SCAFFOLD_USER, schema::{CarboniteResponse, ComputerData, CustomerData, DiagnosticSession, LiveTaskPayload, RecordId, RecordIdExt, Store, TaskHistory, TaskNotePayload, TicketData, User, utilities::{PhoneNumberFormatter, delete_task, get_prestashop_payload}}};
+use database::{SCAFFOLD_PASS, SCAFFOLD_URL, SCAFFOLD_USER, schema::{CarboniteResponse, ComputerData, CustomerData, DiagnosticSession, LiveTaskPayload, RecordId, RecordIdExt, Store, StressTestRun, TaskHistory, TaskNotePayload, TicketData, User, utilities::{PhoneNumberFormatter, delete_task, get_prestashop_payload}}};
 use database::schema::prestashop::{Prestashop, Customer, Address};
 use database::schema::prestashop::xml::{modify_xml, remove_xml_tag};
 use database::schema::prestashop_schema::PrestashopPayload;
@@ -17,7 +17,7 @@ use bytes::Bytes;
 use core::f32;
 use log::info;
 
-use super::tabs::{display_computer_page_with_search, display_diagnostics_page, display_history_page, display_job_builder_page, display_software_page, display_ticket_page, ComputerSearchData, DiagnosticSessionView};
+use super::tabs::{display_computer_page_with_search, display_diagnostics_page, display_history_page, display_job_builder_page, display_software_page, display_stress_tests_page, display_ticket_page, ComputerSearchData, DiagnosticSessionView};
 
 #[cfg(target_arch="wasm32")]
 use std::sync::Mutex;
@@ -153,6 +153,21 @@ pub struct TaskModal {
     pub diagnostics_tx: Sender<DiagnosticSessionView>,
     #[serde(skip)]
     pub diagnostics_rx: Receiver<DiagnosticSessionView>,
+
+    // Stress Tests tab state
+    /// `StressTestRun`s recorded against this task's computer, newest first.
+    pub stress_runs: Vec<StressTestRun>,
+    pub stress_loading: bool,
+    pub stress_error: Option<String>,
+    /// Currently expanded run in the list.
+    pub selected_stress_run: Option<RecordId>,
+    /// Set once the stress fetch has been kicked off so it doesn't re-fire
+    /// every frame.
+    pub stress_fetched: bool,
+    #[serde(skip)]
+    pub stress_tx: Sender<Vec<StressTestRun>>,
+    #[serde(skip)]
+    pub stress_rx: Receiver<Vec<StressTestRun>>,
 }
 
 #[derive(Debug, Default, PartialEq, Clone, Serialize)]
@@ -197,6 +212,9 @@ pub enum ModalAction {
     /// task or the same computer, alongside the customer's check-in notes
     /// for side-by-side comparison.
     DiagnosticsPage,
+    /// Stress Tests tab — lists all `StressTestRun`s recorded against the
+    /// task's computer with their results.
+    StressTestsPage,
     ImportTask,
     Close,
     // TaskPage,
@@ -218,6 +236,7 @@ impl TaskModal {
         let (import_computers_tx, import_computers_rx) = crossbeam::channel::unbounded();
         let (service_history_tx, service_history_rx) = crossbeam::channel::unbounded();
         let (diagnostics_tx, diagnostics_rx) = crossbeam::channel::unbounded();
+        let (stress_tx, stress_rx) = crossbeam::channel::unbounded();
         let comp_tx = computer_tx.clone();
         let cust_tx = customer_tx.clone();
         let svc_tx = service_ticket_tx.clone();
@@ -335,6 +354,13 @@ impl TaskModal {
             selected_diagnostic_session: None,
             diagnostics_fetched: false,
             diagnostics_tx, diagnostics_rx,
+            // Stress Tests
+            stress_runs: Vec::new(),
+            stress_loading: false,
+            stress_error: None,
+            selected_stress_run: None,
+            stress_fetched: false,
+            stress_tx, stress_rx,
             min_width: Some(600.0),
             min_height: Some(600.0),
             default_height: Some(800.0),
@@ -523,6 +549,13 @@ impl TaskModal {
             self.diagnostics_loading = false;
         }
 
+        // Stress runs delivered by the background fetch.
+        if let Ok(runs) = self.stress_rx.try_recv() {
+            log::info!("Received {} stress runs", runs.len());
+            self.stress_runs = runs;
+            self.stress_loading = false;
+        }
+
         // Handle service history open triggers
         if self.open_customer_service_history {
             self.open_customer_service_history = false;
@@ -605,6 +638,34 @@ impl TaskModal {
                 }
                 Err(e) => {
                     log::error!("Failed to load diagnostics for task: {e:?}");
+                }
+            }
+        });
+    }
+
+    /// First-time the Stress Tests tab is opened, fetch every
+    /// `StressTestRun` recorded against the task's computer. Gated on the
+    /// computer being loaded so it retries on later frames until the
+    /// async computer fetch lands; once fired it caches the results.
+    pub fn kickoff_stress_load(&mut self) {
+        if self.stress_fetched {
+            return;
+        }
+        let Some(computer_id) = self.computer.as_ref().map(|c| c.id.clone()) else {
+            return;
+        };
+        self.stress_fetched = true;
+        self.stress_loading = true;
+        self.stress_error = None;
+        let tx = self.stress_tx.clone();
+        PlatformSpawner::spawn(async move {
+            match StressTestRun::list_for_computer(&computer_id).await {
+                Ok(runs) => {
+                    let _ = tx.try_send(runs);
+                }
+                Err(e) => {
+                    log::error!("Failed to load stress runs for computer: {e:?}");
+                    let _ = tx.try_send(Vec::new());
                 }
             }
         });
@@ -1225,6 +1286,14 @@ impl DisplayModal for TaskModal {
                             self.current_page_state = ModalAction::DiagnosticsPage;
                         }
                         if ui.add_sized([22., 22.], eframe::egui::Button::selectable(
+                            self.current_page_state == ModalAction::StressTestsPage,
+                            crate::ui_tools::icons::icon(crate::ui_tools::icons::FLASK).heading()
+                        ))
+                        .on_hover_text("Stress Tests")
+                        .clicked() {
+                            self.current_page_state = ModalAction::StressTestsPage;
+                        }
+                        if ui.add_sized([22., 22.], eframe::egui::Button::selectable(
                             self.current_page_state == ModalAction::TaskNotePage,
                             RichText::new("💬").heading()
                         ))
@@ -1261,6 +1330,7 @@ impl DisplayModal for TaskModal {
                 ModalAction::TaskNotePage => 715.,
                 ModalAction::TaskHistoryPage => 670.,
                 ModalAction::DiagnosticsPage => 715.,
+                ModalAction::StressTestsPage => 715.,
                 _ => 715.
             };
 
@@ -1348,6 +1418,18 @@ impl DisplayModal for TaskModal {
                         self.diagnostics_error.as_deref(),
                         &mut self.selected_diagnostic_session,
                         &checkin,
+                    );
+                },
+                ModalAction::StressTestsPage  => {
+                    self.kickoff_stress_load();
+                    display_stress_tests_page(
+                        ui,
+                        avail_size,
+                        &self.stress_runs,
+                        self.stress_loading,
+                        self.stress_error.as_deref(),
+                        self.computer.is_some(),
+                        &mut self.selected_stress_run,
                     );
                 },
                 // ModalAction::TaskPage         => display_task_page(ui, &mut self.task, avail_size),

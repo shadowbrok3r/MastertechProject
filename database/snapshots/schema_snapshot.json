@@ -115,7 +115,7 @@
     },
     {
       "path": "database/schema/stress_test_run.surql",
-      "hash": "82edf66c6ec4e8865ada775070c3da461a519010338667a751dab0c70a1f82fa"
+      "hash": "cf83d475fde0d65092028fb8e01d158b90f2475006dde255aad8cea48912ae74"
     },
     {
       "path": "database/schema/task_history.surql",

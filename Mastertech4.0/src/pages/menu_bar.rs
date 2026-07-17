@@ -1,4 +1,4 @@
-use eframe::egui::{Button, Color32, ComboBox, Context, FontId, Frame, Key, Layout, RichText, Separator, Stroke, TextEdit, Vec2, Widget, vec2};
+use eframe::egui::{Button, Color32, ComboBox, FontId, Frame, Key, Layout, RichText, Separator, Stroke, TextEdit, Vec2, Widget, vec2};
 use database::{schema::{utilities::{get_store_users, get_tasks_for_store}, FilterLiveTasks, LiveTaskPayload, Store}, db};
 use egui::{PopupCloseBehavior, UiKind, containers::menu::{MenuButton, MenuConfig}, style::StyleModifier};
 use crate::{tabs::github::{get_github_releases, self_updater::run}};
@@ -37,7 +37,21 @@ impl MasterTechApp {
                         );
                     });
                     push_widget_anchor("nav.menu.view", view_menu_button.response.rect);
-                    
+
+                    ui.add_space(10.0);
+
+                    let create_task = Button::new(
+                        RichText::new(format!("Create Task {}", displays::ui_tools::icons::PLUS))
+                            .color(ui.style().visuals.warn_fg_color)
+                            .strong(),
+                    )
+                    .corner_radius(ui.style().visuals.menu_corner_radius)
+                    .ui(ui)
+                    .on_hover_text("Create a new task");
+                    if create_task.clicked() {
+                        let _ = self.context.shared_ctx.ui_actions_tx.try_send(TaskUiActions::CreateTaskModal(None));
+                    }
+
                     // Global task search
                     ui.add_space(20.0);
                     ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_additive_luminance(60));

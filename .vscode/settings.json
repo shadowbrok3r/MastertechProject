@@ -6,7 +6,18 @@
     "diffEditor.codeLens": false,
     "rust-analyzer.cargo.allTargets": true,
     // mtechserver is wasm-only; exclude it from the host-target check so it
-    // doesn't show spurious native errors. Build it with trunk.
-    "rust-analyzer.check.extraArgs": ["--exclude", "mtechserver"],
+    // doesn't show spurious native errors. `--exclude` requires `--workspace`,
+    // so the whole flycheck command is overridden here rather than appended to
+    // rust-analyzer's default per-package `-p ... --bin` check. Build it with trunk.
+    "rust-analyzer.check.overrideCommand": [
+        "cargo",
+        "check",
+        "--workspace",
+        "--exclude",
+        "mtechserver",
+        "--all-targets",
+        "--keep-going",
+        "--message-format=json-diagnostic-rendered-ansi"
+    ]
     // "rust-analyzer.cargo.target": "wasm32-unknown-unknown"
 }

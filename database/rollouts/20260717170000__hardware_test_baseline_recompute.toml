@@ -1,0 +1,59 @@
+id = "20260717170000__hardware_test_baseline_recompute"
+name = "hardware_test_baseline_recompute"
+state = "completed"
+# On surrealdb-dev the hardware_test_baseline view existed only as a bare
+# `DEFINE TABLE ... TYPE ANY SCHEMALESS PERMISSIONS NONE` — the AS SELECT
+# computed-view body from 20260623153000 never landed (swallowed run_sql per
+# Golden Rule 2), so it aggregated nothing and was unreadable by the app.
+# This redefines it as the TYPE NORMAL AS SELECT computed view with
+# PERMISSIONS FULL (matching schema/stress_test_run.surql). Applied MANUALLY
+# via the /sql endpoint (root) to surrealdb-dev and verified with INFO FOR DB
+# + SELECT (157 rows; ryzen-5-3600x stresskit:linpack run_count=3 pass=1
+# fail=2); the __rollout row was reconciled by hand. Manual apply mirrors the
+# 20260612190000 note: surrealkit `rollout complete` collides on the duplicate
+# stress_test_run entity guard this view introduces.
+target_schema_hash = "aa19c19848177f6f36c9b3ce8e3bcac8976de742a75e2ccbe4be5285eb134b76"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "recompute_hardware_test_baseline_view"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE hardware_test_baseline TYPE NORMAL AS
+    SELECT
+        target_component                                  AS component,
+        tool_label                                        AS tool,
+        count()                                           AS run_count,
+        math::sum(IF result = 'pass'         THEN 1 ELSE 0 END) AS pass_count,
+        math::sum(IF result = 'fail'         THEN 1 ELSE 0 END) AS fail_count,
+        math::sum(IF result = 'aborted'      THEN 1 ELSE 0 END) AS abort_count,
+        math::sum(IF result = 'inconclusive' THEN 1 ELSE 0 END) AS inconclusive_count,
+        math::mean(summary.max_temp_c ?? 0)               AS avg_max_temp_c,
+        math::max(summary.max_temp_c ?? 0)                AS peak_max_temp_c,
+        math::mean(summary.avg_temp_c ?? 0)               AS avg_temp_c,
+        math::mean(summary.max_clock_mhz ?? 0)            AS avg_max_clock_mhz,
+        math::mean(summary.avg_clock_mhz ?? 0)            AS avg_clock_mhz,
+        math::mean(summary.max_power_w ?? 0)              AS avg_max_power_w,
+        math::mean(summary.peak_throughput ?? 0)          AS avg_peak_throughput,
+        math::mean(summary.whea_delta_count ?? 0)         AS avg_whea_delta,
+        math::sum(summary.whea_delta_count ?? 0)          AS total_whea_delta,
+        math::sum(summary.disk_io_errors ?? 0)            AS total_disk_io_errors,
+        math::sum(summary.memory_errors ?? 0)             AS total_memory_errors,
+        math::sum(IF summary.thermal_throttle_detected = true THEN 1 ELSE 0 END) AS throttle_count,
+        math::sum(IF summary.bsod_detected = true             THEN 1 ELSE 0 END) AS bsod_count
+    FROM stress_test_run
+    WHERE target_component != NONE
+        AND result != 'in_progress'
+    GROUP BY component, tool
+    PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "revert_hardware_test_baseline_view"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE hardware_test_baseline TYPE ANY SCHEMALESS PERMISSIONS NONE;
+"""

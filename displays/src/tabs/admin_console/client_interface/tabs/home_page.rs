@@ -502,10 +502,19 @@ impl HomePage {
         // to be wordy ("AMD Ryzen 5 5600G with Radeon Graphics") so we
         // keep them as-is — `canonical_id` hashes after lowercase +
         // trim, which collapses cross-machine casing diffs.
-        let mut wanted: Vec<(HardwareKind, String, String)> = Vec::new();
+        let mut wanted: Vec<(HardwareKind, String, String, Option<serde_json::Value>)> = Vec::new();
         let cpu = snap.cpu.trim().to_string();
         if !cpu.is_empty() {
-            wanted.push((HardwareKind::Cpu, classify_cpu_vendor(&cpu), cpu));
+            let mut cpu_specs = serde_json::Map::new();
+            let phys = snap.number_of_cpus.trim();
+            if !phys.is_empty() {
+                cpu_specs.insert("physical_cpus".into(), serde_json::json!(phys));
+            }
+            if !snap.cpu_cores.is_empty() {
+                cpu_specs.insert("logical_cores".into(), serde_json::json!(snap.cpu_cores.len()));
+            }
+            let specs = (!cpu_specs.is_empty()).then(|| serde_json::Value::Object(cpu_specs));
+            wanted.push((HardwareKind::Cpu, classify_cpu_vendor(&cpu), cpu, specs));
         }
         for card in &snap.gpu_info.card {
             let name = card.name.trim();
@@ -517,7 +526,16 @@ impl HomePage {
             } else {
                 classify_gpu_vendor(name)
             };
-            wanted.push((HardwareKind::Gpu, vendor, name.to_string()));
+            let mut gpu_specs = serde_json::Map::new();
+            if card.memory > 0 {
+                gpu_specs.insert("vram_bytes".into(), serde_json::json!(card.memory));
+            }
+            let drv = card.nvidia_info.driver_version.trim();
+            if !drv.is_empty() {
+                gpu_specs.insert("driver_version".into(), serde_json::json!(drv));
+            }
+            let specs = (!gpu_specs.is_empty()).then(|| serde_json::Value::Object(gpu_specs));
+            wanted.push((HardwareKind::Gpu, vendor, name.to_string(), specs));
         }
 
         if wanted.is_empty() {
@@ -526,8 +544,9 @@ impl HomePage {
 
         let pending = self.phantom_pending.clone();
         PlatformSpawner::spawn(async move {
-            for (kind, vendor, model) in wanted {
-                let component = HardwareComponent::new(kind, &vendor, &model);
+            for (kind, vendor, model, specs) in wanted {
+                let mut component = HardwareComponent::new(kind, &vendor, &model);
+                component.specs = specs;
                 match HardwareComponent::upsert_seen(&component).await {
                     Ok(id) => {
                         log::debug!(

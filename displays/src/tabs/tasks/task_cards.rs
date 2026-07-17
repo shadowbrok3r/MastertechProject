@@ -1,4 +1,4 @@
-use eframe::egui::{Button, CollapsingHeader, Color32, Frame, Margin, RichText, Shadow, Ui, Vec2, Widget};
+use eframe::egui::{Button, CollapsingHeader, Color32, Frame, Margin, RichText, Shadow, TextFormat, TextStyle, Ui, Vec2, Widget, WidgetText, text::LayoutJob};
 use database::schema::{LiveTaskPayload, RecordIdExt, TaskNotePayload, User};
 use crossbeam::channel::Sender;
 use chrono::{DateTime, Utc};
@@ -62,17 +62,38 @@ impl Displayable for LiveTaskPayload {
                     })
                 };
 
-                let txt = if count > 0 {
-                    let base = RichText::new(format!("{} 💬", count)).color(style.visuals.warn_fg_color);
-                    if has_unread {
-                        RichText::new(format!("{} 💬 ●", count))
-                            .color(Color32::from_rgb(250, 100, 80))
-                            .strong()
+                // Always lay out the unread dot (transparent when read) so the button, and
+                // therefore the card, keeps a constant width regardless of unread state.
+                let txt: WidgetText = if count > 0 {
+                    let button_font = style
+                        .text_styles
+                        .get(&TextStyle::Button)
+                        .cloned()
+                        .unwrap_or_default();
+                    let text_color = if has_unread {
+                        Color32::from_rgb(250, 100, 80)
                     } else {
-                        base
-                    }
+                        style.visuals.warn_fg_color
+                    };
+                    let dot_color = if has_unread {
+                        Color32::from_rgb(250, 100, 80)
+                    } else {
+                        Color32::TRANSPARENT
+                    };
+                    let mut job = LayoutJob::default();
+                    job.append(
+                        &format!("{count} 💬 "),
+                        0.0,
+                        TextFormat { font_id: button_font.clone(), color: text_color, ..Default::default() },
+                    );
+                    job.append(
+                        "●",
+                        0.0,
+                        TextFormat { font_id: button_font, color: dot_color, ..Default::default() },
+                    );
+                    job.into()
                 } else {
-                    RichText::new("  💬").color(Color32::WHITE)
+                    RichText::new("  💬").color(Color32::WHITE).into()
                 };
 
                 if Button::new(txt)

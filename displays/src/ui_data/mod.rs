@@ -522,6 +522,7 @@ impl crate::app_state::SharedContext {
 
         if let Ok(settings) = self.settings_receiver.try_recv() {
             ctx.request_repaint();
+            crate::ui_tools::theme_config::sync_editor_config(&mut self.theme_config, &settings);
             crate::ui_tools::theme_config::apply_style_with_semantics(ctx, settings);
         }
     }

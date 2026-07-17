@@ -77,6 +77,19 @@ impl WebSocketClient {
                 let sys_color = Color32::from_rgb(160, 200, 180);
                 let os_btn_color = Color32::from_rgb(180, 180, 200);
 
+                // Standalone Home shortcut, left of the View menu.
+                if ui
+                    .button(icons::icon_sized(icons::HOME, 18.0).color(btn_color).strong())
+                    .on_hover_text("Home")
+                    .clicked()
+                {
+                    let _ = self.display_state_channel.0.try_send(WsDisplayState::Home);
+                    if !self.live_stats_active {
+                        let _ = self.send_cmd_tx.try_send(Cmd::LiveData);
+                        self.live_stats_active = true;
+                    }
+                }
+
                 // ── View ─────────────────────────────────────────────
                 // The remote-rendered "live" views (Charts, Viewer) are
                 // stateful — they emit start/stop commands the operator
@@ -84,28 +97,12 @@ impl WebSocketClient {
                 // open. The Stop variant only appears when the relevant
                 // stream is already running.
                 ui.menu_button(RichText::new(menu_label("View")).color(btn_color).strong(), |ui| {
-                    // Home is the RMM-style overview — hardware inventory,
-                    // live charts, running stress tests, processes. Replaces
-                    // the old standalone "Charts" entry.
-                    if ui
-                        .button(format!("{} Home", icons::HOME))
-                        .clicked()
-                    {
-                        let _ = self.display_state_channel.0.try_send(WsDisplayState::Home);
-                        // Home renders live charts; fire the LiveData feed if
-                        // it isn't already running so the chart_board has data.
-                        if !self.live_stats_active {
-                            let _ = self.send_cmd_tx.try_send(Cmd::LiveData);
-                            self.live_stats_active = true;
-                        }
-                        ui.close();
-                    }
-                    if ui.button("My Tools").clicked() {
+                    if ui.button(format!("{} My Tools", icons::WRENCH)).clicked() {
                         let _ = self.display_state_channel.0.try_send(WsDisplayState::ToolBox);
                         let _ = self.toolbox.request_contents("/");
                         ui.close();
                     }
-                    if ui.button("Explorer").clicked() {
+                    if ui.button(format!("{} Explorer", icons::FOLDER)).clicked() {
                         let _ = self.display_state_channel.0.try_send(WsDisplayState::Explorer);
                         self.notifications = 0;
                         if !self.interactive {
@@ -123,11 +120,11 @@ impl WebSocketClient {
                         ui.close();
                     }
                     let notifs = if matches!(self.state, WsDisplayState::Shell) {
-                        "Shell".to_string()
+                        format!("{} Shell", icons::TERMINAL)
                     } else if self.notifications > 0 {
-                        format!("Shell  ({})", self.notifications)
+                        format!("{} Shell  ({})", icons::TERMINAL, self.notifications)
                     } else {
-                        "Shell".to_string()
+                        format!("{} Shell", icons::TERMINAL)
                     };
                     if ui.button(notifs).clicked() {
                         let _ = self.display_state_channel.0.try_send(WsDisplayState::Shell);
