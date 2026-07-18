@@ -128,7 +128,9 @@ pub fn check_authentication(db_tx: Sender<anyhow::Result<database::Database, any
                             );
                             log::warn!("Set new user cookie");
                         },
-                        Err(e) => gloo_console::error!(format!("Error converting user to json: {e:?}"))
+                        Err(e) => {
+                            gloo_console::error!(format!("Error converting user to json: {e:?}"));
+                        }
                     }
                 }
             }
