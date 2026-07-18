@@ -46,7 +46,7 @@ impl gloo_worker::Worker for DeserWorker {
         spawn_local(async move {
             match decompress_data(&msg.0) {
                 Ok(bin) => scope.respond(id, Output(bin)),
-                Err(e) => gloo_console::info!(format!("Error decompressing data: {e:?}")),
+                Err(e) => gloo_console::info!(format!("Error decompressing data: {e:?}"))
             }
         });
     }
