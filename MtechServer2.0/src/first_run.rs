@@ -142,6 +142,7 @@ impl MtechServer {
                     let error_toast = Toast {
                         kind: ToastKind::Error,
                         text: format!("Message from Database: {reason}").into(),
+                        user_dismissed: false,
                         style: ToastStyle::default(),
                         options: ToastOptions::default()
                             .show_progress(true)
@@ -316,6 +317,7 @@ impl MtechServer {
             kind: ToastKind::Error,
             style: ToastStyle::default(),
             text: format!("Detected older crate version").into(),
+            user_dismissed: false,
             options: ToastOptions::default().show_progress(true).duration_in_seconds(10.0),
         };
         toast.add(error_toast);
@@ -387,6 +389,7 @@ impl MtechServer {
                                 style: ToastStyle::default(),
                                 kind: ToastKind::Success,
                                 text: format!("{e:?}").into(),
+                                user_dismissed: false,
                                 options: ToastOptions::default()
                                     .show_progress(true)
                                     .duration_in_seconds(6.0),
@@ -412,6 +415,7 @@ impl MtechServer {
                             style: ToastStyle::default(),
                             kind: ToastKind::Error,
                             text: format!("{e:?} \nYou may need to login again").into(),
+                            user_dismissed: false,
                             options: ToastOptions::default()
                                 .show_progress(true)
                                 .duration_in_seconds(6.0),
