@@ -1050,6 +1050,7 @@ impl SharedContext {
                     text: ws_layout.error.clone().into(),
                     options,
                     style: ToastStyle::default(),
+                    ..Default::default()
                 });
                 ws_layout.error.clear();
             }

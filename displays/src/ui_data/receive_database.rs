@@ -59,6 +59,7 @@ impl crate::app_state::SharedContext {
                                 options: crate::ui_data::ToastOptions::default()
                                     .show_progress(true)
                                     .duration_in_seconds(6.0),
+                                ..Default::default()
                             };
                             toast.add(auth_toast);
                         } else {
@@ -83,6 +84,7 @@ impl crate::app_state::SharedContext {
                             options: crate::ui_data::ToastOptions::default()
                                 .show_progress(true)
                                 .duration_in_seconds(6.0),
+                            ..Default::default()
                         };
                         toast.add(auth_toast);
                         let _ = tx.try_send(crate::app_state::AppState::NoAuth("Needs login".to_string()));

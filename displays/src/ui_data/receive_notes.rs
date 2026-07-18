@@ -95,6 +95,7 @@ impl SharedContext {
                                         .show_progress(true)
                                         .duration_in_seconds(6.0),
                                     style: ToastStyle::default(),
+                                    ..Default::default()
                                 };
                                 self.toasts.add(toast);
                             }

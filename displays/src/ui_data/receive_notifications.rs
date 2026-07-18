@@ -107,6 +107,7 @@ impl SharedContext {
                                     .into(),
                                     options: ToastOptions::default().duration(Some(std::time::Duration::from_secs(3))),
                                     style: ToastStyle::default(),
+                                    ..Default::default()
                                 };
                                 toast.add(auth_toast);
                             }

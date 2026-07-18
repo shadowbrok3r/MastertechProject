@@ -307,6 +307,8 @@ async fn run_tcp_session(
     // Wrap the receiver so the writer task can borrow it each session
     // without taking ownership, allowing reconnect on drop+redial.
     let out_rx = Arc::new(Mutex::new(out_rx));
+    // One toast per failure streak; reset after a successful handshake.
+    let mut connect_failure_toasted = false;
 
     loop {
         if shutdown.load(Ordering::Relaxed) {
@@ -320,6 +322,7 @@ async fn run_tcp_session(
                     "admin_transport -> refreshed dial target {target_addr} -> {fresh}"
                 );
                 target_addr = fresh;
+                connect_failure_toasted = false;
             }
         }
 
@@ -351,13 +354,12 @@ async fn run_tcp_session(
             Ok(Err(e)) => {
                 log::warn!("admin_transport -> connect to {target_addr} failed: {e}; retrying in {RETRY_INTERVAL:?}");
                 let _ = in_tx.send(WsEvent::Error(format!("TCP connect failed: {e} (retrying…)")));
-                // Surface as a toast so the operator sees the failure
-                // even when their attention is on a different tab.
-                // Dedup at the consumer side will collapse the 3-second
-                // retry storm into a single visible toast.
-                let _ = crate::get_toast_sender().try_send(crate::ToastMessage::Warning(
-                    format!("Admin TCP connect to {target_addr} failed: {e}"),
-                ));
+                if !connect_failure_toasted {
+                    connect_failure_toasted = true;
+                    let _ = crate::get_toast_sender().try_send(crate::ToastMessage::Warning(
+                        format!("Admin TCP connect to {target_addr} failed: {e}"),
+                    ));
+                }
                 if shutdown_aware_sleep(&shutdown, RETRY_INTERVAL).await {
                     let _ = in_tx.send(WsEvent::Closed);
                     return;
@@ -367,9 +369,12 @@ async fn run_tcp_session(
             Err(_) => {
                 log::warn!("admin_transport -> connect to {target_addr} timed out; retrying in {RETRY_INTERVAL:?}");
                 let _ = in_tx.send(WsEvent::Error(format!("TCP connect timed out (retrying…)")));
-                let _ = crate::get_toast_sender().try_send(crate::ToastMessage::Warning(
-                    format!("Admin TCP connect to {target_addr} timed out (retrying…)"),
-                ));
+                if !connect_failure_toasted {
+                    connect_failure_toasted = true;
+                    let _ = crate::get_toast_sender().try_send(crate::ToastMessage::Warning(
+                        format!("Admin TCP connect to {target_addr} timed out (retrying…)"),
+                    ));
+                }
                 if shutdown_aware_sleep(&shutdown, RETRY_INTERVAL).await {
                     let _ = in_tx.send(WsEvent::Closed);
                     return;
@@ -399,6 +404,7 @@ async fn run_tcp_session(
         }
 
         log::info!("admin_transport -> connected + handshake sent to {target_addr}");
+        connect_failure_toasted = false;
         let _ = in_tx.send(WsEvent::Opened);
 
         // Liveness state shared between the reader (stamps on every Pong)

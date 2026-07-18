@@ -79,6 +79,7 @@ impl SharedContext {
                     text: txt.into(),
                     options: toast_opts,
                     style: ToastStyle::default(),
+                    ..Default::default()
                 };
 
                 toast.add(client_toast);

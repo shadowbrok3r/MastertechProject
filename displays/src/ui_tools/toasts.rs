@@ -89,8 +89,8 @@ impl Toasts {
         self
     }
 
-    /// Show and update all toasts
-    pub fn show(&mut self, ctx: &Context) {
+    /// Show and update all toasts. Returns texts the operator dismissed via close.
+    pub fn show(&mut self, ctx: &Context) -> Vec<String> {
         let Self {
             id,
             align,
@@ -163,7 +163,19 @@ impl Toasts {
             }
         }
 
+        let mut dismissed = Vec::new();
+        toasts.retain(|toast| {
+            if toast.options.ttl_sec > 0.0 {
+                return true;
+            }
+            if toast.user_dismissed {
+                dismissed.push(toast.text.text().to_string());
+            }
+            false
+        });
+
         ctx.data_mut(|d| d.insert_temp(id, toasts));
+        dismissed
     }
 }
 
@@ -278,6 +290,8 @@ pub struct Toast {
     pub text: WidgetText,
     pub options: ToastOptions,
     pub style: ToastStyle,
+    /// Set when the operator clicks the close button (not on TTL expiry).
+    pub user_dismissed: bool,
 }
 
 impl Toast {
@@ -305,8 +319,9 @@ impl Toast {
         self
     }
 
-    /// Close the toast immediately
+    /// Close the toast immediately (operator dismiss).
     pub fn close(&mut self) {
+        self.user_dismissed = true;
         self.options.ttl_sec = 0.0;
     }
 }

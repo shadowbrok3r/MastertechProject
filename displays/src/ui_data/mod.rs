@@ -271,6 +271,7 @@ impl crate::app_state::SharedContext {
                     .show_progress(true)
                     .duration_in_seconds(6.0),
                 style: ToastStyle::default(),
+                ..Default::default()
             };
             toast.add(auth_toast);
         }
@@ -465,6 +466,7 @@ impl crate::app_state::SharedContext {
                         .show_progress(true)
                         .duration_in_seconds(6.0),
                     style: ToastStyle::default(),
+                    ..Default::default()
                 };
                 toast.add(error_toast);
             }
@@ -506,6 +508,12 @@ impl crate::app_state::SharedContext {
                 ToastMessage::Info(text) => (ToastKind::Info, text),
             };
 
+            if let Some(target) = admin_tcp_toast_target(&text) {
+                if self.dismissed_admin_tcp_targets.contains(target) {
+                    continue;
+                }
+            }
+
             let now = web_time::Instant::now();
             let is_dup = self
                 .last_toast
@@ -529,6 +537,7 @@ impl crate::app_state::SharedContext {
                     .show_progress(true)
                     .duration_in_seconds(3.0),
                 style: ToastStyle::default(),
+                ..Default::default()
             });
         }
         
@@ -737,7 +746,11 @@ impl crate::app_state::SharedContext {
         self.client_diagnostics_popup_ui(ctx);
         self.drain_reachability_events();
         self.connection_status_pill(ctx);
-        self.toasts.show(ctx);
+        for text in self.toasts.show(ctx) {
+            if let Some(target) = admin_tcp_toast_target(&text) {
+                self.dismissed_admin_tcp_targets.insert(target.to_string());
+            }
+        }
     }
 
     /// Small corner pill shown while a reconnect is in flight or pending;
@@ -898,3 +911,9 @@ impl crate::app_state::SharedContext {
     }
 }
 
+/// Host:port from an admin TCP connect toast, if the text matches.
+fn admin_tcp_toast_target(text: &str) -> Option<&str> {
+    text.strip_prefix("Admin TCP connect to ")?
+        .split_whitespace()
+        .next()
+}
