@@ -163,6 +163,9 @@ pub async fn wait_for_preferred_port_available() {
 /// Hard cap on a single inbound frame so a malicious or buggy peer can't
 /// allocate gigabytes by sending a giant length prefix.
 const MAX_FRAME_BYTES: u32 = 64 * 1024 * 1024; // 64 MiB
+/// Bounded depth of the file-chunk writer channel (× 4 MiB chunk = in-flight
+/// cap). Small enough to bound RAM, deep enough to keep the socket busy.
+const FILE_CHANNEL_DEPTH: usize = 4;
 
 /// Bind a TCP listener for direct admin sessions and return the bound
 /// address. Tries [`PREFERRED_PORT`] first, falls back to
@@ -272,19 +275,23 @@ async fn handle_session(stream: TcpStream, peer: SocketAddr) -> Result<()> {
         }
     }
 
-    // 2) Spawn writer task
+    // 2) Spawn writer task. Control frames use an unbounded channel; bulk
+    //    file chunks use a small BOUNDED channel so a large download paces to
+    //    the socket instead of queueing gigabytes in RAM.
     let (write_tx, write_rx) = unbounded_channel::<TcpFrame>();
-    let writer_handle = tokio::spawn(writer_task(write_half, write_rx, peer));
+    let (file_tx, file_rx) = tokio::sync::mpsc::channel::<TcpFrame>(FILE_CHANNEL_DEPTH);
+    let writer_handle = tokio::spawn(writer_task(write_half, write_rx, file_rx, peer));
 
     // 3) Per-session command dispatcher
     let mut client = TerminalWebsocketClient::new();
-    let mut transport = ClientTransport::Tcp(write_tx.clone());
+    let mut transport = ClientTransport::Tcp { ctrl: write_tx.clone(), file: file_tx.clone() };
 
     let result = run_session_loop(read_half, &mut client, &mut transport, &write_tx).await;
 
     // 4) Tear down
-    drop(transport); // close writer channel so writer_task exits
+    drop(transport); // close writer channels so writer_task exits
     drop(write_tx);
+    drop(file_tx);
     let _ = writer_handle.await;
     result
 }
@@ -613,9 +620,20 @@ async fn read_frame(read_half: &mut tokio::net::tcp::OwnedReadHalf) -> Result<In
 async fn writer_task(
     mut write_half: tokio::net::tcp::OwnedWriteHalf,
     mut rx: UnboundedReceiver<TcpFrame>,
+    mut file_rx: tokio::sync::mpsc::Receiver<TcpFrame>,
     peer: SocketAddr,
 ) {
-    while let Some(frame) = rx.recv().await {
+    loop {
+        // Control frames (pongs, egui/desktop frames, command output) are
+        // biased ahead of bulk file chunks so liveness pongs are never
+        // starved by a large download; the bounded `file_rx` gives the
+        // download natural backpressure.
+        let frame = tokio::select! {
+            biased;
+            Some(frame) = rx.recv() => frame,
+            Some(frame) = file_rx.recv() => frame,
+            else => break,
+        };
         let (tag, payload) = match frame {
             TcpFrame::Binary(b) => (FRAME_TAG_BINARY, b),
             TcpFrame::Text(t) => (FRAME_TAG_TEXT, t.into_bytes()),

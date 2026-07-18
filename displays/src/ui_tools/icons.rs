@@ -126,6 +126,10 @@ pub const DIAGNOSTICS: &str = p::MICROSCOPE;
 pub const GRID: &str = p::SQUARES_FOUR;
 pub const CARET_LEFT: &str = p::CARET_LEFT;
 pub const CARET_RIGHT: &str = p::CARET_RIGHT;
+pub const CARET_DOWN: &str = p::CARET_DOWN;
+pub const ARROW_RIGHT: &str = p::ARROW_RIGHT;
+pub const ARROW_DOWN: &str = p::ARROW_DOWN;
+pub const CHECK: &str = p::CHECK;
 
 pub fn folder_shortcut_icon(path: &str) -> &'static str {
     match path {

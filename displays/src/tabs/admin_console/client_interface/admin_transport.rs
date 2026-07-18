@@ -589,6 +589,10 @@ async fn run_tcp_session(
             }
             match tag {
                 FRAME_TAG_BINARY => {
+                    // Any inbound data proves the agent is alive — stamp the
+                    // liveness clock so a long bulk transfer (which delays
+                    // pong echoes) can't trip the pong deadline on its own.
+                    last_pong_at.store(now_millis(), Ordering::Relaxed);
                     let _ = in_tx.send(WsEvent::Message(WsMessage::Binary(payload.into())));
                 }
                 FRAME_TAG_TEXT => {

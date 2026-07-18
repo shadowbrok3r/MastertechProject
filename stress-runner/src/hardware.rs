@@ -82,7 +82,9 @@ pub fn ensure_components_from_snapshot(
         notices.push(msg);
     } else {
         let vendor = classify_cpu_vendor(&model);
-        match upsert_blocking(HardwareKind::Cpu, &vendor, &model) {
+        let cpu_specs = (!snapshot.cores.is_empty())
+            .then(|| serde_json::json!({ "logical_cores": snapshot.cores.len() }));
+        match upsert_blocking(HardwareKind::Cpu, &vendor, &model, cpu_specs) {
             Ok(id) => {
                 log::info!("[hw_middleware] cpu upserted: {vendor} / {model} -> {id:?}");
                 cpu_id = Some(id.clone());
@@ -107,7 +109,10 @@ pub fn ensure_components_from_snapshot(
             gpu_skipped += 1;
             continue;
         }
-        match upsert_blocking(HardwareKind::Gpu, &gpu.vendor, &gpu.name) {
+        let gpu_specs = gpu
+            .memory_total_mb
+            .map(|mb| serde_json::json!({ "vram_mb": mb }));
+        match upsert_blocking(HardwareKind::Gpu, &gpu.vendor, &gpu.name, gpu_specs) {
             Ok(id) => {
                 log::info!(
                     "[hw_middleware] gpu upserted: {} / {} -> {id:?}",
@@ -149,12 +154,16 @@ pub fn ensure_components_from_snapshot(
 
 /// Block-on adapter so the sync `RunController::worker` thread can call
 /// [`HardwareComponent::upsert_seen`] without standing up its own runtime.
+/// `specs` is merged NONE-safely by the upsert SQL, so an identity-only pass
+/// never wipes specs an earlier richer pass stored.
 fn upsert_blocking(
     kind: HardwareKind,
     vendor: &str,
     model: &str,
+    specs: Option<serde_json::Value>,
 ) -> anyhow::Result<RecordId> {
-    let component = HardwareComponent::new(kind, vendor, model);
+    let mut component = HardwareComponent::new(kind, vendor, model);
+    component.specs = specs;
     let comp_for_async = component.clone();
     runtime::block_on(async move { HardwareComponent::upsert_seen(&comp_for_async).await })
 }

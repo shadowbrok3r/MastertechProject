@@ -1,5 +1,5 @@
 use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, database_viewer::DatabaseEditor, dock_session::{default_dock_session_native, default_dock_session_wasm, DockSession}, github::{GithubIssue, GithubRelease}, koth::Koth, presta_order::PrestashopOrderForm, raw_queries::QueryEditor, resource_monitor::ResourceMonitor, sales_tracker::SalesTracker, stock::StockTable, stress_lab::StressLab, task_audit::TaskAuditViewer, tasks::task_layout::{LayoutConfig, TaskLayout}, user_chat::UserChat, web_console::WebConsole, TabId}, ui_tools::{notification_center::NotificationCenter, theme_config::{bootstrap_startup_theme, set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions, Spawner};
-use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, TaskNoteRead, User, UserSettings}, Database};
+use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, AiTask, AiTaskItem, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, TaskNoteRead, User, UserSettings}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use std::{collections::{BTreeMap, HashMap}, sync::Arc};
 use crossbeam::channel::{self, Receiver, Sender};
@@ -166,7 +166,20 @@ pub struct SharedContext {
     pub live_user_tx: Sender<(Action, User)>,
     #[serde(skip)]
     pub live_user_rx: Receiver<(Action, User)>,
-    
+    /// {AI task snapshot + live streams}
+    #[serde(skip)]
+    pub initial_ai_tasks_tx: Sender<(Vec<AiTask>, Vec<AiTaskItem>)>,
+    #[serde(skip)]
+    pub initial_ai_tasks_rx: Receiver<(Vec<AiTask>, Vec<AiTaskItem>)>,
+    #[serde(skip)]
+    pub live_ai_tasks_tx: Sender<(Action, AiTask)>,
+    #[serde(skip)]
+    pub live_ai_tasks_rx: Receiver<(Action, AiTask)>,
+    #[serde(skip)]
+    pub live_ai_task_items_tx: Sender<(Action, AiTaskItem)>,
+    #[serde(skip)]
+    pub live_ai_task_items_rx: Receiver<(Action, AiTaskItem)>,
+
     /// {Live-query stream errors, tagged with the epoch that produced them}
     #[serde(skip)]
     pub live_query_error_tx: Sender<(u64, String)>,
@@ -328,6 +341,19 @@ pub struct SharedContext {
     pub user_chat: UserChat,
     pub pending_store: Option<Store>,
     pub task_index: HashMap<String, LiveTaskPayload>, // Index by task ID
+    /// AI tasks + checklist items, live-query-fed; the single source of
+    /// truth for card, column, and diagnostics-tab checklist rendering.
+    #[serde(skip)]
+    pub ai_tasks: HashMap<String, AiTask>,
+    #[serde(skip)]
+    pub ai_task_items: HashMap<String, AiTaskItem>,
+    /// Completed AI tasks linger on the tech board for a short grace window.
+    #[serde(skip)]
+    pub ai_task_done_grace: HashMap<String, web_time::Instant>,
+    #[serde(skip)]
+    pub ai_popup_queue: std::collections::VecDeque<crate::modals::ai_attention_modal::AiPopup>,
+    #[serde(skip)]
+    pub ai_popup_modal: Option<crate::modals::ai_attention_modal::AiAttentionModal>,
     pub search_results: Option<Vec<LiveTaskPayload>>, // Store global search results
     pub account_mod: UserPreferences,
     #[serde(skip)]
@@ -562,6 +588,9 @@ impl SharedContext {
         let (new_note_tx, new_note_rx) = channel::unbounded::<TaskNotePayload>();
         let (live_notification_tx, live_notification_rx) = channel::unbounded::<(Action, Notification)>();
         let (live_user_tx, live_user_rx) = channel::unbounded::<(Action, User)>();
+        let (initial_ai_tasks_tx, initial_ai_tasks_rx) = channel::unbounded::<(Vec<AiTask>, Vec<AiTaskItem>)>();
+        let (live_ai_tasks_tx, live_ai_tasks_rx) = channel::unbounded::<(Action, AiTask)>();
+        let (live_ai_task_items_tx, live_ai_task_items_rx) = channel::unbounded::<(Action, AiTaskItem)>();
         // Unbounded so a burst of stream errors (all five streams dying on
         // one WS reset) is never silently dropped; the epoch tag lets the
         // drain discard entries from already-replaced stream generations.
@@ -659,6 +688,14 @@ impl SharedContext {
             new_note_tx, new_note_rx,
             notification_tx, notification_rx,
             live_notification_tx, live_notification_rx,
+            initial_ai_tasks_tx, initial_ai_tasks_rx,
+            live_ai_tasks_tx, live_ai_tasks_rx,
+            live_ai_task_items_tx, live_ai_task_items_rx,
+            ai_tasks: HashMap::new(),
+            ai_task_items: HashMap::new(),
+            ai_task_done_grace: HashMap::new(),
+            ai_popup_queue: std::collections::VecDeque::new(),
+            ai_popup_modal: None,
             settings_sender, settings_receiver,
             bytes_channel,
             tur_channel,
@@ -993,6 +1030,42 @@ impl SharedContext {
             });
         }
 
+        // Sync AI handoff views into open task modals — snapshot cloned
+        // before the mutable opened_modals borrow so card + modal render
+        // the same SharedContext state.
+        if !self.opened_modals.is_empty() && !self.ai_tasks.is_empty() {
+            use database::schema::RecordIdExt;
+            let mut ai_views_by_task: HashMap<String, Vec<(AiTask, Vec<AiTaskItem>)>> =
+                HashMap::new();
+            for task in self.ai_tasks.values() {
+                let key = task.id.key_string();
+                let mut items: Vec<AiTaskItem> = self
+                    .ai_task_items
+                    .values()
+                    .filter(|i| i.ai_task_ref.key_string() == key)
+                    .cloned()
+                    .collect();
+                items.sort_by_key(|i| i.position);
+                ai_views_by_task
+                    .entry(task.task_ref.key_string())
+                    .or_default()
+                    .push((task.clone(), items));
+            }
+            for views in ai_views_by_task.values_mut() {
+                views.sort_by(|a, b| b.0.created_at.cmp(&a.0.created_at));
+            }
+            let ui_tx = self.ui_actions_tx.clone();
+            for modal_type in self.opened_modals.values_mut() {
+                if let ModalType::TaskModal(m) = modal_type {
+                    let views = ai_views_by_task
+                        .get(&m.task.id.key_string())
+                        .cloned()
+                        .unwrap_or_default();
+                    m.sync_ai_state(views, ui_tx.clone());
+                }
+            }
+        }
+
         for (title, modal_type) in self.opened_modals.iter_mut() {
             let action = modal_type.ui(ctx, title.clone(), 750., 850.);
             if let Some(action) = action {
@@ -1004,6 +1077,49 @@ impl SharedContext {
         if let Some(modal) = &self.close_modal {
             self.opened_modals.remove_entry(modal);
             self.close_modal = None;
+        }
+
+        // Pump the AI attention/review queue into the blocking modal slot,
+        // one popup at a time; outcomes route through TaskUiActions.
+        if self.ai_popup_modal.is_none() {
+            if let Some(popup) = self.ai_popup_queue.pop_front() {
+                self.ai_popup_modal =
+                    Some(crate::modals::ai_attention_modal::AiAttentionModal {
+                        popup,
+                        queue_remaining: self.ai_popup_queue.len(),
+                    });
+            }
+        }
+        if let Some(modal) = self.ai_popup_modal.as_ref() {
+            if let Some(outcome) = modal.show(ctx, &self.store_users) {
+                use crate::modals::ai_attention_modal::{AiAttentionOutcome, AiPopupKind};
+                let (popup, view_now) = match outcome {
+                    AiAttentionOutcome::ViewNow(p) => (p, true),
+                    AiAttentionOutcome::Later(p) => (p, false),
+                };
+                let review = popup.kind == AiPopupKind::OperatorReview;
+                let _ = self.ui_actions_tx.try_send(TaskUiActions::AcknowledgeAiTask {
+                    ai_task_id: popup.ai_task.id.clone(),
+                    review,
+                });
+                if view_now {
+                    let _ = self.ui_actions_tx.try_send(TaskUiActions::OpenTaskDiagnostics {
+                        task_id: popup.ai_task.task_ref.clone(),
+                        session: Some(popup.ai_task.session_ref.clone()),
+                    });
+                }
+                // Show only ONE popup per burst: acknowledge and discard the
+                // rest of the queue (they stay visible as cards + the column
+                // badge) so a batch of new AI tasks never forces click-through.
+                while let Some(extra) = self.ai_popup_queue.pop_front() {
+                    let review = extra.kind == AiPopupKind::OperatorReview;
+                    let _ = self.ui_actions_tx.try_send(TaskUiActions::AcknowledgeAiTask {
+                        ai_task_id: extra.ai_task.id.clone(),
+                        review,
+                    });
+                }
+                self.ai_popup_modal = None;
+            }
         }
 
         // Stage-4: instantiate the open-service-confirm modal whenever

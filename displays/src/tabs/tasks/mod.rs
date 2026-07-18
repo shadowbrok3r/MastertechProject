@@ -12,6 +12,7 @@ pub mod task_cards;
 pub mod task_layout;
 pub mod interactable;
 pub mod client_cards;
+pub mod ai_task_cards;
 
 impl SharedContext {
     pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
@@ -296,6 +297,54 @@ impl SharedContext {
             });
         }
 
+        // Build the AI Tasks column cards: tech section (my open handoffs,
+        // plus a short grace window after completion) and operator review
+        // section (handoffs I requested that await follow-up).
+        let mut my_tasks_ai_cards: Vec<crate::tabs::tasks::ai_task_cards::AiTaskCardView> =
+            Vec::new();
+        if page == "My Tasks" {
+            use crate::tabs::tasks::ai_task_cards::{AiCardRole, AiTaskCardView};
+            use database::schema::AiTaskStatus;
+            const GRACE: web_time::Duration = web_time::Duration::from_secs(3);
+            self.ai_task_done_grace.retain(|_, t| t.elapsed() < GRACE);
+
+            for task in self.ai_tasks.values() {
+                let key = task.id.key_string();
+                let is_tech = task.assignee == current_user_id;
+                let is_op = task.requested_by == current_user_id;
+                let in_grace = self.ai_task_done_grace.contains_key(&key);
+
+                let role = match task.status {
+                    AiTaskStatus::Open if is_tech => AiCardRole::AssignedTech,
+                    // Review card wins for an operator who is also the tech.
+                    AiTaskStatus::AwaitingFollowup if is_op => AiCardRole::Operator,
+                    AiTaskStatus::AwaitingFollowup if is_tech && in_grace => {
+                        AiCardRole::AssignedTech
+                    }
+                    _ => continue,
+                };
+
+                let mut items: Vec<database::schema::AiTaskItem> = self
+                    .ai_task_items
+                    .values()
+                    .filter(|i| i.ai_task_ref.key_string() == key)
+                    .cloned()
+                    .collect();
+                items.sort_by_key(|i| i.position);
+
+                my_tasks_ai_cards.push(AiTaskCardView {
+                    linked_task: self.task_index.get(&task.task_ref.key_string()).cloned(),
+                    ai_task: task.clone(),
+                    items,
+                    role,
+                    in_grace,
+                });
+            }
+            my_tasks_ai_cards.sort_by(|a, b| {
+                b.ai_task.created_at.cmp(&a.ai_task.created_at)
+            });
+        }
+
         // Update or create layout
         let layout = self.task_layouts.entry(page.to_string()).or_insert_with(|| {
             let mut layout = TaskLayout::new(
@@ -325,6 +374,7 @@ impl SharedContext {
         // Propagate last_read_notes from SharedContext
         layout.last_read_notes = self.last_read_notes.clone();
         layout.client_cards = my_tasks_client_cards;
+        layout.ai_cards = my_tasks_ai_cards;
 
         // Render the layout
         layout.layout_cols(ui, self.ui_actions_tx.clone());

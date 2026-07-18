@@ -272,6 +272,32 @@ pub enum TaskUiActions {
         connection_string: String,
         candidate_index: usize,
     },
+    /// Resolve a task by id (index hit or async fetch) then open its modal.
+    OpenTaskModalById(RecordId),
+    /// Open the task modal directly on the Diagnostics tab, optionally
+    /// preselecting a session. Never toggle-closes an already-open modal.
+    OpenTaskDiagnostics {
+        task_id: RecordId,
+        session: Option<RecordId>,
+    },
+    /// Toggle an AI-task checklist item (optimistic local + async DB write).
+    ToggleAiCheckItem {
+        ai_task_id: RecordId,
+        item_id: RecordId,
+        checked: bool,
+    },
+    /// Reassign an AI task to another user; clears the attention ack.
+    ReassignAiTask {
+        ai_task_id: RecordId,
+        assignee: RecordId,
+    },
+    /// Stamp acknowledged_at (review = review_acknowledged_at) after a popup.
+    AcknowledgeAiTask {
+        ai_task_id: RecordId,
+        review: bool,
+    },
+    /// Operator accepts the handback; closes the AI task + logs a summary entry.
+    CloseAiTask(RecordId),
     None,
 }
 
@@ -379,6 +405,9 @@ pub enum Cmd {
     DownloadRemoteFile(String),
     /// Zip and download a directory from the remote machine
     DownloadRemoteDirectory(String),
+    /// Zip and download all Windows crash dumps (MEMORY.DMP + Minidump\* +
+    /// LiveKernelReports\*) as one archive, streamed to disk.
+    DownloadCrashDumps,
     /// Walk a directory tree and return total size
     ScanDirectorySize(String),
     /// Directory size scan result
@@ -596,6 +625,17 @@ pub enum Cmd {
         tool_name: String,
         success: bool,
         result_json: String,
+    },
+
+    /// Analyze crash dumps ON the remote client with its built-in dump-triage
+    /// parser (no plugin deploy, no cdb). `paths` targets specific dumps;
+    /// omit to analyze every dump in MEMORY.DMP + Minidump + LiveKernelReports.
+    /// The client replies with a `RemotePluginToolResult`
+    /// (plugin_id `native.crash-analysis`, tool `analyze_crash_dumps`) whose
+    /// arrival auto-ingests each result into fleet crash intel.
+    AnalyzeCrashDumps {
+        request_id: String,
+        paths: Option<Vec<String>>,
     },
 
     /// Sent by a `plugin_builder` worker right after the WebSocket

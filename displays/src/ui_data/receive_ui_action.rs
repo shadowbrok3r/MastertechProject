@@ -270,6 +270,174 @@ impl SharedContext {
                     self.pending_open_service_candidate =
                         Some((connection_string, candidate_index));
                 }
+                TaskUiActions::OpenTaskModalById(task_id) => {
+                    if let Some(task) = self.task_index.get(&task_id.key_string()).cloned() {
+                        let _ = self.ui_actions_tx.try_send(TaskUiActions::OpenTaskModal(task));
+                    } else {
+                        // Not indexed (old/foreign task) — fetch, then re-send.
+                        let tx = self.ui_actions_tx.clone();
+                        PlatformSpawner::spawn(async move {
+                            let task: Result<Option<database::schema::LiveTaskPayload>, _> =
+                                database::db().select(task_id.clone()).await;
+                            match task {
+                                Ok(Some(task)) => {
+                                    let _ = tx.try_send(TaskUiActions::OpenTaskModal(task));
+                                }
+                                _ => {
+                                    let _ = crate::get_toast_sender().try_send(
+                                        crate::ToastMessage::Warning(format!(
+                                            "Task {} no longer exists",
+                                            task_id.key_string()
+                                        )),
+                                    );
+                                }
+                            }
+                        });
+                    }
+                }
+                TaskUiActions::OpenTaskDiagnostics { task_id, session } => {
+                    let Some(task) = self.task_index.get(&task_id.key_string()).cloned() else {
+                        let _ = crate::get_toast_sender().try_send(crate::ToastMessage::Warning(
+                            format!("Task {} no longer exists", task_id.key_string()),
+                        ));
+                        return;
+                    };
+                    let title = task.task_name.clone();
+                    // Never toggle-close: focus the diagnostics page in place.
+                    if let Some(ModalType::TaskModal(m)) = self.opened_modals.get_mut(&title) {
+                        m.current_page_state = crate::modals::task_modal::ModalAction::DiagnosticsPage;
+                        m.selected_diagnostic_session = session;
+                    } else {
+                        let mut task_modal = TaskModal::new(
+                            ChatView::new(
+                                self.store_users.clone(),
+                                task.id.clone(),
+                                task.service_number.clone(),
+                            ),
+                            task.clone(),
+                        );
+                        task_modal.current_page_state =
+                            crate::modals::task_modal::ModalAction::DiagnosticsPage;
+                        task_modal.selected_diagnostic_session = session;
+                        let title = task_modal.title.clone();
+                        self.opened_modals.insert(title, ModalType::TaskModal(task_modal));
+                    }
+                }
+                TaskUiActions::ToggleAiCheckItem { ai_task_id, item_id, checked } => {
+                    use database::schema::AiTaskStatus;
+                    let me = self.current_user.as_ref().map(|u| u.get_id());
+                    if let Some(item) = self.ai_task_items.get_mut(&item_id.key_string()) {
+                        item.checked = checked;
+                        item.checked_by = if checked { me } else { None };
+                        item.checked_at = if checked {
+                            Some(chrono::Utc::now().into())
+                        } else {
+                            None
+                        };
+                    }
+                    // Optimistic parent transition; the DB event is authoritative.
+                    let key = ai_task_id.key_string();
+                    let all_checked = {
+                        let mut any = false;
+                        let mut all = true;
+                        for i in self.ai_task_items.values() {
+                            if i.ai_task_ref.key_string() == key {
+                                any = true;
+                                all &= i.checked;
+                            }
+                        }
+                        any && all
+                    };
+                    if let Some(task) = self.ai_tasks.get_mut(&key) {
+                        if checked && all_checked && task.status == AiTaskStatus::Open {
+                            task.status = AiTaskStatus::AwaitingFollowup;
+                            task.completed_at = Some(chrono::Utc::now().into());
+                            self.ai_task_done_grace.insert(key.clone(), web_time::Instant::now());
+                        } else if !checked && task.status == AiTaskStatus::AwaitingFollowup {
+                            task.status = AiTaskStatus::Open;
+                            task.completed_at = None;
+                            task.review_acknowledged_at = None;
+                        }
+                    }
+                    PlatformSpawner::spawn(async move {
+                        if let Err(e) =
+                            database::schema::AiTaskItem::set_checked(&item_id, checked).await
+                        {
+                            log::error!("AiTaskItem::set_checked: {e:?}");
+                        }
+                    });
+                }
+                TaskUiActions::ReassignAiTask { ai_task_id, assignee } => {
+                    if let Some(task) = self.ai_tasks.get_mut(&ai_task_id.key_string()) {
+                        task.assignee = assignee.clone();
+                        task.acknowledged_at = None;
+                    }
+                    PlatformSpawner::spawn(async move {
+                        if let Err(e) =
+                            database::schema::AiTask::reassign(&ai_task_id, &assignee).await
+                        {
+                            log::error!("AiTask::reassign: {e:?}");
+                        }
+                    });
+                }
+                TaskUiActions::AcknowledgeAiTask { ai_task_id, review } => {
+                    if let Some(task) = self.ai_tasks.get_mut(&ai_task_id.key_string()) {
+                        let now = Some(chrono::Utc::now().into());
+                        if review {
+                            task.review_acknowledged_at = now;
+                        } else {
+                            task.acknowledged_at = now;
+                        }
+                    }
+                    PlatformSpawner::spawn(async move {
+                        if let Err(e) =
+                            database::schema::AiTask::acknowledge(&ai_task_id, review).await
+                        {
+                            log::error!("AiTask::acknowledge: {e:?}");
+                        }
+                    });
+                }
+                TaskUiActions::CloseAiTask(ai_task_id) => {
+                    use database::schema::AiTaskStatus;
+                    let key = ai_task_id.key_string();
+                    if let Some(task) = self.ai_tasks.get_mut(&key) {
+                        task.status = AiTaskStatus::Closed;
+                        task.closed_at = Some(chrono::Utc::now().into());
+                    }
+                    let closed = self.ai_tasks.get(&key).cloned();
+                    let step_count = self
+                        .ai_task_items
+                        .values()
+                        .filter(|i| i.ai_task_ref.key_string() == key)
+                        .count();
+                    self.ai_task_done_grace.remove(&key);
+                    PlatformSpawner::spawn(async move {
+                        if let Err(e) = database::schema::AiTask::close(&ai_task_id).await {
+                            log::error!("AiTask::close: {e:?}");
+                            return;
+                        }
+                        // Session log records the outcome (nothing is lost).
+                        if let Some(task) = closed {
+                            let entry = database::schema::DiagnosticEntry {
+                                session_ref: task.session_ref.clone(),
+                                category: database::schema::DiagnosticCategory::Action,
+                                title: format!("Hands-on checklist closed — {}", task.title),
+                                detail: format!(
+                                    "{step_count} steps completed; AI task closed by the operator."
+                                ),
+                                data: Some(serde_json::json!({
+                                    "ai_task": task.id.key_string(),
+                                })),
+                                ..Default::default()
+                            };
+                            if let Err(e) =
+                                database::schema::DiagnosticEntry::create(&entry).await
+                            {
+                                log::warn!("CloseAiTask summary entry failed: {e:?}");
+                            }
+                        }
+                    });
+                }
                 TaskUiActions::None => (),
             };
         }

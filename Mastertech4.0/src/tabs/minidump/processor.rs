@@ -29,11 +29,14 @@ pub enum ProcessorTask {
 
 pub type MaybeMinidump = Option<Result<Arc<Minidump<'static, Mmap>>, minidump::Error>>;
 pub type MaybeProcessed = Option<Result<Arc<ProcessState>, minidump_processor::ProcessError>>;
+pub type MaybeKernel = Option<Result<dump_triage::KernelDumpTriage, String>>;
 
 #[derive(Default, Clone)]
 pub struct MinidumpAnalysis {
     pub minidump: Arc<Mutex<MaybeMinidump>>,
     pub processed: Arc<Mutex<MaybeProcessed>>,
+    /// Kernel-dump (PAGEDU64) triage result; kernel dumps bypass rust-minidump.
+    pub kernel: Arc<Mutex<MaybeKernel>>,
     pub stats: Arc<Mutex<ProcessingStats>>,
 }
 
@@ -67,6 +70,22 @@ pub struct ProcessDump {
     pub http_timeout_secs: u64,
 }
 
+/// True when the file starts with a kernel-dump signature (PAGEDU64/PAGEDUMP).
+fn sniff_is_kernel(path: &PathBuf) -> bool {
+    use std::io::Read;
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut sig = [0u8; 8];
+    if file.read_exact(&mut sig).is_err() {
+        return false;
+    }
+    matches!(
+        dump_triage::sniff_format(&sig),
+        dump_triage::DumpFormat::Kernel64 | dump_triage::DumpFormat::Kernel32
+    )
+}
+
 pub fn run_processor(
     task_receiver: std::sync::Arc<(std::sync::Mutex<Option<ProcessorTask>>, std::sync::Condvar)>,
     analysis_sender: std::sync::Arc<MinidumpAnalysis>,
@@ -93,9 +112,15 @@ pub fn run_processor(
                 // Do nothing, this is only relevant within the other tasks, now we're just clearing it out
             }
             ProcessorTask::ReadDump(path) => {
-                // Read the dump
-                let dump = Minidump::read_path(path).map(Arc::new);
-                *analysis_sender.minidump.lock().unwrap() = Some(dump);
+                // Kernel dumps (PAGEDU64) take the fixed-offset triage path;
+                // everything else goes to rust-minidump as before.
+                if sniff_is_kernel(&path) {
+                    let result = dump_triage::analyze_file(&path);
+                    *analysis_sender.kernel.lock().unwrap() = Some(result);
+                } else {
+                    let dump = Minidump::read_path(path).map(Arc::new);
+                    *analysis_sender.minidump.lock().unwrap() = Some(dump);
+                }
             }
             ProcessorTask::ProcessDump(settings) => {
                 // Reset all stats

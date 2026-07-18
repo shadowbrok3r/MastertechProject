@@ -150,6 +150,16 @@ impl WebSocketClient {
                         let _ = self.display_state_channel.0.try_send(WsDisplayState::FleetIntel);
                         ui.close();
                     }
+                    if ui
+                        .button(format!("{} Download crash dumps", icons::DOWNLOAD))
+                        .on_hover_text(
+                            "Zip and download this client's MEMORY.DMP, Minidump\\*, and LiveKernelReports\\* in one archive",
+                        )
+                        .clicked()
+                    {
+                        self.remote_explorer.start_crash_dump_download(&self.send_cmd_tx);
+                        ui.close();
+                    }
                     ui.separator();
                     // Live data feed toggle. Home's charts depend on this feed.
                     if self.live_stats_active {

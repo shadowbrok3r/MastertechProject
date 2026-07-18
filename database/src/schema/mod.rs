@@ -43,6 +43,7 @@ pub mod qc_fingerprint;
 pub mod task_creation;
 pub mod crash_intel;
 pub mod driver_intel;
+pub mod ai_task;
 
 pub use task::*;
 pub use task_note::*;
@@ -68,6 +69,7 @@ pub use benchmark::*;
 pub use task_creation::*;
 pub use crash_intel::*;
 pub use driver_intel::*;
+pub use ai_task::*;
 
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";
@@ -106,6 +108,8 @@ pub const CRASH_SIGHTING_TABLE: &str = "crash_sighting";
 pub const CRASH_VERDICT_TABLE: &str = "crash_verdict";
 pub const DRIVER_SNAPSHOT_TABLE: &str = "driver_snapshot";
 pub const KNOWN_BAD_DRIVER_TABLE: &str = "known_bad_driver";
+pub const AI_TASK_TABLE: &str = "ai_task";
+pub const AI_TASK_ITEM_TABLE: &str = "ai_task_item";
 
 pub use prestashop as prestashop_schema;
 

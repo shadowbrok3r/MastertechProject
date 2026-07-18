@@ -23,6 +23,7 @@ dependencies = [
  "display-info",
  "displays",
  "dotenvy",
+ "dump-triage",
  "dunce",
  "eframe",
  "egui",
@@ -3208,6 +3209,7 @@ dependencies = [
  "database",
  "derivative",
  "dotenv",
+ "dump-triage",
  "eframe",
  "egui-data-table",
  "egui-phosphor",
@@ -3369,6 +3371,15 @@ name = "dtor"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edf234dd1594d6dd434a8fb8cada51ddbbc593e40e4a01556a0b31c62da2775b"
+
+[[package]]
+name = "dump-triage"
+version = "0.1.0"
+dependencies = [
+ "kdmp-parser",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "dunce"
@@ -6078,6 +6089,12 @@ dependencies = [
  "portable-atomic",
  "thiserror 2.0.18",
 ]
+
+[[package]]
+name = "kdmp-parser"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "306a7a411a48095f0500bc6f552456c6dcc0360c876d3d32787650e57201ca98"
 
 [[package]]
 name = "khronos-egl"

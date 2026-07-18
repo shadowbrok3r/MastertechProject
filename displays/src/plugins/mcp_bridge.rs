@@ -102,6 +102,49 @@ pub(crate) fn unregister_pending_request(request_id: &str) {
     }
 }
 
+// ─── Headless (MCP-triggered) crash-dump fetch routing ──────────────────────
+//
+// connection_string → (destination zip path, pending request_id). Set by
+// `crash_dumps_fetch`; the admin receive loop opens a writer at the dest when
+// the client's DownloadCrashDumps chunks arrive and resolves the request on
+// completion. Keyed by connection_string because FileChunk wire frames carry
+// no per-transfer id.
+static HEADLESS_DUMP_FETCH: Lazy<std::sync::Mutex<HashMap<String, (std::path::PathBuf, String)>>> =
+    Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
+
+pub fn register_headless_dump_fetch(
+    connection_string: String,
+    dest: std::path::PathBuf,
+    request_id: String,
+) {
+    if let Ok(mut m) = HEADLESS_DUMP_FETCH.lock() {
+        m.insert(connection_string, (dest, request_id));
+    }
+}
+
+/// Destination for a pending headless fetch, without removing it.
+pub fn peek_headless_dump_fetch(connection_string: &str) -> Option<std::path::PathBuf> {
+    HEADLESS_DUMP_FETCH
+        .lock()
+        .ok()
+        .and_then(|m| m.get(connection_string).map(|(p, _)| p.clone()))
+}
+
+/// Remove and return a pending headless fetch `(dest, request_id)`.
+pub fn take_headless_dump_fetch(connection_string: &str) -> Option<(std::path::PathBuf, String)> {
+    HEADLESS_DUMP_FETCH
+        .lock()
+        .ok()
+        .and_then(|mut m| m.remove(connection_string))
+}
+
+/// Default admin-side destination for pulled files: the user's Downloads.
+fn default_download_dir() -> std::path::PathBuf {
+    std::env::var("USERPROFILE")
+        .map(|p| std::path::PathBuf::from(p).join("Downloads"))
+        .unwrap_or_else(|_| std::env::temp_dir())
+}
+
 /// RAII guard that calls [`unregister_pending_request`] on drop.
 /// Held next to the receiver inside `call_remote_plugin_tool` so the
 /// registry slot evaporates on every exit path, including the
@@ -113,6 +156,36 @@ impl Drop for PendingRequestGuard {
     fn drop(&mut self) {
         unregister_pending_request(&self.request_id);
     }
+}
+
+/// Ingest a locally-produced dump-triage payload into fleet crash intel
+/// (`connection_string` = None). Guaranteed-logging path for local
+/// `minidump_analyze`; best-effort, returns a summary for the tool response.
+async fn ingest_local_triage(payload: &serde_json::Value) -> serde_json::Value {
+    use database::schema::crash_intel::{
+        parse_kernel_triage_payload, CrashSignature, SightingContext,
+    };
+    let crashes = parse_kernel_triage_payload(payload);
+    if crashes.is_empty() {
+        return serde_json::json!({ "recorded": 0, "note": "no bugcheck parsed" });
+    }
+    let mut recorded = 0usize;
+    let mut errors: Vec<String> = Vec::new();
+    for parsed in &crashes {
+        let dump_kind = parsed
+            .triage
+            .as_ref()
+            .and_then(|t| t.get("dump_type_name").and_then(|v| v.as_str()))
+            .map(|dt| if dt.contains("live") { "livekernel" } else { "minidump" })
+            .unwrap_or("minidump")
+            .to_string();
+        let ctx = SightingContext { dump_kind, ..Default::default() };
+        match CrashSignature::ingest(parsed, &ctx).await {
+            Ok(_) => recorded += 1,
+            Err(e) => errors.push(e.to_string()),
+        }
+    }
+    serde_json::json!({ "recorded": recorded, "errors": errors, "table": "crash_sighting" })
 }
 
 // ─── Entity link validation (MCP ↔ operator modal) ───────────────────────────
@@ -920,6 +993,38 @@ pub struct LogDiagnosticEntryParams {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct CreateAiTaskParams {
+    #[schemars(description = "Session ID of the diagnostic session proposing the hands-on work. Omit to auto-resolve from connection_string via the active-session registry.")]
+    pub session_id: Option<String>,
+    #[schemars(description = "Web Console connection_string — alternative to session_id when a session is active for this client.")]
+    pub connection_string: Option<String>,
+    #[schemars(description = "Concrete hands-on steps for the technician, in order (1-30). Each becomes one checkbox. Be specific and actionable, e.g. 'Disable XMP in BIOS (JEDEC defaults)' not 'check BIOS'.")]
+    pub steps: Vec<String>,
+    #[schemars(description = "SHORT summary of the work ONLY — 3-6 words. The card automatically prefixes '{customer} - {service#}', so provide JUST the summary: do NOT include the customer name, service number, or hostname. Good: 'Clear Device Manager errors', 'Reseat RAM + retest', 'Replace SATA cable'. Bad: 'DESKTOP-XYZ - clear 3 Device Manager yellow-bangs (Dell Precision 5540)'. Default: 'Hands-on work needed'.")]
+    pub title: Option<String>,
+    #[schemars(description = "Task record id (`task:key`) to attach to. Optional — defaults to the session's task_ref, and if that is unset it auto-resolves the task from the session's (or the connection's) open service order and links it to the session. Only pass this to override that resolution.")]
+    pub task_id: Option<String>,
+    #[schemars(description = "Explicit assignee override (user email or exact name). Default resolution: service ticket's technician, else the task's assignee.")]
+    pub assignee_email: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct AddAiTaskStepsParams {
+    #[schemars(description = "AI task record id (`ai_task:key` or bare key) returned by create_ai_task")]
+    pub ai_task_id: String,
+    #[schemars(description = "Additional hands-on steps to append (1-30). Reopens the AI task and re-notifies the technician.")]
+    pub steps: Vec<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct GetAiTaskStatusParams {
+    #[schemars(description = "AI task record id (`ai_task:key` or bare key). Either this or session_id is required.")]
+    pub ai_task_id: Option<String>,
+    #[schemars(description = "Diagnostic session ID — resolves the newest non-closed AI task on that session.")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct CrashIntelSearchParams {
     #[schemars(description = "Search term matched against module, bugcheck code, and bugcheck name. Omit for the most recently seen signatures.")]
     pub query: Option<String>,
@@ -951,6 +1056,25 @@ pub struct CrashVerdictRecordParams {
     pub author: Option<String>,
     #[schemars(description = "Source: tech | ai | autopilot (default ai)")]
     pub source: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct MinidumpAnalyzeParams {
+    #[schemars(description = "Absolute path to a .dmp file. LOCAL mode (no connection_string): a file on THIS admin machine. REMOTE mode (with connection_string): a specific dump on the client; omit to analyze ALL of the client's dumps. Kernel/BSOD dumps only (PAGEDU64: triage minidumps, full, BMP, kernel, live); user-mode MDMP app-crash dumps are rejected.")]
+    #[serde(default)]
+    pub path: Option<String>,
+    #[schemars(description = "Web Console connection_string of a connected client. When set, analysis runs ON THAT CLIENT (built-in parser, no plugin/cdb) over MEMORY.DMP + Minidump + LiveKernelReports (or the single `path` if given). When omitted, analyzes the local `path` on this machine. Either way the results auto-log to fleet crash intel (crash_signature/crash_sighting).")]
+    #[serde(default)]
+    pub connection_string: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct CrashDumpsFetchParams {
+    #[schemars(description = "Web Console connection_string of the connected client to pull crash dumps from")]
+    pub connection_string: String,
+    #[schemars(description = "Destination directory on THIS admin machine (default: %USERPROFILE%\\Downloads). Saved as MTech-CrashDumps-<client>.zip.")]
+    #[serde(default)]
+    pub dest_dir: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
@@ -3318,7 +3442,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "log_diagnostic_entry",
-        description = "Log an entry against an open diagnostic_session. Allowed categories: 'finding' (discovered issue), 'action' (step taken), 'note' (general observation), 'error' (tool/command failed), 'system_info', 'network_info', 'security_alert', 'performance_note', 'customer_note', 'recommendation'. Anything else is recorded as 'note'. Embeddings (title + detail, 768-dim HNSW index `diag_embedding`) are computed app-side via the shared Ollama endpoint on insert; entries are stored without an embedding if the endpoint is unreachable."
+        description = "Log an entry against an open diagnostic_session. Allowed categories: 'finding' (discovered issue), 'action' (step taken), 'note' (general observation), 'error' (tool/command failed), 'system_info', 'network_info', 'security_alert', 'performance_note', 'customer_note', 'recommendation'. Anything else is recorded as 'note'. IMPORTANT: 'recommendation' entries are informational only — nobody is notified and nothing is tracked. If a recommendation requires HANDS-ON tech work (BIOS, hardware, bench tools, physical access), you MUST ALSO call create_ai_task so the tech actually receives it as a tracked checklist. Embeddings (title + detail, 768-dim HNSW index `diag_embedding`) are computed app-side via the shared Ollama endpoint on insert; entries are stored without an embedding if the endpoint is unreachable."
     )]
     async fn log_diagnostic_entry(
         &self,
@@ -3377,6 +3501,341 @@ impl PluginToolProvider {
             serde_json::json!({ "entry_id": id_str, "session_id": p.session_id }),
         )
         .map_err(to_internal)?]))
+    }
+
+    // ── AI Task (hands-on handoff) tools ─────────────────────────────────
+
+    /// Resolve a user record by email or exact (case-insensitive) name.
+    async fn resolve_user_ident(ident: &str) -> Result<Option<database::schema::User>, ErrorData> {
+        let users: Vec<database::schema::User> = database::db()
+            .query("SELECT * FROM user WHERE email = $ident OR string::lowercase(name) = string::lowercase($ident) LIMIT 1")
+            .bind(("ident", ident.to_string()))
+            .await
+            .map_err(to_internal)?
+            .take(0)
+            .map_err(to_internal)?;
+        Ok(users.into_iter().next())
+    }
+
+    /// Resolve which service `task` a new AI task should attach to when the
+    /// caller gave no task_id and the session isn't linked yet: use the
+    /// session's service_order, else the newest service order for the session's
+    /// computer (the connection's open ticket), then that order's task (a
+    /// not-yet-completed one preferred, newest otherwise). Returns
+    /// (task_ref, service_order) so the caller can persist the link.
+    async fn resolve_open_service_task(
+        session: &database::schema::DiagnosticSession,
+    ) -> Result<Option<(database::schema::RecordId, database::schema::RecordId)>, ErrorData> {
+        // Newest, not-yet-completed task for the connection's service order:
+        // by the session's service_order when known, else via the computer's ticket.
+        let tasks: Vec<database::schema::LiveTaskPayload> = match session.service_order.clone() {
+            Some(so) => database::db()
+                .query(
+                    "SELECT * FROM task WHERE service_ticket == $so \
+                     ORDER BY completed ASC, created_at DESC LIMIT 1",
+                )
+                .bind(("so", so))
+                .await
+                .map_err(to_internal)?
+                .take(0)
+                .map_err(to_internal)?,
+            None => database::db()
+                .query(
+                    "SELECT * FROM task WHERE service_ticket.computer == $c \
+                     ORDER BY completed ASC, created_at DESC LIMIT 1",
+                )
+                .bind(("c", session.computer_id.clone()))
+                .await
+                .map_err(to_internal)?
+                .take(0)
+                .map_err(to_internal)?,
+        };
+        let Some(task) = tasks.into_iter().next() else { return Ok(None) };
+        // Link the session's service_order when set, else the task's own ticket.
+        let Some(service_order) = session.service_order.clone().or_else(|| task.service_ticket.clone())
+        else { return Ok(None) };
+        Ok(Some((task.id, service_order)))
+    }
+
+    /// Write-once mirror of checklist steps into diagnostic_entry (embeddings
+    /// computed per entry; failures degrade to unlinked items).
+    async fn mirror_ai_task_steps(
+        session_ref: database::schema::RecordId,
+        ai_task_id: database::schema::RecordId,
+        items: Vec<(database::schema::RecordId, String)>,
+        position_offset: usize,
+    ) {
+        use database::schema::RecordIdExt;
+        for (idx, (item_id, text)) in items.into_iter().enumerate() {
+            let entry = database::schema::DiagnosticEntry {
+                session_ref: session_ref.clone(),
+                category: database::schema::DiagnosticCategory::Recommendation,
+                title: format!("Hands-on step {}", position_offset + idx + 1),
+                detail: text,
+                data: Some(serde_json::json!({
+                    "ai_task": ai_task_id.key_string(),
+                    "ai_task_item": item_id.key_string(),
+                })),
+                ..Default::default()
+            };
+            match database::schema::DiagnosticEntry::create(&entry).await {
+                Ok(entry_id) => {
+                    let res = database::db()
+                        .query("UPDATE $item SET entry_ref = $entry")
+                        .bind(("item", item_id))
+                        .bind(("entry", entry_id))
+                        .await;
+                    if let Err(e) = res {
+                        log::warn!("mirror_ai_task_steps: entry_ref backlink failed: {e}");
+                    }
+                }
+                Err(e) => log::warn!("mirror_ai_task_steps: mirror entry failed: {e}"),
+            }
+        }
+    }
+
+    #[tool(
+        name = "create_ai_task",
+        description = "Hand off hands-on work to the technician. Call when a diagnosis concludes physical/BIOS/bench work is required (e.g. 'disable XMP', 'reseat DIMMs', 're-run OCCT at stock'). Creates an AI Task — a checklist overlay on the service task — which pops a 'requires your attention' modal on the assigned tech's desktop and appears in their AI Tasks column. Steps also log to the diagnostic session as recommendation entries. The task to attach to auto-resolves (explicit task_id > the session's task_ref > the task on the connection's open service order, which then gets linked to the session) — you do NOT need to call link_diagnostic_to_task first. Assignee resolves: explicit assignee_email > service ticket technician > task assignee. Poll get_ai_task_status to see progress; the operator (not the AI) closes the task."
+    )]
+    async fn create_ai_task(
+        &self,
+        Parameters(p): Parameters<CreateAiTaskParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        use database::schema::RecordIdExt;
+
+        if p.steps.is_empty() || p.steps.len() > 30 || p.steps.iter().any(|s| s.trim().is_empty()) {
+            return Err(ErrorData::invalid_params(
+                "create_ai_task: steps must be 1-30 non-empty strings".to_string(), None));
+        }
+
+        // Resolve the diagnostic session (explicit id, or active-registry lookup).
+        let session_key = match (&p.session_id, &p.connection_string) {
+            (Some(sid), _) => sid.clone(),
+            (None, Some(cs)) => super::diagnostic_session_registry::get(cs).ok_or_else(|| {
+                ErrorData::invalid_params(format!(
+                    "create_ai_task: no active diagnostic session for '{cs}' — pass session_id"), None)
+            })?,
+            (None, None) => return Err(ErrorData::invalid_params(
+                "create_ai_task: session_id or connection_string is required".to_string(), None)),
+        };
+        let session_ref = parse_record_id(&session_key, database::schema::DIAGNOSTIC_SESSION_TABLE);
+        let session: Option<database::schema::DiagnosticSession> =
+            database::db().select(session_ref.clone()).await.map_err(to_internal)?;
+        let session = session.ok_or_else(|| ErrorData::invalid_params(
+            format!("create_ai_task: diagnostic session '{session_key}' not found"), None))?;
+
+        // One open AI task per session — retries must append, not spam popups.
+        if let Some(existing) = database::schema::AiTask::get_open_for_session(&session_ref)
+            .await.map_err(to_internal)?
+        {
+            return Err(ErrorData::invalid_params(format!(
+                "create_ai_task: ai_task '{}' already open for this session — use add_ai_task_steps",
+                existing.id.key_string()), None));
+        }
+
+        // Task to attach to: explicit task_id > session.task_ref > auto-resolve
+        // from the connection's open service order (then link it to the session).
+        let (task_ref, auto_linked) = match p.task_id.as_deref() {
+            Some(t) => (parse_record_id(t, database::schema::TASK_TABLE), false),
+            None => match session.task_ref.clone() {
+                Some(t) => (t, false),
+                None => match Self::resolve_open_service_task(&session).await? {
+                    Some((task, service_order)) => {
+                        if let Err(e) = database::schema::DiagnosticSession::link_to_task(
+                            &session_ref,
+                            Some(&task),
+                            Some(&service_order),
+                        )
+                        .await
+                        {
+                            log::warn!("create_ai_task: auto-link session→task failed: {e}");
+                        }
+                        (task, true)
+                    }
+                    None => return Err(ErrorData::invalid_params(
+                        "create_ai_task: no task to attach to — session has no task_ref and no \
+                         service order/task was found for this connection. Pass task_id or run \
+                         link_diagnostic_to_task first.".to_string(),
+                        None)),
+                },
+            },
+        };
+        let task: Option<database::schema::LiveTaskPayload> =
+            database::db().select(task_ref.clone()).await.map_err(to_internal)?;
+        let task = task.ok_or_else(|| ErrorData::invalid_params(
+            format!("create_ai_task: task '{}' not found", task_ref.key_string()), None))?;
+
+        // Ticket tech + customer name (used for assignee default and popup text).
+        let (ticket_tech, ticket_customer): (Option<String>, Option<String>) =
+            match task.service_ticket.as_ref() {
+                Some(ticket) => {
+                    let mut res = database::db()
+                        .query("SELECT VALUE tech FROM $t")
+                        .query("SELECT VALUE customer.name FROM $t")
+                        .bind(("t", ticket.clone()))
+                        .await
+                        .map_err(to_internal)?;
+                    let tech: Vec<Option<String>> = res.take(0).unwrap_or_default();
+                    let cust: Vec<Option<String>> = res.take(1).unwrap_or_default();
+                    (
+                        tech.into_iter().flatten().find(|s| !s.trim().is_empty()),
+                        cust.into_iter().flatten().find(|s| !s.trim().is_empty()),
+                    )
+                }
+                None => (None, None),
+            };
+
+        // Assignee chain: explicit override > ticket tech > task assignee. Never $auth.
+        let assignee_user = match p.assignee_email.as_deref() {
+            Some(ident) => Some(Self::resolve_user_ident(ident).await?.ok_or_else(|| {
+                ErrorData::invalid_params(format!(
+                    "create_ai_task: no user matches assignee_email '{ident}'"), None)
+            })?),
+            None => match ticket_tech.as_deref() {
+                Some(tech) => Self::resolve_user_ident(tech).await?,
+                None => None,
+            },
+        };
+        let assignee = assignee_user.as_ref()
+            .map(|u| u.get_id())
+            .unwrap_or_else(|| task.assignee.clone());
+
+        let service_number = task.service_number.clone().unwrap_or_default();
+        // Popup text fallback: task_name is conventionally "{customer} - {service#}".
+        let customer_name = ticket_customer.unwrap_or_else(|| {
+            let suffix = format!(" - {service_number}");
+            match task.task_name.strip_suffix(suffix.as_str()) {
+                Some(prefix) if !service_number.is_empty() => prefix.to_string(),
+                _ => task.task_name.clone(),
+            }
+        });
+
+        let ai_task = database::schema::AiTask {
+            task_ref: task_ref.clone(),
+            session_ref: session_ref.clone(),
+            assignee: assignee.clone(),
+            requested_by: assignee.clone(), // placeholder; DEFAULT $auth.id would be ideal but
+                                            // .content() writes all fields — overwritten below.
+            title: p.title.clone().unwrap_or_else(|| "Hands-on work needed".to_string()),
+            customer_name,
+            service_number,
+            connection_string: Some(session.connection_string.clone()),
+            ..Default::default()
+        };
+        let (ai_task_id, item_ids) =
+            database::schema::AiTask::create_with_items(&ai_task, &p.steps)
+                .await
+                .map_err(to_internal)?;
+
+        // .content() bypassed the DEFAULT — stamp the true operator explicitly.
+        let _ = database::db()
+            .query("UPDATE $id SET requested_by = $auth.id")
+            .bind(("id", ai_task_id.clone()))
+            .await;
+
+        let mirror_items: Vec<_> = item_ids.iter().cloned().zip(p.steps.iter().cloned()).collect();
+        tokio::spawn(Self::mirror_ai_task_steps(session_ref, ai_task_id.clone(), mirror_items, 0));
+
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
+            "ai_task_id": ai_task_id.key_string(),
+            "task_id": task_ref.key_string(),
+            "auto_linked": auto_linked,
+            "assignee": {
+                "id": assignee.key_string(),
+                "name": assignee_user.as_ref().map(|u| u.get_name().to_string()),
+            },
+            "item_ids": item_ids.iter().map(|i| i.key_string()).collect::<Vec<_>>(),
+            "note": "Tech has been notified. Poll get_ai_task_status for progress; a human operator closes the AI task.",
+        })).map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "add_ai_task_steps",
+        description = "Append hands-on steps to an existing AI task. Reopens it (card returns to the tech's board, tech is re-notified) — use after reviewing completed work when more is needed. The AI cannot close AI tasks; a human operator does."
+    )]
+    async fn add_ai_task_steps(
+        &self,
+        Parameters(p): Parameters<AddAiTaskStepsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        use database::schema::RecordIdExt;
+
+        if p.steps.is_empty() || p.steps.len() > 30 || p.steps.iter().any(|s| s.trim().is_empty()) {
+            return Err(ErrorData::invalid_params(
+                "add_ai_task_steps: steps must be 1-30 non-empty strings".to_string(), None));
+        }
+        let id = parse_record_id(&p.ai_task_id, database::schema::AI_TASK_TABLE);
+        let full = database::schema::AiTask::get_full(&id).await.map_err(to_internal)?;
+        let (task, existing_items) = full.ok_or_else(|| ErrorData::invalid_params(
+            format!("add_ai_task_steps: ai_task '{}' not found", p.ai_task_id), None))?;
+        if task.status == database::schema::AiTaskStatus::Closed {
+            return Err(ErrorData::invalid_params(
+                "add_ai_task_steps: ai_task is closed — create_ai_task for new work".to_string(), None));
+        }
+
+        let new_item_ids = database::schema::AiTask::add_steps(&id, &p.steps)
+            .await
+            .map_err(to_internal)?;
+
+        let mirror_items: Vec<_> = new_item_ids.iter().cloned().zip(p.steps.iter().cloned()).collect();
+        tokio::spawn(Self::mirror_ai_task_steps(
+            task.session_ref.clone(), id.clone(), mirror_items, existing_items.len()));
+
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
+            "ai_task_id": id.key_string(),
+            "new_item_ids": new_item_ids.iter().map(|i| i.key_string()).collect::<Vec<_>>(),
+            "status": "open",
+        })).map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "get_ai_task_status",
+        description = "Read an AI task's checklist progress: items with checked state + who/when, and the remaining count. Resolve by ai_task_id or by session_id (newest non-closed AI task on that session). status: open (tech working) | awaiting_followup (all checked — verify results, then add_ai_task_steps or tell the operator to close) | closed."
+    )]
+    async fn get_ai_task_status(
+        &self,
+        Parameters(p): Parameters<GetAiTaskStatusParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        use database::schema::RecordIdExt;
+
+        let id = match (&p.ai_task_id, &p.session_id) {
+            (Some(aid), _) => parse_record_id(aid, database::schema::AI_TASK_TABLE),
+            (None, Some(sid)) => {
+                let session_ref = parse_record_id(sid, database::schema::DIAGNOSTIC_SESSION_TABLE);
+                database::schema::AiTask::get_open_for_session(&session_ref)
+                    .await.map_err(to_internal)?
+                    .map(|t| t.id)
+                    .ok_or_else(|| ErrorData::invalid_params(format!(
+                        "get_ai_task_status: no non-closed ai_task on session '{sid}'"), None))?
+            }
+            (None, None) => return Err(ErrorData::invalid_params(
+                "get_ai_task_status: ai_task_id or session_id is required".to_string(), None)),
+        };
+        let full = database::schema::AiTask::get_full(&id).await.map_err(to_internal)?;
+        let (task, items) = full.ok_or_else(|| ErrorData::invalid_params(
+            format!("get_ai_task_status: ai_task '{}' not found", id.key_string()), None))?;
+
+        let remaining = items.iter().filter(|i| !i.checked).count();
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
+            "ai_task": {
+                "id": task.id.key_string(),
+                "title": task.title,
+                "status": task.status.as_str(),
+                "task_id": task.task_ref.key_string(),
+                "session_id": task.session_ref.key_string(),
+                "customer_name": task.customer_name,
+                "service_number": task.service_number,
+                "completed_at": task.completed_at.as_ref().map(|d| d.to_string()),
+            },
+            "items": items.iter().map(|i| serde_json::json!({
+                "id": i.id.key_string(),
+                "text": i.text,
+                "checked": i.checked,
+                "checked_by": i.checked_by.as_ref().map(|u| u.key_string()),
+                "checked_at": i.checked_at.as_ref().map(|d| d.to_string()),
+            })).collect::<Vec<_>>(),
+            "remaining": remaining,
+        })).map_err(to_internal)?]))
     }
 
     #[tool(
@@ -3546,7 +4005,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "close_diagnostic_session",
-        description = "Close a diagnostic session with a final status and AI-written summary. Status should be 'resolved', 'escalated', or 'open'."
+        description = "Close a diagnostic session with a final status and AI-written summary. Status should be 'resolved', 'escalated', or 'open'. If you are closing as 'escalated' (or the summary says hands-on work remains), you MUST create_ai_task FIRST — a summary is not a handoff; the tech is only notified through the AI task checklist."
     )]
     async fn close_diagnostic_session(
         &self,
@@ -3668,6 +4127,193 @@ impl PluginToolProvider {
                 "No crash signature recorded for {} {}",
                 p.bugcheck_code, p.module
             ))])),
+        }
+    }
+
+    #[tool(
+        name = "minidump_analyze",
+        description = "Analyze Windows kernel crash dumps (BSOD) — no cdb/WinDbg needed. LOCAL (path, no connection_string): parse a .dmp on this admin machine. REMOTE (connection_string): run the CLIENT's built-in parser over ALL its dumps (MEMORY.DMP + Minidump + LiveKernelReports), or a single `path` on the client — no plugin deploy required. Handles triage minidumps plus full/BMP/kernel/live dumps: bugcheck code/name, decoded parameters, crash-time RIP, driver-list blame, and fleet matches (prior verdicts, known-bad drivers). Results ALWAYS auto-log to fleet crash intel (crash_signature/crash_sighting). This is the primary BSOD triage tool; use com.mastertech.dump-decode only for a deep cdb `!analyze` pass or Microsoft FAILURE_BUCKET_ID."
+    )]
+    async fn minidump_analyze(
+        &self,
+        Parameters(p): Parameters<MinidumpAnalyzeParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let path = p.path.as_deref().map(str::trim).filter(|s| !s.is_empty());
+
+        // REMOTE mode: run the client's built-in dump-triage parser over its
+        // own dumps. The result arrives as a RemotePluginToolResult whose
+        // receive hook auto-ingests into fleet crash intel.
+        if let Some(cs) = p.connection_string.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            let request_id = format!("acd-{}", uuid::Uuid::new_v4());
+            let cmd = crate::Cmd::AnalyzeCrashDumps {
+                request_id: request_id.clone(),
+                paths: path.map(|s| vec![s.to_string()]),
+            };
+            let serialized = bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
+                .map_err(|e| to_internal(format!("bincode serialize: {e}")))?;
+
+            let rx = register_pending_request(request_id.clone());
+            let _guard = PendingRequestGuard { request_id: request_id.clone() };
+            super::remote_egui_control::hub()
+                .send_raw_binary(cs, serialized)
+                .map_err(to_internal)?;
+            log::info!("minidump_analyze remote: req={request_id} cs={cs}");
+
+            let (success, result_json) =
+                match tokio::time::timeout(std::time::Duration::from_secs(300), rx).await {
+                    Ok(Ok(pair)) => pair,
+                    Ok(Err(_)) => {
+                        return Err(to_internal(format!(
+                            "remote client {cs} disconnected before returning analysis"
+                        )))
+                    }
+                    Err(_) => {
+                        return Err(to_internal(format!(
+                            "remote analysis on {cs} timed out after 300s"
+                        )))
+                    }
+                };
+            let result: serde_json::Value =
+                serde_json::from_str(&result_json).unwrap_or(serde_json::json!(result_json));
+            return Ok(CallToolResult::success(vec![ContentBlock::json(
+                serde_json::json!({
+                    "mode": "remote",
+                    "connection_string": cs,
+                    "success": success,
+                    "ingested": "auto → crash_signature/crash_sighting",
+                    "result": result,
+                }),
+            )
+            .map_err(to_internal)?]));
+        }
+
+        // LOCAL mode: analyze a file on this admin machine.
+        let path = path.ok_or_else(|| {
+            to_internal("`path` is required for local analysis (or set `connection_string` for a remote client)".to_string())
+        })?;
+        let path_buf = std::path::PathBuf::from(path);
+        let dump_name = path_buf
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string());
+        let triage = tokio::task::spawn_blocking({
+            let p = path_buf.clone();
+            move || dump_triage::analyze_file(&p)
+        })
+        .await
+        .map_err(|e| to_internal(format!("analysis task: {e}")))?
+        .map_err(to_internal)?;
+
+        // Guaranteed logging: ingest the local analysis into fleet crash intel.
+        let ingest_payload = serde_json::json!({ "dump_name": dump_name, "triage": triage });
+        let ingested = ingest_local_triage(&ingest_payload).await;
+
+        // Fleet enrichment: prior signature/verdicts + known-bad drivers.
+        let module = triage
+            .blamed_module
+            .clone()
+            .or_else(|| triage.rip_module.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+        let signature = database::schema::CrashSignature::find(&triage.bugcheck_code, &module)
+            .await
+            .ok()
+            .flatten();
+        let verdicts = match &signature {
+            Some(sig) => database::schema::CrashSignature::verdicts(&sig.id, 5)
+                .await
+                .unwrap_or_default(),
+            None => Vec::new(),
+        };
+        let known_bad = database::schema::KnownBadDriver::active()
+            .await
+            .unwrap_or_default();
+        let known_bad_hits: Vec<serde_json::Value> = triage
+            .drivers
+            .iter()
+            .filter_map(|d| {
+                let stem = database::schema::module_stem(&d.name);
+                known_bad
+                    .iter()
+                    .find(|k| k.module == stem)
+                    .map(|k| serde_json::json!({ "driver": d.name, "entry": k }))
+            })
+            .collect();
+
+        Ok(CallToolResult::success(vec![ContentBlock::json(
+            serde_json::json!({
+                "mode": "local",
+                "ingested": ingested,
+                "triage": triage,
+                "fleet": {
+                    "signature_module": module,
+                    "signature": signature,
+                    "verdicts": verdicts,
+                    "known_bad_hits": known_bad_hits,
+                },
+            }),
+        )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "crash_dumps_fetch",
+        description = "Pull ALL of a connected client's Windows crash dumps (MEMORY.DMP + Minidump\\* + LiveKernelReports\\*) as one zip, streamed to THIS admin machine. Returns the saved path + size. Use this to hand raw dumps to WinDbg/cdb for a deep pass; for a bugcheck/blame verdict use minidump_analyze with connection_string instead (faster, and it auto-logs to fleet intel)."
+    )]
+    async fn crash_dumps_fetch(
+        &self,
+        Parameters(p): Parameters<CrashDumpsFetchParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let cs = p.connection_string.trim();
+        if cs.is_empty() {
+            return Err(to_internal("connection_string is required".to_string()));
+        }
+        if peek_headless_dump_fetch(cs).is_some() {
+            return Err(to_internal(format!(
+                "a crash-dump fetch is already in progress for {cs}"
+            )));
+        }
+
+        let dir = p
+            .dest_dir
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(default_download_dir);
+        let dest = dir.join(format!("MTech-CrashDumps-{}.zip", sanitize_id(cs)));
+
+        let request_id = format!("cdf-{}", uuid::Uuid::new_v4());
+        register_headless_dump_fetch(cs.to_string(), dest.clone(), request_id.clone());
+        let rx = register_pending_request(request_id.clone());
+        let _guard = PendingRequestGuard { request_id: request_id.clone() };
+
+        let cmd = crate::Cmd::DownloadCrashDumps;
+        let serialized = bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
+            .map_err(|e| to_internal(format!("bincode serialize: {e}")))?;
+        super::remote_egui_control::hub()
+            .send_raw_binary(cs, serialized)
+            .map_err(to_internal)?;
+        log::info!("crash_dumps_fetch: req={request_id} cs={cs} -> {}", dest.display());
+
+        // Multi-GB dumps stream slowly; allow up to 30 minutes.
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1800), rx).await;
+        // Clean up the registry if the transfer never completed.
+        let _ = take_headless_dump_fetch(cs);
+        match result {
+            Ok(Ok((true, saved_path))) => {
+                let size = std::fs::metadata(&saved_path).map(|m| m.len()).unwrap_or(0);
+                Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
+                    "connection_string": cs,
+                    "saved_path": saved_path,
+                    "size_bytes": size,
+                    "note": "zip of MEMORY.DMP + Minidump + LiveKernelReports",
+                }))
+                .map_err(to_internal)?]))
+            }
+            Ok(Ok((false, msg))) => Err(to_internal(format!("fetch failed: {msg}"))),
+            Ok(Err(_)) => Err(to_internal(format!("client {cs} disconnected during fetch"))),
+            Err(_) => Err(to_internal(format!(
+                "crash-dump fetch from {cs} timed out after 30 minutes"
+            ))),
         }
     }
 
@@ -5071,6 +5717,20 @@ After initialize, POST notifications/initialized with the same Mcp-Session-Id be
 Before writing a new WASM plugin, ALWAYS call search_plugins first to check if a suitable plugin already exists in the registry. If one exists, use fetch_plugin to download it and plugin_deploy / plugin_deploy_remote to deploy it.
 After compiling a useful plugin, call publish_plugin to store it in the SurrealDB registry for future sessions.
 
+=== Hands-On Handoff (AI Tasks) — MANDATORY for any human/tech step ===
+Whenever ANY part of a diagnosis or repair requires a HUMAN — physical access, BIOS/firmware changes, reseating or swapping hardware, plugging/unplugging cables, running bench tools (OCCT/MemTest86/HD Tune), reboots you cannot drive remotely, customer contact/approval, or anything else your remote tools cannot do — you MUST call `create_ai_task` with concrete, ordered steps. This is the ONLY tracked handoff mechanism: it puts a checklist card on the technician's board, pops a blocking attention modal on their desktop, and reports progress back to you.
+Do NOT hand off human work any other way. Specifically:
+  - Do NOT bury hands-on steps in `log_diagnostic_entry` recommendation entries (informational only — nobody is notified, nothing is tracked).
+  - Do NOT put them only in `close_diagnostic_session` summaries or chat text.
+  - Do NOT tell the operator "a tech should now do X" without ALSO creating the AI task.
+The loop:
+  1. `create_ai_task` (steps 1-30, each ONE concrete action; assignee auto-resolves to the service tech).
+  2. Poll `get_ai_task_status` to see which steps are checked (who + when per step).
+  3. When status becomes 'awaiting_followup' (all steps done), VERIFY the outcome (re-run the failing test, re-check telemetry).
+  4. If more work is needed, `add_ai_task_steps` — the card reopens and the tech is re-notified.
+  5. You cannot close an AI task; a human operator closes it from the UI after review.
+One open AI task per diagnostic session — create_ai_task errors if one exists (append with add_ai_task_steps instead).
+
 === Plugin Deploy Preconditions (MUST READ) ===
 `plugin_deploy` and `plugin_deploy_remote` need a compiled artifact in the local ArtifactStore first. If you see `No artifact for '<plugin_id>'. Run plugin_compile or plugin_emit_clock_wasm first.`, the artifact isn't loaded — you skipped a step. Pick ONE of these BEFORE calling any deploy tool:
   1. **Use a registry plugin** (preferred when one exists): `search_plugins` → `fetch_plugin` with the registry plugin_id. `fetch_plugin` populates the artifact store directly; no compile needed.
@@ -5330,6 +5990,42 @@ After execution, log a diagnostic_session entry per finding (category 'finding' 
 removed, 'action' for scripts that ran, 'recommendation' for anything the customer should
 follow up on), link_diagnostic_to_task to the tuneup task, then close_diagnostic_session.
 
+=== Crash / BSOD Dump Analysis (kernel dumps — the ordered playbook) ===
+Windows BSOD/kernel dumps (C:\Windows\Minidump\*.dmp, MEMORY.DMP, LiveKernelReports\**) are
+PAGEDU64 format — NOT the user-mode MDMP the old app-crash tools read. There is now a built-in
+pure-Rust parser (no cdb/WinDbg, no symbols, seconds), available locally AND on every connected
+client, and EVERY analysis auto-logs to fleet crash intel. Ordered workflow:
+
+1. **crash_intel_search** FIRST (free, no client needed). A prior verdict for this bugcheck+module
+   may already answer it — if so, apply the recorded fix and skip the rest.
+2. **minidump_analyze** — the primary triage tool:
+   - REMOTE: `minidump_analyze { connection_string }` runs the client's OWN parser over ALL its
+     dumps (or one `path`). No plugin deploy, no cdb. Returns bugcheck/params/RIP/driver-blame per
+     dump; results auto-ingest into crash_signature/crash_sighting.
+   - LOCAL: `minidump_analyze { path }` parses a .dmp already on this admin machine (e.g. one you
+     pulled). Also auto-ingests.
+   - Reading the output: a recurring third-party `.sys` across dumps = that driver (cross-ref
+     known_bad_driver_list; fix via com.mastertech.driver-fetch). Varied faults all in nt/ntoskrnl
+     with NO recurring third-party module = memory-subsystem instability (bad RAM / unstable
+     XMP / FCLK), NOT a driver — non-ECC bit-flips raise AV bugchecks with no WHEA event, so clean
+     WHEA-monitored stress does NOT clear RAM.
+3. **crash_verdict_record** once you know root cause + fix — every future machine with the same
+   signature then surfaces it automatically in step 1.
+4. **Guaranteed logging:** you do NOT need to manually persist — minidump_analyze (local+remote),
+   the com.mastertech.dump-decode plugin (cdb `!analyze`), and the com.mastertech.dump-triage
+   plugin all auto-ingest on result. Do NOT assume a dump was "just viewed" and skip recording a
+   verdict; the sighting is already stored, but the human-useful verdict is your job.
+
+Deep pass (only when step 2 is inconclusive or you need Microsoft's FAILURE_BUCKET_ID / a full
+call stack): com.mastertech.dump-decode runs real cdb `!analyze -v` on the client (installs
+WinDbg via winget on first use; cold symbol cache 2-4 min). Use decode_whea only on 0x124 dumps.
+
+Pull raw dumps to the bench: **crash_dumps_fetch { connection_string }** zips MEMORY.DMP + Minidump
++ LiveKernelReports and streams them to this admin machine (default %USERPROFILE%\Downloads),
+returning the saved path — for handing to WinDbg manually. Prefer minidump_analyze for a verdict;
+only fetch when you need the raw files. Multi-GB MEMORY.DMP transfers are streamed with backpressure
+(they no longer time the client out) but can take minutes.
+
 === Stress Test Persistence (MANDATORY for MCP-driven stress) ===
 Every stress test you run through MCP MUST land rows in SurrealDB so bench history,
 baselines, and AI triage work. This is enforced automatically for the approved paths below.
@@ -5487,6 +6183,20 @@ Use query_surrealdb for any ad-hoc read-only data needs (SELECT/RETURN only).
 - link_diagnostic_to_task — retroactively link a session to an in-house task / service_order.
 - search_diagnostics — find past sessions by hostname, customer, tags, or free text.
 - get_diagnostic_session — retrieve a full session with all entries.
+- create_ai_task — hand off hands-on work to the tech as a checklist (see Hands-On Handoff above).
+- add_ai_task_steps — append steps to an AI task; reopens it and re-notifies the tech.
+- get_ai_task_status — poll checklist progress (checked/by/when, remaining count).
+
+=== Crash Intel & Dump Analysis (see the BSOD playbook above) ===
+- crash_intel_search — search fleet crash signatures + verdicts. Call FIRST when diagnosing a BSOD.
+- crash_intel_signature — exact lookup by bugcheck_code + module (sightings + verdicts).
+- minidump_analyze — parse kernel dumps LOCAL (path) or REMOTE (connection_string → all of a client's
+  dumps, no plugin/cdb). Auto-logs to fleet intel. The primary BSOD triage tool.
+- crash_dumps_fetch — pull a client's raw dumps (MEMORY.DMP + Minidump + LiveKernelReports) as one zip
+  to this admin machine. Only for a manual WinDbg deep pass; use minidump_analyze for a verdict.
+- crash_verdict_record — record diagnosis+fix against a signature (surfaces on every future match).
+- known_bad_driver_add / known_bad_driver_list — fleet driver blocklist, cross-referenced on every crash.
+- driver_snapshots_list / driver_snapshot_diff — installed-driver time machine + known-bad matching.
 
 === Customer & Service Data ===
 - search_customers — search SurrealDB customer table by name/email/phone.

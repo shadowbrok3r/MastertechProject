@@ -18,6 +18,7 @@ members = [
     "qc-app",
     "MtechServer2.0",
     "pxe-bench",
+    "dump-triage",
 ]
 # Targets of bare `cargo build`/`check`/`test` and rust-analyzer. Excludes the
 # wasm-only MtechServer2.0 (cdylib) so native commands don't try to compile it;
@@ -37,6 +38,7 @@ default-members = [
     "Mastertech4.0",
     "qc-app",
     "pxe-bench",
+    "dump-triage",
 ]
 # Standalone crates with their own toolchain/target; never part of this resolve.
 # uefi has its own [workspace] and builds standalone. MastertechMobile still
@@ -49,6 +51,7 @@ exclude = [
 ]
 
 [workspace.dependencies]
+dump-triage = { path = "dump-triage" }
 stress-kit = { path = "stress-kit" }
 stress-runner = { path = "stress-runner" }
 mtech-ui = { path = "mtech-ui" }

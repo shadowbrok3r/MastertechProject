@@ -27,6 +27,7 @@ use crate::tabs::minidump::logger::MapLogger;
 
 pub mod logger;
 pub mod processor;
+pub mod ui_kernel;
 pub mod ui_logs;
 pub mod ui_processed;
 pub mod ui_raw_dump;
@@ -55,6 +56,10 @@ pub struct MiniDumpApp {
     pub last_status: ProcessingStatus,
     pub minidump: MaybeMinidump,
     pub processed: MaybeProcessed,
+    /// Kernel-dump (BSOD) triage result when the loaded file is PAGEDU64.
+    pub kernel_triage: Option<Result<dump_triage::KernelDumpTriage, String>>,
+    /// Crash-intel state for the kernel view (fleet lookups + verdicts).
+    pub kernel_intel: ui_kernel::KernelIntelState,
     pub pointer_width: PointerWidth,
 
     pub task_sender: Arc<(Mutex<Option<ProcessorTask>>, Condvar)>,
@@ -77,6 +82,8 @@ pub enum Tab {
     Processed,
     RawDump,
     Logs,
+    /// BSOD/kernel-dump triage view.
+    Kernel,
 }
 
 #[derive(Parser)]
@@ -157,9 +164,11 @@ impl Default for MiniDumpApp{
             },
             cur_status: ProcessingStatus::NoDump,
             last_status: ProcessingStatus::NoDump,
-            
+
             minidump: None,
             processed: None,
+            kernel_triage: None,
+            kernel_intel: Default::default(),
             pointer_width: PointerWidth::Unknown,
 
             task_sender,
@@ -177,8 +186,27 @@ impl MiniDumpApp {
         if let Some(dump) = new_minidump {
             if let Ok(dump) = &dump {
                 self.process_dump(dump.clone());
+            } else {
+                // Unreadable dump: land back on NoDump so the settings tab
+                // shows the error instead of "Reading minidump..." forever.
+                self.cur_status = ProcessingStatus::NoDump;
             }
             self.minidump = Some(dump);
+        }
+
+        // Kernel-dump triage results skip the symbolication pipeline entirely.
+        let new_kernel = self.analysis_state.kernel.lock().unwrap().take();
+        if let Some(result) = new_kernel {
+            self.cur_status = if result.is_ok() {
+                ProcessingStatus::Done
+            } else {
+                ProcessingStatus::NoDump
+            };
+            if result.is_ok() {
+                self.tab = Tab::Kernel;
+            }
+            self.kernel_intel = Default::default();
+            self.kernel_triage = Some(result);
         }
 
         if self.cur_status < ProcessingStatus::Done {
@@ -242,6 +270,8 @@ impl MiniDumpApp {
         *new_task = Some(ProcessorTask::ReadDump(path));
         self.minidump = None;
         self.processed = None;
+        self.kernel_triage = None;
+        self.kernel_intel = Default::default();
         self.tab = Tab::Settings;
         condvar.notify_one();
     }
@@ -313,6 +343,9 @@ impl MiniDumpApp {
                     if self.cur_status >= ProcessingStatus::RawProcessing {
                         ui.selectable_value(&mut self.tab, Tab::Logs, "logs");
                     }
+                    if matches!(self.kernel_triage, Some(Ok(_))) {
+                        ui.selectable_value(&mut self.tab, Tab::Kernel, "kernel crash");
+                    }
                 });
             });
         egui::CentralPanel::default().show_inside(ui, |ui| {
@@ -322,6 +355,7 @@ impl MiniDumpApp {
                     Tab::RawDump => self.ui_raw_dump(ui, ctx),
                     Tab::Processed => self.ui_processed(ui, ctx),
                     Tab::Logs => self.ui_logs(ui, ctx),
+                    Tab::Kernel => self.ui_kernel(ui, ctx),
                 }
             });
         });

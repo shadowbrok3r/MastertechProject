@@ -10,7 +10,8 @@ use std::sync::Mutex;
 
 use database::schema::{
     crash_intel::{
-        parse_dump_decode_payload, payload_status, CrashIngest, CrashSignature, SightingContext,
+        parse_dump_decode_payload, parse_kernel_triage_payload, payload_status, CrashIngest,
+        CrashSignature, ParsedCrash, SightingContext,
     },
     DiagnosticCategory, DiagnosticEntry, PluginUsageRef, RecordId, DIAGNOSTIC_SESSION_TABLE,
 };
@@ -21,6 +22,13 @@ use crate::{get_toast_sender, PlatformSpawner, Spawner, ToastMessage};
 pub const DUMP_DECODE_PLUGIN_ID: &str = "com.mastertech.dump-decode";
 const ANALYZE_TOOLS: [&str; 3] = ["read_batch", "read_analyze", "read_analyze_livekernel"];
 
+/// Native (non-plugin) remote crash-dump analysis, reported via a reused
+/// `RemotePluginToolResult` with this pseudo plugin id.
+pub const NATIVE_CRASH_ANALYSIS_ID: &str = "native.crash-analysis";
+/// In-wasm PAGEDU64 triage plugin.
+pub const DUMP_TRIAGE_PLUGIN_ID: &str = "com.mastertech.dump-triage";
+const TRIAGE_TOOLS: [&str; 3] = ["analyze_crash_dumps", "triage_dump", "triage_all"];
+
 /// Latest ingest batch per connection_string, read by the Crash Intel viewer.
 static LATEST_INGESTS: Lazy<Mutex<HashMap<String, Vec<CrashIngest>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
@@ -29,9 +37,16 @@ static LATEST_INGESTS: Lazy<Mutex<HashMap<String, Vec<CrashIngest>>>> =
 static NOTICES: Lazy<Mutex<HashMap<String, Vec<String>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
-/// True for dump-decode results that carry `!analyze` output worth ingesting.
+/// True for dump-decode (cdb `!analyze`) results worth ingesting.
 pub fn is_dump_analysis_result(plugin_id: &str, tool_name: &str) -> bool {
     plugin_id == DUMP_DECODE_PLUGIN_ID && ANALYZE_TOOLS.contains(&tool_name)
+}
+
+/// True for native remote analysis / dump-triage plugin results (PAGEDU64
+/// triage JSON) worth ingesting.
+pub fn is_kernel_triage_result(plugin_id: &str, tool_name: &str) -> bool {
+    (plugin_id == NATIVE_CRASH_ANALYSIS_ID || plugin_id == DUMP_TRIAGE_PLUGIN_ID)
+        && TRIAGE_TOOLS.contains(&tool_name)
 }
 
 fn push_notice(connection_string: &str, notice: String) {
@@ -118,7 +133,7 @@ async fn log_finding(session_key: &str, ingest: &CrashIngest, tool_name: &str) {
     }
 }
 
-/// Parse a dump-decode analysis payload and persist crash signatures/sightings.
+/// Parse a dump-decode (cdb `!analyze`) payload and persist signatures/sightings.
 pub fn ingest_dump_decode_result(
     connection_string: String,
     computer: Option<RecordId>,
@@ -135,28 +150,67 @@ pub fn ingest_dump_decode_result(
     if crashes.is_empty() {
         return;
     }
-
     let dump_kind = if tool_name.contains("livekernel") {
         "livekernel"
     } else {
         "minidump"
-    }
-    .to_string();
+    };
+    spawn_ingest(connection_string, computer, tool_name, dump_kind, crashes);
+}
 
+/// Parse a dump-triage (PAGEDU64) payload — native remote analysis, local
+/// `minidump_analyze`, or the `com.mastertech.dump-triage` plugin — and persist
+/// signatures/sightings. This is the guaranteed-logging path: every dump the
+/// tools decode lands in `crash_signature`/`crash_sighting`.
+pub fn ingest_kernel_triage_result(
+    connection_string: String,
+    computer: Option<RecordId>,
+    tool_name: String,
+    result_json: String,
+) {
+    let Ok(payload) = serde_json::from_str::<serde_json::Value>(&result_json) else {
+        return;
+    };
+    let crashes = parse_kernel_triage_payload(&payload);
+    if crashes.is_empty() {
+        return;
+    }
+    spawn_ingest(connection_string, computer, tool_name, "minidump", crashes);
+}
+
+/// Shared: upsert each parsed crash into fleet intel and surface prior verdicts.
+/// Per-crash `dump_kind` is refined from the triage blob when present.
+fn spawn_ingest(
+    connection_string: String,
+    computer: Option<RecordId>,
+    tool_name: String,
+    default_dump_kind: &str,
+    crashes: Vec<ParsedCrash>,
+) {
+    let default_dump_kind = default_dump_kind.to_string();
     PlatformSpawner::spawn(async move {
         let session_key = super::diagnostic_session_registry::get(&connection_string);
-        let ctx = SightingContext {
-            connection_string: Some(connection_string.clone()),
-            computer,
-            session_ref: session_key
-                .as_deref()
-                .map(|k| RecordId::new(DIAGNOSTIC_SESSION_TABLE, k)),
-            task_ref: None,
-            dump_kind,
-        };
+        let session_ref = session_key
+            .as_deref()
+            .map(|k| RecordId::new(DIAGNOSTIC_SESSION_TABLE, k));
 
         let mut ingests: Vec<CrashIngest> = Vec::new();
         for parsed in &crashes {
+            // Refine the coarse dump_kind from the triage blob when present.
+            let dump_kind = parsed
+                .triage
+                .as_ref()
+                .and_then(|t| t.get("dump_type_name").and_then(|v| v.as_str()))
+                .map(|dt| if dt.contains("live") { "livekernel" } else { "minidump" })
+                .unwrap_or(&default_dump_kind)
+                .to_string();
+            let ctx = SightingContext {
+                connection_string: Some(connection_string.clone()),
+                computer: computer.clone(),
+                session_ref: session_ref.clone(),
+                task_ref: None,
+                dump_kind,
+            };
             match CrashSignature::ingest(parsed, &ctx).await {
                 Ok(ingest) => {
                     if let Some(summary) = verdict_summary(&ingest) {

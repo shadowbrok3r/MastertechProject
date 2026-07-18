@@ -8,7 +8,9 @@ use crate::{ui_tools::theme, PlatformSpawner, Spawner};
 pub const NOTIFICATION_CATEGORIES: &[&str] = &[
     "All",
     "Task Update",
-    "Task Created", 
+    "Task Created",
+    "AI Attention",
+    "AI Followup",
     "ALERT",
     "Admin",
     "System",

@@ -68,6 +68,16 @@ pub struct CrashSighting {
     pub caused_by: Option<String>,
     #[serde(default)]
     pub raw_excerpt: String,
+    /// Normalized (`module_stem`) names of every module loaded at crash time.
+    /// The queryable asset: "which machines had driver X loaded when they
+    /// crashed with bugcheck Y". Empty when the dump carried no module list.
+    #[serde(default)]
+    pub loaded_modules: Vec<String>,
+    /// Structured per-dump forensic detail (decoded params, RIP module,
+    /// uptime, driver base/size list). Free-form so it can grow without a
+    /// migration on this SCHEMALESS table.
+    #[serde(default)]
+    pub triage: Option<serde_json::Value>,
     pub created_at: Datetime,
 }
 
@@ -103,6 +113,14 @@ pub struct ParsedCrash {
     pub dump_name: Option<String>,
     pub dump_time: Option<String>,
     pub raw_excerpt: String,
+    /// Normalized loaded-module names (crash-time). Persisted to the sighting
+    /// for fleet co-occurrence queries. Default empty for parsers that don't
+    /// carry a module list (e.g. WinDbg text output).
+    #[serde(default)]
+    pub loaded_modules: Vec<String>,
+    /// Structured forensic blob persisted verbatim onto the sighting.
+    #[serde(default)]
+    pub triage: Option<serde_json::Value>,
 }
 
 /// Machine/task context attached to ingested sightings.
@@ -322,6 +340,8 @@ pub fn parse_dump_decode_payload(payload: &serde_json::Value) -> Vec<ParsedCrash
                     dump_name: Some(json_str(d, "dump")).filter(|v| !v.is_empty()),
                     dump_time: Some(json_str(d, "time")).filter(|v| !v.is_empty()),
                     raw_excerpt: String::new(),
+                    loaded_modules: Vec::new(),
+                    triage: None,
                 };
                 if p.offset.is_none() {
                     p.offset = offset_from_symbol(&json_str(d, "caused_by"));
@@ -360,6 +380,121 @@ pub fn parse_dump_decode_payload(payload: &serde_json::Value) -> Vec<ParsedCrash
     }
 
     Vec::new()
+}
+
+/// Extract crashes from a `dump-triage` result payload (native remote analysis,
+/// local `minidump_analyze`, or the `com.mastertech.dump-triage` plugin).
+/// Accepts `{dumps:[{dump_name, triage}...]}`, `{dump_name, triage}`, or a bare
+/// `KernelDumpTriage` object. Each becomes a `ParsedCrash` carrying the full
+/// triage blob + normalized loaded-module list for the sighting.
+pub fn parse_kernel_triage_payload(payload: &serde_json::Value) -> Vec<ParsedCrash> {
+    let data = payload.get("data").unwrap_or(payload);
+
+    let items: Vec<(Option<String>, &serde_json::Value)> =
+        if let Some(arr) = data.get("dumps").and_then(|d| d.as_array()) {
+            arr.iter()
+                .map(|d| {
+                    let name = d
+                        .get("dump_name")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string);
+                    let triage = d.get("triage").unwrap_or(d);
+                    (name, triage)
+                })
+                .collect()
+        } else if let Some(triage) = data.get("triage") {
+            let name = data.get("dump_name").and_then(|v| v.as_str()).map(str::to_string);
+            vec![(name, triage)]
+        } else if data.get("bugcheck_code").is_some() {
+            let name = data.get("dump_name").and_then(|v| v.as_str()).map(str::to_string);
+            vec![(name, data)]
+        } else {
+            return Vec::new();
+        };
+
+    items
+        .into_iter()
+        .filter_map(|(name, triage)| parsed_crash_from_triage(triage, name))
+        .collect()
+}
+
+/// Convert one `KernelDumpTriage` JSON object into a `ParsedCrash`.
+fn parsed_crash_from_triage(
+    t: &serde_json::Value,
+    dump_name: Option<String>,
+) -> Option<ParsedCrash> {
+    let bugcheck_code = normalize_bugcheck_code(&json_str(t, "bugcheck_code"))?;
+    let bugcheck_name = json_str(t, "bugcheck_name");
+    let rip_module = t.get("rip_module").and_then(|v| v.as_str()).map(str::to_string);
+    let blamed_module = t.get("blamed_module").and_then(|v| v.as_str()).map(str::to_string);
+    let module = blamed_module
+        .clone()
+        .or_else(|| rip_module.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let drivers = t.get("drivers").and_then(|d| d.as_array());
+
+    // Byte offset of RIP within its module, when both are known.
+    let offset = match (t.get("rip").and_then(|v| v.as_str()), &rip_module, drivers) {
+        (Some(rip), Some(rip_mod), Some(arr)) => {
+            let rip = u64::from_str_radix(rip.trim_start_matches("0x"), 16).unwrap_or(0);
+            arr.iter()
+                .find(|d| d.get("name").and_then(|n| n.as_str()) == Some(rip_mod.as_str()))
+                .and_then(|d| d.get("base").and_then(|b| b.as_u64()))
+                .map(|base| format!("+{:#x}", rip.saturating_sub(base)))
+        }
+        _ => None,
+    };
+
+    let loaded_modules = drivers
+        .map(|arr| {
+            let mut v: Vec<String> = arr
+                .iter()
+                .filter_map(|d| d.get("name").and_then(|n| n.as_str()))
+                .map(module_stem)
+                .collect();
+            v.sort();
+            v.dedup();
+            v
+        })
+        .unwrap_or_default();
+
+    let dump_time = t
+        .get("system_time_unix")
+        .and_then(|v| v.as_i64())
+        .and_then(|s| chrono::DateTime::<chrono::Utc>::from_timestamp(s, 0))
+        .map(|d| d.format("%m/%d/%Y %H:%M UTC").to_string());
+
+    let params = t
+        .get("bugcheck_parameters")
+        .and_then(|p| p.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    let raw_excerpt = format!(
+        "{bugcheck_name} ({bugcheck_code}) params: {params} | rip: {} | blame: {} [dump-triage]",
+        t.get("rip").and_then(|v| v.as_str()).unwrap_or("-"),
+        blamed_module.as_deref().unwrap_or("-"),
+    );
+
+    Some(ParsedCrash {
+        bugcheck_code,
+        bugcheck_name,
+        module,
+        offset,
+        process_name: None,
+        failure_bucket: None,
+        caused_by: blamed_module,
+        dump_name,
+        dump_time,
+        raw_excerpt,
+        loaded_modules,
+        triage: Some(t.clone()),
+    })
 }
 
 const SIGNATURE_UPSERT: &str = "UPSERT $id MERGE { \
@@ -459,6 +594,8 @@ impl CrashSignature {
             process_name: parsed.process_name.clone(),
             caused_by: parsed.caused_by.clone(),
             raw_excerpt: parsed.raw_excerpt.chars().take(2000).collect(),
+            loaded_modules: parsed.loaded_modules.clone(),
+            triage: parsed.triage.clone(),
             created_at: chrono::Utc::now().into(),
         };
         let created: Option<CrashSighting> = db()

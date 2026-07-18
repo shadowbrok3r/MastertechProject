@@ -3,11 +3,14 @@
 //! customer's check-in notes so the tech can compare reported symptoms
 //! against AI-recorded findings.
 
-use database::schema::{DiagnosticEntry, DiagnosticSession, RecordId, RecordIdExt};
+use database::schema::{AiTask, AiTaskItem, AiTaskStatus, DiagnosticEntry, DiagnosticSession, RecordId, RecordIdExt, User};
 use eframe::egui::{
-    CollapsingHeader, Color32, Grid, RichText, ScrollArea, Spinner, Ui, Vec2, Widget,
+    CollapsingHeader, Color32, Frame, Grid, Margin, RichText, ScrollArea, Spinner, Ui, Vec2, Widget,
 };
-use crate::ui_tools::theme;
+use crate::modals::tabs::ai_checklist_panel::{ai_checklist_progress, display_ai_checklist};
+use crate::ui_tools::{icons, theme};
+use crate::TaskUiActions;
+use crossbeam::channel::Sender;
 use serde::{Deserialize, Serialize};
 
 /// One session paired with all of its entries. Built by
@@ -18,9 +21,18 @@ pub struct DiagnosticSessionView {
     pub entries: Vec<DiagnosticEntry>,
 }
 
+/// AI handoff context for the pinned checklist panels. `None` renders the
+/// page without them (the Admin Console per-client popup).
+pub struct DiagnosticsPageAiCtx<'a> {
+    pub ai_views: &'a [(AiTask, Vec<AiTaskItem>)],
+    pub store_users: &'a [User],
+    pub current_user: Option<&'a User>,
+    pub ui_actions_tx: Option<&'a Sender<TaskUiActions>>,
+}
+
 /// Render the diagnostics page. Two columns: left = check-in notes from
 /// the ticket, right = scrollable list of diagnostic sessions with their
-/// entries inline.
+/// entries inline. Returns true when the operator clicked Refresh.
 pub fn display_diagnostics_page(
     ui: &mut Ui,
     avail_size: Vec2,
@@ -29,7 +41,11 @@ pub fn display_diagnostics_page(
     error: Option<&str>,
     selected: &mut Option<RecordId>,
     checkin_notes: &str,
-) {
+    ai_ctx: Option<DiagnosticsPageAiCtx<'_>>,
+    show_refresh: bool,
+) -> bool {
+    let mut refresh_clicked = false;
+
     let total_w = avail_size.x.max(700.0);
     let left_w = (total_w * 0.32).clamp(220.0, 320.0);
     let right_w = (total_w - left_w - 12.0).max(380.0);
@@ -38,6 +54,15 @@ pub fn display_diagnostics_page(
     let notes_h = 120.0;
 
     ui.vertical_centered_justified(|ui| {
+        // AI handoff panels live inside the vertical scope — the outer tab
+        // ui is a LeftToRight layout that collapses label wrap widths.
+        if let Some(ai) = ai_ctx.as_ref() {
+            for (task, items) in ai.ai_views.iter() {
+                render_ai_handoff_panel(ui, task, items, ai, selected);
+                ui.add_space(6.0);
+            }
+        }
+
         ui.collapsing("Check-in Notes", |ui| {
             if checkin_notes.trim().is_empty() {
                 ui.colored_label(
@@ -70,6 +95,14 @@ pub fn display_diagnostics_page(
                     );
                     if loading {
                         Spinner::new().size(14.0).ui(ui);
+                    }
+                    if show_refresh
+                        && ui
+                            .small_button(format!("{} Refresh", icons::REFRESH))
+                            .on_hover_text("Re-fetch sessions and entries")
+                            .clicked()
+                    {
+                        refresh_clicked = true;
                     }
                 });
 
@@ -105,6 +138,75 @@ pub fn display_diagnostics_page(
             },
         );
     });
+
+    refresh_clicked
+}
+
+/// Pinned AI Handoff panel — one per ai_task on this task, above the
+/// check-in notes. Same shared checklist widget as the AI task card.
+fn render_ai_handoff_panel(
+    ui: &mut Ui,
+    task: &AiTask,
+    items: &[AiTaskItem],
+    ctx: &DiagnosticsPageAiCtx<'_>,
+    selected: &mut Option<RecordId>,
+) {
+    let (chip_text, chip_color) = match task.status {
+        AiTaskStatus::Open => ("• IN PROGRESS", theme::info(ui)),
+        AiTaskStatus::AwaitingFollowup => ("• AWAITING OPERATOR", theme::warn(ui)),
+        AiTaskStatus::Closed => ("• CLOSED", theme::weak_text(ui)),
+    };
+    let user_name = |id: &RecordId| -> String {
+        ctx.store_users
+            .iter()
+            .find(|u| u.get_id() == *id)
+            .map(|u| u.get_name().to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    };
+
+    Frame::default()
+        .fill(ui.style().visuals.faint_bg_color)
+        .stroke(ui.style().visuals.window_stroke)
+        .inner_margin(Margin::same(8))
+        .corner_radius(ui.style().visuals.menu_corner_radius)
+        .show(ui, |ui| {
+            // Hard width bound: label wrapping must never dictate layout.
+            ui.set_max_width(ui.available_width().clamp(320.0, 690.0));
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!("{} {}", icons::ROBOT, task.title)).strong(),
+                );
+                ui.label(RichText::new(chip_text).color(chip_color).strong().small());
+            });
+            ui.label(
+                RichText::new(format!(
+                    "{} {} {}",
+                    user_name(&task.requested_by),
+                    icons::ARROW_RIGHT,
+                    user_name(&task.assignee)
+                ))
+                .weak()
+                .small(),
+            );
+            let _ = ai_checklist_progress(ui, items);
+
+            let interactive = task.status != AiTaskStatus::Closed
+                && ctx.ui_actions_tx.is_some()
+                && ctx
+                    .current_user
+                    .map(|u| u.get_id() == task.assignee || u.get_id() == task.requested_by)
+                    .unwrap_or(false);
+            if let Some(tx) = ctx.ui_actions_tx {
+                display_ai_checklist(ui, task, items, ctx.store_users, interactive, tx);
+            }
+
+            if ui
+                .link(RichText::new(format!("show linked session {}", icons::CARET_DOWN)).small())
+                .clicked()
+            {
+                *selected = Some(task.session_ref.clone());
+            }
+        });
 }
 
 fn render_session(

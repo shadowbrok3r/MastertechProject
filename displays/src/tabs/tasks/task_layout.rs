@@ -1,6 +1,7 @@
 use eframe::egui::{Align, Button, Color32, ComboBox, Frame, Layout, Margin, NumExt, Popup, PopupCloseBehavior, RectAlign, RichText, ScrollArea, Shadow, Spinner, TextEdit, Ui, Vec2, Widget};
 use database::{self, db, SurrealValue, schema::{LiveTaskPayload, Record, SortDirection, Sortable, Store, TaskNotePayload, User}};
 use crate::{PlatformSpawner, Spawner, Displayable, TaskUiActions, tabs::tasks::client_cards::ClientCardData};
+use crate::tabs::tasks::ai_task_cards::{AiCardRole, AiTaskCardView};
 use crate::ui_tools::icons;
 use std::{collections::{BTreeMap, HashMap, HashSet}, f32};
 use crossbeam::channel::{Receiver, Sender};
@@ -53,12 +54,21 @@ pub struct TaskLayout{
     /// own filter independently.
     #[serde(skip)]
     pub client_filter: String,
+    /// AI-task cards rendered in the `AI_TASKS_KEY` column. Refreshed
+    /// each frame from `SharedContext.ai_tasks` / `ai_task_items`.
+    #[serde(skip)]
+    pub ai_cards: Vec<AiTaskCardView>,
 }
 
 /// Sentinel `column_order` key that means "render the connected-clients
 /// column here". Picked to never collide with a real status string or
 /// username and to serialize cleanly into the user's saved column order.
 pub const CONNECTED_CLIENTS_KEY: &str = "__connected_clients__";
+
+/// Sentinel `column_order` key for the AI hands-on-handoff column. Pinned
+/// at render time immediately left of the connected-clients column and
+/// never persisted into the user's saved order.
+pub const AI_TASKS_KEY: &str = "__ai_tasks__";
 
 pub struct LayoutConfig {
     // Valid keys for task_map (statuses or username)
@@ -135,6 +145,7 @@ impl TaskLayout {
             last_read_notes: HashMap::new(),
             client_cards: Vec::new(),
             client_filter: String::new(),
+            ai_cards: Vec::new(),
         }
     }
 
@@ -252,7 +263,13 @@ impl TaskLayout {
     fn persist_column_order(&mut self) {
         let mut user = self.user.clone();
         let page = self.page.clone();
-        let order = self.column_order.clone();
+        // Render-time-pinned sentinel never enters the saved order.
+        let order: Vec<String> = self
+            .column_order
+            .iter()
+            .filter(|k| *k != AI_TASKS_KEY)
+            .cloned()
+            .collect();
         PlatformSpawner::spawn(async move {
             if let Err(e) = user.save_page_task_columns(&page, order).await {
                 log::error!("Failed to save task column layout for {page}: {e:?}");
@@ -286,6 +303,18 @@ impl TaskLayout {
     pub fn layout_cols(&mut self, ui: &mut Ui, ui_actions_tx: Sender<TaskUiActions>) {
         ui.style_mut().visuals.window_corner_radius = ui.style().visuals.window_corner_radius;
         let style = ui.style().clone();
+
+        // Idempotent per-frame pin: AI Tasks sits immediately left of the
+        // connected-clients column regardless of any saved/stale order.
+        self.column_order.retain(|k| k != AI_TASKS_KEY);
+        if self.page == "My Tasks" && !self.ai_cards.is_empty() {
+            let pos = self
+                .column_order
+                .iter()
+                .position(|k| k == CONNECTED_CLIENTS_KEY)
+                .unwrap_or(0);
+            self.column_order.insert(pos, AI_TASKS_KEY.to_string());
+        }
         let mut inputs = BTreeSet::new();
         // Defer any column move to after UI borrows are released
         let mut requested_move: Option<(String, i8)> = None; // (-1 left, +1 right)
@@ -322,6 +351,107 @@ impl TaskLayout {
             .show(ui, |ui| {
             ui.horizontal(|ui| {
                 for (i, name) in self.column_order.clone().iter().enumerate() {
+                    // AI Tasks column: tech section (assigned) + operator
+                    // review section, sharing one pinned column.
+                    if name == AI_TASKS_KEY {
+                        if self.page != "My Tasks" || self.ai_cards.is_empty() {
+                            continue;
+                        }
+                        let mine: Vec<AiTaskCardView> = self
+                            .ai_cards
+                            .iter()
+                            .filter(|c| c.role == AiCardRole::AssignedTech)
+                            .cloned()
+                            .collect();
+                        let review: Vec<AiTaskCardView> = self
+                            .ai_cards
+                            .iter()
+                            .filter(|c| c.role == AiCardRole::Operator)
+                            .cloned()
+                            .collect();
+
+                        ui.vertical(|col_ui| {
+                            let content_w = Self::COL_W - 4.0;
+                            header_frame.show(col_ui, |hui| {
+                                hui.set_min_width(content_w);
+                                hui.set_max_width(content_w);
+                                let label_text = if review.is_empty() {
+                                    format!("{} AI Tasks ({})", icons::ROBOT, mine.len())
+                                } else {
+                                    format!(
+                                        "{} AI Tasks ({} · {} review)",
+                                        icons::ROBOT,
+                                        mine.len(),
+                                        review.len()
+                                    )
+                                };
+                                hui.label(
+                                    RichText::new(label_text)
+                                        .color(style.visuals.warn_fg_color)
+                                        .strong(),
+                                );
+                            });
+                            column_frame.show(col_ui, |fui| {
+                                fui.set_min_width(content_w);
+                                fui.set_max_width(content_w);
+                                let column_h = (viewport_h - Self::HEADER_H).at_least(0.0);
+                                fui.set_min_height(column_h);
+                                fui.set_max_height(column_h);
+                                ScrollArea::vertical()
+                                    .id_salt(("ai_tasks_scroll", i))
+                                    .max_height(viewport_h - Self::HEADER_H)
+                                    .auto_shrink([false; 2])
+                                    .show(fui, |sui| {
+                                        for card in &mine {
+                                            let notes =
+                                                self.get_notes(&card.ai_task.task_ref);
+                                            let last_read = self
+                                                .last_read_notes
+                                                .get(&card.ai_task.task_ref)
+                                                .copied();
+                                            card.display(
+                                                sui,
+                                                &self.user,
+                                                &self.assignees,
+                                                notes,
+                                                last_read,
+                                                &ui_actions_tx,
+                                            );
+                                        }
+                                        if !review.is_empty() {
+                                            if !mine.is_empty() {
+                                                sui.add_space(4.0);
+                                                sui.separator();
+                                            }
+                                            sui.label(
+                                                RichText::new("Awaiting your review")
+                                                    .weak()
+                                                    .small()
+                                                    .strong(),
+                                            );
+                                            for card in &review {
+                                                let notes =
+                                                    self.get_notes(&card.ai_task.task_ref);
+                                                let last_read = self
+                                                    .last_read_notes
+                                                    .get(&card.ai_task.task_ref)
+                                                    .copied();
+                                                card.display(
+                                                    sui,
+                                                    &self.user,
+                                                    &self.assignees,
+                                                    notes,
+                                                    last_read,
+                                                    &ui_actions_tx,
+                                                );
+                                            }
+                                        }
+                                    });
+                            });
+                        });
+                        ui.add_space(Self::SPACER_W);
+                        continue;
+                    }
                     // Connected-clients column: My Tasks only; omitted when no
                     // clients pass recency / live-transport filters.
                     if name == CONNECTED_CLIENTS_KEY {

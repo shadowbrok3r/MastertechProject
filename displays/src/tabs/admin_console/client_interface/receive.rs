@@ -251,6 +251,15 @@ impl WebSocketClient {
                                                 );
                                             }
                                             #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+                                            if success && crate::plugins::crash_intel_hooks::is_kernel_triage_result(&plugin_id, &tool_name) {
+                                                crate::plugins::crash_intel_hooks::ingest_kernel_triage_result(
+                                                    self.client.connection_string.clone(),
+                                                    self.client.computer.clone(),
+                                                    tool_name.clone(),
+                                                    result_json.clone(),
+                                                );
+                                            }
+                                            #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
                                             if success && crate::plugins::driver_intel_hooks::is_driver_snapshot_result(&plugin_id, &tool_name) {
                                                 crate::plugins::driver_intel_hooks::ingest_driver_snapshot(
                                                     self.client.connection_string.clone(),
@@ -573,8 +582,17 @@ impl WebSocketClient {
                         
                         // Always handle normal file downloads
                         {
-                            // Normal file download
-                            match self.remote_explorer.handle_file_download(data, is_last, &mut self.download_buffer) {
+                            // MCP headless crash-dump fetch: open a writer at the
+                            // registered dest on the first chunk when no UI
+                            // download is active.
+                            #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+                            if !self.remote_explorer.download_in_progress() {
+                                if let Some(dest) = crate::plugins::mcp_bridge::peek_headless_dump_fetch(&self.client.connection_string) {
+                                    self.remote_explorer.begin_headless_download(dest);
+                                }
+                            }
+                            // Normal file download — streams straight to disk.
+                            match self.remote_explorer.handle_file_download(data, is_last) {
                                 Ok(Some(msg)) => {
                                     self.history.push(History {
                                         from: "System".to_string(),
@@ -584,7 +602,12 @@ impl WebSocketClient {
                                 }
                                 Ok(None) => {}
                                 Err(msg) => {
-                                    self.download_buffer.clear();
+                                    #[cfg(not(target_arch = "wasm32"))]
+                                    self.remote_explorer.abort_download();
+                                    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+                                    if let Some((_, req)) = crate::plugins::mcp_bridge::take_headless_dump_fetch(&self.client.connection_string) {
+                                        crate::plugins::mcp_bridge::resolve_pending_request(&req, false, format!("download failed: {msg}"));
+                                    }
                                     self.history.push(History {
                                         from: "System".to_string(),
                                         message: format!("Download failed: {}", msg),
@@ -592,8 +615,12 @@ impl WebSocketClient {
                                     });
                                 }
                             }
-                            // Advance the bulk-download queue once a file finishes.
+                            // Resolve a headless fetch + advance the queue on completion.
                             if is_last {
+                                #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+                                if let Some((dest, req)) = crate::plugins::mcp_bridge::take_headless_dump_fetch(&self.client.connection_string) {
+                                    crate::plugins::mcp_bridge::resolve_pending_request(&req, true, dest.to_string_lossy().to_string());
+                                }
                                 self.remote_explorer.advance_download_queue(&self.send_cmd_tx);
                             }
                         }
@@ -827,6 +854,24 @@ impl WebSocketClient {
                         self.notifications += 1;
                     } else if let Cmd::RemotePluginToolResult { request_id, plugin_id, tool_name, success, result_json } = cmd {
                         log::info!("Remote plugin tool result: {plugin_id}::{tool_name} req={request_id} success={success}");
+                        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+                        if success && crate::plugins::crash_intel_hooks::is_dump_analysis_result(&plugin_id, &tool_name) {
+                            crate::plugins::crash_intel_hooks::ingest_dump_decode_result(
+                                self.client.connection_string.clone(),
+                                self.client.computer.clone(),
+                                tool_name.clone(),
+                                result_json.clone(),
+                            );
+                        }
+                        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+                        if success && crate::plugins::crash_intel_hooks::is_kernel_triage_result(&plugin_id, &tool_name) {
+                            crate::plugins::crash_intel_hooks::ingest_kernel_triage_result(
+                                self.client.connection_string.clone(),
+                                self.client.computer.clone(),
+                                tool_name.clone(),
+                                result_json.clone(),
+                            );
+                        }
                         #[cfg(not(target_arch = "wasm32"))]
                         crate::plugins::mcp_bridge::resolve_pending_request(&request_id, success, result_json);
                     } else if let Cmd::AppPong { nonce, sent_at_ms } = cmd {

@@ -14,6 +14,64 @@ pub mod command;
 
 const FILE_CHUNK_SIZE: usize = 4 * 1024 * 1024;
 
+/// Stream a file from disk to the master in `FILE_CHUNK_SIZE` chunks over the
+/// bounded file channel. Each `send().await` blocks when the channel is full,
+/// pacing reads to the socket so we never buffer the whole file in RAM.
+async fn stream_file_download(
+    path: &str,
+    file_tx: tokio::sync::mpsc::Sender<crate::transport::TcpFrame>,
+) -> anyhow::Result<()> {
+    use tokio::io::AsyncReadExt;
+
+    let mut file = tokio::fs::File::open(path).await?;
+    let total = file.metadata().await?.len();
+    let mut sent: u64 = 0;
+    let mut buf = vec![0u8; FILE_CHUNK_SIZE];
+
+    // Empty file: still send a single terminal chunk so the master finalizes.
+    if total == 0 {
+        let frame = Cmd::FileChunk(Vec::new(), true);
+        let payload = encode_to_vec(&frame, standard())?;
+        file_tx
+            .send(crate::transport::TcpFrame::Binary(payload))
+            .await
+            .map_err(|_| anyhow::anyhow!("writer channel closed"))?;
+        return Ok(());
+    }
+
+    let mut sent_terminal = false;
+    loop {
+        let n = file.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        sent += n as u64;
+        let is_last = sent >= total;
+        let frame = Cmd::FileChunk(buf[..n].to_vec(), is_last);
+        let payload = encode_to_vec(&frame, standard())?;
+        file_tx
+            .send(crate::transport::TcpFrame::Binary(payload))
+            .await
+            .map_err(|_| anyhow::anyhow!("writer channel closed"))?;
+        if is_last {
+            sent_terminal = true;
+            break;
+        }
+    }
+    // File was shorter than its metadata (truncated mid-read): send an empty
+    // terminal chunk so the master finalizes instead of waiting forever.
+    if !sent_terminal {
+        let frame = Cmd::FileChunk(Vec::new(), true);
+        let payload = encode_to_vec(&frame, standard())?;
+        file_tx
+            .send(crate::transport::TcpFrame::Binary(payload))
+            .await
+            .map_err(|_| anyhow::anyhow!("writer channel closed"))?;
+    }
+    log::info!("Streamed {sent} bytes for {path}");
+    Ok(())
+}
+
 fn send_file_chunks(data: Vec<u8>, sender: &mut ClientTransport) {
     let chunks: Vec<&[u8]> = if data.len() > FILE_CHUNK_SIZE {
         data.chunks(FILE_CHUNK_SIZE).collect()
@@ -381,6 +439,100 @@ fn zip_directory(dir_path: &Path) -> Result<Vec<u8>, String> {
         zip.finish().map_err(|e| e.to_string())?;
     }
     Ok(buffer)
+}
+
+/// Every Windows kernel crash dump on this machine: MEMORY.DMP plus every
+/// `.dmp` under Minidump and LiveKernelReports.
+fn enumerate_crash_dumps() -> Vec<std::path::PathBuf> {
+    use walkdir::WalkDir;
+    let mut out = Vec::new();
+    let memdmp = Path::new(r"C:\Windows\MEMORY.DMP");
+    if memdmp.is_file() {
+        out.push(memdmp.to_path_buf());
+    }
+    for dir in [r"C:\Windows\Minidump", r"C:\Windows\LiveKernelReports"] {
+        let d = Path::new(dir);
+        if !d.is_dir() {
+            continue;
+        }
+        for e in WalkDir::new(d).into_iter().filter_map(|e| e.ok()) {
+            let p = e.path();
+            if p.is_file()
+                && p.extension().is_some_and(|x| x.eq_ignore_ascii_case("dmp"))
+            {
+                out.push(p.to_path_buf());
+            }
+        }
+    }
+    out
+}
+
+/// Zip all Windows crash dumps (MEMORY.DMP + Minidump\* + LiveKernelReports\*)
+/// into a temp file, streaming each source through the deflate encoder so a
+/// multi-GB MEMORY.DMP never lands in RAM. Returns the temp zip path.
+fn build_crash_dump_zip() -> Result<std::path::PathBuf, String> {
+    use zip::write::SimpleFileOptions;
+    use zip::ZipWriter;
+
+    let out_path = std::env::temp_dir().join(format!("mtech-crashdumps-{}.zip", std::process::id()));
+    let file = std::fs::File::create(&out_path).map_err(|e| e.to_string())?;
+    let mut zip = ZipWriter::new(std::io::BufWriter::new(file));
+    let options =
+        SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+
+    let mut added: u32 = 0;
+
+    // MEMORY.DMP (full/kernel/automatic dump).
+    let memdmp = Path::new(r"C:\Windows\MEMORY.DMP");
+    if memdmp.is_file() {
+        if let Ok(mut f) = std::fs::File::open(memdmp) {
+            if zip.start_file("MEMORY.DMP", options).is_ok()
+                && std::io::copy(&mut f, &mut zip).is_ok()
+            {
+                added += 1;
+            }
+        }
+    }
+    // Minidump\* (BSOD triage dumps) and LiveKernelReports\** (watchdog live dumps).
+    add_dir_to_zip(&mut zip, Path::new(r"C:\Windows\Minidump"), "Minidump", options, &mut added);
+    add_dir_to_zip(
+        &mut zip,
+        Path::new(r"C:\Windows\LiveKernelReports"),
+        "LiveKernelReports",
+        options,
+        &mut added,
+    );
+
+    zip.finish().map_err(|e| e.to_string())?;
+    log::info!("Crash-dump zip built with {added} file(s): {}", out_path.display());
+    Ok(out_path)
+}
+
+/// Stream every file under `dir` into `zip` beneath `prefix`.
+fn add_dir_to_zip<W: std::io::Write + std::io::Seek>(
+    zip: &mut zip::ZipWriter<W>,
+    dir: &Path,
+    prefix: &str,
+    options: zip::write::SimpleFileOptions,
+    added: &mut u32,
+) {
+    use walkdir::WalkDir;
+    if !dir.is_dir() {
+        return;
+    }
+    for entry in WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let rel = path.strip_prefix(dir).unwrap_or(path);
+        let name = format!("{prefix}/{}", rel.to_string_lossy().replace('\\', "/"));
+        if let Ok(mut f) = std::fs::File::open(path) {
+            if zip.start_file(name, options).is_ok() && std::io::copy(&mut f, zip).is_ok() {
+                *added += 1;
+            }
+        }
+    }
 }
 
 /// Resolve special folder paths using Windows API or fallback to environment variables
@@ -1162,23 +1314,27 @@ impl TerminalWebsocketClient {
             }
             Cmd::DownloadRemoteFile(path_str) => {
                 log::info!("websockets -> Download request for: {}", path_str);
-                
+
                 let path = Path::new(&path_str);
-                if path.is_file() {
-                    // Check file size first to avoid reading huge files into memory
-                    let metadata = match std::fs::metadata(path) {
-                        Ok(m) => m,
-                        Err(e) => {
-                            log::error!("Error getting file metadata: {}", e);
-                            sender.send(WsMessage::Text(format!("Error: Cannot read file metadata - {}", e)));
-                            return;
+                if !path.is_file() {
+                    log::warn!("Path is not a file: {}", path_str);
+                    sender.send(WsMessage::Text("Error: Path is not a file".to_string()));
+                    return;
+                }
+
+                if let Some(file_tx) = sender.file_sender() {
+                    // Direct TCP path: stream from disk on a separate task so
+                    // the session loop keeps echoing pongs, and the bounded
+                    // channel paces us to the socket (no whole-file RAM load).
+                    let path_owned = path_str.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = stream_file_download(&path_owned, file_tx).await {
+                            log::error!("File stream for {path_owned} failed: {e}");
                         }
-                    };
-                    
-                    let file_size = metadata.len();
-                    
-                    log::info!("Reading file: {} ({} bytes)", path_str, file_size);
-                    
+                    });
+                } else {
+                    // Relay path (no bounded file channel): read in chunks from
+                    // disk to avoid a whole-file RAM load, sent inline.
                     match std::fs::read(path) {
                         Ok(data) => {
                             log::info!("File read successfully, {} bytes", data.len());
@@ -1189,9 +1345,38 @@ impl TerminalWebsocketClient {
                             sender.send(WsMessage::Text(format!("Error: {}", e)));
                         }
                     }
+                }
+            }
+            Cmd::DownloadCrashDumps => {
+                log::info!("websockets -> crash-dump bundle download requested");
+                if let Some(file_tx) = sender.file_sender() {
+                    // TCP path: build the zip on disk (streamed), then stream it
+                    // down and delete it. Off the session loop so pongs flow.
+                    tokio::spawn(async move {
+                        match tokio::task::spawn_blocking(build_crash_dump_zip).await {
+                            Ok(Ok(zip_path)) => {
+                                let p = zip_path.to_string_lossy().to_string();
+                                if let Err(e) = stream_file_download(&p, file_tx).await {
+                                    log::error!("Crash-dump stream failed: {e}");
+                                }
+                                let _ = tokio::fs::remove_file(&zip_path).await;
+                            }
+                            Ok(Err(e)) => log::error!("Crash-dump zip failed: {e}"),
+                            Err(e) => log::error!("Crash-dump zip task panicked: {e}"),
+                        }
+                    });
                 } else {
-                    log::warn!("Path is not a file: {}", path_str);
-                    sender.send(WsMessage::Text("Error: Path is not a file".to_string()));
+                    // Relay path: build on disk, read + send inline, then delete.
+                    match build_crash_dump_zip() {
+                        Ok(zip_path) => {
+                            match std::fs::read(&zip_path) {
+                                Ok(data) => send_file_chunks(data, sender),
+                                Err(e) => sender.send(WsMessage::Text(format!("Error: {e}"))),
+                            }
+                            let _ = std::fs::remove_file(&zip_path);
+                        }
+                        Err(e) => sender.send(WsMessage::Text(format!("Error: {e}"))),
+                    }
                 }
             }
             Cmd::DownloadRemoteDirectory(path_str) => {
@@ -3380,6 +3565,57 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                     plugin_id,
                     tool_name,
                     success,
+                    result_json,
+                };
+                if let Ok(payload) = encode_to_vec(&result_cmd, standard()) {
+                    sender.send(WsMessage::Binary(payload));
+                }
+            }
+
+            Cmd::AnalyzeCrashDumps { request_id, paths } => {
+                log::info!(
+                    "AnalyzeCrashDumps: req={request_id} targets={}",
+                    paths.as_ref().map(|p| p.len()).unwrap_or(0)
+                );
+                let result_json = tokio::task::spawn_blocking(move || {
+                    let files: Vec<std::path::PathBuf> = match paths {
+                        Some(ps) if !ps.is_empty() => {
+                            ps.into_iter().map(std::path::PathBuf::from).collect()
+                        }
+                        _ => enumerate_crash_dumps(),
+                    };
+                    let dumps: Vec<serde_json::Value> = files
+                        .iter()
+                        .map(|p| {
+                            let dump_name =
+                                p.file_name().map(|f| f.to_string_lossy().to_string());
+                            match dump_triage::analyze_file(p) {
+                                Ok(triage) => serde_json::json!({
+                                    "dump_name": dump_name,
+                                    "path": p.to_string_lossy(),
+                                    "triage": triage,
+                                }),
+                                Err(e) => serde_json::json!({
+                                    "dump_name": dump_name,
+                                    "path": p.to_string_lossy(),
+                                    "error": e,
+                                }),
+                            }
+                        })
+                        .collect();
+                    serde_json::json!({ "count": dumps.len(), "dumps": dumps }).to_string()
+                })
+                .await
+                .unwrap_or_else(|e| {
+                    serde_json::json!({ "error": format!("analysis task panicked: {e}") })
+                        .to_string()
+                });
+
+                let result_cmd = Cmd::RemotePluginToolResult {
+                    request_id,
+                    plugin_id: "native.crash-analysis".to_string(),
+                    tool_name: "analyze_crash_dumps".to_string(),
+                    success: true,
                     result_json,
                 };
                 if let Ok(payload) = encode_to_vec(&result_cmd, standard()) {

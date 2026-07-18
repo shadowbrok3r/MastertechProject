@@ -55,6 +55,16 @@ impl SharedContext {
                 Action::Create => {
                     if notification.notification_type.as_str() == "Admin" {
                         self.notification_modal = Some(notification.clone());
+                    } else if matches!(
+                        notification.notification_type.as_str(),
+                        "AI Attention" | "AI Followup"
+                    ) {
+                        // The blocking AI popup (driven by the ai_task live
+                        // stream) is the interruption — center-only here.
+                        if notification.user == user.get_id() {
+                            self.notification_center.read_notifications = false;
+                        }
+                        self.notification_center.apply_update(notification.clone());
                     } else {
                         let username_regex = Regex::new(r"tagged (\w+\.\w+)").unwrap();
                         let task_name_regex = Regex::new(r"in task (.+)").unwrap();

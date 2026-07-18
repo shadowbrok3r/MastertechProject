@@ -11,6 +11,7 @@ pub mod create_task_modal;
 pub mod tabs;
 pub mod duplicate_merge_modal;
 pub mod open_service_confirm_modal;
+pub mod ai_attention_modal;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub mod entity_link_resolution_modal;
 
@@ -71,6 +72,11 @@ impl ModalWindow for ModalType {
             _ => 723.0,
         };
 
+        // Strict height cap: runaway content must scroll/clip inside the
+        // window, never grow it past the viewport (which strands the title
+        // bar + close button off-screen).
+        let max_height = (ctx.content_rect().height() - 80.0).clamp(400.0, 900.0);
+
         Window::new(title_color)
             .frame(
                 Frame::default()
@@ -85,9 +91,11 @@ impl ModalWindow for ModalType {
             .default_height(715.)
             .max_width(window_width)
             .min_width(window_width)
+            .max_height(max_height)
+            .constrain(true)
             .open(&mut open)
             .title_bar(true)
-            .show(ctx, |ui| 
+            .show(ctx, |ui|
         {
             match self {
                 ModalType::CreateTaskModal(create_task_modal) => create_task_modal.display(ui, &mut handle_action),

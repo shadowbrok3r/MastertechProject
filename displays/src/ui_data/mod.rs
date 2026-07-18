@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 pub mod receive_notes;
 pub mod receive_notifications;
+pub mod receive_ai_task;
 pub mod receive_prestashop;
 pub mod receive_task;
 pub mod receive_ui_action;
@@ -155,6 +156,16 @@ impl crate::app_state::SharedContext {
                 let res = TaskNoteRead::fetch_all_for_user(read_state_tx).await;
                 log::info!("fetch_all_for_user (task_note_read): {res:?}");
             });
+
+            // AI task snapshot — mandatory on refetch: live events missed
+            // during an outage are never replayed.
+            let initial_ai_tasks_tx = self.initial_ai_tasks_tx.clone();
+            PlatformSpawner::spawn(async move {
+                match database::schema::AiTask::list_active_for_store().await {
+                    Ok(pair) => { let _ = initial_ai_tasks_tx.try_send(pair); }
+                    Err(e) => log::error!("AiTask::list_active_for_store: {e:?}"),
+                }
+            });
             
             self.task_layouts
                 .iter_mut()
@@ -197,6 +208,18 @@ impl crate::app_state::SharedContext {
             self.spawn_live_stream::<database::schema::Notification>(
                 live_notif_tx,
                 "LIVE SELECT * FROM notification WHERE user == $auth.id".to_string(),
+            );
+
+            // ai_task → this store's AI handoff tasks.
+            self.spawn_live_stream::<database::schema::AiTask>(
+                self.live_ai_tasks_tx.clone(),
+                "LIVE SELECT * FROM ai_task WHERE assignee.store == $auth.store".to_string(),
+            );
+
+            // ai_task_item → joined through the parent's assignee store.
+            self.spawn_live_stream::<database::schema::AiTaskItem>(
+                self.live_ai_task_items_tx.clone(),
+                "LIVE SELECT * FROM ai_task_item WHERE ai_task_ref.assignee.store == $auth.store".to_string(),
             );
 
             // connected_client → this store's connected clients.
@@ -456,6 +479,7 @@ impl crate::app_state::SharedContext {
         self.receive_read_state();
         self.receive_users();
         self.receive_task();
+        self.receive_ai_task();
         self.receive_notes();
         self.receive_notification(ctx);
         self.stock_tables.receive(self.ui_actions_tx.clone(), ctx, frame);
@@ -845,7 +869,7 @@ impl crate::app_state::SharedContext {
             .min_width(480.0)
             .show(ctx, |ui| {
                 let avail = ui.available_size();
-                crate::modals::tabs::display_diagnostics_page(
+                let _ = crate::modals::tabs::display_diagnostics_page(
                     ui,
                     avail,
                     &self.client_diagnostics_sessions,
@@ -856,6 +880,8 @@ impl crate::app_state::SharedContext {
                     // so check-in notes are empty here — the widget
                     // already renders a placeholder when they are.
                     "",
+                    None,
+                    false,
                 );
             });
 

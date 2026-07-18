@@ -1,0 +1,106 @@
+id = "20260718170000__ai_task_tables"
+name = "ai_task_tables"
+state = "completed"
+# Additive: two new tables for the AI hands-on handoff loop.
+# ai_task points at an existing task + diagnostic_session and carries the
+# handoff lifecycle; ai_task_item holds the per-step checklist rows. DB
+# events create 'AI Attention' / 'AI Followup' notifications and flip the
+# parent status when the last item is checked / an item is unchecked.
+# Mirrors database/schema/ai_task.surql + ai_task_item.surql. Applying
+# committed file state only: source == target. Paste the `current=` hash
+# from `surrealkit rollout lint`.
+source_schema_hash = "887512dff8b3a7ab491a45289c6a13701dc36b0a6bdabdb813cdbf9f97750733"
+target_schema_hash = "887512dff8b3a7ab491a45289c6a13701dc36b0a6bdabdb813cdbf9f97750733"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "create_ai_task_tables"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE ai_task TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE task_ref               ON ai_task TYPE record<task>                 PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE session_ref            ON ai_task TYPE record<diagnostic_session>   PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE assignee               ON ai_task TYPE record<user>                 PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE requested_by           ON ai_task TYPE record<user> DEFAULT $auth.id PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE title                  ON ai_task TYPE string                       PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE customer_name          ON ai_task TYPE string                       PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE service_number         ON ai_task TYPE string                       PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE connection_string      ON ai_task TYPE none | string                PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE status                 ON ai_task TYPE string DEFAULT 'open'        PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE acknowledged_at        ON ai_task TYPE none | datetime              PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE review_acknowledged_at ON ai_task TYPE none | datetime              PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE created_at             ON ai_task TYPE datetime DEFAULT time::now() PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE completed_at           ON ai_task TYPE none | datetime              PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE closed_at              ON ai_task TYPE none | datetime              PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE ai_task_idx ON ai_task FIELDS task_ref, session_ref, assignee, status;
+DEFINE EVENT OVERWRITE ai_task_created ON ai_task
+    WHEN $event = 'CREATE'
+    THEN {
+        IF $auth != NULL OR NONE {
+            CREATE notification CONTENT {
+                notification_description: string::concat('Computer for ', $value.customer_name, ' - ', $value.service_number, ' requires your attention in task ', $value.task_ref.task_name),
+                notification_type: 'AI Attention',
+                status: 'Unread',
+                user: $value.assignee
+            };
+        };
+    };
+DEFINE EVENT OVERWRITE ai_task_completed ON ai_task
+    WHEN $event = 'UPDATE' AND $before.status = 'open' AND $value.status = 'awaiting_followup'
+    THEN {
+        CREATE notification CONTENT {
+            notification_description: string::concat('AI task complete: ', $value.title, ' (', $value.customer_name, ' - ', $value.service_number, ') in task ', $value.task_ref.task_name),
+            notification_type: 'AI Followup',
+            status: 'Unread',
+            user: $value.requested_by
+        };
+    };
+DEFINE EVENT OVERWRITE ai_task_reopened ON ai_task
+    WHEN $event = 'UPDATE' AND $before.status = 'awaiting_followup' AND $value.status = 'open'
+    THEN {
+        IF $value.assignee != $auth.id {
+            CREATE notification CONTENT {
+                notification_description: string::concat('Computer for ', $value.customer_name, ' - ', $value.service_number, ' requires your attention in task ', $value.task_ref.task_name),
+                notification_type: 'AI Attention',
+                status: 'Unread',
+                user: $value.assignee
+            };
+        };
+    };
+DEFINE TABLE OVERWRITE ai_task_item TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE ai_task_ref ON ai_task_item TYPE record<ai_task>                 PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE text        ON ai_task_item TYPE string                          PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE position    ON ai_task_item TYPE int                             PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE checked     ON ai_task_item TYPE bool DEFAULT false              PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE checked_by  ON ai_task_item TYPE none | record<user>             PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE checked_at  ON ai_task_item TYPE none | datetime                 PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE entry_ref   ON ai_task_item TYPE none | record<diagnostic_entry> PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE created_at  ON ai_task_item TYPE datetime DEFAULT time::now()    PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE ai_task_item_idx ON ai_task_item FIELDS ai_task_ref, checked;
+DEFINE EVENT OVERWRITE ai_task_item_checked ON ai_task_item
+    WHEN $event = 'UPDATE' AND $before.checked = false AND $value.checked = true
+    THEN {
+        LET $remaining = array::first((SELECT VALUE count() FROM ai_task_item WHERE ai_task_ref = $value.ai_task_ref AND checked = false GROUP ALL));
+        IF $remaining = NONE OR $remaining = 0 {
+            UPDATE $value.ai_task_ref SET status = 'awaiting_followup', completed_at = time::now()
+                WHERE status = 'open';
+        };
+    };
+DEFINE EVENT OVERWRITE ai_task_item_unchecked ON ai_task_item
+    WHEN $event = 'UPDATE' AND $before.checked = true AND $value.checked = false
+    THEN {
+        UPDATE $value.ai_task_ref SET status = 'open', completed_at = NONE, review_acknowledged_at = NONE
+            WHERE status = 'awaiting_followup';
+    };
+"""
+
+[[steps]]
+id = "drop_ai_task_tables"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE TABLE IF EXISTS ai_task_item;
+REMOVE TABLE IF EXISTS ai_task;
+"""

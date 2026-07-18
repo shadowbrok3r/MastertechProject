@@ -528,7 +528,7 @@ impl HomePage {
             };
             let mut gpu_specs = serde_json::Map::new();
             if card.memory > 0 {
-                gpu_specs.insert("vram_bytes".into(), serde_json::json!(card.memory));
+                gpu_specs.insert("vram_mb".into(), serde_json::json!(card.memory / (1024 * 1024)));
             }
             let drv = card.nvidia_info.driver_version.trim();
             if !drv.is_empty() {

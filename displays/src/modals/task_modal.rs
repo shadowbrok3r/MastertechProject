@@ -153,6 +153,16 @@ pub struct TaskModal {
     pub diagnostics_tx: Sender<DiagnosticSessionView>,
     #[serde(skip)]
     pub diagnostics_rx: Receiver<DiagnosticSessionView>,
+    /// AI handoff checklists for this task, synced each frame from
+    /// SharedContext so card + modal render identical state.
+    #[serde(skip)]
+    pub ai_checklist_views: Vec<(database::schema::AiTask, Vec<database::schema::AiTaskItem>)>,
+    /// Routes checklist toggles through receive_ui_action like the card.
+    #[serde(skip)]
+    pub ui_actions_tx: Option<Sender<crate::TaskUiActions>>,
+    /// Last diagnostics auto-poll; throttles the open-session refresh.
+    #[serde(skip)]
+    pub diagnostics_last_poll: Option<web_time::Instant>,
 
     // Stress Tests tab state
     /// `StressTestRun`s recorded against this task's computer, newest first.
@@ -354,6 +364,9 @@ impl TaskModal {
             selected_diagnostic_session: None,
             diagnostics_fetched: false,
             diagnostics_tx, diagnostics_rx,
+            ai_checklist_views: Vec::new(),
+            ui_actions_tx: None,
+            diagnostics_last_poll: None,
             // Stress Tests
             stress_runs: Vec::new(),
             stress_loading: false,
@@ -610,6 +623,22 @@ impl TaskModal {
     /// for every `DiagnosticSession` linked to this task or to the same
     /// computer. Subsequent opens reuse the cached results until the modal
     /// is rebuilt.
+    /// Sync the AI handoff views + action sender from SharedContext.
+    pub fn sync_ai_state(
+        &mut self,
+        views: Vec<(database::schema::AiTask, Vec<database::schema::AiTaskItem>)>,
+        tx: Sender<crate::TaskUiActions>,
+    ) {
+        self.ai_checklist_views = views;
+        self.ui_actions_tx = Some(tx);
+    }
+
+    /// Re-fetch sessions + entries; the receive drain upserts by session id.
+    pub fn refresh_diagnostics(&mut self) {
+        self.diagnostics_fetched = false;
+        self.kickoff_diagnostics_load();
+    }
+
     pub fn kickoff_diagnostics_load(&mut self) {
         if self.diagnostics_fetched {
             return;
@@ -617,6 +646,7 @@ impl TaskModal {
         self.diagnostics_fetched = true;
         self.diagnostics_loading = true;
         self.diagnostics_error = None;
+        self.diagnostics_last_poll = Some(web_time::Instant::now());
         let task_id = self.task.id.clone();
         let computer_id = self.computer.as_ref().map(|c| c.id.clone());
         let tx = self.diagnostics_tx.clone();
@@ -1405,12 +1435,30 @@ impl DisplayModal for TaskModal {
                 ModalAction::TaskHistoryPage  => display_history_page(ui, &self.task_history, avail_size),
                 ModalAction::DiagnosticsPage  => {
                     self.kickoff_diagnostics_load();
+                    // Auto-poll while any loaded session is still open.
+                    let any_open = self
+                        .diagnostic_sessions
+                        .iter()
+                        .any(|v| v.session.status == "open");
+                    let poll_due = self
+                        .diagnostics_last_poll
+                        .map(|t| t.elapsed() > web_time::Duration::from_secs(10))
+                        .unwrap_or(false);
+                    if any_open && poll_due && !self.diagnostics_loading {
+                        self.refresh_diagnostics();
+                    }
                     let checkin = self
                         .service_ticket
                         .as_ref()
                         .map(|t| t.checkin_notes.clone())
                         .unwrap_or_default();
-                    display_diagnostics_page(
+                    let ai_ctx = crate::modals::tabs::diagnostics_page::DiagnosticsPageAiCtx {
+                        ai_views: &self.ai_checklist_views,
+                        store_users: &self.store_users,
+                        current_user: Some(&self.user),
+                        ui_actions_tx: self.ui_actions_tx.as_ref(),
+                    };
+                    let refresh_clicked = display_diagnostics_page(
                         ui,
                         avail_size,
                         &self.diagnostic_sessions,
@@ -1418,7 +1466,12 @@ impl DisplayModal for TaskModal {
                         self.diagnostics_error.as_deref(),
                         &mut self.selected_diagnostic_session,
                         &checkin,
+                        Some(ai_ctx),
+                        true,
                     );
+                    if refresh_clicked {
+                        self.refresh_diagnostics();
+                    }
                 },
                 ModalAction::StressTestsPage  => {
                     self.kickoff_stress_load();

@@ -14,7 +14,7 @@
 //!   liveness via TCP itself.
 
 use ewebsock::{WsMessage, WsSender};
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::{Sender, UnboundedSender};
 
 /// Frame queued for the TCP writer task. Distinguishes binary `Cmd`
 /// payloads (the common case) from text control strings, which the
@@ -39,9 +39,14 @@ pub use tcp_protocol::{
 pub enum ClientTransport {
     /// The relay path. Hands `WsMessage` straight to ewebsock.
     WebSocket(WsSender),
-    /// The direct TCP path. Frames are pushed into the writer task's
-    /// channel; that task takes care of length-prefixing and socket I/O.
-    Tcp(UnboundedSender<TcpFrame>),
+    /// The direct TCP path. Control frames go to the writer task's unbounded
+    /// channel; bulk file chunks go to a separate BOUNDED channel so a large
+    /// download applies backpressure (the streaming task blocks when the
+    /// socket falls behind) instead of buffering the whole file in RAM.
+    Tcp {
+        ctrl: UnboundedSender<TcpFrame>,
+        file: Sender<TcpFrame>,
+    },
 }
 
 impl ClientTransport {
@@ -51,18 +56,27 @@ impl ClientTransport {
     pub fn send(&mut self, msg: WsMessage) {
         match self {
             ClientTransport::WebSocket(ws) => ws.send(msg),
-            ClientTransport::Tcp(tx) => match msg {
+            ClientTransport::Tcp { ctrl, .. } => match msg {
                 WsMessage::Binary(b) => {
-                    let _ = tx.send(TcpFrame::Binary(b.into()));
+                    let _ = ctrl.send(TcpFrame::Binary(b.into()));
                 }
                 WsMessage::Text(t) => {
-                    let _ = tx.send(TcpFrame::Text(t.into()));
+                    let _ = ctrl.send(TcpFrame::Text(t.into()));
                 }
                 // Ping/Pong/Close are handled by the WebSocket framing
                 // layer when present and don't have a meaning on direct
                 // TCP; quietly drop them rather than fabricating messages.
                 _ => {}
             },
+        }
+    }
+
+    /// Clone of the bounded file-chunk sender for streaming large downloads
+    /// off the session loop with backpressure. `None` on the relay path.
+    pub fn file_sender(&self) -> Option<Sender<TcpFrame>> {
+        match self {
+            ClientTransport::Tcp { file, .. } => Some(file.clone()),
+            ClientTransport::WebSocket(_) => None,
         }
     }
 }

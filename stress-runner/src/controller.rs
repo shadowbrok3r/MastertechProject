@@ -254,6 +254,7 @@ impl RunController {
         // sessions with zero stress_test_run / hardware_component records).
         let update_tx_panic = update_tx.clone();
         let running_panic = running_worker.clone();
+        let run_id_panic = run_id.clone();
 
         let join = thread::Builder::new()
             .name("stress-runner-controller".into())
@@ -271,6 +272,22 @@ impl RunController {
                 if let Err(payload) = result {
                     let msg = panic_payload_str(&payload);
                     log::error!("[stress-runner/worker] worker thread panicked: {msg}");
+                    // Finalize a panicked run as aborted so it isn't left in_progress.
+                    if let Some(run_id) = run_id_panic.lock().ok().and_then(|g| g.clone()) {
+                        let fin_msg = format!("worker thread panicked: {msg}");
+                        let _ = runtime::block_on(async move {
+                            StressTestRun::finalize(
+                                &run_id,
+                                RunResult::Aborted,
+                                DbFinishReason::Crashed,
+                                FailureMode::AppError { exit_code: None, message: fin_msg },
+                                RunSummary::default(),
+                                Vec::new(),
+                                None,
+                            )
+                            .await
+                        });
+                    }
                     let _ = update_tx_panic.try_send(RunUpdate::Error {
                         message: format!("worker thread panicked: {msg}"),
                     });

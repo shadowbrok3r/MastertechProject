@@ -1,0 +1,31 @@
+id = "20260717180000__crash_sighting_loaded_modules"
+name = "crash_sighting_loaded_modules"
+state = "completed"
+# Additive: loaded_modules array field + element-wise index on crash_sighting
+# for the fleet co-occurrence query ('driver INSIDE loaded_modules'). The
+# free-form triage blob stays undeclared (SCHEMALESS persists it).
+# Mirrors database/schema/crash_intel.surql. Applying committed file state only:
+# source == target. Paste the `current=` hash from `surrealkit rollout lint`.
+source_schema_hash = "c0f31bb2e41add7358d68bf6796a611713c4d68a5c589d61bc19a66abf5488df"
+target_schema_hash = "c0f31bb2e41add7358d68bf6796a611713c4d68a5c589d61bc19a66abf5488df"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "add_loaded_modules_index"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE loaded_modules ON crash_sighting TYPE array<string> DEFAULT [] PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE loaded_modules.* ON crash_sighting TYPE string PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE csight_loaded ON crash_sighting FIELDS loaded_modules;
+"""
+
+[[steps]]
+id = "drop_loaded_modules_index"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE INDEX IF EXISTS csight_loaded ON crash_sighting;
+REMOVE FIELD IF EXISTS loaded_modules ON crash_sighting;
+"""

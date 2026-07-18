@@ -30,6 +30,20 @@ impl MiniDumpApp {
             self.set_path(i);
         }
         ui.add_space(10.0);
+
+        if let Some(Err(e)) = &self.minidump {
+            ui.colored_label(
+                ui.style().visuals.error_fg_color,
+                format!("Failed to read dump: {e}"),
+            );
+        }
+        if let Some(Err(e)) = &self.kernel_triage {
+            ui.colored_label(
+                ui.style().visuals.error_fg_color,
+                format!("Failed to triage kernel dump: {e}"),
+            );
+        }
+
         ui.horizontal(|ui| {
             ui.label(message);
 

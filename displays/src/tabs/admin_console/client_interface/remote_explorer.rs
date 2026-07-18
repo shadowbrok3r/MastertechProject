@@ -339,8 +339,20 @@ pub struct RemoteExplorer {
     /// Remote paths still to download in the current bulk job.
     download_queue: VecDeque<String>,
     /// Destination folder for a bulk download; `None` for a single file
-    /// (which uses a save-as dialog on completion).
+    /// (whose full save path is chosen up-front into `single_save_path`).
     download_dest: Option<PathBuf>,
+    /// Full save path for a single-file download (preserves a user rename).
+    #[cfg(not(target_arch = "wasm32"))]
+    single_save_path: Option<PathBuf>,
+    /// Open writer for the file currently streaming to disk. Chunks are
+    /// written straight through so a multi-GB download never buffers in RAM.
+    #[cfg(not(target_arch = "wasm32"))]
+    download_writer: Option<std::io::BufWriter<std::fs::File>>,
+    /// Save path of the in-progress download (for the completion message).
+    #[cfg(not(target_arch = "wasm32"))]
+    download_save_path: Option<PathBuf>,
+    /// Bytes written for the in-progress download.
+    download_written: u64,
 }
 
 impl Default for RemoteExplorer {
@@ -413,6 +425,13 @@ impl RemoteExplorer {
             preview_pending: None,
             download_queue: VecDeque::new(),
             download_dest: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            single_save_path: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            download_writer: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            download_save_path: None,
+            download_written: 0,
         }
     }
     
@@ -491,61 +510,78 @@ impl RemoteExplorer {
         self.tools_loading = false;
     }
     
-    /// Handle received file data and save to disk
-    /// Accumulates chunks until is_last_chunk is true, then saves the complete file
+    /// Write a received chunk straight to the open download file. The
+    /// destination is chosen up-front (in `start_next_download`) so no dialog
+    /// blocks mid-transfer and nothing accumulates in RAM.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn handle_file_download(&mut self, data: Vec<u8>, is_last_chunk: bool, download_buffer: &mut Vec<u8>) -> Result<Option<String>, String> {
-        // Get or verify we have a pending download
-        let filename = match &self.pending_download {
-            Some(f) => f.clone(),
-            None => return Err("No pending download".to_string()),
-        };
-        
-        // Accumulate data
-        download_buffer.extend_from_slice(&data);
-        log::info!("Accumulated {} bytes for download, is_last: {}", download_buffer.len(), is_last_chunk);
-        
+    pub fn handle_file_download(&mut self, data: Vec<u8>, is_last_chunk: bool) -> Result<Option<String>, String> {
+        use std::io::Write;
+
+        let writer = self
+            .download_writer
+            .as_mut()
+            .ok_or_else(|| "No active download".to_string())?;
+        writer
+            .write_all(&data)
+            .map_err(|e| format!("Failed to write download: {e}"))?;
+        self.download_written += data.len() as u64;
+
         if !is_last_chunk {
-            // More chunks coming, just return success without message
             return Ok(None);
         }
-        
-        // This is the last chunk - save the file
+
+        // Final chunk: flush, close, and report.
+        let mut writer = self.download_writer.take().unwrap();
+        writer
+            .flush()
+            .map_err(|e| format!("Failed to flush download: {e}"))?;
+        drop(writer);
         self.pending_download = None;
-        let file_data = std::mem::take(download_buffer);
-
-        // Bulk download into a pre-chosen folder writes straight through
-        // with no per-file dialog; a single download still prompts for a
-        // save location.
-        let save_path = if let Some(dir) = &self.download_dest {
-            Some(dir.join(&filename))
-        } else {
-            #[cfg(not(any(target_os = "ios", target_os = "android")))]
-            let picked = rfd::FileDialog::new().set_file_name(&filename).save_file();
-            #[cfg(any(target_os = "ios", target_os = "android"))]
-            let picked = None;
-            picked
-        };
-
-        match save_path {
-            Some(save_path) => match std::fs::write(&save_path, &file_data) {
-                Ok(_) => {
-                    let msg = format!("File saved to: {} ({} bytes)", save_path.display(), file_data.len());
-                    log::info!("{}", msg);
-                    Ok(Some(msg))
-                }
-                Err(e) => {
-                    let msg = format!("Failed to save file: {}", e);
-                    log::error!("{}", msg);
-                    Err(msg)
-                }
-            },
-            None => Err("Download cancelled".to_string()),
+        let written = self.download_written;
+        self.download_written = 0;
+        let path = self.download_save_path.take();
+        match path {
+            Some(p) => {
+                let msg = format!("File saved to: {} ({} bytes)", p.display(), written);
+                log::info!("{msg}");
+                Ok(Some(msg))
+            }
+            None => Ok(Some(format!("File saved ({written} bytes)"))),
         }
     }
-    
+
+    /// Open a download writer at `dest` with no dialog — used by an
+    /// MCP-triggered headless crash-dump fetch. No-op if a download is active.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn begin_headless_download(&mut self, dest: std::path::PathBuf) {
+        if self.download_writer.is_some() {
+            return;
+        }
+        if let Some(parent) = dest.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match std::fs::File::create(&dest) {
+            Ok(file) => {
+                self.download_writer = Some(std::io::BufWriter::with_capacity(1 << 20, file));
+                self.download_save_path = Some(dest);
+                self.download_written = 0;
+                self.pending_download = Some("crash-dumps".to_string());
+            }
+            Err(e) => log::error!("begin_headless_download: failed to open {}: {e}", dest.display()),
+        }
+    }
+
+    /// Abort the in-progress download and drop the partial file writer.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn abort_download(&mut self) {
+        self.download_writer = None;
+        self.download_save_path = None;
+        self.download_written = 0;
+        self.pending_download = None;
+    }
+
     #[cfg(target_arch = "wasm32")]
-    pub fn handle_file_download(&mut self, _data: Vec<u8>, _is_last_chunk: bool, _download_buffer: &mut Vec<u8>) -> Result<Option<String>, String> {
+    pub fn handle_file_download(&mut self, _data: Vec<u8>, _is_last_chunk: bool) -> Result<Option<String>, String> {
         Err("File download not supported in web browser".to_string())
     }
     
@@ -791,6 +827,13 @@ impl RemoteExplorer {
         });
     }
     
+    /// True while a file/crash-dump download is streaming or queued. Used to
+    /// refuse a concurrent download that would clobber the active writer.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn download_in_progress(&self) -> bool {
+        self.download_writer.is_some() || !self.download_queue.is_empty()
+    }
+
     /// Begin downloading a set of remote files. One file uses a save-as
     /// dialog; several prompt once for a destination folder and stream
     /// sequentially into it (the wire protocol carries no per-chunk path,
@@ -800,9 +843,29 @@ impl RemoteExplorer {
         if paths.is_empty() {
             return;
         }
+        // Downloads run one at a time (the wire carries no per-chunk path).
+        // Starting a second mid-transfer would overwrite the active writer and
+        // misroute the first transfer's chunks, so refuse while one is live.
+        if self.download_in_progress() {
+            log::warn!("start_downloads: a download is already in progress; ignoring");
+            return;
+        }
+        // Prompt for the destination NOW, before any transfer is in flight, so
+        // the (brief, user-initiated) dialog never blocks mid-download.
         if paths.len() == 1 {
             self.download_dest = None;
+            #[cfg(not(any(target_os = "ios", target_os = "android")))]
+            {
+                let filename = file_name_of(&paths[0]);
+                match rfd::FileDialog::new().set_file_name(&filename).save_file() {
+                    Some(p) => self.single_save_path = Some(p),
+                    None => return,
+                }
+            }
+            #[cfg(any(target_os = "ios", target_os = "android"))]
+            return;
         } else {
+            self.single_save_path = None;
             #[cfg(not(any(target_os = "ios", target_os = "android")))]
             match rfd::FileDialog::new().pick_folder() {
                 Some(dir) => self.download_dest = Some(dir),
@@ -818,12 +881,74 @@ impl RemoteExplorer {
     #[cfg(target_arch = "wasm32")]
     pub fn start_downloads(&mut self, _paths: Vec<String>, _cmd_tx: &Sender<Cmd>) {}
 
-    /// Pop the next queued path and ask the client for it.
-    fn start_next_download(&mut self, cmd_tx: &Sender<Cmd>) {
-        if let Some(path) = self.download_queue.pop_front() {
-            self.pending_download = Some(file_name_of(&path));
-            let _ = cmd_tx.try_send(Cmd::DownloadRemoteFile(path));
+    /// Prompt for a save location and ask the client to zip + stream all of
+    /// its crash dumps (MEMORY.DMP + Minidump + LiveKernelReports).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn start_crash_dump_download(&mut self, cmd_tx: &Sender<Cmd>) {
+        if self.download_in_progress() {
+            log::warn!("start_crash_dump_download: a download is already in progress");
+            return;
         }
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
+        {
+            let save_path = match rfd::FileDialog::new()
+                .set_file_name("MTech-CrashDumps.zip")
+                .add_filter("zip", &["zip"])
+                .save_file()
+            {
+                Some(p) => p,
+                None => return,
+            };
+            match std::fs::File::create(&save_path) {
+                Ok(file) => {
+                    self.download_writer = Some(std::io::BufWriter::with_capacity(1 << 20, file));
+                    self.download_save_path = Some(save_path);
+                    self.download_written = 0;
+                    self.pending_download = Some("MTech-CrashDumps.zip".to_string());
+                    let _ = cmd_tx.try_send(Cmd::DownloadCrashDumps);
+                }
+                Err(e) => log::error!("Failed to open crash-dump save file: {e}"),
+            }
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn start_crash_dump_download(&mut self, _cmd_tx: &Sender<Cmd>) {}
+
+    /// Pop the next queued path, open its local destination writer, and ask
+    /// the client for it. Chunks then stream straight to that writer.
+    fn start_next_download(&mut self, cmd_tx: &Sender<Cmd>) {
+        let Some(path) = self.download_queue.pop_front() else {
+            return;
+        };
+        let filename = file_name_of(&path);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let save_path = self
+                .single_save_path
+                .take()
+                .or_else(|| self.download_dest.as_ref().map(|d| d.join(&filename)));
+            let Some(save_path) = save_path else {
+                log::error!("start_next_download: no destination chosen for {filename}");
+                return;
+            };
+            match std::fs::File::create(&save_path) {
+                Ok(file) => {
+                    self.download_writer =
+                        Some(std::io::BufWriter::with_capacity(1 << 20, file));
+                    self.download_save_path = Some(save_path);
+                    self.download_written = 0;
+                }
+                Err(e) => {
+                    log::error!("Failed to open {}: {e}", save_path.display());
+                    return;
+                }
+            }
+        }
+
+        self.pending_download = Some(filename);
+        let _ = cmd_tx.try_send(Cmd::DownloadRemoteFile(path));
     }
 
     /// Called after each file finishes; starts the next or ends the job.

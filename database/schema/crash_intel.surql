@@ -41,6 +41,10 @@ DEFINE INDEX csight_signature   ON crash_sighting FIELDS signature;
 DEFINE INDEX csight_connection  ON crash_sighting FIELDS connection_string;
 DEFINE INDEX csight_computer    ON crash_sighting FIELDS computer;
 DEFINE INDEX csight_created     ON crash_sighting FIELDS created_at;
+-- Element-wise index over crash-time loaded modules so the fleet query
+-- "which machines had driver X loaded when they crashed with bugcheck Y"
+-- (`'rtwlane' INSIDE loaded_modules`) is indexed instead of a full scan.
+DEFINE INDEX csight_loaded      ON crash_sighting FIELDS loaded_modules;
 
 DEFINE FIELD signature          ON crash_sighting TYPE record<crash_signature>          PERMISSIONS FULL;
 DEFINE FIELD connection_string  ON crash_sighting TYPE none | string                    PERMISSIONS FULL;
@@ -56,6 +60,11 @@ DEFINE FIELD failure_bucket     ON crash_sighting TYPE none | string            
 DEFINE FIELD process_name       ON crash_sighting TYPE none | string                    PERMISSIONS FULL;
 DEFINE FIELD caused_by          ON crash_sighting TYPE none | string                    PERMISSIONS FULL;
 DEFINE FIELD raw_excerpt        ON crash_sighting TYPE string DEFAULT ''                PERMISSIONS FULL;
+-- Normalized (module_stem) names of every module loaded at crash time; the
+-- queryable co-occurrence asset (indexed by csight_loaded). The free-form
+-- `triage` blob stays undeclared — SCHEMALESS persists it verbatim.
+DEFINE FIELD loaded_modules     ON crash_sighting TYPE array<string> DEFAULT []         PERMISSIONS FULL;
+DEFINE FIELD loaded_modules.*   ON crash_sighting TYPE string                           PERMISSIONS FULL;
 DEFINE FIELD created_at         ON crash_sighting TYPE datetime DEFAULT time::now()     PERMISSIONS FULL;
 
 -- Diagnosis + fix recorded against a signature.

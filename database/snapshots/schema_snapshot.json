@@ -31,7 +31,7 @@
     },
     {
       "path": "database/schema/crash_intel.surql",
-      "hash": "346423ed7d188a1973e69df0de54e287d0c9dee5e52f4c8fff0d66855e54a9bc"
+      "hash": "36b650b28a6ae01c292ba7e9db6ce09a228b594709d9885a338aeb6bdb95b8fe"
     },
     {
       "path": "database/schema/customer.surql",
