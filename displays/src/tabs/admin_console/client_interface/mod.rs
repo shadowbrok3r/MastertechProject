@@ -201,6 +201,8 @@ pub struct WebSocketClient {
     last_session_bootstrap: Option<Instant>,
     /// Set after remote self-update so the next reconnect re-bootstraps immediately.
     force_session_rebootstrap: bool,
+    /// True when the client reported a mismatched `Cmd` shape fingerprint.
+    pub cmd_protocol_mismatch: bool,
 }
 
 impl Drop for WebSocketClient {
@@ -378,6 +380,7 @@ Get-WmiObject")
             self_update_rx: None,
             last_session_bootstrap: None,
             force_session_rebootstrap: false,
+            cmd_protocol_mismatch: false,
         }
     }
 

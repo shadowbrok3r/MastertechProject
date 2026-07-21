@@ -67,80 +67,11 @@ pub struct QcMcpState {
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct NoArgs {}
 
-/// JsonSchema-friendly DTO for `stress_kit::Stressor`.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum StressorKind {
-    Cpu,
-    Memory,
-    Disk,
-    Matrix,
-    Memcpy,
-    Bitops,
-    Cache,
-    Vm,
-    Stream,
-    Branch,
-    Atomic,
-    Mutex,
-    Switch,
-    Prime,
-    Fp,
-    Hash,
-    Prefetch,
-    Icache,
-    Tsc,
-    MemTest,
-    CpuVerify,
-    Linpack,
-    Psu,
-    Gpu,
-    GpuMatmul,
-    GpuVram,
-    GpuPcie,
-    Combined,
-}
-
-impl From<StressorKind> for Stressor {
-    fn from(k: StressorKind) -> Self {
-        match k {
-            StressorKind::Cpu => Stressor::Cpu,
-            StressorKind::Memory => Stressor::Memory,
-            StressorKind::Disk => Stressor::Disk,
-            StressorKind::Matrix => Stressor::Matrix,
-            StressorKind::Memcpy => Stressor::Memcpy,
-            StressorKind::Bitops => Stressor::Bitops,
-            StressorKind::Cache => Stressor::Cache,
-            StressorKind::Vm => Stressor::Vm,
-            StressorKind::Stream => Stressor::Stream,
-            StressorKind::Branch => Stressor::Branch,
-            StressorKind::Atomic => Stressor::Atomic,
-            StressorKind::Mutex => Stressor::Mutex,
-            StressorKind::Switch => Stressor::Switch,
-            StressorKind::Prime => Stressor::Prime,
-            StressorKind::Fp => Stressor::Fp,
-            StressorKind::Hash => Stressor::Hash,
-            StressorKind::Prefetch => Stressor::Prefetch,
-            StressorKind::Icache => Stressor::Icache,
-            StressorKind::Tsc => Stressor::Tsc,
-            StressorKind::MemTest => Stressor::MemTest,
-            StressorKind::CpuVerify => Stressor::CpuVerify,
-            StressorKind::Linpack => Stressor::Linpack,
-            StressorKind::Psu => Stressor::Psu,
-            StressorKind::Gpu => Stressor::Gpu,
-            StressorKind::GpuMatmul => Stressor::GpuMatmul,
-            StressorKind::GpuVram => Stressor::GpuVram,
-            StressorKind::GpuPcie => Stressor::GpuPcie,
-            StressorKind::Combined => Stressor::Combined,
-        }
-    }
-}
-
 /// One stage of a scenario submitted via MCP.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct StressStageArgs {
     pub label: String,
-    pub stressor: StressorKind,
+    pub stressor: Stressor,
     /// `0` means "use one worker per logical CPU".
     #[serde(default)]
     pub threads: usize,
@@ -422,7 +353,7 @@ impl QcToolProvider {
             .iter()
             .map(|s| RunStage {
                 label: s.label.clone(),
-                stressor: s.stressor.into(),
+                stressor: s.stressor,
                 threads: s.threads,
                 duration_secs: s.duration_secs.max(1),
                 memory_cap_mb: s.memory_cap_mb,
@@ -475,8 +406,7 @@ impl QcToolProvider {
         &self,
         Parameters(args): Parameters<RunStressorArgs>,
     ) -> Result<CallToolResult, ErrorData> {
-        let kind = args.stressor;
-        let stressor: Stressor = kind.into();
+        let stressor: Stressor = args.stressor;
         let duration_secs = args.duration_secs.max(1);
         let label = stressor.label().to_string();
         let unit = stressor.throughput_unit().to_string();
@@ -1029,41 +959,11 @@ impl QcToolProvider {
         &self,
         Parameters(_p): Parameters<NoArgs>,
     ) -> Result<CallToolResult, ErrorData> {
-        let kinds = [
-            StressorKind::Cpu,
-            StressorKind::Memory,
-            StressorKind::Disk,
-            StressorKind::Matrix,
-            StressorKind::Memcpy,
-            StressorKind::Bitops,
-            StressorKind::Cache,
-            StressorKind::Vm,
-            StressorKind::Stream,
-            StressorKind::Branch,
-            StressorKind::Atomic,
-            StressorKind::Mutex,
-            StressorKind::Switch,
-            StressorKind::Prime,
-            StressorKind::Fp,
-            StressorKind::Hash,
-            StressorKind::Prefetch,
-            StressorKind::Icache,
-            StressorKind::Tsc,
-            StressorKind::MemTest,
-            StressorKind::CpuVerify,
-            StressorKind::Linpack,
-            StressorKind::Psu,
-            StressorKind::Gpu,
-            StressorKind::GpuMatmul,
-            StressorKind::GpuVram,
-            StressorKind::GpuPcie,
-        ];
-        let rows: Vec<serde_json::Value> = kinds
+        let rows: Vec<serde_json::Value> = Stressor::all()
             .iter()
-            .map(|k| {
-                let s: Stressor = (*k).into();
+            .map(|s| {
                 serde_json::json!({
-                    "kind": serde_json::to_value(k).unwrap_or(serde_json::Value::Null),
+                    "kind": s.as_str(),
                     "label": s.label(),
                     "throughput_unit": s.throughput_unit(),
                     "detects_errors": s.detects_errors(),
@@ -1164,7 +1064,7 @@ impl QcToolProvider {
             .iter()
             .map(|s| RunStage {
                 label: s.label.clone(),
-                stressor: s.stressor.into(),
+                stressor: s.stressor,
                 threads: s.threads,
                 duration_secs: 0,
                 memory_cap_mb: s.memory_cap_mb,
@@ -1921,7 +1821,7 @@ fn build_reasoning(
 /// One single-stressor invocation.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct RunStressorArgs {
-    pub stressor: StressorKind,
+    pub stressor: Stressor,
     /// 0 = one worker per logical CPU.
     #[serde(default)]
     pub threads: usize,

@@ -418,77 +418,58 @@ pub fn parse_kernel_triage_payload(payload: &serde_json::Value) -> Vec<ParsedCra
         .collect()
 }
 
-/// Convert one `KernelDumpTriage` JSON object into a `ParsedCrash`.
+/// Convert one `KernelDumpTriage` JSON object into a `ParsedCrash` via typed
+/// deserialization. The original `Value` is persisted verbatim as `triage`.
 fn parsed_crash_from_triage(
     t: &serde_json::Value,
     dump_name: Option<String>,
 ) -> Option<ParsedCrash> {
-    let bugcheck_code = normalize_bugcheck_code(&json_str(t, "bugcheck_code"))?;
-    let bugcheck_name = json_str(t, "bugcheck_name");
-    let rip_module = t.get("rip_module").and_then(|v| v.as_str()).map(str::to_string);
-    let blamed_module = t.get("blamed_module").and_then(|v| v.as_str()).map(str::to_string);
-    let module = blamed_module
+    let kd: dump_triage::KernelDumpTriage = serde_json::from_value(t.clone()).ok()?;
+    let bugcheck_code = normalize_bugcheck_code(&kd.bugcheck_code)?;
+    let module = kd
+        .blamed_module
         .clone()
-        .or_else(|| rip_module.clone())
+        .or_else(|| kd.rip_module.clone())
         .unwrap_or_else(|| "unknown".to_string());
 
-    let drivers = t.get("drivers").and_then(|d| d.as_array());
-
     // Byte offset of RIP within its module, when both are known.
-    let offset = match (t.get("rip").and_then(|v| v.as_str()), &rip_module, drivers) {
-        (Some(rip), Some(rip_mod), Some(arr)) => {
+    let offset = match (kd.rip.as_deref(), &kd.rip_module) {
+        (Some(rip), Some(rip_mod)) => {
             let rip = u64::from_str_radix(rip.trim_start_matches("0x"), 16).unwrap_or(0);
-            arr.iter()
-                .find(|d| d.get("name").and_then(|n| n.as_str()) == Some(rip_mod.as_str()))
-                .and_then(|d| d.get("base").and_then(|b| b.as_u64()))
-                .map(|base| format!("+{:#x}", rip.saturating_sub(base)))
+            kd.drivers
+                .iter()
+                .find(|d| d.name == *rip_mod)
+                .map(|d| format!("+{:#x}", rip.saturating_sub(d.base)))
         }
         _ => None,
     };
 
-    let loaded_modules = drivers
-        .map(|arr| {
-            let mut v: Vec<String> = arr
-                .iter()
-                .filter_map(|d| d.get("name").and_then(|n| n.as_str()))
-                .map(module_stem)
-                .collect();
-            v.sort();
-            v.dedup();
-            v
-        })
-        .unwrap_or_default();
+    let mut loaded_modules: Vec<String> = kd.drivers.iter().map(|d| module_stem(&d.name)).collect();
+    loaded_modules.sort();
+    loaded_modules.dedup();
 
-    let dump_time = t
-        .get("system_time_unix")
-        .and_then(|v| v.as_i64())
+    let dump_time = kd
+        .system_time_unix
         .and_then(|s| chrono::DateTime::<chrono::Utc>::from_timestamp(s, 0))
         .map(|d| d.format("%m/%d/%Y %H:%M UTC").to_string());
 
-    let params = t
-        .get("bugcheck_parameters")
-        .and_then(|p| p.as_array())
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        })
-        .unwrap_or_default();
+    let params = kd.bugcheck_parameters.join(", ");
     let raw_excerpt = format!(
-        "{bugcheck_name} ({bugcheck_code}) params: {params} | rip: {} | blame: {} [dump-triage]",
-        t.get("rip").and_then(|v| v.as_str()).unwrap_or("-"),
-        blamed_module.as_deref().unwrap_or("-"),
+        "{} ({}) params: {params} | rip: {} | blame: {} [dump-triage]",
+        kd.bugcheck_name,
+        kd.bugcheck_code,
+        kd.rip.as_deref().unwrap_or("-"),
+        kd.blamed_module.as_deref().unwrap_or("-"),
     );
 
     Some(ParsedCrash {
         bugcheck_code,
-        bugcheck_name,
+        bugcheck_name: kd.bugcheck_name.clone(),
         module,
         offset,
         process_name: None,
         failure_bucket: None,
-        caused_by: blamed_module,
+        caused_by: kd.blamed_module.clone(),
         dump_name,
         dump_time,
         raw_excerpt,
@@ -857,5 +838,43 @@ Probably caused by : rtwlane.sys ( rtwlane+18e2b )\n";
         assert_eq!(module_stem("rtwlane.sys"), "rtwlane");
         assert_eq!(module_stem("RTWLANE.INF"), "rtwlane");
         assert_eq!(module_stem("nt"), "nt");
+    }
+
+    /// A wire-format `dump-triage` payload deserializes through the typed path and
+    /// preserves the original triage blob verbatim on the sighting.
+    #[test]
+    fn typed_triage_extraction_preserves_contract() {
+        let triage = serde_json::json!({
+            "dump_type": 4,
+            "dump_type_name": "triage_minidump",
+            "bugcheck_code": "0x133",
+            "bugcheck_name": "DPC_WATCHDOG_VIOLATION",
+            "bugcheck_parameters": ["0x1", "0x1e00"],
+            "rip": "0xfffff80320000100",
+            "number_processors": 16,
+            "registers": [["rip", "0xfffff80320000100"]],
+            "system_time_unix": 1767225600i64,
+            "drivers": [{
+                "name": "rtwlane.sys",
+                "path": "\\SystemRoot\\system32\\drivers\\rtwlane.sys",
+                "base": 0xfffff80320000000u64,
+                "size": 1048576u64,
+                "timestamp": null
+            }],
+            "rip_module": "rtwlane.sys",
+            "rip_in_kernel_image": false,
+            "blamed_module": "rtwlane.sys"
+        });
+        let payload = serde_json::json!({ "dumps": [{ "dump_name": "070126-01.dmp", "triage": triage.clone() }] });
+        let crashes = parse_kernel_triage_payload(&payload);
+        assert_eq!(crashes.len(), 1);
+        let c = &crashes[0];
+        assert_eq!(c.bugcheck_code, "0x133");
+        assert_eq!(c.bugcheck_name, "DPC_WATCHDOG_VIOLATION");
+        assert_eq!(c.module, "rtwlane.sys");
+        assert_eq!(c.offset.as_deref(), Some("+0x100"));
+        assert_eq!(c.loaded_modules, vec!["rtwlane".to_string()]);
+        assert_eq!(c.dump_name.as_deref(), Some("070126-01.dmp"));
+        assert_eq!(c.triage.as_ref(), Some(&triage));
     }
 }

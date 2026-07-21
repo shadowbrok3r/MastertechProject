@@ -431,7 +431,7 @@ impl WebSocketClient {
                     },
                     FileSystemAction::RequestNewContents(directory) => {
                         log::info!("web_console/websockets.rs -> RequestNewContents -> {directory}");
-                        log::info!("ACTION TO SEND: {command:?}");
+                        log::info!("ACTION TO SEND: {}", crate::shape_fp::redacted(&command));
                         self.transport.send(WsMessage::Binary(serialize_command(&command)));
                     }
                     FileSystemAction::Execute(label) => { 
@@ -966,7 +966,31 @@ impl WebSocketClient {
             self.transport.close();
             return;
         }
-        
+
+        // Drift sentinel: __SHAPE_FP_MISMATCH__|<peer_fp>|<peer_ver>|<local_fp>|<local_ver>.
+        if let Some(rest) = text.strip_prefix("__SHAPE_FP_MISMATCH__|") {
+            let parts: Vec<&str> = rest.split('|').collect();
+            let (peer_fp, peer_ver, local_fp, local_ver) = match parts.as_slice() {
+                [pf, pv, lf, lv] => (*pf, *pv, *lf, *lv),
+                _ => ("?", "?", "?", "?"),
+            };
+            self.cmd_protocol_mismatch = true;
+            self.history.push(History {
+                from: "System".to_string(),
+                message: format!(
+                    "Client build is out of date (Cmd protocol mismatch): client fp={peer_fp} \
+                     ver={peer_ver} vs admin fp={local_fp} ver={local_ver}. Push a self-update."
+                ),
+                timestamp: chrono::Local::now().to_rfc3339(),
+            });
+            let _ = crate::get_toast_sender().try_send(crate::ToastMessage::Warning(
+                "Client build is out of date (Cmd protocol mismatch) — push a self-update"
+                    .to_string(),
+            ));
+            return;
+        }
+
+
         // Handle connection state notifications from WebSocket server
         match text.as_str() {
             "CLIENT_CONNECTED" => {

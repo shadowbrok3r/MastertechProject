@@ -16,7 +16,7 @@ use stress_runner::{
     RunController, RunPlan, RunSpec, RunStage, RunUpdate, RunVerdict, Stressor, TelemetryAgent,
     TestTool,
 };
-use stress_runner::{RecordId, StressKitStressor};
+use stress_runner::RecordId;
 
 use crate::charts::ChartBoard;
 
@@ -237,8 +237,8 @@ impl StressorChoice {
         }
     }
 
-    pub fn to_db(self) -> StressKitStressor {
-        stress_runner::stressor_to_db(self.to_stressor())
+    pub fn to_db(self) -> String {
+        self.to_stressor().as_str().to_string()
     }
 
     pub fn throughput_unit(self) -> &'static str {

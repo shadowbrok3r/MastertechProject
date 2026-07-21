@@ -93,6 +93,12 @@ pub struct ConnectedClient {
     #[serde(default)]
     #[surreal(default)]
     pub client_kind: ClientKind,
+    /// Capability markers advertised by a `build_worker` (e.g.
+    /// `multifile`). Empty on customer-machine rows and pre-multifile
+    /// workers, so old rows deserialize without a backfill.
+    #[serde(default)]
+    #[surreal(default)]
+    pub capabilities: Vec<String>,
 }
 
 impl Default for ConnectedClient {
@@ -113,6 +119,7 @@ impl Default for ConnectedClient {
             tcp_port: None,
             customer_locked: false,
             client_kind: ClientKind::Machine,
+            capabilities: Vec::new(),
         }
     }
 }

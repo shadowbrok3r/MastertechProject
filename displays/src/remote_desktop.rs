@@ -8,6 +8,7 @@
 //! travel prefixed with [`crate::DESKTOP_INPUT_TAG`].
 
 use serde::{Deserialize, Serialize};
+use facet::Facet;
 
 /// Encoding of the pixel data in a [`DesktopFrameMessage`].
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,7 +69,7 @@ pub enum DesktopInputEvent {
 
 /// A monitor available on the client, reported in response to
 /// [`crate::Cmd::DesktopListMonitors`].
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Facet)]
 pub struct DesktopMonitorInfo {
     pub id: u32,
     pub name: String,

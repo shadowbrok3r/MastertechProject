@@ -31,6 +31,7 @@
 //! - `0x02` — UTF-8 text command.
 //! - `0x03` — Ping (v2+). Payload: `[u64 LE seq][u64 LE epoch_ms]` (16 bytes).
 //! - `0x04` — Pong (v2+). Echoes the ping payload verbatim.
+//! - `0x0B` — Shape fingerprint. Payload: `[u8 kind][u64 LE fp][UTF-8 version]`.
 //!
 //! Unknown tags MUST be ignored (logged at warn) rather than tearing down
 //! the session — this is what lets a v2 master talk to a v1 agent without
@@ -42,6 +43,16 @@ pub const FRAME_TAG_TEXT: u8 = 0x02;
 pub const FRAME_TAG_PING: u8 = 0x03;
 /// Pong (agent → master, in response to [`FRAME_TAG_PING`]).
 pub const FRAME_TAG_PONG: u8 = 0x04;
+/// Shape fingerprint of `Cmd`, exchanged once after the handshake so each
+/// side can detect a peer built from drifted source. Log-only on the agent,
+/// surfaces a self-update hint on the admin. Payload built by
+/// [`encode_shape_fp`].
+pub const FRAME_TAG_SHAPE_FP: u8 = 0x0B;
+
+/// `kind` byte marking a [`FRAME_TAG_SHAPE_FP`] frame as sent by the admin.
+pub const SHAPE_FP_KIND_ADMIN: u8 = 0x01;
+/// `kind` byte marking a [`FRAME_TAG_SHAPE_FP`] frame as sent by the agent.
+pub const SHAPE_FP_KIND_AGENT: u8 = 0x02;
 
 /// Magic preamble that opens the handshake. Cheap rejection of port-scan
 /// probes before any deserialization.
@@ -90,6 +101,32 @@ pub fn decode_ping_payload(bytes: &[u8]) -> Option<(u64, u64)> {
     let seq = u64::from_le_bytes(bytes[0..8].try_into().ok()?);
     let ts = u64::from_le_bytes(bytes[8..16].try_into().ok()?);
     Some((seq, ts))
+}
+
+/// Build a shape-fingerprint payload: `[u8 kind][u64 LE fp][UTF-8 version]`.
+/// The version has no length prefix — it runs to the end of the frame.
+#[inline]
+pub fn encode_shape_fp(kind: u8, fp: u64, version: &str) -> Vec<u8> {
+    let vb = version.as_bytes();
+    let mut out = Vec::with_capacity(9 + vb.len());
+    out.push(kind);
+    out.extend_from_slice(&fp.to_le_bytes());
+    out.extend_from_slice(vb);
+    out
+}
+
+/// Inverse of [`encode_shape_fp`]. Returns `None` when the payload is too
+/// short to hold the kind + fingerprint or the version bytes aren't UTF-8,
+/// so callers can ignore a malformed frame rather than tear the session down.
+#[inline]
+pub fn decode_shape_fp(bytes: &[u8]) -> Option<(u8, u64, String)> {
+    if bytes.len() < 9 {
+        return None;
+    }
+    let kind = bytes[0];
+    let fp = u64::from_le_bytes(bytes[1..9].try_into().ok()?);
+    let version = core::str::from_utf8(&bytes[9..]).ok()?.to_string();
+    Some((kind, fp, version))
 }
 
 /// Apply `SO_KEEPALIVE` + `TCP_NODELAY` to a freshly-accepted or
@@ -164,6 +201,7 @@ pub mod preboot {
     /// Mirrors `ratatui::style::Color` so a cell's color survives the wire
     /// without pulling ratatui into firmware's wire crate.
     #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+    #[cfg_attr(feature = "fingerprint", derive(facet::Facet), repr(u8))]
     pub enum PbColor {
         Reset,
         Black,
@@ -188,6 +226,7 @@ pub mod preboot {
 
     /// One terminal cell: its grapheme, colors, and ratatui modifier bits.
     #[derive(Serialize, Deserialize, Clone, Debug)]
+    #[cfg_attr(feature = "fingerprint", derive(facet::Facet))]
     pub struct PreBootCell {
         pub symbol: String,
         pub fg: PbColor,
@@ -197,6 +236,7 @@ pub mod preboot {
 
     /// A full terminal frame.
     #[derive(Serialize, Deserialize, Clone, Debug)]
+    #[cfg_attr(feature = "fingerprint", derive(facet::Facet))]
     pub struct PreBootFrame {
         pub frame: u64,
         pub cols: u16,
@@ -206,6 +246,7 @@ pub mod preboot {
 
     /// Lossy key code — the subset firmware's `terminput` loop can consume.
     #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+    #[cfg_attr(feature = "fingerprint", derive(facet::Facet), repr(u8))]
     pub enum PbKeyCode {
         Char(char),
         Enter,
@@ -226,6 +267,7 @@ pub mod preboot {
     }
 
     #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+    #[cfg_attr(feature = "fingerprint", derive(facet::Facet))]
     pub struct PreBootKey {
         pub code: PbKeyCode,
         pub ctrl: bool,
@@ -235,6 +277,7 @@ pub mod preboot {
 
     /// An event from the viewer to the firmware app.
     #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+    #[cfg_attr(feature = "fingerprint", derive(facet::Facet), repr(u8))]
     pub enum PreBootEvent {
         Key(PreBootKey),
         MouseClick { x: u16, y: u16 },
@@ -245,6 +288,7 @@ pub mod preboot {
     /// plugin id (firmware fetches it) or an absolute/relative URL; empty runs
     /// the embedded demo. `tool` empty means "first advertised tool".
     #[derive(Serialize, Deserialize, Clone, Debug, Default)]
+    #[cfg_attr(feature = "fingerprint", derive(facet::Facet))]
     pub struct PbPluginRun {
         pub source: String,
         pub tool: String,
@@ -253,6 +297,7 @@ pub mod preboot {
 
     /// Firmware → console plugin outcome.
     #[derive(Serialize, Deserialize, Clone, Debug, Default)]
+    #[cfg_attr(feature = "fingerprint", derive(facet::Facet))]
     pub struct PbPluginResult {
         pub ok: bool,
         pub id: String,
@@ -268,6 +313,7 @@ pub mod preboot {
 
     /// Console → firmware stream gate.
     #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default)]
+    #[cfg_attr(feature = "fingerprint", derive(facet::Facet))]
     pub struct PbStreamCtl {
         pub stream: bool,
     }
@@ -382,6 +428,71 @@ pub mod preboot {
     }
 }
 
+#[cfg(feature = "fingerprint")]
+pub mod shape_fp;
+
+// Pinned structural fingerprints of the preboot wire mirrors. Bump a pin
+// deliberately when the mirrored ratatui/terminput shape changes on the wire.
+#[cfg(all(test, feature = "fingerprint"))]
+mod preboot_shape_fp {
+    use super::preboot::*;
+    use crate::shape_fp::shape_fingerprint;
+
+    // Mirrors ratatui::style::Color.
+    #[test]
+    fn pb_color_pin() {
+        assert_eq!(shape_fingerprint::<PbColor>(), 0x0a68_c6d9_fd03_bf4b);
+    }
+
+    // Mirrors the terminput/crossterm KeyCode subset.
+    #[test]
+    fn pb_key_code_pin() {
+        assert_eq!(shape_fingerprint::<PbKeyCode>(), 0x780a_8389_35f5_29ab);
+    }
+
+    // Mirrors the terminput/crossterm input Event.
+    #[test]
+    fn pre_boot_event_pin() {
+        assert_eq!(shape_fingerprint::<PreBootEvent>(), 0x358c_711f_5281_4666);
+    }
+
+    // Mirrors ratatui::buffer::Cell.
+    #[test]
+    fn pre_boot_cell_pin() {
+        assert_eq!(shape_fingerprint::<PreBootCell>(), 0x90f6_bd5e_85d2_437c);
+    }
+
+    // Mirrors a ratatui::buffer::Buffer frame of cells.
+    #[test]
+    fn pre_boot_frame_pin() {
+        assert_eq!(shape_fingerprint::<PreBootFrame>(), 0xc22a_bddf_43bd_a574);
+    }
+
+    // Mirrors crossterm::event::KeyEvent (code + modifier flags).
+    #[test]
+    fn pre_boot_key_pin() {
+        assert_eq!(shape_fingerprint::<PreBootKey>(), 0xbf87_b4d4_9df4_beab);
+    }
+
+    // Firmware plugin-run wire; no ratatui counterpart.
+    #[test]
+    fn pb_plugin_run_pin() {
+        assert_eq!(shape_fingerprint::<PbPluginRun>(), 0x7224_27b5_2772_56c7);
+    }
+
+    // Firmware plugin-result wire; no ratatui counterpart.
+    #[test]
+    fn pb_plugin_result_pin() {
+        assert_eq!(shape_fingerprint::<PbPluginResult>(), 0xb2ca_f75a_d3e2_f0bc);
+    }
+
+    // Firmware stream-gate wire; no ratatui counterpart.
+    #[test]
+    fn pb_stream_ctl_pin() {
+        assert_eq!(shape_fingerprint::<PbStreamCtl>(), 0xfce4_0c16_a7f4_104c);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -414,6 +525,19 @@ mod tests {
         assert!(decode_ping_payload(&[]).is_none());
         assert!(decode_ping_payload(&[0u8; 15]).is_none());
         assert!(decode_ping_payload(&[0u8; 17]).is_none());
+    }
+
+    #[test]
+    fn shape_fp_roundtrip_and_reject() {
+        let bytes = encode_shape_fp(SHAPE_FP_KIND_AGENT, 0x43d1_b51a_200b_ddd6, "0.1.0");
+        let (kind, fp, ver) = decode_shape_fp(&bytes).unwrap();
+        assert_eq!(kind, SHAPE_FP_KIND_AGENT);
+        assert_eq!(fp, 0x43d1_b51a_200b_ddd6);
+        assert_eq!(ver, "0.1.0");
+        // Empty version is valid (frame remainder may be empty).
+        assert_eq!(decode_shape_fp(&encode_shape_fp(1, 7, "")), Some((1, 7, String::new())));
+        assert!(decode_shape_fp(&[]).is_none());
+        assert!(decode_shape_fp(&[0u8; 8]).is_none());
     }
 
     #[test]

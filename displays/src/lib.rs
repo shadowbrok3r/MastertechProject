@@ -4,6 +4,7 @@ use crossbeam::channel::{Receiver, Sender};
 use bincode::{config::standard, serde::*};
 use modals::task_modal::ModalAction;
 use serde::{Deserialize, Serialize};
+use facet::Facet;
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
 use database::schema::RecordId;
@@ -26,6 +27,7 @@ pub mod pages;
 pub mod chats;
 pub mod tabs;
 pub mod ai;
+pub mod shape_fp;
 
 pub use platform::PlatformSpawner;
 
@@ -367,7 +369,8 @@ pub trait DisplayModal {
 }
 
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Facet)]
+#[repr(u8)]
 pub enum Cmd {
     LiveData,
     TaskManager,
@@ -419,7 +422,7 @@ pub enum Cmd {
         error: Option<String>,
     },
     /// File data chunk response (data, is_last_chunk)
-    FileChunk(Vec<u8>, bool),
+    FileChunk(#[facet(sensitive)] Vec<u8>, bool),
     /// Execute/open a file on the remote machine
     ExecuteRemoteFile(String),
     /// Request file content for text preview
@@ -427,11 +430,11 @@ pub enum Cmd {
     /// Response with file content for preview (path, content)
     FilePreviewContent(String, String),
     /// Upload a file to the remote client (destination_path, data)
-    UploadToClient(String, Vec<u8>),
+    UploadToClient(String, #[facet(sensitive)] Vec<u8>),
     /// Request a thumbnail for an image file
     RequestThumbnail(String),
     /// Response with thumbnail data (path, png_bytes)
-    ThumbnailResponse(String, Vec<u8>),
+    ThumbnailResponse(String, #[facet(sensitive)] Vec<u8>),
     /// Save edited file content to remote (path, content)
     SaveRemoteFile(String, String),
     /// Response indicating save result
@@ -558,7 +561,7 @@ pub enum Cmd {
 
     /// Load a WASM plugin on the receiving Mastertech instance.
     /// Sent from admin console → remote client to hot-deploy a plugin without recompiling.
-    LoadWasmPlugin { plugin_id: String, wasm_bytes: Vec<u8> },
+    LoadWasmPlugin { plugin_id: String, #[facet(sensitive)] wasm_bytes: Vec<u8> },
 
     /// Response after a WASM plugin load attempt.
     LoadWasmPluginResult { plugin_id: String, success: bool, message: String },
@@ -573,6 +576,7 @@ pub enum Cmd {
         filename: String,
         chunk_index: u32,
         total_chunks: u32,
+        #[facet(sensitive)]
         data: Vec<u8>,
     },
 
@@ -593,6 +597,7 @@ pub enum Cmd {
     MastertechSelfUpdateChunk {
         chunk_index: u32,
         total_chunks: u32,
+        #[facet(sensitive)]
         data: Vec<u8>,
     },
 
@@ -682,6 +687,7 @@ pub enum Cmd {
     CompilePluginResult {
         job_id: String,
         success: bool,
+        #[facet(sensitive)]
         wasm_bytes: Option<Vec<u8>>,
         stdout: String,
         stderr: String,
@@ -766,7 +772,7 @@ pub enum Cmd {
 
 /// One stage/lane of a remote stress scenario or concurrent run.
 /// Wire-mirror of the MCP `ScenarioStageParam`; the client maps `stressor` → `stress_runner::Stressor`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Facet)]
 pub struct RemoteScenarioStage {
     pub stressor: String,
     pub duration_secs: u64,
@@ -783,7 +789,7 @@ pub const REMOTE_SCENARIO_RESULT_NAME: &str = "stress_scenario_run_remote";
 /// RemoteScriptResult name emitted by the client for a `RunRemoteConcurrent`; matches the admin waiter.
 pub const REMOTE_CONCURRENT_RESULT_NAME: &str = "stress_concurrent_run_remote";
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Facet)]
 pub struct EventLogEntry {
     pub level: String,
     pub time: String,
@@ -802,7 +808,7 @@ pub struct EventLogEntry {
 /// the uninstall round-trip, since `DisplayName` can be edited
 /// post-install and isn't unique across `WOW6432Node` /
 /// `LOCAL_MACHINE` collisions.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Facet)]
 pub struct InstalledProgram {
     /// Registry subkey name — the canonical id we pass back as
     /// the argument to `Cmd::UninstallProgram`.
@@ -836,7 +842,7 @@ pub struct InstalledProgram {
     pub is_wow6432: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Facet)]
 pub struct WindowsService {
     pub name: String,
     pub display_name: String,
@@ -845,7 +851,8 @@ pub struct WindowsService {
     pub pid: Option<u32>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Facet)]
+#[repr(u8)]
 pub enum ServiceActionType {
     Start,
     Stop,
@@ -853,7 +860,7 @@ pub enum ServiceActionType {
     SetStartType(String),
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Facet)]
 pub struct ScheduledTask {
     pub name: String,
     pub path: String,
@@ -865,7 +872,7 @@ pub struct ScheduledTask {
     pub actions: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Facet)]
 pub struct RegistryKeyInfo {
     pub name: String,
     pub path: String,
@@ -873,14 +880,15 @@ pub struct RegistryKeyInfo {
     pub value_count: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Facet)]
 pub struct RegistryValueEntry {
     pub name: String,
     pub kind: String,
     pub data: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Facet)]
+#[repr(u8)]
 pub enum RegistryEdit {
     SetValue { path: String, name: String, kind: String, data: String },
     DeleteValue { path: String, name: String },
@@ -890,7 +898,7 @@ pub enum RegistryEdit {
 
 // --- Startup Apps ---
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Facet)]
 pub struct StartupApp {
     pub name: String,
     pub command: String,
@@ -899,7 +907,7 @@ pub struct StartupApp {
     pub source: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Facet)]
 pub struct RemoteScriptItem {
     pub name: String,
     pub category: String,
@@ -907,7 +915,8 @@ pub struct RemoteScriptItem {
     pub content: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Facet)]
+#[repr(u8)]
 pub enum RemoteScriptStatus {
     Running,
     Success,
@@ -915,7 +924,7 @@ pub enum RemoteScriptStatus {
 }
 
 /// A remote directory entry for filesystem browsing
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Facet)]
 pub struct RemoteDirEntry {
     /// File or folder name
     pub name: String,
@@ -930,7 +939,8 @@ pub struct RemoteDirEntry {
 }
 
 /// Shell command type for cross-platform shell execution
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Facet)]
+#[repr(u8)]
 pub enum ShellCommandType {
     /// Windows PowerShell
     PowerShell,
@@ -944,13 +954,14 @@ pub enum ShellCommandType {
     Auto,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Facet)]
+#[repr(u8)]
 pub enum FileSystemAction {
     Execute(String),
     CopyToClient(String),
     CopyFromClient(String),
     Delete(String),
-    Select((Modifiers, String)),
+    Select(#[facet(opaque)] (Modifiers, String)),
     PreviewedFile(String),
     EnterDirectory(String),
     ExpandDirectory(String),

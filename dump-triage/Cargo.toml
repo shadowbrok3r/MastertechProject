@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+facet = { workspace = true, optional = true }
 # Full/BMP/kernel/live/complete kernel dumps (rejects DumpType 4 triage dumps,
 # which the fixed-offset parser here handles instead).
 kdmp-parser = { version = "0.8", optional = true }
@@ -13,3 +14,4 @@ kdmp-parser = { version = "0.8", optional = true }
 [features]
 default = ["kdmp"]
 kdmp = ["dep:kdmp-parser"]
+facet = ["dep:facet"]

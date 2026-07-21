@@ -1403,7 +1403,7 @@ fn stage_summary_from_stats(
     ScenarioStageSummary {
         index: stats.index,
         label: stats.label.clone(),
-        stressor: stressor.label().to_ascii_lowercase(),
+        stressor: stressor.as_str().to_string(),
         threads,
         duration_planned_secs: planned_secs,
         duration_actual_secs: elapsed_secs,
@@ -1750,7 +1750,7 @@ impl SummaryAccumulator {
         // HCI/TM5-shaped rubric fields.
         if matches!(
             tool,
-            TestTool::StressKit { stressor: database::schema::StressKitStressor::MemTest }
+            TestTool::StressKit { stressor } if stressor == "memtest"
         ) {
             summary.memory_errors = summary.test_errors;
         }
@@ -1893,7 +1893,7 @@ mod tests {
         let run_id = RecordId::new("stress_test_run", "verdict-test");
         let cancel = Arc::new(AtomicBool::new(false));
         let tool = TestTool::StressKit {
-            stressor: database::schema::StressKitStressor::GpuMatmul,
+            stressor: "gpu_matmul".to_string(),
         };
         acc.into_verdict(&run_id, &cancel, 60.0, &tool, &None, Vec::new())
     }

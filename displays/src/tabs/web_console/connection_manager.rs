@@ -292,7 +292,7 @@ impl ConnectionManager {
                 
                 // Try to deserialize as command
                 if let Ok(cmd) = serde_json::from_str::<Cmd>(&text) {
-                    log::info!("ConnectionManager: Deserialized as Cmd: {:?}", cmd);
+                    log::info!("ConnectionManager: Deserialized as Cmd: {}", crate::shape_fp::redacted(&cmd));
                     let _ = self.receive_cmd_tx.send(cmd);
                 }
             }
@@ -301,7 +301,7 @@ impl ConnectionManager {
                 
                 // Try to deserialize as command using bincode
                 if let Some(cmd) = deserialize_command(&data) {
-                    log::info!("ConnectionManager: Deserialized binary as Cmd: {:?}", cmd);
+                    log::info!("ConnectionManager: Deserialized binary as Cmd: {}", crate::shape_fp::redacted(&cmd));
                     let _ = self.receive_cmd_tx.send(cmd);
                 } else {
                     // Try to interpret as UTF-8 text (shell output)
@@ -344,7 +344,7 @@ impl ConnectionManager {
         if let Some(sender) = &self.ws_sender {
             if let Ok(mut guard) = sender.lock() {
                 while let Ok(cmd) = self.send_cmd_rx.try_recv() {
-                    log::info!("ConnectionManager: Sending command to client: {:?}", cmd);
+                    log::info!("ConnectionManager: Sending command to client: {}", crate::shape_fp::redacted(&cmd));
                     let data = serialize_command(&cmd);
                     log::info!("ConnectionManager: Serialized command to {} bytes", data.len());
                     guard.send(WsMessage::Binary(data.into()));

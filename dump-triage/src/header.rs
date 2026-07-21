@@ -119,6 +119,7 @@ pub fn dump_type_name(dump_type: u32) -> &'static str {
 
 /// Parsed `DMP_HEADER64` fields relevant to bugcheck triage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "facet", derive(facet::Facet))]
 pub struct KernelDumpHeader {
     pub bugcheck_code: u32,
     pub bugcheck_parameters: [u64; 4],

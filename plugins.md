@@ -52,7 +52,7 @@ flowchart LR
 |--------|------|
 | **`displays/src/plugins/mod.rs`** | `MastertechPlugin` trait, `PluginManager`, `PluginManagerHandle` (egui integration), enable/disable, registration. |
 | **`displays/src/plugins/host.rs`** | `PluginHost`, `PluginEvent` channels, snapshots for UI and tooling. |
-| **`displays/src/plugins/wasm.rs`** | `WasmPlugin` / `wasmtime` host: **wasm32-wasip1** modules, host imports (`host_log`, `host_emit_event`, `host_repaint`), MessagePack-style payloads in linear memory. |
+| **`displays/src/plugins/wasm.rs`** | `WasmPlugin` / `wasmtime` host: **wasm32-wasip1** modules, host imports (`host_log`, `host_emit_event`, `host_repaint`), JSON (UTF-8) payloads in linear memory (packed `ptr\|len` u64). |
 | **`displays/src/plugins/plugin_wasm_factory.rs`** | WAT-based factory for demos (e.g. clock plugin template). |
 | **`displays/src/plugins/remote.rs`** | `EguiFrameCapture` (client-side capture) and `EguiRemoteViewer` (admin-side viewer) — **paired** with WebSocket binary framing (see below). |
 | **`displays/src/plugins/mcp_bridge.rs`** | `PluginToolProvider`: MCP tools for plugin **management**, **WASM authoring lifecycle**, and demo WAT tooling. |
@@ -113,6 +113,16 @@ plugin_compile_status (MCP) copies bytes into ArtifactStore ▶ plugin_deploy
 | Fallback | `MASTERTECH_DB_MODE=0` → legacy websocket_server2 room relay on :8081 (`BuilderWire` bincode protocol). Kept as fallback only; nothing defaults to it. |
 | Local (bare-metal) worker | Override `BUILD_WORKER_TARGET_CACHE_ROOT` / `BUILD_WORKER_SCRATCH_ROOT` to writable paths; the `/var/cache` default is Docker-only. Debug builds connect to `DB_URL_LOCAL`. |
 | Fallback caveat | `plugin_compile_remote` silently falls back to **local** compile when no worker heartbeats are live — check `list_build_workers` first if you expect a remote build. |
+
+### SDK-dependent plugins (multifile jobs)
+
+Plugins that depend on `mtech-plugin-sdk` (scaffold Cargo.toml: `mtech-plugin-sdk = { path = "../_mtech_sdk_vendor" }`) build remotely via **multifile jobs**:
+
+- `plugin_compile_remote` attaches the host-embedded vendored SDK file set (from `displays/src/plugins/sdk_vendor.rs::vendored_sdk_files`) as `build_job.extra_files`, each path prefixed `_mtech_sdk_vendor/`. The job is enqueued with status **`pending_multifile`** (not `pending`).
+- Workers materialize a **sibling layout** on disk — `<job_dir>/plugin/{Cargo.toml,src/lib.rs}` plus each `extra_files` entry at `<job_dir>/<path>` — and build inside `<job_dir>/plugin` so `path = "../_mtech_sdk_vendor"` resolves. `extra_files` paths are sanitized (no absolute paths, drive letters, backslashes, or `..`) before any write.
+- **Claim gating by status string:** old workers' live query only matches `status = 'pending'`, so they never see (and never fail on) `pending_multifile` jobs. Updated workers claim `status IN ['pending','pending_multifile']`. Every other transition (`claimed`/`done`/`failed`) is unchanged.
+- **Worker deploy order (important):** update the `plugin_builder` workers **before** SDK remote builds will be claimed. Updated workers advertise `capabilities = ['multifile']` on their `connected_client` heartbeat row; `plugin_compile_remote` only enqueues a multifile job when at least one such worker is live within 90 s, otherwise it falls back to local compile (or errors if no local `cargo` + `wasm32-wasip1`). Old workers simply never claim multifile jobs.
+- **Legacy WS transport (`MASTERTECH_DB_MODE=0`) does not support SDK plugins.** `BuilderWire::CompileRequest` carries only `cargo_toml` + `lib_rs` (no `extra_files`), and its bincode variants must stay byte-stable for old peers. Rather than append a `CompileRequestV2` variant that nothing dispatches (the admin-side WS `send_compile_request` has no live caller — the DB path is the only wired transport), the WS worker **refuses** SDK plugins with a clear `CompileResult` error directing the operator to DB mode. The multifile path is DB-only by design.
 
 **Schema fix (2026-06-12):** `build_job`'s `created_at_default`/`updated_at_touch` events recursed (event UPDATE re-fired the UPDATE event) until SurrealDB aborted every CREATE with "excessive computation depth" — remote compile could never enqueue a job on a DB scaffolded with that schema. Events removed; `updated_at` now uses `VALUE time::now()`, `created_at` is `DEFAULT time::now() READONLY` (rollout `20260612213000__build_job_drop_recursive_events_ddl`). Apply to prod via `./database/scripts/migrate-prod.sh` when ready; prod may first need `REBUILD INDEX by_ns_key ON __entity;` if its `__entity` index carries the stale `table::stress_test_run` entry (see rollout `20260612210000` notes).
 

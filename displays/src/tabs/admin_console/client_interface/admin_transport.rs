@@ -37,8 +37,8 @@ use web_time::Duration;
 // Wire-protocol constants live in the shared `tcp_protocol` crate so this
 // file and `Mastertech4.0/src/{transport,tcp_listener}.rs` cannot drift.
 pub use tcp_protocol::{
-    FRAME_TAG_BINARY, FRAME_TAG_PING, FRAME_TAG_PONG, FRAME_TAG_TEXT, HANDSHAKE_MAGIC,
-    HANDSHAKE_VERSION_CURRENT as HANDSHAKE_VERSION, MAX_FRAME_BYTES,
+    FRAME_TAG_BINARY, FRAME_TAG_PING, FRAME_TAG_PONG, FRAME_TAG_SHAPE_FP, FRAME_TAG_TEXT,
+    HANDSHAKE_MAGIC, HANDSHAKE_VERSION_CURRENT as HANDSHAKE_VERSION, MAX_FRAME_BYTES,
 };
 
 /// Tag describing which transport an [`AdminTransport`] is using. Cheap
@@ -407,6 +407,19 @@ async fn run_tcp_session(
         connect_failure_toasted = false;
         let _ = in_tx.send(WsEvent::Opened);
 
+        // Send our Cmd shape fingerprint before the writer task takes the write half.
+        let fp_payload = tcp_protocol::encode_shape_fp(
+            tcp_protocol::SHAPE_FP_KIND_ADMIN,
+            *crate::shape_fp::CMD_SHAPE_FP,
+            crate::shape_fp::BUILD_VERSION,
+        );
+        if let Err(e) = write_frame(&mut write_half, FRAME_TAG_SHAPE_FP, &fp_payload).await {
+            log::warn!("admin_transport -> shape-fp write failed: {e}; retrying in {RETRY_INTERVAL:?}");
+            let _ = in_tx.send(WsEvent::Error(format!("shape-fp write failed: {e} (retrying…)")));
+            tokio::time::sleep(RETRY_INTERVAL).await;
+            continue;
+        }
+
         // Liveness state shared between the reader (stamps on every Pong)
         // and the ping ticker (checks deadline). Initialized to `now` so
         // the first 30 s after a fresh dial don't immediately trip.
@@ -633,6 +646,24 @@ async fn run_tcp_session(
                     // role-reversal hook, not a current path.
                     log::debug!("admin_transport -> unexpected ping from agent; ignoring");
                     let _ = payload;
+                }
+                FRAME_TAG_SHAPE_FP => {
+                    let local = *crate::shape_fp::CMD_SHAPE_FP;
+                    match tcp_protocol::decode_shape_fp(&payload) {
+                        Some((_, peer_fp, peer_ver)) if peer_fp != local => {
+                            let local_ver = crate::shape_fp::BUILD_VERSION;
+                            let _ = in_tx.send(WsEvent::Message(WsMessage::Text(
+                                format!(
+                                    "__SHAPE_FP_MISMATCH__|{peer_fp:#018x}|{peer_ver}|{local:#018x}|{local_ver}"
+                                )
+                                .into(),
+                            )));
+                        }
+                        Some((_, _, peer_ver)) => {
+                            log::debug!("admin_transport -> Cmd shape ok (agent ver={peer_ver})");
+                        }
+                        None => log::warn!("admin_transport -> malformed shape-fp frame"),
+                    }
                 }
                 other => {
                     log::warn!("admin_transport -> unknown frame tag: 0x{other:02x}");

@@ -254,5 +254,45 @@ fn spawn_ingest(
                 map.insert(connection_string.clone(), ingests);
             }
         }
+
+        surface_cross_dump_diffs(&connection_string, &crashes);
     });
+}
+
+/// Diff a batch of parsed triages against the newest and surface driver-set
+/// deltas as a per-client notice.
+fn surface_cross_dump_diffs(connection_string: &str, crashes: &[ParsedCrash]) {
+    let triages: Vec<dump_triage::KernelDumpTriage> = crashes
+        .iter()
+        .filter_map(|c| c.triage.as_ref())
+        .filter_map(|t| serde_json::from_value(t.clone()).ok())
+        .collect();
+    if triages.len() < 2 {
+        return;
+    }
+    let diffs = dump_triage::diff::baseline_diffs(&triages);
+    let mut lines: Vec<String> = Vec::new();
+    for d in &diffs {
+        if d.drivers_added.is_empty() && d.drivers_removed.is_empty() && d.drivers_rebased.is_empty()
+        {
+            continue;
+        }
+        let mut parts: Vec<String> = Vec::new();
+        if !d.drivers_added.is_empty() {
+            parts.push(format!("added {}", d.drivers_added.join(", ")));
+        }
+        if !d.drivers_removed.is_empty() {
+            parts.push(format!("removed {}", d.drivers_removed.join(", ")));
+        }
+        if !d.drivers_rebased.is_empty() {
+            parts.push(format!("rebased {}", d.drivers_rebased.join(", ")));
+        }
+        lines.push(parts.join("; "));
+    }
+    if !lines.is_empty() {
+        push_notice(
+            connection_string,
+            format!("Cross-dump vs newest: {}", lines.join(" | ")),
+        );
+    }
 }

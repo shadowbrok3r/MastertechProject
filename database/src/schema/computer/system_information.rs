@@ -1,4 +1,6 @@
-#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default )]
+use facet::Facet;
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default, Facet )]
 pub struct SystemInformation {
     pub cpu: String,
     pub motherboard_name: String,
@@ -66,7 +68,7 @@ pub struct SystemInformation {
 }
 
 /// Per-logical-core row on the LiveData wire (mirrors stress-kit `CoreSample`).
-#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default, Facet)]
 pub struct CpuCoreLive {
     pub index: usize,
     pub usage_pct: f32,
@@ -80,7 +82,7 @@ pub struct CpuCoreLive {
 /// types. `delta_since_program_start` increments while the client
 /// process has been running; `absolute_since_boot` is the OS-wide
 /// running total since the machine booted.
-#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default, Facet)]
 pub struct WheaCounters {
     pub delta_since_program_start: u64,
     pub absolute_since_boot: u64,
@@ -89,13 +91,13 @@ pub struct WheaCounters {
 /// Mirror of `stress_kit::telemetry::TdrCounters`. Same shape as
 /// `WheaCounters`; kept as a separate type so a future change to one
 /// doesn't accidentally affect the other.
-#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default, Facet)]
 pub struct TdrCounters {
     pub delta_since_program_start: u64,
     pub absolute_since_boot: u64,
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default )]
+#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default, Facet )]
 pub struct Disk {
     pub device_name: String,
     pub file_system: String,
@@ -104,14 +106,14 @@ pub struct Disk {
     pub available_space: u64,
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default, Facet)]
 pub struct Gpu {
     pub usage: Vec<GraphicsUsage>,
     pub card: Vec<GraphicsCard>
 }
 
 /// Graphic card usage by process
-#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default, Facet)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphicsProcessUtilization {
     /// Process identificator
@@ -127,7 +129,7 @@ pub struct GraphicsProcessUtilization {
 }
 
 /// Graphic card usage summary
-#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default, Facet)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphicsUsage {
     /// Graphic card id
@@ -149,7 +151,7 @@ pub struct GraphicsUsage {
 }
 
 /// Information about a graphic card
-#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default, Facet)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphicsCard {
     /// Device id
@@ -167,7 +169,7 @@ pub struct GraphicsCard {
 
 
 /// Nvidia drivers configuration
-#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default, Facet)]
 #[serde(rename_all = "camelCase")]
 pub struct NvidiaInfo {
      /// Nvidia drivers
@@ -178,7 +180,7 @@ pub struct NvidiaInfo {
      pub cuda_version: i32,
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, PartialEq, Default)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, PartialEq, Default, Facet)]
 pub struct Process {
     /// Process ID
     pub id: u32,
@@ -192,7 +194,7 @@ pub struct Process {
     pub exe_path: Option<String>,
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, PartialEq, Default)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, PartialEq, Default, Facet)]
 pub struct ProcessDiskUsage {
     pub read_bytes: f32,
     pub total_read_bytes: f32,
@@ -200,10 +202,46 @@ pub struct ProcessDiskUsage {
     pub written_bytes: f32,
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, PartialEq, Default)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, PartialEq, Default, Facet)]
 pub struct NetworkInterface {
     /// Process ID
     pub interface_name: String,
     pub total_received: f32,
     pub total_transmitted: f32,
+}
+
+// Pinned structural fingerprints of the LiveData wire mirrors. These are
+// intentional reduced projections of stress-kit telemetry types; do NOT assert
+// equality to the stress-kit type — the mirror is deliberately narrower; see
+// design Deliverable 4 WHEA divergence. Bump a pin deliberately when the wire
+// shape changes on both sides.
+#[cfg(test)]
+mod mirror_shape_fp {
+    use super::*;
+    use tcp_protocol::shape_fp::shape_fingerprint;
+
+    #[test]
+    fn system_information_pin() {
+        assert_eq!(shape_fingerprint::<SystemInformation>(), 0xee82_69a2_83f1_10d9);
+    }
+
+    // Reduced projection of stress-kit CoreSample (stress-kit/src/telemetry/core.rs:8).
+    #[test]
+    fn cpu_core_live_pin() {
+        assert_eq!(shape_fingerprint::<CpuCoreLive>(), 0xd44c_f691_9d9f_cac6);
+    }
+
+    // Reduced projection of stress_kit::telemetry::WheaCounters
+    // (stress-kit/src/telemetry/mod.rs:46), 2 of its 4 fields.
+    #[test]
+    fn whea_counters_pin() {
+        assert_eq!(shape_fingerprint::<WheaCounters>(), 0xabea_2bc1_c5fc_2b08);
+    }
+
+    // Same two-u64 shape as WheaCounters, so it hashes identically; kept a
+    // distinct pin so a future divergence forces conscious reconciliation.
+    #[test]
+    fn tdr_counters_pin() {
+        assert_eq!(shape_fingerprint::<TdrCounters>(), 0xabea_2bc1_c5fc_2b08);
+    }
 }

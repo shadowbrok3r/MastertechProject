@@ -4,7 +4,7 @@
 
 use database::schema::{
     stress_test_sql, HardwareComponent, HardwareKind, RecordId, StressTestRun, TargetKind,
-    TestTool, StressKitStressor, COMPUTER_TABLE,
+    TestTool, COMPUTER_TABLE,
 };
 use surrealdb::engine::local::{Db, Mem};
 use surrealdb::Surreal;
@@ -74,7 +74,7 @@ async fn stress_test_run_create_merges_content_and_embedding() {
     let mut run = StressTestRun::new_for(
         computer.clone(),
         TestTool::StressKit {
-            stressor: StressKitStressor::Cpu,
+            stressor: "cpu".to_string(),
         },
         TargetKind::Cpu,
     );

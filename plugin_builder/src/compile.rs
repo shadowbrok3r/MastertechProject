@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use database::schema::BuildFile;
 use url::Url;
 
 #[derive(Debug)]
@@ -66,14 +67,60 @@ pub fn sanitize(s: &str) -> String {
         .collect()
 }
 
+/// Validate an `extra_files` path against directory traversal. Rejects
+/// absolute paths, drive letters (`C:`), backslashes, and any `..`
+/// component; returns the normalized relative path on success.
+pub fn safe_relative_path(raw: &str) -> Result<PathBuf, String> {
+    if raw.is_empty() {
+        return Err("empty path".to_string());
+    }
+    if raw.contains('\\') {
+        return Err(format!("backslash not allowed: {raw}"));
+    }
+    if raw.contains(':') {
+        return Err(format!("drive letter or colon not allowed: {raw}"));
+    }
+    if raw.starts_with('/') {
+        return Err(format!("absolute path not allowed: {raw}"));
+    }
+    let mut out = PathBuf::new();
+    for seg in raw.split('/') {
+        match seg {
+            "" | "." => continue,
+            ".." => return Err(format!("'..' component not allowed: {raw}")),
+            s => out.push(s),
+        }
+    }
+    if out.as_os_str().is_empty() {
+        return Err(format!("path resolves to empty: {raw}"));
+    }
+    Ok(out)
+}
+
+/// The directory `cargo build` runs in: `job_dir/plugin` when extra
+/// files sit alongside it (so `path = "../_mtech_sdk_vendor"` resolves),
+/// else `job_dir` itself for the flat single-file layout.
+fn build_dir_for(job_dir: &Path, has_extra_files: bool) -> PathBuf {
+    if has_extra_files {
+        job_dir.join("plugin")
+    } else {
+        job_dir.to_path_buf()
+    }
+}
+
 /// Run one `cargo build` invocation.
 ///
-/// Layout (per-job scratch dir, per-plugin target dir):
+/// Flat layout (no `extra_files`, per-job scratch dir, per-plugin
+/// target dir):
 /// ```text
 /// <scratch_root>/<plugin_id>/<job_id>/Cargo.toml
 /// <scratch_root>/<plugin_id>/<job_id>/src/lib.rs
 /// CARGO_TARGET_DIR=<target_cache_root>/<plugin_id>
 /// ```
+/// Sibling layout (`extra_files` present): the plugin lands in
+/// `<job_dir>/plugin/` and each extra file at `<job_dir>/<path>`, so a
+/// scaffold's `path = "../_mtech_sdk_vendor"` resolves to a sibling
+/// crate under the job dir.
 /// The target dir is shared across jobs for the same plugin so
 /// incremental compilation wins on iterative builds.
 pub async fn compile_one(
@@ -84,10 +131,13 @@ pub async fn compile_one(
     lib_rs: &str,
     target: &str,
     profile: &str,
+    extra_files: &[BuildFile],
 ) -> Result<BuildArtifact, BuildFailure> {
     let safe_plugin = sanitize(plugin_id);
-    let job_dir = cfg.scratch_root.join(&safe_plugin).join(job_id);
-    let src_dir = job_dir.join("src");
+    // job_id can originate from a DB record key; sanitize before joining.
+    let job_dir = cfg.scratch_root.join(&safe_plugin).join(sanitize(job_id));
+    let build_dir = build_dir_for(&job_dir, !extra_files.is_empty());
+    let src_dir = build_dir.join("src");
     let cargo_target = cfg.target_cache_root.join(&safe_plugin);
 
     tokio::fs::create_dir_all(&src_dir)
@@ -96,12 +146,26 @@ pub async fn compile_one(
     tokio::fs::create_dir_all(&cargo_target)
         .await
         .with_context(|| format!("create {}", cargo_target.display()))?;
-    tokio::fs::write(job_dir.join("Cargo.toml"), cargo_toml)
+    tokio::fs::write(build_dir.join("Cargo.toml"), cargo_toml)
         .await
         .context("write Cargo.toml")?;
     tokio::fs::write(src_dir.join("lib.rs"), lib_rs)
         .await
         .context("write lib.rs")?;
+
+    for file in extra_files {
+        let rel = safe_relative_path(&file.path)
+            .map_err(|e| BuildFailure::Setup(anyhow::anyhow!("reject extra_files path: {e}")))?;
+        let dest = job_dir.join(&rel);
+        if let Some(parent) = dest.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .with_context(|| format!("create {}", parent.display()))?;
+        }
+        tokio::fs::write(&dest, &file.content)
+            .await
+            .with_context(|| format!("write {}", dest.display()))?;
+    }
 
     let mut cmd = tokio::process::Command::new("cargo");
     cmd.arg("build")
@@ -113,7 +177,7 @@ pub async fn compile_one(
     } else if !profile.is_empty() && profile != "dev" {
         cmd.arg("--profile").arg(profile);
     }
-    cmd.current_dir(&job_dir).env("CARGO_TARGET_DIR", &cargo_target);
+    cmd.current_dir(&build_dir).env("CARGO_TARGET_DIR", &cargo_target);
 
     let start = Instant::now();
     let output = cmd
@@ -180,4 +244,66 @@ async fn find_wasm_artifact(
         primary.display(),
         fallback.display(),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn safe_relative_path_accepts_sibling_layout() {
+        assert_eq!(
+            safe_relative_path("_mtech_sdk_vendor/Cargo.toml").unwrap(),
+            PathBuf::from("_mtech_sdk_vendor").join("Cargo.toml")
+        );
+        assert_eq!(
+            safe_relative_path("_mtech_sdk_vendor/src/lib.rs").unwrap(),
+            PathBuf::from("_mtech_sdk_vendor").join("src").join("lib.rs")
+        );
+    }
+
+    #[test]
+    fn safe_relative_path_rejects_absolute() {
+        assert!(safe_relative_path("/etc/passwd").is_err());
+    }
+
+    #[test]
+    fn safe_relative_path_rejects_parent_traversal() {
+        assert!(safe_relative_path("../secret").is_err());
+        assert!(safe_relative_path("a/../../b").is_err());
+        assert!(safe_relative_path("_mtech_sdk_vendor/../../evil").is_err());
+    }
+
+    #[test]
+    fn safe_relative_path_rejects_drive_letter() {
+        assert!(safe_relative_path("C:/Windows/system32").is_err());
+        assert!(safe_relative_path("C:foo").is_err());
+    }
+
+    #[test]
+    fn safe_relative_path_rejects_backslash() {
+        assert!(safe_relative_path("..\\evil").is_err());
+        assert!(safe_relative_path("dir\\file").is_err());
+    }
+
+    #[test]
+    fn safe_relative_path_rejects_empty_and_dot_only() {
+        assert!(safe_relative_path("").is_err());
+        assert!(safe_relative_path(".").is_err());
+        assert!(safe_relative_path("./.").is_err());
+    }
+
+    #[test]
+    fn sanitize_neutralizes_traversal_chars() {
+        assert_eq!(sanitize("../../evil"), "______evil");
+        assert_eq!(sanitize("..\\evil"), "___evil");
+        assert_eq!(sanitize("C:/x"), "C__x");
+    }
+
+    #[test]
+    fn build_dir_choice_flat_vs_sibling() {
+        let job = Path::new("/scratch/plugin/job1");
+        assert_eq!(build_dir_for(job, false), job.to_path_buf());
+        assert_eq!(build_dir_for(job, true), job.join("plugin"));
+    }
 }

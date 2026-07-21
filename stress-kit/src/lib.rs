@@ -20,7 +20,7 @@
 //!
 //! let session = StressSession::start(config);
 //!
-//! In an `update` loop:
+//! // In an update loop:
 //! if let Some(m) = session.try_recv() {
 //!     println!("{:.1}s  throughput={:.2}", m.elapsed_secs, m.throughput);
 //! }
@@ -39,68 +39,101 @@ use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use facet::Facet;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Facet)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[repr(u8)]
 #[serde(rename_all = "snake_case")]
 pub enum Stressor {
+    #[facet(rename = "cpu")]
     Cpu,
+    #[facet(rename = "memory")]
     Memory,
+    #[facet(rename = "disk")]
     Disk,
     /// Square `f32` matmul; reports Mflop/s.
+    #[facet(rename = "matrix")]
     Matrix,
     /// Bulk memcpy of paired buffers; reports GB/s.
+    #[facet(rename = "memcpy")]
     Memcpy,
     /// Hot-loop bitops (popcount, ctlz, cttz, rotate); reports Mop/s.
+    #[facet(rename = "bitops")]
     Bitops,
     /// Cache-line thrash with `_mm_prefetch`/`_mm_clflush` on x86_64; reports Mref/s.
+    #[facet(rename = "cache")]
     Cache,
     /// Page-touch + churn to pressure the working set / page file; reports MiB/s.
+    #[facet(rename = "vm")]
     Vm,
     /// STREAM-style memory bandwidth (copy/scale/add/triad); reports GB/s.
+    #[facet(rename = "stream")]
     Stream,
     /// Data-dependent branches to fuzz the branch predictor; reports Mbranch/s.
+    #[facet(rename = "branch")]
     Branch,
     /// Many cores fighting over one `AtomicU64`; reports Mop/s.
+    #[facet(rename = "atomic")]
     Atomic,
     /// Many threads contending on a single mutex; reports Mop/s of lock-unlock pairs.
+    #[facet(rename = "mutex")]
     Mutex,
     /// Paired threads ping-ponging on condvars to force OS context switches; reports Mctxsw/s.
+    #[facet(rename = "switch")]
     Switch,
     /// Sieve of Eratosthenes; reports Mprime/s (primes found per second).
+    #[facet(rename = "prime")]
     Prime,
     /// Independent FMA chains; reports Mflop/s.
+    #[facet(rename = "fp")]
     Fp,
     /// FNV-1a hashing over a 1 MiB buffer; reports MiB/s.
+    #[facet(rename = "hash")]
     Hash,
     /// Sequential + striped reads exercising the HW prefetcher; reports Mref/s.
+    #[facet(rename = "prefetch")]
     Prefetch,
     /// Indirect calls through a 64-fn table to spill the i-cache; reports Mcall/s.
+    #[facet(rename = "icache")]
     Icache,
     /// `rdtsc` read rate; reports Mread/s.
+    #[facet(rename = "tsc")]
     Tsc,
     /// Pattern write/verify memory test (moving inversions, walking ones,
     /// address-in-address, random); reports MiB/s; mismatches counted in `errors`.
+    /// DB label is `memtest`; the legacy `mem_test` wire token stays an accepted alias.
+    #[facet(rename = "memtest")]
+    #[serde(rename = "memtest", alias = "mem_test")]
     MemTest,
     /// Duplicate-execution integer+FP workload compare; reports Mop/s;
     /// mismatches counted in `errors`.
+    #[facet(rename = "cpu_verify")]
     CpuVerify,
     /// LU solve with partial pivoting + residual check; reports GFLOPS;
     /// residual breaches counted in `errors`.
+    #[facet(rename = "linpack")]
     Linpack,
     /// Combined CPU FMA + GPU compute load for max power draw; reports GFLOPS.
+    #[facet(rename = "psu")]
     Psu,
 
     /// GPU compute-shader FMA + scattered-load hammer; reports GFLOPS.
+    #[facet(rename = "gpu")]
     Gpu,
     /// GPU NxN fp32 matmul; reports GFLOPS.
+    #[facet(rename = "gpu_matmul")]
     GpuMatmul,
     /// GPU VRAM write-verify pattern walker; reports MiB/s; mismatches counted in `errors`.
+    #[facet(rename = "gpu_vram")]
     GpuVram,
     /// CPU↔GPU buffer round-trip with full readback verify; reports GB/s;
     /// mismatches counted in `errors`.
+    #[facet(rename = "gpu_pcie")]
     GpuPcie,
     /// Concurrent CPU FMA + RAM bandwidth + GPU compute load; reports combined CPU+GPU GFLOPS.
+    #[facet(rename = "combined")]
     Combined,
 }
 
@@ -216,6 +249,52 @@ impl Stressor {
             Self::Combined,
         ]
     }
+
+    /// Canonical snake_case label — the DB, wire, and MCP vocabulary.
+    pub fn as_str(self) -> &'static str {
+        facet::Peek::new(&self)
+            .into_enum()
+            .ok()
+            .and_then(|e| e.active_variant().ok())
+            .and_then(|v| v.rename)
+            .unwrap_or("cpu")
+    }
+
+    /// Parse a canonical label back to a variant; accepts the legacy `mem_test` spelling.
+    pub fn from_str(s: &str) -> Option<Self> {
+        let s = if s == "mem_test" { "memtest" } else { s };
+        Self::all().iter().copied().find(|v| v.as_str() == s)
+    }
+
+    /// All canonical labels, reflected from SHAPE in declaration order.
+    pub fn labels() -> impl Iterator<Item = &'static str> {
+        variant_renames(Self::SHAPE)
+    }
+
+    /// `"cpu, memory, disk, …, combined"` for the MCP description strings.
+    pub fn labels_csv() -> &'static str {
+        static CSV: std::sync::LazyLock<String> =
+            std::sync::LazyLock::new(|| Stressor::labels().collect::<Vec<_>>().join(", "));
+        &CSV
+    }
+
+    /// Ready-made MCP field description.
+    pub fn wire_description() -> &'static str {
+        static D: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+            format!("Stressor (snake_case): {}", Stressor::labels_csv())
+        });
+        &D
+    }
+}
+
+/// Reflected `#[facet(rename)]` (falling back to variant name) in declaration order.
+fn variant_renames(shape: &'static facet::Shape) -> impl Iterator<Item = &'static str> {
+    use facet::{Type, UserType};
+    let variants: &'static [facet::Variant] = match shape.ty {
+        Type::User(UserType::Enum(ref e)) => e.variants,
+        _ => &[],
+    };
+    variants.iter().map(|v| v.rename.unwrap_or(v.name))
 }
 
 /// Single-run settings. In [`scenario::ScenarioStage`], `timeout` is ignored; stage length is `duration_secs`.
@@ -329,6 +408,43 @@ impl Drop for StressSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn label_roundtrip_matches_serde() {
+        for &s in Stressor::all() {
+            assert_eq!(Stressor::from_str(s.as_str()), Some(s), "roundtrip {s:?}");
+            assert_eq!(
+                serde_json::to_value(s).unwrap(),
+                serde_json::json!(s.as_str()),
+                "serde vs as_str disagree for {s:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn labels_reflect_all_in_order() {
+        let reflected: Vec<&str> = Stressor::labels().collect();
+        let via_all: Vec<&str> = Stressor::all().iter().map(|s| s.as_str()).collect();
+        assert_eq!(reflected, via_all);
+        assert!(!reflected.is_empty());
+        assert!(reflected.contains(&"combined"));
+    }
+
+    #[test]
+    fn memtest_accepts_legacy_alias() {
+        assert_eq!(Stressor::from_str("mem_test"), Some(Stressor::MemTest));
+        assert_eq!(Stressor::from_str("memtest"), Some(Stressor::MemTest));
+        assert_eq!(Stressor::MemTest.as_str(), "memtest");
+        assert_eq!(
+            serde_json::from_str::<Stressor>("\"mem_test\"").unwrap(),
+            Stressor::MemTest
+        );
+    }
+
+    #[test]
+    fn unknown_label_is_none() {
+        assert_eq!(Stressor::from_str("nonsense"), None);
+    }
 
     /// Run a stressor briefly and return the last metrics sample seen.
     fn run_briefly(stressor: Stressor, memory_cap_mb: u64, secs: u64) -> Metrics {

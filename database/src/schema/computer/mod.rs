@@ -1,4 +1,5 @@
 use crate::{db, schema::COMPUTER_TABLE};
+use facet::Facet;
 use structdiff::{Difference, StructDiff};
 use serde_json::Value;
 
@@ -16,7 +17,8 @@ pub use seb::*;
 /// installed" is a Windows Security Center fact (authoritative) or
 /// just a heuristic from finding the install directory under
 /// `Program Files`.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, SurrealValue)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, SurrealValue, Facet)]
+#[repr(u8)]
 #[serde(rename_all = "snake_case")]
 pub enum SecurityProductSource {
     /// WMI `SecurityCenter2` — the authoritative Windows-managed list
@@ -54,7 +56,7 @@ impl Default for SecurityProductSource {
 /// deserializer below (`deserialize_security_products`) handles all
 /// three shapes, mapping legacy strings to
 /// `InstalledSecurityProduct { name, ..Default::default() }`.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, SurrealValue, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, SurrealValue, Default, Facet)]
 pub struct InstalledSecurityProduct {
     /// Human display name — what the user sees in the row. Always
     /// populated; everything else is best-effort.

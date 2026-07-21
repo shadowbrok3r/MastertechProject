@@ -126,9 +126,13 @@ fn remote_stage_to_run_stage(
     s: &displays::RemoteScenarioStage,
     concurrent: bool,
 ) -> Result<stress_runner::RunStage, String> {
-    let stressor: stress_runner::Stressor =
-        serde_json::from_value(serde_json::Value::String(s.stressor.clone()))
-            .map_err(|_| format!("unknown stressor '{}'", s.stressor))?;
+    let stressor = stress_runner::Stressor::from_str(&s.stressor).ok_or_else(|| {
+        format!(
+            "unknown stressor '{}'. valid: {}",
+            s.stressor,
+            stress_runner::Stressor::labels_csv()
+        )
+    })?;
     Ok(stress_runner::RunStage {
         label: s.label.clone().unwrap_or_else(|| s.stressor.clone()),
         stressor,
@@ -3584,26 +3588,29 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                         }
                         _ => enumerate_crash_dumps(),
                     };
-                    let dumps: Vec<serde_json::Value> = files
-                        .iter()
-                        .map(|p| {
-                            let dump_name =
-                                p.file_name().map(|f| f.to_string_lossy().to_string());
-                            match dump_triage::analyze_file(p) {
-                                Ok(triage) => serde_json::json!({
+                    let mut dumps: Vec<serde_json::Value> = Vec::with_capacity(files.len());
+                    let mut triages: Vec<dump_triage::KernelDumpTriage> = Vec::new();
+                    for p in &files {
+                        let dump_name =
+                            p.file_name().map(|f| f.to_string_lossy().to_string());
+                        match dump_triage::analyze_file(p) {
+                            Ok(triage) => {
+                                triages.push(triage.clone());
+                                dumps.push(serde_json::json!({
                                     "dump_name": dump_name,
                                     "path": p.to_string_lossy(),
                                     "triage": triage,
-                                }),
-                                Err(e) => serde_json::json!({
-                                    "dump_name": dump_name,
-                                    "path": p.to_string_lossy(),
-                                    "error": e,
-                                }),
+                                }));
                             }
-                        })
-                        .collect();
-                    serde_json::json!({ "count": dumps.len(), "dumps": dumps }).to_string()
+                            Err(e) => dumps.push(serde_json::json!({
+                                "dump_name": dump_name,
+                                "path": p.to_string_lossy(),
+                                "error": e,
+                            })),
+                        }
+                    }
+                    let cross = dump_triage::diff::baseline_diffs(&triages);
+                    serde_json::json!({ "count": dumps.len(), "dumps": dumps, "cross_dump": cross }).to_string()
                 })
                 .await
                 .unwrap_or_else(|e| {

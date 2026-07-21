@@ -26,14 +26,16 @@ pub enum TcpFrame {
     /// original 16-byte ping payload verbatim so the master can measure
     /// round-trip and dedup by sequence number.
     Pong(Vec<u8>),
+    /// Shape-fingerprint frame; payload is a `tcp_protocol::encode_shape_fp` blob.
+    ShapeFp(Vec<u8>),
 }
 
 // Wire-protocol constants are owned by the `tcp_protocol` crate so the
 // agent (this binary) and the master (`displays`) cannot drift.  Re-export
 // them under the original names so existing call sites compile unchanged.
 pub use tcp_protocol::{
-    FRAME_TAG_BINARY, FRAME_TAG_PING, FRAME_TAG_PONG, FRAME_TAG_TEXT, HANDSHAKE_MAGIC,
-    HANDSHAKE_VERSION_CURRENT as HANDSHAKE_VERSION,
+    FRAME_TAG_BINARY, FRAME_TAG_PING, FRAME_TAG_PONG, FRAME_TAG_SHAPE_FP, FRAME_TAG_TEXT,
+    HANDSHAKE_MAGIC, HANDSHAKE_VERSION_CURRENT as HANDSHAKE_VERSION,
 };
 
 pub enum ClientTransport {

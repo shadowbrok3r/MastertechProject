@@ -13,6 +13,7 @@
 //! `Mastertech4.0`.
 
 use crate::SurrealValue;
+use facet::Facet;
 use serde::{Deserialize, Serialize};
 
 /// A successful PrestaShop customer match.  The client populates this
@@ -22,7 +23,7 @@ use serde::{Deserialize, Serialize};
 /// **Not persisted on its own** — the admin-side confirmation modal is
 /// what eventually writes the customer FK onto `connected_client` (via
 /// the existing relink popup pattern).
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, SurrealValue)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, SurrealValue, Facet)]
 pub struct PrestashopCustomerMatch {
     /// `"FirstName LastName - OrderID"` — backwards-compatible with
     /// the pre-existing `lookup_customer_by_serial` return value, kept
@@ -52,7 +53,7 @@ pub struct PrestashopCustomerMatch {
 /// body so the admin-side confirmation modal can show "live vs
 /// PrestaShop" per-field when computer-row creation comes up for
 /// approval.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, SurrealValue)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, SurrealValue, Facet)]
 pub struct OpenServiceCandidate {
     pub service_number: String,
     pub doc_alias: String,
@@ -70,7 +71,7 @@ pub struct OpenServiceCandidate {
 /// PrestaShop-parsed computer specs.  All fields are best-effort; an
 /// empty string means "PrestaShop didn't have that field" and the
 /// admin-side merge should prefer the live `ComputerData` value.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, SurrealValue)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, SurrealValue, Facet)]
 pub struct PrestaSpecsSnapshot {
     pub cpu: String,
     pub gpu: String,

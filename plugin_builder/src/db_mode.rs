@@ -30,7 +30,7 @@ use crate::Config;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const LIVE_QUERY: &str = "LIVE SELECT * FROM build_job \
-                           WHERE status = 'pending' \
+                           WHERE status IN ['pending', 'pending_multifile'] \
                              AND (assigned_worker_id == NONE OR assigned_worker_id == $worker)";
 
 pub async fn run(cfg: Config) -> Result<()> {
@@ -103,7 +103,7 @@ async fn event_loop(
                 if !matches!(action, Action::Create | Action::Update) {
                     continue;
                 }
-                if job.status != "pending" {
+                if job.status != "pending" && job.status != "pending_multifile" {
                     continue;
                 }
                 let cfg_clone = cfg.clone();
@@ -163,6 +163,7 @@ async fn run_and_record(job: BuildJob, cfg: Config) {
         &job.lib_rs,
         &job.target,
         &job.profile,
+        &job.extra_files,
     )
     .await;
     match outcome {
@@ -232,6 +233,7 @@ async fn upsert_self(worker_id: &RecordId, cfg: &Config) -> Result<()> {
         friendly_name: Some(cfg.hostname.clone()),
         connected: true,
         client_kind: ClientKind::BuildWorker,
+        capabilities: vec!["multifile".to_string()],
         last_update: Some(now.clone()),
         created_at: Some(now),
         ..ConnectedClient::default()

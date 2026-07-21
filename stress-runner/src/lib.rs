@@ -121,7 +121,7 @@ pub use runtime::set_runtime_handle;
 pub use database::schema::{
     BenchmarkKind, BenchmarkResult, BiosSettings, DriverVersions, FailureMode,
     FinishReason as DbFinishReason, HardwareComponent, HardwareKind, RecordId, RunResult,
-    RunSummary, ScenarioStageSummary, StressKitStressor, StressTestEvent, StressTestMetric,
+    RunSummary, ScenarioStageSummary, StressTestEvent, StressTestMetric,
     StressTestRun, TargetKind, TestTool,
 };
 

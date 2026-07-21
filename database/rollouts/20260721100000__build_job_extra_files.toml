@@ -1,0 +1,31 @@
+id = "20260721100000__build_job_extra_files"
+name = "build_job_extra_files"
+state = "completed"
+source_schema_hash = "099d2a663b6312dcc52b6f5960847553b28c38063d9bac78f4621cf4b50dfdb2"
+target_schema_hash = "099d2a663b6312dcc52b6f5960847553b28c38063d9bac78f4621cf4b50dfdb2"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "add_build_job_extra_files"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE status ON build_job TYPE string DEFAULT 'pending' ASSERT $value IN ['pending', 'pending_multifile', 'claimed', 'done', 'failed'] PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE extra_files ON build_job TYPE array<object> DEFAULT [] PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE extra_files.* ON build_job TYPE object PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE extra_files.*.path ON build_job TYPE string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE extra_files.*.content ON build_job TYPE string PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "drop_build_job_extra_files"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE status ON build_job TYPE string DEFAULT 'pending' ASSERT $value IN ['pending', 'claimed', 'done', 'failed'] PERMISSIONS FULL;
+REMOVE FIELD IF EXISTS extra_files[*].path ON build_job;
+REMOVE FIELD IF EXISTS extra_files[*].content ON build_job;
+REMOVE FIELD IF EXISTS extra_files[*] ON build_job;
+REMOVE FIELD IF EXISTS extra_files ON build_job;
+"""

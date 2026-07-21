@@ -155,6 +155,7 @@ async fn create_job(
         &target,
         &profile,
         assigned,
+        Vec::new(),
     )
     .await
     .map_err(internal)?;
@@ -267,6 +268,7 @@ async fn publish_job(
         .map(|t| PluginToolInfo {
             name: t.name,
             description: t.description,
+            parameters_schema: Default::default(),
         })
         .collect();
 

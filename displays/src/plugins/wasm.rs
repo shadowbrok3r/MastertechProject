@@ -22,6 +22,8 @@
 //! | `handle_mcp_call` | `(tool_ptr, tool_len, args_ptr, args_len) -> u64`| JSON result (packed ptr\|len)         |
 //! | `alloc`           | `(size: i32) -> i32`                             | Allocate guest memory                  |
 //! | `dealloc`         | `(ptr: i32, size: i32) -> ()`                    | Free guest memory                      |
+//! | `plugin_abi_version` | `() -> u32`                                   | Optional; SDK ABI contract version (missing = legacy) |
+//! | `plugin_fingerprint` | `() -> u64`                                   | Optional; structural tool-shape hash   |
 //!
 //! The host provides these imports (module `"env"`):
 //!
@@ -40,6 +42,9 @@ use std::collections::HashSet;
 use std::sync::Mutex;
 use wasmtime_wasi::p1::WasiP1Ctx;
 use wasmtime_wasi::WasiCtxBuilder;
+
+/// Highest SDK plugin ABI version this host understands.
+pub const HOST_PLUGIN_ABI_MAX: u32 = 1;
 
 // ─── String interning ──────────────────────────────────────────────────────────
 
@@ -115,6 +120,8 @@ pub struct WasmPlugin {
     name: String,
     version: String,
     enabled: bool,
+    abi_version: Option<u32>,
+    fingerprint: Option<u64>,
     inner: Mutex<WasmPluginInner>,
 }
 
@@ -345,6 +352,28 @@ impl WasmPlugin {
         let name = call_string_export(&instance, &mut store, "plugin_name")?;
         let version = call_string_export(&instance, &mut store, "plugin_version")?;
 
+        let abi_version = call_u32_export_opt(&instance, &mut store, "plugin_abi_version");
+        if let Some(v) = abi_version {
+            if v > HOST_PLUGIN_ABI_MAX {
+                return Err(format!(
+                    "plugin '{id_str}' requires plugin ABI v{v}; this Mastertech supports up to v{HOST_PLUGIN_ABI_MAX} — update the app"
+                ));
+            }
+        }
+        let fingerprint = call_u64_export_opt(&instance, &mut store, "plugin_fingerprint");
+
+        match (abi_version, fingerprint) {
+            (Some(v), Some(fp)) => {
+                log::info!("WASM plugin '{id_str}' ABI stamp: abi=v{v}, fingerprint={fp:#018x}");
+            }
+            (Some(v), None) => {
+                log::info!("WASM plugin '{id_str}' ABI stamp: abi=v{v}, no fingerprint export");
+            }
+            (None, _) => {
+                log::debug!("WASM plugin '{id_str}' has no ABI stamp (legacy plugin)");
+            }
+        }
+
         store.data_mut().plugin_id = id_str.clone();
         let id = intern_string(id_str);
 
@@ -355,6 +384,8 @@ impl WasmPlugin {
             name,
             version,
             enabled: true,
+            abi_version,
+            fingerprint,
             inner: Mutex::new(WasmPluginInner { store, instance }),
         })
     }
@@ -385,6 +416,24 @@ fn call_string_export(
     let (ptr, len) = unpack_ptr_len(packed);
     let memory = get_memory(instance, store)?;
     read_wasm_string(&memory, store, ptr, len)
+}
+
+fn call_u32_export_opt(
+    instance: &wasmtime::Instance,
+    store: &mut wasmtime::Store<WasmPluginState>,
+    name: &str,
+) -> Option<u32> {
+    let func = instance.get_typed_func::<(), u32>(&mut *store, name).ok()?;
+    func.call(&mut *store, ()).ok()
+}
+
+fn call_u64_export_opt(
+    instance: &wasmtime::Instance,
+    store: &mut wasmtime::Store<WasmPluginState>,
+    name: &str,
+) -> Option<u64> {
+    let func = instance.get_typed_func::<(), u64>(&mut *store, name).ok()?;
+    func.call(&mut *store, ()).ok()
 }
 
 fn read_wasm_string(
@@ -462,6 +511,14 @@ impl MastertechPlugin for WasmPlugin {
         self.enabled = enabled;
     }
 
+    fn abi_version(&self) -> Option<u32> {
+        self.abi_version
+    }
+
+    fn fingerprint(&self) -> Option<u64> {
+        self.fingerprint
+    }
+
     fn on_load(&mut self, _host: &PluginHost) {
         if let Ok(mut inner) = self.inner.lock() {
             let WasmPluginInner { ref instance, ref mut store } = *inner;
@@ -516,8 +573,21 @@ impl MastertechPlugin for WasmPlugin {
         };
         let WasmPluginInner { ref instance, ref mut store } = *inner;
         match call_string_export(instance, store, "mcp_tools") {
-            Ok(json) => serde_json::from_str(&json).unwrap_or_default(),
-            Err(_) => vec![],
+            Ok(json) => match serde_json::from_str(&json) {
+                Ok(tools) => tools,
+                Err(e) => {
+                    let prefix: String = json.chars().take(200).collect();
+                    log::warn!(
+                        "plugin '{}' mcp_tools JSON parse failed: {e}; got: {prefix}",
+                        self.id
+                    );
+                    vec![]
+                }
+            },
+            Err(e) => {
+                log::warn!("plugin '{}' mcp_tools export call failed: {e}", self.id);
+                vec![]
+            }
         }
     }
 

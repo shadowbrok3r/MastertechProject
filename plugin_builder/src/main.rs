@@ -292,6 +292,27 @@ async fn handle_message(
             profile,
         } => {
             log::info!("[{job_id}] compile request: plugin={plugin_id} target={target} profile={profile}");
+            // The legacy WS CompileRequest carries no extra_files, so it
+            // cannot materialize the vendored mtech-plugin-sdk sibling
+            // crate. Refuse SDK plugins here with a clear error instead
+            // of a cryptic "unresolved import" cargo failure; DB mode is
+            // the multifile path.
+            if cargo_toml.contains("mtech-plugin-sdk") {
+                let payload = BuilderWire::CompileResult {
+                    job_id,
+                    success: false,
+                    wasm_bytes: None,
+                    stdout: String::new(),
+                    stderr: "SDK-dependent plugin received over the legacy WS transport, which \
+                             cannot materialize the vendored mtech-plugin-sdk crate. Run this \
+                             worker in DB mode (unset MASTERTECH_DB_MODE) so it can claim \
+                             multifile build jobs."
+                        .to_string(),
+                    duration_ms: 0,
+                };
+                tx.send(Message::Binary(payload.encode_tagged()?.into())).await?;
+                return Ok(());
+            }
             // Acknowledge before we kick off cargo so the admin sees motion.
             let _ = tx
                 .send(Message::Binary(
@@ -306,7 +327,7 @@ async fn handle_message(
                 .await;
 
             let start = std::time::Instant::now();
-            let result = compile_one(cfg, &job_id, &plugin_id, &cargo_toml, &lib_rs, &target, &profile).await;
+            let result = compile_one(cfg, &job_id, &plugin_id, &cargo_toml, &lib_rs, &target, &profile, &[]).await;
             let dur_ms = start.elapsed().as_millis() as u64;
             let payload = match result {
                 Ok(BuildArtifact { wasm_bytes, stdout, stderr }) => BuilderWire::CompileResult {

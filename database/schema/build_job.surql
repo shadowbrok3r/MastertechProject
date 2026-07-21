@@ -28,7 +28,7 @@ DEFINE FIELD profile             ON build_job TYPE string DEFAULT 'release'     
 -- Lifecycle state. Workers atomically transition pending → claimed via
 -- a guarded UPDATE so two workers can't double-claim the same job.
 DEFINE FIELD status              ON build_job TYPE string DEFAULT 'pending'
-    ASSERT $value IN ['pending', 'claimed', 'done', 'failed']                                                         PERMISSIONS FULL;
+    ASSERT $value IN ['pending', 'pending_multifile', 'claimed', 'done', 'failed']                                    PERMISSIONS FULL;
 -- Optional pin: if set at create time, only this worker may claim
 -- this job. None means any worker advertising the requested target
 -- can pick it up.
@@ -42,6 +42,13 @@ DEFINE FIELD wasm_bytes          ON build_job TYPE none | bytes                 
 DEFINE FIELD stdout              ON build_job TYPE string DEFAULT ''                                                  PERMISSIONS FULL;
 DEFINE FIELD stderr              ON build_job TYPE string DEFAULT ''                                                  PERMISSIONS FULL;
 DEFINE FIELD duration_ms         ON build_job TYPE number DEFAULT 0                                                   PERMISSIONS FULL;
+-- Extra files materialized alongside the plugin for a multifile build
+-- (the vendored mtech-plugin-sdk sibling crate). Empty for single-file
+-- jobs; workers sanitize each path before writing.
+DEFINE FIELD extra_files         ON build_job TYPE array<object> DEFAULT []                                           PERMISSIONS FULL;
+DEFINE FIELD extra_files.*       ON build_job TYPE object                                                             PERMISSIONS FULL;
+DEFINE FIELD extra_files.*.path    ON build_job TYPE string                                                           PERMISSIONS FULL;
+DEFINE FIELD extra_files.*.content ON build_job TYPE string                                                          PERMISSIONS FULL;
 DEFINE FIELD created_at          ON build_job TYPE datetime DEFAULT time::now() READONLY                              PERMISSIONS FULL;
 -- VALUE refreshes on every write, replacing the recursive updated_at_touch event.
 DEFINE FIELD updated_at          ON build_job TYPE datetime VALUE time::now()                                         PERMISSIONS FULL;

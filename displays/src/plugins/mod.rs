@@ -10,11 +10,15 @@ pub mod diagnostic_session_registry;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub mod crash_intel_hooks;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+pub mod dump_triage_schema;
+#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub mod driver_intel_hooks;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub mod intake_autopilot;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub mod mcp_bridge;
+#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+pub mod sdk_vendor;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub mod remote_egui_control;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
@@ -201,6 +205,8 @@ pub struct PluginInfo {
     pub description: String,
     pub enabled: bool,
     pub tool_count: usize,
+    pub abi_version: Option<u32>,
+    pub fingerprint: Option<u64>,
 }
 
 // ─── Core Plugin Trait ─────────────────────────────────────────────────────────
@@ -248,6 +254,12 @@ pub trait MastertechPlugin: Send + Sync + 'static {
     ) -> Result<serde_json::Value, String> {
         Err("No tools registered".into())
     }
+
+    /// SDK ABI contract version, if the plugin stamps one (`None` = legacy plugin).
+    fn abi_version(&self) -> Option<u32> { None }
+
+    /// Structural tool-shape fingerprint, if the plugin stamps one.
+    fn fingerprint(&self) -> Option<u64> { None }
 }
 
 // ─── Event Dispatcher ──────────────────────────────────────────────────────────
@@ -336,6 +348,8 @@ impl PluginManager {
                 description: p.description().to_string(),
                 enabled: p.enabled(),
                 tool_count: p.mcp_tools().len(),
+                abi_version: p.abi_version(),
+                fingerprint: p.fingerprint(),
             })
             .collect()
     }

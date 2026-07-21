@@ -378,7 +378,7 @@ static TELEMETRY_AGENT: Lazy<Arc<stress_runner::TelemetryAgent>> =
 
 // ─── Plugin store directory ────────────────────────────────────────────────────
 
-fn plugin_store_root() -> PathBuf {
+pub(crate) fn plugin_store_root() -> PathBuf {
     if let Ok(home) = std::env::var("HOME") {
         PathBuf::from(home).join(".local").join("share").join("mastertech").join("plugins")
     } else if let Ok(appdata) = std::env::var("LOCALAPPDATA") {
@@ -406,12 +406,22 @@ name = "{name}"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
+mtech-plugin-sdk = {{ path = "../_mtech_sdk_vendor" }}
+facet = "=0.46.5"
 serde = {{ version = "1", features = ["derive"] }}
 serde_json = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+panic = "abort"
 "#,
         name = sanitize_id(plugin_id),
     )
@@ -598,10 +608,21 @@ pub struct TelemetrySnapshotParams {
     pub warmup_ms: Option<u64>,
 }
 
+/// String schema enumerating the reflected stressor labels.
+fn wire_stressor_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    let labels: Vec<&'static str> = stress_runner::Stressor::labels().collect();
+    let description = stress_runner::Stressor::wire_description();
+    schemars::json_schema!({
+        "type": "string",
+        "enum": labels,
+        "description": description,
+    })
+}
+
 #[derive(Deserialize, Debug, Serialize, JsonSchema, Clone)]
 #[schemars(inline)]
 pub struct ScenarioStageParam {
-    #[schemars(description = "Stressor (snake_case): cpu, memory, disk, matrix, memcpy, bitops, cache, vm, stream, branch, atomic, mutex, switch, prime, fp, hash, prefetch, icache, tsc, gpu, gpu_matmul, gpu_vram, gpu_pcie, combined")]
+    #[schemars(schema_with = "wire_stressor_schema")]
     pub stressor: String,
     #[schemars(description = "Stage length in seconds (1-1800)")]
     pub duration_secs: u64,
@@ -1567,13 +1588,13 @@ fn validate_remote_stress_stages(
                 s.label.clone().unwrap_or_else(|| s.stressor.clone())
             )));
         }
-        let _stressor: stress_runner::Stressor =
-            serde_json::from_value(serde_json::Value::String(s.stressor.clone())).map_err(|_| {
-                to_internal(format!(
-                    "Unknown stressor '{}'. Valid: cpu, memory, disk, matrix, memcpy, bitops, cache, vm, stream, branch, atomic, mutex, switch, prime, fp, hash, prefetch, icache, tsc, gpu, gpu_matmul, gpu_vram, gpu_pcie, combined",
-                    s.stressor
-                ))
-            })?;
+        stress_runner::Stressor::from_str(&s.stressor).ok_or_else(|| {
+            to_internal(format!(
+                "Unknown stressor '{}'. Valid: {}",
+                s.stressor,
+                stress_runner::Stressor::labels_csv()
+            ))
+        })?;
         stage_sum += s.duration_secs;
         out.push(crate::RemoteScenarioStage {
             stressor: s.stressor.clone(),
@@ -2487,6 +2508,10 @@ impl PluginToolProvider {
                 .await
                 .map_err(|e| to_internal(format!("write lib.rs: {e}")))?;
 
+            if let Err(e) = super::sdk_vendor::ensure_vendored_sdk() {
+                log::warn!("ensure_vendored_sdk failed: {e}");
+            }
+
             if !cargo_toml.exists() {
                 tokio::fs::write(&cargo_toml, plugin_cargo_toml(&p.plugin_id))
                     .await
@@ -2533,6 +2558,10 @@ impl PluginToolProvider {
                 "No source found for plugin '{}'. Use plugin_source to write source first.",
                 p.plugin_id
             )));
+        }
+
+        if let Err(e) = super::sdk_vendor::ensure_vendored_sdk() {
+            log::warn!("ensure_vendored_sdk failed: {e}");
         }
 
         let output = tokio::process::Command::new("cargo")
@@ -3155,7 +3184,7 @@ impl PluginToolProvider {
             None
         };
 
-        let (name, version, tools_json) = {
+        let (name, version, tools_json, abi_version, fingerprint) = {
             // First check if the plugin is already loaded.
             let already_loaded = {
                 let mgr = self.try_read_manager()?;
@@ -3186,6 +3215,8 @@ impl PluginToolProvider {
             let version = matching
                 .map(|pi| pi.version.clone())
                 .unwrap_or_else(|| "0.1.0".to_string());
+            let abi_version = matching.and_then(|pi| pi.abi_version);
+            let fingerprint = matching.and_then(|pi| pi.fingerprint);
 
             let tools_json: Vec<database::schema::PluginToolInfo> = mgr.plugins.iter()
                 .find(|plug| plug.id() == p.plugin_id)
@@ -3195,10 +3226,11 @@ impl PluginToolProvider {
                 .map(|td| database::schema::PluginToolInfo {
                     name: td.name.clone(),
                     description: td.description.clone(),
+                    parameters_schema: td.parameters_schema.clone(),
                 })
                 .collect();
 
-            (name, version, tools_json)
+            (name, version, tools_json, abi_version, fingerprint)
         };
 
         let wasm_path = if let Some(bytes) = &wasm_bytes {
@@ -3220,6 +3252,8 @@ impl PluginToolProvider {
             tags: p.tags.clone().unwrap_or_default(),
             wasm_bucket_path: wasm_path.clone(),
             source_code,
+            abi_version,
+            fingerprint: fingerprint.map(|f| f as i64),
             ..Default::default()
         };
 
@@ -3271,6 +3305,9 @@ impl PluginToolProvider {
             let src_dir = dir.join("src");
             let _ = tokio::fs::create_dir_all(&src_dir).await;
             let _ = tokio::fs::write(src_dir.join("lib.rs"), source).await;
+            if let Err(e) = super::sdk_vendor::ensure_vendored_sdk() {
+                log::warn!("ensure_vendored_sdk failed: {e}");
+            }
             let cargo_toml_path = dir.join("Cargo.toml");
             if !cargo_toml_path.exists() {
                 let _ = tokio::fs::write(&cargo_toml_path, plugin_cargo_toml(&p.plugin_id)).await;
@@ -4249,8 +4286,30 @@ impl PluginToolProvider {
                     "verdicts": verdicts,
                     "known_bad_hits": known_bad_hits,
                 },
+                "result_schema": serde_json::from_str::<serde_json::Value>(
+                    &crate::plugins::dump_triage_schema::kernel_triage_result_schema(),
+                )
+                .unwrap_or_default(),
             }),
         )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "minidump_analyze_schema",
+        description = "JSON schema of the minidump_analyze triage result and the cross-dump diff object."
+    )]
+    async fn minidump_analyze_schema(&self) -> Result<CallToolResult, ErrorData> {
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
+            "triage": serde_json::from_str::<serde_json::Value>(
+                &crate::plugins::dump_triage_schema::kernel_triage_result_schema(),
+            )
+            .unwrap_or_default(),
+            "diff": serde_json::from_str::<serde_json::Value>(
+                &crate::plugins::dump_triage_schema::triage_diff_schema(),
+            )
+            .unwrap_or_default(),
+        }))
         .map_err(to_internal)?]))
     }
 
@@ -4793,15 +4852,13 @@ impl PluginToolProvider {
                     s.label.clone().unwrap_or_else(|| s.stressor.clone())
                 )));
             }
-            let stressor: stress_runner::Stressor =
-                serde_json::from_value(serde_json::Value::String(s.stressor.clone())).map_err(
-                    |_| {
-                        to_internal(format!(
-                            "Unknown stressor '{}'. Valid: cpu, memory, disk, matrix, memcpy, bitops, cache, vm, stream, branch, atomic, mutex, switch, prime, fp, hash, prefetch, icache, tsc, gpu, gpu_matmul, gpu_vram, gpu_pcie, combined",
-                            s.stressor
-                        ))
-                    },
-                )?;
+            let stressor = stress_runner::Stressor::from_str(&s.stressor).ok_or_else(|| {
+                to_internal(format!(
+                    "Unknown stressor '{}'. Valid: {}",
+                    s.stressor,
+                    stress_runner::Stressor::labels_csv()
+                ))
+            })?;
             stages.push(RunStage {
                 label: s.label.clone().unwrap_or_else(|| s.stressor.clone()),
                 stressor,
@@ -4957,15 +5014,13 @@ impl PluginToolProvider {
         }
         let mut lanes: Vec<RunStage> = Vec::with_capacity(p.lanes.len());
         for s in &p.lanes {
-            let stressor: stress_runner::Stressor =
-                serde_json::from_value(serde_json::Value::String(s.stressor.clone())).map_err(
-                    |_| {
-                        to_internal(format!(
-                            "Unknown stressor '{}'. Valid: cpu, memory, disk, matrix, memcpy, bitops, cache, vm, stream, branch, atomic, mutex, switch, prime, fp, hash, prefetch, icache, tsc, gpu, gpu_matmul, gpu_vram, gpu_pcie, combined",
-                            s.stressor
-                        ))
-                    },
-                )?;
+            let stressor = stress_runner::Stressor::from_str(&s.stressor).ok_or_else(|| {
+                to_internal(format!(
+                    "Unknown stressor '{}'. Valid: {}",
+                    s.stressor,
+                    stress_runner::Stressor::labels_csv()
+                ))
+            })?;
             lanes.push(RunStage {
                 label: s.label.clone().unwrap_or_else(|| s.stressor.clone()),
                 stressor,
@@ -5555,6 +5610,9 @@ impl PluginToolProvider {
                  transparently running local cargo compile for '{}'",
                 p.plugin_id
             );
+            if let Err(e) = super::sdk_vendor::ensure_vendored_sdk() {
+                log::warn!("ensure_vendored_sdk failed: {e}");
+            }
             let (success, stdout, stderr, artifact_size) =
                 run_local_cargo_compile(&dir, &p.plugin_id, &self).await?;
             return Ok(CallToolResult::success(vec![ContentBlock::json(
@@ -5612,6 +5670,63 @@ impl PluginToolProvider {
             }
         };
 
+        let extra_files: Vec<database::schema::BuildFile> = if super::sdk_vendor::cargo_toml_uses_sdk(&cargo_toml) {
+            // SDK plugins need a multifile-capable worker to receive the
+            // vendored sibling crate. Probe for one heartbeating within
+            // 90 s; if none, fall back to local cargo (same as the
+            // no-worker path) so the AI isn't left polling forever.
+            if count_live_multifile_workers().await == 0 {
+                if target == "wasm32-wasip1" && local_cargo_available().await {
+                    log::info!(
+                        "plugin_compile_remote: SDK plugin '{}' but no multifile-capable \
+                         build_worker is live — running local cargo compile",
+                        p.plugin_id
+                    );
+                    if let Err(e) = super::sdk_vendor::ensure_vendored_sdk() {
+                        log::warn!("ensure_vendored_sdk failed: {e}");
+                    }
+                    let (success, stdout, stderr, artifact_size) =
+                        run_local_cargo_compile(&dir, &p.plugin_id, &self).await?;
+                    return Ok(CallToolResult::success(vec![ContentBlock::json(
+                        serde_json::json!({
+                            "job_id": format!("local-fallback:{}", p.plugin_id),
+                            "plugin_id": p.plugin_id,
+                            "target": target,
+                            "profile": profile,
+                            "status": if success { "done" } else { "failed" },
+                            "fell_back_to_local": true,
+                            "reason": "SDK plugin and no multifile-capable build_worker; ran local cargo",
+                            "artifact_bytes": artifact_size,
+                            "stdout_tail": tail_n_lines(&stdout, 20),
+                            "stderr_tail": tail_n_lines(&stderr, 40),
+                            "next": if success {
+                                "plugin_deploy or plugin_deploy_remote — artifact already in local store, no polling needed"
+                            } else {
+                                "fix source from stderr and retry plugin_compile_remote"
+                            },
+                        }),
+                    )
+                    .map_err(to_internal)?]));
+                }
+                return Err(to_internal(
+                    "This plugin depends on mtech-plugin-sdk, but no multifile-capable \
+                     build_worker is live and no local `cargo` + wasm32-wasip1 target is \
+                     available. Update your plugin_builder workers (they advertise the \
+                     'multifile' capability once rebuilt) or install Rust locally and use \
+                     plugin_compile.",
+                ));
+            }
+            super::sdk_vendor::vendored_sdk_files()
+                .into_iter()
+                .map(|(rel, content)| database::schema::BuildFile {
+                    path: format!("_mtech_sdk_vendor/{rel}"),
+                    content,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         let job = database::schema::BuildJob::create(
             &p.plugin_id,
             &cargo_toml,
@@ -5619,6 +5734,7 @@ impl PluginToolProvider {
             &target,
             &profile,
             assigned_worker_id,
+            extra_files,
         )
         .await
         .map_err(|e| to_internal(format!("CREATE build_job: {e}")))?;
@@ -6436,6 +6552,33 @@ fn tail_n_lines(s: &str, n: usize) -> String {
         s.to_string()
     } else {
         lines[lines.len() - n..].join("\n")
+    }
+}
+
+/// Count `build_worker` rows heartbeating within 90 s that advertise
+/// the `multifile` capability. Returns 0 on query failure so callers
+/// fall back to local compile rather than enqueue an unclaimable job.
+async fn count_live_multifile_workers() -> i64 {
+    let resp = database::db()
+        .query(
+            "SELECT count() FROM connected_client \
+             WHERE client_kind = 'build_worker' \
+               AND last_update > time::now() - 90s \
+               AND 'multifile' IN (capabilities ?? []) \
+             GROUP ALL",
+        )
+        .await;
+    match resp {
+        Ok(mut r) => r
+            .take::<Option<serde_json::Value>>(0)
+            .ok()
+            .flatten()
+            .and_then(|v| v.get("count").and_then(|c| c.as_i64()))
+            .unwrap_or(0),
+        Err(e) => {
+            log::warn!("plugin_compile_remote: multifile-worker probe failed: {e:?} — assuming 0");
+            0
+        }
     }
 }
 

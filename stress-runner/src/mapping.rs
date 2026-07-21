@@ -4,7 +4,7 @@
 //! stress-kit. This module is the only place that knows about both.
 
 use database::schema::{
-    random_record_id, CoreSampleRow, DiskRateRow, NetworkRateRow, RecordId, StressKitStressor,
+    random_record_id, CoreSampleRow, DiskRateRow, NetworkRateRow, RecordId,
     StressTestMetric, TargetKind, COMPUTER_TABLE, STRESS_TEST_METRIC_TABLE,
 };
 use stress_kit::{
@@ -12,73 +12,14 @@ use stress_kit::{
     Stressor,
 };
 
-/// stress-kit's runtime `Stressor` enum → database's persisted `StressKitStressor`.
-pub fn stressor_to_db(s: Stressor) -> StressKitStressor {
-    match s {
-        Stressor::Cpu => StressKitStressor::Cpu,
-        Stressor::Memory => StressKitStressor::Memory,
-        Stressor::Disk => StressKitStressor::Disk,
-        Stressor::Matrix => StressKitStressor::Matrix,
-        Stressor::Memcpy => StressKitStressor::Memcpy,
-        Stressor::Bitops => StressKitStressor::Bitops,
-        Stressor::Cache => StressKitStressor::Cache,
-        Stressor::Vm => StressKitStressor::Vm,
-        Stressor::Stream => StressKitStressor::Stream,
-        Stressor::Branch => StressKitStressor::Branch,
-        Stressor::Atomic => StressKitStressor::Atomic,
-        Stressor::Mutex => StressKitStressor::Mutex,
-        Stressor::Switch => StressKitStressor::Switch,
-        Stressor::Prime => StressKitStressor::Prime,
-        Stressor::Fp => StressKitStressor::Fp,
-        Stressor::Hash => StressKitStressor::Hash,
-        Stressor::Prefetch => StressKitStressor::Prefetch,
-        Stressor::Icache => StressKitStressor::Icache,
-        Stressor::Tsc => StressKitStressor::Tsc,
-        Stressor::MemTest => StressKitStressor::MemTest,
-        Stressor::CpuVerify => StressKitStressor::CpuVerify,
-        Stressor::Linpack => StressKitStressor::Linpack,
-        Stressor::Psu => StressKitStressor::Psu,
-        Stressor::Gpu => StressKitStressor::Gpu,
-        Stressor::GpuMatmul => StressKitStressor::GpuMatmul,
-        Stressor::GpuVram => StressKitStressor::GpuVram,
-        Stressor::GpuPcie => StressKitStressor::GpuPcie,
-        // No persisted variant yet; recorded as the closest existing combined-load kind.
-        Stressor::Combined => StressKitStressor::Psu,
-    }
+/// stress-kit runtime `Stressor` → persisted canonical label.
+pub fn stressor_to_db(s: Stressor) -> String {
+    s.as_str().to_string()
 }
 
-/// Database's persisted enum → stress-kit's runtime enum (e.g. for spawning a run
-/// from a saved TestTool::StressKit { stressor } variant).
-pub fn stressor_from_db(s: StressKitStressor) -> Stressor {
-    match s {
-        StressKitStressor::Cpu => Stressor::Cpu,
-        StressKitStressor::Memory => Stressor::Memory,
-        StressKitStressor::Disk => Stressor::Disk,
-        StressKitStressor::Matrix => Stressor::Matrix,
-        StressKitStressor::Memcpy => Stressor::Memcpy,
-        StressKitStressor::Bitops => Stressor::Bitops,
-        StressKitStressor::Cache => Stressor::Cache,
-        StressKitStressor::Vm => Stressor::Vm,
-        StressKitStressor::Stream => Stressor::Stream,
-        StressKitStressor::Branch => Stressor::Branch,
-        StressKitStressor::Atomic => Stressor::Atomic,
-        StressKitStressor::Mutex => Stressor::Mutex,
-        StressKitStressor::Switch => Stressor::Switch,
-        StressKitStressor::Prime => Stressor::Prime,
-        StressKitStressor::Fp => Stressor::Fp,
-        StressKitStressor::Hash => Stressor::Hash,
-        StressKitStressor::Prefetch => Stressor::Prefetch,
-        StressKitStressor::Icache => Stressor::Icache,
-        StressKitStressor::Tsc => Stressor::Tsc,
-        StressKitStressor::MemTest => Stressor::MemTest,
-        StressKitStressor::CpuVerify => Stressor::CpuVerify,
-        StressKitStressor::Linpack => Stressor::Linpack,
-        StressKitStressor::Psu => Stressor::Psu,
-        StressKitStressor::Gpu => Stressor::Gpu,
-        StressKitStressor::GpuMatmul => Stressor::GpuMatmul,
-        StressKitStressor::GpuVram => Stressor::GpuVram,
-        StressKitStressor::GpuPcie => Stressor::GpuPcie,
-    }
+/// Persisted canonical label → stress-kit runtime `Stressor`.
+pub fn stressor_from_db(label: &str) -> Option<Stressor> {
+    Stressor::from_str(label)
 }
 
 /// Sensible default `TargetKind` from a Stressor. Callers can override; this is
@@ -360,4 +301,33 @@ pub fn local_computer_record() -> RecordId {
             RecordId::new(COMPUTER_TABLE, key)
         })
         .clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use database::schema::TestTool;
+
+    #[test]
+    fn db_label_roundtrip_is_lossless() {
+        for &s in Stressor::all() {
+            let label = stressor_to_db(s);
+            assert_eq!(stressor_from_db(&label), Some(s), "lossy DB round-trip for {s:?}");
+        }
+    }
+
+    #[test]
+    fn combined_persists_as_combined() {
+        assert_eq!(stressor_to_db(Stressor::Combined), "combined");
+        assert_eq!(stressor_from_db("combined"), Some(Stressor::Combined));
+        assert_ne!(
+            stressor_to_db(Stressor::Combined),
+            stressor_to_db(Stressor::Psu),
+            "Combined must not collapse into Psu's DB label"
+        );
+        let tool = TestTool::StressKit {
+            stressor: stressor_to_db(Stressor::Combined),
+        };
+        assert_eq!(tool.label(), "stresskit:combined");
+    }
 }

@@ -12,6 +12,15 @@ use crate::db;
 
 use super::{random_record_id, Datetime, RecordId, SurrealValue, BUILD_JOB_TABLE};
 
+/// One extra file materialized alongside the plugin for a multifile
+/// build (e.g. the vendored `mtech-plugin-sdk` sibling crate). `path`
+/// is relative to the job dir; the worker sanitizes it before writing.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
+pub struct BuildFile {
+    pub path: String,
+    pub content: String,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
 pub struct BuildJob {
     pub id: RecordId,
@@ -38,6 +47,11 @@ pub struct BuildJob {
     pub stderr: String,
     #[serde(default)]
     pub duration_ms: u64,
+    /// Files written alongside the plugin for a multifile build. Empty
+    /// for single-file jobs. Old rows deserialize to an empty vec.
+    #[serde(default)]
+    #[surreal(default)]
+    pub extra_files: Vec<BuildFile>,
     pub created_at: Datetime,
     pub updated_at: Datetime,
 }
@@ -60,6 +74,7 @@ impl Default for BuildJob {
             stdout: String::new(),
             stderr: String::new(),
             duration_ms: 0,
+            extra_files: Vec::new(),
             created_at: now.clone(),
             updated_at: now,
         }
@@ -67,9 +82,11 @@ impl Default for BuildJob {
 }
 
 impl BuildJob {
-    /// CREATE a fresh pending job. Caller supplies source; we generate
-    /// the record id and timestamps. Returns the row as the DB sees it
-    /// (so the caller has the authoritative `id` for status polling).
+    /// CREATE a fresh job. Caller supplies source; we generate the
+    /// record id and timestamps. A job carrying `extra_files` enqueues
+    /// as `pending_multifile` so pre-multifile workers (whose live
+    /// query only matches `pending`) never claim it. Returns the row as
+    /// the DB sees it (so the caller has the authoritative `id`).
     pub async fn create(
         plugin_id: &str,
         cargo_toml: &str,
@@ -77,14 +94,18 @@ impl BuildJob {
         target: &str,
         profile: &str,
         assigned_worker_id: Option<RecordId>,
+        extra_files: Vec<BuildFile>,
     ) -> anyhow::Result<Self> {
+        let status = if extra_files.is_empty() { "pending" } else { "pending_multifile" };
         let row = Self {
             plugin_id: plugin_id.to_string(),
             cargo_toml: cargo_toml.to_string(),
             lib_rs: lib_rs.to_string(),
             target: target.to_string(),
             profile: profile.to_string(),
+            status: status.to_string(),
             assigned_worker_id,
+            extra_files,
             ..Self::default()
         };
         let created: Option<Self> = db().create(row.id.clone()).content(row).await?;
@@ -96,9 +117,9 @@ impl BuildJob {
         Ok(row)
     }
 
-    /// Atomically transition `pending → claimed` for this specific
-    /// job, but only if it's still pending AND the claim is valid for
-    /// `worker_id`. Returns `Ok(Some(job))` if we got it, `Ok(None)`
+    /// Atomically transition a `pending`/`pending_multifile` job to
+    /// `claimed`, but only if it's still pending AND the claim is valid
+    /// for `worker_id`. Returns `Ok(Some(job))` if we got it, `Ok(None)`
     /// if some other worker beat us (or the job is in a non-pending
     /// state). This is the only operation that must be race-safe:
     /// SurrealDB's per-record write lock guarantees a single winner.
@@ -108,7 +129,7 @@ impl BuildJob {
                 "UPDATE $id SET status = 'claimed', \
                                 claimed_worker_id = $worker, \
                                 claimed_at = time::now() \
-                 WHERE status = 'pending' \
+                 WHERE status IN ['pending', 'pending_multifile'] \
                    AND (assigned_worker_id == NONE OR assigned_worker_id == $worker) \
                  RETURN AFTER",
             )
@@ -176,7 +197,7 @@ impl BuildJob {
         let mut response = db()
             .query(
                 "SELECT * FROM build_job \
-                 WHERE status = 'pending' \
+                 WHERE status IN ['pending', 'pending_multifile'] \
                    AND (assigned_worker_id == NONE OR assigned_worker_id == $worker) \
                  ORDER BY created_at ASC",
             )

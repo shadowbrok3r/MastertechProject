@@ -42,7 +42,8 @@ surrealdb.workspace = true
 egui_dock.workspace = true
 mtech-ui.workspace = true
 once_cell.workspace = true
-tcp_protocol = { workspace = true }
+tcp_protocol = { workspace = true, features = ["fingerprint"] }
+facet = { workspace = true, features = ["std", "chrono", "reflect"] }
 web-time.workspace = true
 futures.workspace = true
 bincode.workspace = true 
@@ -73,7 +74,8 @@ workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tokio", "tls", "rustls_ring"]}
 tokio = { workspace = true, optional = true }
-dump-triage = { workspace = true }
+dump-triage = { workspace = true, features = ["facet"] }
+mtech-plugin-sdk = { workspace = true }
 stress-kit = { workspace = true, optional = true }
 stress-runner = { workspace = true }
 ratatui = { workspace = true }

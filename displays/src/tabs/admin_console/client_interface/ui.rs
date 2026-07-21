@@ -321,8 +321,13 @@ impl WebSocketClient {
                         format!("Sending {short}  {sent}/{total}"),
                     );
                 } else {
+                    let transfer_color = if self.cmd_protocol_mismatch {
+                        Color32::from_rgb(255, 200, 80)
+                    } else {
+                        sys_color
+                    };
                     ui.menu_button(
-                        RichText::new(menu_label("Transfer")).color(sys_color).strong(),
+                        RichText::new(menu_label("Transfer")).color(transfer_color).strong(),
                         |ui| {
                             #[cfg(not(target_arch = "wasm32"))]
                             #[cfg(not(any(target_os = "ios", target_os = "android")))]

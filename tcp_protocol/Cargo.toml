@@ -4,10 +4,14 @@ version = "0.1.0"
 edition = "2024"
 description = "Shared wire-protocol constants and TCP socket configuration for the MasterTech admin↔client direct TCP path."
 
+[features]
+fingerprint = ["dep:facet"]
+
 [dependencies]
 log = { workspace = true }
 serde = { workspace = true }
 bincode = { workspace = true }
+facet = { workspace = true, optional = true }
 
 # tokio/socket2 back the OS-side TCP helpers only; exclude the firmware (uefi)
 # and wasm targets, which use just the serde frame types.

@@ -1,0 +1,11 @@
+[package]
+name = "mtech-plugin-sdk"
+version = "0.1.0"
+edition = "2024"
+
+# Direct version pins (not workspace deps): the vendored copy shipped to plugin
+# machines has no parent workspace to resolve `{ workspace = true }` against.
+[dependencies]
+facet = "=0.46.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

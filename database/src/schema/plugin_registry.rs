@@ -6,6 +6,8 @@ use super::{Datetime, RecordId, SurrealValue};
 pub struct PluginToolInfo {
     pub name: String,
     pub description: String,
+    #[serde(default)]
+    pub parameters_schema: serde_json::Value,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
@@ -20,6 +22,11 @@ pub struct PluginRegistryEntry {
     pub tags: Vec<String>,
     pub wasm_bucket_path: Option<String>,
     pub source_code: Option<String>,
+    #[serde(default)]
+    pub abi_version: Option<u32>,
+    // u64 fingerprint bits stored as i64; SurrealDB numbers reject u64 >= 2^63.
+    #[serde(default)]
+    pub fingerprint: Option<i64>,
     pub created_at: Datetime,
     pub updated_at: Datetime,
 }
@@ -38,6 +45,8 @@ impl Default for PluginRegistryEntry {
             tags: Vec::new(),
             wasm_bucket_path: None,
             source_code: None,
+            abi_version: None,
+            fingerprint: None,
             created_at: now.clone(),
             updated_at: now,
         }

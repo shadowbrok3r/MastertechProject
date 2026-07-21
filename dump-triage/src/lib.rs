@@ -12,6 +12,7 @@
 //! WASI plugin that fetches byte ranges remotely.
 
 pub mod bugcheck;
+pub mod diff;
 pub mod header;
 pub mod triage;
 
@@ -29,19 +30,28 @@ pub use header::{
 /// One frame of a scanned stack walk. `trust` is `"context"` for the crash
 /// RIP and `"scan"` for a value found on the stack that lands inside a module.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "facet", derive(facet::Facet))]
 pub struct ScannedFrame {
     /// Stack address the return value was found at (None for the RIP frame).
+    #[serde(default)]
     pub stack_addr: Option<u64>,
+    #[serde(default)]
     pub ret_addr: u64,
+    #[serde(default)]
     pub module: String,
+    #[serde(default)]
     pub offset: u64,
+    #[serde(default)]
     pub trust: String,
 }
 
 /// A block of dump memory for a hex view.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "facet", derive(facet::Facet))]
 pub struct HexRegion {
+    #[serde(default)]
     pub base: u64,
+    #[serde(default)]
     pub bytes: Vec<u8>,
 }
 
@@ -86,53 +96,81 @@ pub fn scan_stack_bytes(
 
 /// One loaded kernel module/driver from a dump.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "facet", derive(facet::Facet))]
 pub struct DriverEntry {
     /// Lowercased file name, e.g. `rtwlane.sys`.
+    #[serde(default)]
     pub name: String,
     /// Full NT path as recorded in the dump.
+    #[serde(default)]
     pub path: String,
+    #[serde(default)]
     pub base: u64,
+    #[serde(default)]
     pub size: u64,
     /// PE TimeDateStamp when available (triage driver list carries it).
+    #[serde(default)]
     pub timestamp: Option<u32>,
 }
 
 /// Complete triage result for a kernel dump.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "facet", derive(facet::Facet))]
 pub struct KernelDumpTriage {
+    #[serde(default)]
     pub dump_type: u32,
+    #[serde(default)]
     pub dump_type_name: String,
     /// Normalized like crash-intel expects: `0x133`.
+    #[serde(default)]
     pub bugcheck_code: String,
+    #[serde(default)]
     pub bugcheck_name: String,
+    #[serde(default)]
     pub bugcheck_parameters: Vec<String>,
     /// Documented meaning of the parameters for the common codes.
+    #[serde(default)]
     pub parameter_notes: Vec<String>,
+    #[serde(default)]
     pub rip: Option<String>,
+    #[serde(default)]
     pub rsp: Option<String>,
+    #[serde(default)]
     pub exception_code: Option<String>,
+    #[serde(default)]
     pub number_processors: u32,
     /// AMD64 GP/control registers from the crash CONTEXT, formatted as hex.
+    #[serde(default)]
     pub registers: Vec<(String, String)>,
     /// Unix seconds of the crash wall-clock time.
+    #[serde(default)]
     pub system_time_unix: Option<i64>,
+    #[serde(default)]
     pub uptime_secs: Option<i64>,
+    #[serde(default)]
     pub comment: Option<String>,
+    #[serde(default)]
     pub drivers: Vec<DriverEntry>,
     /// Module whose address range contains the crash-time RIP.
+    #[serde(default)]
     pub rip_module: Option<String>,
     /// True when RIP fell inside the kernel image itself (ntoskrnl/hal) —
     /// varied-process nt faults with no recurring third-party module is the
     /// classic bad-RAM pattern rather than a driver bug.
+    #[serde(default)]
     pub rip_in_kernel_image: bool,
     /// Best single-module blame: the RIP module unless that is the kernel
     /// image, else the triage header's BrokenDriver entry when present.
+    #[serde(default)]
     pub blamed_module: Option<String>,
     /// Scanned-stack backtrace (RIP context frame + stack scan hits).
+    #[serde(default)]
     pub scanned_stack: Vec<ScannedFrame>,
     /// Raw bytes around RIP (full/BMP/live dumps only).
+    #[serde(default)]
     pub rip_region: Option<HexRegion>,
     /// Raw bytes at RSP (full/BMP/live dumps only).
+    #[serde(default)]
     pub rsp_region: Option<HexRegion>,
 }
 
@@ -268,4 +306,96 @@ pub fn analyze_file(path: &Path) -> Result<KernelDumpTriage, String> {
     let (drivers, extras) = (Vec::new(), KernelExtras::default());
 
     Ok(build_triage(&header, drivers, None, extras))
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+
+    /// One `KernelDumpTriage` object in the exact wire format the out-of-repo
+    /// `com.mastertech.dump-triage` WASM plugin and the native producer emit.
+    fn wire_sample() -> serde_json::Value {
+        serde_json::json!({
+            "dump_type": 4,
+            "dump_type_name": "triage_minidump",
+            "bugcheck_code": "0x133",
+            "bugcheck_name": "DPC_WATCHDOG_VIOLATION",
+            "bugcheck_parameters": ["0x1", "0x1e00", "0x0", "0x0"],
+            "parameter_notes": ["The DPC time count."],
+            "rip": "0xfffff80312345678",
+            "rsp": "0xfffff80312340000",
+            "exception_code": null,
+            "number_processors": 16,
+            "registers": [
+                ["rax", "0x0000000000000000"],
+                ["rip", "0xfffff80312345678"]
+            ],
+            "system_time_unix": 1767225600i64,
+            "uptime_secs": 3600i64,
+            "comment": null,
+            "drivers": [{
+                "name": "ntoskrnl.exe",
+                "path": "\\SystemRoot\\system32\\ntoskrnl.exe",
+                "base": 18446735291789737984u64,
+                "size": 16777216u64,
+                "timestamp": null
+            }],
+            "rip_module": "ntoskrnl.exe",
+            "rip_in_kernel_image": true,
+            "blamed_module": "rtwlane.sys",
+            "scanned_stack": [{
+                "stack_addr": null,
+                "ret_addr": 18446735291789738104u64,
+                "module": "ntoskrnl.exe",
+                "offset": 120u64,
+                "trust": "context"
+            }],
+            "rip_region": null,
+            "rsp_region": null
+        })
+    }
+
+    #[test]
+    fn wire_sample_deserializes_into_typed() {
+        let kd: KernelDumpTriage = serde_json::from_value(wire_sample()).unwrap();
+        assert_eq!(kd.bugcheck_code, "0x133");
+        assert_eq!(kd.bugcheck_parameters.len(), 4);
+        assert_eq!(kd.registers[0], ("rax".to_string(), "0x0000000000000000".to_string()));
+        assert_eq!(kd.drivers[0].name, "ntoskrnl.exe");
+        assert_eq!(kd.blamed_module.as_deref(), Some("rtwlane.sys"));
+        assert!(kd.rip_in_kernel_image);
+    }
+
+    #[test]
+    fn serialized_shape_is_byte_stable() {
+        let sample = wire_sample();
+        let kd: KernelDumpTriage = serde_json::from_value(sample.clone()).unwrap();
+        let round: serde_json::Value = serde_json::to_value(&kd).unwrap();
+        assert_eq!(round, sample, "serialization must not alter the wire shape");
+        // Tuple registers stay 2-element arrays, not objects.
+        assert!(round["registers"][0].is_array());
+        assert_eq!(round["registers"][0].as_array().unwrap().len(), 2);
+        assert!(round["bugcheck_code"].is_string());
+    }
+
+    #[test]
+    fn version_skewed_json_missing_newer_fields_still_deserializes() {
+        // A producer that predates parameter_notes/scanned_stack/rip_region omits them.
+        let skewed = serde_json::json!({
+            "dump_type": 4,
+            "dump_type_name": "triage_minidump",
+            "bugcheck_code": "0x1a",
+            "bugcheck_name": "MEMORY_MANAGEMENT",
+            "bugcheck_parameters": ["0x41790"],
+            "number_processors": 8,
+            "drivers": [{ "name": "nt.sys", "path": "", "base": 4096u64, "size": 0u64 }],
+            "rip_in_kernel_image": false
+        });
+        let kd: KernelDumpTriage = serde_json::from_value(skewed).unwrap();
+        assert_eq!(kd.bugcheck_code, "0x1a");
+        assert!(kd.parameter_notes.is_empty());
+        assert!(kd.scanned_stack.is_empty());
+        assert!(kd.rip_region.is_none());
+        assert_eq!(kd.drivers[0].timestamp, None);
+    }
 }

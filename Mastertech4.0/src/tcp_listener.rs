@@ -21,8 +21,8 @@
 use crate::filesystem::get_client_hash;
 use crate::terminal_mode::websockets::TerminalWebsocketClient;
 use crate::transport::{
-    ClientTransport, TcpFrame, FRAME_TAG_BINARY, FRAME_TAG_PING, FRAME_TAG_PONG, FRAME_TAG_TEXT,
-    HANDSHAKE_MAGIC,
+    ClientTransport, TcpFrame, FRAME_TAG_BINARY, FRAME_TAG_PING, FRAME_TAG_PONG,
+    FRAME_TAG_SHAPE_FP, FRAME_TAG_TEXT, HANDSHAKE_MAGIC,
 };
 use tcp_protocol::is_supported_version;
 use anyhow::{anyhow, Context, Result};
@@ -282,6 +282,13 @@ async fn handle_session(stream: TcpStream, peer: SocketAddr) -> Result<()> {
     let (file_tx, file_rx) = tokio::sync::mpsc::channel::<TcpFrame>(FILE_CHANNEL_DEPTH);
     let writer_handle = tokio::spawn(writer_task(write_half, write_rx, file_rx, peer));
 
+    // Send this build's Cmd shape fingerprint before any Cmd frame.
+    let _ = write_tx.send(TcpFrame::ShapeFp(tcp_protocol::encode_shape_fp(
+        tcp_protocol::SHAPE_FP_KIND_AGENT,
+        *displays::shape_fp::CMD_SHAPE_FP,
+        displays::shape_fp::BUILD_VERSION,
+    )));
+
     // 3) Per-session command dispatcher
     let mut client = TerminalWebsocketClient::new();
     let mut transport = ClientTransport::Tcp { ctrl: write_tx.clone(), file: file_tx.clone() };
@@ -472,6 +479,22 @@ async fn run_session_loop(
                         // already validates with `decode_ping_payload`.
                         let _ = write_tx.send(TcpFrame::Pong(payload));
                     }
+                    Ok(InboundFrame::ShapeFp(payload)) => {
+                        let local = *displays::shape_fp::CMD_SHAPE_FP;
+                        match tcp_protocol::decode_shape_fp(&payload) {
+                            Some((_, peer_fp, peer_ver)) if peer_fp != local => {
+                                log::warn!(
+                                    "tcp_listener -> Cmd shape mismatch: admin fp=0x{peer_fp:016x} \
+                                     ver={peer_ver} vs local fp=0x{local:016x} ver={}",
+                                    displays::shape_fp::BUILD_VERSION
+                                );
+                            }
+                            Some((_, _, peer_ver)) => {
+                                log::debug!("tcp_listener -> Cmd shape ok (admin ver={peer_ver})");
+                            }
+                            None => log::warn!("tcp_listener -> malformed shape-fp frame"),
+                        }
+                    }
                     Ok(InboundFrame::Eof) => {
                         log::info!("tcp_listener -> peer closed connection cleanly");
                         break Ok(());
@@ -565,6 +588,8 @@ enum InboundFrame {
     /// `[seq][epoch_ms]` blob from `tcp_protocol::encode_ping_payload`;
     /// the session loop echoes it back as a `Pong`.
     Ping(Vec<u8>),
+    /// Admin's `Cmd` shape fingerprint, compared against the local build's.
+    ShapeFp(Vec<u8>),
     Eof,
 }
 
@@ -599,6 +624,7 @@ async fn read_frame(read_half: &mut tokio::net::tcp::OwnedReadHalf) -> Result<In
             Ok(InboundFrame::Text(s))
         }
         FRAME_TAG_PING => Ok(InboundFrame::Ping(payload)),
+        FRAME_TAG_SHAPE_FP => Ok(InboundFrame::ShapeFp(payload)),
         // Per tcp_protocol docs: unknown tags MUST be ignored, not fatal —
         // this is what lets a v1 agent survive talking to a v3 master.
         // We currently don't expect Pong inbound (agent doesn't send Ping),
@@ -638,6 +664,7 @@ async fn writer_task(
             TcpFrame::Binary(b) => (FRAME_TAG_BINARY, b),
             TcpFrame::Text(t) => (FRAME_TAG_TEXT, t.into_bytes()),
             TcpFrame::Pong(b) => (FRAME_TAG_PONG, b),
+            TcpFrame::ShapeFp(b) => (FRAME_TAG_SHAPE_FP, b),
         };
         let total_len = (payload.len() as u64).saturating_add(1);
         if total_len > MAX_FRAME_BYTES as u64 {

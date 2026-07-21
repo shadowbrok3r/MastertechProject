@@ -1,0 +1,27 @@
+id = "20260721090000__plugin_registry_sdk_fields"
+name = "plugin_registry_sdk_fields"
+state = "completed"
+source_schema_hash = "645979b0cbde8e58151145e2d3f5e349db558645db4f9d44dfa9ecda73614a21"
+target_schema_hash = "645979b0cbde8e58151145e2d3f5e349db558645db4f9d44dfa9ecda73614a21"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "add_plugin_registry_sdk_fields"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE abi_version ON plugin_registry TYPE option<number> PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE fingerprint ON plugin_registry TYPE option<number> PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE tools.*.parameters_schema ON plugin_registry TYPE option<object> PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "drop_plugin_registry_sdk_fields"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE FIELD IF EXISTS abi_version ON plugin_registry;
+REMOVE FIELD IF EXISTS fingerprint ON plugin_registry;
+REMOVE FIELD IF EXISTS tools[*].parameters_schema ON plugin_registry;
+"""

@@ -336,108 +336,6 @@ pub enum OcctProfile {
     GpuMemtest,
 }
 
-/// Stress-kit's own stressor catalog, mirrored here so the database
-/// type system stays decoupled from the stress-kit crate (databases
-/// outlive in-process libs).
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, SurrealValue)]
-#[serde(rename_all = "snake_case")]
-#[surreal(untagged)]
-pub enum StressKitStressor {
-    #[surreal(value = "cpu")]
-    Cpu,
-    #[surreal(value = "memory")]
-    Memory,
-    #[surreal(value = "disk")]
-    Disk,
-    #[surreal(value = "matrix")]
-    Matrix,
-    #[surreal(value = "memcpy")]
-    Memcpy,
-    #[surreal(value = "bitops")]
-    Bitops,
-    #[surreal(value = "cache")]
-    Cache,
-    #[surreal(value = "vm")]
-    Vm,
-    #[surreal(value = "stream")]
-    Stream,
-    #[surreal(value = "branch")]
-    Branch,
-    #[surreal(value = "atomic")]
-    Atomic,
-    #[surreal(value = "mutex")]
-    Mutex,
-    #[surreal(value = "switch")]
-    Switch,
-    #[surreal(value = "prime")]
-    Prime,
-    #[surreal(value = "fp")]
-    Fp,
-    #[surreal(value = "hash")]
-    Hash,
-    #[surreal(value = "prefetch")]
-    Prefetch,
-    #[surreal(value = "icache")]
-    Icache,
-    #[surreal(value = "tsc")]
-    Tsc,
-    /// Pattern write/verify memory test with mismatch counting.
-    #[surreal(value = "memtest")]
-    MemTest,
-    /// Duplicate-execution CPU workload compare with mismatch counting.
-    #[surreal(value = "cpu_verify")]
-    CpuVerify,
-    /// LU solve + residual check; GFLOPS score with residual-breach counting.
-    #[surreal(value = "linpack")]
-    Linpack,
-    /// Combined CPU FMA + GPU compute load for PSU/VRM stress.
-    #[surreal(value = "psu")]
-    Psu,
-
-    #[surreal(value = "gpu")]
-    Gpu,
-    #[surreal(value = "gpu_matmul")]
-    GpuMatmul,
-    #[surreal(value = "gpu_vram")]
-    GpuVram,
-    #[surreal(value = "gpu_pcie")]
-    GpuPcie,
-}
-
-impl StressKitStressor {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Cpu => "cpu",
-            Self::Memory => "memory",
-            Self::Disk => "disk",
-            Self::Matrix => "matrix",
-            Self::Memcpy => "memcpy",
-            Self::Bitops => "bitops",
-            Self::Cache => "cache",
-            Self::Vm => "vm",
-            Self::Stream => "stream",
-            Self::Branch => "branch",
-            Self::Atomic => "atomic",
-            Self::Mutex => "mutex",
-            Self::Switch => "switch",
-            Self::Prime => "prime",
-            Self::Fp => "fp",
-            Self::Hash => "hash",
-            Self::Prefetch => "prefetch",
-            Self::Icache => "icache",
-            Self::Tsc => "tsc",
-            Self::MemTest => "memtest",
-            Self::CpuVerify => "cpu_verify",
-            Self::Linpack => "linpack",
-            Self::Psu => "psu",
-            Self::Gpu => "gpu",
-            Self::GpuMatmul => "gpu_matmul",
-            Self::GpuVram => "gpu_vram",
-            Self::GpuPcie => "gpu_pcie",
-        }
-    }
-}
-
 /// All the stress tools we know how to record. Internal (stress-kit)
 /// runs share two variants; everything else maps to a recognized
 /// industry tool so cross-shop comparisons are possible.
@@ -447,9 +345,9 @@ impl StressKitStressor {
 /// variant so `tool_label()` stays stable.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
 pub enum TestTool {
-    /// One of stress-kit's single stressors.
+    /// One of stress-kit's single stressors, persisted as its canonical label.
     StressKit {
-        stressor: StressKitStressor,
+        stressor: String,
     },
     /// A stress-kit `ScenarioDefinition` (multi-stage).
     StressKitScenario {
@@ -532,7 +430,7 @@ impl TestTool {
     /// Keep stable — these strings index every materialized view row.
     pub fn label(&self) -> String {
         match self {
-            Self::StressKit { stressor } => format!("stresskit:{}", stressor.as_str()),
+            Self::StressKit { stressor } => format!("stresskit:{stressor}"),
             Self::StressKitScenario { .. } => "stresskit:scenario".to_string(),
             Self::Prime95 { .. } => "prime95".to_string(),
             Self::Occt { .. } => "occt".to_string(),
@@ -760,8 +658,8 @@ pub struct DriverVersions {
 pub struct ScenarioStageSummary {
     pub index: u32,
     pub label: String,
-    /// Stress-kit `StressorKind` discriminant (lowercase snake_case) so
-    /// we can filter scenario runs by what they actually exercised.
+    /// Canonical stressor label (`Stressor::as_str`) so scenario runs
+    /// filter by what they actually exercised.
     pub stressor: String,
     pub threads: u32,
     pub duration_planned_secs: u64,

@@ -15,11 +15,15 @@ nvml = ["dep:nvml-wrapper"]
 # bundles a flagged kernel driver that only loads with Windows driver protections
 # lowered (see drivers/). Enable per-app where elevated QC temp reads are wanted.
 winring0-thermal = ["dep:raw-cpuid"]
+# JsonSchema derive on wire types for MCP consumers (unifies with rmcp's schemars 1.x).
+schemars = ["dep:schemars"]
 
 [dependencies]
 log = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+facet = { workspace = true, features = ["reflect"] }
+schemars = { version = "1", optional = true }
 sysinfo = { version = "0.39", features = ["serde", "multithread"] }
 
 wgpu      = { version = "26", optional = true, default-features = false, features = ["dx12", "vulkan", "metal", "wgsl"] }

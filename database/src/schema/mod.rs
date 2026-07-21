@@ -304,7 +304,8 @@ pub struct GetKeysResponse {
     pub superanti_key: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, facet::Facet)]
+#[repr(u8)]
 pub enum Node {
     Folder(String, HashMap<String, Node>),
     File((String, String)),
