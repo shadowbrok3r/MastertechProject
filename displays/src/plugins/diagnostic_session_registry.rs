@@ -36,6 +36,17 @@ pub fn get(connection_string: &str) -> Option<String> {
         .cloned()
 }
 
+/// The sole active connection_string, when exactly one session is registered.
+/// Used to default the link target for a local dump analysis.
+pub fn single_active_connection() -> Option<String> {
+    let map = ACTIVE.lock().ok()?;
+    if map.len() == 1 {
+        map.keys().next().cloned()
+    } else {
+        None
+    }
+}
+
 /// Drop the registry entry for a connection_string.
 pub fn clear_connection(connection_string: &str) {
     if let Ok(mut map) = ACTIVE.lock() {

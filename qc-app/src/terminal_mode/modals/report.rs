@@ -257,7 +257,7 @@ impl ReportModal {
             .constraints([
                 Constraint::Length(1),  // verdict
                 Constraint::Length(4),  // header grid
-                Constraint::Length(3),  // summary grid
+                Constraint::Length(4),  // summary grid
                 Constraint::Min(6),     // stages table
                 Constraint::Length(8),  // temp chart
                 Constraint::Length(6),  // clock chart
@@ -304,27 +304,19 @@ impl ReportModal {
         ];
         f.render_widget(Paragraph::new(header_lines), rows[1]);
 
-        // Summary grid.
-        let summary_lines = vec![
-            kv_line(
-                "CPU max",
-                &fmt_opt_f32(m.max_temp_c, "C"),
-                "CPU avg",
-                &fmt_opt_f32(m.avg_temp_c, "C"),
-            ),
-            kv_line(
-                "GPU max",
-                &fmt_opt_f32(m.max_gpu_temp_c, "C"),
-                "Max clock",
-                &m.max_clock_mhz.map(|c| format!("{c} MHz")).unwrap_or_else(|| "-".into()),
-            ),
-            kv_line(
-                "WHEA/TDR",
-                &format!("{}/{}", m.whea_delta_count, m.tdr_count),
-                "Errors test/disk",
-                &format!("{}/{}", m.test_errors, m.disk_io_errors),
-            ),
-        ];
+        // Summary grid (label/value from the shared SHAPE walk, two pairs/line).
+        let disp = |v: &str| if v.is_empty() { "-".to_string() } else { v.to_string() };
+        let summary_lines: Vec<Line> = m
+            .summary_rows()
+            .chunks(2)
+            .map(|c| {
+                let (k2, v2) = c
+                    .get(1)
+                    .map(|r| (r.label.as_str(), disp(&r.value)))
+                    .unwrap_or(("", String::new()));
+                kv_line(&c[0].label, &disp(&c[0].value), k2, &v2)
+            })
+            .collect();
         f.render_widget(Paragraph::new(summary_lines), rows[2]);
 
         self.render_stages(f, rows[3], m);
@@ -565,10 +557,6 @@ fn kv_line(k1: &str, v1: &str, k2: &str, v2: &str) -> Line<'static> {
         spans.push(Span::styled(v2.to_string(), Style::default().fg(THEME.text)));
     }
     Line::from(spans)
-}
-
-fn fmt_opt_f32(v: Option<f32>, unit: &str) -> String {
-    v.map(|x| format!("{x:.1}{unit}")).unwrap_or_else(|| "-".into())
 }
 
 fn started_at_label(run: &StressTestRun) -> String {

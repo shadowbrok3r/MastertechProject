@@ -1,0 +1,30 @@
+id = "20260722120000__diagnostic_session_status_assert"
+name = "diagnostic_session_status_assert"
+state = "completed"
+# Constrain status to the open|resolved|escalated vocabulary (the MCP close
+# flight-check already enforces it app-side) and drop the ended_at DEFAULT so an
+# open session is no longer stamped ended_at at creation. Modifies managed
+# fields; hand-authored with OVERWRITE. Applying committed file state: source ==
+# target. Paste the `current=` hash from `surrealkit rollout lint`.
+source_schema_hash = "735e9ccd97faf9670ad4a125fd1b2bd573f906a2136447dfd4fb800e97b21614"
+target_schema_hash = "735e9ccd97faf9670ad4a125fd1b2bd573f906a2136447dfd4fb800e97b21614"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "status_assert_and_ended_at_nodefault"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE status ON diagnostic_session TYPE string ASSERT $value IN ['open', 'resolved', 'escalated'] PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE ended_at ON diagnostic_session TYPE none | datetime PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "revert_status_and_ended_at"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE status ON diagnostic_session TYPE string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE ended_at ON diagnostic_session TYPE none | datetime DEFAULT time::now() PERMISSIONS FULL;
+"""

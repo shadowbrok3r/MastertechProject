@@ -5,6 +5,8 @@ use database::schema::{
     Datetime, RecordId, RecordIdExt, ScenarioStageSummary, StressTestEvent, StressTestMetric,
     StressTestRun,
 };
+use database::shape_walk::{self, Row};
+use facet::Facet;
 use serde::Serialize;
 
 /// Raw rows backing one report.
@@ -60,7 +62,7 @@ pub struct TimelineRow {
 }
 
 /// Everything a renderer needs, pre-digested.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Facet)]
 pub struct RunReportModel {
     pub run_id: String,
     pub hostname: Option<String>,
@@ -79,31 +81,55 @@ pub struct RunReportModel {
     pub failure_kind: Option<String>,
     pub failure_detail: Option<String>,
 
+    /// Peak average-core temperature observed during the run.
+    #[facet(rename = "CPU max (°C)")]
     pub max_temp_c: Option<f32>,
+    /// Mean average-core temperature across the run.
+    #[facet(rename = "CPU avg (°C)")]
     pub avg_temp_c: Option<f32>,
+    /// Hottest GPU temperature across all cards.
+    #[facet(rename = "GPU max (°C)")]
     pub max_gpu_temp_c: Option<f32>,
     pub max_cpu_temp_c: Option<f32>,
+    /// Highest average core clock reached.
+    #[facet(rename = "Max clock (MHz)")]
     pub max_clock_mhz: Option<u32>,
     pub avg_clock_mhz: Option<u32>,
     pub max_power_w: Option<u32>,
     pub peak_throughput: Option<f64>,
     pub avg_throughput: Option<f64>,
     pub throughput_unit: Option<String>,
+    /// WHEA hardware-error count accrued since the run started.
+    #[facet(rename = "WHEA")]
     pub whea_delta_count: u32,
+    /// GPU TDR (driver timeout/reset) events during the run.
+    #[facet(rename = "TDR")]
     pub tdr_count: u32,
+    /// Verifying-stressor detected errors (memtest/cpu_verify/linpack/VRAM).
+    #[facet(rename = "Test errors")]
     pub test_errors: u32,
+    /// Disk I/O errors observed during the run.
+    #[facet(rename = "Disk errors")]
     pub disk_io_errors: u32,
     pub thermal_throttle_detected: bool,
     pub vrm_throttle_detected: bool,
 
+    #[facet(opaque)]
     pub stages: Vec<ScenarioStageSummary>,
 
+    #[facet(opaque)]
     pub cpu_temp: ReportSeries,
+    #[facet(opaque)]
     pub gpu_temp: ReportSeries,
+    #[facet(opaque)]
     pub avg_clock: ReportSeries,
+    #[facet(opaque)]
     pub throughput: ReportSeries,
+    #[facet(opaque)]
     pub stage_boundaries: Vec<StageBoundary>,
+    #[facet(opaque)]
     pub event_markers: Vec<EventMarker>,
+    #[facet(opaque)]
     pub timeline: Vec<TimelineRow>,
 }
 
@@ -260,6 +286,25 @@ impl RunReportModel {
             timeline,
         }
     }
+
+    /// Curated telemetry-rollup rows for the summary block, label/value/hover
+    /// sourced from the SHAPE walk so egui and terminal mode share one flatten.
+    pub fn summary_rows(&self) -> Vec<Row> {
+        const KEEP: &[&str] = &[
+            "CPU max (°C)",
+            "CPU avg (°C)",
+            "GPU max (°C)",
+            "Max clock (MHz)",
+            "WHEA",
+            "TDR",
+            "Test errors",
+            "Disk errors",
+        ];
+        let mut all = shape_walk::rows(self);
+        KEEP.iter()
+            .filter_map(|k| all.iter().position(|r| r.label == *k).map(|i| all.remove(i)))
+            .collect()
+    }
 }
 
 fn datetime_rfc3339(dt: &Datetime) -> String {
@@ -404,6 +449,43 @@ mod tests {
         assert_eq!(model.gpu_temp.points.len(), 60);
         assert_eq!(model.stages.len(), 1);
         assert_eq!(model.preset_label.as_deref(), Some("cert:gold-v1"));
+    }
+
+    #[test]
+    fn summary_rows_parity_with_hand_flatten() {
+        let model = RunReportModel::from_data(&synthetic());
+        let rows = model.summary_rows();
+        let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            [
+                "CPU max (°C)",
+                "CPU avg (°C)",
+                "GPU max (°C)",
+                "Max clock (MHz)",
+                "WHEA",
+                "TDR",
+                "Test errors",
+                "Disk errors",
+            ]
+        );
+        let by = |l: &str| rows.iter().find(|r| r.label == l).map(|r| r.value.as_str());
+        // Old hand-flatten emitted these values (unit now folded into the label,
+        // None renders "" instead of "—" — documented cosmetic shifts).
+        assert_eq!(by("CPU max (°C)"), Some("91.0"));
+        assert_eq!(by("CPU avg (°C)"), Some(""));
+        assert_eq!(by("GPU max (°C)"), Some(""));
+        assert_eq!(by("Max clock (MHz)"), Some(""));
+        assert_eq!(by("WHEA"), Some("0"));
+        assert_eq!(by("TDR"), Some("1"));
+        assert_eq!(by("Test errors"), Some("0"));
+        assert_eq!(by("Disk errors"), Some("0"));
+        // Doc comments surface as hover help.
+        let cpu_max = rows.iter().find(|r| r.label == "CPU max (°C)").unwrap();
+        assert_eq!(
+            cpu_max.hover.as_deref(),
+            Some("Peak average-core temperature observed during the run.")
+        );
     }
 
     #[test]

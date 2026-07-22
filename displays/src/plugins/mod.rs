@@ -9,6 +9,8 @@ pub mod stress_test_verify;
 pub mod diagnostic_session_registry;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub mod crash_intel_hooks;
+
+pub mod tool_warnings;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub mod dump_triage_schema;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]

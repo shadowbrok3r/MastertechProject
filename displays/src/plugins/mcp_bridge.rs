@@ -138,6 +138,23 @@ pub fn take_headless_dump_fetch(connection_string: &str) -> Option<(std::path::P
         .and_then(|mut m| m.remove(connection_string))
 }
 
+/// Connection strings with a driver_snapshot_take in progress, so two
+/// concurrent takes for one client can't race for the same result row.
+static SNAPSHOT_INFLIGHT: Lazy<std::sync::Mutex<std::collections::HashSet<String>>> =
+    Lazy::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+
+/// RAII: clears the in-flight marker for a connection on every exit path.
+struct SnapshotInflightGuard {
+    cs: String,
+}
+impl Drop for SnapshotInflightGuard {
+    fn drop(&mut self) {
+        if let Ok(mut set) = SNAPSHOT_INFLIGHT.lock() {
+            set.remove(&self.cs);
+        }
+    }
+}
+
 /// Default admin-side destination for pulled files: the user's Downloads.
 fn default_download_dir() -> std::path::PathBuf {
     std::env::var("USERPROFILE")
@@ -158,10 +175,14 @@ impl Drop for PendingRequestGuard {
     }
 }
 
-/// Ingest a locally-produced dump-triage payload into fleet crash intel
-/// (`connection_string` = None). Guaranteed-logging path for local
+/// Ingest a locally-produced dump-triage payload into fleet crash intel.
+/// `link_connection_string` attributes the sightings to that client and its
+/// open diagnostic session / service task. Guaranteed-logging path for local
 /// `minidump_analyze`; best-effort, returns a summary for the tool response.
-async fn ingest_local_triage(payload: &serde_json::Value) -> serde_json::Value {
+async fn ingest_local_triage(
+    payload: &serde_json::Value,
+    link_connection_string: Option<&str>,
+) -> serde_json::Value {
     use database::schema::crash_intel::{
         parse_kernel_triage_payload, CrashSignature, SightingContext,
     };
@@ -169,6 +190,10 @@ async fn ingest_local_triage(payload: &serde_json::Value) -> serde_json::Value {
     if crashes.is_empty() {
         return serde_json::json!({ "recorded": 0, "note": "no bugcheck parsed" });
     }
+    let links = match link_connection_string {
+        Some(cs) => super::crash_intel_hooks::resolve_sighting_links(cs, None).await,
+        None => super::crash_intel_hooks::SightingLinks::default(),
+    };
     let mut recorded = 0usize;
     let mut errors: Vec<String> = Vec::new();
     for parsed in &crashes {
@@ -179,13 +204,25 @@ async fn ingest_local_triage(payload: &serde_json::Value) -> serde_json::Value {
             .map(|dt| if dt.contains("live") { "livekernel" } else { "minidump" })
             .unwrap_or("minidump")
             .to_string();
-        let ctx = SightingContext { dump_kind, ..Default::default() };
+        let ctx = SightingContext {
+            connection_string: link_connection_string.map(str::to_string),
+            computer: links.computer.clone(),
+            session_ref: links.session_ref.clone(),
+            task_ref: links.task_ref.clone(),
+            dump_kind,
+        };
         match CrashSignature::ingest(parsed, &ctx).await {
             Ok(_) => recorded += 1,
             Err(e) => errors.push(e.to_string()),
         }
     }
-    serde_json::json!({ "recorded": recorded, "errors": errors, "table": "crash_sighting" })
+    serde_json::json!({
+        "recorded": recorded,
+        "errors": errors,
+        "table": "crash_sighting",
+        "session_ref": links.session_ref.as_ref().map(RecordIdExt::key_string),
+        "task_ref": links.task_ref.as_ref().map(RecordIdExt::key_string),
+    })
 }
 
 // ─── Entity link validation (MCP ↔ operator modal) ───────────────────────────
@@ -265,6 +302,22 @@ async fn resolve_entity_links_mcp(
                 .into(),
             ),
         ))
+    }
+}
+
+/// Parse a record id param and require that the row exists.
+async fn require_record(
+    input: &str,
+    table: &'static str,
+    param_name: &str,
+) -> Result<database::schema::RecordId, ErrorData> {
+    let rid = parse_record_id(input, table);
+    match database::schema::utilities::record_exists(rid.clone()).await {
+        Ok(Some(true)) => Ok(rid),
+        _ => Err(ErrorData::invalid_params(
+            format!("{param_name} '{input}' does not match an existing {table} record"),
+            None,
+        )),
     }
 }
 
@@ -1077,6 +1130,12 @@ pub struct CrashVerdictRecordParams {
     pub author: Option<String>,
     #[schemars(description = "Source: tech | ai | autopilot (default ai)")]
     pub source: Option<String>,
+    #[schemars(description = "Diagnostic session this verdict came from — links the verdict to the session's service task. Omit to resolve via connection_string.")]
+    pub session_id: Option<String>,
+    #[schemars(description = "Connection string of the client this verdict came from — resolves the active session's service task when session_id is omitted.")]
+    pub connection_string: Option<String>,
+    #[schemars(description = "Explicit task record id to link (`task:key`). Overrides session/connection resolution.")]
+    pub task_id: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
@@ -1087,6 +1146,9 @@ pub struct MinidumpAnalyzeParams {
     #[schemars(description = "Web Console connection_string of a connected client. When set, analysis runs ON THAT CLIENT (built-in parser, no plugin/cdb) over MEMORY.DMP + Minidump + LiveKernelReports (or the single `path` if given). When omitted, analyzes the local `path` on this machine. Either way the results auto-log to fleet crash intel (crash_signature/crash_sighting).")]
     #[serde(default)]
     pub connection_string: Option<String>,
+    #[schemars(description = "LOCAL mode only: connection_string of the client the local dump file came from (e.g. after crash_dumps_fetch). Links the recorded sightings to that client's open diagnostic session and service task. Remote mode links automatically.")]
+    #[serde(default)]
+    pub link_connection_string: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
@@ -1102,6 +1164,8 @@ pub struct CrashDumpsFetchParams {
 pub struct KnownBadDriverAddParams {
     #[schemars(description = "Driver module or INF stem, e.g. 'rtwlane' or 'rtwlane.sys'")]
     pub module: String,
+    #[schemars(description = "Bugcheck code of the crash class this driver causes ('0x133', '133'). When given, links the entry to the matching crash_signature.")]
+    pub bugcheck_code: Option<String>,
     #[schemars(description = "Bad version matchers (exact or prefix, e.g. '6001.15'). Empty matches every version.")]
     #[serde(default, deserialize_with = "deserialize_optional_string_vec")]
     pub bad_versions: Option<Vec<String>>,
@@ -1135,6 +1199,14 @@ pub struct DriverSnapshotDiffParams {
     pub older_id: Option<String>,
     #[schemars(description = "Newer snapshot record id (`driver_snapshot:key`). Omit to use the newest.")]
     pub newer_id: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct DriverSnapshotTakeParams {
+    #[schemars(description = "Web Console connection_string of the client to snapshot")]
+    pub connection_string: String,
+    #[schemars(description = "Capture label: intake | pre_service | post_service | manual (default manual)")]
+    pub label: Option<String>,
 }
 
 /// Accepts a real array or a stringified JSON array from clients with degraded schemas.
@@ -1215,6 +1287,9 @@ pub struct CloseDiagnosticSessionParams {
     #[schemars(description = "Final tags to apply (appends to/replaces existing tags)")]
     #[serde(default, deserialize_with = "deserialize_optional_string_vec")]
     pub tags: Option<Vec<String>>,
+    #[schemars(description = "Close despite a missing escalation handoff. The escalated-without-AI-task gate is the only check this bypasses; use deliberately.")]
+    #[serde(default)]
+    pub force: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
@@ -3336,12 +3411,19 @@ impl PluginToolProvider {
         &self,
         Parameters(p): Parameters<CreateDiagnosticSessionParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let task_ref = p.task_id.as_deref().map(|s| {
-            parse_record_id(s, database::schema::TASK_TABLE)
-        });
-        let service_order = p.service_order_id.as_deref().map(|s| {
-            parse_record_id(s, database::schema::TICKET_TABLE)
-        });
+        use super::tool_warnings::{attach_warnings, ToolWarning};
+        use database::schema::RecordIdExt;
+
+        let task_ref = match p.task_id.as_deref() {
+            Some(s) => Some(require_record(s, database::schema::TASK_TABLE, "task_id").await?),
+            None => None,
+        };
+        let service_order = match p.service_order_id.as_deref() {
+            Some(s) => {
+                Some(require_record(s, database::schema::TICKET_TABLE, "service_order_id").await?)
+            }
+            None => None,
+        };
 
         let (customer_id, computer_id) = resolve_entity_links_mcp(
             Some(p.connection_string.clone()),
@@ -3365,12 +3447,73 @@ impl PluginToolProvider {
         let id = database::schema::DiagnosticSession::create(&session)
             .await
             .map_err(to_internal)?;
-        use database::schema::RecordIdExt;
         let id_str = id.key_string();
         super::diagnostic_session_registry::register(&session.connection_string, &id_str);
-        Ok(CallToolResult::success(vec![ContentBlock::json(
-            serde_json::json!({ "session_id": id_str }),
-        )
+
+        // Reconcile sees the created id plus whatever task link resolves below.
+        let mut created = session.clone();
+        created.id = id.clone();
+        created.started_at = chrono::Utc::now().into();
+
+        let mut warnings: Vec<ToolWarning> = Vec::new();
+        if created.task_ref.is_none() {
+            match created.resolve_open_service_task().await {
+                Ok(Some((task, so))) => {
+                    match database::schema::DiagnosticSession::link_to_task(
+                        &id,
+                        Some(&task),
+                        Some(&so),
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            created.task_ref = Some(task);
+                            created.service_order = Some(so);
+                        }
+                        Err(e) => {
+                            log::warn!("create_diagnostic_session: task auto-link failed: {e}")
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => log::warn!("create_diagnostic_session: task resolution failed: {e}"),
+            }
+        }
+        if created.task_ref.is_none() {
+            warnings.push(
+                ToolWarning::warn(
+                    "session_unlinked",
+                    "No service task could be resolved for this session; records created \
+                     against it will carry no task_ref until it is linked.",
+                )
+                .with_fix(format!(
+                    "link_diagnostic_to_task {{ session_id: \"{id_str}\", task_id: \"task:<key>\" }} once the service task is known"
+                )),
+            );
+        }
+
+        let reconciled = database::schema::crash_intel::reconcile_session_links(&created)
+            .await
+            .unwrap_or_else(|e| {
+                log::warn!("create_diagnostic_session: reconcile failed: {e}");
+                Default::default()
+            });
+        if reconciled.total() > 0 {
+            warnings.push(ToolWarning::info(
+                "orphans_claimed",
+                format!("Reconcile on session create: {}.", reconciled.summary()),
+            ));
+        }
+
+        Ok(CallToolResult::success(vec![ContentBlock::json(attach_warnings(
+            serde_json::json!({
+                "session_id": id_str,
+                "task_ref": created.task_ref.as_ref().map(RecordIdExt::key_string),
+                "service_order": created.service_order.as_ref().map(RecordIdExt::key_string),
+                "reconciled": reconciled,
+            }),
+            warnings,
+        ))
         .map_err(to_internal)?]))
     }
 
@@ -3443,22 +3586,48 @@ impl PluginToolProvider {
         &self,
         Parameters(p): Parameters<LinkDiagnosticToTaskParams>,
     ) -> Result<CallToolResult, ErrorData> {
+        use super::tool_warnings::{attach_warnings, ToolWarning};
+        use database::schema::RecordIdExt;
+
         let session_id = parse_record_id(
             &p.session_id,
             database::schema::DIAGNOSTIC_SESSION_TABLE,
         );
-        let task_ref = p.task_id.as_deref().map(|s| {
-            parse_record_id(s, database::schema::TASK_TABLE)
-        });
-        let service_order = p.service_order_id.as_deref().map(|s| {
-            parse_record_id(s, database::schema::TICKET_TABLE)
-        });
+        let task_ref = match p.task_id.as_deref() {
+            Some(s) => Some(require_record(s, database::schema::TASK_TABLE, "task_id").await?),
+            None => None,
+        };
+        let service_order = match p.service_order_id.as_deref() {
+            Some(s) => {
+                Some(require_record(s, database::schema::TICKET_TABLE, "service_order_id").await?)
+            }
+            None => None,
+        };
         if task_ref.is_none() && service_order.is_none() {
             return Err(ErrorData::invalid_params(
                 "link_diagnostic_to_task: at least one of task_id or service_order_id must be provided".to_string(),
                 None,
             ));
         }
+        let session = match database::schema::DiagnosticSession::get(&session_id.key_string())
+            .await
+        {
+            Ok(Some(s)) => Some(s),
+            Ok(None) => {
+                return Err(ErrorData::invalid_params(
+                    format!("diagnostic_session '{}' not found", p.session_id),
+                    None,
+                ))
+            }
+            // Legacy row shapes must stay linkable; skip the reconcile sweep.
+            Err(e) => {
+                log::warn!(
+                    "link_diagnostic_to_task: session row unreadable, linking without \
+                     reconcile: {e}"
+                );
+                None
+            }
+        };
         database::schema::DiagnosticSession::link_to_task(
             &session_id,
             task_ref.as_ref(),
@@ -3466,14 +3635,49 @@ impl PluginToolProvider {
         )
         .await
         .map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![ContentBlock::json(
+
+        // Sweep the now-linked task onto the session's existing records.
+        let mut warnings: Vec<ToolWarning> = Vec::new();
+        let reconciled = match session {
+            Some(mut session) => {
+                if task_ref.is_some() {
+                    session.task_ref = task_ref.clone();
+                }
+                if service_order.is_some() {
+                    session.service_order = service_order.clone();
+                }
+                database::schema::crash_intel::reconcile_session_links(&session)
+                    .await
+                    .unwrap_or_else(|e| {
+                        log::warn!("link_diagnostic_to_task: reconcile failed: {e}");
+                        Default::default()
+                    })
+            }
+            None => {
+                warnings.push(ToolWarning::warn(
+                    "completeness_skipped",
+                    "Session row could not be read (legacy shape) — the link was written but \
+                     the reconcile sweep was skipped.",
+                ));
+                Default::default()
+            }
+        };
+        if reconciled.total() > 0 {
+            warnings.push(ToolWarning::info(
+                "orphans_claimed",
+                format!("Reconcile on task link: {}.", reconciled.summary()),
+            ));
+        }
+        Ok(CallToolResult::success(vec![ContentBlock::json(attach_warnings(
             serde_json::json!({
                 "session_id": p.session_id,
                 "task_id": p.task_id,
                 "service_order_id": p.service_order_id,
-                "linked": true
+                "linked": true,
+                "reconciled": reconciled,
             }),
-        )
+            warnings,
+        ))
         .map_err(to_internal)?]))
     }
 
@@ -3554,46 +3758,6 @@ impl PluginToolProvider {
         Ok(users.into_iter().next())
     }
 
-    /// Resolve which service `task` a new AI task should attach to when the
-    /// caller gave no task_id and the session isn't linked yet: use the
-    /// session's service_order, else the newest service order for the session's
-    /// computer (the connection's open ticket), then that order's task (a
-    /// not-yet-completed one preferred, newest otherwise). Returns
-    /// (task_ref, service_order) so the caller can persist the link.
-    async fn resolve_open_service_task(
-        session: &database::schema::DiagnosticSession,
-    ) -> Result<Option<(database::schema::RecordId, database::schema::RecordId)>, ErrorData> {
-        // Newest, not-yet-completed task for the connection's service order:
-        // by the session's service_order when known, else via the computer's ticket.
-        let tasks: Vec<database::schema::LiveTaskPayload> = match session.service_order.clone() {
-            Some(so) => database::db()
-                .query(
-                    "SELECT * FROM task WHERE service_ticket == $so \
-                     ORDER BY completed ASC, created_at DESC LIMIT 1",
-                )
-                .bind(("so", so))
-                .await
-                .map_err(to_internal)?
-                .take(0)
-                .map_err(to_internal)?,
-            None => database::db()
-                .query(
-                    "SELECT * FROM task WHERE service_ticket.computer == $c \
-                     ORDER BY completed ASC, created_at DESC LIMIT 1",
-                )
-                .bind(("c", session.computer_id.clone()))
-                .await
-                .map_err(to_internal)?
-                .take(0)
-                .map_err(to_internal)?,
-        };
-        let Some(task) = tasks.into_iter().next() else { return Ok(None) };
-        // Link the session's service_order when set, else the task's own ticket.
-        let Some(service_order) = session.service_order.clone().or_else(|| task.service_ticket.clone())
-        else { return Ok(None) };
-        Ok(Some((task.id, service_order)))
-    }
-
     /// Write-once mirror of checklist steps into diagnostic_entry (embeddings
     /// computed per entry; failures degrade to unlinked items).
     async fn mirror_ai_task_steps(
@@ -3633,7 +3797,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "create_ai_task",
-        description = "Hand off hands-on work to the technician. Call when a diagnosis concludes physical/BIOS/bench work is required (e.g. 'disable XMP', 'reseat DIMMs', 're-run OCCT at stock'). Creates an AI Task — a checklist overlay on the service task — which pops a 'requires your attention' modal on the assigned tech's desktop and appears in their AI Tasks column. Steps also log to the diagnostic session as recommendation entries. The task to attach to auto-resolves (explicit task_id > the session's task_ref > the task on the connection's open service order, which then gets linked to the session) — you do NOT need to call link_diagnostic_to_task first. Assignee resolves: explicit assignee_email > service ticket technician > task assignee. Poll get_ai_task_status to see progress; the operator (not the AI) closes the task."
+        description = "Hand off HANDS-ON work to the technician. Call when a diagnosis concludes physical/BIOS/bench work is required (e.g. 'disable XMP', 'reseat DIMMs', 're-run OCCT at stock'). Creates an AI Task — a checklist overlay on the service task — which pops a 'requires your attention' modal on the assigned tech's desktop and appears in their AI Tasks column. Steps also log to the diagnostic session as recommendation entries. The task to attach to auto-resolves (explicit task_id > the session's task_ref > the task on the connection's open service order, which then gets linked to the session) — you do NOT need to call link_diagnostic_to_task first. Assignee resolves: explicit assignee_email > service ticket technician > task assignee. Poll get_ai_task_status to see progress; the operator (not the AI) closes the task.\n\nEACH STEP IS A PHYSICAL TODO FOR A HUMAN — never anything else. RULES for the steps array:\n1. This list is NOT a log. Never add an item that records what happened, notes a mistake you made, states a finding, or explains context — that ALL belongs in log_diagnostic_entry, not here. An item with no concrete human action to perform does not belong on the list.\n2. Never add a step you can do yourself through the plugin system or an MCP tool (run a script, read events, snapshot drivers, analyze a dump, query the DB, toggle a setting reachable via com.mastertech.repair, etc.). Do it, then log it. The list is ONLY for actions that require physical access or a human decision you cannot perform remotely.\n3. Write each step short, imperative, and self-contained: one concrete action a tech can check off, with the specific target. 'Reseat both DIMMs in slots A2/B2' — not 'RAM'. 'Replace SATA data cable on the D: drive (WD20EZBX) and move to port 3' — not 'look at the disk'. Thorough but terse; no narration, no rationale paragraphs."
     )]
     async fn create_ai_task(
         &self,
@@ -3674,10 +3838,13 @@ impl PluginToolProvider {
         // Task to attach to: explicit task_id > session.task_ref > auto-resolve
         // from the connection's open service order (then link it to the session).
         let (task_ref, auto_linked) = match p.task_id.as_deref() {
-            Some(t) => (parse_record_id(t, database::schema::TASK_TABLE), false),
+            Some(t) => (
+                require_record(t, database::schema::TASK_TABLE, "task_id").await?,
+                false,
+            ),
             None => match session.task_ref.clone() {
                 Some(t) => (t, false),
-                None => match Self::resolve_open_service_task(&session).await? {
+                None => match session.resolve_open_service_task().await.map_err(to_internal)? {
                     Some((task, service_order)) => {
                         if let Err(e) = database::schema::DiagnosticSession::link_to_task(
                             &session_ref,
@@ -3698,6 +3865,16 @@ impl PluginToolProvider {
                 },
             },
         };
+        // Sweep the resolved task onto the session's unlinked records.
+        {
+            let mut linked_session = session.clone();
+            linked_session.task_ref = Some(task_ref.clone());
+            if let Err(e) =
+                database::schema::crash_intel::reconcile_session_links(&linked_session).await
+            {
+                log::warn!("create_ai_task: reconcile failed: {e}");
+            }
+        }
         let task: Option<database::schema::LiveTaskPayload> =
             database::db().select(task_ref.clone()).await.map_err(to_internal)?;
         let task = task.ok_or_else(|| ErrorData::invalid_params(
@@ -4042,24 +4219,219 @@ impl PluginToolProvider {
 
     #[tool(
         name = "close_diagnostic_session",
-        description = "Close a diagnostic session with a final status and AI-written summary. Status should be 'resolved', 'escalated', or 'open'. If you are closing as 'escalated' (or the summary says hands-on work remains), you MUST create_ai_task FIRST — a summary is not a handoff; the tech is only notified through the AI task checklist."
+        description = "Close a diagnostic session with a final status and AI-written summary. Status must be 'resolved', 'escalated', or 'open'. Closing as 'escalated' REQUIRES an AI-task handoff on the session (create_ai_task) — enforced, a summary is not a handoff. The close runs a final link-reconcile sweep and returns completeness warnings (unverdicted crash signatures, missing driver snapshot, open AI task); resolve them when they matter before closing. force: true bypasses only the escalation gate."
     )]
     async fn close_diagnostic_session(
         &self,
         Parameters(p): Parameters<CloseDiagnosticSessionParams>,
     ) -> Result<CallToolResult, ErrorData> {
+        use super::tool_warnings::{attach_warnings, ToolWarning};
+        use database::schema::RecordIdExt;
+
+        let status = p.status.trim().to_ascii_lowercase();
+        if !["resolved", "escalated", "open"].contains(&status.as_str()) {
+            return Err(ErrorData::invalid_params(
+                format!(
+                    "close_diagnostic_session: status '{}' is not one of resolved | escalated | open",
+                    p.status
+                ),
+                None,
+            ));
+        }
+
+        let session_rid =
+            parse_record_id(&p.session_id, database::schema::DIAGNOSTIC_SESSION_TABLE);
+        let session_key = session_rid.key_string();
+        let session = match database::schema::DiagnosticSession::get(&session_key).await {
+            Ok(Some(s)) => Some(s),
+            Ok(None) => {
+                return Err(ErrorData::invalid_params(
+                    format!("diagnostic_session '{}' not found", p.session_id),
+                    None,
+                ))
+            }
+            // Legacy row shapes (pre-required fields) must stay closable.
+            Err(e) => {
+                log::warn!(
+                    "close_diagnostic_session: session row unreadable, closing without \
+                     completeness checks: {e}"
+                );
+                None
+            }
+        };
+        let Some(session) = session else {
+            database::schema::DiagnosticSession::close(
+                &session_key,
+                &status,
+                &p.summary,
+                p.tags.as_deref(),
+            )
+            .await
+            .map_err(to_internal)?;
+            super::diagnostic_session_registry::clear_session(&session_key);
+            return Ok(CallToolResult::success(vec![ContentBlock::json(attach_warnings(
+                serde_json::json!({ "session_id": session_key, "closed": true, "status": status }),
+                vec![ToolWarning::warn(
+                    "completeness_skipped",
+                    "Session row could not be read (legacy shape) — gates and completeness \
+                     checks were skipped for this close.",
+                )],
+            ))
+            .map_err(to_internal)?]));
+        };
+        if session.status != "open" {
+            return Err(ErrorData::invalid_params(
+                format!(
+                    "diagnostic_session '{session_key}' is already closed (status '{}')",
+                    session.status
+                ),
+                None,
+            ));
+        }
+
+        // Escalated work is only handed off through a tracked AI-task checklist.
+        // Unknown (lookup error) never trips the gate — only a definite absence.
+        let has_ai_task: Option<bool> =
+            match database::schema::AiTask::any_for_session(&session.id).await {
+                Ok(b) => Some(b),
+                Err(e) => {
+                    log::warn!("close_diagnostic_session: ai_task lookup failed: {e}");
+                    None
+                }
+            };
+        if status == "escalated" && has_ai_task == Some(false) && !p.force.unwrap_or(false) {
+            return Err(ErrorData::invalid_params(
+                "close_diagnostic_session: escalated close requires an AI-task handoff — call \
+                 create_ai_task with the hands-on steps first (or pass force: true for a \
+                 deliberate exception)"
+                    .to_string(),
+                None,
+            ));
+        }
+
+        // Final link-reconcile sweep before the completeness report.
+        let reconciled = database::schema::crash_intel::reconcile_session_links(&session)
+            .await
+            .unwrap_or_else(|e| {
+                log::warn!("close_diagnostic_session: reconcile failed: {e}");
+                Default::default()
+            });
+
+        let mut warnings: Vec<ToolWarning> = Vec::new();
+        if reconciled.total() > 0 {
+            warnings.push(ToolWarning::info(
+                "orphans_claimed",
+                format!("Final reconcile sweep: {}.", reconciled.summary()),
+            ));
+        }
+
+        if let Ok(Some(open)) = database::schema::AiTask::get_open_for_session(&session.id).await
+        {
+            warnings.push(ToolWarning::warn(
+                "open_ai_task",
+                format!(
+                    "AI task '{}' is still '{}' — verify the tech's outcome (re-run the failing \
+                     check) before considering this engagement finished; reopen with \
+                     add_ai_task_steps if more work surfaces.",
+                    open.id.key_string(),
+                    open.status.as_str()
+                ),
+            ));
+        }
+
+        // Signatures sighted in this session that carry no recorded verdict.
+        let sightings = database::schema::crash_intel::sightings_for_session(&session.id)
+            .await
+            .unwrap_or_default();
+        let mut checked_signatures: Vec<String> = Vec::new();
+        let mut unverdicted = 0usize;
+        for s in &sightings {
+            let sig_key = s.signature.key_string();
+            if checked_signatures.contains(&sig_key) {
+                continue;
+            }
+            checked_signatures.push(sig_key);
+            let sig: Option<database::schema::CrashSignature> = database::db()
+                .select(s.signature.clone())
+                .await
+                .unwrap_or(None);
+            if let Some(sig) = sig {
+                if sig.latest_verdict.is_none() {
+                    unverdicted += 1;
+                    warnings.push(
+                        ToolWarning::info(
+                            "signature_missing_verdict",
+                            format!(
+                                "Crash signature {} {} sighted in this session has no recorded verdict.",
+                                sig.bugcheck_code, sig.module
+                            ),
+                        )
+                        .with_fix(format!(
+                            "crash_verdict_record {{ bugcheck_code: \"{}\", module: \"{}\", verdict: \"<diagnosis>\", fix: \"<remediation>\" }}",
+                            sig.bugcheck_code, sig.module
+                        )),
+                    );
+                }
+            }
+        }
+
+        // Driver snapshot captured in the session window? Unknown (lookup
+        // error) emits nothing — warnings only state what is definitely true.
+        let has_driver_snapshot: Option<bool> = match database::db()
+            .query(
+                "SELECT VALUE id FROM driver_snapshot WHERE connection_string == $cs \
+                 AND taken_at >= ($started - 15m) LIMIT 1",
+            )
+            .bind(("cs", session.connection_string.clone()))
+            .bind(("started", session.started_at.clone()))
+            .await
+            .and_then(|mut r| r.take::<Vec<database::schema::RecordId>>(0))
+        {
+            Ok(rows) => Some(!rows.is_empty()),
+            Err(e) => {
+                log::warn!("close_diagnostic_session: driver_snapshot lookup failed: {e}");
+                None
+            }
+        };
+        if has_driver_snapshot == Some(false) {
+            warnings.push(
+                ToolWarning::info(
+                    "no_driver_snapshot",
+                    "No driver-inventory snapshot was captured during this session; driver drift \
+                     for this engagement is unrecorded.",
+                )
+                .with_fix(format!(
+                    "call_remote_plugin_tool {{ connection_string: \"{}\", plugin_id: \"com.mastertech.driverstore\", tool_name: \"snapshot\" }}",
+                    session.connection_string
+                )),
+            );
+        }
+
         database::schema::DiagnosticSession::close(
-            &p.session_id,
-            &p.status,
+            &session_key,
+            &status,
             &p.summary,
             p.tags.as_deref(),
         )
         .await
         .map_err(to_internal)?;
-        super::diagnostic_session_registry::clear_session(&p.session_id);
-        Ok(CallToolResult::success(vec![ContentBlock::json(
-            serde_json::json!({ "session_id": p.session_id, "closed": true, "status": p.status }),
-        )
+        super::diagnostic_session_registry::clear_session(&session_key);
+
+        Ok(CallToolResult::success(vec![ContentBlock::json(attach_warnings(
+            serde_json::json!({
+                "session_id": session_key,
+                "closed": true,
+                "status": status,
+                "reconciled": reconciled,
+                "completeness": {
+                    "sightings": sightings.len(),
+                    "unverdicted_signatures": unverdicted,
+                    "has_ai_task": has_ai_task,
+                    "has_driver_snapshot": has_driver_snapshot,
+                },
+            }),
+            warnings,
+        ))
         .map_err(to_internal)?]))
     }
 
@@ -4169,7 +4541,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "minidump_analyze",
-        description = "Analyze Windows kernel crash dumps (BSOD) — no cdb/WinDbg needed. LOCAL (path, no connection_string): parse a .dmp on this admin machine. REMOTE (connection_string): run the CLIENT's built-in parser over ALL its dumps (MEMORY.DMP + Minidump + LiveKernelReports), or a single `path` on the client — no plugin deploy required. Handles triage minidumps plus full/BMP/kernel/live dumps: bugcheck code/name, decoded parameters, crash-time RIP, driver-list blame, and fleet matches (prior verdicts, known-bad drivers). Results ALWAYS auto-log to fleet crash intel (crash_signature/crash_sighting). This is the primary BSOD triage tool; use com.mastertech.dump-decode only for a deep cdb `!analyze` pass or Microsoft FAILURE_BUCKET_ID."
+        description = "Analyze Windows kernel crash dumps (BSOD) — no cdb/WinDbg needed. Open a diagnostic_session for the client FIRST so the recorded sightings link to it; running this before a session exists records them unlinked (a later create_diagnostic_session / intel_links_reap can claim them). LOCAL (path, no connection_string): parse a .dmp on this admin machine — pass link_connection_string so sightings link and dedup stays on. REMOTE (connection_string): run the CLIENT's built-in parser over ALL its dumps (MEMORY.DMP + Minidump + LiveKernelReports), or a single `path` on the client — no plugin deploy required. Handles triage minidumps plus full/BMP/kernel/live dumps: bugcheck code/name, decoded parameters, crash-time RIP, driver-list blame, and fleet matches (prior verdicts, known-bad drivers). Results ALWAYS auto-log to fleet crash intel (crash_signature/crash_sighting). This is the primary BSOD triage tool; use com.mastertech.dump-decode only for a deep cdb `!analyze` pass or Microsoft FAILURE_BUCKET_ID."
     )]
     async fn minidump_analyze(
         &self,
@@ -4212,15 +4584,126 @@ impl PluginToolProvider {
                 };
             let result: serde_json::Value =
                 serde_json::from_str(&result_json).unwrap_or(serde_json::json!(result_json));
-            return Ok(CallToolResult::success(vec![ContentBlock::json(
+
+            // Fleet enrichment + completeness warnings (parity with LOCAL mode).
+            use super::tool_warnings::{attach_warnings, ToolWarning};
+            let mut warnings: Vec<ToolWarning> = Vec::new();
+            // Mirror the ingest hook's resolution: registry pin, then open
+            // session by connection string with the client's computer fallback.
+            let open_session = match super::diagnostic_session_registry::get(cs) {
+                Some(sid) => database::schema::DiagnosticSession::get(&sid)
+                    .await
+                    .unwrap_or(None),
+                None => {
+                    let computer: Option<database::schema::RecordId> = database::db()
+                        .query(
+                            "SELECT VALUE computer FROM connected_client \
+                             WHERE connection_string == $cs LIMIT 1",
+                        )
+                        .bind(("cs", cs.to_string()))
+                        .await
+                        .and_then(|mut r| {
+                            r.take::<Vec<Option<database::schema::RecordId>>>(0)
+                        })
+                        .map(|v| v.into_iter().flatten().next())
+                        .unwrap_or(None);
+                    database::schema::DiagnosticSession::latest_open_for_connection(
+                        cs,
+                        computer.as_ref(),
+                    )
+                    .await
+                    .unwrap_or(None)
+                }
+            };
+            if open_session.is_none() {
+                warnings.push(
+                    ToolWarning::warn(
+                        "no_open_session",
+                        "No open diagnostic session exists for this client — the recorded \
+                         sightings carry no session/task link until one claims them.",
+                    )
+                    .with_fix(format!(
+                        "create_diagnostic_session {{ connection_string: \"{cs}\", ... }} — its reconcile sweep claims these sightings"
+                    )),
+                );
+            }
+
+            let crashes = database::schema::crash_intel::parse_kernel_triage_payload(&result);
+            let known_bad = database::schema::KnownBadDriver::active()
+                .await
+                .unwrap_or_default();
+            let mut fleet: Vec<serde_json::Value> = Vec::new();
+            let mut seen_sigs: Vec<String> = Vec::new();
+            let mut prior_verdicts = 0usize;
+            let mut known_bad_hits: Vec<serde_json::Value> = Vec::new();
+            let mut seen_modules: Vec<String> = Vec::new();
+            for c in &crashes {
+                let sig_key = format!("{}_{}", c.bugcheck_code, c.module);
+                if !seen_sigs.contains(&sig_key) {
+                    seen_sigs.push(sig_key);
+                    let signature =
+                        database::schema::CrashSignature::find(&c.bugcheck_code, &c.module)
+                            .await
+                            .unwrap_or(None);
+                    let verdicts = match &signature {
+                        Some(sig) => database::schema::CrashSignature::verdicts(&sig.id, 3)
+                            .await
+                            .unwrap_or_default(),
+                        None => Vec::new(),
+                    };
+                    prior_verdicts += verdicts.len();
+                    if let Some(v) = verdicts.first() {
+                        warnings.push(ToolWarning::warn(
+                            "prior_verdict",
+                            format!(
+                                "{} {} is a KNOWN crash class: {} Fix: {}",
+                                c.bugcheck_code, c.module, v.verdict, v.fix
+                            ),
+                        ));
+                    }
+                    fleet.push(serde_json::json!({
+                        "bugcheck_code": c.bugcheck_code,
+                        "module": c.module,
+                        "signature": signature,
+                        "verdicts": verdicts,
+                    }));
+                }
+                for m in &c.loaded_modules {
+                    if seen_modules.contains(m) {
+                        continue;
+                    }
+                    seen_modules.push(m.clone());
+                    if let Some(k) = known_bad.iter().find(|k| &k.module == m) {
+                        known_bad_hits.push(serde_json::json!({ "driver": m, "entry": k }));
+                    }
+                }
+            }
+            if !known_bad_hits.is_empty() {
+                warnings.push(ToolWarning::warn(
+                    "known_bad_hit",
+                    format!(
+                        "{} blocklisted driver(s) were loaded at crash time — see fleet.known_bad_hits.",
+                        known_bad_hits.len()
+                    ),
+                ));
+            }
+
+            return Ok(CallToolResult::success(vec![ContentBlock::json(attach_warnings(
                 serde_json::json!({
                     "mode": "remote",
                     "connection_string": cs,
                     "success": success,
                     "ingested": "auto → crash_signature/crash_sighting",
+                    "session_ref": open_session.as_ref().map(|s| s.id.key_string()),
+                    "fleet": {
+                        "signatures": fleet,
+                        "known_bad_hits": known_bad_hits,
+                        "prior_verdicts": prior_verdicts,
+                    },
                     "result": result,
                 }),
-            )
+                warnings,
+            ))
             .map_err(to_internal)?]));
         }
 
@@ -4240,9 +4723,41 @@ impl PluginToolProvider {
         .map_err(|e| to_internal(format!("analysis task: {e}")))?
         .map_err(to_internal)?;
 
+        use super::tool_warnings::{attach_warnings, ToolWarning};
+        let mut warnings: Vec<ToolWarning> = Vec::new();
+
         // Guaranteed logging: ingest the local analysis into fleet crash intel.
+        // An explicit link wins; otherwise fall back to the sole active session
+        // so the common one-engagement case links (and dedup stays on).
+        let explicit_cs = p
+            .link_connection_string
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        let defaulted = explicit_cs.is_none();
+        let link_cs = explicit_cs
+            .or_else(super::diagnostic_session_registry::single_active_connection);
+        if let (true, Some(cs)) = (defaulted, link_cs.as_deref()) {
+            warnings.push(ToolWarning::info(
+                "link_defaulted",
+                format!("Linked to the only active session's client ({cs}); pass link_connection_string to override."),
+            ));
+        }
+        if link_cs.is_none() {
+            warnings.push(
+                ToolWarning::warn(
+                    "dedup_disabled",
+                    "No link_connection_string and no single active session — sightings are \
+                     recorded unlinked AND dedup is off, so re-analyzing this dump double-counts.",
+                )
+                .with_fix(
+                    "pass link_connection_string (the client this dump came from) to link and enable dedup",
+                ),
+            );
+        }
         let ingest_payload = serde_json::json!({ "dump_name": dump_name, "triage": triage });
-        let ingested = ingest_local_triage(&ingest_payload).await;
+        let ingested = ingest_local_triage(&ingest_payload, link_cs.as_deref()).await;
 
         // Fleet enrichment: prior signature/verdicts + known-bad drivers.
         let module = triage
@@ -4275,7 +4790,28 @@ impl PluginToolProvider {
             })
             .collect();
 
-        Ok(CallToolResult::success(vec![ContentBlock::json(
+        if !verdicts.is_empty() {
+            if let Some(v) = verdicts.first() {
+                warnings.push(ToolWarning::warn(
+                    "prior_verdict",
+                    format!(
+                        "{} {} is a KNOWN crash class: {} Fix: {}",
+                        triage.bugcheck_code, module, v.verdict, v.fix
+                    ),
+                ));
+            }
+        }
+        if !known_bad_hits.is_empty() {
+            warnings.push(ToolWarning::warn(
+                "known_bad_hit",
+                format!(
+                    "{} blocklisted driver(s) were loaded at crash time — see fleet.known_bad_hits.",
+                    known_bad_hits.len()
+                ),
+            ));
+        }
+
+        Ok(CallToolResult::success(vec![ContentBlock::json(attach_warnings(
             serde_json::json!({
                 "mode": "local",
                 "ingested": ingested,
@@ -4291,7 +4827,8 @@ impl PluginToolProvider {
                 )
                 .unwrap_or_default(),
             }),
-        )
+            warnings,
+        ))
         .map_err(to_internal)?]))
     }
 
@@ -4384,9 +4921,67 @@ impl PluginToolProvider {
         &self,
         Parameters(p): Parameters<CrashVerdictRecordParams>,
     ) -> Result<CallToolResult, ErrorData> {
+        use super::tool_warnings::{attach_warnings, ToolWarning};
+        use database::schema::RecordIdExt;
+
         let sig = database::schema::CrashSignature::ensure(&p.bugcheck_code, &p.module)
             .await
             .map_err(to_internal)?;
+
+        // Task linkage: explicit task_id > session (explicit id, registry-pinned,
+        // or newest open for the connection) → session.task_ref → the session's
+        // open service task.
+        let mut task_ref: Option<database::schema::RecordId> = match p.task_id.as_deref() {
+            Some(t) => Some(require_record(t, database::schema::TASK_TABLE, "task_id").await?),
+            None => None,
+        };
+        if task_ref.is_none() {
+            let session = match (p.session_id.as_deref(), p.connection_string.as_deref()) {
+                (Some(sid), _) => {
+                    let rid =
+                        parse_record_id(sid, database::schema::DIAGNOSTIC_SESSION_TABLE);
+                    database::schema::DiagnosticSession::get(&rid.key_string())
+                        .await
+                        .unwrap_or(None)
+                }
+                (None, Some(cs)) => match super::diagnostic_session_registry::get(cs) {
+                    Some(sid) => database::schema::DiagnosticSession::get(&sid)
+                        .await
+                        .unwrap_or(None),
+                    None => database::schema::DiagnosticSession::latest_open_for_connection(
+                        cs, None,
+                    )
+                    .await
+                    .unwrap_or(None),
+                },
+                (None, None) => None,
+            };
+            if let Some(session) = session {
+                task_ref = session.task_ref.clone();
+                if task_ref.is_none() {
+                    task_ref = session
+                        .resolve_open_service_task()
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|(task, _)| task);
+                }
+            }
+        }
+
+        let mut warnings: Vec<ToolWarning> = Vec::new();
+        if task_ref.is_none() {
+            warnings.push(
+                ToolWarning::info(
+                    "verdict_unlinked",
+                    "Verdict recorded without a task_ref — it will not surface on the service task.",
+                )
+                .with_fix(
+                    "pass session_id or connection_string (or an explicit task_id) when recording verdicts during an engagement",
+                ),
+            );
+        }
+
         let verdict_id = database::schema::CrashVerdict::create(
             &sig.id,
             &p.verdict,
@@ -4394,17 +4989,19 @@ impl PluginToolProvider {
             p.confidence.as_deref().unwrap_or("medium"),
             p.author.as_deref().unwrap_or(""),
             p.source.as_deref().unwrap_or("ai"),
-            None,
+            task_ref.clone(),
         )
         .await
         .map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![ContentBlock::json(
+        Ok(CallToolResult::success(vec![ContentBlock::json(attach_warnings(
             serde_json::json!({
                 "signature_id": sig.id,
                 "verdict_id": verdict_id,
+                "task_ref": task_ref.as_ref().map(RecordIdExt::key_string),
                 "recorded": true,
             }),
-        )
+            warnings,
+        ))
         .map_err(to_internal)?]))
     }
 
@@ -4418,6 +5015,35 @@ impl PluginToolProvider {
         &self,
         Parameters(p): Parameters<KnownBadDriverAddParams>,
     ) -> Result<CallToolResult, ErrorData> {
+        use super::tool_warnings::{attach_warnings, ToolWarning};
+        use database::schema::RecordIdExt;
+
+        // Link the crash class when a bugcheck code is given. Signature modules
+        // carry extensions; retry with `.sys` when the blocklist form is a stem.
+        let mut signature_ref: Option<database::schema::RecordId> = None;
+        let mut warnings: Vec<ToolWarning> = Vec::new();
+        if let Some(code) = p.bugcheck_code.as_deref() {
+            let mut found = database::schema::CrashSignature::find(code, &p.module)
+                .await
+                .unwrap_or(None);
+            if found.is_none() && !p.module.contains('.') {
+                found =
+                    database::schema::CrashSignature::find(code, &format!("{}.sys", p.module))
+                        .await
+                        .unwrap_or(None);
+            }
+            match found {
+                Some(sig) => signature_ref = Some(sig.id),
+                None => warnings.push(ToolWarning::info(
+                    "signature_not_found",
+                    format!(
+                        "No crash signature exists for {code} {} yet; the blocklist entry was added without a signature_ref.",
+                        p.module
+                    ),
+                )),
+            }
+        }
+
         let entry = database::schema::KnownBadDriver {
             id: database::schema::random_record_id(database::schema::KNOWN_BAD_DRIVER_TABLE),
             module: p.module.clone(),
@@ -4428,7 +5054,7 @@ impl PluginToolProvider {
             symptom: p.symptom.unwrap_or_default(),
             fix: p.fix.unwrap_or_default(),
             severity: p.severity.unwrap_or_else(|| "warn".to_string()),
-            signature_ref: None,
+            signature_ref: signature_ref.clone(),
             active: true,
             created_at: chrono::Utc::now().into(),
             updated_at: chrono::Utc::now().into(),
@@ -4436,9 +5062,14 @@ impl PluginToolProvider {
         let id = database::schema::KnownBadDriver::create(&entry)
             .await
             .map_err(to_internal)?;
-        Ok(CallToolResult::success(vec![ContentBlock::json(
-            serde_json::json!({ "id": id, "added": true }),
-        )
+        Ok(CallToolResult::success(vec![ContentBlock::json(attach_warnings(
+            serde_json::json!({
+                "id": id,
+                "added": true,
+                "signature_ref": signature_ref.as_ref().map(RecordIdExt::key_string),
+            }),
+            warnings,
+        ))
         .map_err(to_internal)?]))
     }
 
@@ -4529,6 +5160,204 @@ impl PluginToolProvider {
                 "known_bad_hits": hits,
             }),
         )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "driver_snapshot_take",
+        description = "Capture a driver-inventory snapshot on a connected client (via com.mastertech.driverstore) and record it to fleet intel, linked to the client's open diagnostic session. label categorizes the capture: intake | pre_service | post_service | manual. Take one at intake and one post-service so driver drift over the engagement is recorded; driver_snapshot_diff then compares them. Deploy com.mastertech.driverstore first if it is not present on the client."
+    )]
+    async fn driver_snapshot_take(
+        &self,
+        Parameters(p): Parameters<DriverSnapshotTakeParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        use super::tool_warnings::{attach_warnings, ToolWarning};
+        use database::schema::RecordIdExt;
+
+        let cs = p.connection_string.trim();
+        if cs.is_empty() {
+            return Err(ErrorData::invalid_params(
+                "driver_snapshot_take: connection_string is required".to_string(),
+                None,
+            ));
+        }
+        let label = p.label.as_deref().map(str::trim).unwrap_or("manual");
+        const LABELS: [&str; 4] = ["intake", "pre_service", "post_service", "manual"];
+        if !LABELS.contains(&label) {
+            return Err(ErrorData::invalid_params(
+                format!(
+                    "driver_snapshot_take: label '{label}' is not one of intake | pre_service | post_service | manual"
+                ),
+                None,
+            ));
+        }
+
+        // Reject a second concurrent take for this client so two calls can't
+        // claim each other's result row. RAII clears the marker on any exit.
+        match SNAPSHOT_INFLIGHT.lock() {
+            Ok(mut set) => {
+                if !set.insert(cs.to_string()) {
+                    return Err(to_internal(format!(
+                        "driver_snapshot_take: a snapshot is already in progress for {cs}"
+                    )));
+                }
+            }
+            Err(_) => return Err(to_internal("driver_snapshot_take: inflight lock poisoned".to_string())),
+        }
+        let _inflight = SnapshotInflightGuard { cs: cs.to_string() };
+
+        // Remember the newest existing snapshot so we only accept a row this
+        // call newly produced, not a pre-existing one.
+        let before_id = database::schema::DriverSnapshot::list_for_connection(cs, 1)
+            .await
+            .ok()
+            .and_then(|mut v| v.pop())
+            .map(|s| s.id);
+
+        // Stamp the label the ingest hook will apply, then invoke the plugin.
+        super::driver_intel_hooks::set_pending_label(cs, label);
+        let started: database::schema::Datetime = chrono::Utc::now().into();
+
+        let request_id = format!("dst-{}", uuid::Uuid::new_v4());
+        let cmd = crate::Cmd::CallRemotePluginTool {
+            request_id: request_id.clone(),
+            plugin_id: super::driver_intel_hooks::DRIVERSTORE_PLUGIN_ID.to_string(),
+            tool_name: "snapshot".to_string(),
+            args_json: "{}".to_string(),
+        };
+        let serialized = bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
+            .map_err(|e| to_internal(format!("bincode serialize: {e}")))?;
+        let rx = register_pending_request(request_id.clone());
+        let _guard = PendingRequestGuard { request_id: request_id.clone() };
+        super::remote_egui_control::hub()
+            .send_raw_binary(cs, serialized)
+            .map_err(to_internal)?;
+
+        let (success, _result_json) =
+            match tokio::time::timeout(std::time::Duration::from_secs(120), rx).await {
+                Ok(Ok(pair)) => pair,
+                Ok(Err(_)) => {
+                    super::driver_intel_hooks::clear_pending_label(cs);
+                    return Err(to_internal(format!(
+                        "driver_snapshot_take: client {cs} disconnected before returning \
+                         a snapshot (is com.mastertech.driverstore deployed?)"
+                    )));
+                }
+                Err(_) => {
+                    super::driver_intel_hooks::clear_pending_label(cs);
+                    return Err(to_internal(format!(
+                        "driver_snapshot_take: {cs} did not return a snapshot within 120s"
+                    )));
+                }
+            };
+        if !success {
+            super::driver_intel_hooks::clear_pending_label(cs);
+            return Err(to_internal(format!(
+                "driver_snapshot_take: the driverstore snapshot call failed on {cs} — deploy \
+                 com.mastertech.driverstore (fetch_plugin + plugin_deploy_remote) and retry"
+            )));
+        }
+
+        // The receive hook persists the row asynchronously; poll for a NEW row
+        // (id differs from before_id) so we never report a pre-existing one.
+        let mut snapshot: Option<database::schema::DriverSnapshot> = None;
+        for _ in 0..20 {
+            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+            let newest = database::schema::DriverSnapshot::list_for_connection(cs, 1)
+                .await
+                .ok()
+                .and_then(|mut v| v.pop());
+            if let Some(row) = newest {
+                if row.taken_at >= started && before_id.as_ref() != Some(&row.id) {
+                    snapshot = Some(row);
+                    break;
+                }
+            }
+        }
+
+        let mut warnings: Vec<ToolWarning> = Vec::new();
+        let Some(snapshot) = snapshot else {
+            return Err(to_internal(format!(
+                "driver_snapshot_take: snapshot call succeeded on {cs} but no new driver_snapshot \
+                 row appeared — the pnputil output may have been empty or unparseable"
+            )));
+        };
+        if snapshot.session_ref.is_none() {
+            warnings.push(
+                ToolWarning::warn(
+                    "no_open_session",
+                    "Snapshot recorded but not linked to a diagnostic session — no open session \
+                     for this client.",
+                )
+                .with_fix(format!(
+                    "create_diagnostic_session {{ connection_string: \"{cs}\", ... }} before snapshotting (its reconcile sweep also claims this row)"
+                )),
+            );
+        }
+
+        Ok(CallToolResult::success(vec![ContentBlock::json(attach_warnings(
+            serde_json::json!({
+                "connection_string": cs,
+                "snapshot_id": snapshot.id.key_string(),
+                "label": snapshot.label,
+                "driver_count": snapshot.driver_count,
+                "taken_at": snapshot.taken_at,
+                "session_ref": snapshot.session_ref.as_ref().map(RecordIdExt::key_string),
+            }),
+            warnings,
+        ))
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "intel_links_reap",
+        description = "Sweep every open diagnostic session through the link reconciler: claim orphan crash sightings and driver snapshots into their session, propagate task links, and enrich same-dump sighting siblings. Reports per-session claims plus fleet-wide remaining-orphan counts. Safe to run anytime (idempotent, coalesce-only); use it to backfill links after out-of-order ingest."
+    )]
+    async fn intel_links_reap(&self) -> Result<CallToolResult, ErrorData> {
+        use database::schema::RecordIdExt;
+
+        let sessions = database::schema::DiagnosticSession::list_open(500)
+            .await
+            .map_err(to_internal)?;
+        let mut swept: Vec<serde_json::Value> = Vec::new();
+        let mut total = 0usize;
+        for session in &sessions {
+            match database::schema::crash_intel::reconcile_session_links(session).await {
+                Ok(r) if r.total() > 0 => {
+                    total += r.total();
+                    swept.push(serde_json::json!({
+                        "session_id": session.id.key_string(),
+                        "connection_string": session.connection_string,
+                        "sightings_claimed": r.sightings_claimed,
+                        "sightings_task_linked": r.sightings_task_linked,
+                        "snapshots_claimed": r.snapshots_claimed,
+                        "sightings_enriched": r.sightings_enriched,
+                    }));
+                }
+                Ok(_) => {}
+                Err(e) => log::warn!(
+                    "intel_links_reap: reconcile failed for {}: {e}",
+                    session.id.key_string()
+                ),
+            }
+        }
+
+        let (orphan_sightings, orphan_snapshots) =
+            database::schema::crash_intel::count_orphan_links()
+                .await
+                .unwrap_or((0, 0));
+
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
+            "open_sessions_swept": sessions.len(),
+            "sessions_with_changes": swept.len(),
+            "total_rows_linked": total,
+            "changes": swept,
+            "remaining_orphans": {
+                "crash_sightings": orphan_sightings,
+                "driver_snapshots": orphan_snapshots,
+                "note": "orphans with no open session to claim them — expected for closed/pre-session engagements; link the session manually if one should own them",
+            },
+        }))
         .map_err(to_internal)?]))
     }
 
@@ -5825,6 +6654,20 @@ impl PluginToolProvider {
 
 /// Shown to MCP clients in `initialize` (`ServerInfo.instructions`). Keep in sync with View menu + `nav_tab_anchor_key` in Mastertech `menu_bar.rs`.
 pub const INSTRUCTIONS: &str = r#"Mastertech Plugin System MCP (MasterTech desktop + admin Web Console).
+
+=== Diagnostic Flow (crash/hardware engagements — follow this ORDER) ===
+Open the session BEFORE running analyzers so every record links to it (analyzers that run first are recorded unlinked and only get claimed retroactively).
+  1. remote_channel_health — confirm the client responds.
+  2. create_diagnostic_session — FIRST. Auto-resolves the service task and claims any pre-session orphan records. Everything after inherits its session/task link.
+  3. driver_snapshot_take {label:'intake'} — baseline the driver inventory.
+  4. minidump_analyze {connection_string} — triage all dumps; sightings auto-link to the open session. The result carries a fleet block (prior verdicts, known-bad hits) and warnings.
+  5. Escalate to com.mastertech.dump-decode (cdb) only when triage blame is ambiguous.
+  6. log_diagnostic_entry as you go — findings, actions, observations, and anything informational live HERE.
+  7. crash_verdict_record / known_bad_driver_add — pass session_id or connection_string so the verdict links to the task.
+  8. create_ai_task — ONLY for hands-on/physical steps a human must do (see that tool's rules). Not for anything you can do via MCP, and not for logging.
+  9. driver_snapshot_take {label:'post_service'} after the fix, then driver_snapshot_diff.
+ 10. close_diagnostic_session — a flight check: it gates status + escalation-handoff, runs a final link sweep, and returns completeness warnings. Resolve warnings that matter first.
+Tool results may include a `warnings` array ({code, severity, message, fix}) — each names the exact follow-up call. Act on warn-severity items; info items are advisory. intel_links_reap backfills links fleet-wide if ingest ran out of order.
 
 === Session (HTTP :9004/mcp) ===
 After initialize, POST notifications/initialized with the same Mcp-Session-Id before tools/call.

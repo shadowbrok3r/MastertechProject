@@ -174,7 +174,8 @@ pub struct KernelDumpTriage {
     pub rsp_region: Option<HexRegion>,
 }
 
-fn is_kernel_image(name: &str) -> bool {
+/// True for the NT kernel image / HAL module names (lowercase).
+pub fn is_kernel_image(name: &str) -> bool {
     matches!(
         name,
         "ntoskrnl.exe" | "ntkrnlmp.exe" | "ntkrnlpa.exe" | "ntkrpamp.exe" | "hal.dll"

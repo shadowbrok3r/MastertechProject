@@ -376,6 +376,25 @@ pub fn listing(
     id: u64,
     items: impl IntoIterator<Item = (String, String)>,
 ) {
+    listing_rows(
+        ui,
+        ctx,
+        id,
+        items.into_iter().map(|(label, value)| database::shape_walk::Row {
+            label,
+            value,
+            hover: None,
+        }),
+    );
+}
+
+/// Two-column (label, value) table; a row's `hover` shows egui help text.
+pub fn listing_rows(
+    ui: &mut Ui,
+    ctx: &egui::Context,
+    id: u64,
+    rows: impl IntoIterator<Item = database::shape_walk::Row>,
+) {
     ui.push_id(id, |ui| {
         let mono_font = egui::style::TextStyle::Monospace.resolve(ui.style());
         let body_font = egui::style::TextStyle::Body.resolve(ui.style());
@@ -390,16 +409,19 @@ pub fn listing(
                 let widths = body.widths();
                 let col1_width = widths[0];
                 let col2_width = widths[1];
-                for (lhs, rhs) in items {
+                for database::shape_walk::Row { label, value, hover } in rows {
                     let (col1, col2, row_height) = ctx.fonts_mut(|fonts| {
-                        let col1 = fonts.layout(lhs, body_font.clone(), Color32::WHITE, col1_width);
-                        let col2 = fonts.layout(rhs, mono_font.clone(), Color32::WHITE, col2_width);
+                        let col1 = fonts.layout(label, body_font.clone(), Color32::WHITE, col1_width);
+                        let col2 = fonts.layout(value, mono_font.clone(), Color32::WHITE, col2_width);
                         let row_height = col1.rect.height().max(col2.rect.height()) + 6.0;
                         (col1, col2, row_height)
                     });
                     body.row(row_height, |mut row| {
                         row.col(|ui| {
-                            ui.label(col1);
+                            let resp = ui.label(col1);
+                            if let Some(h) = &hover {
+                                resp.on_hover_text(h);
+                            }
                         });
                         row.col(|ui| {
                             ui.label(col2);

@@ -13,6 +13,7 @@ use schema::User;
 use log::info;
 
 pub mod live_data;
+pub mod shape_walk;
 // SNTP-based startup clock correction; UdpSocket/SetSystemTime are native-only.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod clock_sync;

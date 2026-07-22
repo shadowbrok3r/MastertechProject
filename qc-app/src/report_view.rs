@@ -239,24 +239,17 @@ fn render_report(ui: &mut egui::Ui, m: &RunReportModel) {
             .num_columns(8)
             .spacing([14.0, 2.0])
             .show(ui, |ui| {
-                let cell = |ui: &mut egui::Ui, k: &str, v: String| {
-                    ui.label(egui::RichText::new(k).small().weak());
-                    ui.label(egui::RichText::new(v).small().monospace());
-                };
-                cell(ui, "CPU max", fmt_opt_f32(m.max_temp_c, "°C"));
-                cell(ui, "CPU avg", fmt_opt_f32(m.avg_temp_c, "°C"));
-                cell(ui, "GPU max", fmt_opt_f32(m.max_gpu_temp_c, "°C"));
-                cell(
-                    ui,
-                    "Max clock",
-                    m.max_clock_mhz.map(|c| format!("{c} MHz")).unwrap_or_else(|| "—".into()),
-                );
-                ui.end_row();
-                cell(ui, "WHEA", m.whea_delta_count.to_string());
-                cell(ui, "TDR", m.tdr_count.to_string());
-                cell(ui, "Test errors", m.test_errors.to_string());
-                cell(ui, "Disk errors", m.disk_io_errors.to_string());
-                ui.end_row();
+                for (i, r) in m.summary_rows().into_iter().enumerate() {
+                    let label = ui.label(egui::RichText::new(&r.label).small().weak());
+                    if let Some(h) = &r.hover {
+                        label.on_hover_text(h);
+                    }
+                    let value = if r.value.is_empty() { "—" } else { r.value.as_str() };
+                    ui.label(egui::RichText::new(value).small().monospace());
+                    if i % 4 == 3 {
+                        ui.end_row();
+                    }
+                }
             });
         if m.thermal_throttle_detected || m.vrm_throttle_detected {
             ui.colored_label(
@@ -367,10 +360,6 @@ fn render_report(ui: &mut egui::Ui, m: &RunReportModel) {
             );
         }
     }
-}
-
-fn fmt_opt_f32(v: Option<f32>, unit: &str) -> String {
-    v.map(|x| format!("{x:.1}{unit}")).unwrap_or_else(|| "—".into())
 }
 
 /// One plot with stage-boundary and event markers shared across charts.

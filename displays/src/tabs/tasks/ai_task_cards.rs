@@ -9,7 +9,7 @@ use crate::ui_tools::{icons, theme};
 use crate::TaskUiActions;
 use crossbeam::channel::Sender;
 use database::schema::{AiTask, AiTaskItem, AiTaskStatus, LiveTaskPayload, RecordIdExt, TaskNotePayload, User};
-use eframe::egui::{Button, CollapsingHeader, ComboBox, Frame, Margin, RichText, Shadow, Ui, Vec2, Widget};
+use eframe::egui::{Button, CollapsingHeader, ComboBox, Frame, Margin, RichText, ScrollArea, Shadow, Ui, Vec2, Widget};
 
 #[derive(Clone, PartialEq)]
 pub enum AiCardRole {
@@ -222,7 +222,14 @@ impl AiTaskCardView {
                 .id_salt(("ai_checklist", &key))
                 .default_open(default_open)
                 .show_unindented(ui, |ui| {
-                    display_ai_checklist(ui, task, &self.items, store_users, interactive, tx);
+                    // Height-capped even when open so a long checklist can't
+                    // balloon the card/column.
+                    ScrollArea::vertical()
+                        .id_salt(("ai_checklist_scroll", &key))
+                        .max_height(220.0)
+                        .show(ui, |ui| {
+                            display_ai_checklist(ui, task, &self.items, store_users, interactive, tx);
+                        });
                 });
 
             // Operator review actions.

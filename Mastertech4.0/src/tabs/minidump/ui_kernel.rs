@@ -7,11 +7,12 @@ use database::schema::{
     module_stem, CrashIngest, CrashSignature, CrashVerdict, KnownBadDriver, ParsedCrash,
     SightingContext,
 };
+use database::shape_walk::{self, Row};
 use dump_triage::KernelDumpTriage;
 use eframe::egui::{self, Color32, Grid, RichText, TextEdit, Ui, Widget};
 use egui_extras::{Column, TableBuilder};
 
-use super::{listing, MiniDumpApp};
+use super::{listing, listing_rows, MiniDumpApp};
 
 /// Sort key for the module table.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -42,6 +43,9 @@ pub struct KernelIntelState {
     ingest_status: Option<Result<String, String>>,
     ingest_tx: Sender<Result<CrashIngest, String>>,
     ingest_rx: Receiver<Result<CrashIngest, String>>,
+    /// Optional connection_string to attribute the sighting to a live client
+    /// (links session/task/computer and enables dedup). Empty = unlinked.
+    ingest_link_cs: String,
 
     verdict_text: String,
     fix_text: String,
@@ -71,6 +75,7 @@ impl Default for KernelIntelState {
             ingest_status: None,
             ingest_tx,
             ingest_rx,
+            ingest_link_cs: String::new(),
             verdict_text: String::new(),
             fix_text: String::new(),
             confidence: "medium".to_string(),
@@ -144,6 +149,7 @@ fn to_parsed_crash(triage: &KernelDumpTriage, dump_name: Option<String>) -> Pars
         process_name: None,
         failure_bucket: None,
         caused_by: triage.blamed_module.clone(),
+        module_version: None,
         dump_name,
         dump_time: triage.system_time_unix.map(unix_to_string),
         raw_excerpt,
@@ -360,6 +366,18 @@ impl MiniDumpApp {
 
         ui.add_space(6.0);
         ui.horizontal(|ui| {
+            ui.label("Link to client:");
+            TextEdit::singleline(&mut self.kernel_intel.ingest_link_cs)
+                .hint_text("connection_string (optional)")
+                .desired_width(200.0)
+                .ui(ui)
+                .on_hover_text(
+                    "Optional. When set to a connected client's connection_string, the sighting \
+                     links to that client's open session/task/computer and dedups on re-record. \
+                     Leave empty to record an unlinked bench sighting.",
+                );
+        });
+        ui.horizontal(|ui| {
             let can_ingest = !self.kernel_intel.ingest_running
                 && !matches!(self.kernel_intel.ingest_status, Some(Ok(_)));
             if ui
@@ -373,12 +391,20 @@ impl MiniDumpApp {
                 self.kernel_intel.ingest_running = true;
                 self.kernel_intel.ingest_status = None;
                 let parsed = to_parsed_crash(triage, dump_name.clone());
-                let ctx = SightingContext {
-                    dump_kind: "minidump".to_string(),
-                    ..Default::default()
-                };
+                let link_cs = self.kernel_intel.ingest_link_cs.trim().to_string();
                 let tx = self.kernel_intel.ingest_tx.clone();
                 tokio::spawn(async move {
+                    let ctx = if link_cs.is_empty() {
+                        SightingContext {
+                            dump_kind: "minidump".to_string(),
+                            ..Default::default()
+                        }
+                    } else {
+                        database::schema::crash_intel::sighting_context_for_connection(
+                            &link_cs, "minidump",
+                        )
+                        .await
+                    };
                     let result = CrashSignature::ingest(&parsed, &ctx)
                         .await
                         .map_err(|e| e.to_string());
@@ -479,24 +505,47 @@ impl MiniDumpApp {
 
 /// Left summary column: crash meta + bugcheck parameters.
 fn render_bugcheck_panel(ui: &mut Ui, ctx: &egui::Context, triage: &KernelDumpTriage) {
-    let mut meta: Vec<(String, String)> = Vec::new();
+    // Field doc comments keyed by their walker label, attached to meta rows.
+    let hovers: std::collections::HashMap<String, String> = shape_walk::rows(triage)
+        .into_iter()
+        .filter_map(|r| r.hover.map(|h| (r.label, h)))
+        .collect();
+    let hover = |walker_label: &str| hovers.get(walker_label).cloned();
+
+    let mut meta: Vec<Row> = Vec::new();
     if let Some(t) = triage.system_time_unix {
-        meta.push(("Crash time".into(), unix_to_string(t)));
+        meta.push(Row {
+            label: "Crash time".into(),
+            value: unix_to_string(t),
+            hover: hover("System Time Unix"),
+        });
     }
     if let Some(up) = triage.uptime_secs {
-        meta.push(("Uptime".into(), format!("{}h {}m", up / 3600, (up % 3600) / 60)));
+        meta.push(Row {
+            label: "Uptime".into(),
+            value: format!("{}h {}m", up / 3600, (up % 3600) / 60),
+            hover: hover("Uptime Secs"),
+        });
     }
-    meta.push(("Processors".into(), triage.number_processors.to_string()));
+    meta.push(Row {
+        label: "Processors".into(),
+        value: triage.number_processors.to_string(),
+        hover: hover("Number Processors"),
+    });
     if let Some(rip) = &triage.rip {
-        meta.push(("RIP".into(), rip.clone()));
+        meta.push(Row { label: "RIP".into(), value: rip.clone(), hover: hover("Rip") });
     }
     if let Some(rsp) = &triage.rsp {
-        meta.push(("RSP".into(), rsp.clone()));
+        meta.push(Row { label: "RSP".into(), value: rsp.clone(), hover: hover("Rsp") });
     }
     if let Some(exc) = &triage.exception_code {
-        meta.push(("Exception".into(), exc.clone()));
+        meta.push(Row {
+            label: "Exception".into(),
+            value: exc.clone(),
+            hover: hover("Exception Code"),
+        });
     }
-    listing(ui, ctx, 0xB50C_0001, meta);
+    listing_rows(ui, ctx, 0xB50C_0001, meta);
 
     if !triage.bugcheck_parameters.is_empty() {
         ui.add_space(4.0);
@@ -553,11 +602,15 @@ fn render_registers(ui: &mut Ui, ctx: &egui::Context, triage: &KernelDumpTriage)
         return;
     }
     ui.collapsing(RichText::new("Registers").strong(), |ui| {
-        listing(
+        listing_rows(
             ui,
             ctx,
             0xB50C_0003,
-            triage.registers.iter().cloned(),
+            triage
+                .registers
+                .iter()
+                .cloned()
+                .map(|(label, value)| Row { label, value, hover: None }),
         );
     });
 }

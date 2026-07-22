@@ -254,6 +254,16 @@ impl AiTask {
         Ok(tasks.into_iter().next())
     }
 
+    /// True when any AI task (any status) was ever created for the session.
+    pub async fn any_for_session(session_ref: &RecordId) -> anyhow::Result<bool> {
+        let tasks: Vec<Self> = db()
+            .query("SELECT * FROM ai_task WHERE session_ref == $sid LIMIT 1")
+            .bind(("sid", session_ref.clone()))
+            .await?
+            .take(0)?;
+        Ok(!tasks.is_empty())
+    }
+
     pub async fn get_for_task(task_ref: &RecordId) -> anyhow::Result<Vec<Self>> {
         let tasks: Vec<Self> = db()
             .query("SELECT * FROM ai_task WHERE task_ref == $tid ORDER BY created_at DESC LIMIT 20")

@@ -872,6 +872,14 @@ impl WebSocketClient {
                                 result_json.clone(),
                             );
                         }
+                        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+                        if success && crate::plugins::driver_intel_hooks::is_driver_snapshot_result(&plugin_id, &tool_name) {
+                            crate::plugins::driver_intel_hooks::ingest_driver_snapshot(
+                                self.client.connection_string.clone(),
+                                self.client.computer.clone(),
+                                result_json.clone(),
+                            );
+                        }
                         #[cfg(not(target_arch = "wasm32"))]
                         crate::plugins::mcp_bridge::resolve_pending_request(&request_id, success, result_json);
                     } else if let Cmd::AppPong { nonce, sent_at_ms } = cmd {

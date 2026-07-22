@@ -1,5 +1,6 @@
 use eframe::egui::{Align, Layout, Ui};
 use egui_extras::{Column, TableBuilder};
+use facet::Facet;
 
 #[derive(Clone, Debug, Default)]
 pub struct MachineDriveRow {
@@ -9,12 +10,21 @@ pub struct MachineDriveRow {
     pub space_label: String,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Facet)]
 pub struct MachineInfo {
+    /// Machine host name reported by the OS.
+    #[facet(rename = "System Name")]
     pub hostname: String,
+    /// Primary processor model string.
+    #[facet(rename = "CPU Name")]
     pub cpu: String,
+    /// Installed physical memory.
+    #[facet(rename = "Total RAM")]
     pub ram_gb: String,
+    /// Primary display-adapter model.
+    #[facet(rename = "GPU")]
     pub gpu: String,
+    #[facet(opaque)]
     pub drives: Vec<MachineDriveRow>,
 }
 
@@ -35,18 +45,16 @@ impl MachineInfo {
                 });
             })
             .body(|mut body| {
-                for (label, value) in [
-                    ("System Name", self.hostname.as_str()),
-                    ("CPU Name", self.cpu.as_str()),
-                    ("Total RAM", self.ram_gb.as_str()),
-                    ("GPU", self.gpu.as_str()),
-                ] {
+                for field in database::shape_walk::rows(self) {
                     body.row(20.0, |mut row| {
                         row.col(|ui| {
-                            ui.label(label);
+                            let resp = ui.label(&field.label);
+                            if let Some(h) = &field.hover {
+                                resp.on_hover_text(h);
+                            }
                         });
                         row.col(|ui| {
-                            ui.label(value);
+                            ui.label(&field.value);
                         });
                     });
                 }
@@ -98,5 +106,35 @@ impl MachineInfo {
                     });
                 }
             });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn machine_info_rows_use_renames_and_skip_drives() {
+        let mi = MachineInfo {
+            hostname: "PC-1".into(),
+            cpu: "Ryzen 9".into(),
+            ram_gb: "32 GB".into(),
+            gpu: "RTX 4070".into(),
+            drives: vec![MachineDriveRow::default()],
+        };
+        let rows = database::shape_walk::rows(&mi);
+        let pairs: Vec<(&str, &str)> =
+            rows.iter().map(|r| (r.label.as_str(), r.value.as_str())).collect();
+        assert_eq!(
+            pairs,
+            [
+                ("System Name", "PC-1"),
+                ("CPU Name", "Ryzen 9"),
+                ("Total RAM", "32 GB"),
+                ("GPU", "RTX 4070"),
+            ]
+        );
+        assert!(rows.iter().all(|r| r.label != "Drives"));
+        assert_eq!(rows[0].hover.as_deref(), Some("Machine host name reported by the OS."));
     }
 }

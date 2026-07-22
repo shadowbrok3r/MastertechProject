@@ -246,6 +246,12 @@ impl DiagnosticSession {
         Ok(())
     }
 
+    /// Fetch one session row by key.
+    pub async fn get(session_id: &str) -> anyhow::Result<Option<Self>> {
+        let sid = RecordId::new(super::DIAGNOSTIC_SESSION_TABLE, session_id);
+        Ok(db().select(sid).await?)
+    }
+
     pub async fn get_full(session_id: &str) -> anyhow::Result<Option<DiagnosticSessionFull>> {
         let sid = RecordId::new(super::DIAGNOSTIC_SESSION_TABLE, session_id);
         let session: Option<DiagnosticSession> = db().select(sid.clone()).await?;
@@ -344,6 +350,81 @@ impl DiagnosticSession {
         if let Some(s) = service_order { q = q.bind(("svc", s.clone())); }
         q.await?;
         Ok(())
+    }
+
+    /// Every open session, newest first. Used by the periodic link reaper.
+    pub async fn list_open(limit: u32) -> anyhow::Result<Vec<Self>> {
+        let sessions: Vec<Self> = db()
+            .query(
+                "SELECT * FROM diagnostic_session WHERE status == 'open' \
+                 ORDER BY started_at DESC LIMIT $limit",
+            )
+            .bind(("limit", limit as i64))
+            .await?
+            .take(0)?;
+        Ok(sessions)
+    }
+
+    /// Newest open session for a connected client: by `connection_string`,
+    /// else by the linked computer when provided.
+    pub async fn latest_open_for_connection(
+        connection_string: &str,
+        computer_id: Option<&RecordId>,
+    ) -> anyhow::Result<Option<Self>> {
+        let mut sessions: Vec<Self> = db()
+            .query(
+                "SELECT * FROM diagnostic_session WHERE status == 'open' \
+                 AND connection_string == $cs ORDER BY started_at DESC LIMIT 1",
+            )
+            .bind(("cs", connection_string.to_string()))
+            .await?
+            .take(0)?;
+        if sessions.is_empty() {
+            if let Some(c) = computer_id {
+                sessions = db()
+                    .query(
+                        "SELECT * FROM diagnostic_session WHERE status == 'open' \
+                         AND computer_id == $c ORDER BY started_at DESC LIMIT 1",
+                    )
+                    .bind(("c", c.clone()))
+                    .await?
+                    .take(0)?;
+            }
+        }
+        Ok(sessions.into_iter().next())
+    }
+
+    /// The service `task` a session artifact should attach to when the session
+    /// isn't linked yet: the session's service_order, else the newest service
+    /// order for the session's computer, then that order's task (a
+    /// not-yet-completed one preferred, newest otherwise). Returns
+    /// `(task_ref, service_order)` so the caller can persist the link.
+    pub async fn resolve_open_service_task(
+        &self,
+    ) -> anyhow::Result<Option<(RecordId, RecordId)>> {
+        let tasks: Vec<super::LiveTaskPayload> = match self.service_order.clone() {
+            Some(so) => db()
+                .query(
+                    "SELECT * FROM task WHERE service_ticket == $so \
+                     ORDER BY completed ASC, created_at DESC LIMIT 1",
+                )
+                .bind(("so", so))
+                .await?
+                .take(0)?,
+            None => db()
+                .query(
+                    "SELECT * FROM task WHERE service_ticket.computer == $c \
+                     ORDER BY completed ASC, created_at DESC LIMIT 1",
+                )
+                .bind(("c", self.computer_id.clone()))
+                .await?
+                .take(0)?,
+        };
+        let Some(task) = tasks.into_iter().next() else { return Ok(None) };
+        // Link the session's service_order when set, else the task's own ticket.
+        let Some(service_order) = self.service_order.clone().or_else(|| task.service_ticket.clone())
+        else { return Ok(None) };
+        Ok(Some((task.id, service_order)))
     }
 
     pub async fn search(

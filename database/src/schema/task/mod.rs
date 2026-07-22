@@ -1,6 +1,7 @@
 use crate::{schema::{Record, User, TASK_TABLE}, db};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use structdiff::{Difference, StructDiff};
+use facet::Facet;
 use chrono::Utc;
 
 use super::{random_record_id, ComputerData, CustomerData, Datetime, RecordId, SurrealValue, TaskNotePayload, TicketData, TicketPayload, USER_TABLE};
@@ -48,18 +49,23 @@ impl Default for TaskPayload {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Difference, SurrealValue)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Difference, SurrealValue, Facet)]
 pub struct LiveTaskPayload {
+    #[facet(opaque)]
     pub id: RecordId,
     pub task_name: String,
+    #[facet(opaque)]
     pub service_ticket: Option<RecordId>,
     pub task_description: String,
-    pub assignee: RecordId, 
+    #[facet(opaque)]
+    pub assignee: RecordId,
     pub service_number: Option<String>,
+    #[facet(opaque)]
     pub due_date: Datetime,
     pub priority: Priority,
     pub completed: bool,
     pub status: Status,
+    #[facet(opaque)]
     pub created_at: Datetime
 }
 
@@ -81,161 +87,19 @@ impl Default for LiveTaskPayload {
     }
 }
 
-impl TaskPayload {
-    /// Creates a JSON diff representation comparing this task to another.
-    /// Returns a serde_json::Value with format: { "field_name": { "old": "old_value", "new": "new_value" }, ... }
-    pub fn diff_to_json(&self, other: &Self) -> serde_json::Value {
-        use serde_json::{json, Map, Value};
-        use super::RecordIdExt;
-        
-        let mut diff_map = Map::new();
-        
-        if self.task_name != other.task_name {
-            diff_map.insert("task_name".to_string(), json!({
-                "old": self.task_name,
-                "new": other.task_name
-            }));
-        }
-        if self.task_description != other.task_description {
-            diff_map.insert("task_description".to_string(), json!({
-                "old": self.task_description,
-                "new": other.task_description
-            }));
-        }
-        if self.assignee != other.assignee {
-            diff_map.insert("assignee".to_string(), json!({
-                "old": self.assignee.key_string(),
-                "new": other.assignee.key_string()
-            }));
-        }
-        if self.service_number != other.service_number {
-            diff_map.insert("service_number".to_string(), json!({
-                "old": self.service_number.clone().unwrap_or_default(),
-                "new": other.service_number.clone().unwrap_or_default()
-            }));
-        }
-        if self.due_date != other.due_date {
-            diff_map.insert("due_date".to_string(), json!({
-                "old": self.due_date.to_string(),
-                "new": other.due_date.to_string()
-            }));
-        }
-        if self.priority != other.priority {
-            diff_map.insert("priority".to_string(), json!({
-                "old": self.priority.as_str(),
-                "new": other.priority.as_str()
-            }));
-        }
-        if self.status != other.status {
-            diff_map.insert("status".to_string(), json!({
-                "old": self.status.as_str(),
-                "new": other.status.as_str()
-            }));
-        }
-        if self.completed != other.completed {
-            diff_map.insert("completed".to_string(), json!({
-                "old": self.completed,
-                "new": other.completed
-            }));
-        }
-        
-        Value::Object(diff_map)
-    }
-    
-    /// Returns true if this task has any differences from the other task.
-    pub fn has_changes_from(&self, other: &Self) -> bool {
-        self.task_name != other.task_name
-            || self.task_description != other.task_description
-            || self.assignee != other.assignee
-            || self.service_number != other.service_number
-            || self.due_date != other.due_date
-            || self.priority != other.priority
-            || self.status != other.status
-            || self.completed != other.completed
-    }
-}
-
 impl LiveTaskPayload {
+    /// Fields never diffed: identity and immutable creation time.
+    const DIFF_IGNORE: &'static [&'static str] = &["id", "created_at"];
+
     /// Creates a JSON diff representation comparing this task to another.
-    /// Returns a serde_json::Value with format: { "field_name": { "old": "old_value", "new": "new_value" }, ... }
-    /// Uses structdiff's StructDiff trait under the hood.
+    /// Format: { "field_name": { "old": "old_value", "new": "new_value" }, ... }
     pub fn diff_to_json(&self, other: &Self) -> serde_json::Value {
-        use serde_json::{json, Map, Value};
-        use super::RecordIdExt;
-        
-        let mut diff_map = Map::new();
-        
-        // Compare each field and add to diff if different
-        if self.task_name != other.task_name {
-            diff_map.insert("task_name".to_string(), json!({
-                "old": self.task_name,
-                "new": other.task_name
-            }));
-        }
-        if self.task_description != other.task_description {
-            diff_map.insert("task_description".to_string(), json!({
-                "old": self.task_description,
-                "new": other.task_description
-            }));
-        }
-        if self.assignee != other.assignee {
-            diff_map.insert("assignee".to_string(), json!({
-                "old": self.assignee.key_string(),
-                "new": other.assignee.key_string()
-            }));
-        }
-        if self.service_number != other.service_number {
-            diff_map.insert("service_number".to_string(), json!({
-                "old": self.service_number.clone().unwrap_or_default(),
-                "new": other.service_number.clone().unwrap_or_default()
-            }));
-        }
-        if self.service_ticket != other.service_ticket {
-            diff_map.insert("service_ticket".to_string(), json!({
-                "old": self.service_ticket.as_ref().map(|r| r.key_string()).unwrap_or_default(),
-                "new": other.service_ticket.as_ref().map(|r| r.key_string()).unwrap_or_default()
-            }));
-        }
-        if self.due_date != other.due_date {
-            diff_map.insert("due_date".to_string(), json!({
-                "old": self.due_date.to_string(),
-                "new": other.due_date.to_string()
-            }));
-        }
-        if self.priority != other.priority {
-            diff_map.insert("priority".to_string(), json!({
-                "old": self.priority.as_str(),
-                "new": other.priority.as_str()
-            }));
-        }
-        if self.status != other.status {
-            diff_map.insert("status".to_string(), json!({
-                "old": self.status.as_str(),
-                "new": other.status.as_str()
-            }));
-        }
-        if self.completed != other.completed {
-            diff_map.insert("completed".to_string(), json!({
-                "old": self.completed,
-                "new": other.completed
-            }));
-        }
-        
-        Value::Object(diff_map)
+        crate::shape_walk::diff_to_json(self, other, Self::DIFF_IGNORE)
     }
-    
+
     /// Returns true if this task has any differences from the other task.
-    /// Excludes created_at from comparison (creation time should never change).
     pub fn has_changes_from(&self, other: &Self) -> bool {
-        self.task_name != other.task_name
-            || self.task_description != other.task_description
-            || self.assignee != other.assignee
-            || self.service_number != other.service_number
-            || self.service_ticket != other.service_ticket
-            || self.due_date != other.due_date
-            || self.priority != other.priority
-            || self.status != other.status
-            || self.completed != other.completed
+        crate::shape_walk::has_changes(self, other, Self::DIFF_IGNORE)
     }
 
     pub async fn get_associated_computer(&self) -> anyhow::Result<ComputerData, anyhow::Error> {
@@ -473,7 +337,8 @@ impl From<TaskPayload> for LiveTaskPayload {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Default, Eq, Hash, SurrealValue)]
+#[derive(Clone, Debug, PartialEq, Default, Eq, Hash, SurrealValue, Facet)]
+#[repr(u8)]
 #[surreal(untagged)]
 pub enum Status {
     #[default]
@@ -531,7 +396,8 @@ impl<'de> Deserialize<'de> for Status {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Default, SurrealValue)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Default, SurrealValue, Facet)]
+#[repr(u8)]
 #[surreal(untagged)]
 pub enum Priority {
     Express,

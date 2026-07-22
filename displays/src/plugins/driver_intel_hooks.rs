@@ -38,6 +38,15 @@ fn take_pending_label(connection_string: &str) -> String {
         .unwrap_or_else(|| "manual".to_string())
 }
 
+/// Drop a pending label without consuming it into a snapshot. Called by
+/// driver_snapshot_take on error paths where the plugin result never reaches
+/// ingest, so a stranded label can't mislabel the next snapshot.
+pub fn clear_pending_label(connection_string: &str) {
+    if let Ok(mut map) = PENDING_LABELS.lock() {
+        map.remove(connection_string);
+    }
+}
+
 /// True for driverstore results that carry a full inventory.
 pub fn is_driver_snapshot_result(plugin_id: &str, tool_name: &str) -> bool {
     plugin_id == DRIVERSTORE_PLUGIN_ID && tool_name == "snapshot"
@@ -67,6 +76,9 @@ pub fn ingest_driver_snapshot(
     computer: Option<RecordId>,
     result_json: String,
 ) {
+    // Consume the pending label up front so a bad/empty payload can't strand it
+    // for the next snapshot on this connection.
+    let label = take_pending_label(&connection_string);
     let Ok(payload) = serde_json::from_str::<serde_json::Value>(&result_json) else {
         return;
     };
@@ -77,7 +89,6 @@ pub fn ingest_driver_snapshot(
     if drivers.is_empty() {
         return;
     }
-    let label = take_pending_label(&connection_string);
 
     PlatformSpawner::spawn(async move {
         let session_key = super::diagnostic_session_registry::get(&connection_string);

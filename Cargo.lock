@@ -11346,6 +11346,7 @@ dependencies = [
  "crossbeam",
  "database",
  "directories",
+ "facet",
  "hex",
  "log",
  "once_cell",

@@ -13,7 +13,8 @@ use database::schema::{
         parse_dump_decode_payload, parse_kernel_triage_payload, payload_status, CrashIngest,
         CrashSignature, ParsedCrash, SightingContext,
     },
-    DiagnosticCategory, DiagnosticEntry, PluginUsageRef, RecordId, DIAGNOSTIC_SESSION_TABLE,
+    DiagnosticCategory, DiagnosticEntry, DiagnosticSession, PluginUsageRef, RecordId,
+    DIAGNOSTIC_SESSION_TABLE,
 };
 use once_cell::sync::Lazy;
 
@@ -98,7 +99,7 @@ fn verdict_summary(ingest: &CrashIngest) -> Option<String> {
     ))
 }
 
-async fn log_finding(session_key: &str, ingest: &CrashIngest, tool_name: &str) {
+async fn log_finding(session_ref: &RecordId, ingest: &CrashIngest, tool_name: &str) {
     let detail = match verdict_summary(ingest) {
         Some(s) => s,
         None => format!(
@@ -114,7 +115,7 @@ async fn log_finding(session_key: &str, ingest: &CrashIngest, tool_name: &str) {
         ),
     };
     let entry = DiagnosticEntry {
-        session_ref: RecordId::new(DIAGNOSTIC_SESSION_TABLE, session_key),
+        session_ref: session_ref.clone(),
         category: DiagnosticCategory::Finding,
         title: format!(
             "Crash signature {} {}",
@@ -178,6 +179,60 @@ pub fn ingest_kernel_triage_result(
     spawn_ingest(connection_string, computer, tool_name, "minidump", crashes);
 }
 
+/// Session/task/computer linkage resolved for new crash sightings.
+#[derive(Debug, Default, Clone)]
+pub struct SightingLinks {
+    pub session_ref: Option<RecordId>,
+    pub task_ref: Option<RecordId>,
+    pub computer: Option<RecordId>,
+}
+
+/// Resolve sighting linkage for a connection at ingest time: the
+/// registry-pinned session when present, else the newest open
+/// `diagnostic_session` row for the connection (or its computer). The task
+/// comes from `session.task_ref`, else the connection's open service order.
+pub async fn resolve_sighting_links(
+    connection_string: &str,
+    computer: Option<RecordId>,
+) -> SightingLinks {
+    let mut session: Option<DiagnosticSession> = None;
+    if let Some(key) = super::diagnostic_session_registry::get(connection_string) {
+        session = database::db()
+            .select(RecordId::new(DIAGNOSTIC_SESSION_TABLE, key))
+            .await
+            .ok()
+            .flatten();
+    }
+    if session.is_none() {
+        match DiagnosticSession::latest_open_for_connection(connection_string, computer.as_ref())
+            .await
+        {
+            Ok(found) => session = found,
+            Err(e) => {
+                log::warn!("crash_intel: open-session lookup failed for {connection_string}: {e}")
+            }
+        }
+    }
+    let Some(session) = session else {
+        return SightingLinks { computer, ..Default::default() };
+    };
+    let task_ref = match session.task_ref.clone() {
+        Some(t) => Some(t),
+        None => match session.resolve_open_service_task().await {
+            Ok(hit) => hit.map(|(task, _service_order)| task),
+            Err(e) => {
+                log::warn!("crash_intel: service-task lookup failed for {connection_string}: {e}");
+                None
+            }
+        },
+    };
+    SightingLinks {
+        session_ref: Some(session.id.clone()),
+        task_ref,
+        computer: computer.or(Some(session.computer_id)),
+    }
+}
+
 /// Shared: upsert each parsed crash into fleet intel and surface prior verdicts.
 /// Per-crash `dump_kind` is refined from the triage blob when present.
 fn spawn_ingest(
@@ -189,10 +244,7 @@ fn spawn_ingest(
 ) {
     let default_dump_kind = default_dump_kind.to_string();
     PlatformSpawner::spawn(async move {
-        let session_key = super::diagnostic_session_registry::get(&connection_string);
-        let session_ref = session_key
-            .as_deref()
-            .map(|k| RecordId::new(DIAGNOSTIC_SESSION_TABLE, k));
+        let links = resolve_sighting_links(&connection_string, computer).await;
 
         let mut ingests: Vec<CrashIngest> = Vec::new();
         for parsed in &crashes {
@@ -206,9 +258,9 @@ fn spawn_ingest(
                 .to_string();
             let ctx = SightingContext {
                 connection_string: Some(connection_string.clone()),
-                computer: computer.clone(),
-                session_ref: session_ref.clone(),
-                task_ref: None,
+                computer: links.computer.clone(),
+                session_ref: links.session_ref.clone(),
+                task_ref: links.task_ref.clone(),
                 dump_kind,
             };
             match CrashSignature::ingest(parsed, &ctx).await {
@@ -228,8 +280,8 @@ fn spawn_ingest(
                             ),
                         );
                     }
-                    if let Some(key) = session_key.as_deref() {
-                        log_finding(key, &ingest, &tool_name).await;
+                    if let Some(session_ref) = links.session_ref.as_ref() {
+                        log_finding(session_ref, &ingest, &tool_name).await;
                     }
                     ingests.push(ingest);
                 }

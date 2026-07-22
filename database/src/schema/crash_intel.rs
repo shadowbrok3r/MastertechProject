@@ -110,6 +110,9 @@ pub struct ParsedCrash {
     pub process_name: Option<String>,
     pub failure_bucket: Option<String>,
     pub caused_by: Option<String>,
+    /// Version marker for the blamed module (triage path: PE link date).
+    #[serde(default)]
+    pub module_version: Option<String>,
     pub dump_name: Option<String>,
     pub dump_time: Option<String>,
     pub raw_excerpt: String,
@@ -142,6 +145,36 @@ pub struct CrashIngest {
     pub prior_sighting_count: u32,
     pub prior_machine_count: u32,
     pub verdicts: Vec<CrashVerdict>,
+}
+
+/// Outcome of a session-link reconcile sweep.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ReconcileReport {
+    pub sightings_claimed: usize,
+    pub sightings_task_linked: usize,
+    pub snapshots_claimed: usize,
+    pub sightings_enriched: usize,
+}
+
+impl ReconcileReport {
+    pub fn total(&self) -> usize {
+        self.sightings_claimed
+            + self.sightings_task_linked
+            + self.snapshots_claimed
+            + self.sightings_enriched
+    }
+
+    /// One-line account of what the sweep changed, covering every counter so
+    /// an enrichment-only sweep isn't reported as "0 sightings, 0 snapshots".
+    pub fn summary(&self) -> String {
+        format!(
+            "{} sighting(s) claimed, {} task link(s) propagated, {} snapshot(s) claimed, {} sibling field(s) enriched",
+            self.sightings_claimed,
+            self.sightings_task_linked,
+            self.snapshots_claimed,
+            self.sightings_enriched
+        )
+    }
 }
 
 /// `crash_signature:<0xNNN_module>` so repeat crashes upsert in place.
@@ -337,6 +370,7 @@ pub fn parse_dump_decode_payload(payload: &serde_json::Value) -> Vec<ParsedCrash
                     process_name: Some(json_str(d, "process")).filter(|v| !v.is_empty()),
                     failure_bucket: Some(json_str(d, "bucket")).filter(|v| !v.is_empty()),
                     caused_by: Some(json_str(d, "caused_by")).filter(|v| !v.is_empty()),
+                    module_version: None,
                     dump_name: Some(json_str(d, "dump")).filter(|v| !v.is_empty()),
                     dump_time: Some(json_str(d, "time")).filter(|v| !v.is_empty()),
                     raw_excerpt: String::new(),
@@ -418,6 +452,15 @@ pub fn parse_kernel_triage_payload(payload: &serde_json::Value) -> Vec<ParsedCra
         .collect()
 }
 
+/// PE TimeDateStamp as a version marker: link date when plausible, hex otherwise.
+fn pe_timestamp_version(ts: u32) -> String {
+    use chrono::Datelike;
+    match chrono::DateTime::<chrono::Utc>::from_timestamp(ts as i64, 0) {
+        Some(d) if (1995..=2038).contains(&d.year()) => format!("built {}", d.format("%Y-%m-%d")),
+        _ => format!("pe:{ts:#010x}"),
+    }
+}
+
 /// Convert one `KernelDumpTriage` JSON object into a `ParsedCrash` via typed
 /// deserialization. The original `Value` is persisted verbatim as `triage`.
 fn parsed_crash_from_triage(
@@ -431,6 +474,17 @@ fn parsed_crash_from_triage(
         .clone()
         .or_else(|| kd.rip_module.clone())
         .unwrap_or_else(|| "unknown".to_string());
+
+    // caused_by/module_version only for a concrete third-party driver;
+    // generic kernel-image blame (ntoskrnl/hal) carries no diagnostic value.
+    let blamed_driver = kd
+        .blamed_module
+        .clone()
+        .filter(|m| !dump_triage::is_kernel_image(m));
+    let module_version = blamed_driver.as_deref().and_then(|m| {
+        let ts = kd.drivers.iter().find(|d| d.name == m)?.timestamp?;
+        (ts != 0).then(|| pe_timestamp_version(ts))
+    });
 
     // Byte offset of RIP within its module, when both are known.
     let offset = match (kd.rip.as_deref(), &kd.rip_module) {
@@ -469,7 +523,8 @@ fn parsed_crash_from_triage(
         offset,
         process_name: None,
         failure_bucket: None,
-        caused_by: kd.blamed_module.clone(),
+        caused_by: blamed_driver,
+        module_version,
         dump_name,
         dump_time,
         raw_excerpt,
@@ -511,6 +566,7 @@ impl CrashSignature {
                 .await?
                 .take(0)?;
             if let Some(prior) = existing.into_iter().next() {
+                Self::backfill_sighting_links(&prior, ctx).await;
                 if let Some(signature) = db().select::<Option<Self>>(id.clone()).await? {
                     let verdicts = Self::verdicts(&signature.id, 5).await?;
                     return Ok(CrashIngest {
@@ -528,6 +584,7 @@ impl CrashSignature {
         let machines: Vec<String> = ctx.connection_string.iter().cloned().collect();
         let offsets: Vec<String> = parsed.offset.iter().cloned().collect();
         let buckets: Vec<String> = parsed.failure_bucket.iter().cloned().collect();
+        let versions: Vec<String> = parsed.module_version.iter().cloned().collect();
 
         let mut response = db()
             .query(SIGNATURE_UPSERT)
@@ -536,7 +593,7 @@ impl CrashSignature {
             .bind(("bugcheck_name", parsed.bugcheck_name.clone()))
             .bind(("module", parsed.module.clone()))
             .bind(("offsets", offsets))
-            .bind(("module_versions", Vec::<String>::new()))
+            .bind(("module_versions", versions))
             .bind(("failure_buckets", buckets))
             .bind(("machines", machines))
             .await?;
@@ -570,7 +627,7 @@ impl CrashSignature {
             },
             dump_time: parsed.dump_time.clone(),
             offset: parsed.offset.clone(),
-            module_version: None,
+            module_version: parsed.module_version.clone(),
             failure_bucket: parsed.failure_bucket.clone(),
             process_name: parsed.process_name.clone(),
             caused_by: parsed.caused_by.clone(),
@@ -595,6 +652,38 @@ impl CrashSignature {
             verdicts,
             signature,
         })
+    }
+
+    /// Fill missing session/task/computer links on an existing sighting when a
+    /// re-analysis carries them; never overwrites values already set.
+    /// `loaded_modules ?? []` keeps UPDATE coercion happy on pre-schema rows.
+    async fn backfill_sighting_links(prior: &CrashSighting, ctx: &SightingContext) {
+        let wants_links = (prior.session_ref.is_none() && ctx.session_ref.is_some())
+            || (prior.task_ref.is_none() && ctx.task_ref.is_some())
+            || (prior.computer.is_none() && ctx.computer.is_some());
+        if !wants_links {
+            return;
+        }
+        let res = db()
+            .query(
+                "UPDATE $sighting SET \
+                 session_ref = session_ref ?? $session_ref, \
+                 task_ref = task_ref ?? $task_ref, \
+                 computer = computer ?? $computer, \
+                 loaded_modules = loaded_modules ?? []",
+            )
+            .bind(("sighting", prior.id.clone()))
+            .bind(("session_ref", ctx.session_ref.clone()))
+            .bind(("task_ref", ctx.task_ref.clone()))
+            .bind(("computer", ctx.computer.clone()))
+            .await;
+        if let Err(e) = res {
+            use super::RecordIdExt;
+            log::warn!(
+                "crash_sighting link backfill failed for {}: {e}",
+                prior.id.key_string()
+            );
+        }
     }
 
     /// Fetch-or-create a signature without recording a sighting.
@@ -717,6 +806,229 @@ impl CrashVerdict {
             .await?;
         Ok(id)
     }
+}
+
+/// Claim orphan crash sightings and driver snapshots for a session and
+/// propagate a late-arriving task link. Coalesce-only: existing links are
+/// never overwritten. Orphan claims are bounded to the engagement span —
+/// no earlier than 15 minutes before the session started and no later than
+/// its end (now, while it is open) — so unlinked rows from other
+/// engagements on the same connection are never mis-attributed.
+/// `loaded_modules ?? []` keeps UPDATE coercion happy on pre-schema rows.
+pub async fn reconcile_session_links(
+    session: &super::diagnostic::DiagnosticSession,
+) -> anyhow::Result<ReconcileReport> {
+    let mut report = ReconcileReport::default();
+
+    let claimed: Vec<CrashSighting> = db()
+        .query(
+            "UPDATE crash_sighting SET \
+             session_ref = $sid, \
+             task_ref = task_ref ?? $task, \
+             computer = computer ?? $comp, \
+             loaded_modules = loaded_modules ?? [] \
+             WHERE connection_string == $cs AND session_ref == NONE \
+             AND created_at >= ($started - 15m) \
+             AND created_at <= ($ended ?? time::now())",
+        )
+        .bind(("sid", session.id.clone()))
+        .bind(("task", session.task_ref.clone()))
+        .bind(("comp", session.computer_id.clone()))
+        .bind(("cs", session.connection_string.clone()))
+        .bind(("started", session.started_at.clone()))
+        .bind(("ended", session.ended_at.clone()))
+        .await?
+        .take(0)?;
+    report.sightings_claimed = claimed.len();
+
+    if session.task_ref.is_some() {
+        let linked: Vec<CrashSighting> = db()
+            .query(
+                "UPDATE crash_sighting SET \
+                 task_ref = $task, \
+                 loaded_modules = loaded_modules ?? [] \
+                 WHERE session_ref == $sid AND task_ref == NONE",
+            )
+            .bind(("task", session.task_ref.clone()))
+            .bind(("sid", session.id.clone()))
+            .await?
+            .take(0)?;
+        report.sightings_task_linked = linked.len();
+    }
+
+    let snapshots: Vec<super::driver_intel::DriverSnapshot> = db()
+        .query(
+            "UPDATE driver_snapshot SET \
+             session_ref = $sid, \
+             computer = computer ?? $comp \
+             WHERE connection_string == $cs AND session_ref == NONE \
+             AND taken_at >= ($started - 15m) \
+             AND taken_at <= ($ended ?? time::now())",
+        )
+        .bind(("sid", session.id.clone()))
+        .bind(("comp", session.computer_id.clone()))
+        .bind(("cs", session.connection_string.clone()))
+        .bind(("started", session.started_at.clone()))
+        .bind(("ended", session.ended_at.clone()))
+        .await?
+        .take(0)?;
+    report.snapshots_claimed = snapshots.len();
+
+    report.sightings_enriched = enrich_session_dump_siblings(&session.id).await.unwrap_or(0);
+
+    Ok(report)
+}
+
+/// Fill gaps between sightings of the SAME dump on one session. The fast
+/// triage pass and the cdb deep pass produce separate rows (different blamed
+/// module → different signature) for one dump: triage carries the forensic
+/// blob + loaded modules + PE version, cdb carries the bucket + process +
+/// probable cause. Each donates what the other lacks. Coalesce-only, so a
+/// second run is a no-op. Signature links are never touched.
+async fn enrich_session_dump_siblings(session_id: &RecordId) -> anyhow::Result<usize> {
+    use super::RecordIdExt;
+    let sightings = sightings_for_session(session_id).await?;
+    let mut by_dump: std::collections::HashMap<String, Vec<CrashSighting>> =
+        std::collections::HashMap::new();
+    for s in sightings {
+        let Some(dump) = s.dump_name.clone() else { continue };
+        // Two analysis passes of ONE physical dump share both dump_name and
+        // bugcheck code (signature key is "<code>_<module>"); two different
+        // crashes reusing a fixed filename (C:\Windows\MEMORY.DMP) differ in
+        // code and must NOT cross-donate. Key on both so only true siblings group.
+        let sig_key = s.signature.key_string();
+        let code = sig_key
+            .split_once('_')
+            .map(|(c, _)| c.to_string())
+            .unwrap_or(sig_key);
+        by_dump.entry(format!("{dump}::{code}")).or_default().push(s);
+    }
+
+    let mut enriched = 0usize;
+    for (_dump, group) in by_dump {
+        if group.len() < 2 {
+            continue;
+        }
+        // Best available value for each donatable field across the group.
+        let triage = group.iter().find_map(|s| s.triage.clone());
+        let loaded = group
+            .iter()
+            .find(|s| !s.loaded_modules.is_empty())
+            .map(|s| s.loaded_modules.clone());
+        let module_version = group.iter().find_map(|s| s.module_version.clone());
+        let failure_bucket = group.iter().find_map(|s| s.failure_bucket.clone());
+        let process_name = group.iter().find_map(|s| s.process_name.clone());
+        let caused_by = group.iter().find_map(|s| s.caused_by.clone());
+
+        for s in &group {
+            let wants = (s.triage.is_none() && triage.is_some())
+                || (s.loaded_modules.is_empty() && loaded.is_some())
+                || (s.module_version.is_none() && module_version.is_some())
+                || (s.failure_bucket.is_none() && failure_bucket.is_some())
+                || (s.process_name.is_none() && process_name.is_some())
+                || (s.caused_by.is_none() && caused_by.is_some());
+            if !wants {
+                continue;
+            }
+            let res = db()
+                .query(
+                    "UPDATE $id SET \
+                     triage = triage ?? $triage, \
+                     loaded_modules = IF array::len(loaded_modules ?? []) > 0 \
+                        THEN loaded_modules ELSE $loaded END, \
+                     module_version = module_version ?? $mv, \
+                     failure_bucket = failure_bucket ?? $fb, \
+                     process_name = process_name ?? $pn, \
+                     caused_by = caused_by ?? $cb",
+                )
+                .bind(("id", s.id.clone()))
+                .bind(("triage", triage.clone()))
+                .bind(("loaded", loaded.clone().unwrap_or_default()))
+                .bind(("mv", module_version.clone()))
+                .bind(("fb", failure_bucket.clone()))
+                .bind(("pn", process_name.clone()))
+                .bind(("cb", caused_by.clone()))
+                .await;
+            match res {
+                Ok(_) => enriched += 1,
+                Err(e) => {
+                    log::warn!("sibling enrich failed for {}: {e}", s.id.key_string());
+                }
+            }
+        }
+    }
+    Ok(enriched)
+}
+
+/// Fleet-wide unlinked-row counts: crash sightings and driver snapshots
+/// with no `session_ref`. Surfaced by the link reaper as a health gauge.
+pub async fn count_orphan_links() -> anyhow::Result<(usize, usize)> {
+    let sightings: Vec<usize> = db()
+        .query("SELECT VALUE count() FROM crash_sighting WHERE session_ref == NONE GROUP ALL")
+        .await?
+        .take(0)?;
+    let snapshots: Vec<usize> = db()
+        .query("SELECT VALUE count() FROM driver_snapshot WHERE session_ref == NONE GROUP ALL")
+        .await?
+        .take(0)?;
+    Ok((
+        sightings.into_iter().next().unwrap_or(0),
+        snapshots.into_iter().next().unwrap_or(0),
+    ))
+}
+
+/// Build a sighting context for a connected client from its open session:
+/// connection_string + the session's computer/session/task links. Used by the
+/// bench minidump view to link (and dedup) a manually-recorded sighting.
+/// Returns a connection_string-only context when no open session exists.
+pub async fn sighting_context_for_connection(
+    connection_string: &str,
+    dump_kind: &str,
+) -> SightingContext {
+    let session = super::diagnostic::DiagnosticSession::latest_open_for_connection(
+        connection_string,
+        None,
+    )
+    .await
+    .ok()
+    .flatten();
+    let (computer, session_ref, task_ref) = match session {
+        Some(s) => {
+            let task = match s.task_ref.clone() {
+                Some(t) => Some(t),
+                None => s
+                    .resolve_open_service_task()
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|(t, _)| t),
+            };
+            (Some(s.computer_id.clone()), Some(s.id.clone()), task)
+        }
+        None => (None, None, None),
+    };
+    SightingContext {
+        connection_string: Some(connection_string.to_string()),
+        computer,
+        session_ref,
+        task_ref,
+        dump_kind: dump_kind.to_string(),
+    }
+}
+
+/// Sightings recorded against a diagnostic session, newest first.
+pub async fn sightings_for_session(
+    session_id: &RecordId,
+) -> anyhow::Result<Vec<CrashSighting>> {
+    let rows: Vec<CrashSighting> = db()
+        .query(
+            "SELECT * FROM crash_sighting WHERE session_ref == $sid \
+             ORDER BY created_at DESC LIMIT 100",
+        )
+        .bind(("sid", session_id.clone()))
+        .await?
+        .take(0)?;
+    Ok(rows)
 }
 
 #[cfg(test)]
@@ -859,7 +1171,7 @@ Probably caused by : rtwlane.sys ( rtwlane+18e2b )\n";
                 "path": "\\SystemRoot\\system32\\drivers\\rtwlane.sys",
                 "base": 0xfffff80320000000u64,
                 "size": 1048576u64,
-                "timestamp": null
+                "timestamp": 1688256000u32
             }],
             "rip_module": "rtwlane.sys",
             "rip_in_kernel_image": false,
@@ -875,6 +1187,40 @@ Probably caused by : rtwlane.sys ( rtwlane+18e2b )\n";
         assert_eq!(c.offset.as_deref(), Some("+0x100"));
         assert_eq!(c.loaded_modules, vec!["rtwlane".to_string()]);
         assert_eq!(c.dump_name.as_deref(), Some("070126-01.dmp"));
+        assert_eq!(c.caused_by.as_deref(), Some("rtwlane.sys"));
+        assert_eq!(c.module_version.as_deref(), Some("built 2023-07-02"));
         assert_eq!(c.triage.as_ref(), Some(&triage));
+    }
+
+    /// Kernel-image blame keeps the signature module but sets no caused_by or
+    /// module_version.
+    #[test]
+    fn kernel_image_blame_is_not_caused_by() {
+        let triage = serde_json::json!({
+            "bugcheck_code": "0x1a",
+            "bugcheck_name": "MEMORY_MANAGEMENT",
+            "rip": "0xfffff80310000200",
+            "drivers": [{
+                "name": "ntoskrnl.exe",
+                "path": "\\SystemRoot\\system32\\ntoskrnl.exe",
+                "base": 0xfffff80310000000u64,
+                "size": 16777216u64,
+                "timestamp": 1688256000u32
+            }],
+            "rip_module": "ntoskrnl.exe",
+            "rip_in_kernel_image": true,
+            "blamed_module": "ntoskrnl.exe"
+        });
+        let crashes = parse_kernel_triage_payload(&serde_json::json!({ "triage": triage }));
+        assert_eq!(crashes.len(), 1);
+        assert_eq!(crashes[0].module, "ntoskrnl.exe");
+        assert_eq!(crashes[0].caused_by, None);
+        assert_eq!(crashes[0].module_version, None);
+    }
+
+    #[test]
+    fn pe_timestamp_versions() {
+        assert_eq!(pe_timestamp_version(1688256000), "built 2023-07-02");
+        assert_eq!(pe_timestamp_version(0xF0000000), "pe:0xf0000000");
     }
 }
