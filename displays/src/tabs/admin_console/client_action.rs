@@ -119,11 +119,11 @@ impl AdminConsole {
     }
 
     /// Establish (or replace a dead) admin↔client session for `client` without
-    /// changing focus. On native: direct TCP when coords are advertised and no
-    /// probe has proved them unreachable (the transport auto-falls back to the
-    /// relay tunnel after repeated dial failures); the relay tunnel directly
-    /// when a probe says unreachable or no coords are advertised. On wasm: the
-    /// browser relay room. Returns true if a session entry is present afterward.
+    /// changing focus. On native: direct TCP when coords are advertised (the
+    /// transport auto-falls back to the relay tunnel after repeated dial
+    /// failures); the relay tunnel directly when no coords are advertised. On
+    /// wasm: the browser relay room. Returns true if a session entry is present
+    /// afterward.
     pub fn open_session(&mut self, mut client: ConnectedClient) -> bool {
         use std::collections::hash_map::Entry;
         if let Some(existing) = self.ws_clients.get(&client.connection_string) {
@@ -135,22 +135,9 @@ impl AdminConsole {
         #[cfg(not(target_arch = "wasm32"))]
         let transport = match (client.local_ip.as_deref(), client.tcp_port) {
             (Some(ip), Some(port)) if !ip.is_empty() => {
-                // A probe that positively marked this client unreachable skips
-                // the doomed TCP dials and goes straight to the relay tunnel;
-                // reachable/never-probed both take the TCP path (its own
-                // fallback covers a stale or never-probed cache).
-                if self
-                    .reachability_cache
-                    .get(&client.connection_string)
-                    .is_some_and(|s| !s.reachable)
-                {
-                    log::info!("open_session -> {} known TCP-unreachable; relay tunnel", client.connection_string);
-                    AdminTransport::from_tunnel(client.connection_string.clone())
-                } else {
-                    let target = format!("{ip}:{port}");
-                    log::info!("open_session -> direct TCP to {target} for {}", client.connection_string);
-                    AdminTransport::from_tcp(target, client.connection_string.clone())
-                }
+                let target = format!("{ip}:{port}");
+                log::info!("open_session -> direct TCP to {target} for {}", client.connection_string);
+                AdminTransport::from_tcp(target, client.connection_string.clone())
             }
             _ => {
                 log::info!("open_session -> relay tunnel for {} (no TCP coords)", client.connection_string);
