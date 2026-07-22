@@ -72,6 +72,9 @@ database = { workspace = true }
 workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Adds the relay-tunnel transport on native (unioned with the base
+# `fingerprint` feature); wasm keeps only `fingerprint`.
+tcp_protocol = { workspace = true, features = ["tunnel"] }
 ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tokio", "tls", "rustls_ring"]}
 tokio = { workspace = true, optional = true }
 dump-triage = { workspace = true, features = ["facet"] }

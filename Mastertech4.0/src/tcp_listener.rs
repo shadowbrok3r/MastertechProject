@@ -26,11 +26,11 @@ use crate::transport::{
 };
 use tcp_protocol::is_supported_version;
 use anyhow::{anyhow, Context, Result};
-use displays::{deserialize_command, DESKTOP_INPUT_TAG, EGUI_INPUT_TAG};
+use displays::{DESKTOP_INPUT_TAG, EGUI_INPUT_TAG};
 use std::net::SocketAddr;
 use std::sync::OnceLock;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -232,17 +232,8 @@ pub async fn accept_loop(listener: TcpListener) {
     }
 }
 
-/// Per-connection driver.
-///
-/// 1. Reads + validates the handshake.
-/// 2. Spawns the writer task that drains a `TcpFrame` channel and writes
-///    length-prefixed frames to the socket.
-/// 3. Constructs a per-session [`TerminalWebsocketClient`] and a
-///    [`ClientTransport::Tcp`] pointing at the writer channel.
-/// 4. `tokio::select!`s between inbound frames and the client's outbound
-///    side channels (`bin_rx`, `command_rx`, `sysinfo_rx`) so live
-///    streams (e.g. sysinfo) flow back to the admin without the admin
-///    having to drive the loop with another request.
+/// Per-connection driver for an accepted TCP socket: applies socket
+/// options, splits the stream, and serves the session over its halves.
 async fn handle_session(stream: TcpStream, peer: SocketAddr) -> Result<()> {
     // SO_KEEPALIVE + TCP_NODELAY.  Keepalive is the safety net for a peer
     // that vanishes silently (NAT timeout, cable yank) when no app-level
@@ -251,26 +242,47 @@ async fn handle_session(stream: TcpStream, peer: SocketAddr) -> Result<()> {
     if let Err(e) = tcp_protocol::apply_tcp_options(&stream) {
         log::warn!("tcp_listener -> apply_tcp_options failed for {peer}: {e}");
     }
+    let (read_half, write_half) = stream.into_split();
+    serve_admin_session(read_half, write_half, peer.to_string()).await
+}
 
-    let (mut read_half, write_half) = stream.into_split();
-
+/// Serves one admin session over any byte stream: validates the handshake,
+/// spawns the writer task, sends the shape fingerprint, then multiplexes
+/// inbound frames against the client's outbound side channels until the
+/// peer disconnects. Drives both the direct-TCP and relay-tunnel paths.
+///
+/// 1. Reads + validates the handshake.
+/// 2. Spawns the writer task that drains a `TcpFrame` channel and writes
+///    length-prefixed frames to the stream.
+/// 3. Constructs a per-session [`TerminalWebsocketClient`] and a
+///    [`ClientTransport::Tcp`] pointing at the writer channel.
+/// 4. `tokio::select!`s between inbound frames and the client's outbound
+///    side channels (`bin_rx`, `command_rx`, `sysinfo_rx`) so live
+///    streams (e.g. sysinfo) flow back to the admin without the admin
+///    having to drive the loop with another request.
+pub(crate) async fn serve_admin_session<R, W>(
+    mut read_half: R,
+    write_half: W,
+    peer_label: String,
+) -> Result<()>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
+{
     // 1) Handshake
     let expected_id = get_client_hash().connection_string;
-    let outcome = perform_handshake(&mut read_half, &expected_id, peer)
+    let outcome = perform_handshake(&mut read_half, &expected_id, &peer_label)
         .await
-        .with_context(|| format!("handshake with {peer}"))?;
+        .with_context(|| format!("handshake with {peer_label}"))?;
     match outcome {
         HandshakeOutcome::Authenticated => {
             log::info!(
-                "tcp_listener -> admin session established with {peer} (id={expected_id})"
+                "tcp_listener -> admin session established with {peer_label} (id={expected_id})"
             );
         }
         HandshakeOutcome::Probe => {
-            // Reachability probe (see displays/src/ui_data/reachability.rs):
-            // peer connected, sent no bytes, and closed.  Don't spawn the
-            // full session machinery — just return cleanly so the accept
-            // loop logs a quiet "closed cleanly" instead of a WARN.
-            log::debug!("tcp_listener -> reachability probe from {peer}");
+            // Peer connected, sent no bytes, and closed (TCP reachability probe).
+            log::debug!("tcp_listener -> reachability probe from {peer_label}");
             return Ok(());
         }
     }
@@ -280,7 +292,7 @@ async fn handle_session(stream: TcpStream, peer: SocketAddr) -> Result<()> {
     //    the socket instead of queueing gigabytes in RAM.
     let (write_tx, write_rx) = unbounded_channel::<TcpFrame>();
     let (file_tx, file_rx) = tokio::sync::mpsc::channel::<TcpFrame>(FILE_CHANNEL_DEPTH);
-    let writer_handle = tokio::spawn(writer_task(write_half, write_rx, file_rx, peer));
+    let writer_handle = tokio::spawn(writer_task(write_half, write_rx, file_rx, peer_label));
 
     // Send this build's Cmd shape fingerprint before any Cmd frame.
     let _ = write_tx.send(TcpFrame::ShapeFp(tcp_protocol::encode_shape_fp(
@@ -295,8 +307,8 @@ async fn handle_session(stream: TcpStream, peer: SocketAddr) -> Result<()> {
 
     let result = run_session_loop(read_half, &mut client, &mut transport, &write_tx).await;
 
-    // 4) Tear down
-    drop(transport); // close writer channels so writer_task exits
+    // 4) Close writer channels so writer_task exits.
+    drop(transport);
     drop(write_tx);
     drop(file_tx);
     let _ = writer_handle.await;
@@ -315,10 +327,10 @@ enum HandshakeOutcome {
 }
 
 /// Read and validate the handshake preamble from the admin side.
-async fn perform_handshake(
-    read_half: &mut tokio::net::tcp::OwnedReadHalf,
+async fn perform_handshake<R: AsyncRead + Unpin>(
+    read_half: &mut R,
     expected_id: &str,
-    peer: SocketAddr,
+    peer_label: &str,
 ) -> Result<HandshakeOutcome> {
     // Magic
     let mut magic = [0u8; 4];
@@ -341,11 +353,11 @@ async fn perform_handshake(
             return Ok(HandshakeOutcome::Probe);
         }
         Ok(Err(e)) => return Err(anyhow!("handshake read magic: {e}")),
-        Err(_) => return Err(anyhow!("handshake timeout reading magic from {peer}")),
+        Err(_) => return Err(anyhow!("handshake timeout reading magic from {peer_label}")),
     }
     if &magic != HANDSHAKE_MAGIC {
         return Err(anyhow!(
-            "bad handshake magic from {peer}: got {magic:?}, expected MTRX"
+            "bad handshake magic from {peer_label}: got {magic:?}, expected MTRX"
         ));
     }
 
@@ -356,11 +368,11 @@ async fn perform_handshake(
     // tcp_protocol::is_supported_version.
     let version = tokio::time::timeout(Duration::from_secs(5), read_half.read_u8())
         .await
-        .map_err(|_| anyhow!("handshake timeout reading version from {peer}"))?
+        .map_err(|_| anyhow!("handshake timeout reading version from {peer_label}"))?
         .map_err(|e| anyhow!("handshake read version: {e}"))?;
     if !is_supported_version(version) {
         return Err(anyhow!(
-            "unsupported handshake version from {peer}: got {version}, \
+            "unsupported handshake version from {peer_label}: got {version}, \
              agent accepts {}..={}",
             tcp_protocol::HANDSHAKE_VERSION_V1,
             tcp_protocol::HANDSHAKE_VERSION_CURRENT,
@@ -370,21 +382,21 @@ async fn perform_handshake(
     // Connection string length + bytes
     let id_len = tokio::time::timeout(Duration::from_secs(5), read_half.read_u32_le())
         .await
-        .map_err(|_| anyhow!("handshake timeout reading id len from {peer}"))?
+        .map_err(|_| anyhow!("handshake timeout reading id len from {peer_label}"))?
         .map_err(|e| anyhow!("handshake read id len: {e}"))?;
     if id_len > 1024 {
-        return Err(anyhow!("handshake id_len too large from {peer}: {id_len}"));
+        return Err(anyhow!("handshake id_len too large from {peer_label}: {id_len}"));
     }
     let mut id_bytes = vec![0u8; id_len as usize];
     tokio::time::timeout(Duration::from_secs(5), read_half.read_exact(&mut id_bytes))
         .await
-        .map_err(|_| anyhow!("handshake timeout reading id bytes from {peer}"))?
+        .map_err(|_| anyhow!("handshake timeout reading id bytes from {peer_label}"))?
         .map_err(|e| anyhow!("handshake read id bytes: {e}"))?;
     let claimed_id = std::str::from_utf8(&id_bytes)
-        .map_err(|e| anyhow!("handshake id not utf-8 from {peer}: {e}"))?;
+        .map_err(|e| anyhow!("handshake id not utf-8 from {peer_label}: {e}"))?;
     if claimed_id != expected_id {
         return Err(anyhow!(
-            "handshake id mismatch from {peer}: got {claimed_id:?}, expected {expected_id:?}"
+            "handshake id mismatch from {peer_label}: got {claimed_id:?}, expected {expected_id:?}"
         ));
     }
     Ok(HandshakeOutcome::Authenticated)
@@ -400,8 +412,8 @@ async fn perform_handshake(
 /// hundreds of megabytes and the session dies with `frame too large`.
 /// A single task owns the read half and forwards **complete** frames on a
 /// channel so reads are never cancelled part-way.
-async fn run_session_loop(
-    read_half: tokio::net::tcp::OwnedReadHalf,
+async fn run_session_loop<R: AsyncRead + Unpin + Send + 'static>(
+    read_half: R,
     client: &mut TerminalWebsocketClient,
     transport: &mut ClientTransport,
     write_tx: &UnboundedSender<TcpFrame>,
@@ -460,8 +472,13 @@ async fn run_session_loop(
                                 }
                             }
                             _ => {
-                                let cmd = deserialize_command(&bytes);
-                                client.handle_command(cmd, transport).await;
+                                match displays::try_deserialize_command(&bytes) {
+                                    Some(cmd) => client.handle_command(cmd, transport).await,
+                                    None => log::warn!(
+                                        "tcp_listener -> dropping undecodable Cmd frame ({} bytes); peer likely newer build",
+                                        bytes.len()
+                                    ),
+                                }
                             }
                         }
                     }
@@ -565,8 +582,8 @@ async fn run_session_loop(
 
 /// Serializes all inbound length-prefixed frames onto `in_tx`. Never
 /// returns until EOF or a fatal read / protocol error.
-async fn reader_task(
-    mut read_half: tokio::net::tcp::OwnedReadHalf,
+async fn reader_task<R: AsyncRead + Unpin + Send + 'static>(
+    mut read_half: R,
     in_tx: tokio_mpsc::UnboundedSender<Result<InboundFrame, anyhow::Error>>,
 ) {
     loop {
@@ -593,7 +610,7 @@ enum InboundFrame {
     Eof,
 }
 
-async fn read_frame(read_half: &mut tokio::net::tcp::OwnedReadHalf) -> Result<InboundFrame> {
+async fn read_frame<R: AsyncRead + Unpin>(read_half: &mut R) -> Result<InboundFrame> {
     // total_len = tag byte (1) + payload length
     let total_len = match read_half.read_u32_le().await {
         Ok(n) => n,
@@ -643,11 +660,11 @@ async fn read_frame(read_half: &mut tokio::net::tcp::OwnedReadHalf) -> Result<In
     }
 }
 
-async fn writer_task(
-    mut write_half: tokio::net::tcp::OwnedWriteHalf,
+async fn writer_task<W: AsyncWrite + Unpin + Send + 'static>(
+    mut write_half: W,
     mut rx: UnboundedReceiver<TcpFrame>,
     mut file_rx: tokio::sync::mpsc::Receiver<TcpFrame>,
-    peer: SocketAddr,
+    peer_label: String,
 ) {
     loop {
         // Control frames (pongs, egui/desktop frames, command output) are
@@ -669,21 +686,19 @@ async fn writer_task(
         let total_len = (payload.len() as u64).saturating_add(1);
         if total_len > MAX_FRAME_BYTES as u64 {
             log::warn!(
-                "tcp_listener -> dropping outbound frame to {peer}: too large ({total_len} bytes)"
+                "tcp_listener -> dropping outbound frame to {peer_label}: too large ({total_len} bytes)"
             );
             continue;
         }
+        // Length prefix, tag, and payload in one buffer + one write: over the
+        // tunnel each write_all becomes a WebSocket message.
         let total_len_u32 = total_len as u32;
-        if let Err(e) = write_half.write_all(&total_len_u32.to_le_bytes()).await {
-            log::info!("tcp_listener -> write len to {peer} failed: {e}");
-            return;
-        }
-        if let Err(e) = write_half.write_all(&[tag]).await {
-            log::info!("tcp_listener -> write tag to {peer} failed: {e}");
-            return;
-        }
-        if let Err(e) = write_half.write_all(&payload).await {
-            log::info!("tcp_listener -> write payload to {peer} failed: {e}");
+        let mut frame_bytes = Vec::with_capacity(5 + payload.len());
+        frame_bytes.extend_from_slice(&total_len_u32.to_le_bytes());
+        frame_bytes.push(tag);
+        frame_bytes.extend_from_slice(&payload);
+        if let Err(e) = write_half.write_all(&frame_bytes).await {
+            log::info!("tcp_listener -> write frame to {peer_label} failed: {e}");
             return;
         }
     }

@@ -481,6 +481,25 @@ impl DiagnosticEntry {
         Ok(entries)
     }
 
+    /// Rewrite an entry's detail and recompute its embedding from title+detail.
+    /// A plain `UPDATE SET detail` would leave the HNSW vector encoding the old
+    /// text (embeddings are app-computed at write time, no DB event), so this
+    /// keeps the vector consistent; on embed failure it stores NONE (honest,
+    /// and the backfill picks it up) rather than a stale vector.
+    pub async fn update_detail(entry_id: &RecordId, detail: &str) -> anyhow::Result<()> {
+        let existing: Option<Self> = db().select(entry_id.clone()).await?;
+        let title = existing.map(|e| e.title).unwrap_or_default();
+        let source = format!("{} {}", title.trim(), detail.trim());
+        let embedding = super::utilities::embed_text(&source).await.ok();
+        db()
+            .query("UPDATE $id SET detail = $detail, embedding = $embedding")
+            .bind(("id", entry_id.clone()))
+            .bind(("detail", detail.to_string()))
+            .bind(("embedding", embedding))
+            .await?;
+        Ok(())
+    }
+
     pub async fn create(entry: &Self) -> anyhow::Result<RecordId> {
         let mut e = entry.clone();
         e.id = super::random_record_id(super::DIAGNOSTIC_ENTRY_TABLE);

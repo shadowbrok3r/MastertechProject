@@ -3,15 +3,16 @@ use axum::{
         ws::{Message, WebSocket},
         Extension, Query, WebSocketUpgrade,
     },
-    response::IntoResponse,
+    http::StatusCode,
+    response::{IntoResponse, Response},
     routing::get,
     serve, Router,
 };
 use database::{init_database, schema::{ConnectedClient, User}, Database, db};
-use futures::{stream::SplitSink, SinkExt, StreamExt};
+use futures::{stream::{SplitSink, SplitStream}, SinkExt, StreamExt};
 use std::{collections::HashMap, sync::Arc};
 use std::net::SocketAddr;
-use tokio::sync::Mutex;
+use tokio::sync::{oneshot, Mutex};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -38,36 +39,13 @@ enum ChatMessage {
 
 use std::time::{Duration, Instant};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct Room {
     master: Option<Arc<Mutex<SplitSink<WebSocket, Message>>>>,
     client: Option<Arc<Mutex<SplitSink<WebSocket, Message>>>>,
-    /// Last time we received any message from the master
-    master_last_activity: Option<Instant>,
-    /// Last time we received any message from the client
-    client_last_activity: Option<Instant>,
-    /// Last time we updated last_update in DB for master (for rate limiting)
-    master_db_update: Option<Instant>,
-    /// Last time we updated last_update in DB for client (for rate limiting)
-    client_db_update: Option<Instant>,
 }
-
-impl Default for Room {
-    fn default() -> Self {
-        Self {
-            master: None,
-            client: None,
-            master_last_activity: None,
-            client_last_activity: None,
-            master_db_update: None,
-            client_db_update: None,
-        }
-    }
-}
-
-/// Minimum interval between database updates per-room (prevents excessive writes)
-const MIN_ACTIVITY_UPDATE_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Global rate limiter: max DB writes across ALL rooms within a rolling window.
 /// Each connected_client UPDATE triggers live query notifications to every client
@@ -99,6 +77,81 @@ fn global_write_allowed() -> bool {
         GLOBAL_WRITE_COUNT.fetch_sub(1, Ordering::Relaxed);
         false
     }
+}
+
+/// Startup configuration read once from the environment.
+struct Config {
+    ws_activity_write_secs: u64,
+    tunnel_pending_ttl_secs: u64,
+}
+
+impl Config {
+    fn from_env() -> Self {
+        let ws_activity_write_secs = std::env::var("WS_ACTIVITY_WRITE_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(300);
+        let tunnel_pending_ttl_secs = std::env::var("TUNNEL_PENDING_TTL_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30);
+        Self { ws_activity_write_secs, tunnel_pending_ttl_secs }
+    }
+}
+
+static CONFIG: OnceLock<Config> = OnceLock::new();
+
+fn config() -> &'static Config {
+    CONFIG.get_or_init(Config::from_env)
+}
+
+const MAX_TUNNEL_PENDING: usize = 256;
+const MAX_TUNNEL_ACTIVE: usize = 512;
+const MAX_TUNNEL_BUFFER: usize = 64 * 1024;
+
+type WsSink = SplitSink<WebSocket, Message>;
+type WsStream = SplitStream<WebSocket>;
+type TunnelSlots = Arc<Mutex<HashMap<String, TunnelSlot>>>;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TunnelRole {
+    Master,
+    Client,
+}
+
+impl TunnelRole {
+    fn parse(s: &str) -> Option<Self> {
+        match s {
+            "master" => Some(Self::Master),
+            "client" => Some(Self::Client),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Master => "master",
+            Self::Client => "client",
+        }
+    }
+}
+
+/// Halves and buffered bytes handed from a parked socket to the pairing task.
+struct ParkedParts {
+    sink: WsSink,
+    stream: WsStream,
+    buffered: Vec<Message>,
+}
+
+/// A single socket waiting for its opposite-role peer.
+struct Pending {
+    role: TunnelRole,
+    reclaim: oneshot::Sender<oneshot::Sender<ParkedParts>>,
+}
+
+enum TunnelSlot {
+    Pending(Pending),
+    Active,
 }
 
 #[derive(Clone)]
@@ -292,12 +345,13 @@ impl ChatServer {
         let room_id_for_ping = room_id.clone();
         let session_id_for_ping = session_id.clone();
 
-        // Ping task to detect disconnection and update activity
+        // Ping task to detect disconnection and stamp activity at a bounded rate
         tokio::spawn(async move {
             let ws_tx = ws_tx_for_ping;
+            let stamp_secs = config().ws_activity_write_secs;
             let mut last_db_update: Option<Instant> = None;
             loop {
-                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                tokio::time::sleep(Duration::from_secs(10)).await;
                 let mut sender = ws_tx.lock().await;
                 if let Err(e) = sender.send(Message::Ping(vec![].into())).await {
                     info!("WebSocket {} disconnected: {:?}", session_id_for_ping, e);
@@ -308,9 +362,12 @@ impl ChatServer {
                     break;
                 }
                 drop(sender);
-                
+
+                if stamp_secs == 0 {
+                    continue;
+                }
                 let per_room_ok = match last_db_update {
-                    Some(t) if t.elapsed() < MIN_ACTIVITY_UPDATE_INTERVAL => false,
+                    Some(t) if t.elapsed() < Duration::from_secs(stamp_secs) => false,
                     _ => true,
                 };
                 if per_room_ok && global_write_allowed() {
@@ -321,7 +378,7 @@ impl ChatServer {
                             .bind(("room_id", room_id_for_db.clone()))
                             .await
                             .and_then(|mut r| r.take(0));
-                        
+
                         if let Err(e) = result {
                             log::warn!("Failed to update last_update from ping task for room {}: {:?}", room_id_for_db, e);
                         }
@@ -336,6 +393,34 @@ impl ChatServer {
         // via SurrealDB connected_client.last_update field instead of websocket messages
     }
 
+    /// Forwards each message from an ephemeral control socket to the room's client
+    /// without registering in rooms/session_map or touching the database.
+    async fn handle_control(self: Arc<Self>, ws: WebSocket, room_id: RoomID, session_id: SessionID) {
+        let (_ctrl_tx, mut ctrl_rx) = ws.split();
+        info!("Control socket {} connected for room {}", session_id, room_id);
+        while let Some(Ok(message)) = ctrl_rx.next().await {
+            match message {
+                msg @ (Message::Text(_) | Message::Binary(_)) => {
+                    let client = {
+                        let rooms = self.rooms.lock().await;
+                        rooms.get(&room_id).and_then(|r| r.client.clone())
+                    };
+                    match client {
+                        Some(client_tx) => {
+                            if let Err(e) = client_tx.lock().await.send(msg).await {
+                                log::warn!("Control forward to client failed for room {}: {:?}", room_id, e);
+                            }
+                        }
+                        None => info!("Control message for room {} dropped; no client present", room_id),
+                    }
+                }
+                Message::Close(_) => break,
+                Message::Ping(_) | Message::Pong(_) => {}
+            }
+        }
+        info!("Control socket {} disconnected from room {}", session_id, room_id);
+    }
+
     async fn handle_message(&self, call: ChatMessage) {
         match call {
             ChatMessage::Send {
@@ -348,48 +433,9 @@ impl ChatServer {
             } => {
                 let mut rooms = self.rooms.lock().await;
                 if let Some(room) = rooms.get_mut(&room_id) {
-                    // Track activity and determine target
                     let is_from_master = self.is_session_match(room.master.as_ref(), &from).await;
                     let is_from_client = self.is_session_match(room.client.as_ref(), &from).await;
-                    
-                    let mut should_update_db = false;
-                    if is_from_master {
-                        room.master_last_activity = Some(Instant::now());
-                        let per_room_ok = match room.master_db_update {
-                            Some(t) if t.elapsed() < MIN_ACTIVITY_UPDATE_INTERVAL => false,
-                            _ => true,
-                        };
-                        if per_room_ok {
-                            room.master_db_update = Some(Instant::now());
-                            should_update_db = true;
-                        }
-                    } else if is_from_client {
-                        room.client_last_activity = Some(Instant::now());
-                        let per_room_ok = match room.client_db_update {
-                            Some(t) if t.elapsed() < MIN_ACTIVITY_UPDATE_INTERVAL => false,
-                            _ => true,
-                        };
-                        if per_room_ok {
-                            room.client_db_update = Some(Instant::now());
-                            should_update_db = true;
-                        }
-                    }
-                    
-                    if should_update_db && global_write_allowed() {
-                        let room_id_for_db = room_id.clone();
-                        tokio::spawn(async move {
-                            let result: Result<Option<ConnectedClient>, _> = db()
-                                .query("UPDATE connected_client SET last_update = time::now() WHERE connection_string == $room_id")
-                                .bind(("room_id", room_id_for_db.clone()))
-                                .await
-                                .and_then(|mut r| r.take(0));
-                            
-                            if let Err(e) = result {
-                                log::warn!("Failed to update last_update for room {}: {:?}", room_id_for_db, e);
-                            }
-                        });
-                    }
-                    
+
                     let target_session = if is_from_master {
                         room.client.clone()
                     } else if is_from_client {
@@ -659,6 +705,11 @@ impl ChatServer {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
+    let cfg = config();
+    info!(
+        "Config: ws_activity_write_secs={}, tunnel_pending_ttl_secs={}",
+        cfg.ws_activity_write_secs, cfg.tunnel_pending_ttl_secs
+    );
     match init_database().await {
         Ok(_) => log::info!("Initialized Database"),
         Err(e) => log::info!("Error Initializing Database: {e:?}"),
@@ -670,9 +721,13 @@ async fn main() -> anyhow::Result<()> {
         user_map: Arc::new(Mutex::new(HashMap::new())),
     };
 
+    let tunnel_slots: TunnelSlots = Arc::new(Mutex::new(HashMap::new()));
+
     let app = Router::new()
         .route("/websocket", get(websocket_handler))
-        .layer(Extension(Arc::new(chat_server)));
+        .route("/tunnel", get(tunnel_handler))
+        .layer(Extension(Arc::new(chat_server)))
+        .layer(Extension(tunnel_slots));
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8081));
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -704,6 +759,11 @@ async fn websocket_handler(
     };
 
     info!("Client connected. Role: {:?}, Room: {:?}, Session: {:?}", role, room_id, session_id);
+
+    if role == "control" {
+        return ws.on_upgrade(move |socket| chat_server.handle_control(socket, room_id, session_id));
+    }
+
     let res = connect_client(room_id.clone()).await;
     println!("Res: {res:?}");
     ws.on_upgrade(move |socket| chat_server.handle_ws(socket, session_id, room_id, role))
@@ -746,4 +806,218 @@ pub async fn connect_client(room_id: String) -> anyhow::Result<(), anyhow::Error
     }
 
     Ok(())
+}
+
+async fn tunnel_handler(
+    ws: WebSocketUpgrade,
+    Query(params): Query<HashMap<String, String>>,
+    Extension(slots): Extension<TunnelSlots>,
+) -> Response {
+    let session = params.get("session").cloned().unwrap_or_default();
+    let role_str = params.get("role").cloned().unwrap_or_default();
+
+    if session.is_empty() || session.len() > 128 {
+        warn!("tunnel rejected: session must be 1..=128 chars");
+        return (StatusCode::BAD_REQUEST, "invalid session").into_response();
+    }
+    let Some(role) = TunnelRole::parse(&role_str) else {
+        warn!("tunnel rejected: invalid role {:?}", role_str);
+        return (StatusCode::BAD_REQUEST, "invalid role").into_response();
+    };
+
+    ws.on_upgrade(move |socket| tunnel_join(slots, session, role, socket))
+}
+
+async fn tunnel_join(slots: TunnelSlots, session: String, role: TunnelRole, ws: WebSocket) {
+    let (sink, stream) = ws.split();
+    let mut guard = slots.lock().await;
+
+    let existing = match guard.get(&session) {
+        Some(TunnelSlot::Active) => Some(None),
+        Some(TunnelSlot::Pending(p)) => Some(Some(p.role)),
+        None => None,
+    };
+
+    match existing {
+        Some(None) => {
+            drop(guard);
+            warn!("tunnel session {} already paired; rejecting {}", session, role.as_str());
+            close_sink(sink).await;
+        }
+        Some(Some(pending_role)) if pending_role == role => {
+            drop(guard);
+            warn!("tunnel session {} already has pending {}; rejecting duplicate", session, role.as_str());
+            close_sink(sink).await;
+        }
+        Some(Some(_)) => {
+            let Some(TunnelSlot::Pending(peer)) = guard.remove(&session) else { return };
+            let active = guard.values().filter(|v| matches!(v, TunnelSlot::Active)).count();
+            if active >= MAX_TUNNEL_ACTIVE {
+                guard.insert(session.clone(), TunnelSlot::Pending(peer));
+                drop(guard);
+                warn!("tunnel active cap {} reached; rejecting {} for session {}", MAX_TUNNEL_ACTIVE, role.as_str(), session);
+                close_sink(sink).await;
+                return;
+            }
+            guard.insert(session.clone(), TunnelSlot::Active);
+            drop(guard);
+            pair_tunnel(slots, session, peer, role, sink, stream).await;
+        }
+        None => {
+            let pending = guard.values().filter(|v| matches!(v, TunnelSlot::Pending(_))).count();
+            if pending >= MAX_TUNNEL_PENDING {
+                drop(guard);
+                warn!("tunnel pending cap {} reached; rejecting {} for session {}", MAX_TUNNEL_PENDING, role.as_str(), session);
+                close_sink(sink).await;
+                return;
+            }
+            let (reclaim_tx, reclaim_rx) = oneshot::channel();
+            guard.insert(session.clone(), TunnelSlot::Pending(Pending { role, reclaim: reclaim_tx }));
+            drop(guard);
+            info!("tunnel session {} parked ({})", session, role.as_str());
+            tokio::spawn(park_tunnel(slots, session, role, sink, stream, reclaim_rx));
+        }
+    }
+}
+
+async fn park_tunnel(
+    slots: TunnelSlots,
+    session: String,
+    role: TunnelRole,
+    mut sink: WsSink,
+    mut stream: WsStream,
+    mut reclaim: oneshot::Receiver<oneshot::Sender<ParkedParts>>,
+) {
+    let mut buffered: Vec<Message> = Vec::new();
+    let mut total = 0usize;
+    let ttl = tokio::time::sleep(Duration::from_secs(config().tunnel_pending_ttl_secs));
+    tokio::pin!(ttl);
+
+    loop {
+        tokio::select! {
+            biased;
+            ret = &mut reclaim => {
+                if let Ok(return_tx) = ret {
+                    let _ = return_tx.send(ParkedParts { sink, stream, buffered });
+                }
+                return;
+            }
+            _ = &mut ttl => {
+                warn!("tunnel session {} pending TTL expired ({})", session, role.as_str());
+                let _ = sink.send(Message::Close(None)).await;
+                remove_pending(&slots, &session).await;
+                return;
+            }
+            msg = stream.next() => {
+                match msg {
+                    Some(Ok(Message::Binary(data))) => {
+                        total += data.len();
+                        if total > MAX_TUNNEL_BUFFER {
+                            warn!("tunnel session {} parked {} exceeded {}-byte buffer; closing", session, role.as_str(), MAX_TUNNEL_BUFFER);
+                            let _ = sink.send(Message::Close(None)).await;
+                            remove_pending(&slots, &session).await;
+                            return;
+                        }
+                        buffered.push(Message::Binary(data));
+                    }
+                    Some(Ok(Message::Close(_))) | None => {
+                        info!("tunnel session {} parked {} closed before pairing", session, role.as_str());
+                        remove_pending(&slots, &session).await;
+                        return;
+                    }
+                    Some(Err(e)) => {
+                        info!("tunnel session {} parked {} read error: {}", session, role.as_str(), e);
+                        remove_pending(&slots, &session).await;
+                        return;
+                    }
+                    Some(Ok(_)) => {}
+                }
+            }
+        }
+    }
+}
+
+async fn remove_pending(slots: &TunnelSlots, session: &str) {
+    let mut guard = slots.lock().await;
+    if matches!(guard.get(session), Some(TunnelSlot::Pending(_))) {
+        guard.remove(session);
+    }
+}
+
+async fn pair_tunnel(
+    slots: TunnelSlots,
+    session: String,
+    peer: Pending,
+    new_role: TunnelRole,
+    mut new_sink: WsSink,
+    new_stream: WsStream,
+) {
+    let peer_role = peer.role;
+
+    let (ret_tx, ret_rx) = oneshot::channel();
+    if peer.reclaim.send(ret_tx).is_err() {
+        warn!("tunnel session {} peer vanished during pairing; rejecting {}", session, new_role.as_str());
+        slots.lock().await.remove(&session);
+        close_sink(new_sink).await;
+        return;
+    }
+    let ParkedParts { sink: mut peer_sink, stream: peer_stream, buffered } = match ret_rx.await {
+        Ok(parts) => parts,
+        Err(_) => {
+            warn!("tunnel session {} peer socket lost during pairing; rejecting {}", session, new_role.as_str());
+            slots.lock().await.remove(&session);
+            close_sink(new_sink).await;
+            return;
+        }
+    };
+
+    let _ = peer_sink.send(Message::Text("PAIRED".into())).await;
+    let _ = new_sink.send(Message::Text("PAIRED".into())).await;
+
+    for msg in buffered {
+        if new_sink.send(msg).await.is_err() {
+            warn!("tunnel session {} failed delivering buffered bytes; tearing down", session);
+            slots.lock().await.remove(&session);
+            let _ = peer_sink.send(Message::Close(None)).await;
+            close_sink(new_sink).await;
+            return;
+        }
+    }
+
+    info!("tunnel session {} paired (parked {} <-> {})", session, peer_role.as_str(), new_role.as_str());
+
+    // Bidirectional binary pump; the first direction to end closes the other.
+    tokio::spawn(async move {
+        let a = pump_copy(peer_stream, new_sink);
+        let b = pump_copy(new_stream, peer_sink);
+        tokio::pin!(a, b);
+        let (dir, reason) = tokio::select! {
+            r = &mut a => ("parked->arrived", r),
+            r = &mut b => ("arrived->parked", r),
+        };
+        slots.lock().await.remove(&session);
+        info!("tunnel session {} torn down (direction {}, reason {})", session, dir, reason);
+    });
+}
+
+async fn pump_copy(mut rx: WsStream, mut tx: WsSink) -> &'static str {
+    let reason = loop {
+        match rx.next().await {
+            Some(Ok(Message::Binary(data))) => {
+                if tx.send(Message::Binary(data)).await.is_err() {
+                    break "peer send failed";
+                }
+            }
+            Some(Ok(Message::Close(_))) => break "close frame",
+            Some(Ok(_)) => {}
+            Some(Err(_)) => break "read error",
+            None => break "stream ended",
+        }
+    };
+    let _ = tx.send(Message::Close(None)).await;
+    reason
+}
+
+async fn close_sink(mut sink: WsSink) {
+    let _ = sink.send(Message::Close(None)).await;
 }

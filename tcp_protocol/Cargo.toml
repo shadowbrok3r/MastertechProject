@@ -6,6 +6,8 @@ description = "Shared wire-protocol constants and TCP socket configuration for t
 
 [features]
 fingerprint = ["dep:facet"]
+# WebSocket byte-stream tunnel transport (relay-carried admin↔client sessions).
+tunnel = ["dep:tokio-tungstenite", "dep:futures", "dep:bytes"]
 
 [dependencies]
 log = { workspace = true }
@@ -18,3 +20,10 @@ facet = { workspace = true, optional = true }
 [target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "uefi")))'.dependencies]
 tokio = { workspace = true }
 socket2 = "0.6"
+# 0.26 matches the ewebsock fork's tokio-tungstenite so both resolve to one build.
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"], optional = true }
+futures = { workspace = true, optional = true }
+bytes = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

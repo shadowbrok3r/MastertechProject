@@ -53,7 +53,8 @@ impl SharedContext {
                 .get(&c.connection_string)
                 .map(|w| {
                     use crate::tabs::admin_console::client_interface::TransportKind;
-                    if w.transport.kind() == TransportKind::Tcp {
+                    // TCP and relay-tunnel sessions prove liveness in-band.
+                    if w.transport.kind() != TransportKind::WebSocket {
                         w.is_connected
                     } else {
                         w.is_connected && w.last_pong_time.is_some()
@@ -258,7 +259,8 @@ impl SharedContext {
                     let is_ws_connected = ws
                         .map(|w| {
                             use crate::tabs::admin_console::client_interface::TransportKind;
-                            if w.transport.kind() == TransportKind::Tcp {
+                            // TCP and relay-tunnel sessions prove liveness in-band.
+                            if w.transport.kind() != TransportKind::WebSocket {
                                 w.is_connected
                             } else {
                                 w.is_connected && w.last_pong_time.is_some()

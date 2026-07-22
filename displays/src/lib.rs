@@ -768,6 +768,14 @@ pub enum Cmd {
     DesktopListMonitors,
     /// Client → admin: the client's available monitors.
     DesktopMonitorList(Vec<crate::remote_desktop::DesktopMonitorInfo>),
+
+    /// Admin → client (via the relay room control channel): dial the relay's
+    /// `/tunnel` route as `role=client` with this one-time session id and
+    /// serve a full admin session over it — same MTRX wire protocol as an
+    /// accepted direct-TCP connection. The client derives the tunnel URL from
+    /// its own baked `WS_CLIENT_URL`; the admin never dictates a dial target.
+    /// Appended last so existing bincode variant indices stay stable.
+    OpenRelayTunnel { session_id: String },
 }
 
 /// One stage/lane of a remote stress scenario or concurrent run.
@@ -998,6 +1006,13 @@ pub fn serialize_system_info(system_info: &SystemInformation) -> Vec<u8> {
 pub fn deserialize_command(bytes: &[u8]) -> Cmd {
     let (cmd, _) = decode_from_slice(bytes, standard()).expect("Failed to deserialize Cmd");
     cmd
+}
+
+/// Non-panicking [`deserialize_command`]: `None` on any decode failure, so a
+/// peer built with newer `Cmd` variants degrades to a dropped frame instead
+/// of killing the receiver's session loop.
+pub fn try_deserialize_command(bytes: &[u8]) -> Option<Cmd> {
+    decode_from_slice(bytes, standard()).ok().map(|(cmd, _)| cmd)
 }
 
 use chrono::{DateTime, Datelike, Utc};

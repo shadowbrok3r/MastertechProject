@@ -127,6 +127,11 @@ pub struct AdminConsole {
     /// round trip per frame.
     #[serde(skip)]
     pub security_inventory: HashMap<String, Vec<database::schema::InstalledSecurityProduct>>,
+    /// Per-admin TCP reachability snapshot, mirrored from
+    /// `SharedContext::reachability_cache` so `open_session` can route a
+    /// probe-confirmed-unreachable client straight to the relay tunnel.
+    #[serde(skip)]
+    pub reachability_cache: HashMap<String, crate::ui_data::reachability::ReachabilityStatus>,
     /// Pending batch action awaiting operator confirmation
     /// (slice 4). The Batch ▾ menu fires items into this slot;
     /// the confirm dialog reads it, and on Confirm the dispatcher
@@ -193,6 +198,7 @@ impl AdminConsole {
             ws_clients: Default::default(),
             active_diagnostic_sessions: Default::default(),
             security_inventory: Default::default(),
+            reachability_cache: Default::default(),
             pending_batch_action: None,
             ui_actions_channel,
             error: Default::default(),
@@ -816,7 +822,9 @@ impl SharedContext {
                             .ws_clients
                             .get(&client.connection_string)
                             .map(|wsc| {
-                                if wsc.transport.kind() == TransportKind::Tcp {
+                                // TCP and relay-tunnel sessions prove liveness
+                                // in-band (ping/pong), not via ewebsock pongs.
+                                if wsc.transport.kind() != TransportKind::WebSocket {
                                     wsc.is_connected
                                 } else {
                                     wsc.is_connected && wsc.last_pong_time.is_some()
@@ -915,9 +923,9 @@ impl SharedContext {
                     let is_ws_connected = ws_client.ws_clients
                         .get(&client.connection_string)
                         .map(|wsc| {
-                            // TCP connections don't use WebSocket pings/pongs;
-                            // liveness is proven by the TCP session itself.
-                            if wsc.transport.kind() == TransportKind::Tcp {
+                            // TCP and relay-tunnel sessions don't use WebSocket
+                            // pings/pongs; liveness is proven in-band.
+                            if wsc.transport.kind() != TransportKind::WebSocket {
                                 wsc.is_connected
                             } else {
                                 wsc.is_connected && wsc.last_pong_time.is_some()

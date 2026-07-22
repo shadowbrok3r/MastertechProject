@@ -1,7 +1,7 @@
 use super::{client_interface::tabs::command_shell::History, AdminConsole, SessionLayout};
 use database::{
     schema::{ConnectedClient, Record, RecordIdExt, CONNECTED_CLIENT_TABLE},
-    websocket_url_with_room, db, WS_MASTER_URL, WS_MASTER_URL_LOCAL,
+    db,
 };
 use crate::tabs::admin_console::client_interface::{AdminTransport, WebSocketClient};
 use crate::{Cmd, PlatformSpawner, Spawner};
@@ -119,8 +119,11 @@ impl AdminConsole {
     }
 
     /// Establish (or replace a dead) admin↔client session for `client` without
-    /// changing focus. Prefers direct TCP when local_ip+port are advertised,
-    /// else the relay. Returns true if a session entry is present afterward.
+    /// changing focus. On native: direct TCP when coords are advertised and no
+    /// probe has proved them unreachable (the transport auto-falls back to the
+    /// relay tunnel after repeated dial failures); the relay tunnel directly
+    /// when a probe says unreachable or no coords are advertised. On wasm: the
+    /// browser relay room. Returns true if a session entry is present afterward.
     pub fn open_session(&mut self, mut client: ConnectedClient) -> bool {
         use std::collections::hash_map::Entry;
         if let Some(existing) = self.ws_clients.get(&client.connection_string) {
@@ -132,14 +135,27 @@ impl AdminConsole {
         #[cfg(not(target_arch = "wasm32"))]
         let transport = match (client.local_ip.as_deref(), client.tcp_port) {
             (Some(ip), Some(port)) if !ip.is_empty() => {
-                let target = format!("{ip}:{port}");
-                log::info!("open_session -> direct TCP to {target} for {}", client.connection_string);
-                AdminTransport::from_tcp(target, client.connection_string.clone())
+                // A probe that positively marked this client unreachable skips
+                // the doomed TCP dials and goes straight to the relay tunnel;
+                // reachable/never-probed both take the TCP path (its own
+                // fallback covers a stale or never-probed cache).
+                if self
+                    .reachability_cache
+                    .get(&client.connection_string)
+                    .is_some_and(|s| !s.reachable)
+                {
+                    log::info!("open_session -> {} known TCP-unreachable; relay tunnel", client.connection_string);
+                    AdminTransport::from_tunnel(client.connection_string.clone())
+                } else {
+                    let target = format!("{ip}:{port}");
+                    log::info!("open_session -> direct TCP to {target} for {}", client.connection_string);
+                    AdminTransport::from_tcp(target, client.connection_string.clone())
+                }
             }
-            _ => match Self::dial_ws(&mut client) {
-                Some(t) => t,
-                None => return false,
-            },
+            _ => {
+                log::info!("open_session -> relay tunnel for {} (no TCP coords)", client.connection_string);
+                AdminTransport::from_tunnel(client.connection_string.clone())
+            }
         };
         #[cfg(target_arch = "wasm32")]
         let transport = match Self::dial_ws(&mut client) {
@@ -164,7 +180,9 @@ impl AdminConsole {
         true
     }
 
+    #[cfg(target_arch = "wasm32")]
     fn dial_ws(client: &mut ConnectedClient) -> Option<AdminTransport> {
+        use database::{websocket_url_with_room, WS_MASTER_URL, WS_MASTER_URL_LOCAL};
         let url = websocket_url_with_room(
             if cfg!(debug_assertions) { WS_MASTER_URL_LOCAL } else { WS_MASTER_URL },
             &client.connection_string,
@@ -181,9 +199,10 @@ impl AdminConsole {
     }
 
     /// Open a session for every explicitly-opened client (one with a
-    /// `session_layout` entry) that is connected over LAN TCP but has no live
-    /// session yet, regardless of which client is focused. The transport's own
-    /// retry loop keeps each session alive once established.
+    /// `session_layout` entry) that is connected but has no live session yet,
+    /// regardless of which client is focused. `open_session` picks direct TCP
+    /// or the relay tunnel per client. The transport's own retry loop keeps
+    /// each session alive once established.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn ensure_sessions(&mut self) {
         let want: Vec<ConnectedClient> = self
@@ -193,8 +212,6 @@ impl AdminConsole {
                 c.connected
                     && self.session_layout.contains_key(&c.connection_string)
                     && !self.ws_clients.contains_key(&c.connection_string)
-                    && c.local_ip.as_deref().map(|s| !s.is_empty()).unwrap_or(false)
-                    && c.tcp_port.is_some()
             })
             .cloned()
             .collect();

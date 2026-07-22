@@ -1,6 +1,6 @@
 #![allow(unused)]
 use database::{schema::{utilities::{check_id_existence, query_id}, ConnectedClient, CONNECTED_CLIENT_TABLE}, websocket_url_with_room, db, WS_CLIENT_URL, WS_CLIENT_URL_LOCAL};
-use displays::{deserialize_command, remote_viewer::{encode_buffer_with_timestamp, ratagui::TerminalEvent}, serialize_system_info, tabs::admin_console::client_action::ClientHandler, Cmd, EventLogEntry, FileSystemAction, RegistryEdit, RegistryKeyInfo, RegistryValueEntry, RemoteDirEntry, RemoteScriptItem, RemoteScriptStatus, ScheduledTask, ServiceActionType, StartupApp, WindowsService};
+use displays::{remote_viewer::{encode_buffer_with_timestamp, ratagui::TerminalEvent}, serialize_system_info, tabs::admin_console::client_action::ClientHandler, Cmd, EventLogEntry, FileSystemAction, RegistryEdit, RegistryKeyInfo, RegistryValueEntry, RemoteDirEntry, RemoteScriptItem, RemoteScriptStatus, ScheduledTask, ServiceActionType, StartupApp, WindowsService};
 use crate::{filesystem::{get_client_hash, system_info::{get_sysinfo, get_sysinfo_no_gpu}}, tabs::file_browser::read_folder, transport::ClientTransport};
 use std::{path::Path, time::{Duration, Instant}};
 use command::{handle_windows_cmd_interactive, PersistentShell};
@@ -900,8 +900,13 @@ impl TerminalWebsocketClient {
                                                 } else {
                                                     log::warn!("Failed to forward TerminalEvent to rendering loop");
                                                 }
+                                            } else if let Some(cmd) = displays::try_deserialize_command(&bin) {
+                                                self.handle_command(cmd, &mut sender).await;
                                             } else {
-                                                self.handle_command(deserialize_command(&bin.clone()), &mut sender).await;
+                                                log::warn!(
+                                                    "websockets -> dropping undecodable Cmd frame ({} bytes); peer likely newer build",
+                                                    bin.len()
+                                                );
                                             }
                                         }
                                     }
@@ -3808,6 +3813,10 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                         std::process::exit(0);
                     }
                 }
+            }
+            Cmd::OpenRelayTunnel { session_id } => {
+                log::info!("websockets -> OpenRelayTunnel request (session {})", &session_id[..session_id.len().min(8)]);
+                crate::tunnel_session::spawn_tunnel_session(session_id);
             }
             _ => {}
         }

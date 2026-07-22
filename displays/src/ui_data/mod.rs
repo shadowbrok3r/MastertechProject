@@ -789,8 +789,15 @@ impl crate::app_state::SharedContext {
     /// a handful of events per frame, only the round-completion
     /// burst sees more.
     fn drain_reachability_events(&mut self) {
+        let mut changed = false;
         while let Ok(event) = self.reachability_rx.try_recv() {
             self.reachability_cache.insert(event.connection_string, event.status);
+            changed = true;
+        }
+        // Mirror into the admin console so `open_session` can read reachability
+        // without a handle to SharedContext.
+        if changed {
+            self.web_console_layout.reachability_cache = self.reachability_cache.clone();
         }
     }
 

@@ -37,6 +37,13 @@
 //! the session — this is what lets a v2 master talk to a v1 agent without
 //! the agent dying when it sees a Ping frame it doesn't understand.
 
+#[cfg(all(
+    feature = "tunnel",
+    not(target_arch = "wasm32"),
+    not(target_os = "uefi")
+))]
+pub mod tunnel;
+
 pub const FRAME_TAG_BINARY: u8 = 0x01;
 pub const FRAME_TAG_TEXT: u8 = 0x02;
 /// Ping (master → agent). Agent echoes back with [`FRAME_TAG_PONG`].

@@ -11910,11 +11910,14 @@ name = "tcp_protocol"
 version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
+ "bytes",
  "facet",
+ "futures",
  "log",
  "serde",
  "socket2",
  "tokio",
+ "tokio-tungstenite 0.26.2",
 ]
 
 [[package]]

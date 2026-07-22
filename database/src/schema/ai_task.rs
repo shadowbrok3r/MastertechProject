@@ -272,6 +272,26 @@ impl AiTask {
             .take(0)?;
         Ok(tasks)
     }
+
+    /// Transition an open task to awaiting_followup when every remaining item is
+    /// checked. Item removal does not fire the `ai_task_item_checked` event, so
+    /// removing the last unchecked item must complete the task explicitly.
+    pub async fn reevaluate_completion(id: &RecordId) -> anyhow::Result<()> {
+        let items: Vec<AiTaskItem> = db()
+            .query("SELECT * FROM ai_task_item WHERE ai_task_ref == $id")
+            .bind(("id", id.clone()))
+            .await?
+            .take(0)?;
+        if !items.is_empty() && items.iter().all(|i| i.checked) {
+            db().query(
+                "UPDATE $id SET status = 'awaiting_followup', completed_at = time::now() \
+                 WHERE status = 'open'",
+            )
+            .bind(("id", id.clone()))
+            .await?;
+        }
+        Ok(())
+    }
 }
 
 impl AiTaskItem {
@@ -284,5 +304,42 @@ impl AiTaskItem {
         };
         db().query(sql).bind(("id", id.clone())).await?;
         Ok(())
+    }
+
+    /// Fetch one checklist item by id.
+    pub async fn get(id: &RecordId) -> anyhow::Result<Option<Self>> {
+        Ok(db().select(id.clone()).await?)
+    }
+
+    /// Rewrite an item's step text, atomically re-asserting that it is unchecked
+    /// and its task is open, so a tech checking the box or the task closing
+    /// between the caller's read and this write can't slip through. Returns the
+    /// updated row, or None when the guard now fails (item checked/closed/gone).
+    pub async fn edit_text_if_editable(id: &RecordId, text: &str) -> anyhow::Result<Option<Self>> {
+        let updated: Vec<Self> = db()
+            .query(
+                "UPDATE $id SET text = $text \
+                 WHERE checked = false AND ai_task_ref.status != 'closed' RETURN AFTER",
+            )
+            .bind(("id", id.clone()))
+            .bind(("text", text.to_string()))
+            .await?
+            .take(0)?;
+        Ok(updated.into_iter().next())
+    }
+
+    /// Delete a checklist item, atomically re-asserting unchecked + task-open so
+    /// a concurrently-checked item is never destroyed. Returns the removed row
+    /// (BEFORE state, for its entry_ref), or None when the guard now fails.
+    pub async fn remove_if_unchecked(id: &RecordId) -> anyhow::Result<Option<Self>> {
+        let deleted: Vec<Self> = db()
+            .query(
+                "DELETE $id \
+                 WHERE checked = false AND ai_task_ref.status != 'closed' RETURN BEFORE",
+            )
+            .bind(("id", id.clone()))
+            .await?
+            .take(0)?;
+        Ok(deleted.into_iter().next())
     }
 }

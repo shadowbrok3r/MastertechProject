@@ -1099,6 +1099,20 @@ pub struct GetAiTaskStatusParams {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct EditAiTaskItemParams {
+    #[schemars(description = "AI task item record id (`ai_task_item:key` or bare key) — from get_ai_task_status items[].id or create_ai_task item_ids[].")]
+    pub item_id: String,
+    #[schemars(description = "New step text: a short, imperative, self-contained physical action (same rules as create_ai_task steps).")]
+    pub text: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct RemoveAiTaskItemParams {
+    #[schemars(description = "AI task item record id (`ai_task_item:key` or bare key) to delete — from get_ai_task_status items[].id or create_ai_task item_ids[].")]
+    pub item_id: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct CrashIntelSearchParams {
     #[schemars(description = "Search term matched against module, bugcheck code, and bugcheck name. Omit for the most recently seen signatures.")]
     pub query: Option<String>,
@@ -3759,20 +3773,35 @@ impl PluginToolProvider {
     }
 
     /// Write-once mirror of checklist steps into diagnostic_entry (embeddings
-    /// computed per entry; failures degrade to unlinked items).
+    /// computed per entry; failures degrade to unlinked items). Runs detached,
+    /// so it re-reads each item: a step edited before the mirror runs is
+    /// mirrored with its current text, and one removed before the mirror runs
+    /// is skipped (no orphan entry). If the item vanishes between create and
+    /// backlink, the just-created entry is deleted rather than left dangling.
     async fn mirror_ai_task_steps(
         session_ref: database::schema::RecordId,
         ai_task_id: database::schema::RecordId,
-        items: Vec<(database::schema::RecordId, String)>,
+        item_ids: Vec<database::schema::RecordId>,
         position_offset: usize,
     ) {
         use database::schema::RecordIdExt;
-        for (idx, (item_id, text)) in items.into_iter().enumerate() {
+        for (idx, item_id) in item_ids.into_iter().enumerate() {
+            let current = match database::schema::AiTaskItem::get(&item_id).await {
+                Ok(Some(it)) => it,
+                Ok(None) => continue, // removed before the mirror ran
+                Err(e) => {
+                    log::warn!("mirror_ai_task_steps: item re-read failed: {e}");
+                    continue;
+                }
+            };
+            if current.entry_ref.is_some() {
+                continue; // already mirrored
+            }
             let entry = database::schema::DiagnosticEntry {
                 session_ref: session_ref.clone(),
                 category: database::schema::DiagnosticCategory::Recommendation,
                 title: format!("Hands-on step {}", position_offset + idx + 1),
-                detail: text,
+                detail: current.text.clone(),
                 data: Some(serde_json::json!({
                     "ai_task": ai_task_id.key_string(),
                     "ai_task_item": item_id.key_string(),
@@ -3781,13 +3810,19 @@ impl PluginToolProvider {
             };
             match database::schema::DiagnosticEntry::create(&entry).await {
                 Ok(entry_id) => {
-                    let res = database::db()
-                        .query("UPDATE $item SET entry_ref = $entry")
+                    let updated: Vec<database::schema::AiTaskItem> = database::db()
+                        .query("UPDATE $item SET entry_ref = $entry RETURN AFTER")
                         .bind(("item", item_id))
-                        .bind(("entry", entry_id))
-                        .await;
-                    if let Err(e) = res {
-                        log::warn!("mirror_ai_task_steps: entry_ref backlink failed: {e}");
+                        .bind(("entry", entry_id.clone()))
+                        .await
+                        .and_then(|mut r| r.take(0))
+                        .unwrap_or_default();
+                    // Item deleted between re-read and backlink → drop the orphan.
+                    if updated.is_empty() {
+                        let _ = database::db()
+                            .query("DELETE $entry")
+                            .bind(("entry", entry_id))
+                            .await;
                     }
                 }
                 Err(e) => log::warn!("mirror_ai_task_steps: mirror entry failed: {e}"),
@@ -3948,8 +3983,7 @@ impl PluginToolProvider {
             .bind(("id", ai_task_id.clone()))
             .await;
 
-        let mirror_items: Vec<_> = item_ids.iter().cloned().zip(p.steps.iter().cloned()).collect();
-        tokio::spawn(Self::mirror_ai_task_steps(session_ref, ai_task_id.clone(), mirror_items, 0));
+        tokio::spawn(Self::mirror_ai_task_steps(session_ref, ai_task_id.clone(), item_ids.clone(), 0));
 
         Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
             "ai_task_id": ai_task_id.key_string(),
@@ -3991,15 +4025,207 @@ impl PluginToolProvider {
             .await
             .map_err(to_internal)?;
 
-        let mirror_items: Vec<_> = new_item_ids.iter().cloned().zip(p.steps.iter().cloned()).collect();
         tokio::spawn(Self::mirror_ai_task_steps(
-            task.session_ref.clone(), id.clone(), mirror_items, existing_items.len()));
+            task.session_ref.clone(), id.clone(), new_item_ids.clone(), existing_items.len()));
 
         Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
             "ai_task_id": id.key_string(),
             "new_item_ids": new_item_ids.iter().map(|i| i.key_string()).collect::<Vec<_>>(),
             "status": "open",
         })).map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "edit_ai_task_item",
+        description = "Rewrite the text of ONE unchecked checklist item — use to fix a poorly-worded or incorrect step you added, not to add or reword completed work. Only items the tech has not yet checked can be edited, and only on a non-closed task. Keep the new text a short, imperative, self-contained physical action (same rules as create_ai_task steps). Also updates the mirrored diagnostic-session recommendation entry."
+    )]
+    async fn edit_ai_task_item(
+        &self,
+        Parameters(p): Parameters<EditAiTaskItemParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        use database::schema::RecordIdExt;
+
+        let text = p.text.trim();
+        if text.is_empty() || text.len() > 500 {
+            return Err(ErrorData::invalid_params(
+                "edit_ai_task_item: text must be a non-empty step under 500 chars".to_string(),
+                None,
+            ));
+        }
+        let item_id = parse_record_id(&p.item_id, database::schema::AI_TASK_ITEM_TABLE);
+        let item = database::schema::AiTaskItem::get(&item_id)
+            .await
+            .map_err(to_internal)?
+            .ok_or_else(|| {
+                ErrorData::invalid_params(
+                    format!("edit_ai_task_item: item '{}' not found", p.item_id),
+                    None,
+                )
+            })?;
+        if item.checked {
+            return Err(ErrorData::invalid_params(
+                "edit_ai_task_item: item is already checked off by the tech — editing completed \
+                 work would misrepresent the record. Add a new step with add_ai_task_steps instead."
+                    .to_string(),
+                None,
+            ));
+        }
+        match database::schema::AiTask::get_full(&item.ai_task_ref)
+            .await
+            .map_err(to_internal)?
+        {
+            None => {
+                return Err(ErrorData::invalid_params(
+                    format!(
+                        "edit_ai_task_item: parent ai_task '{}' not found",
+                        item.ai_task_ref.key_string()
+                    ),
+                    None,
+                ))
+            }
+            Some((task, _)) if task.status == database::schema::AiTaskStatus::Closed => {
+                return Err(ErrorData::invalid_params(
+                    "edit_ai_task_item: the AI task is closed".to_string(),
+                    None,
+                ))
+            }
+            _ => {}
+        }
+
+        // Atomic write re-asserts unchecked + task-open, closing the window
+        // where a tech checks the box between the read above and this update.
+        let updated = database::schema::AiTaskItem::edit_text_if_editable(&item_id, text)
+            .await
+            .map_err(to_internal)?
+            .ok_or_else(|| {
+                ErrorData::invalid_params(
+                    "edit_ai_task_item: item was checked off or its task closed concurrently — \
+                     re-check with get_ai_task_status"
+                        .to_string(),
+                    None,
+                )
+            })?;
+
+        // Keep the mirrored session recommendation in sync (text + embedding).
+        if let Some(entry) = updated.entry_ref.as_ref() {
+            if let Err(e) =
+                database::schema::DiagnosticEntry::update_detail(entry, text).await
+            {
+                log::warn!("edit_ai_task_item: mirror entry update failed: {e}");
+            }
+        }
+
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
+            "item_id": item_id.key_string(),
+            "ai_task_id": item.ai_task_ref.key_string(),
+            "text": text,
+            "edited": true,
+        }))
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "remove_ai_task_item",
+        description = "Delete ONE unchecked checklist item from an AI task — use to drop a step you added in error (e.g. something informational, a duplicate, or work you can do yourself via MCP). Only unchecked items on a non-closed task can be removed, and never the task's last remaining item (to end a task, the operator closes it). Also deletes the mirrored diagnostic-session recommendation entry. If removing the item leaves every remaining item checked, the task advances to awaiting_followup."
+    )]
+    async fn remove_ai_task_item(
+        &self,
+        Parameters(p): Parameters<RemoveAiTaskItemParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        use database::schema::RecordIdExt;
+
+        let item_id = parse_record_id(&p.item_id, database::schema::AI_TASK_ITEM_TABLE);
+        let item = database::schema::AiTaskItem::get(&item_id)
+            .await
+            .map_err(to_internal)?
+            .ok_or_else(|| {
+                ErrorData::invalid_params(
+                    format!("remove_ai_task_item: item '{}' not found", p.item_id),
+                    None,
+                )
+            })?;
+        if item.checked {
+            return Err(ErrorData::invalid_params(
+                "remove_ai_task_item: item is checked off by the tech — removing it would erase \
+                 completed-work history. The tech can uncheck it if it was done in error."
+                    .to_string(),
+                None,
+            ));
+        }
+        let parent = database::schema::AiTask::get_full(&item.ai_task_ref)
+            .await
+            .map_err(to_internal)?;
+        let Some((task, items)) = parent else {
+            return Err(ErrorData::invalid_params(
+                format!(
+                    "remove_ai_task_item: parent ai_task '{}' not found",
+                    item.ai_task_ref.key_string()
+                ),
+                None,
+            ));
+        };
+        if task.status == database::schema::AiTaskStatus::Closed {
+            return Err(ErrorData::invalid_params(
+                "remove_ai_task_item: the AI task is closed".to_string(),
+                None,
+            ));
+        }
+        if items.len() <= 1 {
+            return Err(ErrorData::invalid_params(
+                "remove_ai_task_item: this is the task's only item — a checklist cannot be empty. \
+                 Add a replacement step first, or have the operator close the task."
+                    .to_string(),
+                None,
+            ));
+        }
+
+        // Atomic delete re-asserts unchecked + task-open, closing the window
+        // where a tech checks the box between the read above and this delete.
+        let removed = database::schema::AiTaskItem::remove_if_unchecked(&item_id)
+            .await
+            .map_err(to_internal)?
+            .ok_or_else(|| {
+                ErrorData::invalid_params(
+                    "remove_ai_task_item: item was checked off or its task closed concurrently — \
+                     re-check with get_ai_task_status"
+                        .to_string(),
+                    None,
+                )
+            })?;
+        // Drop the mirrored session recommendation so it doesn't linger.
+        if let Some(entry) = removed.entry_ref.as_ref() {
+            let res = database::db()
+                .query("DELETE $entry")
+                .bind(("entry", entry.clone()))
+                .await;
+            if let Err(e) = res {
+                log::warn!("remove_ai_task_item: mirror entry delete failed: {e}");
+            }
+        }
+        database::schema::AiTask::reevaluate_completion(&item.ai_task_ref)
+            .await
+            .map_err(to_internal)?;
+
+        let full = database::schema::AiTask::get_full(&item.ai_task_ref)
+            .await
+            .map_err(to_internal)?;
+        let (status, remaining) = full
+            .map(|(t, its)| {
+                (
+                    t.status.as_str().to_string(),
+                    its.iter().filter(|i| !i.checked).count(),
+                )
+            })
+            .unwrap_or_else(|| ("open".to_string(), 0));
+
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
+            "removed_item_id": item_id.key_string(),
+            "ai_task_id": item.ai_task_ref.key_string(),
+            "status": status,
+            "remaining": remaining,
+            "removed": true,
+        }))
+        .map_err(to_internal)?]))
     }
 
     #[tool(
