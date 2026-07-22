@@ -393,34 +393,6 @@ impl ChatServer {
         // via SurrealDB connected_client.last_update field instead of websocket messages
     }
 
-    /// Forwards each message from an ephemeral control socket to the room's client
-    /// without registering in rooms/session_map or touching the database.
-    async fn handle_control(self: Arc<Self>, ws: WebSocket, room_id: RoomID, session_id: SessionID) {
-        let (_ctrl_tx, mut ctrl_rx) = ws.split();
-        info!("Control socket {} connected for room {}", session_id, room_id);
-        while let Some(Ok(message)) = ctrl_rx.next().await {
-            match message {
-                msg @ (Message::Text(_) | Message::Binary(_)) => {
-                    let client = {
-                        let rooms = self.rooms.lock().await;
-                        rooms.get(&room_id).and_then(|r| r.client.clone())
-                    };
-                    match client {
-                        Some(client_tx) => {
-                            if let Err(e) = client_tx.lock().await.send(msg).await {
-                                log::warn!("Control forward to client failed for room {}: {:?}", room_id, e);
-                            }
-                        }
-                        None => info!("Control message for room {} dropped; no client present", room_id),
-                    }
-                }
-                Message::Close(_) => break,
-                Message::Ping(_) | Message::Pong(_) => {}
-            }
-        }
-        info!("Control socket {} disconnected from room {}", session_id, room_id);
-    }
-
     async fn handle_message(&self, call: ChatMessage) {
         match call {
             ChatMessage::Send {
@@ -759,10 +731,6 @@ async fn websocket_handler(
     };
 
     info!("Client connected. Role: {:?}, Room: {:?}, Session: {:?}", role, room_id, session_id);
-
-    if role == "control" {
-        return ws.on_upgrade(move |socket| chat_server.handle_control(socket, room_id, session_id));
-    }
 
     let res = connect_client(room_id.clone()).await;
     println!("Res: {res:?}");

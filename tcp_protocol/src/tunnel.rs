@@ -67,9 +67,9 @@ pub async fn connect_tunnel(url: &str) -> Result<TunnelStream, tungstenite::Erro
 
 /// Connect to `url`, deliver one binary message, flush, close.
 ///
-/// Used for the relay room control channel (`role=control`): the admin
-/// sends a single serialized `Cmd` that the relay forwards to the room's
-/// client without registering the sender as the room master.
+/// Used to poke the client's room over `role=master`: the admin joins the
+/// room, sends one serialized `Cmd` (which the relay forwards to the room's
+/// client), then drops the connection.
 pub async fn send_oneshot_ws_binary(url: &str, payload: Vec<u8>) -> Result<(), tungstenite::Error> {
     let (mut ws, _resp) = tokio_tungstenite::connect_async(url).await?;
     ws.send(Message::Binary(payload.into())).await?;

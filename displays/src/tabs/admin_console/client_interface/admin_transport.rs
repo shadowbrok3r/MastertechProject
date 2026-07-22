@@ -454,13 +454,14 @@ async fn run_session(
                 }
             };
 
-            // Tell the client (via the always-on room control route) to dial
-            // the same tunnel as `role=client`.
-            let control_url = database::websocket_url_with_room(master_base, &connection_string, "control");
+            // Join the client's room as master (flips the client's ready state
+            // via MASTER_CONNECTED) and send OpenRelayTunnel so it dials the same
+            // tunnel as `role=client`, then the one-shot closes.
+            let room_url = database::websocket_url_with_room(master_base, &connection_string, TUNNEL_ROLE_MASTER);
             let ctrl = super::serialize_command(&crate::Cmd::OpenRelayTunnel { session_id });
-            if let Err(e) = send_oneshot_ws_binary(&control_url, ctrl).await {
-                log::warn!("admin_transport -> tunnel control send failed: {e}");
-                let _ = in_tx.send(WsEvent::Error(format!("relay control send failed: {e} (retrying…)")));
+            if let Err(e) = send_oneshot_ws_binary(&room_url, ctrl).await {
+                log::warn!("admin_transport -> tunnel dial-request send failed: {e}");
+                let _ = in_tx.send(WsEvent::Error(format!("relay dial-request send failed: {e} (retrying…)")));
                 if shutdown_aware_sleep(&shutdown, RETRY_INTERVAL).await {
                     let _ = in_tx.send(WsEvent::Closed);
                     return;

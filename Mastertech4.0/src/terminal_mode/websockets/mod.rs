@@ -903,12 +903,6 @@ impl TerminalWebsocketClient {
                                                     bin.len()
                                                 );
                                             }
-                                        } else if serde_json::from_slice::<TerminalEvent>(&bin).is_err() {
-                                            // Control-plane Cmds (e.g. OpenRelayTunnel via role=control)
-                                            // are honored even with no master streaming; egui input is not.
-                                            if let Some(cmd) = displays::try_deserialize_command(&bin) {
-                                                self.handle_command(cmd, &mut sender).await;
-                                            }
                                         }
                                     }
                                     _ => {}
