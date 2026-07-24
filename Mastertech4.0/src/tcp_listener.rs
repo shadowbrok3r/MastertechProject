@@ -19,7 +19,7 @@
 //! duplication.
 
 use crate::filesystem::get_client_hash;
-use crate::terminal_mode::websockets::TerminalWebsocketClient;
+use crate::terminal_mode::websockets::{SessionOutbound, TerminalWebsocketClient};
 use crate::transport::{
     ClientTransport, TcpFrame, FRAME_TAG_BINARY, FRAME_TAG_PING, FRAME_TAG_PONG,
     FRAME_TAG_SHAPE_FP, FRAME_TAG_TEXT, HANDSHAKE_MAGIC,
@@ -28,6 +28,7 @@ use tcp_protocol::is_supported_version;
 use anyhow::{anyhow, Context, Result};
 use displays::{DESKTOP_INPUT_TAG, EGUI_INPUT_TAG};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -35,6 +36,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::mpsc as tokio_mpsc;
+use tokio::sync::Notify;
 
 // ── Egui frame broadcast ──────────────────────────────────────────────────────
 //
@@ -160,6 +162,33 @@ pub async fn wait_for_preferred_port_available() {
     );
 }
 
+// ── Listener handoff ─────────────────────────────────────────────────────────
+//
+// A mode switch spawns a replacement agent that must own the preferred port and
+// the `connected_client` coords. This process drops its listener and clears the
+// coords it published so only one agent per machine advertises them.
+
+static LISTENER_RELEASED: AtomicBool = AtomicBool::new(false);
+
+fn release_notify() -> &'static Notify {
+    static RELEASE: OnceLock<Notify> = OnceLock::new();
+    RELEASE.get_or_init(Notify::new)
+}
+
+/// Drops this process's direct-TCP listener and clears its advertised
+/// `local_ip`/`tcp_port` so another agent can claim the port and the coords.
+pub async fn release_direct_tcp_listener() {
+    LISTENER_RELEASED.store(true, Ordering::SeqCst);
+    release_notify().notify_waiters();
+    clear_tcp_coords(get_client_hash().id).await;
+    log::info!("tcp_listener -> released listener and cleared advertised coords");
+}
+
+/// True once [`release_direct_tcp_listener`] has run.
+pub fn direct_tcp_listener_released() -> bool {
+    LISTENER_RELEASED.load(Ordering::SeqCst)
+}
+
 /// Hard cap on a single inbound frame so a malicious or buggy peer can't
 /// allocate gigabytes by sending a giant length prefix.
 const MAX_FRAME_BYTES: u32 = 64 * 1024 * 1024; // 64 MiB
@@ -202,10 +231,19 @@ pub async fn bind_listener() -> Result<(TcpListener, SocketAddr)> {
 /// the launching terminal alive past egui window close).
 pub async fn accept_loop(listener: TcpListener) {
     loop {
+        if direct_tcp_listener_released() {
+            log::info!("tcp_listener -> listener released; dropping the bound port");
+            return;
+        }
         tokio::select! {
             biased;
             _ = displays::wait_for_shutdown() => {
                 log::info!("tcp_listener -> shutdown signaled; stopping accept loop");
+                return;
+            }
+            // Handed off to a replacement agent; returning drops the listener.
+            _ = release_notify().notified() => {
+                log::info!("tcp_listener -> listener released; dropping the bound port");
                 return;
             }
             res = listener.accept() => match res {
@@ -255,8 +293,9 @@ async fn handle_session(stream: TcpStream, peer: SocketAddr) -> Result<()> {
 /// 2. Spawns the writer task that drains a `TcpFrame` channel and writes
 ///    length-prefixed frames to the stream.
 /// 3. Constructs a per-session [`TerminalWebsocketClient`] and a
-///    [`ClientTransport::Tcp`] pointing at the writer channel.
-/// 4. `tokio::select!`s between inbound frames and the client's outbound
+///    [`ClientTransport::Tcp`] pointing at the writer channel, and moves both
+///    into a dispatch task fed by a FIFO queue.
+/// 4. `tokio::select!`s between inbound frames and the session's outbound
 ///    side channels (`bin_rx`, `command_rx`, `sysinfo_rx`) so live
 ///    streams (e.g. sysinfo) flow back to the admin without the admin
 ///    having to drive the loop with another request.
@@ -301,18 +340,59 @@ where
         displays::shape_fp::BUILD_VERSION,
     )));
 
-    // 3) Per-session command dispatcher
+    // 3) Per-session command dispatcher, on its own task so a slow handler
+    //    cannot delay the session loop's Ping → Pong replies.
     let mut client = TerminalWebsocketClient::new();
-    let mut transport = ClientTransport::Tcp { ctrl: write_tx.clone(), file: file_tx.clone() };
+    // An established admin session wants the ratatui buffer stream; the admin's
+    // `READY` text arms it again and is not re-sent across its redials.
+    client.arm_terminal_stream();
+    let outbound = client.take_outbound_receivers();
+    let transport = ClientTransport::Tcp { ctrl: write_tx.clone(), file: file_tx.clone() };
+    let (work_tx, work_rx) = unbounded_channel::<SessionWork>();
+    let mut dispatch_handle = tokio::spawn(dispatch_task(client, transport, work_rx));
 
-    let result = run_session_loop(read_half, &mut client, &mut transport, &write_tx).await;
+    let result = run_session_loop(read_half, &work_tx, &write_tx, outbound).await;
 
-    // 4) Close writer channels so writer_task exits.
-    drop(transport);
+    // 4) Drain the queued work, then close writer channels so writer_task exits.
+    //    The dispatch task owns the transport, so it must end before the writer
+    //    channels can close; a process shutdown cancels it instead of waiting.
+    drop(work_tx);
+    let aborted = tokio::select! {
+        biased;
+        _ = displays::wait_for_shutdown() => {
+            dispatch_handle.abort();
+            true
+        }
+        _ = &mut dispatch_handle => false,
+    };
+    if aborted {
+        let _ = dispatch_handle.await;
+    }
     drop(write_tx);
     drop(file_tx);
     let _ = writer_handle.await;
     result
+}
+
+/// One inbound work item for a session's dispatch task.
+enum SessionWork {
+    Command(displays::Cmd),
+    Text(String),
+}
+
+/// Owns a session's client + transport and runs its inbound work strictly in
+/// arrival order, so handler duration never blocks the session loop.
+async fn dispatch_task(
+    mut client: TerminalWebsocketClient,
+    mut transport: ClientTransport,
+    mut work_rx: UnboundedReceiver<SessionWork>,
+) {
+    while let Some(work) = work_rx.recv().await {
+        match work {
+            SessionWork::Command(cmd) => client.handle_command(cmd, &mut transport).await,
+            SessionWork::Text(text) => client.handle_text_command(text).await,
+        }
+    }
 }
 
 /// Outcome of [`perform_handshake`].
@@ -412,12 +492,21 @@ async fn perform_handshake<R: AsyncRead + Unpin>(
 /// hundreds of megabytes and the session dies with `frame too large`.
 /// A single task owns the read half and forwards **complete** frames on a
 /// channel so reads are never cancelled part-way.
+///
+/// **Why dispatch is off-loop:** `handle_command` can run for minutes (plugin
+/// calls, PowerShell, spec gathers, stress runs). Awaiting it here stopped this
+/// loop from answering the admin's framed Pings, so the admin's 30 s pong
+/// deadline tore down a healthy session mid-operation. Commands go to
+/// [`dispatch_task`] over a FIFO queue instead, leaving every branch below
+/// non-blocking.
 async fn run_session_loop<R: AsyncRead + Unpin + Send + 'static>(
     read_half: R,
-    client: &mut TerminalWebsocketClient,
-    transport: &mut ClientTransport,
+    work_tx: &UnboundedSender<SessionWork>,
     write_tx: &UnboundedSender<TcpFrame>,
+    outbound: SessionOutbound,
 ) -> Result<()> {
+    let SessionOutbound { mut command_rx, mut sysinfo_rx, mut bin_rx } = outbound;
+
     // Subscribe to egui frames so this TCP session can forward them to the
     // admin without any changes to the frame-capture path in first_run.rs.
     let mut frame_rx = frame_broadcast().subscribe();
@@ -473,7 +562,14 @@ async fn run_session_loop<R: AsyncRead + Unpin + Send + 'static>(
                             }
                             _ => {
                                 match displays::try_deserialize_command(&bytes) {
-                                    Some(cmd) => client.handle_command(cmd, transport).await,
+                                    // Queued in arrival order; a send error means
+                                    // the dispatch task is gone, so end the session
+                                    // instead of silently swallowing commands.
+                                    Some(cmd) => {
+                                        if work_tx.send(SessionWork::Command(cmd)).is_err() {
+                                            break Err(anyhow!("dispatch task ended"));
+                                        }
+                                    }
                                     None => log::warn!(
                                         "tcp_listener -> dropping undecodable Cmd frame ({} bytes); peer likely newer build",
                                         bytes.len()
@@ -487,7 +583,9 @@ async fn run_session_loop<R: AsyncRead + Unpin + Send + 'static>(
                         // session.  The admin shell panel sends commands as
                         // text frames (non-interactive mode); we handle them
                         // the same way the WebSocket relay path does.
-                        client.handle_text_command(text).await;
+                        if work_tx.send(SessionWork::Text(text)).is_err() {
+                            break Err(anyhow!("dispatch task ended"));
+                        }
                     }
                     Ok(InboundFrame::Ping(payload)) => {
                         // Master keepalive: echo the payload back as a Pong so
@@ -522,13 +620,13 @@ async fn run_session_loop<R: AsyncRead + Unpin + Send + 'static>(
             // Outbound: drain the side-channels the dispatcher uses for
             // streaming responses (process stdout, sysinfo loop, etc.) so
             // they reach the admin without needing another inbound poke.
-            Some(bin) = client.command_rx.recv() => {
+            Some(bin) = command_rx.recv() => {
                 let _ = write_tx.send(TcpFrame::Binary(bin));
             }
-            Some(sysinfo) = client.sysinfo_rx.recv() => {
+            Some(sysinfo) = sysinfo_rx.recv() => {
                 let _ = write_tx.send(TcpFrame::Binary(sysinfo));
             }
-            Some(bin) = client.bin_rx.recv() => {
+            Some(bin) = bin_rx.recv() => {
                 let _ = write_tx.send(TcpFrame::Binary(bin));
             }
             // Outbound: forward egui frame snapshots to the admin.

@@ -14,13 +14,23 @@ use std::time::Duration;
 
 /// Bound at most once per process.
 static STARTED: AtomicBool = AtomicBool::new(false);
+/// Set to retire the channel (e.g. before handing the room to another agent
+/// in this process). The loop exits at its next boundary and stays off.
+static STOPPED: AtomicBool = AtomicBool::new(false);
 
 /// Reconnect backoff bounds; the channel retries for the process lifetime.
 const MIN_BACKOFF: Duration = Duration::from_secs(5);
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
 /// Keepalive cadence and the inbound silence window that forces a redial.
+/// Deliberately below the relay's own pong deadline (`WS_PONG_TIMEOUT_SECS`,
+/// default 35 s): whoever gives up first should be the side that can redial,
+/// so a stalled socket is re-registered instead of orphaned relay-side.
 const PING_INTERVAL: Duration = Duration::from_secs(10);
-const LIVENESS_TIMEOUT: Duration = Duration::from_secs(45);
+const LIVENESS_TIMEOUT: Duration = Duration::from_secs(25);
+/// Hard socket lifetime. A relay that drops our room slot without closing the
+/// socket leaves us auto-ponging a connection it no longer routes, which no
+/// silence check can observe; recycling caps that blind window.
+const MAX_SOCKET_AGE: Duration = Duration::from_secs(600);
 /// Event-drain poll interval.
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -32,6 +42,24 @@ pub fn spawn_relay_control_channel() {
     tokio::spawn(async move {
         run().await;
     });
+}
+
+/// Retire the room channel so another agent in this process can own the room.
+pub fn stop_relay_control_channel() {
+    STOPPED.store(true, Ordering::SeqCst);
+}
+
+/// True once the channel has been retired or the process is shutting down.
+fn should_stop() -> bool {
+    STOPPED.load(Ordering::SeqCst) || displays::is_shutting_down()
+}
+
+/// Why one room socket ended.
+enum SocketEnd {
+    /// Retired at [`MAX_SOCKET_AGE`]; redial immediately to keep the gap short.
+    Recycled,
+    /// Died or never opened; `opened` gates the backoff reset.
+    Ended { opened: bool },
 }
 
 async fn run() {
@@ -58,18 +86,23 @@ async fn run() {
 
     let mut backoff = MIN_BACKOFF;
     loop {
-        if displays::is_shutting_down() {
+        if should_stop() {
             return;
         }
         match ewebsock::connect(url.clone(), ewebsock::Options::default()) {
-            Ok((sender, receiver)) => {
-                if serve_room_socket(sender, receiver).await {
+            Ok((sender, receiver)) => match serve_room_socket(sender, receiver).await {
+                SocketEnd::Recycled => {
                     backoff = MIN_BACKOFF;
+                    continue;
                 }
-            }
+                // A socket that opened proves the relay is reachable, so the
+                // next failure starts its backoff from the floor.
+                SocketEnd::Ended { opened: true } => backoff = MIN_BACKOFF,
+                SocketEnd::Ended { opened: false } => {}
+            },
             Err(e) => log::warn!("relay_control -> connect failed: {e}; retrying in {backoff:?}"),
         }
-        if displays::is_shutting_down() {
+        if should_stop() {
             return;
         }
         tokio::select! {
@@ -81,20 +114,20 @@ async fn run() {
     }
 }
 
-/// Drains one room socket until it dies. Returns `true` when the socket had
-/// opened, so the caller resets its backoff.
+/// Drains one room socket until it dies or is recycled.
 async fn serve_room_socket(
     mut sender: ewebsock::WsSender,
     receiver: ewebsock::WsReceiver,
-) -> bool {
+) -> SocketEnd {
     let mut opened = false;
+    let started = tokio::time::Instant::now();
     let mut last_event = tokio::time::Instant::now();
     let mut last_ping = tokio::time::Instant::now();
 
     loop {
-        if displays::is_shutting_down() {
+        if should_stop() {
             sender.close();
-            return opened;
+            return SocketEnd::Ended { opened };
         }
 
         while let Some(event) = receiver.try_recv() {
@@ -103,17 +136,14 @@ async fn serve_room_socket(
                 WsEvent::Opened => {
                     opened = true;
                     log::info!("relay_control -> room channel open");
-                    // The relay writes connected = false when a client socket
-                    // drops; re-assert it so the row matches reality.
-                    crate::tcp_listener::upsert_self_identity(true).await;
                 }
                 WsEvent::Closed => {
                     log::info!("relay_control -> room channel closed; will reconnect");
-                    return opened;
+                    return SocketEnd::Ended { opened };
                 }
                 WsEvent::Error(e) => {
                     log::warn!("relay_control -> room channel error: {e}");
-                    return opened;
+                    return SocketEnd::Ended { opened };
                 }
                 WsEvent::Message(WsMessage::Binary(bin)) => handle_binary(&bin),
                 WsEvent::Message(_) => {}
@@ -129,14 +159,19 @@ async fn serve_room_socket(
                 "relay_control -> no room traffic for {LIVENESS_TIMEOUT:?}; reconnecting"
             );
             sender.close();
-            return opened;
+            return SocketEnd::Ended { opened };
+        }
+        if opened && started.elapsed() >= MAX_SOCKET_AGE {
+            log::info!("relay_control -> recycling room socket after {MAX_SOCKET_AGE:?}");
+            sender.close();
+            return SocketEnd::Recycled;
         }
 
         tokio::select! {
             biased;
             _ = displays::wait_for_shutdown() => {
                 sender.close();
-                return opened;
+                return SocketEnd::Ended { opened };
             }
             _ = tokio::time::sleep(POLL_INTERVAL) => {}
         }

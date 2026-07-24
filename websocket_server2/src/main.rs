@@ -12,7 +12,7 @@ use database::{init_database, schema::{ConnectedClient, User}, Database, db};
 use futures::{stream::{SplitSink, SplitStream}, SinkExt, StreamExt};
 use std::{collections::HashMap, sync::Arc};
 use std::net::SocketAddr;
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{oneshot, Mutex, Notify};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -31,20 +31,77 @@ enum ChatMessage {
     },
     Command {
         from: SessionID,
-        ws_tx: Arc<Mutex<SplitSink<WebSocket, Message>>>,
+        conn: Arc<Conn>,
         command: String,
         args: Vec<String>,
     },
 }
 
 use std::time::{Duration, Instant};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::OnceLock;
+
+/// One relay connection: its sink, the role and room it joined with, and its
+/// eviction signal.
+#[derive(Debug)]
+struct Conn {
+    sink: Mutex<WsSink>,
+    role: String,
+    room_id: RoomID,
+    evicted: AtomicBool,
+    evict_signal: Notify,
+}
+
+impl Conn {
+    fn new(sink: WsSink, role: String, room_id: RoomID) -> Self {
+        Self {
+            sink: Mutex::new(sink),
+            role,
+            room_id,
+            evicted: AtomicBool::new(false),
+            evict_signal: Notify::new(),
+        }
+    }
+
+    async fn send(&self, msg: Message) -> Result<(), axum::Error> {
+        self.sink.lock().await.send(msg).await
+    }
+
+    /// True when this connection joined `room_id` as a master, registered or not.
+    fn is_master_for(&self, room_id: &RoomID) -> bool {
+        self.role == "master" && self.room_id == *room_id
+    }
+
+    fn is_evicted(&self) -> bool {
+        self.evicted.load(Ordering::SeqCst)
+    }
+
+    /// Flags the connection evicted, wakes its read loop, and sends one Close frame.
+    async fn evict(&self) {
+        if self.evicted.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        self.evict_signal.notify_one();
+        let close = Duration::from_secs(config().ws_close_timeout_secs);
+        let _ = tokio::time::timeout(close, async {
+            let _ = self.sink.lock().await.send(Message::Close(None)).await;
+        })
+        .await;
+    }
+
+    /// Resolves once the connection has been evicted.
+    async fn wait_evicted(&self) {
+        if self.is_evicted() {
+            return;
+        }
+        self.evict_signal.notified().await;
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 struct Room {
-    master: Option<Arc<Mutex<SplitSink<WebSocket, Message>>>>,
-    client: Option<Arc<Mutex<SplitSink<WebSocket, Message>>>>,
+    master: Option<Arc<Conn>>,
+    client: Option<Arc<Conn>>,
 }
 
 /// Global rate limiter: max DB writes across ALL rooms within a rolling window.
@@ -85,6 +142,7 @@ struct Config {
     tunnel_pending_ttl_secs: u64,
     ws_pong_timeout_secs: u64,
     tunnel_idle_secs: u64,
+    ws_close_timeout_secs: u64,
 }
 
 impl Config {
@@ -105,7 +163,11 @@ impl Config {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(90);
-        Self { ws_activity_write_secs, tunnel_pending_ttl_secs, ws_pong_timeout_secs, tunnel_idle_secs }
+        let ws_close_timeout_secs = std::env::var("WS_CLOSE_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(5);
+        Self { ws_activity_write_secs, tunnel_pending_ttl_secs, ws_pong_timeout_secs, tunnel_idle_secs, ws_close_timeout_secs }
     }
 }
 
@@ -174,7 +236,7 @@ enum TunnelSlot {
 #[derive(Clone)]
 struct ChatServer {
     rooms: Arc<Mutex<HashMap<RoomID, Room>>>,
-    session_map: Arc<Mutex<HashMap<SessionID, Arc<Mutex<SplitSink<WebSocket, Message>>>>>>,
+    session_map: Arc<Mutex<HashMap<SessionID, Arc<Conn>>>>,
     // Map session_id to username if authenticated
     user_map: Arc<Mutex<HashMap<SessionID, User>>>,
 }
@@ -188,70 +250,61 @@ impl ChatServer {
         role: String,
     ) {
         let (ws_tx, mut ws_rx) = ws.split();
-        let ws_tx = Arc::new(Mutex::new(ws_tx));
+        let conn = Arc::new(Conn::new(ws_tx, role.clone(), room_id.clone()));
 
+        if role != "master" && role != "client" {
+            let _ = conn.send(Message::Text("Invalid role".into())).await;
+            conn.evict().await;
+            return;
+        }
 
-        let mut rooms = self.rooms.lock().await;
-        let entry = rooms.entry(room_id.clone()).or_insert_with(Room::default);
-
-        // Assign session, overwriting stale entries
-        match role.as_str() {
-            "master" => {
-                // If there was an old master, notify it's being replaced (shouldn't happen often)
-                if entry.master.is_some() {
-                    info!("Replacing stale master session in room {}", room_id);
+        // Claim the room slot and snapshot the peer; sends happen after the lock drops.
+        let (peer, displaced) = {
+            let mut rooms = self.rooms.lock().await;
+            let entry = rooms.entry(room_id.clone()).or_insert_with(Room::default);
+            if role == "master" {
+                let peer = entry.client.clone();
+                // A master registers only into an empty slot; one-shot joins never evict a live master.
+                if entry.master.is_none() {
+                    entry.master = Some(conn.clone());
+                    info!("Master session {} assigned to room {}", session_id, room_id);
+                } else {
+                    info!(
+                        "Room {} already has a registered master; session {} forwards without registering",
+                        room_id, session_id
+                    );
                 }
-                
-                // Notify client that a master has connected
-                let mut client_stale = false;
-                if let Some(client_tx) = entry.client.clone() {
-                    match client_tx.lock().await.send(Message::Text("MASTER_CONNECTED".into())).await {
-                        Ok(_) => info!("Notified client in room {} that master connected", room_id),
-                        Err(e) => {
-                            info!("Failed to notify client in room {} (may be stale): {:?}", room_id, e);
-                            client_stale = true;
-                        }
-                    }
-                }
-                // Client connection is stale, remove it
-                if client_stale {
-                    entry.client = None;
-                }
-                entry.master = Some(ws_tx.clone());
-                info!("Master session {} assigned to room {}", session_id, room_id);
-            }
-            "client" => {
-                // If there was an old client, notify it's being replaced
-                if entry.client.is_some() {
+                (peer, None)
+            } else {
+                let peer = entry.master.clone();
+                let displaced = entry.client.replace(conn.clone());
+                if displaced.is_some() {
                     info!("Replacing stale client session in room {}", room_id);
                 }
-                
-                // Notify master that a client has connected
-                let mut master_stale = false;
-                if let Some(master_tx) = entry.master.clone() {
-                    match master_tx.lock().await.send(Message::Text("CLIENT_CONNECTED".into())).await {
-                        Ok(_) => info!("Notified master in room {} that client connected", room_id),
-                        Err(e) => {
-                            info!("Failed to notify master in room {} (may be stale): {:?}", room_id, e);
-                            master_stale = true;
-                        }
-                    }
-                }
-                // Master connection is stale, remove it
-                if master_stale {
-                    entry.master = None;
-                }
-                entry.client = Some(ws_tx.clone());
                 info!("Client session {} assigned to room {}", session_id, room_id);
+                (peer, displaced)
             }
-            _ => {
-                let _ = ws_tx.lock().await.send(Message::Text("Invalid role".into())).await;
-                return;
+        };
+
+        // Close the client socket this connection displaced.
+        if let Some(old) = displaced {
+            old.evict().await;
+        }
+
+        if let Some(peer) = peer {
+            let notice = if role == "master" { "MASTER_CONNECTED" } else { "CLIENT_CONNECTED" };
+            match peer.send(Message::Text(notice.into())).await {
+                Ok(_) => info!("Notified peer in room {} with {}", room_id, notice),
+                Err(e) => {
+                    info!("Failed to notify peer in room {} (may be stale): {:?}", room_id, e);
+                    let peer_role = if role == "master" { "client" } else { "master" };
+                    if self.clear_slot(&room_id, peer_role, &peer).await {
+                        info!("Stale {} removed from room {}", peer_role, room_id);
+                    }
+                    peer.evict().await;
+                }
             }
         }
-        
-        // Release rooms lock before spawning tasks
-        drop(rooms);
 
         // Update ConnectedClient in SurrealDB for this connection
         let room_id_clone2 = room_id.clone();
@@ -279,7 +332,7 @@ impl ChatServer {
         self.session_map
             .lock()
             .await
-            .insert(session_id.clone(), ws_tx.clone());
+            .insert(session_id.clone(), conn.clone());
         // Remove any previous user association for this session
         self.user_map.lock().await.remove(&session_id);
 
@@ -289,13 +342,25 @@ impl ChatServer {
         let session_id_clone = session_id.clone();
         let room_id_clone = room_id.clone();
         let role_clone = role.clone();
-        let ws_tx_for_incoming = ws_tx.clone();
+        let conn_for_incoming = conn.clone();
         let last_activity_incoming = Arc::clone(&last_activity);
 
         // Handle incoming messages
         tokio::spawn(async move {
-            let ws_tx = ws_tx_for_incoming;
-            while let Some(Ok(message)) = ws_rx.next().await {
+            let conn = conn_for_incoming;
+            loop {
+                // Eviction wins over reads so a torn-down socket stops auto-ponging.
+                let message = tokio::select! {
+                    biased;
+                    _ = conn.wait_evicted() => {
+                        info!("WebSocket {} evicted; stopping read loop", session_id_clone);
+                        break;
+                    }
+                    msg = ws_rx.next() => match msg {
+                        Some(Ok(message)) => message,
+                        _ => break,
+                    },
+                };
                 last_activity_incoming.store(now_unix_secs(), Ordering::Relaxed);
                 match message {
                     Message::Text(text) => {
@@ -304,12 +369,10 @@ impl ChatServer {
                             let mut parts = text[1..].split_whitespace();
                             if let Some(cmd) = parts.next() {
                                 let args: Vec<String> = parts.map(|s| s.to_string()).collect();
-                                // Clone ws_tx before moving it into the async handler
-                                let ws_tx_clone = ws_tx.clone();
                                 server_clone
                                     .handle_message(ChatMessage::Command {
                                         from: session_id_clone.clone(),
-                                        ws_tx: ws_tx_clone,
+                                        conn: conn.clone(),
                                         command: cmd.to_string(),
                                         args,
                                     })
@@ -344,10 +407,6 @@ impl ChatServer {
                         if let Some(frame) = close_frame {
                             info!("WebSocket closed: {:?} {:?}", frame.reason, frame.code);
                         }
-
-                        server_clone
-                            .cleanup_session(&room_id_clone, &session_id_clone, &role_clone, &ws_tx)
-                            .await?;
                         break;
                     }
                     Message::Ping(_bytes) => {},
@@ -355,44 +414,45 @@ impl ChatServer {
                 }
             }
             server_clone
-                .cleanup_session(&room_id_clone, &session_id_clone, &role_clone, &ws_tx)
+                .cleanup_session(&room_id_clone, &session_id_clone, &role_clone, &conn)
                 .await?;
             Ok::<(), anyhow::Error>(())
         });
 
         let server_clone = Arc::clone(&self);
         let role_clone = role.clone();
-        let ws_tx_for_ping = ws_tx.clone();
+        let conn_for_ping = conn.clone();
         let room_id_for_ping = room_id.clone();
         let session_id_for_ping = session_id.clone();
         let last_activity_ping = Arc::clone(&last_activity);
 
         // Ping task to detect disconnection and stamp activity at a bounded rate
         tokio::spawn(async move {
-            let ws_tx = ws_tx_for_ping;
+            let conn = conn_for_ping;
             let stamp_secs = config().ws_activity_write_secs;
             let pong_timeout = config().ws_pong_timeout_secs;
             let mut last_db_update: Option<Instant> = None;
             loop {
                 tokio::time::sleep(Duration::from_secs(10)).await;
-                let mut sender = ws_tx.lock().await;
-                if let Err(e) = sender.send(Message::Ping(vec![].into())).await {
+                if conn.is_evicted() {
+                    break;
+                }
+                if let Err(e) = conn.send(Message::Ping(vec![].into())).await {
                     info!("WebSocket {} disconnected: {:?}", session_id_for_ping, e);
-                    drop(sender);
                     server_clone
-                        .cleanup_session(&room_id_for_ping, &session_id_for_ping, &role_clone, &ws_tx)
+                        .cleanup_session(&room_id_for_ping, &session_id_for_ping, &role_clone, &conn)
                         .await?;
                     break;
                 }
-                drop(sender);
 
                 // Half-open detection: no inbound frame within the window means the socket is dead.
                 if pong_timeout > 0 {
                     let idle = now_unix_secs().saturating_sub(last_activity_ping.load(Ordering::Relaxed));
                     if idle >= pong_timeout {
                         info!("WebSocket {} idle {}s with no pong; treating as dead", session_id_for_ping, idle);
+                        conn.evict().await;
                         server_clone
-                            .cleanup_session(&room_id_for_ping, &session_id_for_ping, &role_clone, &ws_tx)
+                            .cleanup_session(&room_id_for_ping, &session_id_for_ping, &role_clone, &conn)
                             .await?;
                         break;
                     }
@@ -438,108 +498,108 @@ impl ChatServer {
                 ping,
                 pong
             } => {
-                let mut rooms = self.rooms.lock().await;
-                if let Some(room) = rooms.get_mut(&room_id) {
-                    let is_from_master = self.is_session_match(room.master.as_ref(), &from).await;
-                    let is_from_client = self.is_session_match(room.client.as_ref(), &from).await;
+                let sender = self.session_map.lock().await.get(&from).cloned();
+                let Some(sender) = sender else {
+                    log::debug!("Sender session {from} is no longer registered; dropping message");
+                    return;
+                };
+                // Master identity comes from the connection's own role, not slot ownership.
+                let is_from_master = sender.is_master_for(&room_id);
 
-                    let target_session = if is_from_master {
+                // Clone the target out of the map so no rooms guard is held across a send.
+                let target = {
+                    let rooms = self.rooms.lock().await;
+                    let Some(room) = rooms.get(&room_id) else {
+                        info!("Room {} not found", room_id);
+                        return;
+                    };
+                    if is_from_master {
                         room.client.clone()
-                    } else if is_from_client {
+                    } else if room.client.as_ref().is_some_and(|c| Arc::ptr_eq(c, &sender)) {
                         room.master.clone()
                     } else {
                         None
-                    };
-
-                    if let Some(session) = target_session {
-                        let target_arc = session.clone();
-                        let mut session = session.lock().await;
-                        let send_result = if let Some(bin) = bin {
-                            info!("Binary message sent to target session in room {}", room_id);
-                            session.send(Message::Binary(bin.into())).await
-                        } else if let Some(ping) = ping {
-                            session.send(Message::Ping(ping.into())).await
-                        } else if let Some(pong) = pong {
-                            session.send(Message::Pong(pong.into())).await
-                        } else {
-                            info!("{text} sent to target session in room {}", room_id);
-                            session.send(Message::Text(text.into())).await
-                        };
-                        if let Err(e) = send_result {
-                            log::error!("Failed to send message to session in room {}: {:?}", room_id, e);
-                            drop(session);
-                            // Clear the dead target only if it is still the same socket.
-                            if is_from_master {
-                                if room.client.as_ref().map(|s| Arc::ptr_eq(s, &target_arc)).unwrap_or(false) {
-                                    room.client = None;
-                                    info!("Client removed from room {} due to send failure", room_id);
-                                }
-                            } else if is_from_client {
-                                if room.master.as_ref().map(|s| Arc::ptr_eq(s, &target_arc)).unwrap_or(false) {
-                                    room.master = None;
-                                    info!("Master removed from room {} due to send failure", room_id);
-                                }
-                            }
-                        }
-                    } else {
-                        // No target session found - the other party isn't connected yet
-                        // This is normal - just means the master hasn't connected to this room yet
-                        // Don't mark the client as disconnected - they're still connected, just waiting
-                        log::debug!("No target session in room {} - target may not have connected yet", room_id);
-                        // A master with no client gets an explicit sentinel; a client with
-                        // no master stays silent.
-                        if is_from_master {
-                            let sender_sink = self.session_map.lock().await.get(&from).cloned();
-                            if let Some(sink) = sender_sink {
-                                let _ = sink.lock().await.send(Message::Text("NO_AGENT_IN_ROOM".into())).await;
-                                info!("No agent in room {room_id}; notified master");
-                            }
-                        }
                     }
+                };
+
+                let Some(target) = target else {
+                    // No target session found - the other party isn't connected yet
+                    // This is normal - just means the master hasn't connected to this room yet
+                    // Don't mark the client as disconnected - they're still connected, just waiting
+                    log::debug!("No target session in room {} - target may not have connected yet", room_id);
+                    // A master with no client gets an explicit sentinel; a client with
+                    // no master stays silent.
+                    if is_from_master {
+                        let _ = sender.send(Message::Text("NO_AGENT_IN_ROOM".into())).await;
+                        info!("No agent in room {room_id}; notified master");
+                    }
+                    return;
+                };
+
+                let send_result = if let Some(bin) = bin {
+                    info!("Binary message sent to target session in room {}", room_id);
+                    target.send(Message::Binary(bin.into())).await
+                } else if let Some(ping) = ping {
+                    target.send(Message::Ping(ping.into())).await
+                } else if let Some(pong) = pong {
+                    target.send(Message::Pong(pong.into())).await
                 } else {
-                    info!("Room {} not found", room_id);
+                    info!("{text} sent to target session in room {}", room_id);
+                    target.send(Message::Text(text.into())).await
+                };
+
+                if let Err(e) = send_result {
+                    log::error!("Failed to send message to session in room {}: {:?}", room_id, e);
+                    let target_role = if is_from_master { "client" } else { "master" };
+                    if self.clear_slot(&room_id, target_role, &target).await {
+                        info!("{} removed from room {} due to send failure", target_role, room_id);
+                    }
+                    // Close the dead peer so it observes the drop and redials.
+                    target.evict().await;
                 }
             }
-            ChatMessage::Command { from, ws_tx, command, args } => {
+            ChatMessage::Command { from, conn, command, args } => {
                 match command.as_str() {
                     "users_online" => {
                         // List all unique users currently connected
-                        let user_map = self.user_map.lock().await;
-                        if user_map.is_empty() {
-                            let mut sender = ws_tx.lock().await;
-                            let _ = sender.send(Message::Text("No users are currently authenticated/connected.".into())).await;
+                        let mut users: Vec<String> = {
+                            let user_map = self.user_map.lock().await;
+                            user_map.values().map(|user| user.get_username().to_string()).collect()
+                        };
+                        users.sort();
+                        users.dedup();
+                        let msg = if users.is_empty() {
+                            "No users are currently authenticated/connected.".to_string()
                         } else {
-                            let mut users = Vec::new();
-                            for (_session, user) in user_map.iter() {
-                                users.push(format!("{}", user.get_username()));
-                            }
-                            users.sort();
-                            users.dedup();
-                            let mut sender = ws_tx.lock().await;
-                            let msg = if users.is_empty() {
-                                "No users are currently authenticated/connected.".to_string()
-                            } else {
-                                format!("Users currently online ({}):\n{}", users.len(), users.join(", "))
-                            };
-                            let _ = sender.send(Message::Text(msg.into())).await;
-                        }
+                            format!("Users currently online ({}):\n{}", users.len(), users.join(", "))
+                        };
+                        let _ = conn.send(Message::Text(msg.into())).await;
                     }
                     "my_connections" => {
-                        let rooms = self.rooms.lock().await;
-                        for (room_id, room) in rooms.iter() {
-                            if let Ok(client) = get_client(room_id).await {
+                        // Snapshot the rooms so the DB reads below run without the lock.
+                        let snapshot: Vec<(RoomID, bool, bool)> = {
+                            let rooms = self.rooms.lock().await;
+                            rooms
+                                .iter()
+                                .map(|(id, room)| (id.clone(), room.master.is_some(), room.client.is_some()))
+                                .collect()
+                        };
+                        for (room_id, has_master, has_client) in snapshot {
+                            let Ok(client) = get_client(&room_id).await else { continue };
+                            let owned = {
                                 let user_map = self.user_map.lock().await;
-                                if let (Some(record_user), Some(usr)) = (&client.assigned_user, user_map.get(&from)) {
-                                    if record_user == &usr.get_id() {
-                                        let mut summary = String::from("Active rooms and sessions:\n");
-                                            if room_id == &client.connection_string {
-                                                summary.push_str(&format!("Room: {}\n", room_id));
-                                                summary.push_str(&format!("  Master: {}\n", if room.master.is_some() { "connected" } else { "none" }));
-                                                summary.push_str(&format!("  Client: {}\n", if room.client.is_some() { "connected" } else { "none" }));
-                                                summary.push_str(&format!("Client: {:#?}\n", client));
-                                            }
-                                    }
+                                match (&client.assigned_user, user_map.get(&from)) {
+                                    (Some(record_user), Some(usr)) => record_user == &usr.get_id(),
+                                    _ => false,
                                 }
+                            };
+                            if owned && room_id == client.connection_string {
+                                let summary = format!(
+                                    "Active rooms and sessions:\nRoom: {room_id}\n  Master: {}\n  Client: {}\nClient: {client:#?}\n",
+                                    if has_master { "connected" } else { "none" },
+                                    if has_client { "connected" } else { "none" },
+                                );
+                                let _ = conn.send(Message::Text(summary.into())).await;
                             }
                         }
                     }
@@ -559,85 +619,96 @@ impl ChatServer {
 /remove_room <room_id>
     Remove a room entirely.
 "#;
-                        let mut sender = ws_tx.lock().await;
-                        let _ = sender.send(Message::Text(help_msg.into())).await;
+                        let _ = conn.send(Message::Text(help_msg.into())).await;
                     }
                     "auth" => {
                         // Usage: /auth <username> <password>
                         if args.len() < 2 {
-                            let mut sender = ws_tx.lock().await;
-                            let _ = sender.send(Message::Text("Usage: /auth <username> <password>".into())).await;
+                            let _ = conn.send(Message::Text("Usage: /auth <username> <password>".into())).await;
                         } else {
                             let username = &args[0];
                             let password = &args[1];
                             // Try to sign in with SurrealDB
-                            let mut sender = ws_tx.lock().await;
                             match Database::new(username.to_string(), password.to_string(), None).await {
                                 Ok(db) => {
                                     // Associate session with username
                                     self.user_map.lock().await.insert(from.clone(), db.user.unwrap_or_default());
-                                    let _ = sender.send(Message::Text(format!("Authenticated as {}", username).into())).await;
+                                    let _ = conn.send(Message::Text(format!("Authenticated as {}", username).into())).await;
                                 }
                                 Err(e) => {
-                                    let _ = sender.send(Message::Text(format!("Authentication failed: {e}").into())).await;
+                                    let _ = conn.send(Message::Text(format!("Authentication failed: {e}").into())).await;
                                 }
                             }
                         }
                     }
                     "list" => {
-                        let rooms = self.rooms.lock().await;
-                        let mut summary = String::from("Active rooms and sessions:\n");
-                        for (room_id, room) in rooms.iter() {
-                            summary.push_str(&format!("Room: {}\n", room_id));
-                            summary.push_str(&format!("  Master: {}\n", if room.master.is_some() { "connected" } else { "none" }));
-                            summary.push_str(&format!("  Client: {}\n", if room.client.is_some() { "connected" } else { "none" }));
-                        }
-                        let mut sender = ws_tx.lock().await;
-                        let _ = sender.send(Message::Text(summary.into())).await;
+                        let summary = {
+                            let rooms = self.rooms.lock().await;
+                            let mut summary = String::from("Active rooms and sessions:\n");
+                            for (room_id, room) in rooms.iter() {
+                                summary.push_str(&format!("Room: {}\n", room_id));
+                                summary.push_str(&format!("  Master: {}\n", if room.master.is_some() { "connected" } else { "none" }));
+                                summary.push_str(&format!("  Client: {}\n", if room.client.is_some() { "connected" } else { "none" }));
+                            }
+                            summary
+                        };
+                        let _ = conn.send(Message::Text(summary.into())).await;
                     }
                     "remove" => {
                         // Usage: /remove <room_id> <role>
                         if args.len() < 2 {
-                            let mut sender = ws_tx.lock().await;
-                            let _ = sender.send(Message::Text("Usage: /remove <room_id> <role>".into())).await;
+                            let _ = conn.send(Message::Text("Usage: /remove <room_id> <role>".into())).await;
                         } else {
                             let room_id = &args[0];
                             let role = &args[1];
-                            let mut rooms = self.rooms.lock().await;
-                            if let Some(room) = rooms.get_mut(room_id) {
-                                match role.as_str() {
-                                    "master" => room.master = None,
-                                    "client" => room.client = None,
-                                    _ => {}
+                            let removed = {
+                                let mut rooms = self.rooms.lock().await;
+                                rooms.get_mut(room_id).map(|room| match role.as_str() {
+                                    "master" => room.master.take(),
+                                    "client" => room.client.take(),
+                                    _ => None,
+                                })
+                            };
+                            match removed {
+                                Some(target) => {
+                                    // Evicted sockets are always closed.
+                                    if let Some(target) = target {
+                                        target.evict().await;
+                                    }
+                                    let _ = conn.send(Message::Text(format!("Removed {} from room {}", role, room_id).into())).await;
                                 }
-                                let mut sender = ws_tx.lock().await;
-                                let _ = sender.send(Message::Text(format!("Removed {} from room {}", role, room_id).into())).await;
-                            } else {
-                                let mut sender = ws_tx.lock().await;
-                                let _ = sender.send(Message::Text(format!("Room {} not found", room_id).into())).await;
+                                None => {
+                                    let _ = conn.send(Message::Text(format!("Room {} not found", room_id).into())).await;
+                                }
                             }
                         }
                     }
                     "remove_room" => {
                         // Usage: /remove_room <room_id>
                         if args.is_empty() {
-                            let mut sender = ws_tx.lock().await;
-                            let _ = sender.send(Message::Text("Usage: /remove_room <room_id>".into())).await;
+                            let _ = conn.send(Message::Text("Usage: /remove_room <room_id>".into())).await;
                         } else {
                             let room_id = &args[0];
-                            let mut rooms = self.rooms.lock().await;
-                            if rooms.remove(room_id).is_some() {
-                                let mut sender = ws_tx.lock().await;
-                                let _ = sender.send(Message::Text(format!("Room {} removed", room_id).into())).await;
-                            } else {
-                                let mut sender = ws_tx.lock().await;
-                                let _ = sender.send(Message::Text(format!("Room {} not found", room_id).into())).await;
+                            let removed = self.rooms.lock().await.remove(room_id);
+                            match removed {
+                                Some(room) => {
+                                    // Evicted sockets are always closed.
+                                    if let Some(master) = room.master {
+                                        master.evict().await;
+                                    }
+                                    if let Some(client) = room.client {
+                                        client.evict().await;
+                                    }
+                                    let _ = conn.send(Message::Text(format!("Room {} removed", room_id).into())).await;
+                                }
+                                None => {
+                                    let _ = conn.send(Message::Text(format!("Room {} not found", room_id).into())).await;
+                                }
                             }
                         }
                     }
                     _ => {
-                        let mut sender = ws_tx.lock().await;
-                        let _ = sender.send(Message::Text(format!("Unknown command: {}", command).into())).await;
+                        let _ = conn.send(Message::Text(format!("Unknown command: {}", command).into())).await;
                     }
                 }
             }
@@ -645,31 +716,41 @@ impl ChatServer {
     }
 
     
+    /// Clears `role`'s slot in `room_id` when `conn` still owns it; reports whether it did.
+    async fn clear_slot(&self, room_id: &RoomID, role: &str, conn: &Arc<Conn>) -> bool {
+        let mut rooms = self.rooms.lock().await;
+        let Some(room) = rooms.get_mut(room_id) else { return false };
+        let slot = match role {
+            "master" => &mut room.master,
+            "client" => &mut room.client,
+            _ => return false,
+        };
+        if slot.as_ref().is_some_and(|s| Arc::ptr_eq(s, conn)) {
+            *slot = None;
+            true
+        } else {
+            false
+        }
+    }
+
     async fn cleanup_session(
         &self,
         room_id: &RoomID,
         session_id: &SessionID,
         role: &str,
-        my_sink: &Arc<Mutex<SplitSink<WebSocket, Message>>>,
+        my_conn: &Arc<Conn>,
     ) -> anyhow::Result<(), anyhow::Error> {
-        let mut rooms = self.rooms.lock().await;
-        let mut session_map = self.session_map.lock().await;
-        let mut user_map = self.user_map.lock().await;
-
         // In-memory maps are keyed on this session id; removal is always safe.
-        session_map.remove(session_id);
-        user_map.remove(session_id);
+        self.session_map.lock().await.remove(session_id);
+        self.user_map.lock().await.remove(session_id);
 
         // Only touch shared room/DB state when this socket still owns its slot;
         // a newer reconnect may have replaced it.
-        let owns_slot = rooms.get(room_id).is_some_and(|room| {
-            let slot = match role {
-                "master" => room.master.as_ref(),
-                "client" => room.client.as_ref(),
-                _ => None,
-            };
-            slot.is_some_and(|s| Arc::ptr_eq(s, my_sink))
-        });
+        let owns_slot = self.clear_slot(room_id, role, my_conn).await;
+
+        // This socket is going away either way; close it so the peer redials.
+        my_conn.evict().await;
+
         if !owns_slot {
             log::info!("cleanup_session: slot for {role} in room {room_id} already replaced; skipping");
             return Ok(());
@@ -690,45 +771,23 @@ impl ChatServer {
             log::info!("Master role disconnected from room {room_id}, DB not updated (client still connected)");
         }
 
-        log::info!("Client disconnected");
-
-        if let Some(room) = rooms.get_mut(room_id) {
-            match role {
-                "master" => {
-                    room.master = None;
-                    if let Some(client_tx) = &room.client {
-                        let send_result = client_tx.lock().await.send(Message::Text("MASTER_DISCONNECTED".into())).await;
-                        if send_result.is_ok() {
-                            info!("Notified client in room {} that master disconnected", room_id);
-                        }
-                    }
-                    info!("Master session {} removed from room {}", session_id, room_id);
-                }
-                "client" => {
-                    room.client = None;
-                    if let Some(master_tx) = &room.master {
-                        let send_result = master_tx.lock().await.send(Message::Text("CLIENT_DISCONNECTED".into())).await;
-                        if send_result.is_ok() {
-                            info!("Notified master in room {} that client disconnected", room_id);
-                        }
-                    }
-                    info!("Client session {} removed from room {}", session_id, room_id);
-                }
-                _ => {}
+        // Clone the surviving peer out of the map so the notify runs unlocked.
+        let (peer, notice) = {
+            let rooms = self.rooms.lock().await;
+            let room = rooms.get(room_id);
+            if role == "master" {
+                (room.and_then(|r| r.client.clone()), "MASTER_DISCONNECTED")
+            } else {
+                (room.and_then(|r| r.master.clone()), "CLIENT_DISCONNECTED")
+            }
+        };
+        if let Some(peer) = peer {
+            if peer.send(Message::Text(notice.into())).await.is_ok() {
+                info!("Notified peer in room {} with {}", room_id, notice);
             }
         }
+        info!("{} session {} removed from room {}", role, session_id, room_id);
         Ok(())
-    }
-
-    async fn is_session_match(
-        &self,
-        session: Option<&Arc<Mutex<SplitSink<WebSocket, Message>>>>,
-        session_id: &SessionID,
-    ) -> bool {
-        let session_map = self.session_map.lock().await;
-        session
-            .and_then(|s| session_map.get(session_id).map(|stored| Arc::ptr_eq(s, stored)))
-            .unwrap_or(false)
     }
 }
 
@@ -737,8 +796,8 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     let cfg = config();
     info!(
-        "Config: ws_activity_write_secs={}, tunnel_pending_ttl_secs={}, ws_pong_timeout_secs={}, tunnel_idle_secs={}",
-        cfg.ws_activity_write_secs, cfg.tunnel_pending_ttl_secs, cfg.ws_pong_timeout_secs, cfg.tunnel_idle_secs
+        "Config: ws_activity_write_secs={}, tunnel_pending_ttl_secs={}, ws_pong_timeout_secs={}, tunnel_idle_secs={}, ws_close_timeout_secs={}",
+        cfg.ws_activity_write_secs, cfg.tunnel_pending_ttl_secs, cfg.ws_pong_timeout_secs, cfg.tunnel_idle_secs, cfg.ws_close_timeout_secs
     );
     match init_database().await {
         Ok(_) => log::info!("Initialized Database"),

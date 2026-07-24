@@ -2,7 +2,11 @@
 use database::{schema::{utilities::{check_id_existence, query_id}, ConnectedClient, CONNECTED_CLIENT_TABLE}, websocket_url_with_room, db, WS_CLIENT_URL, WS_CLIENT_URL_LOCAL};
 use displays::{remote_viewer::{encode_buffer_with_timestamp, ratagui::TerminalEvent}, serialize_system_info, tabs::admin_console::client_action::ClientHandler, Cmd, EventLogEntry, FileSystemAction, RegistryEdit, RegistryKeyInfo, RegistryValueEntry, RemoteDirEntry, RemoteScriptItem, RemoteScriptStatus, ScheduledTask, ServiceActionType, StartupApp, WindowsService};
 use crate::{filesystem::{get_client_hash, system_info::{get_sysinfo, get_sysinfo_no_gpu}}, tabs::file_browser::read_folder, transport::ClientTransport};
-use std::{path::Path, time::{Duration, Instant}};
+use std::{
+    path::Path,
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    time::{Duration, Instant},
+};
 use command::{handle_windows_cmd_interactive, PersistentShell};
 use bincode::{config::standard, serde::*};
 use ewebsock::{WsEvent, WsMessage};
@@ -625,6 +629,126 @@ pub struct TerminalWebsocketClient {
     pub file_transfer_buffers: std::collections::HashMap<String, (u32, Vec<(u32, Vec<u8>)>)>,
     /// Accumulates incoming self-update binary chunks from the admin console.
     pub self_update_buffer: crate::remote_self_update::SelfUpdateBuffer,
+    /// This session's terminal-streaming arm; released when the client drops.
+    stream_arm: SessionStreamArm,
+}
+
+// ── Terminal-buffer streaming arm ─────────────────────────────────────────────
+//
+// The relay room socket arms streaming through `start_tx` / `can_start`.
+// Sessions on any other transport (direct TCP, relay tunnel) arm this counter
+// instead, so the room socket dropping cannot latch streaming off for a session
+// that is still live on another transport.
+
+static SESSION_STREAM_ARMS: AtomicUsize = AtomicUsize::new(0);
+/// Set while this process owns the terminal-mode relay room socket.
+static ROOM_SOCKET_OWNED: AtomicBool = AtomicBool::new(false);
+
+/// True while at least one non-room admin session wants terminal buffers.
+pub fn session_terminal_stream_armed() -> bool {
+    SESSION_STREAM_ARMS.load(Ordering::SeqCst) > 0
+}
+
+/// True when this process runs the terminal-mode relay room socket.
+pub fn terminal_room_socket_owned() -> bool {
+    ROOM_SOCKET_OWNED.load(Ordering::SeqCst)
+}
+
+/// Holds one session's terminal-streaming arm and releases it on drop.
+#[derive(Default)]
+struct SessionStreamArm(bool);
+
+impl SessionStreamArm {
+    fn arm(&mut self) {
+        if !self.0 {
+            self.0 = true;
+            SESSION_STREAM_ARMS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+}
+
+impl Drop for SessionStreamArm {
+    fn drop(&mut self) {
+        if self.0 {
+            SESSION_STREAM_ARMS.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+}
+
+/// A session's outbound receivers, detached from the client so a session loop
+/// can drain them while a dispatch task owns the client.
+pub struct SessionOutbound {
+    pub command_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
+    pub sysinfo_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
+    pub bin_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
+}
+
+// ── Remote plugin tool-call correlation ───────────────────────────────────────
+//
+// `PluginManager` returns every result on one process-global channel, so a
+// single pump drains it and hands each result to the caller that registered its
+// request id instead of letting concurrent calls consume each other's results.
+
+type PluginToolResult = (bool, String);
+
+static PENDING_TOOL_CALLS: once_cell::sync::Lazy<
+    std::sync::Mutex<
+        std::collections::HashMap<String, tokio::sync::oneshot::Sender<PluginToolResult>>,
+    >,
+> = once_cell::sync::Lazy::new(Default::default);
+
+/// Registers `request_id` and returns the channel its result arrives on.
+fn register_tool_call(request_id: &str) -> tokio::sync::oneshot::Receiver<PluginToolResult> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    if let Ok(mut map) = PENDING_TOOL_CALLS.lock() {
+        if map.insert(request_id.to_string(), tx).is_some() {
+            log::warn!("remote tool call -> duplicate request id {request_id}");
+        }
+    }
+    rx
+}
+
+/// Drops `request_id`'s registration so the pending map stays bounded.
+fn forget_tool_call(request_id: &str) {
+    if let Ok(mut map) = PENDING_TOOL_CALLS.lock() {
+        map.remove(request_id);
+    }
+}
+
+/// Starts the result pump once per process.
+fn ensure_tool_result_pump() {
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    if STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    tokio::spawn(async move {
+        let rx = displays::plugins::remote_tool_result_receiver();
+        loop {
+            match rx.try_recv() {
+                Ok((request_id, success, result_json)) => {
+                    let waiter = PENDING_TOOL_CALLS
+                        .lock()
+                        .ok()
+                        .and_then(|mut map| map.remove(&request_id));
+                    match waiter {
+                        Some(tx) => {
+                            let _ = tx.send((success, result_json));
+                        }
+                        None => log::warn!(
+                            "remote tool result -> no caller waiting on {request_id}"
+                        ),
+                    }
+                }
+                Err(crossbeam::channel::TryRecvError::Empty) => {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                Err(crossbeam::channel::TryRecvError::Disconnected) => {
+                    log::warn!("remote tool result -> channel disconnected; pump stopping");
+                    return;
+                }
+            }
+        }
+    });
 }
 
 /// Returns `true` when `command` is one of the bare-text control-plane
@@ -669,9 +793,29 @@ impl TerminalWebsocketClient {
             persistent_shell: None,
             file_transfer_buffers: std::collections::HashMap::new(),
             self_update_buffer: Default::default(),
+            stream_arm: SessionStreamArm::default(),
         }
     }
-    
+
+    /// Arms terminal-buffer streaming for this session until the client drops.
+    pub fn arm_terminal_stream(&mut self) {
+        self.stream_arm.arm();
+    }
+
+    /// Moves the outbound receivers out, leaving detached stand-ins behind so
+    /// the senders this client hands to shells and spawned tasks keep working.
+    pub fn take_outbound_receivers(&mut self) -> SessionOutbound {
+        fn detached() -> tokio::sync::mpsc::UnboundedReceiver<Vec<u8>> {
+            tokio::sync::mpsc::unbounded_channel().1
+        }
+        SessionOutbound {
+            command_rx: std::mem::replace(&mut self.command_rx, detached()),
+            sysinfo_rx: std::mem::replace(&mut self.sysinfo_rx, detached()),
+            bin_rx: std::mem::replace(&mut self.bin_rx, detached()),
+        }
+    }
+
+
     /// Route a plain-text shell command from the admin over the TCP path.
     ///
     /// Mirrors the `WsMessage::Text` branch in `start_websocket_sender`:
@@ -684,9 +828,17 @@ impl TerminalWebsocketClient {
     /// Filters out the same control-plane sentinels the WebSocket relay path
     /// handles inline (`READY`, `MASTER_CONNECTED`, etc.) — see
     /// [`is_control_plane_sentinel`] — so they don't get executed as shell
-    /// commands when delivered over direct TCP.
+    /// commands when delivered over direct TCP.  `READY` / `MASTER_CONNECTED`
+    /// arm this session's terminal-buffer streaming first, the same way the
+    /// relay-room path flips its `ready` flag.
     pub async fn handle_text_command(&mut self, command: String) {
         if command.is_empty() {
+            return;
+        }
+        // Viewer-readiness signals arm streaming for this transport.
+        if command == "READY" || command == "MASTER_CONNECTED" {
+            self.stream_arm.arm();
+            log::info!("handle_text_command: terminal streaming armed by {command:?}");
             return;
         }
         // Drop control-plane sentinels before they reach the shell.
@@ -738,8 +890,12 @@ impl TerminalWebsocketClient {
         event_tx: tokio::sync::mpsc::UnboundedSender<LocalTermEvent>,
         mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
     ) 
-        -> anyhow::Result<()> 
+        -> anyhow::Result<()>
     {
+        // Marks this process as the room-slot owner so `LaunchTerminalMode`
+        // never forks a second agent that would evict it.
+        ROOM_SOCKET_OWNED.store(true, Ordering::SeqCst);
+
         let connection_url = websocket_url_with_room(
             if cfg!(debug_assertions) {
                 WS_CLIENT_URL_LOCAL
@@ -772,6 +928,8 @@ impl TerminalWebsocketClient {
                     // because the wrapper preserves the same `send(WsMessage)`
                     // method shape — see `Mastertech4.0/src/transport.rs`.
                     let mut sender = ClientTransport::WebSocket(ws_sender);
+                    // Room-transport gate only; sessions on other transports
+                    // hold their own arm (see `SessionStreamArm`).
                     let ready = &mut false;
                     log::info!("start_websocket_sender -> connecting");
                     loop {
@@ -1690,10 +1848,27 @@ impl TerminalWebsocketClient {
                     }
                 }
             }
+            // At most one process per machine owns the relay room slot and the
+            // published direct-TCP coords: a terminal-mode agent already owns
+            // both, and an egui-mode agent only releases them once the
+            // replacement has actually spawned.
             Cmd::LaunchTerminalMode => {
+                if terminal_room_socket_owned() {
+                    log::info!(
+                        "websockets -> LaunchTerminalMode ignored: this process already runs terminal mode"
+                    );
+                    return;
+                }
                 log::info!("websockets -> LaunchTerminalMode: spawning terminal-mode process");
                 match crate::utilities::app_restart::restart_in_terminal_mode() {
-                    Ok(()) => log::info!("terminal mode process spawned"),
+                    Ok(()) => {
+                        log::info!(
+                            "terminal mode process spawned; releasing room slot and TCP coords"
+                        );
+                        crate::relay_control::stop_relay_control_channel();
+                        crate::tcp_listener::release_direct_tcp_listener().await;
+                    }
+                    // Nothing released, so this process keeps serving admins.
                     Err(e) => log::error!("LaunchTerminalMode failed: {e}"),
                 }
             }
@@ -3549,24 +3724,39 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
 
             Cmd::CallRemotePluginTool { request_id, plugin_id, tool_name, args_json } => {
                 log::info!("CallRemotePluginTool: {plugin_id}::{tool_name} req={request_id}");
+                const TOOL_CALL_TIMEOUT: Duration = Duration::from_secs(90);
+                ensure_tool_result_pump();
+                // Register before dispatching so a fast result can't outrun the wait.
+                let result_rx = register_tool_call(&request_id);
                 let call_tx = displays::plugins::remote_tool_call_sender();
-                let _ = call_tx.try_send((request_id.clone(), plugin_id.clone(), tool_name.clone(), args_json));
-                let result_rx = displays::plugins::remote_tool_result_receiver();
-                let mut result: Option<(bool, String)> = None;
-                // Poll up to 90s (9000 * 10ms) for the background plugin result.
-                for _ in 0..9000 {
-                    if let Ok((rid, success, rjson)) = result_rx.try_recv() {
-                        if rid == request_id {
-                            result = Some((success, rjson));
-                            break;
+                let dispatched = call_tx
+                    .try_send((
+                        request_id.clone(),
+                        plugin_id.clone(),
+                        tool_name.clone(),
+                        args_json,
+                    ))
+                    .is_ok();
+                let (success, result_json) = if !dispatched {
+                    forget_tool_call(&request_id);
+                    (false, "remote tool call channel full or disconnected".to_string())
+                } else {
+                    match tokio::time::timeout(TOOL_CALL_TIMEOUT, result_rx).await {
+                        Ok(Ok(result)) => result,
+                        Ok(Err(_)) => (
+                            false,
+                            "remote tool result channel closed before a result arrived".to_string(),
+                        ),
+                        Err(_) => {
+                            forget_tool_call(&request_id);
+                            (
+                                false,
+                                "PluginManager did not return a result within 90 seconds"
+                                    .to_string(),
+                            )
                         }
                     }
-                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                }
-                let (success, result_json) = result.unwrap_or((
-                    false,
-                    "PluginManager did not return a result within 90 seconds".to_string(),
-                ));
+                };
                 let result_cmd = Cmd::RemotePluginToolResult {
                     request_id,
                     plugin_id,
@@ -4012,7 +4202,9 @@ impl<'a> TerminalApp<'a> {
     ) {
         let now = Instant::now(); // Changed: Throttle buffer sending
         if now.duration_since(*last_sent) >= send_interval {
-            if *can_start {
+            // `can_start` tracks the relay room socket (and the manual menu-bar
+            // action); sessions on other transports carry their own arm.
+            if *can_start || session_terminal_stream_armed() {
                 let buffer_to_send = f.buffer_mut().clone();
                 let count = f.count();
                 // Broadcast to any TCP admin sessions so they receive the
