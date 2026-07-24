@@ -83,6 +83,52 @@ pub enum RightPanel {
     Chat,
 }
 
+/// Renders one client row. Takes each field separately so callers can pass
+/// disjoint borrows of `AdminConsole` while its `clients` vec is borrowed.
+#[allow(clippy::too_many_arguments)]
+fn render_client_row(
+    ui: &mut eframe::egui::Ui,
+    client: &ConnectedClient,
+    ws_clients: &HashMap<String, WebSocketClient>,
+    security_inventory: &HashMap<String, Vec<database::schema::InstalledSecurityProduct>>,
+    session_layout: &HashMap<String, SessionLayout>,
+    focused_client: Option<&str>,
+    actions_tx: &Sender<ClientUiAction>,
+    fk_health_tx: &crossbeam::channel::Sender<(String, bool, bool)>,
+    fk_health_cache: &HashMap<String, (bool, bool)>,
+    reachability: Option<&crate::ui_data::reachability::ReachabilityStatus>,
+) {
+    ui.add_space(4.);
+    let session = ws_clients.get(&client.connection_string);
+    // TCP and relay-tunnel sessions prove liveness in-band, not via WS pongs.
+    let is_ws_connected = session
+        .map(|wsc| {
+            if wsc.transport.kind() != TransportKind::WebSocket {
+                wsc.is_connected
+            } else {
+                wsc.is_connected && wsc.last_pong_time.is_some()
+            }
+        })
+        .unwrap_or(false);
+    let transport = session.map(|w| (w.transport.kind(), w.is_connected));
+    let inventory = security_inventory
+        .get(&client.connection_string)
+        .map(|v| v.as_slice());
+    AdminConsole::client_header(
+        ui,
+        actions_tx.clone(),
+        client,
+        session_layout.clone(),
+        focused_client,
+        is_ws_connected,
+        fk_health_tx,
+        fk_health_cache,
+        inventory,
+        reachability,
+        transport,
+    );
+}
+
 /// True only when the signed-in user's authorization is exactly `Root`.
 /// Gates connecting to clients outside the live query's user/store scope.
 pub fn current_user_is_root() -> bool {
@@ -147,7 +193,7 @@ pub struct AdminConsole {
     /// (another store's machine, or one assigned to a different user).
     #[serde(skip)]
     pub manual_connect_input: String,
-    /// Result line shown under [`Self::manual_connect_input`].
+    /// Result line shown beside [`Self::manual_connect_input`] in the menu bar.
     #[serde(skip)]
     pub manual_connect_status: String,
     /// True while a lookup is in flight, so the button can't be double-fired.
@@ -640,11 +686,11 @@ impl SharedContext {
                     .corner_radius(radius)
             )
             .show_separator_line(true)
-            .exact_size(20.)
+            .exact_size(26.)
             .show_inside(ui, |ui |
         {
             egui::MenuBar::new().ui(ui, |ui| {
-                ui.set_height(15.);
+                ui.set_height(20.);
                 ui.style_mut().spacing.button_padding = Vec2::new(5.0, 1.0);
                 let txt = match self.web_console_layout.open_menu {
                     false => "Show Clients ->",
@@ -758,6 +804,77 @@ impl SharedContext {
                     }
                 });
 
+                ui.separator();
+
+                // ── Visibility scope ────────────────────────────────────
+                // Non-root has one option, so the combo renders disabled;
+                // `connected_client_live_query` clamps it regardless.
+                let is_root = current_user_is_root();
+                let options = crate::ui_data::ClientScope::selectable_for(is_root);
+                let mut selected = self.client_scope;
+                ui.label(RichText::new("Show").small().weak());
+                ui.add_enabled_ui(options.len() > 1, |ui| {
+                    egui::ComboBox::from_id_salt("admin_client_scope")
+                        .selected_text(RichText::new(selected.label()).small())
+                        .width(88.)
+                        .show_ui(ui, |ui| {
+                            for opt in options {
+                                ui.selectable_value(&mut selected, *opt, opt.label());
+                            }
+                        });
+                })
+                .response
+                .on_hover_text(if is_root {
+                    "Which connected clients to subscribe to"
+                } else {
+                    "Root authorization required to widen this"
+                });
+                if selected != self.client_scope {
+                    self.client_scope = selected;
+                    self.client_scope_dirty = true;
+                }
+
+                // ── Root-only connect by hash ───────────────────────────
+                // Reaches a client the live query never returns (another
+                // store's machine, or one assigned to another user).
+                if is_root {
+                    ui.separator();
+                    let layout = &mut self.web_console_layout;
+                    let submitted = ui
+                        .add_sized(
+                            [180., 18.],
+                            egui::TextEdit::singleline(&mut layout.manual_connect_input)
+                                .hint_text("host:hash or client hash")
+                                .font(egui::TextStyle::Small),
+                        )
+                        .on_hover_text("Root only: connect to any client by identifier")
+                        .lost_focus()
+                        && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    let ready = !layout.manual_connect_busy
+                        && !layout.manual_connect_input.trim().is_empty();
+                    let clicked = ui
+                        .add_enabled(
+                            ready,
+                            egui::Button::new(
+                                RichText::new(format!("{} Connect", icons::LOCK)).small(),
+                            ),
+                        )
+                        .clicked();
+                    if ready && (submitted || clicked) {
+                        let query = layout.manual_connect_input.clone();
+                        let _ = layout
+                            .ui_actions_channel
+                            .0
+                            .try_send(ClientUiAction::ConnectByIdentifier(query));
+                    }
+                    if !layout.manual_connect_status.is_empty() {
+                        let full = layout.manual_connect_status.clone();
+                        let short: String = full.chars().take(40).collect();
+                        ui.label(RichText::new(short).small().weak())
+                            .on_hover_text(full);
+                    }
+                }
+
                 // ── Active-client breadcrumb ────────────────────────────
                 //
                 // Until now operators had to remember which client they
@@ -835,8 +952,9 @@ impl SharedContext {
             .show_animated_inside(ui, self.web_console_layout.open_menu, |ui |
         {
             ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                ui.set_width(CLIENT_ROW_CONTENT_W);
-                ui.set_max_width(CLIENT_ROW_CONTENT_W);
+                // Full panel width so the list's scrollbar sits flush against
+                // the panel edge; rows self-size to CLIENT_ROW_CONTENT_W.
+                ui.set_min_width(CLIENT_ROW_CONTENT_W);
 
                 // Snapshot the per-connection reachability lookup
                 // *before* the mut borrow on `web_console_layout`
@@ -857,94 +975,15 @@ impl SharedContext {
                         })
                         .collect();
 
-                // Visibility scope. Non-root has only one option, so the combo
-                // renders disabled; the query builder clamps it regardless.
-                {
-                    let is_root = current_user_is_root();
-                    let options = crate::ui_data::ClientScope::selectable_for(is_root);
-                    let mut selected = self.client_scope;
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("Show").small().weak());
-                        ui.add_enabled_ui(options.len() > 1, |ui| {
-                            eframe::egui::ComboBox::from_id_salt("admin_client_scope")
-                                .selected_text(RichText::new(selected.label()).small())
-                                .show_ui(ui, |ui| {
-                                    for opt in options {
-                                        ui.selectable_value(
-                                            &mut selected,
-                                            *opt,
-                                            opt.label(),
-                                        );
-                                    }
-                                });
-                        })
-                        .response
-                        .on_hover_text(if is_root {
-                            "Which connected clients to subscribe to"
-                        } else {
-                            "Root authorization required to widen this"
-                        });
-                    });
-                    if selected != self.client_scope {
-                        self.client_scope = selected;
-                        self.client_scope_dirty = true;
-                    }
-                    ui.add_space(4.);
-                }
-
-                // Root-only: reach a client the live query never returns
-                // (another store's machine, or one assigned to another user).
-                if current_user_is_root() {
-                    let layout = &mut self.web_console_layout;
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(format!("{} Connect by hash", icons::LOCK))
-                                .small()
-                                .strong(),
-                        )
-                        .on_hover_text(
-                            "Root only: connection string (host:hash) or full client hash",
-                        );
-                    });
-                    ui.horizontal(|ui| {
-                        let submitted = ui
-                            .add_sized(
-                                [CLIENT_ROW_CONTENT_W - 90., 25.],
-                                eframe::egui::TextEdit::singleline(
-                                    &mut layout.manual_connect_input,
-                                )
-                                .hint_text("host:hash or client hash")
-                                .font(eframe::egui::TextStyle::Small),
-                            )
-                            .lost_focus()
-                            && ui.input(|i| i.key_pressed(eframe::egui::Key::Enter));
-                        let clicked = ui
-                            .add_enabled(
-                                !layout.manual_connect_busy
-                                    && !layout.manual_connect_input.trim().is_empty(),
-                                eframe::egui::Button::new(RichText::new("Connect").small()),
-                            )
-                            .clicked();
-                        let ready = !layout.manual_connect_busy
-                            && !layout.manual_connect_input.trim().is_empty();
-                        if ready && (submitted || clicked) {
-                            let query = layout.manual_connect_input.clone();
-                            let _ = layout
-                                .ui_actions_channel
-                                .0
-                                .try_send(ClientUiAction::ConnectByIdentifier(query));
-                        }
-                    });
-                    if !layout.manual_connect_status.is_empty() {
-                        ui.label(
-                            RichText::new(layout.manual_connect_status.clone())
-                                .small()
-                                .weak(),
-                        );
-                    }
-                    ui.add_space(4.);
-                    ui.separator();
-                }
+                // Snapshotted before the mut borrow below so the grouped list
+                // can read them.
+                let group_by_store =
+                    self.client_scope == crate::ui_data::ClientScope::AllClients;
+                let user_store_map = if group_by_store {
+                    self.user_store_map.clone()
+                } else {
+                    HashMap::new()
+                };
 
                 let ws_client = &mut self.web_console_layout;
                 let clients = &mut ws_client.clients;
@@ -1063,53 +1102,78 @@ impl SharedContext {
                 let list_max_h =
                     if show_preboot { ui.available_height() * 0.75 } else { f32::INFINITY };
                 ScrollArea::vertical()
-                    .auto_shrink([true, true])
+                    .auto_shrink([false, true])
                     .max_height(list_max_h)
                     .show(ui, |ui| {
-                    ui.set_width(CLIENT_ROW_CONTENT_W);
                     ui.set_min_width(CLIENT_ROW_CONTENT_W);
-                    ui.set_max_width(CLIENT_ROW_CONTENT_W);
-                    for &index in &visible_indices {
-                        ui.add_space(4.);
-                        if let Some(client) = clients.get(index) {
-                            // Check if we have an active WebSocket connection with confirmed remote client activity
-                            // Green requires both: master connected AND client actively responding
-                    let is_ws_connected = ws_client.ws_clients
-                        .get(&client.connection_string)
-                        .map(|wsc| {
-                            // TCP and relay-tunnel sessions don't use WebSocket
-                            // pings/pongs; liveness is proven in-band.
-                            if wsc.transport.kind() != TransportKind::WebSocket {
-                                wsc.is_connected
-                            } else {
-                                wsc.is_connected && wsc.last_pong_time.is_some()
+                    // Fleet-wide lists group under one collapsing header per
+                    // owning store; every other scope is a single flat group.
+                    let groups: Vec<(Option<String>, Vec<usize>)> = if group_by_store {
+                        let mut by_store: std::collections::BTreeMap<String, Vec<usize>> =
+                            std::collections::BTreeMap::new();
+                        for &index in &visible_indices {
+                            let Some(c) = clients.get(index) else { continue };
+                            let store = c
+                                .assigned_user
+                                .as_ref()
+                                .and_then(|u| user_store_map.get(&u.key_string()))
+                                .cloned()
+                                .unwrap_or_else(|| "Unknown store".to_string());
+                            by_store.entry(store).or_default().push(index);
+                        }
+                        by_store.into_iter().map(|(s, v)| (Some(s), v)).collect()
+                    } else {
+                        vec![(None, visible_indices.clone())]
+                    };
+
+                    for (header, indices) in groups {
+                        match header {
+                            Some(store) => {
+                                egui::CollapsingHeader::new(
+                                    RichText::new(format!("{store}  ({})", indices.len()))
+                                        .strong(),
+                                )
+                                .id_salt(("admin_store_group", store.as_str()))
+                                .default_open(true)
+                                .show(ui, |ui| {
+                                    for &index in &indices {
+                                        if let Some(client) = clients.get(index) {
+                                            render_client_row(
+                                                ui,
+                                                client,
+                                                &ws_client.ws_clients,
+                                                &ws_client.security_inventory,
+                                                &ws_client.session_layout,
+                                                ws_client.focused_client.as_deref(),
+                                                &ws_client.ui_actions_channel.0,
+                                                &ws_client.fk_health_tx,
+                                                &ws_client.fk_health_cache,
+                                                reachability_snapshot
+                                                    .get(&client.connection_string),
+                                            );
+                                        }
+                                    }
+                                });
                             }
-                        })
-                        .unwrap_or(false);
-                            
-                            let inventory = ws_client
-                                .security_inventory
-                                .get(&client.connection_string)
-                                .map(|v| v.as_slice());
-                            let reachability = reachability_snapshot
-                                .get(&client.connection_string);
-                            let transport = ws_client
-                                .ws_clients
-                                .get(&client.connection_string)
-                                .map(|w| (w.transport.kind(), w.is_connected));
-                            AdminConsole::client_header(
-                                ui,
-                                ws_client.ui_actions_channel.0.clone(),
-                                client,
-                                ws_client.session_layout.clone(),
-                                ws_client.focused_client.as_deref(),
-                                is_ws_connected,
-                                &ws_client.fk_health_tx,
-                                &ws_client.fk_health_cache,
-                                inventory,
-                                reachability,
-                                transport,
-                            );
+                            None => {
+                                for &index in &indices {
+                                    if let Some(client) = clients.get(index) {
+                                        render_client_row(
+                                            ui,
+                                            client,
+                                            &ws_client.ws_clients,
+                                            &ws_client.security_inventory,
+                                            &ws_client.session_layout,
+                                            ws_client.focused_client.as_deref(),
+                                            &ws_client.ui_actions_channel.0,
+                                            &ws_client.fk_health_tx,
+                                            &ws_client.fk_health_cache,
+                                            reachability_snapshot
+                                                .get(&client.connection_string),
+                                        );
+                                    }
+                                }
+                            }
                         }
                     }
                 });
@@ -1360,8 +1424,9 @@ impl SharedContext {
 
     pub fn refresh_client_list(&mut self) {
         let tx = self.connected_clients_tx.clone();
+        let scope = self.client_scope;
         PlatformSpawner::spawn(async move {
-            match get_connected_clients(tx).await {
+            match get_connected_clients(tx, scope).await {
                 Ok(_) => info!("web_console/mod.rs -> get_connected_clients ran ok"),
                 Err(e) => log::warn!("web_console/mod.rs -> get_connected_clients error: {e:?}"),
             }

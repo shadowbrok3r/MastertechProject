@@ -5,6 +5,62 @@ use std::cmp::Reverse;
 
 use super::{random_record_id, Datetime, RecordId, SurrealValue};
 
+/// Which connected clients a console subscribes to and fetches.
+///
+/// Lives here so the LIVE query and the snapshot fetch
+/// (`utilities::get_connected_clients`) cannot disagree — they did, which made
+/// a widened scope look like it had no effect: the live stream only carries
+/// changes, so the visible list stayed whatever the snapshot returned.
+#[derive(
+    serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Default,
+)]
+pub enum ClientScope {
+    /// Clients assigned to the signed-in user. The only scope non-root gets.
+    #[default]
+    MyClients,
+    /// Every client assigned to a user in the signed-in user's store.
+    MyStore,
+    /// Every connected client in the fleet, all stores. Root only.
+    AllClients,
+}
+
+impl ClientScope {
+    pub fn label(self) -> &'static str {
+        match self {
+            ClientScope::MyClients => "My clients",
+            ClientScope::MyStore => "My store",
+            ClientScope::AllClients => "All clients",
+        }
+    }
+
+    /// Scopes the given user may select; non-root is limited to their own.
+    pub fn selectable_for(is_root: bool) -> &'static [ClientScope] {
+        if is_root {
+            &[
+                ClientScope::MyClients,
+                ClientScope::MyStore,
+                ClientScope::AllClients,
+            ]
+        } else {
+            &[ClientScope::MyClients]
+        }
+    }
+
+    /// Clamps to [`ClientScope::MyClients`] for anyone but Root. Applied on
+    /// both the live-query and fetch paths, so a stored or requested wider
+    /// scope never widens what a non-root user receives.
+    pub fn effective(self, is_root: bool) -> ClientScope {
+        if is_root {
+            self
+        } else {
+            if self != ClientScope::MyClients {
+                log::warn!("client scope {self:?} requires Root; using MyClients");
+            }
+            ClientScope::MyClients
+        }
+    }
+}
+
 /// Whether this `connected_client` row represents a customer machine
 /// under service or a Rust-toolchain `plugin_builder` worker. The
 /// admin/MCP `list_build_workers` tool filters on this; the default

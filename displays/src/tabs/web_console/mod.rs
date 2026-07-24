@@ -288,7 +288,7 @@ impl WebConsole {
         self.loading = true;
         let tx = self.clients_tx.clone();
         PlatformSpawner::spawn(async move {
-            match get_connected_clients(tx).await {
+            match get_connected_clients(tx, database::schema::ClientScope::MyStore).await {
                 Ok(_) => log::info!("WebConsole: Refreshed client list"),
                 Err(e) => log::error!("WebConsole: Failed to refresh clients: {e:?}"),
             }

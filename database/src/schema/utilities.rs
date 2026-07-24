@@ -1,5 +1,5 @@
 #[allow(unused_imports)]
-use crate::{schema::{prestashop::xml::{modify_xml, remove_xml_tag}, prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ConnectedClient, Priority, Qc, Record, RecordId, RecordIdExt, SurrealValue, Store, TaskNotePayload, User, UserAuthorization, CUSTOMER_TABLE, TASK_TABLE}, PlatformSpawner, Spawner, db};
+use crate::{schema::{prestashop::xml::{modify_xml, remove_xml_tag}, prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ClientScope, ConnectedClient, Priority, Qc, Record, RecordId, RecordIdExt, SurrealValue, Store, TaskNotePayload, User, UserAuthorization, CUSTOMER_TABLE, TASK_TABLE}, PlatformSpawner, Spawner, db};
 #[allow(unused_imports)]
 use super::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, LocalSebData, Notification, TicketData};
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, Utc, Weekday};
@@ -411,10 +411,15 @@ fn last_update_ord(c: &ConnectedClient) -> String {
         .unwrap_or_default()
 }
 
-pub async fn get_connected_clients(tx: Sender<Vec<ConnectedClient>>) -> Result<(), Error> {
-    debug!("get_connected_clients");
+/// Snapshot fetch that fills the console's client list. Must stay in step with
+/// the LIVE query built from the same [`ClientScope`]: the stream only delivers
+/// changes, so anything this omits stays invisible until it happens to change.
+pub async fn get_connected_clients(
+    tx: Sender<Vec<ConnectedClient>>,
+    scope: ClientScope,
+) -> Result<(), Error> {
+    debug!("get_connected_clients (scope {scope:?})");
 
-    // Check if current user is Root - they can see all clients
     let is_root = match User::get_current_user_from_auth().await {
         Ok(Some(user)) => user.get_authorization() == UserAuthorization::Root,
         _ => false,
@@ -422,30 +427,43 @@ pub async fn get_connected_clients(tx: Sender<Vec<ConnectedClient>>) -> Result<(
 
     const LIST_FILTER: &str = "(client_kind IS NONE OR client_kind = 'machine') AND connected == true";
 
-    if is_root {
-        let query: Vec<ConnectedClient> = db()
-            .query(&format!(
-                "SELECT * FROM connected_client \
-                 WHERE (({LIST_FILTER} AND assigned_user.id_store == $auth.id_store) \
-                    OR (client_kind = 'qc_agent' AND connected == true)) \
-                 ORDER BY connected DESC, last_update DESC LIMIT 30",
-            ))
-            .await?
-            .take(0)?;
-        tx.try_send(dedupe_connected_clients_by_connection_string(query))?;
-    } else {
-        let query: Vec<ConnectedClient> = db()
-            .query(&format!(
-                "SELECT * FROM connected_client \
-                 WHERE assigned_user == $auth.id \
-                   AND {LIST_FILTER} \
-                 ORDER BY last_update DESC LIMIT 15",
-            ))
-            .await?
-            .take(0)?;
-        tx.try_send(dedupe_connected_clients_by_connection_string(query))?;
-    }
+    // Store scoping keys off `user.store` (TYPE string, required) rather than
+    // `id_store` (none | string DEFAULT ''), which is blank on some users and
+    // silently dropped their machines from the store view.
+    let sql = match scope.effective(is_root) {
+        ClientScope::MyClients => format!(
+            "SELECT * FROM connected_client \
+             WHERE assigned_user == $auth.id AND {LIST_FILTER} \
+             ORDER BY last_update DESC LIMIT 15"
+        ),
+        ClientScope::MyStore => format!(
+            "SELECT * FROM connected_client \
+             WHERE (({LIST_FILTER} AND assigned_user.store == $auth.store) \
+                OR (client_kind = 'qc_agent' AND connected == true)) \
+             ORDER BY connected DESC, last_update DESC LIMIT 30"
+        ),
+        ClientScope::AllClients => format!(
+            "SELECT * FROM connected_client \
+             WHERE ({LIST_FILTER}) OR (client_kind = 'qc_agent' AND connected == true) \
+             ORDER BY connected DESC, last_update DESC LIMIT 300"
+        ),
+    };
 
+    let query: Vec<ConnectedClient> = db().query(&sql).await?.take(0)?;
+    tx.try_send(dedupe_connected_clients_by_connection_string(query))?;
+    Ok(())
+}
+
+/// Every active user, for resolving a client's owning store when the console
+/// groups a fleet-wide list. The `user` table is `FOR select FULL`, so this
+/// reaches users outside the caller's store.
+pub async fn get_all_users(tx: Sender<Vec<User>>) -> Result<(), Error> {
+    debug!("get_all_users");
+    let data: Vec<User> = db()
+        .query("SELECT * FROM user WHERE active == true")
+        .await?
+        .take(0)?;
+    tx.try_send(data)?;
     Ok(())
 }
 

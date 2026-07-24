@@ -503,6 +503,14 @@ pub struct SharedContext {
     /// re-issues the live queries under the new filter.
     #[serde(skip)]
     pub client_scope_dirty: bool,
+    /// `user` record key -> store label, for grouping a fleet-wide client list
+    /// by the store that owns each machine.
+    #[serde(skip)]
+    pub user_store_map: HashMap<String, String>,
+    #[serde(skip)]
+    pub all_users_tx: Sender<Vec<database::schema::User>>,
+    #[serde(skip)]
+    pub all_users_rx: Receiver<Vec<database::schema::User>>,
     /// Latest `Cmd::OpenServiceCandidatesResponse` keyed by the
     /// connected client's `connection_string`.  Populated when the
     /// admin's Web Console session for that client returns a response
@@ -589,6 +597,7 @@ impl SharedContext {
         let (live_clients_tx, live_clients_rx) = channel::unbounded::<(Action, ConnectedClient)>();
         let (associated_notes_tx, associated_notes_rx) = channel::unbounded::<Vec<TaskNotePayload>>();
         let (connected_clients_tx, connected_clients_rx) = channel::unbounded::<Vec<ConnectedClient>>();
+        let (all_users_tx, all_users_rx) = channel::unbounded::<Vec<database::schema::User>>();
         let (client_customer_resolved_tx, client_customer_resolved_rx) = channel::unbounded::<Vec<(String, RecordId)>>();
         let (notes_tx, notes_rx) = channel::unbounded::<(Action, TaskNotePayload)>();
         let (read_state_tx, read_state_rx) = channel::unbounded::<Vec<TaskNoteRead>>();
@@ -773,6 +782,9 @@ impl SharedContext {
             reachability_cache: HashMap::new(),
             client_scope: Default::default(),
             client_scope_dirty: false,
+            user_store_map: HashMap::new(),
+            all_users_tx,
+            all_users_rx,
             open_service_suggestions: HashMap::new(),
             reachability_tx,
             reachability_rx,

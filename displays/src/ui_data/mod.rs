@@ -19,59 +19,20 @@ pub mod reachability;
 pub mod open_service_apply;
 // pub mod receive_database;
 
-/// Which connected clients the admin console subscribes to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-pub enum ClientScope {
-    /// Clients assigned to the signed-in user. The only scope non-root gets.
-    #[default]
-    MyClients,
-    /// Every client assigned to a user in the signed-in user's store.
-    MyStore,
-    /// Every connected client in the fleet, all stores. Root only.
-    AllClients,
-}
-
-impl ClientScope {
-    pub fn label(self) -> &'static str {
-        match self {
-            ClientScope::MyClients => "My clients",
-            ClientScope::MyStore => "My store",
-            ClientScope::AllClients => "All clients",
-        }
-    }
-
-    /// Scopes the given user may select; non-root is limited to their own.
-    pub fn selectable_for(user_is_root: bool) -> &'static [ClientScope] {
-        if user_is_root {
-            &[
-                ClientScope::MyClients,
-                ClientScope::MyStore,
-                ClientScope::AllClients,
-            ]
-        } else {
-            &[ClientScope::MyClients]
-        }
-    }
-}
+/// Scope selector shared with the snapshot fetch in `database::schema`.
+pub use database::schema::client::ClientScope;
 
 /// Builds the `connected_client` LIVE query for `scope`, clamping non-root
-/// users to [`ClientScope::MyClients`] regardless of what is stored or
-/// requested — this is the authoritative gate, not the combo box.
+/// users via [`ClientScope::effective`] — the authoritative gate, not the
+/// combo box.
 ///
 /// Every scope keeps `connected == true` so the subscription tracks online
-/// machines rather than the whole table.
+/// machines rather than the whole table. Must stay in step with
+/// `utilities::get_connected_clients`, which fills the initial list.
 pub fn connected_client_live_query(scope: ClientScope, user: &User) -> String {
     let is_root =
         user.get_authorization() == database::schema::user::UserAuthorization::Root;
-    let effective = if is_root { scope } else { ClientScope::MyClients };
-    if effective != scope {
-        log::warn!(
-            "client scope {:?} requires Root; using {:?}",
-            scope,
-            effective
-        );
-    }
-    match effective {
+    match scope.effective(is_root) {
         ClientScope::MyClients => "LIVE SELECT * FROM connected_client WHERE \
              assigned_user == $auth.id AND assigned_user.store == $auth.store \
              AND connected == true"
@@ -321,6 +282,17 @@ impl crate::app_state::SharedContext {
             // connected_client → scope selected in the admin console.
             let query = connected_client_live_query(self.client_scope, &user);
             self.spawn_live_stream::<database::schema::ConnectedClient>(live_clients_tx, query);
+
+            // Store labels for grouping a fleet-wide list; only this scope
+            // spans stores, so nothing else pays for the fetch.
+            if self.client_scope == ClientScope::AllClients {
+                let tx = self.all_users_tx.clone();
+                PlatformSpawner::spawn(async move {
+                    if let Err(e) = database::schema::utilities::get_all_users(tx).await {
+                        log::warn!("get_all_users failed: {e:?}");
+                    }
+                });
+            }
         } else {
             log::info!("load_data: live queries already active; skipping re-spawn");
         }
@@ -392,7 +364,18 @@ impl crate::app_state::SharedContext {
                 self.kill_live_streams();
                 self.force_data_refetch = true;
                 self.load_data(ctx, &user);
+                // The live stream only carries changes, so the list is filled
+                // by this snapshot under the new scope.
+                self.refresh_client_list();
             }
+        }
+
+        while let Ok(users) = self.all_users_rx.try_recv() {
+            self.user_store_map = users
+                .iter()
+                .map(|u| (u.get_id().key_string().to_string(), u.get_store().as_str().to_string()))
+                .collect();
+            log::info!("user store map -> {} users", self.user_store_map.len());
         }
 
         // Drain the full error backlog every frame (five streams die at once
