@@ -19,6 +19,74 @@ pub mod reachability;
 pub mod open_service_apply;
 // pub mod receive_database;
 
+/// Which connected clients the admin console subscribes to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum ClientScope {
+    /// Clients assigned to the signed-in user. The only scope non-root gets.
+    #[default]
+    MyClients,
+    /// Every client assigned to a user in the signed-in user's store.
+    MyStore,
+    /// Every connected client in the fleet, all stores. Root only.
+    AllClients,
+}
+
+impl ClientScope {
+    pub fn label(self) -> &'static str {
+        match self {
+            ClientScope::MyClients => "My clients",
+            ClientScope::MyStore => "My store",
+            ClientScope::AllClients => "All clients",
+        }
+    }
+
+    /// Scopes the given user may select; non-root is limited to their own.
+    pub fn selectable_for(user_is_root: bool) -> &'static [ClientScope] {
+        if user_is_root {
+            &[
+                ClientScope::MyClients,
+                ClientScope::MyStore,
+                ClientScope::AllClients,
+            ]
+        } else {
+            &[ClientScope::MyClients]
+        }
+    }
+}
+
+/// Builds the `connected_client` LIVE query for `scope`, clamping non-root
+/// users to [`ClientScope::MyClients`] regardless of what is stored or
+/// requested — this is the authoritative gate, not the combo box.
+///
+/// Every scope keeps `connected == true` so the subscription tracks online
+/// machines rather than the whole table.
+pub fn connected_client_live_query(scope: ClientScope, user: &User) -> String {
+    let is_root =
+        user.get_authorization() == database::schema::user::UserAuthorization::Root;
+    let effective = if is_root { scope } else { ClientScope::MyClients };
+    if effective != scope {
+        log::warn!(
+            "client scope {:?} requires Root; using {:?}",
+            scope,
+            effective
+        );
+    }
+    match effective {
+        ClientScope::MyClients => "LIVE SELECT * FROM connected_client WHERE \
+             assigned_user == $auth.id AND assigned_user.store == $auth.store \
+             AND connected == true"
+            .to_string(),
+        // Root also receives pre-boot UEFI/QC agents (no assigned_user).
+        ClientScope::MyStore => "LIVE SELECT * FROM connected_client WHERE \
+             (assigned_user.store == $auth.store AND connected == true) \
+             OR (client_kind IN ['qc_agent', 'uefi'] AND connected == true)"
+            .to_string(),
+        ClientScope::AllClients => {
+            "LIVE SELECT * FROM connected_client WHERE connected == true".to_string()
+        }
+    }
+}
+
 impl crate::app_state::SharedContext {
     /// Spawns one abortable live-query stream; stream failures report
     /// `(epoch, error)` so stale generations can be discarded.
@@ -47,6 +115,34 @@ impl crate::app_state::SharedContext {
         PlatformSpawner::spawn(async move {
             let _ = fut.await;
         });
+    }
+
+    /// Closes every open admin↔client session and drops the client lists.
+    ///
+    /// Called whenever the signed-in identity goes away: sessions and their
+    /// background retry loops outlive a `$auth` change, so without this the
+    /// next user inherits the previous user's sessions — including any the
+    /// previous (Root) user opened outside the new user's scope — and can act
+    /// on them through paths that read `ws_clients` directly (Batch menu).
+    pub fn end_admin_sessions(&mut self, reason: &str) {
+        let layout = &mut self.web_console_layout;
+        if !layout.ws_clients.is_empty() {
+            log::info!(
+                "Closing {} admin session(s): {reason}",
+                layout.ws_clients.len()
+            );
+        }
+        for (cs, mut ws) in layout.ws_clients.drain() {
+            log::info!("end_admin_sessions -> closing {cs}");
+            ws.transport.close();
+        }
+        layout.session_layout.clear();
+        layout.focused_client = None;
+        layout.clients.clear();
+        layout.manual_connect_input.clear();
+        layout.manual_connect_status.clear();
+        layout.manual_connect_busy = false;
+        self.clients.clear();
     }
 
     /// Aborts all live-query streams (dropping a stream auto-KILLs it) and
@@ -222,14 +318,8 @@ impl crate::app_state::SharedContext {
                 "LIVE SELECT * FROM ai_task_item WHERE ai_task_ref.assignee.store == $auth.store".to_string(),
             );
 
-            // connected_client → this store's connected clients.
-            let is_root = user.get_authorization() == database::schema::user::UserAuthorization::Root;
-            let query = if is_root {
-                // Root also receives pre-boot UEFI agents (no assigned_user).
-                "LIVE SELECT * FROM connected_client WHERE (assigned_user.store == $auth.store AND connected == true) OR (client_kind IN ['qc_agent', 'uefi'] AND connected == true)".to_string()
-            } else {
-                "LIVE SELECT * FROM connected_client WHERE assigned_user == $auth.id AND assigned_user.store == $auth.store AND connected == true".to_string()
-            };
+            // connected_client → scope selected in the admin console.
+            let query = connected_client_live_query(self.client_scope, &user);
             self.spawn_live_stream::<database::schema::ConnectedClient>(live_clients_tx, query);
         } else {
             log::info!("load_data: live queries already active; skipping re-spawn");
@@ -290,6 +380,20 @@ impl crate::app_state::SharedContext {
         }
 
         ctx.request_repaint_after(web_time::Duration::from_secs(1));
+
+        // Scope change: re-issue the live queries under the new filter. The old
+        // client set belongs to the previous scope, so drop it and refetch.
+        if self.client_scope_dirty {
+            self.client_scope_dirty = false;
+            if let Some(user) = self.current_user.clone() {
+                log::info!("client scope -> {:?}; re-issuing live queries", self.client_scope);
+                self.clients.clear();
+                self.web_console_layout.clients.clear();
+                self.kill_live_streams();
+                self.force_data_refetch = true;
+                self.load_data(ctx, &user);
+            }
+        }
 
         // Drain the full error backlog every frame (five streams die at once
         // on a WS reset); errors from replaced stream generations are noise.
@@ -363,6 +467,7 @@ impl crate::app_state::SharedContext {
                     // (expired token, no cached password). Route to login on
                     // both platforms rather than wedging behind a modal.
                     log::warn!("Reconnected but $auth can't be restored — returning to login");
+                    self.end_admin_sessions("auth lost");
                     self.kill_live_streams();
                     self.needs_reconnect = false;
                     self.reconnect_attempts = 0;
@@ -458,6 +563,11 @@ impl crate::app_state::SharedContext {
         if let Ok(state) = self.app_state_rx.try_recv() {
             log::info!("Got a new state: {state:?}\nbefore state: {:?}", self.state);
             if let crate::app_state::AppState::NoAuth(reason) = &state {
+                // Every route back to login lands here, so sessions and live
+                // streams opened under the old identity end in one place.
+                self.end_admin_sessions("signed out");
+                self.kill_live_streams();
+                self.current_user = None;
                 let toast = &mut self.toasts;
                 let error_toast = crate::ui_tools::toasts::Toast {
                     kind: crate::ui_tools::toasts::ToastKind::Error,

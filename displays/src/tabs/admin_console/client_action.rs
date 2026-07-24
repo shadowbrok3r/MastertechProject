@@ -28,6 +28,9 @@ pub enum ClientUiAction {
     LinkCustomer(ConnectedClient),
     /// Run automated repair for this connection_string.
     RepairAssociations(ConnectedClient),
+    /// Root-only: look up a client by `connection_string` or `client_hash` and
+    /// open a session to it, bypassing the live query's user/store scope.
+    ConnectByIdentifier(String),
 }
 
 impl AdminConsole {
@@ -105,6 +108,32 @@ impl AdminConsole {
             }
             ClientUiAction::LinkCustomer(client) => {
                 submit_admin_entity_link(&client, "customer");
+            }
+            ClientUiAction::ConnectByIdentifier(query) => {
+                let query = query.trim().to_string();
+                // Enforced here, not only in the UI, so no stray action can
+                // reach a client outside the caller's scope.
+                if !super::current_user_is_root() {
+                    log::warn!(
+                        "ConnectByIdentifier refused: signed-in user is not Root"
+                    );
+                    self.manual_connect_status =
+                        "Root authorization required".to_string();
+                    self.manual_connect_busy = false;
+                    return;
+                }
+                if query.is_empty() {
+                    self.manual_connect_status =
+                        "Enter a connection string or client hash".to_string();
+                    self.manual_connect_busy = false;
+                    return;
+                }
+                self.manual_connect_busy = true;
+                self.manual_connect_status = format!("Looking up {query}…");
+                let tx = self.manual_connect_tx.clone();
+                PlatformSpawner::spawn(async move {
+                    let _ = tx.send(lookup_client_by_identifier(&query).await);
+                });
             }
             ClientUiAction::RepairAssociations(client) => {
                 let cs = client.connection_string.clone();
@@ -224,8 +253,14 @@ impl AdminConsole {
             .filter(|(cs, w)| {
                 w.transport.is_closed() && self.session_layout.contains_key(*cs)
             })
-            .filter_map(|(cs, _)| {
-                self.clients.iter().find(|c| &c.connection_string == cs).cloned()
+            // Fall back to the session's own copy: a client reached by hash is
+            // absent from the scoped list and would never be resurrected.
+            .map(|(cs, w)| {
+                self.clients
+                    .iter()
+                    .find(|c| &c.connection_string == cs)
+                    .cloned()
+                    .unwrap_or_else(|| w.client.clone())
             })
             .collect();
         for client in dead {
@@ -252,6 +287,29 @@ impl AdminConsole {
         for client in want {
             self.open_session(client);
         }
+    }
+}
+
+/// Fetch one `connected_client` by exact `connection_string` or `client_hash`,
+/// with no user/store filter. Callers must confirm Root authorization first.
+async fn lookup_client_by_identifier(query: &str) -> Result<ConnectedClient, String> {
+    let mut response = db()
+        .query(
+            "SELECT * FROM connected_client \
+             WHERE connection_string == $q OR client_hash == $q LIMIT 1",
+        )
+        .bind(("q", query.to_string()))
+        .await
+        .map_err(|e| format!("lookup failed: {e}"))?;
+    let rows: Vec<ConnectedClient> = response
+        .take(0)
+        .map_err(|e| format!("lookup decode failed: {e}"))?;
+    match rows.into_iter().next() {
+        Some(client) if client.connection_string.trim().is_empty() => {
+            Err("row has no connection_string; cannot open a session".to_string())
+        }
+        Some(client) => Ok(client),
+        None => Err(format!("no client matches {query}")),
     }
 }
 

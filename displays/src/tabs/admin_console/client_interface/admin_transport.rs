@@ -43,6 +43,10 @@ use web_time::Duration;
 type OutTx = tokio::sync::mpsc::UnboundedSender<TcpFrame>;
 #[cfg(not(target_arch = "wasm32"))]
 type OutRx = Arc<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<TcpFrame>>>;
+// wasm never constructs the Tcp variant; this only keeps the field's type in
+// scope, and `send`/`close` use the same call shape on either sender.
+#[cfg(target_arch = "wasm32")]
+type OutTx = XSender<TcpFrame>;
 // Wire-protocol constants live in the shared `tcp_protocol` crate so this
 // file and `Mastertech4.0/src/{transport,tcp_listener}.rs` cannot drift.
 pub use tcp_protocol::{

@@ -83,6 +83,16 @@ pub enum RightPanel {
     Chat,
 }
 
+/// True only when the signed-in user's authorization is exactly `Root`.
+/// Gates connecting to clients outside the live query's user/store scope.
+pub fn current_user_is_root() -> bool {
+    crate::get_current_user_from_auth()
+        .map(|u| {
+            u.get_authorization() == database::schema::user::UserAuthorization::Root
+        })
+        .unwrap_or(false)
+}
+
 #[derive(Serialize)]
 pub struct AdminConsole {
     pub client_map: BTreeMap<String, Vec<ConnectedClient>>,
@@ -132,6 +142,21 @@ pub struct AdminConsole {
     /// probe-confirmed-unreachable client straight to the relay tunnel.
     #[serde(skip)]
     pub reachability_cache: HashMap<String, crate::ui_data::reachability::ReachabilityStatus>,
+    /// Root-only connect-by-identifier field: a `connection_string` or
+    /// `client_hash` typed in to reach a client the live query never returns
+    /// (another store's machine, or one assigned to a different user).
+    #[serde(skip)]
+    pub manual_connect_input: String,
+    /// Result line shown under [`Self::manual_connect_input`].
+    #[serde(skip)]
+    pub manual_connect_status: String,
+    /// True while a lookup is in flight, so the button can't be double-fired.
+    #[serde(skip)]
+    pub manual_connect_busy: bool,
+    #[serde(skip)]
+    pub manual_connect_tx: Sender<Result<ConnectedClient, String>>,
+    #[serde(skip)]
+    pub manual_connect_rx: Receiver<Result<ConnectedClient, String>>,
     /// Pending batch action awaiting operator confirmation
     /// (slice 4). The Batch ▾ menu fires items into this slot;
     /// the confirm dialog reads it, and on Confirm the dispatcher
@@ -184,6 +209,7 @@ impl AdminConsole {
     pub fn new(client_map: BTreeMap<String, Vec<ConnectedClient>>, clients: Vec<ConnectedClient>) -> Self {
         let ui_actions_channel = ClientUiAction::create_unbounded_channel();
         let (fk_health_tx, fk_health_rx) = crossbeam::channel::unbounded();
+        let (manual_connect_tx, manual_connect_rx) = crossbeam::channel::unbounded();
         Self {
             clients,
             client_map,
@@ -199,6 +225,11 @@ impl AdminConsole {
             active_diagnostic_sessions: Default::default(),
             security_inventory: Default::default(),
             reachability_cache: Default::default(),
+            manual_connect_input: Default::default(),
+            manual_connect_status: Default::default(),
+            manual_connect_busy: false,
+            manual_connect_tx,
+            manual_connect_rx,
             pending_batch_action: None,
             ui_actions_channel,
             error: Default::default(),
@@ -361,6 +392,40 @@ impl AdminConsole {
         self.filesystem.receive();
         while let Ok((cs, cust_ok, comp_ok)) = self.fk_health_rx.try_recv() {
             self.fk_health_cache.insert(cs, (cust_ok, comp_ok));
+        }
+        while let Ok(result) = self.manual_connect_rx.try_recv() {
+            self.manual_connect_busy = false;
+            // Re-checked at the point of action: authorization may have changed
+            // between submitting the lookup and its result arriving.
+            if !current_user_is_root() {
+                self.manual_connect_status = "Root authorization required".to_string();
+                continue;
+            }
+            match result {
+                Ok(client) => {
+                    let cs = client.connection_string.clone();
+                    self.manual_connect_status = if client.connected {
+                        format!("Opening session to {cs}")
+                    } else {
+                        format!("Opening session to {cs} (row says disconnected)")
+                    };
+                    log::info!("ConnectByIdentifier -> opening session to {cs}");
+                    self.session_layout
+                        .entry(cs.clone())
+                        .or_insert(SessionLayout::Docked);
+                    self.focused_client = Some(cs.clone());
+                    if self.open_session(client) {
+                        self.manual_connect_input.clear();
+                    } else {
+                        self.manual_connect_status = format!("Could not open a session to {cs}");
+                    }
+                }
+                Err(e) => {
+                    log::warn!("ConnectByIdentifier -> {e}");
+                    self.manual_connect_status = e;
+                }
+            }
+            ctx.request_repaint();
         }
         if let Ok(action) = self.ui_actions_channel.1.try_recv() {
             self.handle_action(action);
@@ -791,6 +856,95 @@ impl SharedContext {
                                 .map(|s| (c.connection_string.clone(), s.clone()))
                         })
                         .collect();
+
+                // Visibility scope. Non-root has only one option, so the combo
+                // renders disabled; the query builder clamps it regardless.
+                {
+                    let is_root = current_user_is_root();
+                    let options = crate::ui_data::ClientScope::selectable_for(is_root);
+                    let mut selected = self.client_scope;
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Show").small().weak());
+                        ui.add_enabled_ui(options.len() > 1, |ui| {
+                            eframe::egui::ComboBox::from_id_salt("admin_client_scope")
+                                .selected_text(RichText::new(selected.label()).small())
+                                .show_ui(ui, |ui| {
+                                    for opt in options {
+                                        ui.selectable_value(
+                                            &mut selected,
+                                            *opt,
+                                            opt.label(),
+                                        );
+                                    }
+                                });
+                        })
+                        .response
+                        .on_hover_text(if is_root {
+                            "Which connected clients to subscribe to"
+                        } else {
+                            "Root authorization required to widen this"
+                        });
+                    });
+                    if selected != self.client_scope {
+                        self.client_scope = selected;
+                        self.client_scope_dirty = true;
+                    }
+                    ui.add_space(4.);
+                }
+
+                // Root-only: reach a client the live query never returns
+                // (another store's machine, or one assigned to another user).
+                if current_user_is_root() {
+                    let layout = &mut self.web_console_layout;
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(format!("{} Connect by hash", icons::LOCK))
+                                .small()
+                                .strong(),
+                        )
+                        .on_hover_text(
+                            "Root only: connection string (host:hash) or full client hash",
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        let submitted = ui
+                            .add_sized(
+                                [CLIENT_ROW_CONTENT_W - 90., 25.],
+                                eframe::egui::TextEdit::singleline(
+                                    &mut layout.manual_connect_input,
+                                )
+                                .hint_text("host:hash or client hash")
+                                .font(eframe::egui::TextStyle::Small),
+                            )
+                            .lost_focus()
+                            && ui.input(|i| i.key_pressed(eframe::egui::Key::Enter));
+                        let clicked = ui
+                            .add_enabled(
+                                !layout.manual_connect_busy
+                                    && !layout.manual_connect_input.trim().is_empty(),
+                                eframe::egui::Button::new(RichText::new("Connect").small()),
+                            )
+                            .clicked();
+                        let ready = !layout.manual_connect_busy
+                            && !layout.manual_connect_input.trim().is_empty();
+                        if ready && (submitted || clicked) {
+                            let query = layout.manual_connect_input.clone();
+                            let _ = layout
+                                .ui_actions_channel
+                                .0
+                                .try_send(ClientUiAction::ConnectByIdentifier(query));
+                        }
+                    });
+                    if !layout.manual_connect_status.is_empty() {
+                        ui.label(
+                            RichText::new(layout.manual_connect_status.clone())
+                                .small()
+                                .weak(),
+                        );
+                    }
+                    ui.add_space(4.);
+                    ui.separator();
+                }
 
                 let ws_client = &mut self.web_console_layout;
                 let clients = &mut ws_client.clients;

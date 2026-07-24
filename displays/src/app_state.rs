@@ -495,6 +495,14 @@ pub struct SharedContext {
     /// result is only meaningful for that admin's filter view.
     #[serde(skip)]
     pub reachability_cache: HashMap<String, crate::ui_data::reachability::ReachabilityStatus>,
+    /// Which connected clients the live query subscribes to. Non-root is
+    /// clamped to `MyClients` when the query is built, so a stored wider scope
+    /// never grants visibility.
+    pub client_scope: crate::ui_data::ClientScope,
+    /// Set when the operator picks a new scope; the next `receive_shared_logic`
+    /// re-issues the live queries under the new filter.
+    #[serde(skip)]
+    pub client_scope_dirty: bool,
     /// Latest `Cmd::OpenServiceCandidatesResponse` keyed by the
     /// connected client's `connection_string`.  Populated when the
     /// admin's Web Console session for that client returns a response
@@ -763,6 +771,8 @@ impl SharedContext {
             client_diagnostics_rx,
             client_diagnostics_selected: None,
             reachability_cache: HashMap::new(),
+            client_scope: Default::default(),
+            client_scope_dirty: false,
             open_service_suggestions: HashMap::new(),
             reachability_tx,
             reachability_rx,

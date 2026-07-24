@@ -625,11 +625,18 @@ impl AdminConsole {
                 .copied()
                 .unwrap_or_default();
             if layout == SessionLayout::Docked {
-                if let Some(data) = self.clients.iter().find(|c| c.connection_string == focused).cloned() {
-                    if let Some(ws_client) = self.ws_clients.get_mut(&focused) {
+                let fresh = self
+                    .clients
+                    .iter()
+                    .find(|c| c.connection_string == focused)
+                    .cloned();
+                if let Some(ws_client) = self.ws_clients.get_mut(&focused) {
+                    // A session opened by hash is absent from the scoped list;
+                    // render it from its own copy instead of skipping it.
+                    if let Some(data) = fresh {
                         ws_client.client = data;
-                        ws_client.show(ui);
                     }
+                    ws_client.show(ui);
                 }
             }
         }
