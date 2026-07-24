@@ -486,6 +486,15 @@ impl ChatServer {
                         // This is normal - just means the master hasn't connected to this room yet
                         // Don't mark the client as disconnected - they're still connected, just waiting
                         log::debug!("No target session in room {} - target may not have connected yet", room_id);
+                        // A master with no client gets an explicit sentinel; a client with
+                        // no master stays silent.
+                        if is_from_master {
+                            let sender_sink = self.session_map.lock().await.get(&from).cloned();
+                            if let Some(sink) = sender_sink {
+                                let _ = sink.lock().await.send(Message::Text("NO_AGENT_IN_ROOM".into())).await;
+                                info!("No agent in room {room_id}; notified master");
+                            }
+                        }
                     }
                 } else {
                     info!("Room {} not found", room_id);

@@ -376,6 +376,7 @@ async fn run_session(
     // One toast per failure streak for each event kind.
     let mut connect_failure_toasted = false;
     let mut tunnel_switch_toasted = false;
+    let mut no_agent_toasted = false;
 
     loop {
         if shutdown.load(Ordering::Relaxed) {
@@ -431,6 +432,7 @@ async fn run_session(
                 &shutdown,
                 &relaunch_grace_until_ms,
                 read_idle,
+                &mut no_agent_toasted,
             )
             .await
         } else {
@@ -462,6 +464,7 @@ async fn run_session(
                 failed_attempts = 0;
                 connect_failure_toasted = false;
                 tunnel_switch_toasted = false;
+                no_agent_toasted = false;
                 log::info!("admin_transport -> session ended; reconnecting in {RETRY_INTERVAL:?}");
                 let _ = in_tx.send(WsEvent::Error("peer disconnected (reconnecting…)".to_string()));
             }
@@ -553,7 +556,11 @@ async fn attempt_tcp(
 /// One relay-tunnel connection attempt: park on `/tunnel` as master, send the
 /// client an `OpenRelayTunnel` via a one-shot `role=master` room join, then
 /// run the shared connection phase over the paired byte pipe.
+///
+/// A `NO_AGENT_IN_ROOM` reply to the room join fails the attempt immediately
+/// rather than waiting out the relay's unpaired-park TTL.
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
 async fn attempt_tunnel(
     master_base: &str,
     connection_string: &str,
@@ -562,6 +569,7 @@ async fn attempt_tunnel(
     shutdown: &Arc<AtomicBool>,
     relaunch_grace_until_ms: &Arc<AtomicU64>,
     read_idle: Duration,
+    no_agent_toasted: &mut bool,
 ) -> AttemptOutcome {
     use tcp_protocol::tunnel::{
         connect_tunnel, derive_tunnel_url, send_oneshot_ws_binary, TUNNEL_ROLE_MASTER,
@@ -592,10 +600,33 @@ async fn attempt_tunnel(
     // as `role=client`, then the one-shot closes.
     let room_url = database::websocket_url_with_room(master_base, connection_string, TUNNEL_ROLE_MASTER);
     let ctrl = super::serialize_command(&crate::Cmd::OpenRelayTunnel { session_id });
-    if let Err(e) = send_oneshot_ws_binary(&room_url, ctrl).await {
-        log::warn!("admin_transport -> tunnel dial-request send failed: {e}");
-        let _ = in_tx.send(WsEvent::Error(format!("relay dial-request send failed: {e} (retrying…)")));
-        return AttemptOutcome::Failed;
+    match send_oneshot_ws_binary(&room_url, ctrl).await {
+        Err(e) => {
+            log::warn!("admin_transport -> tunnel dial-request send failed: {e}");
+            let _ = in_tx.send(WsEvent::Error(format!("relay dial-request send failed: {e} (retrying…)")));
+            return AttemptOutcome::Failed;
+        }
+        // Nothing will ever pair with the parked socket; drop it now instead of
+        // waiting out the relay's unpaired TTL.
+        Ok(Some(reply)) if reply == "NO_AGENT_IN_ROOM" => {
+            log::warn!(
+                "admin_transport -> relay reports no agent in room for {connection_string}; agent is offline or has no relay presence"
+            );
+            let _ = in_tx.send(WsEvent::Error(
+                "client not reachable via relay: agent not connected to the relay room (retrying…)"
+                    .to_string(),
+            ));
+            if !*no_agent_toasted {
+                *no_agent_toasted = true;
+                let _ = crate::get_toast_sender().try_send(crate::ToastMessage::Warning(format!(
+                    "Relay reports no agent connected for {connection_string} — client agent is offline"
+                )));
+            }
+            return AttemptOutcome::Failed;
+        }
+        Ok(Some(other)) => log::debug!("admin_transport -> relay reply to dial-request: {other}"),
+        // Older relay builds send no reply.
+        Ok(None) => {}
     }
 
     let (read_half, write_half) = tokio::io::split(tunnel);

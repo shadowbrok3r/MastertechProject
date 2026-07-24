@@ -94,6 +94,11 @@ impl MasterTechApp {
         // listener from ever binding and the firewall rule from ever being
         // added -- breaking direct-TCP admin connections for that machine.
         // `TCP_LISTENER_STARTED` keeps this exactly-once for the process.
+        // Relay room presence, so off-network admins can reach this client:
+        // the relay needs a `role=client` socket to deliver OpenRelayTunnel to.
+        // Self-guarded, independent of the spec-gather and TCP listener below.
+        crate::relay_control::spawn_relay_control_channel();
+
         if !TCP_LISTENER_STARTED.swap(true, Ordering::SeqCst) {
             spawn(async move {
                 // sysinfo's refresh_all inside get_client_hash is CPU-bound;

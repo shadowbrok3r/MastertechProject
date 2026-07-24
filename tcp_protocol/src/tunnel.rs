@@ -26,10 +26,11 @@
 //! how both session engines drive their write half.
 
 use bytes::Bytes;
-use futures::{Sink, SinkExt, Stream};
+use futures::{Sink, SinkExt, Stream, StreamExt};
 use std::io;
 use std::pin::Pin;
 use std::task::{ready, Context, Poll};
+use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::{self, Message};
@@ -41,6 +42,8 @@ pub const TUNNEL_ROLE_MASTER: &str = "master";
 pub const TUNNEL_ROLE_CLIENT: &str = "client";
 /// Path of the relay's tunnel route.
 pub const TUNNEL_PATH: &str = "/tunnel";
+/// How long [`send_oneshot_ws_binary`] waits for the relay's first `Text` reply.
+pub const ONESHOT_REPLY_WINDOW: Duration = Duration::from_secs(2);
 
 /// Derive the relay tunnel URL from a configured `/websocket` room URL.
 ///
@@ -65,16 +68,40 @@ pub async fn connect_tunnel(url: &str) -> Result<TunnelStream, tungstenite::Erro
     Ok(WsByteStream::new(ws))
 }
 
-/// Connect to `url`, deliver one binary message, flush, close.
+/// Connect to `url`, deliver one binary message, flush, wait briefly for a
+/// reply, close.
 ///
 /// Used to poke the client's room over `role=master`: the admin joins the
 /// room, sends one serialized `Cmd` (which the relay forwards to the room's
-/// client), then drops the connection.
-pub async fn send_oneshot_ws_binary(url: &str, payload: Vec<u8>) -> Result<(), tungstenite::Error> {
+/// client), then drops the connection. Returns the relay's first `Text` reply
+/// if one arrives within [`ONESHOT_REPLY_WINDOW`], otherwise `None`; a
+/// timeout, a close without text, and non-`Text` frames all yield `None`.
+pub async fn send_oneshot_ws_binary(
+    url: &str,
+    payload: Vec<u8>,
+) -> Result<Option<String>, tungstenite::Error> {
     let (mut ws, _resp) = tokio_tungstenite::connect_async(url).await?;
     ws.send(Message::Binary(payload.into())).await?;
+    ws.flush().await?;
+
+    let reply = tokio::time::timeout(ONESHOT_REPLY_WINDOW, async {
+        while let Some(msg) = ws.next().await {
+            match msg {
+                Ok(Message::Text(t)) => return Some(t.to_string()),
+                Ok(_) => {}
+                Err(e) => {
+                    log::debug!("oneshot -> read error while awaiting relay reply: {e}");
+                    return None;
+                }
+            }
+        }
+        None
+    })
+    .await
+    .unwrap_or(None);
+
     let _ = ws.close(None).await;
-    Ok(())
+    Ok(reply)
 }
 
 /// `AsyncRead + AsyncWrite` over a tokio-tungstenite WebSocket.
