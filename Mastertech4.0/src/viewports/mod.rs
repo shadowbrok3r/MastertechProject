@@ -125,6 +125,10 @@ impl MasterTechApp{
                         String,
                         (bool, bool),
                     > = std::collections::HashMap::new();
+                    let transport = layout
+                        .ws_clients
+                        .get(&client.connection_string)
+                        .map(|w| (w.transport.kind(), w.is_connected));
                     ui.horizontal(|ui| {
                         AdminConsole::client_header(
                             ui,
@@ -137,6 +141,7 @@ impl MasterTechApp{
                             &fk_health_cache,
                             inventory,
                             None,
+                            transport,
                         );
                     });
                     if let Some(ws_client) = layout.ws_clients.get_mut(&client.connection_string) {

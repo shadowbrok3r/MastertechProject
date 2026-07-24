@@ -120,12 +120,28 @@ impl AdminConsole {
 
     /// Establish (or replace a dead) admin↔client session for `client` without
     /// changing focus. On native: direct TCP when coords are advertised (the
-    /// transport auto-falls back to the relay tunnel after repeated dial
-    /// failures); the relay tunnel directly when no coords are advertised. On
-    /// wasm: the browser relay room. Returns true if a session entry is present
-    /// afterward.
+    /// transport rotates the relay tunnel into its retry schedule on dial
+    /// failures); the relay tunnel directly when no coords are advertised. An
+    /// existing entry that is not connected gets a fresh transport swapped in
+    /// while keeping its session history and UI state. On wasm: the browser
+    /// relay room. Returns true if a session entry is present afterward.
     pub fn open_session(&mut self, mut client: ConnectedClient) -> bool {
         use std::collections::hash_map::Entry;
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(existing) = self.ws_clients.get_mut(&client.connection_string) {
+            if existing.is_connected {
+                return true;
+            }
+            log::info!(
+                "open_session -> swapping fresh transport into existing session for {}",
+                client.connection_string
+            );
+            existing.transport = Self::dial_native(&client);
+            existing.connection_status = "Reconnecting…".to_string();
+            return true;
+        }
+        #[cfg(target_arch = "wasm32")]
         if let Some(existing) = self.ws_clients.get(&client.connection_string) {
             if existing.is_connected {
                 return true;
@@ -133,17 +149,7 @@ impl AdminConsole {
         }
 
         #[cfg(not(target_arch = "wasm32"))]
-        let transport = match (client.local_ip.as_deref(), client.tcp_port) {
-            (Some(ip), Some(port)) if !ip.is_empty() => {
-                let target = format!("{ip}:{port}");
-                log::info!("open_session -> direct TCP to {target} for {}", client.connection_string);
-                AdminTransport::from_tcp(target, client.connection_string.clone())
-            }
-            _ => {
-                log::info!("open_session -> relay tunnel for {} (no TCP coords)", client.connection_string);
-                AdminTransport::from_tunnel(client.connection_string.clone())
-            }
-        };
+        let transport = Self::dial_native(&client);
         #[cfg(target_arch = "wasm32")]
         let transport = match Self::dial_ws(&mut client) {
             Some(t) => t,
@@ -165,6 +171,23 @@ impl AdminConsole {
             _ => {}
         }
         true
+    }
+
+    /// Native transport choice: direct TCP when coords are advertised (with
+    /// built-in tunnel rotation on dial failures), else the relay tunnel.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn dial_native(client: &ConnectedClient) -> AdminTransport {
+        match (client.local_ip.as_deref(), client.tcp_port) {
+            (Some(ip), Some(port)) if !ip.is_empty() => {
+                let target = format!("{ip}:{port}");
+                log::info!("open_session -> direct TCP to {target} for {}", client.connection_string);
+                AdminTransport::from_tcp(target, client.connection_string.clone())
+            }
+            _ => {
+                log::info!("open_session -> relay tunnel for {} (no TCP coords)", client.connection_string);
+                AdminTransport::from_tunnel(client.connection_string.clone())
+            }
+        }
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -192,6 +215,30 @@ impl AdminConsole {
     /// each session alive once established.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn ensure_sessions(&mut self) {
+        // Resurrect entries whose transport went terminal (session task ended,
+        // e.g. after a panic). Transient drops self-heal inside the transport
+        // and never trip this; the swap keeps session history and UI state.
+        let dead: Vec<ConnectedClient> = self
+            .ws_clients
+            .iter()
+            .filter(|(cs, w)| {
+                w.transport.is_closed() && self.session_layout.contains_key(*cs)
+            })
+            .filter_map(|(cs, _)| {
+                self.clients.iter().find(|c| &c.connection_string == cs).cloned()
+            })
+            .collect();
+        for client in dead {
+            log::warn!(
+                "ensure_sessions -> transport for {} is terminal; swapping in a fresh one",
+                client.connection_string
+            );
+            if let Some(w) = self.ws_clients.get_mut(&client.connection_string) {
+                w.transport = Self::dial_native(&client);
+                w.connection_status = "Reconnecting…".to_string();
+            }
+        }
+
         let want: Vec<ConnectedClient> = self
             .clients
             .iter()

@@ -34,6 +34,15 @@ use std::sync::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use web_time::Duration;
+
+/// Outbound frame queue shared across a session's reconnect attempts. A tokio
+/// unbounded channel (not crossbeam) so the writer task can `recv().await`
+/// directly: cancel-safe, so aborting the writer on redial never strands a
+/// blocked thread or swallows the next frame.
+#[cfg(not(target_arch = "wasm32"))]
+type OutTx = tokio::sync::mpsc::UnboundedSender<TcpFrame>;
+#[cfg(not(target_arch = "wasm32"))]
+type OutRx = Arc<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<TcpFrame>>>;
 // Wire-protocol constants live in the shared `tcp_protocol` crate so this
 // file and `Mastertech4.0/src/{transport,tcp_listener}.rs` cannot drift.
 pub use tcp_protocol::{
@@ -67,7 +76,7 @@ enum AdminTransportInner {
     /// `out_tx` (a writer task drains them); synthesized [`WsEvent`]s
     /// arrive on `in_rx`.
     Tcp {
-        out_tx: XSender<TcpFrame>,
+        out_tx: OutTx,
         in_rx: XReceiver<WsEvent>,
         /// Set to `true` when we've sent a `WsEvent::Closed` so further
         /// `send()` calls become no-ops instead of leaking unbounded-channel
@@ -103,6 +112,20 @@ pub enum TcpFrame {
     Shutdown,
 }
 
+impl Drop for AdminTransport {
+    fn drop(&mut self) {
+        if let AdminTransportInner::Tcp {
+            out_tx, shutdown, ..
+        } = &self.inner
+        {
+            // A replaced or dropped handle must not leave its background
+            // session task dialing (or holding a phantom session).
+            shutdown.store(true, Ordering::Relaxed);
+            let _ = out_tx.send(TcpFrame::Shutdown);
+        }
+    }
+}
+
 impl AdminTransport {
     pub fn from_ws(sender: WsSender, receiver: WsReceiver) -> Self {
         Self {
@@ -110,11 +133,12 @@ impl AdminTransport {
         }
     }
 
-    /// Spawn a session that starts by dialing direct TCP and permanently
-    /// falls back to the relay tunnel after repeated dial failures. Returns
-    /// immediately; the connect happens in the background. A `WsEvent::Opened`
-    /// arrives once the handshake completes; failures surface as
-    /// `WsEvent::Error`/`WsEvent::Closed` on the existing receive loop.
+    /// Spawn a session that starts by dialing direct TCP and rotates the
+    /// relay tunnel into its retry schedule after repeated dial failures
+    /// (see [`run_session`]) — retrying both paths forever until closed.
+    /// Returns immediately; the connect happens in the background. A
+    /// `WsEvent::Opened` arrives once the handshake completes; failures
+    /// surface as `WsEvent::Error`/`WsEvent::Closed` on the receive loop.
     ///
     /// `target_addr` should be `"<ip>:<port>"`. `connection_string` is what
     /// the client expects in the handshake's connection_string field — we
@@ -139,7 +163,7 @@ impl AdminTransport {
     fn spawn_session(initial_target: Option<String>, connection_string: String) -> Self {
         use crossbeam::channel::unbounded;
 
-        let (out_tx, out_rx) = unbounded::<TcpFrame>();
+        let (out_tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<TcpFrame>();
         let (in_tx, in_rx) = unbounded::<WsEvent>();
 
         // Shared shutdown signal — `close()` flips it from the UI thread;
@@ -211,6 +235,18 @@ impl AdminTransport {
                     TransportKind::Tcp
                 }
             }
+        }
+    }
+
+    /// True once this transport is terminal — closed by the operator or its
+    /// background session task has exited. Terminal transports never
+    /// reconnect on their own; callers swap in a fresh one.
+    pub fn is_closed(&self) -> bool {
+        match &self.inner {
+            AdminTransportInner::WebSocket { .. } => false,
+            AdminTransportInner::Tcp {
+                closed, shutdown, ..
+            } => *closed || shutdown.load(Ordering::Relaxed),
         }
     }
 
@@ -289,17 +325,17 @@ impl AdminTransport {
     }
 }
 
-/// Background driver for a single admin↔client session. Runs in one of two
-/// modes and retries indefinitely until `AdminTransport::close()` flips
-/// `shutdown`.
+/// Background driver for a single admin↔client session. Retries indefinitely
+/// until `AdminTransport::close()` flips `shutdown` — no attempt count or
+/// failure mode ever makes it give up, and no path choice is permanent.
 ///
-/// - TCP mode (`initial_target` = `Some`): dials the advertised address,
-///   refreshing it from the DB each round. After two consecutive dial
-///   failures the session permanently switches to Tunnel mode.
-/// - Tunnel mode (`initial_target` = `None`, or entered by fallback): each
-///   attempt mints a fresh session id, dials the relay `/tunnel` route as
-///   master, then pushes an `OpenRelayTunnel` control message so the client
-///   dials the same tunnel.
+/// Path rotation per failed attempt: while TCP coords are advertised, the
+/// first two attempts of a streak dial direct TCP, then the relay tunnel
+/// joins the rotation (TCP, tunnel, TCP, …) so whichever path recovers first
+/// wins. Coords are re-read from the DB before every attempt, so a client
+/// that restarts on a new port, publishes coords late, or loses them is
+/// picked up automatically. Every established session resets the rotation to
+/// TCP-first.
 ///
 /// `shutdown` is honored at every retry boundary so a UI-initiated disconnect
 /// breaks out within ≤200 ms even mid-dial. `tunnel_active` is shared with the
@@ -308,26 +344,22 @@ impl AdminTransport {
 async fn run_session(
     initial_target: Option<String>,
     connection_string: String,
-    out_rx: XReceiver<TcpFrame>,
+    out_rx: tokio::sync::mpsc::UnboundedReceiver<TcpFrame>,
     in_tx: XSender<WsEvent>,
     shutdown: Arc<AtomicBool>,
     relaunch_grace_until_ms: Arc<AtomicU64>,
     tunnel_active: Arc<AtomicBool>,
 ) {
-    use std::sync::Mutex;
-    use tokio::net::TcpStream;
-
     const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
     const CONNECT_TIMEOUT_RELAUNCH: Duration = Duration::from_secs(10);
     const RETRY_INTERVAL: Duration = Duration::from_secs(3);
-    const TUNNEL_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
     /// Per-frame read idle timeout. With pings at 15 s, a healthy session
     /// always sees a pong inside this window. If 45 s elapses with nothing
     /// inbound, treat the connection as dead and let the outer loop retry.
     const READ_IDLE: Duration = Duration::from_secs(45);
     const READ_IDLE_RELAUNCH: Duration = Duration::from_secs(120);
-    /// Consecutive TCP dial failures before permanently switching to tunnel.
-    const TCP_FAILURE_FALLBACK: u32 = 2;
+    /// Failed attempts in a streak before the tunnel joins the rotation.
+    const TCP_ATTEMPTS_BEFORE_TUNNEL: u32 = 2;
 
     let master_base = if cfg!(debug_assertions) {
         database::WS_MASTER_URL_LOCAL
@@ -335,14 +367,15 @@ async fn run_session(
         database::WS_MASTER_URL
     };
 
-    // Wrap the receiver so the writer task can borrow it each connection
-    // without taking ownership, allowing reconnect on drop+redial.
-    let out_rx = Arc::new(Mutex::new(out_rx));
-    let mut tunnel_mode = initial_target.is_none();
-    let mut target_addr = initial_target.unwrap_or_default();
-    // One toast per failure streak; reset after a successful dial.
+    // Shared so each attempt's writer task can lock it; the queue survives
+    // redials so frames sent during a reconnect are delivered on the next one.
+    let out_rx: OutRx = Arc::new(tokio::sync::Mutex::new(out_rx));
+    let mut target_addr = initial_target;
+    // Failed attempts since the last established session.
+    let mut failed_attempts: u32 = 0;
+    // One toast per failure streak for each event kind.
     let mut connect_failure_toasted = false;
-    let mut consecutive_failures: u32 = 0;
+    let mut tunnel_switch_toasted = false;
 
     loop {
         if shutdown.load(Ordering::Relaxed) {
@@ -350,72 +383,48 @@ async fn run_session(
             return;
         }
 
+        // Re-read coords before every attempt: a restarted client can publish
+        // a new port, publish coords for the first time, or drop them.
+        if let Some(fresh) = fetch_tcp_target(&connection_string).await {
+            if target_addr.as_deref() != Some(fresh.as_str()) {
+                log::info!("admin_transport -> refreshed dial target {target_addr:?} -> {fresh}");
+                connect_failure_toasted = false;
+            }
+            target_addr = Some(fresh);
+        }
+
         let relaunch_grace_active = in_relaunch_grace(&relaunch_grace_until_ms);
+        let connect_timeout = if relaunch_grace_active {
+            CONNECT_TIMEOUT_RELAUNCH
+        } else {
+            CONNECT_TIMEOUT
+        };
         let read_idle = if relaunch_grace_active {
             READ_IDLE_RELAUNCH
         } else {
             READ_IDLE
         };
 
-        if !tunnel_mode {
-            // ---- TCP mode: acquire read/write halves ----
-            if let Some(fresh) = fetch_tcp_target(&connection_string).await {
-                if fresh != target_addr {
-                    log::info!("admin_transport -> refreshed dial target {target_addr} -> {fresh}");
-                    target_addr = fresh;
-                    connect_failure_toasted = false;
-                }
+        // Attempts 0,1 of a streak dial TCP; attempts 2,4,6,… try the tunnel
+        // and 3,5,7,… retry TCP. Without coords the tunnel is the only path.
+        let use_tunnel = match &target_addr {
+            None => true,
+            Some(_) => {
+                failed_attempts >= TCP_ATTEMPTS_BEFORE_TUNNEL
+                    && (failed_attempts - TCP_ATTEMPTS_BEFORE_TUNNEL) % 2 == 0
             }
-            let connect_timeout = if relaunch_grace_active {
-                CONNECT_TIMEOUT_RELAUNCH
-            } else {
-                CONNECT_TIMEOUT
-            };
-            log::info!(
-                "admin_transport -> dialing {target_addr} (relaunch_grace={relaunch_grace_active})"
-            );
+        };
+        tunnel_active.store(use_tunnel, Ordering::Relaxed);
 
-            let dial_result = match tokio::time::timeout(connect_timeout, TcpStream::connect(&target_addr)).await {
-                Ok(Ok(s)) => Ok(s),
-                Ok(Err(e)) => Err(format!("TCP connect to {target_addr} failed: {e}")),
-                Err(_) => Err(format!("TCP connect to {target_addr} timed out")),
-            };
-            let stream = match dial_result {
-                Ok(s) => s,
-                Err(msg) => {
-                    consecutive_failures += 1;
-                    log::warn!("admin_transport -> {msg} (failure {consecutive_failures})");
-                    let _ = in_tx.send(WsEvent::Error(format!("{msg} (retrying…)")));
-                    if !connect_failure_toasted {
-                        connect_failure_toasted = true;
-                        let _ = crate::get_toast_sender().try_send(crate::ToastMessage::Warning(msg.clone()));
-                    }
-                    if consecutive_failures >= TCP_FAILURE_FALLBACK {
-                        tunnel_mode = true;
-                        tunnel_active.store(true, Ordering::Relaxed);
-                        consecutive_failures = 0;
-                        connect_failure_toasted = false;
-                        let _ = crate::get_toast_sender().try_send(crate::ToastMessage::Warning(
-                            format!("TCP unreachable — switching to relay tunnel for {connection_string}"),
-                        ));
-                        continue;
-                    }
-                    if shutdown_aware_sleep(&shutdown, RETRY_INTERVAL).await {
-                        let _ = in_tx.send(WsEvent::Closed);
-                        return;
-                    }
-                    continue;
-                }
-            };
-            if let Err(e) = tcp_protocol::apply_tcp_options(&stream) {
-                log::warn!("admin_transport -> apply_tcp_options failed: {e}");
+        let outcome = if use_tunnel {
+            if target_addr.is_some() && !tunnel_switch_toasted {
+                tunnel_switch_toasted = true;
+                let _ = crate::get_toast_sender().try_send(crate::ToastMessage::Warning(
+                    format!("TCP unreachable — trying relay tunnel for {connection_string}"),
+                ));
             }
-            connect_failure_toasted = false;
-            consecutive_failures = 0;
-            let (read_half, write_half) = stream.into_split();
-            run_connection_phase(
-                read_half,
-                write_half,
+            attempt_tunnel(
+                master_base,
                 &connection_string,
                 &out_rx,
                 &in_tx,
@@ -423,73 +432,44 @@ async fn run_session(
                 &relaunch_grace_until_ms,
                 read_idle,
             )
-            .await;
+            .await
         } else {
-            // ---- Tunnel mode: acquire read/write halves ----
-            use tcp_protocol::tunnel::{connect_tunnel, derive_tunnel_url, send_oneshot_ws_binary, TUNNEL_ROLE_MASTER};
-
-            let session_id = uuid::Uuid::new_v4().to_string();
-            let master_url = derive_tunnel_url(master_base, &session_id, TUNNEL_ROLE_MASTER);
-            log::info!("admin_transport -> tunnel dial {master_url} for {connection_string}");
-
-            let tunnel = match tokio::time::timeout(TUNNEL_CONNECT_TIMEOUT, connect_tunnel(&master_url)).await {
-                Ok(Ok(s)) => s,
-                Ok(Err(e)) => {
-                    log::warn!("admin_transport -> tunnel connect failed: {e}");
-                    let _ = in_tx.send(WsEvent::Error(format!("relay tunnel connect failed: {e} (retrying…)")));
-                    if shutdown_aware_sleep(&shutdown, RETRY_INTERVAL).await {
-                        let _ = in_tx.send(WsEvent::Closed);
-                        return;
-                    }
-                    continue;
-                }
-                Err(_) => {
-                    log::warn!("admin_transport -> tunnel connect timed out");
-                    let _ = in_tx.send(WsEvent::Error("relay tunnel connect timed out (retrying…)".to_string()));
-                    if shutdown_aware_sleep(&shutdown, RETRY_INTERVAL).await {
-                        let _ = in_tx.send(WsEvent::Closed);
-                        return;
-                    }
-                    continue;
-                }
-            };
-
-            // Join the client's room as master (flips the client's ready state
-            // via MASTER_CONNECTED) and send OpenRelayTunnel so it dials the same
-            // tunnel as `role=client`, then the one-shot closes.
-            let room_url = database::websocket_url_with_room(master_base, &connection_string, TUNNEL_ROLE_MASTER);
-            let ctrl = super::serialize_command(&crate::Cmd::OpenRelayTunnel { session_id });
-            if let Err(e) = send_oneshot_ws_binary(&room_url, ctrl).await {
-                log::warn!("admin_transport -> tunnel dial-request send failed: {e}");
-                let _ = in_tx.send(WsEvent::Error(format!("relay dial-request send failed: {e} (retrying…)")));
-                if shutdown_aware_sleep(&shutdown, RETRY_INTERVAL).await {
-                    let _ = in_tx.send(WsEvent::Closed);
-                    return;
-                }
-                continue;
-            }
-
-            let (read_half, write_half) = tokio::io::split(tunnel);
-            run_connection_phase(
-                read_half,
-                write_half,
+            let target = target_addr.clone().unwrap_or_default();
+            log::info!(
+                "admin_transport -> dialing {target} (attempt {failed_attempts}, relaunch_grace={relaunch_grace_active})"
+            );
+            attempt_tcp(
+                &target,
                 &connection_string,
                 &out_rx,
                 &in_tx,
                 &shutdown,
                 &relaunch_grace_until_ms,
                 read_idle,
+                connect_timeout,
+                &mut connect_failure_toasted,
             )
-            .await;
-        }
+            .await
+        };
 
         if shutdown.load(Ordering::Relaxed) {
             let _ = in_tx.send(WsEvent::Closed);
             return;
         }
 
-        log::info!("admin_transport -> session ended; reconnecting in {RETRY_INTERVAL:?}");
-        let _ = in_tx.send(WsEvent::Error("peer disconnected (reconnecting…)".to_string()));
+        match outcome {
+            AttemptOutcome::Established => {
+                failed_attempts = 0;
+                connect_failure_toasted = false;
+                tunnel_switch_toasted = false;
+                log::info!("admin_transport -> session ended; reconnecting in {RETRY_INTERVAL:?}");
+                let _ = in_tx.send(WsEvent::Error("peer disconnected (reconnecting…)".to_string()));
+            }
+            AttemptOutcome::Failed => {
+                failed_attempts = failed_attempts.saturating_add(1);
+            }
+        }
+
         if shutdown_aware_sleep(&shutdown, RETRY_INTERVAL).await {
             let _ = in_tx.send(WsEvent::Closed);
             return;
@@ -497,21 +477,164 @@ async fn run_session(
     }
 }
 
+/// Result of one connection attempt in [`run_session`]'s rotation.
+#[cfg(not(target_arch = "wasm32"))]
+enum AttemptOutcome {
+    /// The handshake was delivered and a session ran; the next streak starts
+    /// TCP-first.
+    Established,
+    /// Dial or setup failed before a session opened; the rotation advances.
+    Failed,
+}
+
+/// One direct-TCP connection attempt: dial, socket options, then the shared
+/// connection phase.
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
+async fn attempt_tcp(
+    target: &str,
+    connection_string: &str,
+    out_rx: &OutRx,
+    in_tx: &XSender<WsEvent>,
+    shutdown: &Arc<AtomicBool>,
+    relaunch_grace_until_ms: &Arc<AtomicU64>,
+    read_idle: Duration,
+    connect_timeout: Duration,
+    connect_failure_toasted: &mut bool,
+) -> AttemptOutcome {
+    use tokio::net::TcpStream;
+
+    let stream = match tokio::time::timeout(connect_timeout, TcpStream::connect(target)).await {
+        Ok(Ok(s)) => s,
+        Ok(Err(e)) => {
+            let msg = format!("TCP connect to {target} failed: {e}");
+            log::warn!("admin_transport -> {msg}");
+            let _ = in_tx.send(WsEvent::Error(format!("{msg} (retrying…)")));
+            if !*connect_failure_toasted {
+                *connect_failure_toasted = true;
+                let _ = crate::get_toast_sender().try_send(crate::ToastMessage::Warning(msg));
+            }
+            return AttemptOutcome::Failed;
+        }
+        Err(_) => {
+            let msg = format!("TCP connect to {target} timed out");
+            log::warn!("admin_transport -> {msg}");
+            let _ = in_tx.send(WsEvent::Error(format!("{msg} (retrying…)")));
+            if !*connect_failure_toasted {
+                *connect_failure_toasted = true;
+                let _ = crate::get_toast_sender().try_send(crate::ToastMessage::Warning(msg));
+            }
+            return AttemptOutcome::Failed;
+        }
+    };
+    if let Err(e) = tcp_protocol::apply_tcp_options(&stream) {
+        log::warn!("admin_transport -> apply_tcp_options failed: {e}");
+    }
+    *connect_failure_toasted = false;
+    let (read_half, write_half) = stream.into_split();
+    if run_connection_phase(
+        read_half,
+        write_half,
+        connection_string,
+        out_rx,
+        in_tx,
+        shutdown,
+        relaunch_grace_until_ms,
+        read_idle,
+    )
+    .await
+    {
+        AttemptOutcome::Established
+    } else {
+        AttemptOutcome::Failed
+    }
+}
+
+/// One relay-tunnel connection attempt: park on `/tunnel` as master, send the
+/// client an `OpenRelayTunnel` via a one-shot `role=master` room join, then
+/// run the shared connection phase over the paired byte pipe.
+#[cfg(not(target_arch = "wasm32"))]
+async fn attempt_tunnel(
+    master_base: &str,
+    connection_string: &str,
+    out_rx: &OutRx,
+    in_tx: &XSender<WsEvent>,
+    shutdown: &Arc<AtomicBool>,
+    relaunch_grace_until_ms: &Arc<AtomicU64>,
+    read_idle: Duration,
+) -> AttemptOutcome {
+    use tcp_protocol::tunnel::{
+        connect_tunnel, derive_tunnel_url, send_oneshot_ws_binary, TUNNEL_ROLE_MASTER,
+    };
+
+    const TUNNEL_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let master_url = derive_tunnel_url(master_base, &session_id, TUNNEL_ROLE_MASTER);
+    log::info!("admin_transport -> tunnel dial {master_url} for {connection_string}");
+
+    let tunnel = match tokio::time::timeout(TUNNEL_CONNECT_TIMEOUT, connect_tunnel(&master_url)).await {
+        Ok(Ok(s)) => s,
+        Ok(Err(e)) => {
+            log::warn!("admin_transport -> tunnel connect failed: {e}");
+            let _ = in_tx.send(WsEvent::Error(format!("relay tunnel connect failed: {e} (retrying…)")));
+            return AttemptOutcome::Failed;
+        }
+        Err(_) => {
+            log::warn!("admin_transport -> tunnel connect timed out");
+            let _ = in_tx.send(WsEvent::Error("relay tunnel connect timed out (retrying…)".to_string()));
+            return AttemptOutcome::Failed;
+        }
+    };
+
+    // Join the client's room as master (flips the client's ready state via
+    // MASTER_CONNECTED) and send OpenRelayTunnel so it dials the same tunnel
+    // as `role=client`, then the one-shot closes.
+    let room_url = database::websocket_url_with_room(master_base, connection_string, TUNNEL_ROLE_MASTER);
+    let ctrl = super::serialize_command(&crate::Cmd::OpenRelayTunnel { session_id });
+    if let Err(e) = send_oneshot_ws_binary(&room_url, ctrl).await {
+        log::warn!("admin_transport -> tunnel dial-request send failed: {e}");
+        let _ = in_tx.send(WsEvent::Error(format!("relay dial-request send failed: {e} (retrying…)")));
+        return AttemptOutcome::Failed;
+    }
+
+    let (read_half, write_half) = tokio::io::split(tunnel);
+    if run_connection_phase(
+        read_half,
+        write_half,
+        connection_string,
+        out_rx,
+        in_tx,
+        shutdown,
+        relaunch_grace_until_ms,
+        read_idle,
+    )
+    .await
+    {
+        AttemptOutcome::Established
+    } else {
+        AttemptOutcome::Failed
+    }
+}
+
 /// Per-connection engine shared by both transport modes: handshake, shape-fp
 /// exchange, ping ticker, writer task, and reader loop over an already-split
 /// byte pipe. Returns when the connection ends (peer closed, read/write error,
-/// ping timeout, or shutdown); the caller decides whether to retry.
+/// ping timeout, or shutdown); `true` once `WsEvent::Opened` was emitted, so
+/// the caller can distinguish an established-then-dropped session from a
+/// setup failure.
 #[cfg(not(target_arch = "wasm32"))]
 async fn run_connection_phase<R, W>(
     mut read_half: R,
     mut write_half: W,
     connection_string: &str,
-    out_rx: &Arc<std::sync::Mutex<XReceiver<TcpFrame>>>,
+    out_rx: &OutRx,
     in_tx: &XSender<WsEvent>,
     shutdown: &Arc<AtomicBool>,
     relaunch_grace_until_ms: &Arc<AtomicU64>,
     read_idle: Duration,
-) where
+) -> bool
+where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
     W: tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
@@ -525,6 +648,14 @@ async fn run_connection_phase<R, W>(
     const PONG_DEADLINE_MS: u64 = 30_000;
     const PONG_DEADLINE_RELAUNCH_MS: u64 = 120_000;
 
+    // Set once the peer proves live by sending a first inbound frame. Until
+    // then no `WsEvent::Opened` fires and the attempt does not count as
+    // established — a relay tunnel parked with no client on the far end, or a
+    // TCP endpoint that accepts then rejects our handshake, both accept our
+    // writes but never reply, so gating on inbound avoids a false-Connected
+    // badge and silent command loss.
+    let mut opened = false;
+
     // ---- Handshake (admin sends) ----
     let id_bytes = connection_string.as_bytes();
     let mut hs = Vec::with_capacity(4 + 1 + 4 + id_bytes.len());
@@ -536,11 +667,10 @@ async fn run_connection_phase<R, W>(
     if let Err(e) = write_half.write_all(&hs).await {
         log::warn!("admin_transport -> handshake write failed: {e}");
         let _ = in_tx.send(WsEvent::Error(format!("handshake write failed: {e} (retrying…)")));
-        return;
+        return opened;
     }
 
-    log::info!("admin_transport -> connected + handshake sent for {connection_string}");
-    let _ = in_tx.send(WsEvent::Opened);
+    log::info!("admin_transport -> handshake sent for {connection_string}; awaiting peer");
 
     // Send our Cmd shape fingerprint before the writer task takes the write half.
     let fp_payload = tcp_protocol::encode_shape_fp(
@@ -551,7 +681,7 @@ async fn run_connection_phase<R, W>(
     if let Err(e) = write_frame(&mut write_half, FRAME_TAG_SHAPE_FP, &fp_payload).await {
         log::warn!("admin_transport -> shape-fp write failed: {e}");
         let _ = in_tx.send(WsEvent::Error(format!("shape-fp write failed: {e} (retrying…)")));
-        return;
+        return opened;
     }
 
     // Liveness state shared between the reader (stamps on every Pong)
@@ -616,25 +746,12 @@ async fn run_connection_phase<R, W>(
     let in_tx_writer = in_tx.clone();
     let out_rx_writer = out_rx.clone();
     let writer_handle = tokio::spawn(async move {
-        // We can't await `out_rx.recv()` directly (crossbeam = blocking).
-        // Persist a single in-flight `spawn_blocking` JoinHandle across
-        // select! iterations so we don't churn worker threads — and so a
-        // ping branch firing doesn't drop a partially-consumed user
-        // frame on the floor. (Dropping the &mut JoinHandle does NOT
-        // drop the JoinHandle itself; it stays in `pending` and resumes
-        // next iteration.)
-        let mut pending: Option<
-            tokio::task::JoinHandle<Result<TcpFrame, crossbeam::channel::RecvError>>,
-        > = None;
+        // Hold the shared receiver for this session; released on task end or
+        // abort so the next redial's writer re-locks it. `recv().await` is
+        // cancel-safe, so an abort mid-recv strands no thread and drops no
+        // frame — the frame stays queued for the next writer.
+        let mut rx = out_rx_writer.lock().await;
         loop {
-            if pending.is_none() {
-                let rx = out_rx_writer.clone();
-                pending = Some(tokio::task::spawn_blocking(move || {
-                    rx.lock().unwrap_or_else(|e| e.into_inner()).recv()
-                }));
-            }
-            let pending_ref = pending.as_mut().expect("just set above");
-
             tokio::select! {
                 // Bias pings so a saturated user-frame stream still
                 // gets keepalive traffic out the door.
@@ -655,18 +772,11 @@ async fn run_connection_phase<R, W>(
                     }
                 }
 
-                user_result = pending_ref => {
-                    pending = None;
-                    let frame = match user_result {
-                        Ok(Ok(f)) => f,
-                        Ok(Err(_)) => {
-                            shutdown_writer.store(true, Ordering::Relaxed);
-                            break;
-                        }
-                        Err(e) => {
-                            log::warn!("admin_transport -> writer recv join error: {e}");
-                            break;
-                        }
+                frame = rx.recv() => {
+                    let Some(frame) = frame else {
+                        // Sender dropped — the transport handle is gone.
+                        shutdown_writer.store(true, Ordering::Relaxed);
+                        break;
                     };
                     match frame {
                         TcpFrame::Shutdown => {
@@ -739,6 +849,13 @@ async fn run_connection_phase<R, W>(
             log::warn!("admin_transport -> reader payload error: {e}");
             break;
         }
+        // First complete inbound frame proves the peer is live (a real agent
+        // sends its shape-fp immediately, else a pong within a ping cycle).
+        if !opened {
+            opened = true;
+            log::info!("admin_transport -> peer responded for {connection_string}; session open");
+            let _ = in_tx.send(WsEvent::Opened);
+        }
         match tag {
             FRAME_TAG_BINARY => {
                 // Any inbound data proves the agent is alive — stamp the
@@ -805,6 +922,7 @@ async fn run_connection_phase<R, W>(
     }
 
     writer_handle.abort();
+    opened
 }
 
 /// Sleeps up to `dur`, polling `shutdown` at 200 ms granularity.

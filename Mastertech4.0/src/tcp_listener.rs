@@ -742,6 +742,37 @@ pub async fn upsert_self_identity(connected: bool) {
     }
 }
 
+/// Clears this client's advertised direct-TCP coords (`local_ip`/`tcp_port`
+/// set to NONE) so admins fall back to the relay tunnel while the listener is
+/// down. Keeps every required identity field so the store-wide LIVE query
+/// never sees a row missing `client_hash`.
+async fn clear_tcp_coords(client_uuid: database::schema::RecordId) {
+    use database::db;
+
+    let identity = get_client_hash();
+    if identity.client_hash.is_empty() {
+        return;
+    }
+    let Some(computer) = identity.computer.clone() else {
+        return;
+    };
+    let res = db()
+        .query(
+            "UPSERT $client SET local_ip = NONE, tcp_port = NONE, \
+             connection_string = $cs, client_hash = $client_hash, \
+             computer = $computer, connected = true, \
+             assigned_user = $auth.id, last_update = time::now()",
+        )
+        .bind(("client", client_uuid))
+        .bind(("cs", identity.connection_string.clone()))
+        .bind(("client_hash", identity.client_hash.clone()))
+        .bind(("computer", computer))
+        .await;
+    if let Err(e) = res {
+        log::warn!("spawn_direct_tcp_listener -> clear coords failed: {e:?}");
+    }
+}
+
 /// Bind the direct-TCP admin listener, add a firewall rule, and publish the
 /// address to this client's `connected_client` row so admins can dial
 /// directly without going through the WS relay.
@@ -757,26 +788,36 @@ pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) 
         wait_for_preferred_port_available().await;
     }
 
-    let local_ip = match detect_local_ipv4() {
-        Some(ip) => ip,
-        None => {
-            log::warn!(
+    // Retry IPv4 detection + bind with capped backoff; a NIC absent at boot
+    // often appears seconds later, so never give up for the process lifetime.
+    // While unbound, clear the advertised coords so admins use the relay.
+    const MIN_BACKOFF: Duration = Duration::from_secs(5);
+    const MAX_BACKOFF: Duration = Duration::from_secs(60);
+    let mut backoff = MIN_BACKOFF;
+    let (local_ip, listener, addr) = loop {
+        match detect_local_ipv4() {
+            Some(ip) => match bind_listener().await {
+                Ok((listener, addr)) => break (ip, listener, addr),
+                Err(e) => log::warn!(
+                    "spawn_direct_tcp_listener -> bind failed: {e:?}; \
+                     clearing coords, retrying in {backoff:?}"
+                ),
+            },
+            None => log::warn!(
                 "spawn_direct_tcp_listener -> no routable IPv4 detected; \
-                 skipping direct-TCP listener (relay path still active)"
-            );
-            return;
+                 clearing coords, retrying in {backoff:?}"
+            ),
         }
-    };
-
-    let (listener, addr) = match bind_listener().await {
-        Ok(pair) => pair,
-        Err(e) => {
-            log::warn!(
-                "spawn_direct_tcp_listener -> bind failed: {e:?} \
-                 (relay path still active)"
-            );
-            return;
+        clear_tcp_coords(client_uuid.clone()).await;
+        tokio::select! {
+            biased;
+            _ = displays::wait_for_shutdown() => {
+                log::info!("spawn_direct_tcp_listener -> shutdown during startup retry");
+                return;
+            }
+            _ = tokio::time::sleep(backoff) => {}
         }
+        backoff = (backoff * 2).min(MAX_BACKOFF);
     };
 
     // Best-effort Windows firewall rule. If it fails, the OS firewall

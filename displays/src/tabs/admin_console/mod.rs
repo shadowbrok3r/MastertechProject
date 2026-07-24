@@ -939,6 +939,10 @@ impl SharedContext {
                                 .map(|v| v.as_slice());
                             let reachability = reachability_snapshot
                                 .get(&client.connection_string);
+                            let transport = ws_client
+                                .ws_clients
+                                .get(&client.connection_string)
+                                .map(|w| (w.transport.kind(), w.is_connected));
                             AdminConsole::client_header(
                                 ui,
                                 ws_client.ui_actions_channel.0.clone(),
@@ -950,6 +954,7 @@ impl SharedContext {
                                 &ws_client.fk_health_cache,
                                 inventory,
                                 reachability,
+                                transport,
                             );
                         }
                     }

@@ -83,6 +83,8 @@ fn global_write_allowed() -> bool {
 struct Config {
     ws_activity_write_secs: u64,
     tunnel_pending_ttl_secs: u64,
+    ws_pong_timeout_secs: u64,
+    tunnel_idle_secs: u64,
 }
 
 impl Config {
@@ -95,8 +97,23 @@ impl Config {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(30);
-        Self { ws_activity_write_secs, tunnel_pending_ttl_secs }
+        let ws_pong_timeout_secs = std::env::var("WS_PONG_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(35);
+        let tunnel_idle_secs = std::env::var("TUNNEL_IDLE_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(90);
+        Self { ws_activity_write_secs, tunnel_pending_ttl_secs, ws_pong_timeout_secs, tunnel_idle_secs }
     }
+}
+
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
@@ -266,16 +283,20 @@ impl ChatServer {
         // Remove any previous user association for this session
         self.user_map.lock().await.remove(&session_id);
 
+        let last_activity = Arc::new(AtomicU64::new(now_unix_secs()));
+
         let server_clone = Arc::clone(&self);
         let session_id_clone = session_id.clone();
         let room_id_clone = room_id.clone();
         let role_clone = role.clone();
         let ws_tx_for_incoming = ws_tx.clone();
+        let last_activity_incoming = Arc::clone(&last_activity);
 
         // Handle incoming messages
         tokio::spawn(async move {
             let ws_tx = ws_tx_for_incoming;
             while let Some(Ok(message)) = ws_rx.next().await {
+                last_activity_incoming.store(now_unix_secs(), Ordering::Relaxed);
                 match message {
                     Message::Text(text) => {
                         // Command parsing: commands start with '/'
@@ -325,7 +346,7 @@ impl ChatServer {
                         }
 
                         server_clone
-                            .cleanup_session(&room_id_clone, &session_id_clone, &role_clone)
+                            .cleanup_session(&room_id_clone, &session_id_clone, &role_clone, &ws_tx)
                             .await?;
                         break;
                     }
@@ -334,7 +355,7 @@ impl ChatServer {
                 }
             }
             server_clone
-                .cleanup_session(&room_id_clone, &session_id_clone, &role_clone)
+                .cleanup_session(&room_id_clone, &session_id_clone, &role_clone, &ws_tx)
                 .await?;
             Ok::<(), anyhow::Error>(())
         });
@@ -344,11 +365,13 @@ impl ChatServer {
         let ws_tx_for_ping = ws_tx.clone();
         let room_id_for_ping = room_id.clone();
         let session_id_for_ping = session_id.clone();
+        let last_activity_ping = Arc::clone(&last_activity);
 
         // Ping task to detect disconnection and stamp activity at a bounded rate
         tokio::spawn(async move {
             let ws_tx = ws_tx_for_ping;
             let stamp_secs = config().ws_activity_write_secs;
+            let pong_timeout = config().ws_pong_timeout_secs;
             let mut last_db_update: Option<Instant> = None;
             loop {
                 tokio::time::sleep(Duration::from_secs(10)).await;
@@ -357,11 +380,23 @@ impl ChatServer {
                     info!("WebSocket {} disconnected: {:?}", session_id_for_ping, e);
                     drop(sender);
                     server_clone
-                        .cleanup_session(&room_id_for_ping, &session_id_for_ping, &role_clone)
+                        .cleanup_session(&room_id_for_ping, &session_id_for_ping, &role_clone, &ws_tx)
                         .await?;
                     break;
                 }
                 drop(sender);
+
+                // Half-open detection: no inbound frame within the window means the socket is dead.
+                if pong_timeout > 0 {
+                    let idle = now_unix_secs().saturating_sub(last_activity_ping.load(Ordering::Relaxed));
+                    if idle >= pong_timeout {
+                        info!("WebSocket {} idle {}s with no pong; treating as dead", session_id_for_ping, idle);
+                        server_clone
+                            .cleanup_session(&room_id_for_ping, &session_id_for_ping, &role_clone, &ws_tx)
+                            .await?;
+                        break;
+                    }
+                }
 
                 if stamp_secs == 0 {
                     continue;
@@ -417,6 +452,7 @@ impl ChatServer {
                     };
 
                     if let Some(session) = target_session {
+                        let target_arc = session.clone();
                         let mut session = session.lock().await;
                         let send_result = if let Some(bin) = bin {
                             info!("Binary message sent to target session in room {}", room_id);
@@ -431,13 +467,18 @@ impl ChatServer {
                         };
                         if let Err(e) = send_result {
                             log::error!("Failed to send message to session in room {}: {:?}", room_id, e);
-                            // Assume the target is dead and clean it up
-                            if self.is_session_match(room.master.as_ref(), &from).await {
-                                room.client = None;
-                                info!("Client removed from room {} due to send failure", room_id);
-                            } else if self.is_session_match(room.client.as_ref(), &from).await {
-                                room.master = None;
-                                info!("Master removed from room {} due to send failure", room_id);
+                            drop(session);
+                            // Clear the dead target only if it is still the same socket.
+                            if is_from_master {
+                                if room.client.as_ref().map(|s| Arc::ptr_eq(s, &target_arc)).unwrap_or(false) {
+                                    room.client = None;
+                                    info!("Client removed from room {} due to send failure", room_id);
+                                }
+                            } else if is_from_client {
+                                if room.master.as_ref().map(|s| Arc::ptr_eq(s, &target_arc)).unwrap_or(false) {
+                                    room.master = None;
+                                    info!("Master removed from room {} due to send failure", room_id);
+                                }
                             }
                         }
                     } else {
@@ -595,48 +636,57 @@ impl ChatServer {
     }
 
     
-    async fn cleanup_session(&self, room_id: &RoomID, session_id: &SessionID, role: &str) -> anyhow::Result<(), anyhow::Error> {
+    async fn cleanup_session(
+        &self,
+        room_id: &RoomID,
+        session_id: &SessionID,
+        role: &str,
+        my_sink: &Arc<Mutex<SplitSink<WebSocket, Message>>>,
+    ) -> anyhow::Result<(), anyhow::Error> {
         let mut rooms = self.rooms.lock().await;
         let mut session_map = self.session_map.lock().await;
         let mut user_map = self.user_map.lock().await;
-        
-        // Only mark the remote Mastertech client as disconnected in DB when the
-        // CLIENT role drops. When the MASTER (admin console) disconnects (e.g. switching
-        // to a different client), the remote client is still running and connected.
-        if role == "client" {
-            let client: Option<ConnectedClient> = db()
-                .query("UPDATE connected_client SET connected = false WHERE connection_string == $connection_id")
-                .bind(("connection_id", room_id.clone()))
-                .await?
-                .take(0)?;
-            log::info!("Client role disconnected, DB updated: {client:?}");
-        } else {
-            log::info!("Master role disconnected from room {room_id}, DB not updated (client still connected)");
+
+        // In-memory maps are keyed on this session id; removal is always safe.
+        session_map.remove(session_id);
+        user_map.remove(session_id);
+
+        // Only touch shared room/DB state when this socket still owns its slot;
+        // a newer reconnect may have replaced it.
+        let owns_slot = rooms.get(room_id).is_some_and(|room| {
+            let slot = match role {
+                "master" => room.master.as_ref(),
+                "client" => room.client.as_ref(),
+                _ => None,
+            };
+            slot.is_some_and(|s| Arc::ptr_eq(s, my_sink))
+        });
+        if !owns_slot {
+            log::info!("cleanup_session: slot for {role} in room {room_id} already replaced; skipping");
+            return Ok(());
         }
 
-        // Check if already cleaned up
-        let was_in_session_map = session_map.remove(session_id).is_some();
-        let was_in_user_map = user_map.remove(session_id).is_some();
-        
-        if !was_in_session_map && !was_in_user_map {
-            // Double-check: maybe the room entry is stale
-            if let Some(room) = rooms.get_mut(room_id) {
-                match role {
-                    "master" => room.master = None,
-                    "client" => room.client = None,
-                    _ => {}
-                }
+        // Best-effort DB write; a DB error must not skip the in-memory cleanup below.
+        if role == "client" {
+            let result: Result<Option<ConnectedClient>, _> = db()
+                .query("UPDATE connected_client SET connected = false WHERE connection_string == $connection_id")
+                .bind(("connection_id", room_id.clone()))
+                .await
+                .and_then(|mut r| r.take(0));
+            match result {
+                Ok(client) => log::info!("Client role disconnected, DB updated: {client:?}"),
+                Err(e) => log::warn!("cleanup_session: connected=false write failed for room {room_id}: {e:?}"),
             }
-            return Ok(()); // Already cleaned up
+        } else {
+            log::info!("Master role disconnected from room {room_id}, DB not updated (client still connected)");
         }
 
         log::info!("Client disconnected");
 
         if let Some(room) = rooms.get_mut(room_id) {
             match role {
-                "master" if room.master.is_some() => {
+                "master" => {
                     room.master = None;
-                    // Notify client that master has disconnected
                     if let Some(client_tx) = &room.client {
                         let send_result = client_tx.lock().await.send(Message::Text("MASTER_DISCONNECTED".into())).await;
                         if send_result.is_ok() {
@@ -645,9 +695,8 @@ impl ChatServer {
                     }
                     info!("Master session {} removed from room {}", session_id, room_id);
                 }
-                "client" if room.client.is_some() => {
+                "client" => {
                     room.client = None;
-                    // Notify master that client has disconnected
                     if let Some(master_tx) = &room.master {
                         let send_result = master_tx.lock().await.send(Message::Text("CLIENT_DISCONNECTED".into())).await;
                         if send_result.is_ok() {
@@ -679,8 +728,8 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     let cfg = config();
     info!(
-        "Config: ws_activity_write_secs={}, tunnel_pending_ttl_secs={}",
-        cfg.ws_activity_write_secs, cfg.tunnel_pending_ttl_secs
+        "Config: ws_activity_write_secs={}, tunnel_pending_ttl_secs={}, ws_pong_timeout_secs={}, tunnel_idle_secs={}",
+        cfg.ws_activity_write_secs, cfg.tunnel_pending_ttl_secs, cfg.ws_pong_timeout_secs, cfg.tunnel_idle_secs
     );
     match init_database().await {
         Ok(_) => log::info!("Initialized Database"),
@@ -969,17 +1018,19 @@ async fn pair_tunnel(
 }
 
 async fn pump_copy(mut rx: WsStream, mut tx: WsSink) -> &'static str {
+    let idle = Duration::from_secs(config().tunnel_idle_secs);
     let reason = loop {
-        match rx.next().await {
-            Some(Ok(Message::Binary(data))) => {
+        match tokio::time::timeout(idle, rx.next()).await {
+            Err(_) => break "idle timeout",
+            Ok(Some(Ok(Message::Binary(data)))) => {
                 if tx.send(Message::Binary(data)).await.is_err() {
                     break "peer send failed";
                 }
             }
-            Some(Ok(Message::Close(_))) => break "close frame",
-            Some(Ok(_)) => {}
-            Some(Err(_)) => break "read error",
-            None => break "stream ended",
+            Ok(Some(Ok(Message::Close(_)))) => break "close frame",
+            Ok(Some(Ok(_))) => {}
+            Ok(Some(Err(_))) => break "read error",
+            Ok(None) => break "stream ended",
         }
     };
     let _ = tx.send(Message::Close(None)).await;

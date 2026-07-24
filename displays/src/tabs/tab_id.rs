@@ -32,6 +32,7 @@ pub enum TabId {
     DatabaseEditor,
     FleetDashboard,
     StressLab,
+    StressTest,
     Terminal,
     ShopifyOrders,
 }
@@ -114,6 +115,7 @@ const MT_NATIVE: &[TabId] = &[
     TabId::DatabaseEditor,
     TabId::FleetDashboard,
     TabId::StressLab,
+    TabId::StressTest,
     TabId::Terminal,
 ];
 
@@ -171,6 +173,7 @@ impl TabId {
             Self::DatabaseEditor => "database_editor",
             Self::FleetDashboard => "fleet_dashboard",
             Self::StressLab => "stress_lab",
+            Self::StressTest => "stress_test",
             Self::Terminal => "terminal",
             Self::ShopifyOrders => "shopify_orders",
         }
@@ -210,6 +213,7 @@ impl TabId {
             Self::DatabaseEditor => "Database Editor",
             Self::FleetDashboard => "Fleet Dashboard",
             Self::StressLab => "Stress Lab",
+            Self::StressTest => "Stress Test",
             Self::Terminal => "Terminal",
             Self::ShopifyOrders => "Shopify Orders",
         }
@@ -259,6 +263,7 @@ impl TabId {
             "Database Editor" | "Database" => Some(Self::DatabaseEditor),
             "Fleet Dashboard" => Some(Self::FleetDashboard),
             "Stress Lab" => Some(Self::StressLab),
+            "Stress Test" => Some(Self::StressTest),
             "Terminal" => Some(Self::Terminal),
             "Shopify Orders" => Some(Self::ShopifyOrders),
             _ => None,
@@ -297,6 +302,7 @@ impl TabId {
             "database_editor" => Some(Self::DatabaseEditor),
             "fleet_dashboard" => Some(Self::FleetDashboard),
             "stress_lab" => Some(Self::StressLab),
+            "stress_test" => Some(Self::StressTest),
             "terminal" => Some(Self::Terminal),
             "shopify_orders" => Some(Self::ShopifyOrders),
             _ => None,

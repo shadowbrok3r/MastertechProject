@@ -6,7 +6,7 @@ use bincode::config::standard;
 use ewebsock::WsMessage;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::plugins::remote::EguiInputEvent;
-use super::WebSocketClient;
+use super::{TransportKind, WebSocketClient};
 
 
 pub enum WsDisplayState {
@@ -473,6 +473,30 @@ impl WebSocketClient {
 
                     ui.colored_label(status_color, status_text)
                         .on_hover_text(status_tooltip);
+
+                    // ── Transport badge: which path carries this session ──
+                    let kind = self.transport.kind();
+                    let (badge, badge_tip) = match kind {
+                        TransportKind::Tcp => ("TCP", "Direct TCP (same network)"),
+                        TransportKind::Relay => ("RELAY", "Relay tunnel via websocket server"),
+                        TransportKind::WebSocket => ("WS", "Legacy WebSocket relay room"),
+                    };
+                    let badge_color = if !self.is_connected {
+                        Color32::GRAY
+                    } else {
+                        match kind {
+                            TransportKind::Tcp => Color32::from_rgb(100, 200, 100),
+                            TransportKind::Relay => Color32::from_rgb(235, 170, 80),
+                            TransportKind::WebSocket => Color32::from_rgb(120, 160, 230),
+                        }
+                    };
+                    let badge_hover = if self.is_connected {
+                        badge_tip.to_string()
+                    } else {
+                        format!("{badge_tip} — {}", self.connection_status)
+                    };
+                    ui.colored_label(badge_color, RichText::new(badge).small().strong())
+                        .on_hover_text(badge_hover);
                 });
             });
         });

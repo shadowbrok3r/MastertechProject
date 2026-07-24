@@ -8,6 +8,7 @@ pub enum Tab {
     #[default]
     TurSheet,
     Scripts,
+    Stress,
     Tasks,
     Ncdu,
     SystemInfo,

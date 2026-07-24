@@ -3916,9 +3916,10 @@ pub async fn live_computer_stats(tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>
             IDLE_INTERVAL
         };
         tokio::select! {
-            _ = stop_rx.changed() => {
-                if *stop_rx.borrow() {
-                    log::info!("live_computer_stats: received stop signal");
+            res = stop_rx.changed() => {
+                // Err = stop sender dropped (session died); Ok + true = explicit Quit.
+                if res.is_err() || *stop_rx.borrow() {
+                    log::info!("live_computer_stats: stop signaled or session closed; exiting");
                     break;
                 }
             }

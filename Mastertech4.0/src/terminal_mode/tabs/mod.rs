@@ -9,6 +9,7 @@ pub mod webconsole;
 pub mod task_manager;
 pub mod ncdu;
 pub mod settings;
+pub mod stress;
 
 pub use scripts::*;
 pub use menu_bar::*;

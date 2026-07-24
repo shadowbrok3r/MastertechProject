@@ -20,6 +20,7 @@ pub mod quality_check;
 pub mod resource_mon;
 pub mod scripts;
 pub mod shopify_orders;
+pub mod stress_test;
 pub mod system_information;
 pub mod tur_sheet;
 pub mod egui_file_dialog;
@@ -135,6 +136,7 @@ impl TabViewer for MastertechContext {
             TabId::AdminConsole => self.shared_ctx.admin_console(ui),
             TabId::FleetDashboard => self.shared_ctx.fleet_dashboard(ui),
             TabId::StressLab => self.shared_ctx.stress_lab.ui(ui),
+            TabId::StressTest => self.show_stress_test(ui),
             TabId::QueryEditor => {
                 if let Some(usr) = &self.shared_ctx.current_user {
                     if usr.is_admin() {

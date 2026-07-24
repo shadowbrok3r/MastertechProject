@@ -374,6 +374,10 @@ async fn main() -> eframe::Result<()> {
         log::warn!("clock sync failed ({e:?}); TLS may fail if the system clock is wrong");
     }
 
+    // Run stress-runner's DB writes on this runtime (which owns the SurrealDB
+    // connection) instead of its private fallback runtime.
+    stress_runner::set_runtime_handle(tokio::runtime::Handle::current());
+
     #[cfg(target_os = "windows")]
     {
         use windows::Win32::System::Threading::GetCurrentProcess;

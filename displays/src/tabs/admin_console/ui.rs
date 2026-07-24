@@ -153,6 +153,9 @@ impl AdminConsole {
         // to it yet. Surfaced as informational metadata in the
         // details grid — does *not* gate visibility.
         reachability: Option<&crate::ui_data::reachability::ReachabilityStatus>,
+        // Live transport path of the open session `(kind, is_connected)`,
+        // or `None` when no session entry exists for this client.
+        transport: Option<(super::client_interface::TransportKind, bool)>,
     ) {
         let style = ui.style().clone();
         let row_id = ui.make_persistent_id((
@@ -242,6 +245,32 @@ impl AdminConsole {
                                     RichText::new(indicator_text).color(indicator_color),
                                 ),
                             );
+
+                            // Transport badge for the open session's live path.
+                            if let Some((kind, session_up)) = transport {
+                                use super::client_interface::TransportKind;
+                                let (badge, tip) = match kind {
+                                    TransportKind::Tcp => ("TCP", "Direct TCP (same network)"),
+                                    TransportKind::Relay => ("RELAY", "Relay tunnel via websocket server"),
+                                    TransportKind::WebSocket => ("WS", "Legacy WebSocket relay room"),
+                                };
+                                let color = if session_up {
+                                    match kind {
+                                        TransportKind::Tcp => Color32::from_rgb(100, 200, 100),
+                                        TransportKind::Relay => Color32::from_rgb(235, 170, 80),
+                                        TransportKind::WebSocket => Color32::from_rgb(120, 160, 230),
+                                    }
+                                } else {
+                                    Color32::GRAY
+                                };
+                                let tip = if session_up {
+                                    tip.to_string()
+                                } else {
+                                    format!("{tip} — reconnecting")
+                                };
+                                ui.label(RichText::new(badge).small().strong().color(color))
+                                    .on_hover_text(tip);
+                            }
 
                             let name_btn = ui
                                 .add_sized(

@@ -114,6 +114,7 @@ impl <'a>TerminalApp<'a> {
                         Tab::SystemInfo => self.sysinfo_tab.handle_mouse_event(&mouse_event),
                         Tab::Login => self.login_tab.borrow_mut().handle_mouse_event(&mouse_event),
                         Tab::Tasks => self.tasks_tab.borrow_mut().handle_mouse_event(&mouse_event),
+                        Tab::Stress => self.stress_tab.borrow_mut().handle_mouse_event(&mouse_event),
                         Tab::Webconsole => self.webconsole_tab.borrow_mut().handle_mouse_event(&mouse_event),
                         Tab::Logs => self.logger.handle_mouse_event(&mouse_event),
                         Tab::Settings => self.settings_tab.borrow_mut().handle_mouse_event(&mouse_event),
@@ -155,7 +156,8 @@ impl <'a>TerminalApp<'a> {
                                         Tab::Login => menu_bar.set_active_tab(Tab::Settings),
                                         Tab::Settings => menu_bar.set_active_tab(Tab::Assistant),
                                         Tab::Assistant => menu_bar.set_active_tab(Tab::TurSheet),
-                                        Tab::Ncdu => menu_bar.set_active_tab(Tab::Ncdu)
+                                        Tab::Ncdu => menu_bar.set_active_tab(Tab::Ncdu),
+                                        Tab::Stress => menu_bar.set_active_tab(Tab::Stress),
                                     };
                                 }
                                 KeyCode::Left => {
@@ -169,7 +171,8 @@ impl <'a>TerminalApp<'a> {
                                         Tab::Logs => menu_bar.set_active_tab(Tab::Webconsole),
                                         Tab::Login => menu_bar.set_active_tab(Tab::Logs),
                                         Tab::Settings => menu_bar.set_active_tab(Tab::Login),
-                                        Tab::Ncdu => menu_bar.set_active_tab(Tab::Ncdu)
+                                        Tab::Ncdu => menu_bar.set_active_tab(Tab::Ncdu),
+                                        Tab::Stress => menu_bar.set_active_tab(Tab::Stress),
                                     };
                                 }
                                 _ => {}
@@ -180,6 +183,7 @@ impl <'a>TerminalApp<'a> {
                             Tab::TurSheet => self.service_tab.borrow_mut().handle_key_event(key_event),
                             Tab::Scripts => self.scripts_tab.borrow_mut().handle_key_event(key_event),
                             Tab::Tasks => self.tasks_tab.borrow_mut().handle_key_event(key_event),
+                            Tab::Stress => self.stress_tab.borrow_mut().handle_key_event(key_event),
                             Tab::SystemInfo => self.sysinfo_tab.handle_key_event(key_event),
                             Tab::Logs => self.logger.handle_key_event(key_event),
                             Tab::Login => self.login_tab.borrow_mut().handle_key_event(key_event),
@@ -238,6 +242,7 @@ impl <'a>TerminalApp<'a> {
                                                 Tab::Settings => menu_bar.set_active_tab(Tab::Assistant),
                                                 Tab::Assistant => menu_bar.set_active_tab(Tab::TurSheet),
                                                 Tab::Ncdu => menu_bar.set_active_tab(Tab::Ncdu),
+                                                Tab::Stress => menu_bar.set_active_tab(Tab::Stress),
                                             };
                                         }
                                         KeyCode::Left => if key_event.modifiers.contains(KeyModifiers::CONTROL) {
@@ -252,6 +257,7 @@ impl <'a>TerminalApp<'a> {
                                                 Tab::Login => menu_bar.set_active_tab(Tab::Logs),
                                                 Tab::Settings => menu_bar.set_active_tab(Tab::Login),
                                                 Tab::Ncdu => menu_bar.set_active_tab(Tab::Ncdu),
+                                                Tab::Stress => menu_bar.set_active_tab(Tab::Stress),
                                             };
                                         }
                                         _ => {}
@@ -263,6 +269,7 @@ impl <'a>TerminalApp<'a> {
                                     Tab::TurSheet => self.service_tab.borrow_mut().handle_key_event(key_event),
                                     Tab::Scripts => self.scripts_tab.borrow_mut().handle_key_event(key_event),
                                     Tab::Tasks => self.tasks_tab.borrow_mut().handle_key_event(key_event),
+                                    Tab::Stress => self.stress_tab.borrow_mut().handle_key_event(key_event),
                                     Tab::SystemInfo => self.sysinfo_tab.handle_key_event(key_event),
                                     Tab::Logs => self.logger.handle_key_event(key_event),
                                     Tab::Login => self.login_tab.borrow_mut().handle_key_event(key_event),
@@ -285,6 +292,7 @@ impl <'a>TerminalApp<'a> {
                                 Tab::SystemInfo => self.sysinfo_tab.handle_mouse_event(&mouse_event),
                                 Tab::Login => self.login_tab.borrow_mut().handle_mouse_event(&mouse_event),
                                 Tab::Tasks => self.tasks_tab.borrow_mut().handle_mouse_event(&mouse_event),
+                                Tab::Stress => self.stress_tab.borrow_mut().handle_mouse_event(&mouse_event),
                                 Tab::Webconsole => self.webconsole_tab.borrow_mut().handle_mouse_event(&mouse_event),
                                 Tab::Logs => self.logger.handle_mouse_event(&mouse_event),
                                 Tab::Settings => self.settings_tab.borrow_mut().handle_mouse_event(&mouse_event),

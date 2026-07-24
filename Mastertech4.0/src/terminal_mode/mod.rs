@@ -1,5 +1,5 @@
 use ratatui::{crossterm::{ event::{DisableMouseCapture, EnableMouseCapture}, execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},}, layout::{Constraint, Direction, Layout}};
-use tabs::{assistant::AssistantTab, logger::Logger, login::LoginTab, menu_bar::Tab, service_form::ServiceFormTab, settings::SettingsTab, tasks::TasksTab, webconsole::WebconsoleTab, MenuBar, NcduTab, ScriptsTab, SysinfoTab};
+use tabs::{assistant::AssistantTab, logger::Logger, login::LoginTab, menu_bar::Tab, service_form::ServiceFormTab, settings::SettingsTab, stress::StressTab, tasks::TasksTab, webconsole::WebconsoleTab, MenuBar, NcduTab, ScriptsTab, SysinfoTab};
 use systems::{communication_system::Message, data_system::DataSystem, notification_system::Notification, render_system::RenderSystem, widget_render_system::WidgetRenderer};
 use std::{cell::RefCell, io, rc::Rc, sync::{Arc, Mutex}, time::{Duration, Instant}};
 use events::{action_handler::{get_event_receiver, EventManager}, EventHandler};
@@ -39,6 +39,7 @@ pub struct TerminalApp<'a> {
     service_tab: Rc<RefCell<ServiceFormTab<'a>>>,
     ncdu_tab: Rc<RefCell<NcduTab>>,
     tasks_tab: Rc<RefCell<TasksTab<'a>>>,
+    stress_tab: Rc<RefCell<StressTab>>,
     sysinfo_tab: SysinfoTab,
     login_tab: Rc<RefCell<LoginTab<'a>>>,
     webconsole_tab: Rc<RefCell<WebconsoleTab<'a>>>,
@@ -137,6 +138,7 @@ impl<'a> TerminalApp<'a> {
         let assistant_tab = Rc::new(RefCell::new(AssistantTab::new()));
 
         let sysinfo_tab = SysinfoTab::new();
+        let stress_tab = Rc::new(RefCell::new(StressTab::new()));
         let menu_bar = Rc::new(RefCell::new(MenuBar::new(ctx.clone(), manual_connect_tx)));
         
         // Register the ServiceFormTab with the event manager.
@@ -158,6 +160,7 @@ impl<'a> TerminalApp<'a> {
             menu_bar,
             login_tab,
             tasks_tab,
+            stress_tab,
             scripts_tab,
             service_tab,
             sysinfo_tab,
@@ -418,6 +421,7 @@ impl <'a>TerminalApp<'a> {
                 Tab::TurSheet => self.service_tab.borrow_mut().draw::<B>(f, main_content_area),
                 Tab::Scripts => self.scripts_tab.borrow_mut().draw::<B>(f, main_content_area),
                 Tab::Tasks => self.tasks_tab.borrow_mut().draw::<B>(f, main_content_area),
+                Tab::Stress => self.stress_tab.borrow_mut().draw::<B>(f, main_content_area),
                 Tab::SystemInfo => self.sysinfo_tab.draw::<B>(f, main_content_area),
                 Tab::Login => self.login_tab.borrow_mut().draw::<B>(f, main_content_area),
                 Tab::Webconsole => self.webconsole_tab.borrow_mut().draw::<B>(f, main_content_area),

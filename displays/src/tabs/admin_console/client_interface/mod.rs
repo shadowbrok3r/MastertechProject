@@ -126,6 +126,9 @@ pub struct WebSocketClient {
     stop_rx: Receiver<()>,
     /// Track connection status and last pong time
     pub is_connected: bool,
+    /// True once the transport has opened at least once; suppresses duplicate
+    /// "Connection opened" history entries on automatic redials.
+    pub seen_first_open: bool,
     pub last_pong_time: Option<Instant>,
     pub connection_status: String,
     /// Application-layer ping/pong state (separate from kernel TCP
@@ -197,10 +200,6 @@ pub struct WebSocketClient {
     /// Channel receiving `MastertechSelfUpdateChunk` Cmds for a remote self-update
     #[cfg(not(target_arch = "wasm32"))]
     pub self_update_rx: Option<Receiver<Cmd>>,
-    /// Last time session streams (LiveData, etc.) were bootstrapped.
-    last_session_bootstrap: Option<Instant>,
-    /// Set after remote self-update so the next reconnect re-bootstraps immediately.
-    force_session_rebootstrap: bool,
     /// True when the client reported a mismatched `Cmd` shape fingerprint.
     pub cmd_protocol_mismatch: bool,
 }
@@ -322,6 +321,7 @@ Get-WmiObject")
             notifications: Default::default(),
             resource_monitor: ResourceMonitor::default(),
             is_connected: false,
+            seen_first_open: false,
             last_pong_time: None,
             last_app_ping_sent: None,
             last_app_pong_received: None,
@@ -378,36 +378,20 @@ Get-WmiObject")
             file_transfer_rx: None,
             #[cfg(not(target_arch = "wasm32"))]
             self_update_rx: None,
-            last_session_bootstrap: None,
-            force_session_rebootstrap: false,
             cmd_protocol_mismatch: false,
         }
     }
 
-    /// Re-bootstrap streams after a transport reconnect (TCP redial or relay).
+    /// Re-arm session streams on every transport (re)open. `WsEvent::Opened`
+    /// fires once per established session (see admin_transport's inbound
+    /// gating), so a fast client restart always re-arms — no throttle.
     pub fn bootstrap_connected_session(&mut self) {
-        let now = web_time::Instant::now();
-        const MIN_BOOTSTRAP_INTERVAL: web_time::Duration = web_time::Duration::from_secs(45);
-        if !self.force_session_rebootstrap {
-            if let Some(last) = self.last_session_bootstrap {
-                if now.duration_since(last) < MIN_BOOTSTRAP_INTERVAL {
-                    return;
-                }
-            }
-        }
-        self.force_session_rebootstrap = false;
-        self.last_session_bootstrap = Some(now);
         let _ = self.send_cmd_tx.try_send(Cmd::LiveData);
         self.live_stats_active = true;
         let _ = self.send_cmd_tx.try_send(Cmd::GatherSecurityInventory);
         let req = Cmd::RequestOpenServiceCandidates { refresh: false };
         self.transport
             .send(WsMessage::Binary(serialize_command(&req)));
-    }
-
-    /// After remote self-update, allow an immediate re-bootstrap on reconnect.
-    pub fn mark_session_rebootstrap_pending(&mut self) {
-        self.force_session_rebootstrap = true;
     }
 
 

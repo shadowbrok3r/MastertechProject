@@ -32,7 +32,9 @@ mod drive;
 mod gpu_probe;
 mod hardware;
 mod mapping;
+mod panel_config;
 mod presets;
+mod qc_benchmark;
 mod report;
 mod rules;
 mod runtime;
@@ -105,6 +107,13 @@ pub use rules::{
     ThroughputCvRule, VerdictRules,
 };
 pub use gpu_probe::{gpu_probe_spec, gpu_probe_stages, GPU_PROBE_PRESET};
+pub use panel_config::{
+    build_run_spec, certification_spec, concurrent_spec, qc_benchmark_spec, scenario_spec,
+    single_spec, target_kind_for, CertConfig, ConcurrentConfig, PanelMode, QcBenchmarkConfig,
+    ScenarioConfig, ScenarioStageConfig, SingleConfig, StressPanelConfig, StressRunContext,
+    StressorChoice,
+};
+pub use qc_benchmark::{qc_benchmark_stages, qc_floor_for, QC_BENCHMARK_PRESET};
 pub use script_catalog::{
     benchmark_kind_for_script, build_stress_script_spec, is_benchmark_script, is_stress_script,
     BENCHMARK_SCRIPT_NAMES, STRESS_SCRIPT_NAMES,

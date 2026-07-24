@@ -318,7 +318,8 @@ impl WebSocketClient {
                     }
                 },
                 WsEvent::Opened => {
-                    let is_redial = self.is_connected;
+                    let is_redial = self.seen_first_open;
+                    self.seen_first_open = true;
                     self.is_connected = true;
                     self.connection_status = "Connected".to_string();
                     if !is_redial {
@@ -370,6 +371,10 @@ impl WebSocketClient {
                         self.client.connection_string
                     );
                     if soft {
+                        // The session dropped and the transport is redialing —
+                        // report disconnected so liveness dots and the
+                        // open_session gate stay honest.
+                        self.is_connected = false;
                         self.connection_status = "Reconnecting…".to_string();
                     } else {
                         self.is_connected = false;
@@ -816,7 +821,6 @@ impl WebSocketClient {
                         );
                         let grace_secs = reconnect_hint_secs as u64 + 10;
                         self.transport.signal_relaunch_pending(grace_secs);
-                        self.mark_session_rebootstrap_pending();
                         self.connection_status =
                             format!("Client relaunching (~{reconnect_hint_secs}s)…");
                         self.history.push(History {
@@ -832,7 +836,6 @@ impl WebSocketClient {
                         self.file_transfer_progress = None;
                         if success {
                             self.transport.signal_relaunch_pending(20);
-                            self.mark_session_rebootstrap_pending();
                             self.connection_status = "Client relaunching (reconnecting…)".to_string();
                         }
                         let toast_msg = if success {

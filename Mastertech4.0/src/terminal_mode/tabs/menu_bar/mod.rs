@@ -52,7 +52,7 @@ impl MenuGroup {
     pub fn tabs(self) -> &'static [Tab] {
         match self {
             MenuGroup::Service => &[Tab::TurSheet, Tab::Tasks],
-            MenuGroup::Tools => &[Tab::Scripts, Tab::SystemInfo, Tab::Ncdu, Tab::Assistant],
+            MenuGroup::Tools => &[Tab::Scripts, Tab::Stress, Tab::SystemInfo, Tab::Ncdu, Tab::Assistant],
             MenuGroup::Remote => &[Tab::Webconsole, Tab::Logs],
             MenuGroup::Account => &[Tab::Login, Tab::Settings],
         }
@@ -72,6 +72,7 @@ fn tab_label(tab: Tab, login_label: &str) -> String {
         Tab::TurSheet => "Ticket".to_string(),
         Tab::Tasks => "Tasks".to_string(),
         Tab::Scripts => "Scripts".to_string(),
+        Tab::Stress => "Stress".to_string(),
         Tab::SystemInfo => "System".to_string(),
         Tab::Ncdu => "NCDU".to_string(),
         Tab::Webconsole => "Webconsole".to_string(),
