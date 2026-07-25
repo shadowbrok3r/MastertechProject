@@ -1,9 +1,7 @@
 use eframe::egui::{
     Align, Button, CentralPanel, ComboBox, FontId, Layout, RichText, ScrollArea, Ui, Vec2, Widget,
 };
-use crate::ui_tools::theme;
-#[cfg(feature = "native-telemetry")]
-use crate::ui_tools::icons;
+use crate::ui_tools::{icons, theme};
 use process_table::ProcessTableViewer;
 use crate::channel_manager::ChannelManager;
 use crossbeam::channel::{Receiver, Sender};
