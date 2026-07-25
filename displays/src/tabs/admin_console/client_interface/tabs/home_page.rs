@@ -29,12 +29,13 @@ use crate::{PlatformSpawner, Spawner};
 use database::schema::{HardwareComponent, HardwareKind, RecordId, RecordIdExt, SystemInformation};
 use database::db;
 use eframe::egui::{
-    Align, Color32, Layout, ProgressBar, RichText, ScrollArea, Ui, Vec2,
+    Align, Button, Id, Layout, ProgressBar, RichText, ScrollArea, Ui, Vec2, Window,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use super::command_shell::History;
 use super::super::ui::WsDisplayState;
 use super::super::WebSocketClient;
 
@@ -49,6 +50,12 @@ const PHANTOM_ENSURE_INTERVAL: Duration = Duration::from_secs(60);
 /// from ballooning vertically while still showing enough history that
 /// a regression is visible at a glance.
 const HISTORY_PER_COMPONENT: usize = 5;
+/// How long a `SetDriverProtections` may stay in flight before the row
+/// stops waiting. Matches the transport's 45 s liveness window, after
+/// which no reply is coming; the revert button must be usable again.
+const DRIVER_PROTECTIONS_TIMEOUT: Duration = Duration::from_secs(45);
+/// How many driver-protections audit records the `computer` row keeps.
+const DRIVER_PROTECTIONS_HISTORY_KEEP: i64 = 50;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HomeSubTab {
@@ -170,6 +177,63 @@ pub struct HomePage {
     /// `last_inventory_poll` so the next render fires a fresh poll and
     /// the new phantom cards appear immediately.
     phantom_pending: Arc<std::sync::atomic::AtomicBool>,
+    /// Driver-protections toggle awaiting the operator's confirm click;
+    /// holds the requested `enable` value.
+    driver_protections_pending: Option<bool>,
+    /// Last driver-protections message plus whether it was a success.
+    driver_protections_status: Option<(String, bool)>,
+    /// Set between sending `SetDriverProtections` and its result arriving.
+    driver_protections_busy: bool,
+    /// When the in-flight `SetDriverProtections` was sent; expires the busy
+    /// flag after `DRIVER_PROTECTIONS_TIMEOUT`.
+    driver_protections_sent_at: Option<Instant>,
+    /// The `SetDriverProtections` still awaiting a reply; cleared on a matching
+    /// result and on timeout.
+    driver_protections_outstanding: Option<DriverProtectionsRequest>,
+}
+
+/// One `SetDriverProtections` awaiting its `DriverProtectionsResult`.
+#[derive(Clone, Debug)]
+struct DriverProtectionsRequest {
+    id: String,
+    /// True for a re-enable, false for a disable.
+    enable: bool,
+}
+
+/// How a `DriverProtectionsResult` lines up with the outstanding request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DriverProtectionsAttribution {
+    /// Echoed request id matches the outstanding request.
+    Current,
+    /// Result carries no request id; only the echoed direction could be checked.
+    Uncorrelated,
+    /// Echoed request id belongs to a different request than the outstanding one.
+    Stale,
+    /// Nothing outstanding on this page.
+    Unsolicited,
+}
+
+impl DriverProtectionsAttribution {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Current => "current",
+            Self::Uncorrelated => "uncorrelated",
+            Self::Stale => "stale",
+            Self::Unsolicited => "unsolicited",
+        }
+    }
+
+    /// True when the result answers the request this page is waiting on.
+    pub fn answers_outstanding(self) -> bool {
+        matches!(self, Self::Current | Self::Uncorrelated)
+    }
+}
+
+/// Process-unique correlation id for a `SetDriverProtections`.
+fn next_driver_protections_request_id(conn: &str) -> String {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("dp-{conn}-{}-{n}", chrono::Utc::now().timestamp_millis())
 }
 
 impl Default for HomePage {
@@ -190,6 +254,11 @@ impl HomePage {
             last_inventory_poll: None,
             last_phantom_ensure: None,
             phantom_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            driver_protections_pending: None,
+            driver_protections_status: None,
+            driver_protections_busy: false,
+            driver_protections_sent_at: None,
+            driver_protections_outstanding: None,
         }
     }
 
@@ -198,6 +267,107 @@ impl HomePage {
     pub fn reset_log_cursor(&mut self) {
         self.log_cursor = 0;
         self.log_runs.clear();
+    }
+
+    /// Ends any wait and shows `message` under the driver-protections row.
+    fn set_driver_protections_result(&mut self, success: bool, message: String) {
+        self.driver_protections_busy = false;
+        self.driver_protections_sent_at = None;
+        self.driver_protections_pending = None;
+        self.driver_protections_outstanding = None;
+        self.driver_protections_status = Some((message, success));
+    }
+
+    /// Marks a `SetDriverProtections` as in flight under `request_id` and starts
+    /// its timeout.
+    fn begin_driver_protections_wait(&mut self, enable: bool, request_id: String) {
+        self.driver_protections_busy = true;
+        self.driver_protections_sent_at = Some(Instant::now());
+        self.driver_protections_outstanding = Some(DriverProtectionsRequest {
+            id: request_id,
+            enable,
+        });
+        self.driver_protections_status = None;
+    }
+
+    /// Direction of the `SetDriverProtections` still awaiting a reply.
+    pub fn outstanding_driver_protections_direction(&self) -> Option<bool> {
+        self.driver_protections_outstanding.as_ref().map(|r| r.enable)
+    }
+
+    /// Matches a result's echoed correlation id and direction against the
+    /// outstanding request.
+    pub fn classify_driver_protections_result(
+        &self,
+        request_id: Option<&str>,
+        requested_enable: Option<bool>,
+    ) -> DriverProtectionsAttribution {
+        let Some(outstanding) = self.driver_protections_outstanding.as_ref() else {
+            return DriverProtectionsAttribution::Unsolicited;
+        };
+        match request_id {
+            Some(id) if id == outstanding.id => DriverProtectionsAttribution::Current,
+            Some(_) => DriverProtectionsAttribution::Stale,
+            None => match requested_enable {
+                Some(enable) if enable != outstanding.enable => {
+                    DriverProtectionsAttribution::Stale
+                }
+                _ => DriverProtectionsAttribution::Uncorrelated,
+            },
+        }
+    }
+
+    /// Ends the wait only for a result that answers the outstanding request;
+    /// anything else is reported without clearing the in-flight state.
+    pub fn apply_driver_protections_result(
+        &mut self,
+        attribution: DriverProtectionsAttribution,
+        success: bool,
+        message: String,
+    ) {
+        if attribution.answers_outstanding() {
+            self.set_driver_protections_result(success, message);
+            return;
+        }
+        log::error!(
+            "[home] driver protections: {} DriverProtectionsResult not attributed to a live \
+             request — {message}",
+            attribution.label(),
+        );
+        self.driver_protections_status = Some((
+            format!(
+                "{} client reply — NOT attributed to a request from this page, so it does not \
+                 describe the change you are waiting on: {message}",
+                attribution.label(),
+            ),
+            false,
+        ));
+    }
+
+    /// Clears a wait that outlived `DRIVER_PROTECTIONS_TIMEOUT` so both the
+    /// disable and the revert control become usable again.
+    fn expire_driver_protections_wait(&mut self) {
+        let Some(sent) = self.driver_protections_sent_at else { return };
+        if sent.elapsed() < DRIVER_PROTECTIONS_TIMEOUT {
+            return;
+        }
+        self.driver_protections_sent_at = None;
+        self.driver_protections_busy = false;
+        // Dropping the correlation id stops a late reply being read as the next request's.
+        let expired = self.driver_protections_outstanding.take();
+        let secs = DRIVER_PROTECTIONS_TIMEOUT.as_secs();
+        log::warn!(
+            "[home] driver protections: no DriverProtectionsResult within {secs}s for request {} \
+             — clearing busy",
+            expired.as_ref().map(|r| r.id.as_str()).unwrap_or("<none>"),
+        );
+        self.driver_protections_status = Some((
+            format!(
+                "No response from client within {secs}s — the machine may be in EITHER state. \
+                 Re-check it and re-send before it leaves the bench."
+            ),
+            false,
+        ));
     }
 }
 
@@ -245,6 +415,77 @@ impl WebSocketClient {
 
         // ── Top: status header + hardware inventory + active runs ──
         render_status_header(ui, &computer_label, &self.client.connection_string);
+        let conn = self.client.connection_string.clone();
+        if let Some(enable) = self.home_page.render_driver_protections(ui, &conn) {
+            // Enforced here, not only by hiding the UI, so no stray action can
+            // lower a customer machine's security posture.
+            if !crate::tabs::admin_console::current_user_is_root() {
+                log::warn!(
+                    "[home] SetDriverProtections refused for {conn}: signed-in user is not Root"
+                );
+                self.home_page.set_driver_protections_result(
+                    false,
+                    "Root authorization required to change driver protections".to_string(),
+                );
+            } else {
+                let verb = if enable { "re-enable" } else { "disable" };
+                let request_id = next_driver_protections_request_id(&self.client.connection_string);
+                // Enqueued before anything is audited so no 'requested' record
+                // outlives a command that never left the console.
+                let queued = self
+                    .send_cmd_tx
+                    .try_send(Cmd::SetDriverProtections {
+                        enable,
+                        request_id: Some(request_id.clone()),
+                    })
+                    .is_ok();
+                let audit = if queued {
+                    format!(
+                        "Driver protections: operator requested {verb} of Memory Integrity (HVCI) and \
+                         the Vulnerable Driver Blocklist on {} (request {request_id}) — awaiting the \
+                         client's read-back",
+                        self.client.connection_string,
+                    )
+                } else {
+                    format!(
+                        "Driver protections: {verb} of Memory Integrity (HVCI) and the Vulnerable \
+                         Driver Blocklist on {} (request {request_id}) was NOT sent — this session's \
+                         command channel is closed and the machine is unchanged",
+                        self.client.connection_string,
+                    )
+                };
+                if queued {
+                    log::warn!("[home] {audit}");
+                } else {
+                    log::error!("[home] {audit}");
+                }
+                self.history.push(History {
+                    from: "System".to_string(),
+                    message: audit.clone(),
+                    timestamp: chrono::Local::now().to_rfc3339(),
+                });
+                record_driver_protections_audit(DriverProtectionsAudit {
+                    connection_string: self.client.connection_string.clone(),
+                    hostname: self.client_hostname(),
+                    computer: self.client.computer.clone(),
+                    enable,
+                    stage: if queued {
+                        DriverProtectionsStage::Requested
+                    } else {
+                        DriverProtectionsStage::Failed
+                    },
+                    detail: audit.clone(),
+                    request_id: Some(request_id.clone()),
+                    ..Default::default()
+                });
+                if queued {
+                    self.home_page
+                        .begin_driver_protections_wait(enable, request_id);
+                } else {
+                    self.home_page.set_driver_protections_result(false, audit);
+                }
+            }
+        }
         let actions = self.home_page.render_inventory(ui);
         ui.separator();
 
@@ -334,6 +575,16 @@ impl WebSocketClient {
             }
         }
     }
+
+    /// Live sysinfo hostname, else the client's friendly name.
+    pub fn client_hostname(&self) -> Option<String> {
+        self.resource_monitor
+            .latest_sysinfo
+            .as_ref()
+            .map(|s| s.hostname.trim().to_string())
+            .filter(|h| !h.is_empty())
+            .or_else(|| self.client.friendly_name.clone())
+    }
 }
 
 fn render_status_header(ui: &mut Ui, computer_label: &str, connection_string: &str) {
@@ -358,6 +609,197 @@ fn render_status_header(ui: &mut Ui, computer_label: &str, connection_string: &s
             );
         });
     });
+}
+
+/// How far a driver-protections change got.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DriverProtectionsStage {
+    #[default]
+    Requested,
+    Applied,
+    Failed,
+}
+
+impl DriverProtectionsStage {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Requested => "requested",
+            Self::Applied => "applied",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+/// One durable driver-protections audit record: direction, target, operator, time.
+#[derive(Clone, Debug, Default)]
+pub struct DriverProtectionsAudit {
+    pub connection_string: String,
+    pub hostname: Option<String>,
+    pub computer: Option<RecordId>,
+    /// True for a re-enable, false for a disable.
+    pub enable: bool,
+    pub stage: DriverProtectionsStage,
+    pub detail: String,
+    pub hvci_enabled: Option<bool>,
+    pub blocklist_enabled: Option<bool>,
+    pub hvci_running: Option<bool>,
+    pub policy_override: Option<String>,
+    /// HVCI in `Win32_DeviceGuard.SecurityServicesConfigured`.
+    pub hvci_configured: Option<bool>,
+    /// `Win32_DeviceGuard.VirtualizationBasedSecurityStatus`: 0 off, 1 configured, 2 running.
+    pub vbs_status: Option<u32>,
+    pub reboot_required: Option<bool>,
+    /// Correlation id of the `SetDriverProtections` this record belongs to.
+    pub request_id: Option<String>,
+    /// How a client result lined up with the outstanding request; `None` on
+    /// records written by the console itself.
+    pub attribution: Option<DriverProtectionsAttribution>,
+    /// True when `direction` came from the client's echoed `requested_enable`
+    /// rather than from console state.
+    pub direction_echoed: bool,
+}
+
+/// Persists `audit` in the background.
+pub fn record_driver_protections_audit(audit: DriverProtectionsAudit) {
+    PlatformSpawner::spawn(async move { write_driver_protections_audit(audit).await });
+}
+
+/// Writes the audit to the client's open diagnostic session and to its
+/// `computer` row. Warns loudly when neither target exists so a change is
+/// never silently unrecorded.
+async fn write_driver_protections_audit(audit: DriverProtectionsAudit) {
+    use database::schema::{
+        DiagnosticCategory, DiagnosticEntry, DiagnosticSession, DIAGNOSTIC_SESSION_TABLE,
+    };
+
+    let direction = if audit.enable { "re-enabled" } else { "disabled" };
+    let stage = audit.stage.label();
+    let operator = crate::get_current_user_from_auth()
+        .map(|u| format!("{} <{}>", u.get_name(), u.get_email()))
+        .unwrap_or_else(|| "unknown operator".to_string());
+    let at = chrono::Utc::now().to_rfc3339();
+    let host = audit.hostname.clone().unwrap_or_default();
+
+    let record = serde_json::json!({
+        "direction": direction,
+        "stage": stage,
+        "connection_string": audit.connection_string,
+        "hostname": host,
+        "operator": operator,
+        "at": at,
+        "request_id": audit.request_id,
+        "attribution": audit.attribution.map(|a| a.label()),
+        "direction_echoed": audit.direction_echoed,
+        "hvci_enabled": audit.hvci_enabled,
+        "blocklist_enabled": audit.blocklist_enabled,
+        "hvci_running": audit.hvci_running,
+        "hvci_configured": audit.hvci_configured,
+        "vbs_status": audit.vbs_status,
+        "reboot_required": audit.reboot_required,
+        "policy_override": audit.policy_override,
+        "detail": audit.detail,
+    });
+
+    let mut written: Vec<String> = Vec::new();
+
+    let session_key = DiagnosticSession::latest_open_for_connection(
+        &audit.connection_string,
+        audit.computer.as_ref(),
+    )
+    .await
+    .ok()
+    .flatten()
+    .map(|s| s.id.key_string());
+
+    if let Some(key) = session_key.as_deref() {
+        let entry = DiagnosticEntry {
+            session_ref: RecordId::new(DIAGNOSTIC_SESSION_TABLE, key),
+            // A disable lowers the machine's security posture; the revert is a plain action.
+            category: if audit.enable {
+                DiagnosticCategory::Action
+            } else {
+                DiagnosticCategory::SecurityAlert
+            },
+            title: format!(
+                "Memory Integrity + vulnerable-driver blocklist {direction} ({stage}){}",
+                match audit.attribution {
+                    Some(a) if !a.answers_outstanding() =>
+                        format!(" [{} client reply — unattributed]", a.label()),
+                    _ => String::new(),
+                },
+            ),
+            detail: format!(
+                "{}\nTarget: {} ({})\nOperator: {operator}\nAt: {at}",
+                audit.detail,
+                audit.connection_string,
+                if host.is_empty() { "hostname unknown" } else { host.as_str() },
+            ),
+            data: Some(record.clone()),
+            ..Default::default()
+        };
+        match DiagnosticEntry::create(&entry).await {
+            Ok(id) => written.push(format!("diagnostic_entry {}", id.key_string())),
+            Err(e) => log::error!("[home] driver-protections diagnostic entry failed: {e}"),
+        }
+    }
+
+    if let Some(id) = audit.computer.clone() {
+        // Appends to the row's history instead of replacing it, so a
+        // disable/reboot/re-enable pass keeps every state it went through.
+        // `array::flatten` folds a legacy single-object value into the first
+        // element and an absent field into an empty history.
+        let res: Result<_, surrealdb::Error> = db()
+            .query(
+                "UPDATE $id SET driver_protections = array::slice(\
+                     array::flatten([driver_protections ?? [], [$record]]), $tail\
+                 ) RETURN id",
+            )
+            .bind(("id", id.clone()))
+            .bind(("record", record))
+            // Negative start keeps the newest entries.
+            .bind(("tail", -DRIVER_PROTECTIONS_HISTORY_KEEP))
+            .await;
+        match res {
+            Ok(mut resp) => {
+                let rows: Result<Vec<serde_json::Value>, surrealdb::Error> = resp.take(0);
+                let matched = match rows {
+                    Ok(rows) => !rows.is_empty(),
+                    Err(e) => {
+                        log::warn!("[home] driver-protections history read-back failed: {e}");
+                        true
+                    }
+                };
+                if matched {
+                    written.push(format!("computer {} history", id.key_string()));
+                } else {
+                    log::error!(
+                        "[home] driver-protections history matched no computer row {}",
+                        id.key_string(),
+                    );
+                }
+            }
+            Err(e) => log::error!("[home] driver-protections computer history append failed: {e}"),
+        }
+    }
+
+    if written.is_empty() {
+        log::error!(
+            "[home] driver protections {direction} ({stage}) on {} NOT recorded — no open \
+             diagnostic session and no linked computer",
+            audit.connection_string,
+        );
+        let _ = crate::get_toast_sender().try_send(crate::ToastMessage::Warning(format!(
+            "Driver protections {direction} on {} was NOT recorded — link a computer or open a \
+             diagnostic session for this client",
+            audit.connection_string,
+        )));
+        return;
+    }
+    log::warn!(
+        "[home] driver protections {direction} ({stage}) on {} by {operator} recorded to {}",
+        audit.connection_string,
+        written.join(", "),
+    );
 }
 
 impl HomePage {
@@ -616,6 +1058,159 @@ impl HomePage {
             merged.push(run);
         }
         merged
+    }
+
+    /// Renders the driver-protections row and its confirm popup. Returns
+    /// `Some(enable)` on the frame the operator confirms.
+    fn render_driver_protections(&mut self, ui: &mut Ui, conn: &str) -> Option<bool> {
+        // Polled panel, so an elapsed-check on repaint bounds the wait.
+        self.expire_driver_protections_wait();
+        let is_root = crate::tabs::admin_console::current_user_is_root();
+        let busy = self.driver_protections_busy;
+        if busy {
+            ui.ctx().request_repaint_after(Duration::from_millis(500));
+        }
+
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.label(
+                RichText::new(format!("{} Sensor driver protections", icons::LOCK))
+                    .color(theme::strong_text(ui))
+                    .strong(),
+            );
+            ui.add_space(8.0);
+
+            if ui
+                .add_enabled(
+                    !busy && is_root,
+                    Button::new(
+                        RichText::new(format!("{} Disable Memory Integrity", icons::STATUS_WARN))
+                            .color(theme::warn(ui)),
+                    ),
+                )
+                .on_hover_text(
+                    "Turns OFF Memory Integrity (HVCI) and the Vulnerable Driver Blocklist so the \
+                     WinRing0 sensor driver can load and report CPU temperature and board \
+                     voltages.\nLowers this machine's security posture. Requires a reboot. Revert \
+                     it before the machine leaves the bench.",
+                )
+                .clicked()
+            {
+                self.driver_protections_pending = Some(false);
+            }
+
+            if ui
+                .add_enabled(
+                    !busy && is_root,
+                    Button::new(
+                        RichText::new(format!("{} Re-enable protections", icons::CHECK))
+                            .color(theme::success(ui)),
+                    ),
+                )
+                .on_hover_text(
+                    "Turns Memory Integrity (HVCI) and the Vulnerable Driver Blocklist back ON. \
+                     Requires a reboot.",
+                )
+                .clicked()
+            {
+                self.driver_protections_pending = Some(true);
+            }
+
+            if busy {
+                ui.spinner();
+            }
+
+            if !is_root {
+                ui.label(
+                    RichText::new(format!("{} Root authorization required", icons::LOCK))
+                        .color(theme::warn(ui))
+                        .small(),
+                );
+            }
+
+            if let Some((msg, ok)) = self.driver_protections_status.as_ref() {
+                let color = if *ok { theme::success(ui) } else { theme::error(ui) };
+                ui.label(RichText::new(msg.as_str()).color(color).small());
+            }
+        });
+
+        if !is_root {
+            self.driver_protections_pending = None;
+            return None;
+        }
+
+        let enable = self.driver_protections_pending?;
+        let mut confirmed = None;
+
+        Window::new(format!("{} Confirm driver protections", icons::STATUS_WARN))
+            .id(Id::new(("driver_protections_confirm", conn)))
+            .collapsible(false)
+            .resizable(false)
+            .show(ui.ctx(), |ui| {
+                ui.set_max_width(460.0);
+                if enable {
+                    ui.label(
+                        RichText::new("Re-enable Windows driver protections on this machine?")
+                            .color(theme::strong_text(ui))
+                            .strong(),
+                    );
+                    ui.label(
+                        "Sets Memory Integrity (HVCI) and the Vulnerable Driver Blocklist back to \
+                         Enabled. Protection is only active again after the machine reboots.",
+                    );
+                } else {
+                    ui.label(
+                        RichText::new(format!(
+                            "{} This disables Memory Integrity and the Vulnerable Driver Blocklist",
+                            icons::STATUS_WARN
+                        ))
+                        .color(theme::warn(ui))
+                        .strong(),
+                    );
+                    ui.label(
+                        "It lowers this machine's security posture so the WinRing0 sensor driver \
+                         can load and report CPU temperature and board voltages.",
+                    );
+                    ui.label(
+                        "The change only takes effect after a reboot. Re-enable protections and \
+                         reboot again before the machine goes back to the customer.",
+                    );
+                }
+
+                let target = u32::from(enable);
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(format!(
+                        "DeviceGuard\\Scenarios\\HypervisorEnforcedCodeIntegrity\\Enabled = {target}\n\
+                         CI\\Config\\VulnerableDriverBlocklistEnable = {target}"
+                    ))
+                    .monospace()
+                    .small()
+                    .color(theme::weak_text(ui)),
+                );
+                ui.add_space(6.0);
+
+                ui.horizontal(|ui| {
+                    let (label, color) = if enable {
+                        ("Re-enable protections", theme::success(ui))
+                    } else {
+                        ("Disable protections", theme::error(ui))
+                    };
+                    if ui.button(RichText::new(label).color(color).strong()).clicked() {
+                        confirmed = Some(enable);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.driver_protections_pending = None;
+                    }
+                });
+            });
+
+        // The send site owns the busy flag; it only arms the wait once the
+        // Root gate has passed.
+        if confirmed.is_some() {
+            self.driver_protections_pending = None;
+        }
+        confirmed
     }
 
     fn render_inventory(&self, ui: &mut Ui) -> HomeActions {

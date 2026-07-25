@@ -178,6 +178,11 @@ pub struct RunVerdictDto {
     pub throughput_unit: Option<String>,
     pub tdr_count: u32,
     pub max_gpu_temp_c: Option<f32>,
+    /// Lowest +12V rail reading of the run (Windows + `winring0-thermal` only).
+    /// UNCALIBRATED: the divider ratio and channel map are assumed, not measured.
+    /// Use as a droop trend across runs on the same board, never as an absolute
+    /// voltage or a pass/fail threshold.
+    pub min_v12_v: Option<f32>,
     /// Per-stage rules verdicts; empty when the run carried no rules.
     pub stage_verdicts: Vec<StageVerdictDto>,
 }
@@ -209,6 +214,7 @@ impl From<&stress_runner::RunVerdict> for RunVerdictDto {
             throughput_unit: v.summary.throughput_unit.clone(),
             tdr_count: v.summary.tdr_count,
             max_gpu_temp_c: v.summary.max_gpu_temp_c,
+            min_v12_v: v.summary.min_v12_v,
             stage_verdicts: v
                 .stage_outcomes
                 .iter()
@@ -688,6 +694,7 @@ impl QcToolProvider {
             "test_errors": scenario.verdict.as_ref().map(|v| v.test_errors),
             "max_temp_c": scenario.verdict.as_ref().and_then(|v| v.max_temp_c),
             "max_gpu_temp_c": scenario.verdict.as_ref().and_then(|v| v.max_gpu_temp_c),
+            "min_v12_v": scenario.verdict.as_ref().and_then(|v| v.min_v12_v),
             "stage_verdicts": scenario.verdict.as_ref().map(|v| v.stage_verdicts.clone()),
             "finished_reason": scenario.finished_reason,
             "total_elapsed_secs": scenario.total_elapsed_secs,
@@ -1123,6 +1130,30 @@ impl QcToolProvider {
                 256,
                 "qc-mcp:psu-v1",
                 "preset:psu",
+            )
+            .await?;
+        let json = serde_json::to_string_pretty(&report)
+            .map_err(|e| to_internal(e.to_string()))?;
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
+    }
+
+    #[tool(
+        name = "run_psu_transient_test",
+        description = "Transient / load-step PSU test: all CPU cores stay pinned with FMA chains while the GPU compute load square-waves 100 ms on / 100 ms off, so the rails see a repeated hard load step instead of a flat draw. Catches supplies that hold a steady load but sag or trip on transients. Default 300 s. Reported GFLOPS is roughly half the steady-state `run_psu_test` figure because the GPU leg only runs half the wall clock. Runs CPU-only with a warning when no GPU is present (no transient is generated in that case)."
+    )]
+    async fn run_psu_transient_test(
+        &self,
+        Parameters(args): Parameters<DurationOnlyArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let report = self
+            .run_verified_single(
+                "psu_transient",
+                Stressor::PsuTransient,
+                0,
+                args.duration_secs.unwrap_or(300),
+                256,
+                "qc-mcp:psu-transient-v1",
+                "preset:psu_transient",
             )
             .await?;
         let json = serde_json::to_string_pretty(&report)
@@ -1944,6 +1975,9 @@ pub struct VerifiedTestReport {
     pub avg_temp_c: Option<f32>,
     /// Max GPU board power observed (NVML), the PSU-load proxy.
     pub max_power_w: Option<u32>,
+    /// Lowest +12V rail reading of the run. UNCALIBRATED (assumed divider and
+    /// channel map) — a droop trend, not an absolute voltage or a threshold.
+    pub min_v12_v: Option<f32>,
     pub last_error: Option<String>,
     pub finished_reason: String,
     pub reasoning: String,
@@ -2365,6 +2399,7 @@ impl QcToolProvider {
             max_temp_c: report.verdict.as_ref().and_then(|v| v.max_temp_c),
             avg_temp_c: report.verdict.as_ref().and_then(|v| v.avg_temp_c),
             max_power_w: report.verdict.as_ref().and_then(|v| v.max_power_w),
+            min_v12_v: report.verdict.as_ref().and_then(|v| v.min_v12_v),
             last_error: report.last_metrics.as_ref().and_then(|m| m.last_error.clone()),
             finished_reason: report.finished_reason,
             reasoning,
@@ -2389,6 +2424,7 @@ impl ServerHandler for QcToolProvider {
              Verified tests with error detection: `run_memtest` (RAM pattern verify), \
              `run_cpu_stability` (duplicate-execution compare), `run_linpack` (LU + residual check), \
              `run_psu_test` (CPU+GPU combined max load), \
+             `run_psu_transient_test` (same load pulsed 100ms on/off for rail load-step testing), \
              `run_combined_test` (single fused CPU+RAM+GPU torture). \
              Benchmarks with persisted scores: `run_benchmark`, `run_benchmark_suite`, \
              `measure_memory_latency`, `get_benchmark_results` (score history / cross-machine). \

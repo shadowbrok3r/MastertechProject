@@ -32,6 +32,8 @@ pub mod gpu_pcie;
 #[cfg(feature = "gpu")]
 pub mod psu;
 #[cfg(feature = "gpu")]
+pub mod psu_transient;
+#[cfg(feature = "gpu")]
 pub mod combined;
 #[cfg(feature = "gpu")]
 mod gpu_common;
@@ -108,6 +110,8 @@ pub(crate) fn run_core(
         #[cfg(feature = "gpu")]
         Stressor::Psu => psu::run(thread_count, cancel, tx, started_at),
         #[cfg(feature = "gpu")]
+        Stressor::PsuTransient => psu_transient::run(thread_count, cancel, tx, started_at),
+        #[cfg(feature = "gpu")]
         Stressor::Combined => {
             combined::run(thread_count, config.memory_cap_mb, cancel, tx, started_at)
         }
@@ -122,6 +126,7 @@ pub(crate) fn run_core(
 
         #[cfg(not(feature = "gpu"))]
         Stressor::Psu
+        | Stressor::PsuTransient
         | Stressor::Combined
         | Stressor::Gpu
         | Stressor::GpuMatmul

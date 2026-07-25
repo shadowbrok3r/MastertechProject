@@ -776,6 +776,38 @@ pub enum Cmd {
     /// its own baked `WS_CLIENT_URL`; the admin never dictates a dial target.
     /// Appended last so existing bincode variant indices stay stable.
     OpenRelayTunnel { session_id: String },
+
+    /// Admin → client: set HVCI `Enabled` and `VulnerableDriverBlocklistEnable` to `enable`.
+    SetDriverProtections {
+        enable: bool,
+        /// Correlation id the client echoes in `DriverProtectionsResult`.
+        /// Appended last so existing bincode field order stays stable.
+        request_id: Option<String>,
+    },
+    /// Client → admin: outcome of `SetDriverProtections` with both values read back.
+    DriverProtectionsResult {
+        success: bool,
+        hvci_enabled: Option<bool>,
+        blocklist_enabled: Option<bool>,
+        reboot_required: bool,
+        message: String,
+        /// HVCI in `Win32_DeviceGuard.SecurityServicesRunning`, so the registry
+        /// value can be compared against what Device Guard is actually doing.
+        /// Appended last so existing bincode field order stays stable.
+        hvci_running: Option<bool>,
+        /// Set when the Device Guard policy hive contradicts the requested state.
+        policy_override: Option<String>,
+        /// `SetDriverProtections.request_id` echoed back; `None` from client
+        /// builds that predate correlation.
+        request_id: Option<String>,
+        /// `SetDriverProtections.enable` echoed back, so a result carries the
+        /// direction it answers instead of inheriting the admin's last request.
+        requested_enable: Option<bool>,
+        /// HVCI in `Win32_DeviceGuard.SecurityServicesConfigured`.
+        hvci_configured: Option<bool>,
+        /// `Win32_DeviceGuard.VirtualizationBasedSecurityStatus`: 0 off, 1 configured, 2 running.
+        vbs_status: Option<u32>,
+    },
 }
 
 /// One stage/lane of a remote stress scenario or concurrent run.

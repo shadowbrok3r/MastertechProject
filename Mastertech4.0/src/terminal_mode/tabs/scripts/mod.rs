@@ -279,7 +279,10 @@ impl<'a> ScriptsTab<'a> {
                     TodoItem::new("Are there scheduled tasks for it?", Category::Informational),
                     TodoItem::new("Is Windows Activated?", Category::Informational),
                     TodoItem::new("Is Hibernation/Sleep enabled?", Category::Informational),
-                    TodoItem::new("Any Recent Blue Screens?", Category::Informational),
+                    TodoItem::new("Any Recent Blue Screens?", Category::Informational)
+                        .set_pass_criteria("No bugcheck, no fatal WHEA, no TDR, no crash dumps in the last 30 days")
+                        .set_warning_criteria("Kernel-Power 41 with BugcheckCode 0 (power loss / hard reset), 6008, TDR, corrected WHEA, or an incomplete query")
+                        .set_error_criteria("Bugcheck record, Kernel-Power 41 with a non-zero bugcheck code, fatal WHEA, or a crash dump in the window"),
                     TodoItem::new("When Was The Last Service Date?", Category::Informational),
                     TodoItem::new("Windows Version", Category::Informational)
                         .set_pass_criteria("Windows 11")

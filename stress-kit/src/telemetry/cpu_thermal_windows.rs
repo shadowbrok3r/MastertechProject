@@ -42,6 +42,8 @@ const fn ctl_code(function: u32, access: u32) -> u32 {
 const IOCTL_READ_MSR: u32 = ctl_code(0x821, FILE_ANY_ACCESS);
 const IOCTL_READ_PCI_CONFIG: u32 = ctl_code(0x851, FILE_READ_ACCESS);
 const IOCTL_WRITE_PCI_CONFIG: u32 = ctl_code(0x852, FILE_WRITE_ACCESS);
+const IOCTL_READ_IO_PORT_BYTE: u32 = ctl_code(0x833, FILE_READ_ACCESS);
+const IOCTL_WRITE_IO_PORT_BYTE: u32 = ctl_code(0x836, FILE_WRITE_ACCESS);
 
 const MSR_TEMPERATURE_TARGET: u32 = 0x1A2;
 const IA32_THERM_STATUS: u32 = 0x19C;
@@ -267,6 +269,67 @@ impl CpuThermalMonitor {
             ioapiset::DeviceIoControl(
                 self.device,
                 IOCTL_WRITE_PCI_CONFIG,
+                input.as_ptr() as *mut c_void,
+                input.len() as DWORD,
+                null_mut(),
+                0,
+                &mut returned,
+                null_mut(),
+            )
+        };
+        if ok != 0 { Some(()) } else { None }
+    }
+
+    /// IO-port accessor for other readers on this driver (SuperIO board voltages).
+    pub fn io_ports(&self) -> IoPorts {
+        IoPorts { device: self.device }
+    }
+}
+
+/// Borrowed WinRing0 IO-port access. The handle is owned by the
+/// [`CpuThermalMonitor`] it came from; calls fail (`None`) once that drops.
+#[derive(Clone, Copy)]
+pub struct IoPorts {
+    device: winnt::HANDLE,
+}
+
+impl IoPorts {
+    /// `IN AL, DX` via the driver. WinRing0 echoes the input length in
+    /// `returned` for the read-port IOCTLs and writes only one output byte.
+    pub fn read_io_port_byte(&self, port: u16) -> Option<u8> {
+        let input = (port as u32).to_le_bytes();
+        let mut out = [0u8; 4];
+        let mut returned: DWORD = 0;
+        let ok = unsafe {
+            ioapiset::DeviceIoControl(
+                self.device,
+                IOCTL_READ_IO_PORT_BYTE,
+                input.as_ptr() as *mut c_void,
+                input.len() as DWORD,
+                out.as_mut_ptr() as *mut c_void,
+                out.len() as DWORD,
+                &mut returned,
+                null_mut(),
+            )
+        };
+        if ok != 0 && returned >= 1 {
+            Some(out[0])
+        } else {
+            None
+        }
+    }
+
+    /// `OUT DX, AL` via the driver. Input is WinRing0's write-port struct:
+    /// little-endian `u32` port, then the byte at offset 4 (union, 8 bytes total).
+    pub fn write_io_port_byte(&self, port: u16, value: u8) -> Option<()> {
+        let mut input = [0u8; 8];
+        input[..4].copy_from_slice(&(port as u32).to_le_bytes());
+        input[4] = value;
+        let mut returned: DWORD = 0;
+        let ok = unsafe {
+            ioapiset::DeviceIoControl(
+                self.device,
+                IOCTL_WRITE_IO_PORT_BYTE,
                 input.as_ptr() as *mut c_void,
                 input.len() as DWORD,
                 null_mut(),

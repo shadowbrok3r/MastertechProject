@@ -1,0 +1,39 @@
+id = "20260724130000__stress_metric_voltage_rails"
+name = "stress_metric_voltage_rails"
+state = "completed"
+# Adds the four SuperIO rail columns to stress_test_metric, matching
+# database/schema/stress_test_metric.surql. Purely additive: stress_test_metric is
+# SCHEMALESS and every field is `none | number`, so old rows and old clients are
+# unaffected. Values are UNCALIBRATED (assumed board dividers) — trend data only.
+#
+# stress_test_run.summary.min_v12_v needs NO DDL: `summary` is `TYPE object` with
+# no per-key field definitions, so the new key lands without a schema change.
+# Same for scenario_stages.*.min_v12_v (`array<object>` / `object`).
+#
+# source == target because this only pushes committed file state.
+source_schema_hash = "c66f5523a3ec4c916cd3d6e7fae7b06cd55e5e3997f08c235f16487abae9b954"
+target_schema_hash = "c66f5523a3ec4c916cd3d6e7fae7b06cd55e5e3997f08c235f16487abae9b954"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "add_stress_metric_voltage_rails"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE v12_v   ON stress_test_metric TYPE none | number PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE v5_v    ON stress_test_metric TYPE none | number PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE v3vcc_v ON stress_test_metric TYPE none | number PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE vcore_v ON stress_test_metric TYPE none | number PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "drop_stress_metric_voltage_rails"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE FIELD IF EXISTS v12_v   ON stress_test_metric;
+REMOVE FIELD IF EXISTS v5_v    ON stress_test_metric;
+REMOVE FIELD IF EXISTS v3vcc_v ON stress_test_metric;
+REMOVE FIELD IF EXISTS vcore_v ON stress_test_metric;
+"""

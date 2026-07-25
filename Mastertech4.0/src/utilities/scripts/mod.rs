@@ -2,6 +2,7 @@ pub mod task_scheduler;
 pub mod taskbar;
 pub mod startup;
 pub mod processes;
+pub mod bsod_scan;
 #[cfg(target_os="windows")]
 pub mod programs;
 #[cfg(target_os="windows")]

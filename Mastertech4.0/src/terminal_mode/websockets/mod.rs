@@ -2391,6 +2391,72 @@ impl TerminalWebsocketClient {
                 }
             }
 
+            // --- Driver protections (HVCI + vulnerable driver blocklist) ---
+            Cmd::SetDriverProtections { enable, request_id } => {
+                log::warn!(
+                    "websockets -> SetDriverProtections(enable={enable}, request={request_id:?})"
+                );
+
+                let outcome = tokio::task::spawn_blocking(move || {
+                    crate::utilities::windows::registry::set_driver_protections(enable)
+                })
+                .await;
+
+                let response = match outcome {
+                    Ok(o) => {
+                        log::warn!(
+                            "websockets -> driver protections: success={} hvci={:?} blocklist={:?} \
+                             running={:?} configured={:?} vbs={:?} reboot={} override={:?} — {}",
+                            o.success,
+                            o.hvci_enabled,
+                            o.blocklist_enabled,
+                            o.hvci_running,
+                            o.hvci_configured,
+                            o.vbs_status,
+                            o.reboot_required,
+                            o.policy_override,
+                            o.message,
+                        );
+                        Cmd::DriverProtectionsResult {
+                            success: o.success,
+                            hvci_enabled: o.hvci_enabled,
+                            blocklist_enabled: o.blocklist_enabled,
+                            reboot_required: o.reboot_required,
+                            message: o.message,
+                            hvci_running: o.hvci_running,
+                            policy_override: o.policy_override,
+                            request_id,
+                            requested_enable: Some(enable),
+                            hvci_configured: o.hvci_configured,
+                            vbs_status: o.vbs_status,
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("websockets -> driver protections task failed: {e}");
+                        Cmd::DriverProtectionsResult {
+                            success: false,
+                            hvci_enabled: None,
+                            blocklist_enabled: None,
+                            reboot_required: false,
+                            message: format!("Registry task failed: {e}"),
+                            hvci_running: None,
+                            policy_override: None,
+                            request_id,
+                            requested_enable: Some(enable),
+                            hvci_configured: None,
+                            vbs_status: None,
+                        }
+                    }
+                };
+
+                if let Ok(payload) = encode_to_vec(&response, standard()) {
+                    sender.send(WsMessage::Binary(payload));
+                }
+            }
+
+            // Admin-bound only; drop an echo.
+            Cmd::DriverProtectionsResult { .. } => {}
+
             Cmd::ListStartupApps => {
                 log::info!("websockets -> ListStartupApps");
 
@@ -2951,68 +3017,17 @@ if (Test-Path $path) {{
                         }
 
                         "Any Recent Blue Screens?" => {
-                            let ps_cmd = r#"
-$days = 30
-$start = (Get-Date).AddDays(-$days)
-$evts = New-Object System.Collections.Generic.List[Object]
-$filters = @(
-    @{ LogName = 'System';      ProviderName = 'Microsoft-Windows-WER-SystemErrorReporting'; StartTime = $start },
-    @{ LogName = 'System';      Id = 1001; StartTime = $start },
-    @{ LogName = 'System';      Id = 1003; StartTime = $start },
-    @{ LogName = 'System';      Id = 41;   StartTime = $start },
-    @{ LogName = 'System';      Id = 6008; StartTime = $start },
-    @{ LogName = 'System';      Id = 4101; StartTime = $start },
-    @{ LogName = 'Application'; ProviderName = 'Windows Error Reporting'; Id = 1001; StartTime = $start }
-)
-foreach ($f in $filters) {
-    try {
-        Get-WinEvent -FilterHashtable $f -ErrorAction SilentlyContinue |
-            ForEach-Object { $null = $evts.Add($_) }
-    } catch {}
-}
-if ($evts.Count -eq 0) {
-    Write-Output ("No BugCheck / WER / Kernel-Power / TDR (nvlddmkm 4101) events in the last {0} days." -f $days)
-} else {
-    Write-Output ("Found {0} BSOD/TDR-related events in the last {1} days (most recent 25):" -f $evts.Count, $days)
-    $evts | Sort-Object TimeCreated -Descending | Select-Object -First 25 | ForEach-Object {
-        $first = ($_.Message -split "`r?`n") | Where-Object { $_.Trim() -ne '' } | Select-Object -First 1
-        Write-Output ("[{0}] id={1} provider={2} level={3} :: {4}" -f $_.TimeCreated, $_.Id, $_.ProviderName, $_.LevelDisplayName, $first)
-    }
-}
-$mini = Get-ChildItem -Path "$env:SystemRoot\Minidump" -Filter '*.dmp' -ErrorAction SilentlyContinue |
-    Sort-Object LastWriteTime -Descending | Select-Object -First 10
-if ($mini) {
-    Write-Output "Recent minidumps:"
-    foreach ($d in $mini) { Write-Output ("  {0}  {1} bytes  {2}" -f $d.LastWriteTime, $d.Length, $d.FullName) }
-} else {
-    Write-Output "No minidumps in $env:SystemRoot\Minidump"
-}
-$memdmp = Join-Path $env:SystemRoot 'MEMORY.DMP'
-if (Test-Path $memdmp) {
-    $f = Get-Item $memdmp
-    Write-Output ("MEMORY.DMP present: {0} bytes, last written {1}" -f $f.Length, $f.LastWriteTime)
-}
-"#;
-                            let output = tokio::process::Command::new("powershell")
-                                .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd])
-                                .output()
-                                .await;
-                            match output {
-                                Ok(out) => {
-                                    let stdout = String::from_utf8_lossy(&out.stdout);
-                                    let stderr = String::from_utf8_lossy(&out.stderr);
-                                    for line in stdout.lines() {
-                                        if !line.trim().is_empty() { send_log(&tx, line.to_string()); }
+                            use crate::utilities::scripts::bsod_scan::{self, BsodVerdict};
+                            match bsod_scan::scan_async(bsod_scan::DEFAULT_DAYS).await {
+                                Ok(scan) => {
+                                    for line in scan.report_lines() {
+                                        send_log(&tx, line);
                                     }
-                                    for line in stderr.lines() {
-                                        if !line.trim().is_empty() { send_log(&tx, format!("[stderr] {line}")); }
-                                    }
-                                    if out.status.success() {
-                                        send_result(&tx, &script.name, RemoteScriptStatus::Success);
-                                    } else {
-                                        send_log(&tx, format!("Exit code: {:?}", out.status.code()));
-                                        send_result(&tx, &script.name, RemoteScriptStatus::Failed);
-                                    }
+                                    let status = match scan.verdict() {
+                                        BsodVerdict::Error => RemoteScriptStatus::Failed,
+                                        _ => RemoteScriptStatus::Success,
+                                    };
+                                    send_result(&tx, &script.name, status);
                                 }
                                 Err(e) => {
                                     send_log(&tx, format!("Error running BSOD check: {e}"));

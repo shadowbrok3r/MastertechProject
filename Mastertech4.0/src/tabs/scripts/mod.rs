@@ -1599,9 +1599,7 @@ impl EguiScriptsTab {
                 self.execute_check_power_settings(log_tx, category, script_name);
             },
             "Any Recent Blue Screens?" => {
-                let _ = log_tx.try_send(ScriptLogEntry::warning(
-                    category, &script_name, "BSOD check not yet implemented"
-                ));
+                self.execute_bsod_scan(log_tx, category, script_name);
             },
             "When Was The Last Service Date?" => {
                 let _ = log_tx.try_send(ScriptLogEntry::warning(
@@ -1776,6 +1774,50 @@ impl EguiScriptsTab {
     }
 
     /// Check Power Settings
+    /// Provider-scoped BSOD / instability event scan.
+    fn execute_bsod_scan(
+        &self,
+        log_tx: Sender<ScriptLogEntry>,
+        category: ScriptCategory,
+        script_name: String,
+    ) {
+        #[cfg(target_os = "windows")]
+        {
+            use crate::utilities::scripts::bsod_scan::{self, BsodVerdict};
+            std::thread::spawn(move || {
+                match bsod_scan::scan_blocking(bsod_scan::DEFAULT_DAYS) {
+                    Ok(scan) => {
+                        let verdict = scan.verdict();
+                        let mut lines = scan.report_lines();
+                        // Last line is the verdict; it carries the entry's severity.
+                        let summary = lines.pop().unwrap_or_default();
+                        for line in lines {
+                            let _ = log_tx.try_send(ScriptLogEntry::info(
+                                category.clone(), &script_name, line
+                            ));
+                        }
+                        let entry = match verdict {
+                            BsodVerdict::Error => ScriptLogEntry::error(category, &script_name, summary),
+                            BsodVerdict::Warning => ScriptLogEntry::warning(category, &script_name, summary),
+                            BsodVerdict::Clean => ScriptLogEntry::success(category, &script_name, summary),
+                        };
+                        let _ = log_tx.try_send(entry);
+                    }
+                    Err(e) => {
+                        let _ = log_tx.try_send(ScriptLogEntry::error(
+                            category, &script_name, format!("BSOD check failed: {}", e)
+                        ));
+                    }
+                }
+            });
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        let _ = log_tx.try_send(ScriptLogEntry::warning(
+            category, &script_name, "BSOD check only available on Windows"
+        ));
+    }
+
     fn execute_check_power_settings(
         &self,
         log_tx: Sender<ScriptLogEntry>,

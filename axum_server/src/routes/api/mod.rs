@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod surreal;
 pub mod orders;
 pub mod order_lookup;
@@ -39,5 +40,6 @@ pub fn routes(state: crate::AppState) -> axum::Router {
         .merge(qc_fleet::qc_fleet_routes())
         .merge(preboot::preboot_routes())
         .merge(build::build_routes())
+        .merge(admin::admin_routes())
         .with_state(state)
 }

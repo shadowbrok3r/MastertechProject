@@ -34,7 +34,7 @@ Pragma = "no-cache"
 
 [tools]
 # Default wasm-opt version to download.
-wasm_opt = "version_129"
+wasm_opt = "version_131"
 
 # [hooks] 
 # post-build = "build.ps1"

@@ -571,6 +571,14 @@ pub enum FailureMode {
     OperatorOverride {
         reason: String,
     },
+    /// A board voltage rail stayed below its configured floor under load. Only
+    /// reachable when an operator opts in per board — the SuperIO divider is
+    /// assumed, so no built-in policy sets a rail floor. Appended last so
+    /// existing variant indices stay stable.
+    RailDroop {
+        rail: String,
+        min_v: f32,
+    },
 }
 
 impl FailureMode {
@@ -592,6 +600,7 @@ impl FailureMode {
             Self::Reboot => "reboot",
             Self::Timeout => "timeout",
             Self::OperatorOverride { .. } => "operator_override",
+            Self::RailDroop { .. } => "rail_droop",
         }
     }
 }
@@ -686,6 +695,11 @@ pub struct ScenarioStageSummary {
     #[serde(default)]
     #[surreal(default)]
     pub max_gpu_temp_c: Option<f32>,
+    /// Lowest +12V rail reading during this stage. Uncalibrated SuperIO value —
+    /// trend/droop data, not an absolute. Missing on older rows.
+    #[serde(default)]
+    #[surreal(default)]
+    pub min_v12_v: Option<f32>,
     #[serde(default)]
     #[surreal(default)]
     pub max_clock_mhz: Option<u32>,
@@ -753,6 +767,11 @@ pub struct RunSummary {
     #[serde(default)]
     #[surreal(default)]
     pub max_cpu_temp_c: Option<f32>,
+    /// Lowest +12V rail reading of the run — droop, not peak, is the PSU signal.
+    /// Uncalibrated SuperIO value. Missing on older rows.
+    #[serde(default)]
+    #[surreal(default)]
+    pub min_v12_v: Option<f32>,
 }
 
 // ============================================================
@@ -1192,6 +1211,22 @@ pub struct StressTestMetric {
     #[serde(default)]
     #[surreal(default)]
     pub power_w: Option<f32>,
+    /// SuperIO board rails at this tick (`winring0-thermal`, Windows only).
+    /// Scaled with assumed nominal dividers, so these are uncalibrated and
+    /// board-specific — read them as trend/droop, never as absolutes.
+    #[serde(default)]
+    #[surreal(default)]
+    pub v12_v: Option<f32>,
+    #[serde(default)]
+    #[surreal(default)]
+    pub v5_v: Option<f32>,
+    /// Sensor chip's 3.3V supply, not the board's +3.3V PSU rail.
+    #[serde(default)]
+    #[surreal(default)]
+    pub v3vcc_v: Option<f32>,
+    #[serde(default)]
+    #[surreal(default)]
+    pub vcore_v: Option<f32>,
 }
 
 impl StressTestMetric {
@@ -1221,6 +1256,10 @@ impl StressTestMetric {
             cpu_usage_pct: None,
             clock_mhz: None,
             power_w: None,
+            v12_v: None,
+            v5_v: None,
+            v3vcc_v: None,
+            vcore_v: None,
         }
     }
 

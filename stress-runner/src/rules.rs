@@ -36,6 +36,18 @@ fn default_collapse_usage() -> f32 {
     50.0
 }
 
+/// Sustained rail droop: reading stayed below `floor_v` for `consecutive_ticks`+ ticks.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RailDroopRule {
+    pub floor_v: f32,
+    #[serde(default = "default_rail_ticks")]
+    pub consecutive_ticks: u32,
+}
+
+fn default_rail_ticks() -> u32 {
+    5
+}
+
 /// Post-warmup throughput stability: coefficient of variation must stay under `max_cv`.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ThroughputCvRule {
@@ -65,6 +77,11 @@ pub struct VerdictRules {
     pub max_gpu_temp_c: Option<TempRule>,
     pub clock_collapse: Option<ClockCollapseRule>,
     pub throughput_cv: Option<ThroughputCvRule>,
+    /// +12V droop floor. Stays `None` in every built-in policy: SuperIO rails
+    /// are read through an assumed, board-specific divider and publish
+    /// `calibrated: false`, so the number cannot gate a certification run.
+    /// Only set this per-board after verifying against a meter.
+    pub min_v12_v: Option<RailDroopRule>,
 }
 
 impl Default for VerdictRules {
@@ -78,6 +95,7 @@ impl Default for VerdictRules {
             max_gpu_temp_c: None,
             clock_collapse: None,
             throughput_cv: None,
+            min_v12_v: None,
         }
     }
 }
@@ -107,6 +125,7 @@ impl VerdictRules {
                 max_cv: 0.20,
                 min_samples: 30,
             }),
+            min_v12_v: None,
         }
     }
 }
@@ -122,6 +141,10 @@ pub enum RuleViolation {
     GpuTemp { limit_c: f32, peak_c: f32, sustained_ticks: u32 },
     ClockCollapse { below_pct: f32, ticks: u32 },
     ThroughputUnstable { cv: f64, max_cv: f64 },
+    RailDroop { rail: String, floor_v: f32, min_v: f32, sustained_ticks: u32 },
+    /// The stressor gave up before its intended load finished, so nothing this
+    /// stage measured proves the hardware is healthy.
+    FatalAbort { reason: Option<String> },
 }
 
 impl RuleViolation {
@@ -150,6 +173,15 @@ impl RuleViolation {
             Self::ThroughputUnstable { cv, max_cv } => format!(
                 "throughput CV {cv:.3} over band {max_cv:.3}"
             ),
+            Self::RailDroop { rail, floor_v, min_v, sustained_ticks } => format!(
+                "{rail} under {floor_v:.2}V for {sustained_ticks}s (min {min_v:.2}V, uncalibrated)"
+            ),
+            Self::FatalAbort { reason } => match reason {
+                Some(r) => format!(
+                    "inconclusive: stressor aborted before its load completed — {r}"
+                ),
+                None => "inconclusive: stressor aborted before its load completed".to_string(),
+            },
         }
     }
 }
@@ -184,11 +216,15 @@ pub struct StageStats {
     pub sum_cpu_temp: f64,
     pub cpu_temp_samples: u32,
     pub max_gpu_temp_c: Option<f32>,
+    /// Lowest +12V sample this stage; `None` when no SuperIO rail was readable.
+    pub min_v12_v: Option<f32>,
     pub max_avg_clock_mhz: Option<u32>,
     cpu_temp_over_run: u32,
     pub worst_cpu_temp_over: u32,
     gpu_temp_over_run: u32,
     pub worst_gpu_temp_over: u32,
+    rail_under_run: u32,
+    pub worst_rail_under: u32,
     collapse_run: u32,
     pub worst_collapse_run: u32,
     pub peak_throughput: Option<f64>,
@@ -196,6 +232,13 @@ pub struct StageStats {
     tp_sum_sq: f64,
     pub tp_samples: u32,
     pub errors: u64,
+    /// Newest `Metrics.last_error` folded in this stage.
+    pub last_error: Option<String>,
+    /// A stressor reported `Metrics.fatal` at least once this stage. Latched:
+    /// later clean ticks never clear it.
+    pub fatal_abort: bool,
+    /// `last_error` carried by the first fatal sample.
+    pub fatal_reason: Option<String>,
     whea_baseline: u32,
     pub whea_delta: u32,
     whea_corrected_baseline: u32,
@@ -221,11 +264,14 @@ impl StageStats {
             sum_cpu_temp: 0.0,
             cpu_temp_samples: 0,
             max_gpu_temp_c: None,
+            min_v12_v: None,
             max_avg_clock_mhz: None,
             cpu_temp_over_run: 0,
             worst_cpu_temp_over: 0,
             gpu_temp_over_run: 0,
             worst_gpu_temp_over: 0,
+            rail_under_run: 0,
+            worst_rail_under: 0,
             collapse_run: 0,
             worst_collapse_run: 0,
             peak_throughput: None,
@@ -233,6 +279,9 @@ impl StageStats {
             tp_sum_sq: 0.0,
             tp_samples: 0,
             errors: 0,
+            last_error: None,
+            fatal_abort: false,
+            fatal_reason: None,
             whea_baseline: whea_count(snapshot),
             whea_delta: 0,
             whea_corrected_baseline: whea_corrected(snapshot),
@@ -246,6 +295,31 @@ impl StageStats {
         }
     }
 
+    /// Fold the stressor-reported counters of one sample: cumulative errors,
+    /// newest `last_error`, and the latched fatal flag.
+    fn absorb_metrics(&mut self, metrics: &Metrics) {
+        // `Metrics.errors` is cumulative within the stage's stressor.
+        self.errors = self.errors.max(metrics.errors);
+        if metrics.last_error.is_some() {
+            self.last_error = metrics.last_error.clone();
+        }
+        if metrics.fatal {
+            self.fatal_abort = true;
+            if self.fatal_reason.is_none() {
+                self.fatal_reason = metrics
+                    .last_error
+                    .clone()
+                    .or_else(|| self.last_error.clone());
+            }
+        }
+    }
+
+    /// Fold a sample that arrived outside the ~1 Hz cadence without counting
+    /// it as a tick, so a final or fatal sample is never dropped.
+    pub fn absorb_final(&mut self, metrics: &Metrics) {
+        self.absorb_metrics(metrics);
+    }
+
     /// Fold one ~1 Hz tick of stressor metrics + telemetry.
     pub fn absorb_tick(
         &mut self,
@@ -254,9 +328,7 @@ impl StageStats {
         rules: &VerdictRules,
     ) {
         self.ticks = self.ticks.saturating_add(1);
-
-        // `Metrics.errors` is cumulative within the stage's stressor.
-        self.errors = self.errors.max(metrics.errors);
+        self.absorb_metrics(metrics);
 
         self.whea_delta = whea_count(snapshot).saturating_sub(self.whea_baseline);
         self.whea_corrected_delta =
@@ -300,6 +372,19 @@ impl StageStats {
                 rule.limit_c,
                 &mut self.gpu_temp_over_run,
                 &mut self.worst_gpu_temp_over,
+            );
+        }
+
+        let tick_v12 = snapshot.rail_12v();
+        if let Some(v) = tick_v12 {
+            self.min_v12_v = Some(self.min_v12_v.map_or(v, |m| m.min(v)));
+        }
+        if let Some(rule) = &rules.min_v12_v {
+            track_under_run(
+                tick_v12,
+                rule.floor_v,
+                &mut self.rail_under_run,
+                &mut self.worst_rail_under,
             );
         }
 
@@ -401,6 +486,18 @@ fn track_over_run(temp: Option<f32>, limit_c: f32, run: &mut u32, worst: &mut u3
     }
 }
 
+/// Consecutive-breach run tracking for one reading falling below a floor.
+fn track_under_run(value: Option<f32>, floor: f32, run: &mut u32, worst: &mut u32) {
+    match value {
+        Some(v) if v < floor => {
+            *run = run.saturating_add(1);
+            *worst = (*worst).max(*run);
+        }
+        Some(_) => *run = 0,
+        None => {}
+    }
+}
+
 fn whea_count(snapshot: &TelemetrySnapshot) -> u32 {
     snapshot
         .whea
@@ -438,7 +535,11 @@ fn tdr_count(snapshot: &TelemetrySnapshot) -> u32 {
 fn cv_exempt(stressor: Stressor) -> bool {
     matches!(
         stressor,
-        Stressor::Psu | Stressor::Disk | Stressor::MemTest | Stressor::GpuVram
+        Stressor::Psu
+            | Stressor::PsuTransient
+            | Stressor::Disk
+            | Stressor::MemTest
+            | Stressor::GpuVram
     )
 }
 
@@ -446,6 +547,13 @@ fn cv_exempt(stressor: Stressor) -> bool {
 pub fn evaluate_stage(stats: &StageStats, rules: &VerdictRules) -> StageVerdict {
     let mut violations = Vec::new();
     let mut warnings = Vec::new();
+
+    // Rule-independent: a load that never ran cannot clear any policy.
+    if stats.fatal_abort {
+        violations.push(RuleViolation::FatalAbort {
+            reason: stats.fatal_reason.clone().or_else(|| stats.last_error.clone()),
+        });
+    }
 
     if rules.whea_fails {
         if stats.whea_corrected_delta > 0 || stats.whea_fatal_delta > 0 {
@@ -490,6 +598,16 @@ pub fn evaluate_stage(stats: &StageStats, rules: &VerdictRules) -> StageVerdict 
             });
         }
     }
+    if let Some(rule) = &rules.min_v12_v {
+        if stats.worst_rail_under >= rule.consecutive_ticks {
+            violations.push(RuleViolation::RailDroop {
+                rail: "+12V".to_string(),
+                floor_v: rule.floor_v,
+                min_v: stats.min_v12_v.unwrap_or(rule.floor_v),
+                sustained_ticks: stats.worst_rail_under,
+            });
+        }
+    }
     if let Some(rule) = &rules.clock_collapse {
         if stats.worst_collapse_run >= rule.consecutive_ticks {
             violations.push(RuleViolation::ClockCollapse {
@@ -523,7 +641,7 @@ pub fn evaluate_stage(stats: &StageStats, rules: &VerdictRules) -> StageVerdict 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stress_kit::telemetry::{CoreSample, TdrCounters, WheaCounters};
+    use stress_kit::telemetry::{CoreSample, TdrCounters, VoltageReading, WheaCounters};
 
     fn snapshot(temp_c: f32, freq_mhz: u64, usage: f32) -> TelemetrySnapshot {
         TelemetrySnapshot {
@@ -546,6 +664,16 @@ mod tests {
             throughput,
             errors,
             ..Default::default()
+        }
+    }
+
+    fn fatal_metrics(reason: &str) -> Metrics {
+        Metrics {
+            elapsed_secs: 1.0,
+            throughput: 0.0,
+            last_error: Some(reason.to_string()),
+            fatal: true,
+            errors: 0,
         }
     }
 
@@ -757,5 +885,120 @@ mod tests {
         assert!(legacy.max_cpu_temp_c.is_none());
         assert!(legacy.clock_collapse.is_none());
         assert!(legacy.throughput_cv.is_none());
+        assert!(legacy.min_v12_v.is_none());
+    }
+
+    /// The rail divider is uncalibrated and board-specific, so no built-in
+    /// policy may fail a run on it.
+    #[test]
+    fn rail_droop_rule_is_off_in_every_builtin_policy() {
+        assert!(VerdictRules::default().min_v12_v.is_none());
+        assert!(VerdictRules::certification().min_v12_v.is_none());
+    }
+
+    /// A stage whose ticks include a fatal can never report pass, under any
+    /// policy — this is the false-green the PSU GPU-leg bug produced.
+    #[test]
+    fn fatal_tick_cannot_pass_under_any_policy() {
+        let reason = "psu: inconclusive - GPU unavailable, GPU leg never ran";
+        for rules in [VerdictRules::certification(), VerdictRules::default()] {
+            let mut stats = StageStats::begin(
+                0,
+                "psu",
+                Stressor::Psu,
+                &snapshot(50.0, 4000, 90.0),
+            );
+            for _ in 0..30 {
+                stats.absorb_tick(&metrics(100.0, 0), &snapshot(70.0, 4000, 95.0), &rules);
+            }
+            stats.absorb_tick(&fatal_metrics(reason), &snapshot(70.0, 4000, 95.0), &rules);
+            // Clean ticks after the fatal must not clear the latch.
+            for _ in 0..30 {
+                stats.absorb_tick(&metrics(100.0, 0), &snapshot(70.0, 4000, 95.0), &rules);
+            }
+            stats.finish(&snapshot(70.0, 4000, 95.0));
+
+            let verdict = evaluate_stage(&stats, &rules);
+            assert!(!verdict.pass, "fatal stage reported pass");
+            assert!(verdict
+                .violations
+                .iter()
+                .any(|v| matches!(v, RuleViolation::FatalAbort { .. })));
+            assert!(
+                verdict.violation_lines().iter().any(|l| l.contains(reason)),
+                "reason missing from operator lines: {:?}",
+                verdict.violation_lines()
+            );
+        }
+    }
+
+    /// The post-loop absorb: a fatal that lands after the last periodic tick
+    /// still reaches the verdict.
+    #[test]
+    fn fatal_after_last_tick_is_captured_by_absorb_final() {
+        let rules = VerdictRules::certification();
+        let mut stats = stats_for(&rules);
+        for _ in 0..60 {
+            stats.absorb_tick(&metrics(100.0, 0), &snapshot(70.0, 4000, 95.0), &rules);
+        }
+        assert!(evaluate_stage(&stats, &rules).pass, "baseline must pass");
+
+        stats.absorb_final(&fatal_metrics("gpu: device is lost"));
+        stats.finish(&snapshot(70.0, 4000, 95.0));
+
+        let verdict = evaluate_stage(&stats, &rules);
+        assert!(!verdict.pass);
+        assert_eq!(stats.ticks, 60, "absorb_final must not count as a tick");
+        assert_eq!(stats.fatal_reason.as_deref(), Some("gpu: device is lost"));
+    }
+
+    #[test]
+    fn absorb_final_folds_errors_and_last_error() {
+        let rules = VerdictRules::default();
+        let mut stats = stats_for(&rules);
+        stats.absorb_tick(&metrics(100.0, 1), &snapshot(70.0, 4000, 95.0), &rules);
+        stats.absorb_final(&metrics(100.0, 7));
+        assert_eq!(stats.errors, 7);
+        assert!(!stats.fatal_abort);
+
+        stats.absorb_final(&fatal_metrics("disk thread 0: write failed"));
+        assert_eq!(stats.last_error.as_deref(), Some("disk thread 0: write failed"));
+        assert!(stats.fatal_abort);
+    }
+
+    #[test]
+    fn rail_droop_only_fails_when_opted_in() {
+        let mut snap = snapshot(70.0, 4000, 95.0);
+        snap.voltages = vec![VoltageReading {
+            label: "+12V".into(),
+            volts: 10.9,
+            calibrated: false,
+        }];
+
+        let cert = VerdictRules::certification();
+        let mut off = StageStats::begin(0, "psu", Stressor::Psu, &snapshot(50.0, 4000, 90.0));
+        for _ in 0..10 {
+            off.absorb_tick(&metrics(100.0, 0), &snap, &cert);
+        }
+        assert!(evaluate_stage(&off, &cert).pass);
+        assert_eq!(off.min_v12_v, Some(10.9));
+
+        let opted = VerdictRules {
+            min_v12_v: Some(RailDroopRule {
+                floor_v: 11.4,
+                consecutive_ticks: 5,
+            }),
+            ..cert
+        };
+        let mut on = StageStats::begin(0, "psu", Stressor::Psu, &snapshot(50.0, 4000, 90.0));
+        for _ in 0..10 {
+            on.absorb_tick(&metrics(100.0, 0), &snap, &opted);
+        }
+        let verdict = evaluate_stage(&on, &opted);
+        assert!(!verdict.pass);
+        assert!(verdict
+            .violations
+            .iter()
+            .any(|v| matches!(v, RuleViolation::RailDroop { .. })));
     }
 }

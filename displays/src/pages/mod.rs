@@ -12,7 +12,8 @@ pub fn view_menu(
     tab_ctx: TabContext,
     mut anchor: Option<&mut dyn FnMut(TabId, Rect)>,
 ) {
-    for &tab in TabId::visible_for(tab_ctx) {
+    let is_root = crate::tabs::admin_console::current_user_is_root();
+    for tab in TabId::visible_for_user(tab_ctx, is_root) {
         let label = tab.title(tab_ctx);
         let item = ui.selectable_label(session.is_open(tab), label);
         if let Some(push) = anchor.as_deref_mut() {

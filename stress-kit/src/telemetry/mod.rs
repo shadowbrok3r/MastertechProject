@@ -23,6 +23,8 @@ mod tdr_windows;
 mod thermal_windows;
 #[cfg(all(target_os = "windows", feature = "winring0-thermal"))]
 mod cpu_thermal_windows;
+#[cfg(all(target_os = "windows", feature = "winring0-thermal"))]
+mod superio_windows;
 #[cfg(target_os = "windows")]
 mod storage_thermal_windows;
 
@@ -91,6 +93,12 @@ pub struct TelemetrySnapshot {
     /// non-Windows or when the WMI query isn't available.
     #[serde(default)]
     pub thermals: Vec<ThermalReading>,
+    /// SuperIO board rails on Windows (`winring0-thermal`). Scaled with nominal
+    /// dividers, so `calibrated` is false unless a per-board factor is known. A
+    /// rail that drops below its plausible floor is published at its measured
+    /// value, so a collapse reaches the verdict rules as a very low reading.
+    #[serde(default)]
+    pub voltages: Vec<VoltageReading>,
 }
 
 /// One ACPI thermal-zone reading. Mirrors the lightweight shape we
@@ -101,6 +109,16 @@ pub struct TelemetrySnapshot {
 pub struct ThermalReading {
     pub label: String,
     pub temp_c: f32,
+}
+
+/// One board voltage rail. `label` is the rail name (`+12V`, `+5V`,
+/// `3VCC (chip)`, `Vcore`, `VBAT`); `calibrated` is false when a nominal
+/// divider was assumed instead of a known per-board ratio.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VoltageReading {
+    pub label: String,
+    pub volts: f32,
+    pub calibrated: bool,
 }
 
 impl TelemetrySnapshot {
@@ -116,6 +134,30 @@ impl TelemetrySnapshot {
                 l.contains("package") || l.contains("cpu") || l.contains("tctl") || l.contains("tdie") || l.starts_with("tz") })
             .map(|r| r.temp_c)
             .fold(None, |acc: Option<f32>, t| Some(acc.map_or(t, |m| m.max(t))))
+    }
+
+    pub fn rail_12v(&self) -> Option<f32> {
+        self.rail("+12V")
+    }
+
+    pub fn rail_5v(&self) -> Option<f32> {
+        self.rail("+5V")
+    }
+
+    /// Sensor chip's own 3.3V supply, not the board's +3.3V PSU rail.
+    pub fn rail_3vcc(&self) -> Option<f32> {
+        self.rail("3VCC (chip)")
+    }
+
+    pub fn vcore(&self) -> Option<f32> {
+        self.rail("Vcore")
+    }
+
+    fn rail(&self, label: &str) -> Option<f32> {
+        self.voltages
+            .iter()
+            .find(|v| v.label.eq_ignore_ascii_case(label))
+            .map(|v| v.volts)
     }
 }
 
@@ -198,6 +240,7 @@ fn capture_snapshot_blocking() -> TelemetrySnapshot {
         // the long-running agent populate thermals on its sampler
         // thread instead.
         thermals: Vec::new(),
+        voltages: Vec::new(),
     }
 }
 
@@ -234,6 +277,11 @@ fn sampler_loop(
 
     #[cfg(all(target_os = "windows", feature = "winring0-thermal"))]
     let mut cpu_thermal = cpu_thermal_windows::CpuThermalMonitor::open();
+    // Shares the WinRing0 handle above, so it must not outlive `cpu_thermal`.
+    #[cfg(all(target_os = "windows", feature = "winring0-thermal"))]
+    let mut superio = cpu_thermal
+        .as_ref()
+        .and_then(|c| superio_windows::SuperIoMonitor::open(c.io_ports()));
 
     #[cfg(target_os = "windows")]
     let mut storage_thermal = storage_thermal_windows::StorageThermalMonitor::open();
@@ -303,6 +351,10 @@ fn sampler_loop(
                 let _ = thermal;
                 Vec::new()
             },
+            #[cfg(all(target_os = "windows", feature = "winring0-thermal"))]
+            voltages: superio.as_mut().map(|s| s.poll()).unwrap_or_default(),
+            #[cfg(not(all(target_os = "windows", feature = "winring0-thermal")))]
+            voltages: Vec::new(),
         };
 
         if let Ok(mut g) = snapshot.lock() {

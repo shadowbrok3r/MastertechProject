@@ -103,8 +103,8 @@ pub use report::{
     TimelineRow,
 };
 pub use rules::{
-    evaluate_stage, ClockCollapseRule, RuleViolation, StageStats, StageVerdict, TempRule,
-    ThroughputCvRule, VerdictRules,
+    evaluate_stage, ClockCollapseRule, RailDroopRule, RuleViolation, StageStats, StageVerdict,
+    TempRule, ThroughputCvRule, VerdictRules,
 };
 pub use gpu_probe::{gpu_probe_spec, gpu_probe_stages, GPU_PROBE_PRESET};
 pub use panel_config::{

@@ -23,6 +23,7 @@ pub mod checkin_form;
 pub mod sales_tracker;
 pub mod web_console;
 pub mod fleet_dashboard;
+pub mod server_console;
 pub mod stress_lab;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod plugins_tab;
@@ -114,6 +115,7 @@ impl egui_dock::TabViewer for SharedContext {
                 .enable_category("egui_glow::painter".to_string(), false)
                 .show(ui),
             TabId::AdminConsole => self.admin_console(ui),
+            TabId::ServerConsole => self.server_console.ui(ui),
             TabId::WebConsole => self.web_console.ui(ui),
             #[cfg(not(target_arch = "wasm32"))]
             TabId::Ai => {
@@ -203,7 +205,8 @@ impl egui_dock::TabViewer for SharedContext {
     ) {
         ui.set_width(100.0);
         let tab_ctx = self.tab_context();
-        for &tab in TabId::visible_for(tab_ctx) {
+        let is_root = crate::tabs::admin_console::current_user_is_root();
+        for tab in TabId::visible_for_user(tab_ctx, is_root) {
             let label = tab.title(tab_ctx);
             let open = self.dock.is_open(tab);
             if ui.selectable_label(open, label).clicked() {

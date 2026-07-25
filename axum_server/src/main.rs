@@ -89,9 +89,16 @@ async fn main() -> anyhow::Result<()> {
     // IPv4 stack (no Tcp4/Http); reassembles chunked datagrams.
     tokio::spawn(routes::api::qc_udp::serve());
 
+    // `mw_record_request` runs ahead of the response logger so it can install a
+    // per-request Ctx; the AddExtensionLayer below is only the fallback for
+    // paths that bypass the recorder.
     let app = Router::new()
         .merge(routes(app_state.clone()))
         .layer(map_response(middleware_logger))
+        .layer(axum::middleware::from_fn_with_state(
+            app_state.clone(),
+            middleware::request_recorder::mw_record_request,
+        ))
         .layer(CorsLayer::permissive())
         .layer(AddExtensionLayer::new(Ctx::new(
             Ok("Shadowbroker".to_string()),
@@ -115,6 +122,8 @@ pub struct AppState {
     pub fleet: SharedFleetState,
     /// Pre-boot terminal relay sessions, keyed by machine serial.
     pub preboot: routes::api::preboot::SharedPreBoot,
+    /// Recorded request ring + Root-token cache behind `/api/v1/admin`.
+    pub admin: routes::api::admin::AdminState,
 }
 
 impl AppState {
@@ -123,6 +132,7 @@ impl AppState {
             cache: Arc::new(Mutex::new(HashMap::new())),
             fleet: Arc::new(Mutex::new(FleetState::default())),
             preboot: routes::api::preboot::new_registry(),
+            admin: routes::api::admin::AdminState::new(),
         }
     }
 }

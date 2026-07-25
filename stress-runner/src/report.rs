@@ -91,6 +91,10 @@ pub struct RunReportModel {
     #[facet(rename = "GPU max (°C)")]
     pub max_gpu_temp_c: Option<f32>,
     pub max_cpu_temp_c: Option<f32>,
+    /// Lowest +12V rail reading of the run. Uncalibrated SuperIO value — read as
+    /// droop trend, not an absolute voltage.
+    #[facet(rename = "12V min (V)")]
+    pub min_v12_v: Option<f32>,
     /// Highest average core clock reached.
     #[facet(rename = "Max clock (MHz)")]
     pub max_clock_mhz: Option<u32>,
@@ -264,6 +268,7 @@ impl RunReportModel {
             avg_temp_c: run.summary.avg_temp_c,
             max_gpu_temp_c: run.summary.max_gpu_temp_c,
             max_cpu_temp_c: run.summary.max_cpu_temp_c,
+            min_v12_v: run.summary.min_v12_v,
             max_clock_mhz: run.summary.max_clock_mhz,
             avg_clock_mhz: run.summary.avg_clock_mhz,
             max_power_w: run.summary.max_power_w,
@@ -335,6 +340,9 @@ fn failure_detail(run: &StressTestRun) -> Option<String> {
         F::Reboot => "unexpected reboot".to_string(),
         F::Timeout => "timed out".to_string(),
         F::OperatorOverride { reason } => format!("operator override: {reason}"),
+        F::RailDroop { rail, min_v } => {
+            format!("{rail} droop under load (min {min_v:.2}V, uncalibrated)")
+        }
     })
 }
 

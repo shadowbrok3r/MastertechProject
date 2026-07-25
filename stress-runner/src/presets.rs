@@ -315,6 +315,7 @@ mod tests {
             Stressor::CpuVerify,
             Stressor::Linpack,
             Stressor::Psu,
+            Stressor::PsuTransient,
             Stressor::Gpu,
             Stressor::GpuMatmul,
             Stressor::GpuVram,

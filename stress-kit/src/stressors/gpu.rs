@@ -62,8 +62,11 @@ const WG_SIZE: u32 = 64;
 const WG_COUNT: u32 = 4096;
 const INVOCATIONS_PER_DISPATCH: u64 = (WG_SIZE as u64) * (WG_COUNT as u64);
 const INNER_ITERS: u32 = 1024;
-const OPS_PER_INVOCATION: u64 = (INNER_ITERS as u64) * 4 + (INNER_ITERS as u64) / 2;
+// 6 flops per inner iteration, plus 2 more on every 4th iteration.
+const OPS_PER_INVOCATION: u64 = (INNER_ITERS as u64) * 6 + (INNER_ITERS as u64) / 2;
 const SCATTER_FLOATS: usize = (64 * 1024 * 1024) / std::mem::size_of::<f32>();
+/// Consecutive device-wait timeouts tolerated before the run is declared stalled.
+const MAX_WAIT_FAILURES: u32 = 3;
 
 pub(crate) fn run(
     _thread_count: usize,
@@ -149,7 +152,10 @@ pub(crate) fn run(
     });
 
     let mut last_tick = Instant::now();
+    // Confirmed-complete dispatches only; a timed-out wait is not work done.
     let mut dispatches_in_tick: u64 = 0;
+    let mut wait_failures: u32 = 0;
+    let mut warn: Option<String> = None;
 
     while !cancel.load(Ordering::Relaxed) {
         params.seed = params.seed.wrapping_mul(1103515245).wrapping_add(12345);
@@ -170,19 +176,43 @@ pub(crate) fn run(
             cpass.dispatch_workgroups(WG_COUNT, 1, 1);
         }
         ctx.queue.submit(std::iter::once(encoder.finish()));
-        let _ = ctx.device.poll(wgpu::PollType::Wait);
+        // A wait timeout is neither an uncaptured error nor device-lost, so it has
+        // to be counted here or a hung device looks healthy.
+        match ctx.device.poll(wgpu::PollType::Wait) {
+            Ok(_) => {
+                dispatches_in_tick += 1;
+                wait_failures = 0;
+            }
+            Err(e) => {
+                wait_failures += 1;
+                let msg = format!("gpu: device wait timed out ({e:?}) x{wait_failures}");
+                log::warn!("[stress-kit/gpu] {msg}");
+                warn = Some(msg);
+            }
+        }
         if let Some(reason) = ctx.health.failure() {
             emit_fatal_tick(tx, started_at, format!("gpu: {reason}"), 0);
             return;
         }
-        dispatches_in_tick += 1;
+        if wait_failures >= MAX_WAIT_FAILURES {
+            emit_fatal_tick(
+                tx,
+                started_at,
+                format!(
+                    "gpu: inconclusive - queue stalled, {MAX_WAIT_FAILURES} consecutive \
+                     device-wait timeouts; the compute load is not completing"
+                ),
+                0,
+            );
+            return;
+        }
 
         if last_tick.elapsed() >= TICK {
             let dt = last_tick.elapsed().as_secs_f64().max(f64::EPSILON);
             let invocations = INVOCATIONS_PER_DISPATCH * dispatches_in_tick;
             let total_ops = invocations * OPS_PER_INVOCATION;
             let gflops = (total_ops as f64) / dt / 1e9;
-            emit_tick(tx, started_at, gflops, None, 0);
+            emit_tick(tx, started_at, gflops, warn.take(), 0);
             last_tick = Instant::now();
             dispatches_in_tick = 0;
         }

@@ -98,6 +98,11 @@ pub fn stress_tests_scripts() -> Vec<ScriptItem> {
             .with_pass_criteria("Run completes; no WHEA delta; no thermal runaway")
             .with_warning_criteria("No GPU present — CPU-only load")
             .with_error_criteria("WHEA events or reboot during the run"),
+        ScriptItem::new("Stress: PSU Transient", ScriptCategory::StressTests)
+            .with_description("Square-wave load step: all-core FMA held steady while the GPU pulses 100 ms on / 100 ms off to hammer the rails with repeated transients; reports combined GFLOPS (~half of steady-state PSU by design)")
+            .with_pass_criteria("Run completes; no WHEA delta; no rail droop or shutdown across the load steps")
+            .with_warning_criteria("No GPU present — CPU-only load, so no transient is generated")
+            .with_error_criteria("Reboot, shutdown, or power-off during the run (an unstable rail under load stepping — the point of this test), WHEA events, or a TDR"),
         // CPU singles
         ScriptItem::new("Stress: CPU", ScriptCategory::StressTests)
             .with_description("Float-op burst loop; reports Mop/s")
@@ -250,7 +255,10 @@ pub fn informational_scripts() -> Vec<ScriptItem> {
         ScriptItem::new("Is Hibernation/Sleep enabled?", ScriptCategory::Informational)
             .with_description("Check power settings status"),
         ScriptItem::new("Any Recent Blue Screens?", ScriptCategory::Informational)
-            .with_description("Check for recent BSOD events"),
+            .with_description("Provider-scoped 30-day scan for bugchecks, Kernel-Power 41 resets, WHEA errors, TDRs and crash dumps")
+            .with_pass_criteria("No bugcheck record, no Kernel-Power 41 with a bugcheck code, no fatal WHEA, no TDR, no crash dumps in the window")
+            .with_warning_criteria("Kernel-Power 41 with BugcheckCode 0 (power loss / hard reset, not a BSOD), EventLog 6008, TDR, corrected WHEA, or an incomplete event query")
+            .with_error_criteria("Any bugcheck record (WER-SystemErrorReporting / BugCheck 1001), Kernel-Power 41 with a non-zero bugcheck code, fatal WHEA, or a crash dump in the window"),
         ScriptItem::new("When Was The Last Service Date?", ScriptCategory::Informational)
             .with_description("Query last service date from database"),
         ScriptItem::new("Windows Version", ScriptCategory::Informational)

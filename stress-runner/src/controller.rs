@@ -606,14 +606,7 @@ fn worker(
     let duration_secs = started_at.elapsed().as_secs_f64();
     let stages: Vec<ScenarioStageSummary> =
         outcomes.iter().map(|o| o.summary.clone()).collect();
-    let verdict = acc.into_verdict(
-        &run_id_clone,
-        &cancel,
-        duration_secs,
-        &spec.tool,
-        &rules,
-        outcomes,
-    );
+    let verdict = acc.into_verdict(&run_id_clone, &cancel, duration_secs, &spec.tool, outcomes);
 
     // Same `'static` requirement as the create call — clone everything into
     // an owned async block.
@@ -679,6 +672,31 @@ fn build_run(spec: &RunSpec) -> StressTestRun {
     run
 }
 
+/// Text used when a fatal sample carries no `last_error`.
+const FATAL_FALLBACK: &str = "run aborted (fatal stressor error)";
+
+/// Operator-facing text for a fatal stressor sample.
+fn fatal_message(metrics: &Metrics) -> String {
+    metrics
+        .last_error
+        .clone()
+        .unwrap_or_else(|| FATAL_FALLBACK.to_string())
+}
+
+/// Stage verdict when the run carries rules, plus unconditionally when the
+/// stressor aborted — a fatal abort must never leave a stage unjudged.
+fn stage_verdict_for(
+    stats: &StageStats,
+    rules: &Option<VerdictRules>,
+    effective: &VerdictRules,
+) -> Option<StageVerdict> {
+    match rules {
+        Some(r) => Some(evaluate_stage(stats, r)),
+        None if stats.fatal_abort => Some(evaluate_stage(stats, effective)),
+        None => None,
+    }
+}
+
 /// Drive a single-stressor run: tick at 1 Hz, sample telemetry, batch metric
 /// writes, forward updates to the UI.
 fn drive_single(
@@ -707,6 +725,8 @@ fn drive_single(
     let mut stage_peak: Option<f64> = None;
     let mut stage_tp_sum = 0.0_f64;
     let mut stage_tp_count = 0_u32;
+    // Stressors latch `fatal` on every later sample; report it once.
+    let mut fatal_reported = false;
 
     let deadline = duration_secs.map(|d| started_at + Duration::from_secs(d));
 
@@ -727,11 +747,13 @@ fn drive_single(
 
         if let Some(m) = session.try_recv() {
             if m.fatal {
-                let msg = m
-                    .last_error
-                    .clone()
-                    .unwrap_or_else(|| "run aborted (fatal stressor error)".to_string());
-                send(update_tx, RunUpdate::Error { message: msg });
+                if !fatal_reported {
+                    fatal_reported = true;
+                    send(update_tx, RunUpdate::Error { message: fatal_message(&m) });
+                }
+                // Fold immediately: the loop breaks on `is_stopping` before the
+                // next periodic absorb.
+                stage_stats.absorb_final(&m);
                 session.stop();
             }
             if m.throughput > 0.0 {
@@ -820,9 +842,34 @@ fn drive_single(
         );
     }
 
-    stage_stats.errors = stage_stats.errors.max(latest_metrics.errors);
+    // Final drain: any sample emitted after the last periodic absorb — the
+    // fatal tick included — is still folded into the stage.
+    if let Some(m) = session.try_recv() {
+        if m.throughput > 0.0 {
+            stage_peak = Some(stage_peak.map_or(m.throughput, |p: f64| p.max(m.throughput)));
+            stage_tp_sum += m.throughput;
+            stage_tp_count += 1;
+        }
+        if let Some(err) = &m.last_error {
+            stage_had_error = true;
+            stage_last_error = Some(err.clone());
+        }
+        latest_metrics = m;
+    }
+    stage_stats.absorb_final(&latest_metrics);
+    if stage_stats.fatal_abort && !fatal_reported {
+        send(
+            update_tx,
+            RunUpdate::Error {
+                message: stage_stats
+                    .fatal_reason
+                    .clone()
+                    .unwrap_or_else(|| FATAL_FALLBACK.to_string()),
+            },
+        );
+    }
     stage_stats.finish(&telemetry.snapshot());
-    let verdict = rules.as_ref().map(|r| evaluate_stage(&stage_stats, r));
+    let verdict = stage_verdict_for(&stage_stats, rules, &effective_rules);
     let avg = if stage_tp_count > 0 {
         Some(stage_tp_sum / stage_tp_count as f64)
     } else {
@@ -852,7 +899,9 @@ fn drive_single(
 /// more than one lane contends for the single physical GPU.
 fn budget_concurrent_threads(lanes: &mut [RunStage]) -> Option<String> {
     let total = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
-    let uses_gpu = |s: Stressor| s.is_gpu() || matches!(s, Stressor::Combined | Stressor::Psu);
+    let uses_gpu = |s: Stressor| {
+        s.is_gpu() || matches!(s, Stressor::Combined | Stressor::Psu | Stressor::PsuTransient)
+    };
     let gpu_lane_count = lanes.iter().filter(|l| uses_gpu(l.stressor)).count();
     let reserve = usize::from(gpu_lane_count > 0);
     let pool = total.saturating_sub(reserve).max(1);
@@ -934,11 +983,14 @@ fn drive_concurrent(
         for (i, s) in sessions.iter().enumerate() {
             if let Some(m) = s.try_recv() {
                 if m.fatal {
-                    fatal_seen[i] = true;
-                    let msg = m.last_error.clone().unwrap_or_else(|| {
-                        format!("{} aborted (fatal stressor error)", lanes[i].label)
-                    });
-                    send(update_tx, RunUpdate::Error { message: msg });
+                    if !fatal_seen[i] {
+                        fatal_seen[i] = true;
+                        let msg = m.last_error.clone().unwrap_or_else(|| {
+                            format!("{} aborted (fatal stressor error)", lanes[i].label)
+                        });
+                        send(update_tx, RunUpdate::Error { message: msg });
+                    }
+                    stats[i].absorb_final(&m);
                     s.stop();
                 }
                 if m.throughput > 0.0 {
@@ -1037,7 +1089,22 @@ fn drive_concurrent(
     let final_snapshot = telemetry.snapshot();
     let mut total_test_errors = 0_u64;
     for (i, lane) in lanes.iter().enumerate() {
-        stats[i].errors = stats[i].errors.max(latest[i].errors);
+        // Final drain per lane, then fold: the last sample can land after the
+        // last periodic absorb.
+        if let Some(m) = sessions.get(i).and_then(|s| s.try_recv()) {
+            if m.throughput > 0.0 {
+                peak[i] = Some(peak[i].map_or(m.throughput, |p: f64| p.max(m.throughput)));
+                tp_sum[i] += m.throughput;
+                tp_count[i] += 1;
+            }
+            if let Some(err) = &m.last_error {
+                had_error[i] = true;
+                last_error[i] = Some(err.clone());
+            }
+            latest[i] = m;
+        }
+        stats[i].absorb_final(&latest[i]);
+        fatal_seen[i] |= stats[i].fatal_abort;
         stats[i].finish(&final_snapshot);
         total_test_errors = total_test_errors.saturating_add(stats[i].errors);
         // A lane that aborted mid-run is a failure even with no error counter;
@@ -1053,7 +1120,7 @@ fn drive_concurrent(
             }
         }
         let unit = lane.stressor.throughput_unit();
-        let verdict = rules.as_ref().map(|r| evaluate_stage(&stats[i], r));
+        let verdict = stage_verdict_for(&stats[i], rules, &effective_rules);
         let avg = if tp_count[i] > 0 {
             Some(tp_sum[i] / tp_count[i] as f64)
         } else {
@@ -1130,6 +1197,9 @@ fn drive_scenario(
                     current_stage_throughput_count = 0;
                     current_stage_last_error = None;
                     current_stage_had_error = false;
+                    // Stressors latch `fatal`/`last_error`; a stale carry-over
+                    // would be charged to this stage.
+                    latest_metrics = Metrics::default();
                     current_stage_stats = Some(StageStats::begin(
                         index as u32,
                         &label,
@@ -1164,6 +1234,19 @@ fn drive_scenario(
                         current_stage_had_error = true;
                         current_stage_last_error = Some(err.clone());
                     }
+                    // Every scenario tick is folded here, so a fatal can't be
+                    // lost between the 1 Hz absorbs.
+                    let first_fatal = metrics.fatal
+                        && current_stage_stats.as_ref().is_some_and(|s| !s.fatal_abort);
+                    if let Some(stats) = current_stage_stats.as_mut() {
+                        stats.absorb_final(&metrics);
+                    }
+                    if first_fatal {
+                        send(
+                            update_tx,
+                            RunUpdate::Error { message: fatal_message(&metrics) },
+                        );
+                    }
                     let _ = stage_index; // already tracked in current_stage_index
                 }
                 ScenarioEvent::StageFinished { index } => {
@@ -1188,9 +1271,9 @@ fn drive_scenario(
                             &telemetry.snapshot(),
                         )
                     });
-                    stats.errors = stats.errors.max(latest_metrics.errors);
+                    stats.absorb_final(&latest_metrics);
                     stats.finish(&telemetry.snapshot());
-                    let verdict = rules.as_ref().map(|r| evaluate_stage(&stats, r));
+                    let verdict = stage_verdict_for(&stats, rules, &effective_rules);
                     let summary = stage_summary_from_stats(
                         &stats,
                         stressor,
@@ -1417,6 +1500,7 @@ fn stage_summary_from_stats(
         max_temp_c: stats.max_cpu_temp_c,
         avg_temp_c: stats.avg_cpu_temp_c(),
         max_gpu_temp_c: stats.max_gpu_temp_c,
+        min_v12_v: stats.min_v12_v,
         max_clock_mhz: stats.max_avg_clock_mhz,
         errors: stats.errors,
         whea_delta: stats.whea_delta,
@@ -1573,6 +1657,8 @@ struct SummaryAccumulator {
     tdr_delta_count: u32,
     max_gpu_temp_c: Option<f32>,
     max_cpu_temp_c: Option<f32>,
+    /// Lowest +12V rail sample of the run; droop is the PSU diagnostic, not peak.
+    min_v12_v: Option<f32>,
     disk_io_errors: u32,
     /// GPU-classified `last_error` transitions (device lost, acquire failed).
     gpu_device_errors: u32,
@@ -1673,6 +1759,10 @@ impl SummaryAccumulator {
             self.max_cpu_temp_c = Some(self.max_cpu_temp_c.map_or(t, |m| m.max(t)));
         }
 
+        if let Some(v) = snapshot.rail_12v() {
+            self.min_v12_v = Some(self.min_v12_v.map_or(v, |m| m.min(v)));
+        }
+
         // GPU board power summed across cards (NVML); CPU package power has
         // no portable source, so this is the PSU-load proxy we have.
         let gpu_w: f64 = snapshot.gpus.iter().filter_map(|g| g.power_w).map(f64::from).sum();
@@ -1733,6 +1823,7 @@ impl SummaryAccumulator {
             test_errors: self.total_test_errors().min(u32::MAX as u64) as u32,
             max_gpu_temp_c: self.max_gpu_temp_c,
             max_cpu_temp_c: self.max_cpu_temp_c,
+            min_v12_v: self.min_v12_v,
         }
     }
 
@@ -1742,7 +1833,6 @@ impl SummaryAccumulator {
         cancel: &Arc<AtomicBool>,
         duration_secs: f64,
         tool: &TestTool,
-        rules: &Option<VerdictRules>,
         stage_outcomes: Vec<StageOutcome>,
     ) -> RunVerdict {
         let mut summary = self.into_summary();
@@ -1755,9 +1845,9 @@ impl SummaryAccumulator {
             summary.memory_errors = summary.test_errors;
         }
 
-        let rules_failure = rules
-            .as_ref()
-            .and_then(|_| rules_failure_mode(&stage_outcomes, &mut summary));
+        // Not gated on `rules`: stages without a policy still carry a verdict
+        // when the stressor aborted.
+        let rules_failure = rules_failure_mode(&stage_outcomes, &mut summary);
 
         let cancelled = cancel.load(Ordering::Relaxed);
         let had_failure = rules_failure.is_some()
@@ -1820,8 +1910,11 @@ impl SummaryAccumulator {
 }
 
 /// Dominant `FailureMode` across failed stage verdicts, by severity:
-/// WHEA > TDR > temp > data mismatch > clock collapse > unstable throughput.
-/// Also folds throttle observations into the run summary flags.
+/// WHEA > TDR > temp > data mismatch > fatal abort > clock collapse >
+/// unstable throughput. A fatal abort outranks the throughput-derived rules
+/// because those read a load that stopped running, but yields to the
+/// independent hardware evidence above it. Also folds throttle observations
+/// into the run summary flags.
 fn rules_failure_mode(
     outcomes: &[StageOutcome],
     summary: &mut RunSummary,
@@ -1829,8 +1922,10 @@ fn rules_failure_mode(
     let mut tdr: Option<FailureMode> = None;
     let mut temp: Option<FailureMode> = None;
     let mut mismatch: Option<FailureMode> = None;
+    let mut fatal_abort: Option<FailureMode> = None;
     let mut collapse: Option<FailureMode> = None;
     let mut unstable: Option<FailureMode> = None;
+    let mut droop: Option<FailureMode> = None;
 
     for outcome in outcomes {
         let Some(verdict) = &outcome.verdict else { continue };
@@ -1868,11 +1963,36 @@ fn rules_failure_mode(
                         cv: *cv,
                     });
                 }
+                RuleViolation::RailDroop { rail, min_v, .. } => {
+                    summary.vrm_throttle_detected = true;
+                    droop.get_or_insert(FailureMode::RailDroop {
+                        rail: rail.clone(),
+                        min_v: *min_v,
+                    });
+                }
+                // The stressor never ran its load: a tooling/environment error,
+                // not evidence against the hardware.
+                RuleViolation::FatalAbort { reason } => {
+                    fatal_abort.get_or_insert(FailureMode::AppError {
+                        exit_code: None,
+                        message: reason.clone().unwrap_or_else(|| {
+                            format!(
+                                "stage '{}' aborted before its load completed",
+                                verdict.label
+                            )
+                        }),
+                    });
+                }
             }
         }
     }
 
-    tdr.or(temp).or(mismatch).or(collapse).or(unstable)
+    tdr.or(temp)
+        .or(mismatch)
+        .or(fatal_abort)
+        .or(collapse)
+        .or(unstable)
+        .or(droop)
 }
 
 #[cfg(test)]
@@ -1895,7 +2015,15 @@ mod tests {
         let tool = TestTool::StressKit {
             stressor: "gpu_matmul".to_string(),
         };
-        acc.into_verdict(&run_id, &cancel, 60.0, &tool, &None, Vec::new())
+        acc.into_verdict(&run_id, &cancel, 60.0, &tool, Vec::new())
+    }
+
+    /// One finished stage carrying only the supplied verdict.
+    fn outcome_with(verdict: StageVerdict) -> StageOutcome {
+        StageOutcome {
+            summary: ScenarioStageSummary::default(),
+            verdict: Some(verdict),
+        }
     }
 
     #[test]
@@ -1906,8 +2034,13 @@ mod tests {
             "gpu_vram: 3 consecutive readback failures; aborting stage",
             "gpu_pcie acquire failed: no GPU adapters found",
             "readback map failed (1/3)",
-            "psu: GPU unavailable, running CPU-only (no GPU adapters found)",
-            "psu: GPU leg stopped (GPU device failed (1 error(s)): Unknown: Device is lost); continuing CPU-only",
+            "psu: inconclusive - GPU unavailable, GPU leg never ran (no GPU adapters found)",
+            "psu: inconclusive - GPU leg stopped (GPU device failed (1 error(s)): Unknown: Device is lost)",
+            "psu: inconclusive - GPU leg stopped (queue stalled, 3 consecutive wait timeouts)",
+            "psu_transient: GPU unavailable (no GPU adapters found); the pulsed +12V load never ran, so this is not a valid PSU transient test",
+            "psu_transient: GPU leg stopped responding, device wait timed out (Timeout)",
+            "psu_transient: GPU unavailable for pulsed load; one submit takes 140ms against a 100ms ON window (measured duty cycle 72%), so the +12V transient is not being generated",
+            "psu_transient: GPU leg stopped (device lost); the pulsed +12V load ended, so this is not a valid PSU transient test",
             "stress-kit built without 'gpu' feature",
         ] {
             assert!(is_gpu_error_message(msg), "should classify as GPU: {msg}");
@@ -1978,6 +2111,122 @@ mod tests {
             verdict.failure_mode,
             FailureMode::GpuDeviceLost { message: gpu_msg.to_string() }
         );
+    }
+
+    /// The reported symptom: a stage whose stressor aborted must not persist
+    /// `result: "pass"` next to `had_error: true`.
+    #[test]
+    fn fatal_stage_summary_reports_fail_not_pass() {
+        let reason = "psu: inconclusive - GPU unavailable, GPU leg never ran";
+        let rules = VerdictRules::certification();
+        let snapshot = TelemetrySnapshot::default();
+        let mut stats = StageStats::begin(0, "psu", Stressor::Psu, &snapshot);
+        for _ in 0..40 {
+            stats.absorb_tick(&tick(None, 0), &snapshot, &rules);
+        }
+        stats.absorb_final(&Metrics {
+            elapsed_secs: 40.0,
+            throughput: 120.0,
+            last_error: Some(reason.to_string()),
+            fatal: true,
+            errors: 0,
+        });
+
+        let verdict = stage_verdict_for(&stats, &Some(rules.clone()), &rules)
+            .expect("rules attached, verdict expected");
+        assert!(!verdict.pass);
+
+        let summary = stage_summary_from_stats(
+            &stats,
+            Stressor::Psu,
+            8,
+            60,
+            40.0,
+            Some(120.0),
+            Some(120.0),
+            "GFLOPS",
+            true,
+            Some(reason.to_string()),
+            Some(&verdict),
+        );
+        assert_eq!(summary.result.as_deref(), Some("fail"));
+        assert!(summary.had_error);
+        assert!(
+            summary.violations.iter().any(|v| v.contains(reason)),
+            "violations: {:?}",
+            summary.violations
+        );
+    }
+
+    /// A legacy run with no policy still gets a verdict when the load aborted,
+    /// so `StageVerdict`/`StageOutcome` consumers can't read it as clean.
+    #[test]
+    fn fatal_stage_gets_a_verdict_without_rules() {
+        let snapshot = TelemetrySnapshot::default();
+        let effective = VerdictRules::default();
+        let mut clean = StageStats::begin(0, "cpu", Stressor::Cpu, &snapshot);
+        clean.absorb_tick(&tick(None, 0), &snapshot, &effective);
+        assert!(stage_verdict_for(&clean, &None, &effective).is_none());
+
+        let mut aborted = StageStats::begin(0, "psu", Stressor::Psu, &snapshot);
+        aborted.absorb_final(&Metrics {
+            elapsed_secs: 1.0,
+            throughput: 0.0,
+            last_error: Some("psu: GPU leg never ran".to_string()),
+            fatal: true,
+            errors: 0,
+        });
+        let verdict = stage_verdict_for(&aborted, &None, &effective)
+            .expect("fatal abort must produce a verdict");
+        assert!(!verdict.pass);
+    }
+
+    /// A load that never ran is a tooling error, not proof of bad hardware.
+    #[test]
+    fn fatal_abort_maps_to_app_error_not_a_hardware_fault() {
+        let reason = "psu: inconclusive - GPU unavailable, GPU leg never ran";
+        let mut summary = RunSummary::default();
+        let outcomes = vec![outcome_with(StageVerdict {
+            index: 0,
+            label: "psu".to_string(),
+            pass: false,
+            violations: vec![RuleViolation::FatalAbort {
+                reason: Some(reason.to_string()),
+            }],
+            warnings: Vec::new(),
+        })];
+
+        let mode = rules_failure_mode(&outcomes, &mut summary).expect("failure mode expected");
+        assert_eq!(mode.kind(), "app_error");
+        assert_eq!(
+            mode,
+            FailureMode::AppError {
+                exit_code: None,
+                message: reason.to_string(),
+            }
+        );
+        assert!(!summary.vrm_throttle_detected);
+        assert!(!summary.thermal_throttle_detected);
+    }
+
+    /// Independent hardware evidence in the same stage still wins the headline.
+    #[test]
+    fn real_hardware_evidence_outranks_a_fatal_abort() {
+        let mut summary = RunSummary::default();
+        let outcomes = vec![outcome_with(StageVerdict {
+            index: 0,
+            label: "psu".to_string(),
+            pass: false,
+            violations: vec![
+                RuleViolation::FatalAbort {
+                    reason: Some("psu: GPU leg never ran".to_string()),
+                },
+                RuleViolation::Tdr { delta: 2 },
+            ],
+            warnings: Vec::new(),
+        })];
+        let mode = rules_failure_mode(&outcomes, &mut summary).expect("failure mode expected");
+        assert_eq!(mode, FailureMode::Tdr { count: 2 });
     }
 
     #[test]

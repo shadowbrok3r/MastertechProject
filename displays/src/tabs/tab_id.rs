@@ -35,6 +35,7 @@ pub enum TabId {
     StressTest,
     Terminal,
     ShopifyOrders,
+    ServerConsole,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,6 +85,7 @@ const MT_SERVER_WASM: &[TabId] = &[
     TabId::Koth,
     TabId::CreatePrestashopOrder,
     TabId::StressLab,
+    TabId::ServerConsole,
 ];
 
 const MT_NATIVE: &[TabId] = &[
@@ -117,6 +119,7 @@ const MT_NATIVE: &[TabId] = &[
     TabId::StressLab,
     TabId::StressTest,
     TabId::Terminal,
+    TabId::ServerConsole,
 ];
 
 const WH_WASM: &[TabId] = &[
@@ -176,7 +179,13 @@ impl TabId {
             Self::StressTest => "stress_test",
             Self::Terminal => "terminal",
             Self::ShopifyOrders => "shopify_orders",
+            Self::ServerConsole => "server_console",
         }
+    }
+
+    /// Tabs hidden from the View menu and refused at render for anyone but Root.
+    pub fn requires_root(self) -> bool {
+        matches!(self, Self::ServerConsole)
     }
 
     pub fn title(self, ctx: TabContext) -> &'static str {
@@ -216,7 +225,17 @@ impl TabId {
             Self::StressTest => "Stress Test",
             Self::Terminal => "Terminal",
             Self::ShopifyOrders => "Shopify Orders",
+            Self::ServerConsole => "Server Console",
         }
+    }
+
+    /// [`visible_for`] minus the Root-only tabs when the operator is not Root.
+    pub fn visible_for_user(ctx: TabContext, is_root: bool) -> Vec<TabId> {
+        Self::visible_for(ctx)
+            .iter()
+            .copied()
+            .filter(|t| is_root || !t.requires_root())
+            .collect()
     }
 
     pub fn visible_for(ctx: TabContext) -> &'static [TabId] {
@@ -266,6 +285,7 @@ impl TabId {
             "Stress Test" => Some(Self::StressTest),
             "Terminal" => Some(Self::Terminal),
             "Shopify Orders" => Some(Self::ShopifyOrders),
+            "Server Console" => Some(Self::ServerConsole),
             _ => None,
         }
     }
@@ -305,6 +325,7 @@ impl TabId {
             "stress_test" => Some(Self::StressTest),
             "terminal" => Some(Self::Terminal),
             "shopify_orders" => Some(Self::ShopifyOrders),
+            "server_console" => Some(Self::ServerConsole),
             _ => None,
         }
     }

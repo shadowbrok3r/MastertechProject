@@ -153,6 +153,7 @@ pub enum StressorChoice {
     CpuVerify,
     Linpack,
     Psu,
+    PsuTransient,
     Combined,
     Gpu,
     GpuMatmul,
@@ -161,7 +162,7 @@ pub enum StressorChoice {
 }
 
 impl StressorChoice {
-    pub const ALL: [Self; 28] = [
+    pub const ALL: [Self; 29] = [
         Self::Cpu,
         Self::Memory,
         Self::Disk,
@@ -185,6 +186,7 @@ impl StressorChoice {
         Self::CpuVerify,
         Self::Linpack,
         Self::Psu,
+        Self::PsuTransient,
         Self::Combined,
         Self::Gpu,
         Self::GpuMatmul,
@@ -221,6 +223,7 @@ impl StressorChoice {
             Self::CpuVerify => Stressor::CpuVerify,
             Self::Linpack => Stressor::Linpack,
             Self::Psu => Stressor::Psu,
+            Self::PsuTransient => Stressor::PsuTransient,
             Self::Combined => Stressor::Combined,
             Self::Gpu => Stressor::Gpu,
             Self::GpuMatmul => Stressor::GpuMatmul,

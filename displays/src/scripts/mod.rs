@@ -54,7 +54,7 @@ pub fn default_remote_script_timeout_secs(script_name: &str) -> u64 {
         // 12+ benchmarks at ~15 s each plus warmup and persistence.
         "Benchmark Suite" => 1800,
         "QC Benchmark" | "Memory Test" => 1200,
-        "GPU Stress Test" | "Stress: PSU" | "Stress: Linpack" => 900,
+        "GPU Stress Test" | "Stress: PSU" | "Stress: PSU Transient" | "Stress: Linpack" => 900,
         _ => 600,
     }
 }

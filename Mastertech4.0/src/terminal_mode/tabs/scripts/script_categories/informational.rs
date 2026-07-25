@@ -1,3 +1,4 @@
+use crate::utilities::scripts::bsod_scan::{self, BsodVerdict};
 use crate::utilities::scripts::{check_power_options, AntiVirusProduct, InstalledProgram, ScheduledTask};
 use crate::terminal_mode::tabs::script_categories::check_windows_activation;
 use crate::utilities::windows::antivirus::check_antivirus;
@@ -153,10 +154,20 @@ impl <'a> ScriptsTab <'a> {
         }
     }
 
-    /// TODO: NOT YET IMPLEMENTED
     pub fn recent_blue_screens(&mut self, item_text: &str, category: &Category) {
-        self.log_message("BSOD check not implemented.");
-        self.update_checklist(category.clone(), item_text, false);
+        match bsod_scan::scan_blocking(bsod_scan::DEFAULT_DAYS) {
+            Ok(scan) => {
+                for line in scan.report_lines() {
+                    self.log_message(line);
+                }
+                let passed = scan.verdict() != BsodVerdict::Error;
+                self.update_checklist(category.clone(), item_text, passed);
+            }
+            Err(e) => {
+                self.log_message(format!("Error running BSOD check: {e}"));
+                self.update_checklist(category.clone(), item_text, false);
+            }
+        }
     }
 
     /// TODO: NOT YET IMPLEMENTED

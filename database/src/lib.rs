@@ -149,6 +149,23 @@ pub const XBM_API_URL: &str = env!("XBM_API_URL");
 /// runtime; reads then fall back to the Admin GraphQL path where available.
 pub const XBM_API_KEY: &str = env!("XBM_API_KEY");
 
+/// SurrealDB endpoint this process connects to, matching [`init_database`]:
+/// debug → [`DB_URL_LOCAL`], release → [`DB_URL_DEV`].
+#[inline]
+pub fn active_db_url() -> &'static str {
+    if cfg!(debug_assertions) {
+        DB_URL_LOCAL
+    } else {
+        DB_URL_DEV
+    }
+}
+
+/// `true` when [`active_db_url`] needs a `Wss` rather than a `Ws` connection.
+#[inline]
+pub fn active_db_secure() -> bool {
+    !cfg!(debug_assertions)
+}
+
 /// Pick the active orchestrator URL based on the current build profile.
 /// Debug → [`ORCHESTRATOR_URL_DEV`]; release → [`ORCHESTRATOR_URL`].
 /// Callers should treat an empty return as "fleet disabled" and short-circuit.

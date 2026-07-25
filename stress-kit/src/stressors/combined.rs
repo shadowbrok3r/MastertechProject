@@ -29,7 +29,10 @@ const WG_SIZE: u32 = 64;
 const WG_COUNT: u32 = 4096;
 const INVOCATIONS_PER_DISPATCH: u64 = (WG_SIZE as u64) * (WG_COUNT as u64);
 const INNER_ITERS: u32 = 2048;
-const GPU_OPS_PER_INVOCATION: u64 = (INNER_ITERS as u64) * 2;
+// 5 flops per inner iteration: `y * 0.999999` plus two 2-flop fma calls.
+const GPU_OPS_PER_INVOCATION: u64 = (INNER_ITERS as u64) * 5;
+/// Consecutive device-wait timeouts tolerated before the GPU leg is dropped.
+const MAX_WAIT_FAILURES: u32 = 3;
 
 const SHADER: &str = r#"
 struct Params { inner_iters: u32, seed: u32, _p0: u32, _p1: u32 };
@@ -198,9 +201,7 @@ fn gpu_driver(cancel: Arc<AtomicBool>, counter: Arc<AtomicU64>, warn: Arc<Mutex<
         Err(e) => {
             let msg = format!("combined: GPU unavailable, running CPU+RAM only ({e})");
             log::warn!("[stress-kit/combined] {msg}");
-            if let Ok(mut g) = warn.lock() {
-                *g = Some(msg);
-            }
+            set_warn(&warn, msg);
             return;
         }
     };
@@ -262,6 +263,8 @@ fn gpu_driver(cancel: Arc<AtomicBool>, counter: Arc<AtomicU64>, warn: Arc<Mutex<
         ],
     });
 
+    let mut wait_failures: u32 = 0;
+
     while !cancel.load(Ordering::Relaxed) {
         params.seed = params.seed.wrapping_mul(1103515245).wrapping_add(12345);
         ctx.queue.write_buffer(&params_buf, 0, bytemuck::bytes_of(&params));
@@ -279,15 +282,39 @@ fn gpu_driver(cancel: Arc<AtomicBool>, counter: Arc<AtomicU64>, warn: Arc<Mutex<
             cpass.dispatch_workgroups(WG_COUNT, 1, 1);
         }
         ctx.queue.submit(std::iter::once(encoder.finish()));
-        let _ = ctx.device.poll(wgpu::PollType::Wait);
+        // Only a confirmed-complete dispatch counts toward GFLOPS.
+        match ctx.device.poll(wgpu::PollType::Wait) {
+            Ok(_) => {
+                counter.fetch_add(1, Ordering::Relaxed);
+                wait_failures = 0;
+            }
+            Err(e) => {
+                wait_failures += 1;
+                log::warn!(
+                    "[stress-kit/combined] device wait timed out ({e:?}) x{wait_failures}"
+                );
+            }
+        }
         if let Some(reason) = ctx.health.failure() {
             let msg = format!("combined: GPU leg stopped ({reason}); continuing CPU+RAM only");
             log::error!("[stress-kit/combined] {msg}");
-            if let Ok(mut g) = warn.lock() {
-                *g = Some(msg);
-            }
+            set_warn(&warn, msg);
             return;
         }
-        counter.fetch_add(1, Ordering::Relaxed);
+        if wait_failures >= MAX_WAIT_FAILURES {
+            let msg = format!(
+                "combined: GPU leg stopped (queue stalled, {MAX_WAIT_FAILURES} consecutive \
+                 device-wait timeouts); continuing CPU+RAM only"
+            );
+            log::error!("[stress-kit/combined] {msg}");
+            set_warn(&warn, msg);
+            return;
+        }
+    }
+}
+
+fn set_warn(warn: &Arc<Mutex<Option<String>>>, msg: String) {
+    if let Ok(mut g) = warn.lock() {
+        *g = Some(msg);
     }
 }

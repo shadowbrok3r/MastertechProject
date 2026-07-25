@@ -1,4 +1,4 @@
-use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, database_viewer::DatabaseEditor, dock_session::{default_dock_session_native, default_dock_session_wasm, DockSession}, github::{GithubIssue, GithubRelease}, koth::Koth, presta_order::PrestashopOrderForm, raw_queries::QueryEditor, resource_monitor::ResourceMonitor, sales_tracker::SalesTracker, stock::StockTable, stress_lab::StressLab, task_audit::TaskAuditViewer, tasks::task_layout::{LayoutConfig, TaskLayout}, user_chat::UserChat, web_console::WebConsole, TabId}, ui_tools::{notification_center::NotificationCenter, theme_config::{bootstrap_startup_theme, set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions, Spawner};
+use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, database_viewer::DatabaseEditor, dock_session::{default_dock_session_native, default_dock_session_wasm, DockSession}, github::{GithubIssue, GithubRelease}, koth::Koth, presta_order::PrestashopOrderForm, raw_queries::QueryEditor, resource_monitor::ResourceMonitor, sales_tracker::SalesTracker, server_console::ServerConsole, stock::StockTable, stress_lab::StressLab, task_audit::TaskAuditViewer, tasks::task_layout::{LayoutConfig, TaskLayout}, user_chat::UserChat, web_console::WebConsole, TabId}, ui_tools::{notification_center::NotificationCenter, theme_config::{bootstrap_startup_theme, set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions, Spawner};
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, AiTask, AiTaskItem, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, TaskNoteRead, User, UserSettings}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use std::{collections::{BTreeMap, HashMap, HashSet}, sync::Arc};
@@ -384,6 +384,9 @@ pub struct SharedContext {
     pub sales_tracker: SalesTracker,
     #[serde(skip)]
     pub stress_lab: StressLab,
+    /// Root-only view of the axum orchestrator's recorded requests.
+    #[serde(skip)]
+    pub server_console: ServerConsole,
     /// {Widgets / Modals / Ui for portions throughout the app}
     pub search_input: String,
     // Miscellaneous Fields
@@ -751,6 +754,7 @@ impl SharedContext {
             pending_store: None,
             sales_tracker: SalesTracker::default(),
             stress_lab: StressLab::default(),
+            server_console: ServerConsole::default(),
             notification_center: NotificationCenter::default(),
             user_settings: UserSettings::default(),
             update_settings: false,

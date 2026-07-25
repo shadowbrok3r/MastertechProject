@@ -8,6 +8,19 @@ const WINDOWS_COPILOT_KEY: &str = r"Software\Policies\Microsoft\Windows\WindowsC
 const ACCOUNT_NOTIFICATIONS_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\SystemSettings\AccountNotifications";
 const AUX_PINS_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband\AuxilliaryPins";
 
+const HVCI_KEY: &str =
+    r"SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity";
+const HVCI_VALUE: &str = "Enabled";
+const CI_CONFIG_KEY: &str = r"SYSTEM\CurrentControlSet\Control\CI\Config";
+const BLOCKLIST_VALUE: &str = "VulnerableDriverBlocklistEnable";
+
+/// MDM/GPO Device Guard policy hive; re-applied over the scenario key at boot.
+const DG_POLICY_KEY: &str = r"SOFTWARE\Policies\Microsoft\Windows\DeviceGuard";
+const DG_POLICY_HVCI_VALUE: &str = "HypervisorEnforcedCodeIntegrity";
+const DG_POLICY_VBS_VALUE: &str = "EnableVirtualizationBasedSecurity";
+/// `Win32_DeviceGuard` security-service id for HVCI.
+const DG_SERVICE_HVCI: u32 = 2;
+
 /// Opens (creating if missing) an HKCU key and sets `value_name` to `target`.
 /// A missing key or value is treated as "not yet set", never as an error.
 fn set_hkcu_u32(key_path: &str, value_name: &str, target: u32, friendly: &str) -> Result<String> {
@@ -228,6 +241,227 @@ pub fn disable_task_groups() -> Result<String> {
 
 pub fn disable_snap_assist_flyout() -> Result<String> {
     set_hkcu_u32(EXPLORER_ADVANCED_KEY, "EnableSnapAssistFlyout", 0, "Snap Assist Flyout (off)")
+}
+
+/// Result of a `set_driver_protections` call, with both flags read back after the write.
+#[derive(Debug, Clone)]
+pub struct DriverProtectionOutcome {
+    pub success: bool,
+    pub hvci_enabled: Option<bool>,
+    pub blocklist_enabled: Option<bool>,
+    /// HVCI in `Win32_DeviceGuard.SecurityServicesRunning` after the write.
+    pub hvci_running: Option<bool>,
+    /// HVCI in `Win32_DeviceGuard.SecurityServicesConfigured` after the write.
+    pub hvci_configured: Option<bool>,
+    /// `Win32_DeviceGuard.VirtualizationBasedSecurityStatus`: 0 off, 1 configured, 2 running.
+    pub vbs_status: Option<u32>,
+    /// Set when the Device Guard policy hive contradicts the requested state.
+    pub policy_override: Option<String>,
+    /// True only when a value actually changed and the change can take effect.
+    pub reboot_required: bool,
+    pub message: String,
+}
+
+/// Device Guard state as Windows reports it, independent of the scenario key.
+#[derive(Debug, Clone, Default)]
+pub struct DeviceGuardState {
+    /// HVCI listed in `Win32_DeviceGuard.SecurityServicesRunning`.
+    pub hvci_running: Option<bool>,
+    /// HVCI listed in `Win32_DeviceGuard.SecurityServicesConfigured`.
+    pub hvci_configured: Option<bool>,
+    /// `Win32_DeviceGuard.VirtualizationBasedSecurityStatus`: 0 off, 1 configured, 2 running.
+    pub vbs_status: Option<u32>,
+    /// Policy-hive HVCI value: 0 off, 1 on with UEFI lock, 2 on without lock.
+    pub policy_hvci: Option<u32>,
+    pub policy_vbs: Option<u32>,
+}
+
+/// Reads an HKLM DWORD; `None` when the key or value is absent.
+fn get_hklm_u32(key_path: &str, value_name: &str) -> Option<u32> {
+    LOCAL_MACHINE
+        .options()
+        .read()
+        .open(key_path)
+        .ok()?
+        .get_u32(value_name)
+        .ok()
+}
+
+/// Reads an HKLM DWORD as a bool; `None` when the key or value is absent.
+fn get_hklm_flag(key_path: &str, value_name: &str) -> Option<bool> {
+    get_hklm_u32(key_path, value_name).map(|v| v != 0)
+}
+
+/// `Win32_DeviceGuard` running services, configured services, and VBS status.
+fn read_device_guard_wmi() -> Option<(Vec<u32>, Vec<u32>, Option<u32>)> {
+    #[derive(serde::Deserialize)]
+    struct Win32DeviceGuard {
+        #[serde(rename = "SecurityServicesRunning")]
+        running: Option<Vec<u32>>,
+        #[serde(rename = "SecurityServicesConfigured")]
+        configured: Option<Vec<u32>>,
+        #[serde(rename = "VirtualizationBasedSecurityStatus")]
+        vbs_status: Option<u32>,
+    }
+    let wmi = wmi::WMIConnection::with_namespace_path(r"ROOT\Microsoft\Windows\DeviceGuard")
+        .map_err(|e| log::debug!("Win32_DeviceGuard namespace unavailable: {e}"))
+        .ok()?;
+    let rows: Vec<Win32DeviceGuard> = wmi
+        .raw_query(
+            "SELECT SecurityServicesRunning, SecurityServicesConfigured, \
+             VirtualizationBasedSecurityStatus FROM Win32_DeviceGuard",
+        )
+        .map_err(|e| log::debug!("Win32_DeviceGuard query failed: {e}"))
+        .ok()?;
+    let row = rows.into_iter().next()?;
+    Some((
+        row.running.unwrap_or_default(),
+        row.configured.unwrap_or_default(),
+        row.vbs_status,
+    ))
+}
+
+/// Live Device Guard state: WMI security services plus the policy hive.
+pub fn read_device_guard_state() -> DeviceGuardState {
+    let mut state = DeviceGuardState {
+        policy_hvci: get_hklm_u32(DG_POLICY_KEY, DG_POLICY_HVCI_VALUE),
+        policy_vbs: get_hklm_u32(DG_POLICY_KEY, DG_POLICY_VBS_VALUE),
+        ..Default::default()
+    };
+    if let Some((running, configured, vbs_status)) = read_device_guard_wmi() {
+        state.hvci_running = Some(running.contains(&DG_SERVICE_HVCI));
+        state.hvci_configured = Some(configured.contains(&DG_SERVICE_HVCI));
+        state.vbs_status = vbs_status;
+    }
+    state
+}
+
+/// Describes a policy-hive value that contradicts `enable`; `None` when nothing does.
+fn policy_override_note(state: &DeviceGuardState, enable: bool) -> Option<String> {
+    let mut hits = Vec::new();
+    for (name, value) in [
+        (DG_POLICY_HVCI_VALUE, state.policy_hvci),
+        (DG_POLICY_VBS_VALUE, state.policy_vbs),
+    ] {
+        if let Some(v) = value {
+            if (v != 0) != enable {
+                hits.push(format!("{name}={v}"));
+            }
+        }
+    }
+    if hits.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "MDM/GPO policy at HKLM\\{DG_POLICY_KEY} contradicts this change ({}) — it is re-applied \
+         at boot, and a UEFI-locked policy ignores the write entirely, so a reboot will not change \
+         Device Guard",
+        hits.join(", ")
+    ))
+}
+
+/// Running Device Guard state as a loggable line.
+fn device_guard_label(state: &DeviceGuardState) -> String {
+    let hvci = match state.hvci_running {
+        Some(true) => "running",
+        Some(false) => "not running",
+        None => "unreadable (Win32_DeviceGuard)",
+    };
+    let configured = match state.hvci_configured {
+        Some(true) => ", configured",
+        Some(false) => ", not configured",
+        None => "",
+    };
+    match state.vbs_status {
+        Some(v) => format!("Device Guard right now: HVCI {hvci}{configured}, VBS status {v}"),
+        None => format!("Device Guard right now: HVCI {hvci}{configured}"),
+    }
+}
+
+/// Opens (creating if missing) an HKLM key and sets `value_name` to `target`.
+fn set_hklm_u32(key_path: &str, value_name: &str, target: u32) -> Result<()> {
+    LOCAL_MACHINE
+        .options()
+        .read()
+        .write()
+        .create()
+        .open(key_path)?
+        .set_u32(value_name, target)
+}
+
+/// Current HVCI and vulnerable-driver-blocklist flags.
+pub fn read_driver_protections() -> (Option<bool>, Option<bool>) {
+    (
+        get_hklm_flag(HVCI_KEY, HVCI_VALUE),
+        get_hklm_flag(CI_CONFIG_KEY, BLOCKLIST_VALUE),
+    )
+}
+
+/// Sets HVCI and the vulnerable-driver blocklist to `enable`, then reads both the
+/// registry values and the live Device Guard state back.
+pub fn set_driver_protections(enable: bool) -> DriverProtectionOutcome {
+    let target = u32::from(enable);
+    let (prior_hvci, prior_blocklist) = read_driver_protections();
+    let mut errors = Vec::new();
+    if let Err(e) = set_hklm_u32(HVCI_KEY, HVCI_VALUE, target) {
+        errors.push(format!("{HVCI_VALUE}: {e}"));
+    }
+    if let Err(e) = set_hklm_u32(CI_CONFIG_KEY, BLOCKLIST_VALUE, target) {
+        errors.push(format!("{BLOCKLIST_VALUE}: {e}"));
+    }
+
+    let (hvci_enabled, blocklist_enabled) = read_driver_protections();
+    let applied = hvci_enabled == Some(enable) && blocklist_enabled == Some(enable);
+    let write_ok = errors.is_empty() && applied;
+    let changed = prior_hvci != hvci_enabled || prior_blocklist != blocklist_enabled;
+
+    let guard = read_device_guard_state();
+    let policy_override = policy_override_note(&guard, enable);
+    // A policy-overridden write cannot take effect, so it is neither a success nor
+    // worth a reboot.
+    let success = write_ok && policy_override.is_none();
+    let reboot_required = write_ok && changed && policy_override.is_none();
+
+    let verb = if enable { "enabled" } else { "disabled" };
+    let mut parts = Vec::new();
+    if !errors.is_empty() {
+        parts.push(format!(
+            "Registry write failed — MasterTech needs to run elevated to write HKLM: {}",
+            errors.join("; ")
+        ));
+    } else if !applied {
+        parts.push(format!(
+            "Write reported success but read-back disagrees (HVCI={hvci_enabled:?}, blocklist={blocklist_enabled:?})"
+        ));
+    } else if policy_override.is_some() {
+        parts.push(format!(
+            "Registry values are {verb} but the change will NOT take effect"
+        ));
+    } else if changed {
+        parts.push(format!(
+            "Memory Integrity and the Vulnerable Driver Blocklist are {verb}; reboot to apply"
+        ));
+    } else {
+        parts.push(format!(
+            "Memory Integrity and the Vulnerable Driver Blocklist were already {verb}; no reboot needed"
+        ));
+    }
+    parts.push(device_guard_label(&guard));
+    if let Some(note) = policy_override.as_ref() {
+        parts.push(note.clone());
+    }
+
+    DriverProtectionOutcome {
+        success,
+        hvci_enabled,
+        blocklist_enabled,
+        hvci_running: guard.hvci_running,
+        hvci_configured: guard.hvci_configured,
+        vbs_status: guard.vbs_status,
+        policy_override,
+        reboot_required,
+        message: parts.join("; "),
+    }
 }
 
 /* OTHER REG TWEAKS

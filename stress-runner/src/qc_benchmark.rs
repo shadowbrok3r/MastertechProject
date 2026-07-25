@@ -80,6 +80,9 @@ pub fn qc_floor_for(stressor: Stressor) -> f64 {
         Stressor::CpuVerify => 10.0,
         Stressor::Linpack => 1.0,
         Stressor::Psu => 1.0,
+        // Pulsed: the GPU leg only runs half the wall clock, so the reported
+        // average lands near half of the steady-state PSU figure.
+        Stressor::PsuTransient => 0.5,
         Stressor::Gpu => 100.0,
         Stressor::GpuMatmul => 100.0,
         Stressor::GpuVram => 1000.0,

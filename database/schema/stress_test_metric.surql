@@ -53,3 +53,13 @@ DEFINE FIELD whea_delta_count   ON stress_test_metric TYPE none | number        
 -- Stress-kit `Metrics.last_error` from this tick (only the disk
 -- stressor sets this today, but the column exists for future stressors).
 DEFINE FIELD last_error         ON stress_test_metric TYPE none | string               PERMISSIONS FULL;
+
+-- SuperIO board rails at this tick (Windows + `winring0-thermal` only; NONE
+-- everywhere else). Scaled with assumed nominal dividers on the common
+-- ASUS/Nuvoton channel map, so these are UNCALIBRATED and board-specific —
+-- query them as trend/droop series, never as absolute voltages, and never as
+-- a pass/fail gate. Source: `stress_kit::telemetry::TelemetrySnapshot::rail_*`.
+DEFINE FIELD v12_v              ON stress_test_metric TYPE none | number               PERMISSIONS FULL;
+DEFINE FIELD v5_v               ON stress_test_metric TYPE none | number               PERMISSIONS FULL;
+DEFINE FIELD v3vcc_v            ON stress_test_metric TYPE none | number               PERMISSIONS FULL;
+DEFINE FIELD vcore_v            ON stress_test_metric TYPE none | number               PERMISSIONS FULL;

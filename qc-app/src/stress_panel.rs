@@ -859,6 +859,7 @@ impl StressPanel {
                 | StressorChoice::Tsc
                 | StressorChoice::CpuVerify
                 | StressorChoice::Psu
+                | StressorChoice::PsuTransient
                 | StressorChoice::Gpu
                 | StressorChoice::GpuMatmul => {}
             }
@@ -1720,6 +1721,7 @@ impl VerdictPretty for RunVerdict {
             FailureMode::Reboot => "reboot",
             FailureMode::Timeout => "timeout",
             FailureMode::OperatorOverride { .. } => "operator override",
+            FailureMode::RailDroop { .. } => "rail droop",
         }
     }
 }

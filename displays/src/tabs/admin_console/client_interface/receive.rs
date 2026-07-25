@@ -3,6 +3,9 @@ use database::schema::{Node, SystemInformation};
 use ewebsock::{WsEvent, WsMessage};
 use eframe::egui::Context;
 
+use super::tabs::home_page::{
+    record_driver_protections_audit, DriverProtectionsAudit, DriverProtectionsStage,
+};
 use super::{deserialize_exact, deserializer, is_zstd_frame, ui::WsDisplayState, History, WebSocketClient};
 
 impl WebSocketClient {
@@ -695,6 +698,111 @@ impl WebSocketClient {
                         if success && !self.registry_editor.selected_key.is_empty() {
                             let _ = self.send_cmd_tx.try_send(Cmd::ListRegistryKeys(self.registry_editor.selected_key.clone()));
                         }
+                    } else if let Cmd::DriverProtectionsResult {
+                        success,
+                        hvci_enabled,
+                        blocklist_enabled,
+                        reboot_required,
+                        message,
+                        hvci_running,
+                        policy_override,
+                        request_id,
+                        requested_enable,
+                        hvci_configured,
+                        vbs_status,
+                    } = cmd
+                    {
+                        let flag = |v: Option<bool>| match v {
+                            Some(true) => "on",
+                            Some(false) => "off",
+                            None => "unreadable",
+                        };
+                        // Matched against the outstanding request before anything is
+                        // audited or shown.
+                        let attribution = self
+                            .home_page
+                            .classify_driver_protections_result(
+                                request_id.as_deref(),
+                                requested_enable,
+                            );
+                        // Registry values AND the running Device Guard state, so a
+                        // policy-overridden write can't read as a clean success.
+                        let summary = format!(
+                            "Driver protections on {}: {message} (registry — Memory Integrity: {}, \
+                             Vulnerable Driver Blocklist: {}; Device Guard HVCI actually {}, {}, \
+                             VBS status {}{}{}; request {} [{}])",
+                            self.client.connection_string,
+                            flag(hvci_enabled),
+                            flag(blocklist_enabled),
+                            match hvci_running {
+                                Some(true) => "running",
+                                Some(false) => "not running",
+                                None => "unreadable",
+                            },
+                            match hvci_configured {
+                                Some(true) => "configured",
+                                Some(false) => "not configured",
+                                None => "configured-state unreadable",
+                            },
+                            match vbs_status {
+                                Some(v) => v.to_string(),
+                                None => "unreadable".to_string(),
+                            },
+                            if reboot_required { "; reboot required" } else { "" },
+                            match policy_override.as_deref() {
+                                Some(note) => format!("; POLICY OVERRIDE: {note}"),
+                                None => String::new(),
+                            },
+                            request_id.as_deref().unwrap_or("<none>"),
+                            attribution.label(),
+                        );
+                        log::warn!("{summary}");
+                        // The client echoes the direction it acted on; console state
+                        // is only a fallback for pre-correlation client builds.
+                        let direction_echoed = requested_enable.is_some();
+                        let enable = requested_enable
+                            .or_else(|| self.home_page.outstanding_driver_protections_direction())
+                            .unwrap_or(hvci_enabled == Some(true));
+                        record_driver_protections_audit(DriverProtectionsAudit {
+                            connection_string: self.client.connection_string.clone(),
+                            hostname: self.client_hostname(),
+                            computer: self.client.computer.clone(),
+                            enable,
+                            stage: if success {
+                                DriverProtectionsStage::Applied
+                            } else {
+                                DriverProtectionsStage::Failed
+                            },
+                            detail: summary.clone(),
+                            hvci_enabled,
+                            blocklist_enabled,
+                            hvci_running,
+                            policy_override,
+                            hvci_configured,
+                            vbs_status,
+                            reboot_required: Some(reboot_required),
+                            request_id,
+                            attribution: Some(attribution),
+                            direction_echoed,
+                        });
+                        self.home_page.apply_driver_protections_result(
+                            attribution,
+                            success,
+                            summary.clone(),
+                        );
+                        self.history.push(History {
+                            from: "System".to_string(),
+                            message: summary.clone(),
+                            timestamp: chrono::Local::now().to_rfc3339(),
+                        });
+                        let toast = if !attribution.answers_outstanding() {
+                            crate::ToastMessage::Warning(summary)
+                        } else if success {
+                            crate::ToastMessage::Success(summary)
+                        } else {
+                            crate::ToastMessage::Error(summary)
+                        };
+                        let _ = crate::get_toast_sender().try_send(toast);
                     } else if let Cmd::WindowsUpdateResult { success, summary } = cmd {
                         // Slice 4: batch Windows Update finished
                         // on this client. Surface the per-client

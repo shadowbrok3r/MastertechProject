@@ -35,7 +35,7 @@ pub mod scenario;
 pub mod telemetry;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -135,6 +135,11 @@ pub enum Stressor {
     /// Concurrent CPU FMA + RAM bandwidth + GPU compute load; reports combined CPU+GPU GFLOPS.
     #[facet(rename = "combined")]
     Combined,
+    /// Square-wave GPU bursts over a continuous all-core CPU FMA load to drive
+    /// 12V rail transients; reports combined CPU+GPU GFLOPS.
+    /// Appended last so existing bincode variant indices stay stable.
+    #[facet(rename = "psu_transient")]
+    PsuTransient,
 }
 
 impl Stressor {
@@ -168,6 +173,7 @@ impl Stressor {
             Self::GpuVram => "GPU VRAM",
             Self::GpuPcie => "GPU PCIe",
             Self::Combined => "Combined (CPU+RAM+GPU)",
+            Self::PsuTransient => "PSU Transient",
         }
     }
 
@@ -201,6 +207,7 @@ impl Stressor {
             Self::GpuVram => "MiB/s",
             Self::GpuPcie => "GB/s",
             Self::Combined => "GFLOPS",
+            Self::PsuTransient => "GFLOPS",
         }
     }
 
@@ -247,6 +254,7 @@ impl Stressor {
             Self::GpuVram,
             Self::GpuPcie,
             Self::Combined,
+            Self::PsuTransient,
         ]
     }
 
@@ -339,11 +347,16 @@ pub struct Metrics {
     pub errors: u64,
 }
 
+/// Stand-in reason when a stressor sends `fatal` with no `last_error`.
+const FATAL_WITHOUT_REASON: &str = "stressor aborted without a reason";
+
 /// Background run; [`Drop`] calls [`StressSession::stop`].
 pub struct StressSession {
     cancel: Arc<AtomicBool>,
     metrics_rx: mpsc::Receiver<Metrics>,
     started_at: Instant,
+    /// Reason from the first fatal sample drained; never cleared.
+    fatal_latch: Mutex<Option<String>>,
 }
 
 impl StressSession {
@@ -373,6 +386,7 @@ impl StressSession {
             cancel,
             metrics_rx: rx,
             started_at,
+            fatal_latch: Mutex::new(None),
         }
     }
 
@@ -389,19 +403,61 @@ impl StressSession {
         self.started_at.elapsed()
     }
 
-    /// Latest metrics only; drains the channel with `try_recv`.
+    /// Latest metrics only; drains the channel with `try_recv`. `fatal` latches:
+    /// once a fatal sample is drained, every sample returned afterwards carries
+    /// `fatal` and the first fatal reason, so a newer tick cannot mask it.
     pub fn try_recv(&self) -> Option<Metrics> {
-        let mut latest = None;
+        let mut latest: Option<Metrics> = None;
         while let Ok(m) = self.metrics_rx.try_recv() {
+            if m.fatal {
+                self.latch_fatal(m.last_error.as_deref());
+            }
             latest = Some(m);
         }
-        latest
+        let mut latest = latest?;
+        if let Some(reason) = self.fatal_reason() {
+            latest.fatal = true;
+            latest.last_error = Some(reason);
+        }
+        Some(latest)
+    }
+
+    /// Stores the first fatal reason seen.
+    fn latch_fatal(&self, reason: Option<&str>) {
+        if let Ok(mut latched) = self.fatal_latch.lock() {
+            if latched.is_none() {
+                *latched = Some(reason.unwrap_or(FATAL_WITHOUT_REASON).to_string());
+            }
+        }
+    }
+
+    /// Reason from the first fatal sample [`StressSession::try_recv`] drained,
+    /// readable after the stressor has stopped sending.
+    pub fn fatal_reason(&self) -> Option<String> {
+        self.fatal_latch.lock().ok().and_then(|g| g.clone())
     }
 }
 
 impl Drop for StressSession {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+#[cfg(test)]
+impl StressSession {
+    /// Session with no supervisor thread, wired to a caller-held sender.
+    fn detached() -> (Self, mpsc::Sender<Metrics>) {
+        let (tx, rx) = mpsc::channel();
+        (
+            Self {
+                cancel: Arc::new(AtomicBool::new(false)),
+                metrics_rx: rx,
+                started_at: Instant::now(),
+                fatal_latch: Mutex::new(None),
+            },
+            tx,
+        )
     }
 }
 
@@ -444,6 +500,57 @@ mod tests {
     #[test]
     fn unknown_label_is_none() {
         assert_eq!(Stressor::from_str("nonsense"), None);
+    }
+
+    fn sample(throughput: f64, fatal: bool, last_error: Option<&str>) -> Metrics {
+        Metrics {
+            elapsed_secs: 1.0,
+            throughput,
+            last_error: last_error.map(str::to_string),
+            fatal,
+            errors: 0,
+        }
+    }
+
+    #[test]
+    fn fatal_survives_a_newer_tick_in_the_same_drain() {
+        let (session, tx) = StressSession::detached();
+        tx.send(sample(1.0, true, Some("gpu leg never ran"))).unwrap();
+        tx.send(sample(2.0, false, None)).unwrap();
+
+        let m = session.try_recv().expect("drain returned nothing");
+        assert!(m.fatal, "newest-only drain dropped the fatal");
+        assert_eq!(m.last_error.as_deref(), Some("gpu leg never ran"));
+        assert_eq!(m.throughput, 2.0, "newest throughput is still reported");
+    }
+
+    #[test]
+    fn fatal_latches_across_drains() {
+        let (session, tx) = StressSession::detached();
+        tx.send(sample(1.0, true, Some("boom"))).unwrap();
+        assert!(session.try_recv().expect("first drain").fatal);
+
+        tx.send(sample(3.0, false, Some("just a warning"))).unwrap();
+        let m = session.try_recv().expect("second drain");
+        assert!(m.fatal, "fatal did not latch across calls");
+        assert_eq!(m.last_error.as_deref(), Some("boom"));
+        assert_eq!(session.fatal_reason().as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn fatal_without_reason_gets_a_placeholder() {
+        let (session, tx) = StressSession::detached();
+        tx.send(sample(0.0, true, None)).unwrap();
+        let m = session.try_recv().expect("drain returned nothing");
+        assert_eq!(m.last_error.as_deref(), Some(FATAL_WITHOUT_REASON));
+    }
+
+    #[test]
+    fn empty_channel_returns_none_even_after_a_fatal() {
+        let (session, tx) = StressSession::detached();
+        tx.send(sample(0.0, true, Some("boom"))).unwrap();
+        assert!(session.try_recv().is_some());
+        assert!(session.try_recv().is_none(), "latch must not synthesize ticks");
     }
 
     /// Run a stressor briefly and return the last metrics sample seen.

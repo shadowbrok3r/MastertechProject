@@ -47,7 +47,7 @@ pub fn default_target_kind(s: Stressor) -> TargetKind {
         | Stressor::Vm
         | Stressor::Stream
         | Stressor::MemTest => TargetKind::Memory,
-        Stressor::Psu => TargetKind::Psu,
+        Stressor::Psu | Stressor::PsuTransient => TargetKind::Psu,
         Stressor::Disk => TargetKind::Storage,
         Stressor::Gpu | Stressor::GpuMatmul | Stressor::GpuVram | Stressor::GpuPcie => {
             TargetKind::Gpu
@@ -133,6 +133,10 @@ pub fn metric_from_snapshot(
         cpu_usage_pct: mean_core_usage_pct(snapshot),
         clock_mhz: mean_core_clock_mhz(snapshot),
         power_w: gpu_power_sum_w(snapshot),
+        v12_v: snapshot.rail_12v(),
+        v5_v: snapshot.rail_5v(),
+        v3vcc_v: snapshot.rail_3vcc(),
+        vcore_v: snapshot.vcore(),
     })
 }
 

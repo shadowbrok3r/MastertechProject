@@ -209,6 +209,12 @@ fn render_summary(ui: &mut Ui, run: &StressTestRun, idx: usize) {
             summary_temp(ui, "Max CPU temp", s.max_cpu_temp_c);
             summary_temp(ui, "Max GPU temp", s.max_gpu_temp_c);
 
+            if let Some(v) = s.min_v12_v {
+                ui.label(RichText::new("12V min").weak());
+                ui.label(format!("{v:.2} V (uncalibrated)"));
+                ui.end_row();
+            }
+
             if let Some(clk) = s.max_clock_mhz {
                 ui.label(RichText::new("Max clock").weak());
                 ui.label(format!("{clk} MHz"));
