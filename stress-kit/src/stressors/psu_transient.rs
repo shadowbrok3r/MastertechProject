@@ -3,8 +3,8 @@
 //! run continuously. Submits are sized so a burst can be cut on the clock, and
 //! the achieved duty cycle is measured rather than assumed. Reports combined
 //! GFLOPS from confirmed-complete burst-phase GPU work. A run with no GPU load
-//! is not a valid transient test: it goes fatal and stays fatal on every later
-//! tick.
+//! is not a valid transient test: it goes fatal as soon as the GPU leg is gone
+//! and the stage returns on the next tick.
 
 #![cfg(feature = "gpu")]
 
@@ -38,8 +38,8 @@ const INNER_ITERS: u32 = 512;
 const GPU_OPS_PER_INVOCATION: u64 = (INNER_ITERS as u64) * 6 + (INNER_ITERS as u64) / 2;
 /// Queued submits tolerated before the driver thread waits on the oldest.
 const MAX_INFLIGHT_SUBMITS: usize = 3;
-/// Consecutive device-wait timeouts tolerated before the GPU leg is declared stopped.
-const MAX_DRAIN_FAILURES: u32 = 3;
+/// Wall-clock window without confirmed GPU work before the leg is declared stalled.
+const DRAIN_STALL_LIMIT: Duration = Duration::from_secs(90);
 /// Timed single-unit submits taken before the burst loop starts.
 const CALIBRATION_SAMPLES: u32 = 3;
 /// Bursts between measured duty-cycle logs.
@@ -105,34 +105,38 @@ pub(crate) fn run(
     tx: &mpsc::Sender<Metrics>,
     started_at: Instant,
 ) {
+    // Set when the tick loop leaves, so an early return still stops every worker.
+    let stop = Arc::new(AtomicBool::new(false));
     // Two logical cores left free for the GPU submit thread and the tick loop.
     let cpu_threads = thread_count.saturating_sub(2).max(1);
     let cpu_bursts = Arc::new(AtomicU64::new(0));
     // Confirmed-complete GPU work units, not submits.
     let gpu_units = Arc::new(AtomicU64::new(0));
     let warn_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let stall_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let fatal_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
     let cpu_handles: Vec<_> = (0..cpu_threads)
         .map(|_| {
-            let cancel = cancel.clone();
+            let stop = stop.clone();
             let counter = cpu_bursts.clone();
             thread::Builder::new()
                 .name("stress-kit-pulse-cpu".into())
-                .spawn(move || fma_worker(cancel, counter))
+                .spawn(move || fma_worker(stop, counter))
                 .expect("stress-kit: failed to spawn psu_transient cpu worker")
         })
         .collect();
 
     let gpu_handle = {
-        let cancel = cancel.clone();
+        let stop = stop.clone();
         let counter = gpu_units.clone();
         let warn = warn_slot.clone();
+        let stall = stall_slot.clone();
         let fatal = fatal_slot.clone();
         let tx = tx.clone();
         thread::Builder::new()
             .name("stress-kit-pulse-gpu".into())
-            .spawn(move || gpu_driver(cancel, counter, warn, fatal, tx, started_at))
+            .spawn(move || gpu_driver(stop, counter, warn, stall, fatal, tx, started_at))
             .expect("stress-kit: failed to spawn psu_transient gpu driver")
     };
 
@@ -142,47 +146,55 @@ pub(crate) fn run(
 
     while !cancel.load(Ordering::Relaxed) {
         thread::sleep(Duration::from_millis(50));
-        if last_tick.elapsed() >= TICK {
-            let cpu_now = cpu_bursts.load(Ordering::Relaxed);
-            let gpu_now = gpu_units.load(Ordering::Relaxed);
-            let dt = last_tick.elapsed().as_secs_f64().max(f64::EPSILON);
+        if last_tick.elapsed() < TICK {
+            continue;
+        }
 
-            let cpu_flops = cpu_now.saturating_sub(last_cpu) as f64 * CPU_FLOPS_PER_BURST as f64;
-            let gpu_flops = gpu_now.saturating_sub(last_gpu) as f64
-                * (INVOCATIONS_PER_SUBMIT * GPU_OPS_PER_INVOCATION) as f64;
-            let gflops = (cpu_flops + gpu_flops) / dt / 1e9;
+        let cpu_now = cpu_bursts.load(Ordering::Relaxed);
+        let gpu_now = gpu_units.load(Ordering::Relaxed);
+        let dt = last_tick.elapsed().as_secs_f64().max(f64::EPSILON);
 
-            // Every tick after the GPU leg dies repeats the fatal so a newest-only drain keeps it.
-            match fatal_slot.lock().ok().and_then(|g| g.clone()) {
-                Some(reason) => emit_latched_fatal(tx, started_at, gflops, reason),
-                None => emit_tick(
-                    tx,
-                    started_at,
-                    gflops,
-                    warn_slot.lock().ok().and_then(|g| g.clone()),
-                    0,
-                ),
+        let cpu_flops = cpu_now.saturating_sub(last_cpu) as f64 * CPU_FLOPS_PER_BURST as f64;
+        let gpu_flops = gpu_now.saturating_sub(last_gpu) as f64
+            * (INVOCATIONS_PER_SUBMIT * GPU_OPS_PER_INVOCATION) as f64;
+        let gflops = (cpu_flops + gpu_flops) / dt / 1e9;
+
+        last_cpu = cpu_now;
+        last_gpu = gpu_now;
+        last_tick = Instant::now();
+
+        match fatal_slot.lock().ok().and_then(|g| g.clone()) {
+            // The verdict is decided; the surviving CPU-only load proves nothing.
+            Some(reason) => {
+                emit_latched_fatal(tx, started_at, gflops, reason);
+                break;
             }
-
-            last_cpu = cpu_now;
-            last_gpu = gpu_now;
-            last_tick = Instant::now();
+            // A live stall outranks the standing pulse-degraded notice.
+            None => {
+                let warn = stall_slot
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.clone())
+                    .or_else(|| warn_slot.lock().ok().and_then(|g| g.clone()));
+                emit_tick(tx, started_at, gflops, warn, 0);
+            }
         }
     }
 
+    stop.store(true, Ordering::SeqCst);
     for h in cpu_handles {
         let _ = h.join();
     }
     let _ = gpu_handle.join();
 }
 
-fn fma_worker(cancel: Arc<AtomicBool>, counter: Arc<AtomicU64>) {
+fn fma_worker(stop: Arc<AtomicBool>, counter: Arc<AtomicU64>) {
     let mut acc = [1.000_001f64; CHAIN_DEPTH];
     for (i, a) in acc.iter_mut().enumerate() {
         *a += i as f64 * 1e-6;
     }
 
-    while !cancel.load(Ordering::Relaxed) {
+    while !stop.load(Ordering::Relaxed) {
         for _ in 0..ITERS_PER_BURST {
             for (i, a) in acc.iter_mut().enumerate() {
                 *a = a.mul_add(1.000_000_001 + i as f64 * 1e-12, 1e-9);
@@ -218,9 +230,10 @@ fn raise_submit_priority() {
 fn raise_submit_priority() {}
 
 fn gpu_driver(
-    cancel: Arc<AtomicBool>,
+    stop: Arc<AtomicBool>,
     counter: Arc<AtomicU64>,
     warn: Arc<Mutex<Option<String>>>,
+    stall: Arc<Mutex<Option<String>>>,
     fatal: Arc<Mutex<Option<String>>>,
     tx: mpsc::Sender<Metrics>,
     started_at: Instant,
@@ -229,8 +242,8 @@ fn gpu_driver(
         Ok(c) => c,
         Err(e) => {
             let msg = format!(
-                "psu_transient: GPU unavailable ({e}); the pulsed +12V load never ran, \
-                 so this is not a valid PSU transient test"
+                "psu_transient: inconclusive - GPU unavailable ({e}); the pulsed +12V load \
+                 never ran, so this is not a valid PSU transient test"
             );
             log::error!("[stress-kit/psu_transient] {msg}");
             set_slot(&warn, msg.clone());
@@ -307,15 +320,24 @@ fn gpu_driver(
         ],
     });
 
+    // Reset by every confirmed unit; a timing-out device wait leaves it standing.
+    let mut last_progress = Instant::now();
+
     // Uncounted warm-up submit forces pipeline compilation before the first edge.
     let warmup = submit_unit(&ctx, &pipeline, &bind_group);
-    let _ = drain_to(&ctx, warmup, &warn);
+    if drain_to(&ctx, warmup, &stall) {
+        last_progress = Instant::now();
+    }
     if let Some(reason) = ctx.health.failure() {
         report_gpu_stop(&warn, &fatal, &tx, started_at, reason);
         return;
     }
 
-    let unit_cost = calibrate_unit(&ctx, &pipeline, &bind_group, &warn);
+    let Some(unit_cost) = calibrate_unit(&ctx, &pipeline, &bind_group, &stall) else {
+        report_gpu_stalled(&warn, &fatal, &tx, started_at, last_progress.elapsed());
+        return;
+    };
+    last_progress = Instant::now();
     let inflight_cap = inflight_cap_for(unit_cost);
     log::info!(
         "[stress-kit/psu_transient] submit cost {:.2}ms, ~{} submits per burst, {} in flight",
@@ -332,16 +354,15 @@ fn gpu_driver(
     let mut on_total = Duration::ZERO;
     let mut cycle_total = Duration::ZERO;
     let mut cycles: u64 = 0;
-    let mut drain_failures: u32 = 0;
 
-    while !cancel.load(Ordering::Relaxed) {
+    while !stop.load(Ordering::Relaxed) {
         let cycle_start = Instant::now();
         let on_until = cycle_start + PULSE_ON;
         let mut submits: u64 = 0;
 
-        while !cancel.load(Ordering::Relaxed)
+        while !stop.load(Ordering::Relaxed)
             && Instant::now() < on_until
-            && drain_failures < MAX_DRAIN_FAILURES
+            && last_progress.elapsed() < DRAIN_STALL_LIMIT
         {
             params.seed = params.seed.wrapping_mul(1103515245).wrapping_add(12345);
             ctx.queue.write_buffer(&params_buf, 0, bytemuck::bytes_of(&params));
@@ -352,11 +373,9 @@ fn gpu_driver(
             match pop_at_cap(&mut pending, inflight_cap) {
                 // The cap drain already waits on the oldest unit; its success confirms one unit.
                 Some(oldest) => {
-                    if drain_to(&ctx, oldest, &warn) {
+                    if drain_to(&ctx, oldest, &stall) {
                         counter.fetch_add(1, Ordering::Relaxed);
-                        drain_failures = 0;
-                    } else {
-                        drain_failures += 1;
+                        last_progress = Instant::now();
                     }
                 }
                 None => {
@@ -368,12 +387,12 @@ fn gpu_driver(
         // Queued work is drained before the idle window so the trailing edge steps down.
         let queued = pending.len() as u64;
         pending.clear();
-        if check_poll(ctx.device.poll(wgpu::PollType::Wait), &warn) {
+        // Skipped once stalled: the wait would block for wgpu's full internal timeout.
+        let stalled = last_progress.elapsed() >= DRAIN_STALL_LIMIT;
+        if !stalled && check_poll(ctx.device.poll(wgpu::PollType::Wait), &stall) {
             // An empty queue confirms every unit still tracked at the boundary.
             counter.fetch_add(queued, Ordering::Relaxed);
-            drain_failures = 0;
-        } else {
-            drain_failures += 1;
+            last_progress = Instant::now();
         }
         let on_actual = cycle_start.elapsed();
 
@@ -381,14 +400,8 @@ fn gpu_driver(
             report_gpu_stop(&warn, &fatal, &tx, started_at, reason);
             return;
         }
-        if drain_failures >= MAX_DRAIN_FAILURES {
-            report_gpu_stop(
-                &warn,
-                &fatal,
-                &tx,
-                started_at,
-                format!("queue stalled, {MAX_DRAIN_FAILURES} consecutive device-wait timeouts"),
-            );
+        if last_progress.elapsed() >= DRAIN_STALL_LIMIT {
+            report_gpu_stalled(&warn, &fatal, &tx, started_at, last_progress.elapsed());
             return;
         }
 
@@ -411,7 +424,10 @@ fn gpu_driver(
         }
     }
 
-    let _ = check_poll(ctx.device.poll(wgpu::PollType::Wait), &warn);
+    // Skipped once stalled: the wait would block for wgpu's full internal timeout.
+    if last_progress.elapsed() < DRAIN_STALL_LIMIT {
+        let _ = check_poll(ctx.device.poll(wgpu::PollType::Wait), &stall);
+    }
 }
 
 /// Encodes and submits one work unit.
@@ -453,46 +469,53 @@ fn pop_at_cap(
 fn drain_to(
     ctx: &GpuContext,
     index: wgpu::SubmissionIndex,
-    warn: &Arc<Mutex<Option<String>>>,
+    stall: &Arc<Mutex<Option<String>>>,
 ) -> bool {
     check_poll(
         ctx.device.poll(wgpu::PollType::WaitForSubmissionIndex(index)),
-        warn,
+        stall,
     )
 }
 
-/// Surfaces a device-wait timeout through `warn`; `PollError` has no `Display` here.
+/// Publishes a device-wait timeout through `stall` and clears it once a wait completes.
 fn check_poll(
     result: Result<wgpu::PollStatus, wgpu::PollError>,
-    warn: &Arc<Mutex<Option<String>>>,
+    stall: &Arc<Mutex<Option<String>>>,
 ) -> bool {
     match result {
-        Ok(_) => true,
+        Ok(_) => {
+            clear_slot(stall);
+            true
+        }
         Err(e) => {
-            let msg =
-                format!("psu_transient: GPU leg stopped responding, device wait timed out ({e:?})");
+            let msg = format!(
+                "psu_transient: inconclusive - a device wait timed out ({e:?}); the pulsed GPU \
+                 burst has not completed"
+            );
             log::warn!("[stress-kit/psu_transient] {msg}");
-            set_slot(warn, msg);
+            set_slot(stall, msg);
             false
         }
     }
 }
 
-/// Fastest of `CALIBRATION_SAMPLES` timed single-unit submits.
+/// Fastest of `CALIBRATION_SAMPLES` timed single-unit submits; `None` if a wait timed out.
 fn calibrate_unit(
     ctx: &GpuContext,
     pipeline: &wgpu::ComputePipeline,
     bind_group: &wgpu::BindGroup,
-    warn: &Arc<Mutex<Option<String>>>,
-) -> Duration {
+    stall: &Arc<Mutex<Option<String>>>,
+) -> Option<Duration> {
     let mut best = Duration::MAX;
     for _ in 0..CALIBRATION_SAMPLES {
         let started = Instant::now();
         let index = submit_unit(ctx, pipeline, bind_group);
-        let _ = drain_to(ctx, index, warn);
+        if !drain_to(ctx, index, stall) {
+            return None;
+        }
         best = best.min(started.elapsed());
     }
-    best
+    Some(best)
 }
 
 /// Submits that fit in one ON window at the measured unit cost.
@@ -536,10 +559,48 @@ fn report_gpu_stop(
     started_at: Instant,
     reason: String,
 ) {
-    let msg = format!(
-        "psu_transient: GPU leg stopped ({reason}); the pulsed +12V load ended, \
-         so this is not a valid PSU transient test"
+    report_fatal(
+        warn,
+        fatal,
+        tx,
+        started_at,
+        format!(
+            "psu_transient: inconclusive - the GPU leg ended early ({reason}); the pulsed +12V \
+             load stopped, so this is not a valid PSU transient test"
+        ),
     );
+}
+
+/// Ends the stage: device waits keep timing out, so no burst is completing.
+fn report_gpu_stalled(
+    warn: &Arc<Mutex<Option<String>>>,
+    fatal: &Arc<Mutex<Option<String>>>,
+    tx: &mpsc::Sender<Metrics>,
+    started_at: Instant,
+    without_progress: Duration,
+) {
+    report_fatal(
+        warn,
+        fatal,
+        tx,
+        started_at,
+        format!(
+            "psu_transient: inconclusive - no GPU burst has completed for {}s, device waits keep \
+             timing out; the pulsed +12V load is not reaching the rail, so this is not a valid \
+             PSU transient test",
+            without_progress.as_secs()
+        ),
+    );
+}
+
+/// Publishes `msg` to both slots and sends the fatal tick.
+fn report_fatal(
+    warn: &Arc<Mutex<Option<String>>>,
+    fatal: &Arc<Mutex<Option<String>>>,
+    tx: &mpsc::Sender<Metrics>,
+    started_at: Instant,
+    msg: String,
+) {
     log::error!("[stress-kit/psu_transient] {msg}");
     set_slot(warn, msg.clone());
     set_slot(fatal, msg.clone());
@@ -565,5 +626,11 @@ fn emit_latched_fatal(
 fn set_slot(slot: &Arc<Mutex<Option<String>>>, msg: String) {
     if let Ok(mut g) = slot.lock() {
         *g = Some(msg);
+    }
+}
+
+fn clear_slot(slot: &Arc<Mutex<Option<String>>>) {
+    if let Ok(mut g) = slot.lock() {
+        *g = None;
     }
 }

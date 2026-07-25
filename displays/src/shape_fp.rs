@@ -122,7 +122,7 @@ mod tests {
     // bump deliberately when Cmd's wire shape changes; this is the drift review gate.
     #[test]
     fn cmd_shape_fp_pin() {
-        assert_eq!(*super::CMD_SHAPE_FP, 0x43d1_b51a_200b_ddd6);
+        assert_eq!(*super::CMD_SHAPE_FP, 0xc3a6_c45c_81cc_a2b0);
     }
 
     // bump deliberately when the dump-triage result contract changes.

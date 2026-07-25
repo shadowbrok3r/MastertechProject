@@ -3,10 +3,10 @@
 //! single-dispatch mixed-FMA + scattered-load submissions in flight on the GPU.
 //! Reports combined GFLOPS.
 //!
-//! When the GPU leg cannot run, the stage keeps loading every core, reports the
-//! reason on each tick, then marks every tick past the grace window fatal: a
-//! CPU-only run never loads the rails the +12V / GPU rules grade, so it must not
-//! yield a PSU verdict.
+//! A CPU-only run never loads the rails the +12V / GPU rules grade, so it cannot
+//! yield a PSU verdict: the stage goes fatal the moment the GPU leg is gone, or
+//! when a leg that only signalled trouble fails to recover inside
+//! `GPU_LOSS_GRACE`, and returns once that fatal is latched.
 
 #![cfg(feature = "gpu")]
 
@@ -20,9 +20,7 @@ use wgpu::util::DeviceExt;
 
 use crate::Metrics;
 
-use super::gpu_common::{emit_tick, GpuContext};
-
-const TICK: Duration = Duration::from_millis(500);
+use super::gpu_common::{emit_fatal_tick, emit_tick, GpuContext, TICK};
 
 const CHAIN_DEPTH: usize = 8;
 const ITERS_PER_BURST: u64 = 200_000;
@@ -40,14 +38,15 @@ const SCATTER_FLOATS: usize = (64 * 1024 * 1024) / std::mem::size_of::<f32>();
 const DISPATCH_SLOTS: usize = 8;
 /// Single-dispatch submissions queued before the driver thread waits on the oldest.
 const MAX_INFLIGHT_DISPATCHES: usize = 32;
-/// Consecutive queue-drain timeouts tolerated before the GPU leg is declared stopped.
-const MAX_DRAIN_FAILURES: u32 = 3;
+/// Wall-clock window without confirmed GPU work before the leg is declared stalled.
+const DRAIN_STALL_LIMIT: Duration = Duration::from_secs(90);
 /// Logical cores held back for the GPU driver thread and the tick loop.
 const RESERVED_CORES: usize = 2;
-/// Ticks that carry the GPU-leg failure reason before every later tick goes fatal.
-const GPU_LOSS_GRACE_TICKS: u32 = 6;
+/// Window a mid-run GPU-leg failure is carried as a warning before going fatal.
+const GPU_LOSS_GRACE: Duration = Duration::from_secs(3);
 /// Reason reported when the GPU-leg failure detail is unreadable.
-const GPU_LEG_DOWN: &str = "psu: inconclusive - GPU unavailable, GPU leg never ran";
+const GPU_LEG_DOWN: &str =
+    "psu: inconclusive - the GPU leg is not running, the combined CPU+GPU load was not applied";
 
 const SHADER: &str = r#"
 struct Params {
@@ -105,6 +104,7 @@ pub(crate) fn run(
     let gpu_dispatches = Arc::new(AtomicU64::new(0));
     let gpu_down = Arc::new(AtomicBool::new(false));
     let warn_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let fatal_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
     let mut cpu_handles: Vec<_> = (0..cpu_threads)
         .map(|_| spawn_fma_worker(&stop, &cpu_bursts))
@@ -114,62 +114,63 @@ pub(crate) fn run(
         let stop = stop.clone();
         let counter = gpu_dispatches.clone();
         let warn = warn_slot.clone();
+        let fatal = fatal_slot.clone();
         let down = gpu_down.clone();
+        let tx = tx.clone();
         thread::Builder::new()
             .name("stress-kit-psu-gpu".into())
-            .spawn(move || gpu_driver(stop, counter, warn, down))
+            .spawn(move || gpu_driver(stop, counter, warn, fatal, down, tx, started_at))
             .expect("stress-kit: failed to spawn psu gpu driver")
     };
 
     let mut last_tick = Instant::now();
     let mut last_cpu: u64 = 0;
     let mut last_gpu: u64 = 0;
-    let mut ticks_since_gpu_loss: Option<u32> = None;
+    let mut grace_until: Option<Instant> = None;
 
     while !cancel.load(Ordering::Relaxed) {
         thread::sleep(Duration::from_millis(50));
 
         // GPU leg down: put its reserved cores back to work on the CPU chains.
-        if ticks_since_gpu_loss.is_none() && gpu_down.load(Ordering::Relaxed) {
-            ticks_since_gpu_loss = Some(0);
+        if grace_until.is_none() && gpu_down.load(Ordering::Relaxed) {
+            grace_until = Some(Instant::now() + GPU_LOSS_GRACE);
             for _ in 0..thread_count.saturating_sub(cpu_threads) {
                 cpu_handles.push(spawn_fma_worker(&stop, &cpu_bursts));
             }
         }
 
-        if last_tick.elapsed() >= TICK {
-            let cpu_now = cpu_bursts.load(Ordering::Relaxed);
-            let gpu_now = gpu_dispatches.load(Ordering::Relaxed);
-            let dt = last_tick.elapsed().as_secs_f64().max(f64::EPSILON);
+        if last_tick.elapsed() < TICK {
+            continue;
+        }
 
-            let cpu_flops = cpu_now.saturating_sub(last_cpu) as f64 * CPU_FLOPS_PER_BURST as f64;
-            let gpu_flops = gpu_now.saturating_sub(last_gpu) as f64
-                * (INVOCATIONS_PER_DISPATCH * GPU_OPS_PER_INVOCATION) as f64;
-            let gflops = (cpu_flops + gpu_flops) / dt / 1e9;
+        let cpu_now = cpu_bursts.load(Ordering::Relaxed);
+        let gpu_now = gpu_dispatches.load(Ordering::Relaxed);
+        let dt = last_tick.elapsed().as_secs_f64().max(f64::EPSILON);
 
-            let reason = warn_slot.lock().ok().and_then(|g| g.clone());
-            let grace_elapsed = match ticks_since_gpu_loss.as_mut() {
-                Some(n) => {
-                    *n = n.saturating_add(1);
-                    *n >= GPU_LOSS_GRACE_TICKS
-                }
-                None => false,
-            };
-            if grace_elapsed {
-                // Every tick from here repeats the fatal so a newest-only drain keeps it.
-                emit_latched_fatal(
-                    tx,
-                    started_at,
-                    gflops,
-                    reason.unwrap_or_else(|| GPU_LEG_DOWN.to_string()),
-                );
-            } else {
-                emit_tick(tx, started_at, gflops, reason, 0);
+        let cpu_flops = cpu_now.saturating_sub(last_cpu) as f64 * CPU_FLOPS_PER_BURST as f64;
+        let gpu_flops = gpu_now.saturating_sub(last_gpu) as f64
+            * (INVOCATIONS_PER_DISPATCH * GPU_OPS_PER_INVOCATION) as f64;
+        let gflops = (cpu_flops + gpu_flops) / dt / 1e9;
+
+        last_cpu = cpu_now;
+        last_gpu = gpu_now;
+        last_tick = Instant::now();
+
+        let reason = warn_slot.lock().ok().and_then(|g| g.clone());
+        // The driver thread returns early only when its leg is gone for good.
+        let leg_gone = gpu_handle.is_finished()
+            || grace_until.is_some_and(|deadline| Instant::now() >= deadline);
+        let fatal = fatal_slot.lock().ok().and_then(|g| g.clone()).or_else(|| {
+            leg_gone.then(|| reason.clone().unwrap_or_else(|| GPU_LEG_DOWN.to_string()))
+        });
+
+        match fatal {
+            // The verdict is decided; the surviving CPU-only load proves nothing.
+            Some(msg) => {
+                emit_latched_fatal(tx, started_at, gflops, msg);
+                break;
             }
-
-            last_cpu = cpu_now;
-            last_gpu = gpu_now;
-            last_tick = Instant::now();
+            None => emit_tick(tx, started_at, gflops, reason, 0),
         }
     }
 
@@ -232,15 +233,25 @@ fn gpu_driver(
     stop: Arc<AtomicBool>,
     counter: Arc<AtomicU64>,
     warn: Arc<Mutex<Option<String>>>,
+    fatal: Arc<Mutex<Option<String>>>,
     down: Arc<AtomicBool>,
+    tx: mpsc::Sender<Metrics>,
+    started_at: Instant,
 ) {
     let ctx = match GpuContext::acquire(true) {
         Ok(c) => c,
         Err(e) => {
-            report_gpu_stop(
+            // No leg to recover, so the fatal goes out now instead of after the grace window.
+            report_gpu_never_ran(
                 &warn,
+                &fatal,
                 &down,
-                format!("psu: inconclusive - GPU unavailable, GPU leg never ran ({e})"),
+                &tx,
+                started_at,
+                format!(
+                    "psu: inconclusive - GPU unavailable ({e}); the GPU leg never ran, so the \
+                     +12V rail was never loaded and this is not a valid PSU test"
+                ),
             );
             return;
         }
@@ -332,7 +343,8 @@ fn gpu_driver(
     let mut pending: VecDeque<wgpu::SubmissionIndex> =
         VecDeque::with_capacity(MAX_INFLIGHT_DISPATCHES + 1);
     let mut slot: usize = 0;
-    let mut drain_failures: u32 = 0;
+    // Reset by every confirmed dispatch; a timing-out device wait leaves it standing.
+    let mut last_progress = Instant::now();
 
     while !stop.load(Ordering::Relaxed) {
         while pending.len() >= MAX_INFLIGHT_DISPATCHES {
@@ -341,25 +353,23 @@ fn gpu_driver(
                 Ok(_) => {
                     pending.pop_front();
                     counter.fetch_add(1, Ordering::Relaxed);
-                    drain_failures = 0;
+                    last_progress = Instant::now();
                 }
                 // Oldest stays tracked unless a full drain confirms it completed.
                 Err(e) => match ctx.device.poll(wgpu::PollType::Wait) {
                     Ok(_) => {
                         counter.fetch_add(pending.len() as u64, Ordering::Relaxed);
                         pending.clear();
-                        drain_failures = 0;
+                        last_progress = Instant::now();
                     }
-                    Err(_) => {
-                        drain_failures += 1;
-                        log::debug!(
-                            "[stress-kit/psu] queue wait timed out ({e:?}) x{drain_failures}"
-                        );
-                    }
+                    Err(_) => log::debug!(
+                        "[stress-kit/psu] queue wait timed out ({e:?}); {:.0}s without progress",
+                        last_progress.elapsed().as_secs_f64()
+                    ),
                 },
             }
             if stop.load(Ordering::Relaxed)
-                || drain_failures >= MAX_DRAIN_FAILURES
+                || last_progress.elapsed() >= DRAIN_STALL_LIMIT
                 || ctx.health.failure().is_some()
             {
                 break;
@@ -374,13 +384,14 @@ fn gpu_driver(
             );
             return;
         }
-        if drain_failures >= MAX_DRAIN_FAILURES {
+        if last_progress.elapsed() >= DRAIN_STALL_LIMIT {
             report_gpu_stop(
                 &warn,
                 &down,
                 format!(
-                    "psu: inconclusive - GPU leg stopped (queue stalled, \
-                     {MAX_DRAIN_FAILURES} consecutive wait timeouts)"
+                    "psu: inconclusive - no GPU dispatch has completed for {}s, device waits keep \
+                     timing out; the GPU leg is no longer loading the rail",
+                    last_progress.elapsed().as_secs()
                 ),
             );
             return;
@@ -407,10 +418,14 @@ fn gpu_driver(
         if let Ok(wgpu::PollStatus::QueueEmpty) = ctx.device.poll(wgpu::PollType::Poll) {
             counter.fetch_add(pending.len() as u64, Ordering::Relaxed);
             pending.clear();
+            last_progress = Instant::now();
         }
     }
 
-    let _ = ctx.device.poll(wgpu::PollType::Wait);
+    // Skipped once stalled: the wait would block for wgpu's full internal timeout.
+    if last_progress.elapsed() < DRAIN_STALL_LIMIT {
+        let _ = ctx.device.poll(wgpu::PollType::Wait);
+    }
 }
 
 /// Sends a fatal tick that keeps the measured throughput of the CPU-only load.
@@ -432,8 +447,26 @@ fn emit_latched_fatal(
 /// Publishes the GPU-leg stop reason and flags the leg down for the tick loop.
 fn report_gpu_stop(warn: &Arc<Mutex<Option<String>>>, down: &Arc<AtomicBool>, msg: String) {
     log::error!("[stress-kit/psu] {msg}");
-    if let Ok(mut g) = warn.lock() {
+    set_slot(warn, msg);
+    down.store(true, Ordering::SeqCst);
+}
+
+/// Publishes the reason and sends the fatal at once, bypassing the grace window.
+fn report_gpu_never_ran(
+    warn: &Arc<Mutex<Option<String>>>,
+    fatal: &Arc<Mutex<Option<String>>>,
+    down: &Arc<AtomicBool>,
+    tx: &mpsc::Sender<Metrics>,
+    started_at: Instant,
+    msg: String,
+) {
+    report_gpu_stop(warn, down, msg.clone());
+    set_slot(fatal, msg.clone());
+    emit_fatal_tick(tx, started_at, msg, 0);
+}
+
+fn set_slot(slot: &Arc<Mutex<Option<String>>>, msg: String) {
+    if let Ok(mut g) = slot.lock() {
         *g = Some(msg);
     }
-    down.store(true, Ordering::SeqCst);
 }

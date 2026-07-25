@@ -1,13 +1,55 @@
+use std::collections::HashMap;
+
 use eframe::egui::{self, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
 use stress_kit::telemetry::{
     DiskRateSample, GpuSample, MemorySample, NetworkRateSample, ProcessSample, TelemetrySnapshot,
-    WheaCounters,
+    ThermalReading, VoltageReading, WheaCounters,
 };
 
 use crate::ui_tools::theme;
 
 const ROW_HEIGHT: f32 = 18.0;
+
+/// Package-level CPU reading: `CPU Package` on Intel, `CPU (Tctl)` on AMD Zen,
+/// else any non-per-core CPU sensor such as the `CPUZ_0` ACPI zone. `CPU Core N`
+/// is excluded so a package summary never borrows a single core's value.
+fn cpu_package_reading(snapshot: &TelemetrySnapshot) -> Option<&ThermalReading> {
+    let not_per_core = |r: &&ThermalReading| !r.label.to_lowercase().starts_with("cpu core");
+    snapshot
+        .thermals
+        .iter()
+        .find(|r| {
+            let l = r.label.to_lowercase();
+            not_per_core(r) && (l.contains("package") || l.contains("tctl") || l.contains("tdie"))
+        })
+        .or_else(|| {
+            snapshot
+                .thermals
+                .iter()
+                .find(|r| not_per_core(r) && r.label.to_lowercase().starts_with("cpu"))
+        })
+}
+
+/// `CPU Core N` readings keyed by core index.
+fn per_core_thermals(snapshot: &TelemetrySnapshot) -> HashMap<usize, f32> {
+    snapshot
+        .thermals
+        .iter()
+        .filter_map(|r| {
+            let rest = r
+                .label
+                .strip_prefix("CPU Core ")
+                .or_else(|| r.label.strip_prefix("cpu core "))?;
+            rest.trim().parse::<usize>().ok().map(|i| (i, r.temp_c))
+        })
+        .collect()
+}
+
+/// Package/Tctl reading for a section header, e.g. `CPU (Tctl) 52.4 °C`.
+pub fn cpu_package_summary(snapshot: &TelemetrySnapshot) -> Option<String> {
+    cpu_package_reading(snapshot).map(|r| format!("{} {:.1} °C", r.label, r.temp_c))
+}
 
 pub fn show_cores(ui: &mut egui::Ui, snapshot: &TelemetrySnapshot, filter: &str) {
     let filter_lower = filter.to_lowercase();
@@ -21,12 +63,44 @@ pub fn show_cores(ui: &mut egui::Ui, snapshot: &TelemetrySnapshot, filter: &str)
         })
         .collect();
 
+    // Whole-CPU package/Tctl reading, once above the per-core rows.
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Package").strong());
+        match cpu_package_reading(snapshot) {
+            Some(r) => {
+                ui.colored_label(
+                    theme::temp_level(ui, r.temp_c),
+                    format!("{:.1} °C", r.temp_c),
+                );
+                ui.label(RichText::new(&r.label).small().weak());
+            }
+            None => {
+                ui.colored_label(theme::weak_text(ui), "no package sensor readable");
+            }
+        }
+    });
+
     if visible.is_empty() {
         empty_state(ui, "No cores match the filter.");
         return;
     }
 
-    TableBuilder::new(ui)
+    let per_core = per_core_thermals(snapshot);
+    let has_per_core = !per_core.is_empty() || visible.iter().any(|c| c.temp_c.is_some());
+    if !has_per_core {
+        let brand = visible.first().map(|c| c.brand.to_lowercase()).unwrap_or_default();
+        let amd = brand.contains("amd") || brand.contains("ryzen") || brand.contains("threadripper");
+        ui.colored_label(
+            theme::weak_text(ui),
+            if amd {
+                "No per-core sensors: AMD Zen exposes only the package Tctl through the SMU."
+            } else {
+                "No per-core temperature sensors readable on this platform."
+            },
+        );
+    }
+
+    let mut table = TableBuilder::new(ui)
         .striped(true)
         .resizable(true)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
@@ -34,15 +108,20 @@ pub fn show_cores(ui: &mut egui::Ui, snapshot: &TelemetrySnapshot, filter: &str)
         .column(Column::auto().at_least(60.0).at_most(110.0))
         .column(Column::initial(280.0).at_least(180.0))
         .column(Column::auto().at_least(80.0))
-        .column(Column::auto().at_least(100.0))
-        .column(Column::auto().at_least(80.0))
+        .column(Column::auto().at_least(100.0));
+    if has_per_core {
+        table = table.column(Column::auto().at_least(80.0));
+    }
+    table
         .header(20.0, |mut h| {
             h.col(|ui| header_label(ui, "#"));
             h.col(|ui| header_label(ui, "Name"));
             h.col(|ui| header_label(ui, "Brand"));
             h.col(|ui| header_label(ui, "Usage %"));
             h.col(|ui| header_label(ui, "Freq"));
-            h.col(|ui| header_label(ui, "Temp"));
+            if has_per_core {
+                h.col(|ui| header_label(ui, "Temp"));
+            }
         })
         .body(|mut body| {
             for c in visible {
@@ -68,17 +147,87 @@ pub fn show_cores(ui: &mut egui::Ui, snapshot: &TelemetrySnapshot, filter: &str)
                     r.col(|ui| {
                         ui.label(format!("{} MHz", c.freq_mhz));
                     });
-                    r.col(|ui| match c.temp_c {
-                        Some(t) => {
-                            ui.colored_label(theme::temp_level(ui, t), format!("{t:.1} °C"));
+                    if has_per_core {
+                        let temp = c.temp_c.or_else(|| per_core.get(&c.index).copied());
+                        r.col(|ui| match temp {
+                            Some(t) => {
+                                ui.colored_label(theme::temp_level(ui, t), format!("{t:.1} °C"));
+                            }
+                            None => {
+                                ui.colored_label(theme::weak_text(ui), "no sensor");
+                            }
+                        });
+                    }
+                });
+            }
+        });
+}
+
+/// Board rails from the SuperIO chip. `3VCC (chip)` is the sensor chip's own
+/// supply, never the board's +3.3V PSU rail; rails scaled with a nominal
+/// divider are marked uncalibrated.
+pub fn show_voltages(ui: &mut egui::Ui, voltages: &[VoltageReading]) {
+    if voltages.is_empty() {
+        empty_state(
+            ui,
+            "No board rails in this snapshot. Locally they need the WinRing0 driver for the SuperIO \
+             chip (Memory Integrity blocks it); remote client telemetry does not carry rails yet.",
+        );
+        return;
+    }
+
+    let any_uncalibrated = voltages.iter().any(|v| !v.calibrated);
+
+    TableBuilder::new(ui)
+        .striped(true)
+        .resizable(true)
+        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+        .column(Column::auto().at_least(90.0).at_most(140.0))
+        .column(Column::auto().at_least(80.0))
+        .column(Column::initial(260.0).at_least(160.0))
+        .header(20.0, |mut h| {
+            h.col(|ui| header_label(ui, "Rail"));
+            h.col(|ui| header_label(ui, "Volts"));
+            h.col(|ui| header_label(ui, "Scaling"));
+        })
+        .body(|mut body| {
+            for v in voltages {
+                let chip_supply = v.label.eq_ignore_ascii_case("3VCC (chip)");
+                body.row(ROW_HEIGHT, |mut r| {
+                    r.col(|ui| {
+                        let resp = ui.label(&v.label);
+                        if chip_supply {
+                            resp.on_hover_text(
+                                "Supply voltage of the SuperIO sensor chip itself. NOT the board's \
+                                 +3.3V PSU rail — do not read it as one.",
+                            );
                         }
-                        None => {
-                            ui.colored_label(theme::weak_text(ui), "N/A");
+                    });
+                    r.col(|ui| {
+                        ui.label(format!("{:.3} V", v.volts));
+                    });
+                    r.col(|ui| {
+                        if v.calibrated {
+                            ui.colored_label(theme::success(ui), "calibrated divider");
+                        } else {
+                            ui.colored_label(theme::warn(ui), "nominal divider — uncalibrated");
+                        }
+                        if chip_supply {
+                            ui.colored_label(theme::info(ui), "sensor chip supply, not +3.3V PSU");
                         }
                     });
                 });
             }
         });
+
+    if any_uncalibrated {
+        ui.add_space(4.0);
+        ui.colored_label(
+            theme::weak_text(ui),
+            "Uncalibrated rails assume a nominal divider, so the absolute value can be off; \
+             compare against the rail's own trend, not the nominal spec.",
+        );
+    }
 }
 
 pub fn show_memory(ui: &mut egui::Ui, m: &MemorySample) {

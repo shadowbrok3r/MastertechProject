@@ -88,12 +88,18 @@ pub(super) struct GpuContext {
     pub health: GpuHealth,
 }
 
-fn adapter_score(info: &wgpu::AdapterInfo, prefer_discrete: bool) -> i32 {
+/// CPU-backed rasterizers (WARP / Basic Render Driver, llvmpipe, SwiftShader):
+/// they answer wgpu but exercise no GPU.
+fn is_software_adapter(info: &wgpu::AdapterInfo) -> bool {
     let name = info.name.to_lowercase();
-    if name.contains("microsoft basic")
+    name.contains("microsoft basic")
         || name.contains("llvmpipe")
         || name.contains("swiftshader")
-    {
+}
+
+fn adapter_score(info: &wgpu::AdapterInfo, prefer_discrete: bool) -> i32 {
+    let name = info.name.to_lowercase();
+    if is_software_adapter(info) {
         return -1000;
     }
 
@@ -157,23 +163,35 @@ impl GpuContext {
             );
         }
 
-        let adapter = pick_adapter(adapters, prefer_discrete).unwrap_or_else(|| {
-            let power = if prefer_discrete {
-                PowerPreference::HighPerformance
-            } else {
-                PowerPreference::LowPower
-            };
-            log::warn!(
-                "[stress-kit/gpu] no scored adapter; falling back to wgpu power preference {:?}",
-                power
-            );
-            pollster::block_on(instance.request_adapter(&RequestAdapterOptions {
-                power_preference: power,
-                compatible_surface: None,
-                force_fallback_adapter: false,
-            }))
-            .expect("enumerate_adapters was non-empty")
-        });
+        let adapter = match pick_adapter(adapters, prefer_discrete) {
+            Some(a) => a,
+            None => {
+                let power = if prefer_discrete {
+                    PowerPreference::HighPerformance
+                } else {
+                    PowerPreference::LowPower
+                };
+                log::warn!(
+                    "[stress-kit/gpu] no scored adapter; falling back to wgpu power preference {:?}",
+                    power
+                );
+                let fallback = pollster::block_on(instance.request_adapter(&RequestAdapterOptions {
+                    power_preference: power,
+                    compatible_surface: None,
+                    force_fallback_adapter: false,
+                }))
+                .map_err(|e| format!("no usable GPU adapter: {e}"))?;
+                let info = fallback.get_info();
+                // The fallback re-offers the adapter the scorer just rejected.
+                if is_software_adapter(&info) {
+                    return Err(format!(
+                        "no usable GPU adapter: '{}' is a software rasterizer",
+                        info.name
+                    ));
+                }
+                fallback
+            }
+        };
 
         let info = adapter.get_info();
         log::info!(
@@ -260,15 +278,28 @@ pub(super) fn emit_fatal_tick(
     });
 }
 
+/// Idles until cancel, emitting a latched inconclusive fatal every tick so the
+/// stage cannot pass. `stage` is the message prefix, `load` names the work that
+/// did not run, `detail` is the acquisition failure.
 pub(super) fn run_unsupported(
-    reason: String,
+    stage: &str,
+    load: &str,
+    detail: &str,
     cancel: &Arc<AtomicBool>,
     tx: &mpsc::Sender<Metrics>,
     started_at: Instant,
 ) {
-    log::warn!("[stress-kit/gpu] stressor inactive: {reason}");
-    emit_tick(tx, started_at, 0.0, Some(reason), 0);
+    let reason =
+        format!("{stage}: inconclusive - no usable GPU, the {load} never ran ({detail})");
+    log::error!("[stress-kit/gpu] {reason}");
+    emit_fatal_tick(tx, started_at, reason.clone(), 0);
+    let mut last_tick = Instant::now();
     while !cancel.load(Ordering::Relaxed) {
-        std::thread::sleep(Duration::from_millis(100));
+        std::thread::sleep(Duration::from_millis(50));
+        // Re-emitted every tick so a newest-only drain still sees the fatal.
+        if last_tick.elapsed() >= TICK {
+            emit_fatal_tick(tx, started_at, reason.clone(), 0);
+            last_tick = Instant::now();
+        }
     }
 }

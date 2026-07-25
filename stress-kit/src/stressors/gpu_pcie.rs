@@ -52,7 +52,16 @@ pub(crate) fn run(
 ) {
     let ctx = match GpuContext::acquire(true) {
         Ok(c) => c,
-        Err(e) => return run_unsupported(format!("gpu_pcie acquire failed: {e}"), cancel, tx, started_at),
+        Err(e) => {
+            return run_unsupported(
+                "gpu_pcie",
+                "PCIe round-trip load",
+                &e,
+                cancel,
+                tx,
+                started_at,
+            )
+        }
     };
 
     let (elements, buffer_bytes) = capped_element_count(memory_cap_mb);

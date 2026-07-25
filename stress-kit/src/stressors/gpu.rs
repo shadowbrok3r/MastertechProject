@@ -76,7 +76,9 @@ pub(crate) fn run(
 ) {
     let ctx = match GpuContext::acquire(true) {
         Ok(c) => c,
-        Err(e) => return run_unsupported(format!("gpu acquire failed: {e}"), cancel, tx, started_at),
+        Err(e) => {
+            return run_unsupported("gpu", "GPU compute load", &e, cancel, tx, started_at)
+        }
     };
     log::info!(
         "[stress-kit/gpu] acquired {} on {} backend",

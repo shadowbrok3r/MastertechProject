@@ -4,7 +4,8 @@ use ewebsock::{WsEvent, WsMessage};
 use eframe::egui::Context;
 
 use super::tabs::home_page::{
-    record_driver_protections_audit, DriverProtectionsAudit, DriverProtectionsStage,
+    record_driver_protections_audit, terse_driver_protections_status, DriverProtectionsAudit,
+    DriverProtectionsStage,
 };
 use super::{deserialize_exact, deserializer, is_zstd_frame, ui::WsDisplayState, History, WebSocketClient};
 
@@ -757,6 +758,17 @@ impl WebSocketClient {
                             attribution.label(),
                         );
                         log::warn!("{summary}");
+                        // One-line form for the toolbar status and the toast;
+                        // hostname and request id stay in `summary`.
+                        let terse = terse_driver_protections_status(
+                            success,
+                            hvci_enabled,
+                            blocklist_enabled,
+                            hvci_running,
+                            policy_override.as_deref(),
+                            reboot_required,
+                            &message,
+                        );
                         // The client echoes the direction it acted on; console state
                         // is only a fallback for pre-correlation client builds.
                         let direction_echoed = requested_enable.is_some();
@@ -788,19 +800,23 @@ impl WebSocketClient {
                         self.home_page.apply_driver_protections_result(
                             attribution,
                             success,
+                            terse.clone(),
                             summary.clone(),
                         );
                         self.history.push(History {
                             from: "System".to_string(),
-                            message: summary.clone(),
+                            message: summary,
                             timestamp: chrono::Local::now().to_rfc3339(),
                         });
                         let toast = if !attribution.answers_outstanding() {
-                            crate::ToastMessage::Warning(summary)
+                            crate::ToastMessage::Warning(format!(
+                                "{} reply — not this request: {terse}",
+                                attribution.label(),
+                            ))
                         } else if success {
-                            crate::ToastMessage::Success(summary)
+                            crate::ToastMessage::Success(terse)
                         } else {
-                            crate::ToastMessage::Error(summary)
+                            crate::ToastMessage::Error(terse)
                         };
                         let _ = crate::get_toast_sender().try_send(toast);
                     } else if let Cmd::WindowsUpdateResult { success, summary } = cmd {

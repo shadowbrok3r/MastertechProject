@@ -808,7 +808,26 @@ pub enum Cmd {
         /// `Win32_DeviceGuard.VirtualizationBasedSecurityStatus`: 0 off, 1 configured, 2 running.
         vbs_status: Option<u32>,
     },
+
+    /// Admin → client: one-shot read of the client's shared stress-kit
+    /// `TelemetryAgent` (per-core load/clock/temp, memory, GPU, every labelled
+    /// thermal zone, SuperIO voltage rails, WHEA/TDR counters). `warmup_ms`
+    /// caps how long the client waits for the sampler's first populated tick.
+    /// The client answers with [`Cmd::RemotePluginToolResult`] carrying the
+    /// reading as JSON under plugin id [`NATIVE_TELEMETRY_PLUGIN_ID`] and tool
+    /// name [`NATIVE_TELEMETRY_TOOL_NAME`].
+    /// Appended last so existing bincode variant indices stay stable.
+    RequestTelemetrySnapshot {
+        request_id: String,
+        warmup_ms: Option<u64>,
+    },
 }
+
+/// `RemotePluginToolResult.plugin_id` the client answers `RequestTelemetrySnapshot` with.
+pub const NATIVE_TELEMETRY_PLUGIN_ID: &str = "native.telemetry";
+
+/// `RemotePluginToolResult.tool_name` the client answers `RequestTelemetrySnapshot` with.
+pub const NATIVE_TELEMETRY_TOOL_NAME: &str = "telemetry_snapshot_remote";
 
 /// One stage/lane of a remote stress scenario or concurrent run.
 /// Wire-mirror of the MCP `ScenarioStageParam`; the client maps `stressor` → `stress_runner::Stressor`.

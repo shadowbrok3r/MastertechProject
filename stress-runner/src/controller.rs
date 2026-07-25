@@ -955,6 +955,8 @@ fn drive_concurrent(
     let mut tp_sum = vec![0.0_f64; n];
     let mut tp_count = vec![0_u32; n];
     let mut last_error: Vec<Option<String>> = vec![None; n];
+    // Newest lane message already routed into `acc`.
+    let mut classified: Vec<Option<String>> = vec![None; n];
     let mut had_error = vec![false; n];
     let mut seen_errors = vec![0_u64; n];
     let mut fatal_seen = vec![false; n];
@@ -1018,6 +1020,12 @@ fn drive_concurrent(
                 for (i, lane) in lanes.iter().enumerate() {
                     let unit = lane.stressor.throughput_unit();
                     stats[i].absorb_tick(&latest[i], &snapshot, &effective_rules);
+                    // The rollup absorb gets a default `Metrics`; lanes route here.
+                    acc.route_lane_error(
+                        &mut classified[i],
+                        last_error[i].as_deref(),
+                        latest[i].errors,
+                    );
                     if latest[i].errors > seen_errors[i] {
                         let new_errors = latest[i].errors - seen_errors[i];
                         seen_errors[i] = latest[i].errors;
@@ -1104,21 +1112,10 @@ fn drive_concurrent(
             latest[i] = m;
         }
         stats[i].absorb_final(&latest[i]);
-        fatal_seen[i] |= stats[i].fatal_abort;
         stats[i].finish(&final_snapshot);
         total_test_errors = total_test_errors.saturating_add(stats[i].errors);
-        // A lane that aborted mid-run is a failure even with no error counter;
-        // classify it the way `absorb` would for the single-stressor path.
-        if fatal_seen[i] {
-            let detail = last_error[i].clone().unwrap_or_default();
-            if is_gpu_error_message(&detail) {
-                acc.gpu_device_errors = acc.gpu_device_errors.saturating_add(1);
-                acc.last_gpu_error = Some(detail);
-            } else {
-                acc.disk_io_errors = acc.disk_io_errors.saturating_add(1);
-                acc.last_disk_error = Some(detail);
-            }
-        }
+        // Messages that landed after the last tick, fatal or not.
+        acc.route_lane_error(&mut classified[i], last_error[i].as_deref(), stats[i].errors);
         let unit = lane.stressor.throughput_unit();
         let verdict = stage_verdict_for(&stats[i], rules, &effective_rules);
         let avg = if tp_count[i] > 0 {
@@ -1638,6 +1635,24 @@ fn is_gpu_error_message(msg: &str) -> bool {
         || m.contains("without 'gpu' feature")
 }
 
+/// Device-loss vocabulary: hardware evidence that outranks an inconclusive marker.
+fn is_device_loss_message(msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    m.contains("device is lost")
+        || m.contains("device lost")
+        || m.contains("device removed")
+        || m.contains("dxgi_error")
+}
+
+/// The `inconclusive -` marker stress-kit stamps on messages that report a load
+/// it could not apply, so the stage proves nothing about any component.
+fn is_inconclusive_message(msg: &str) -> bool {
+    msg.to_ascii_lowercase().contains("inconclusive -")
+}
+
+/// Stand-in for an error a stressor reported without text; carries the marker.
+const UNNAMED_ERROR: &str = "inconclusive - stressor reported an error with no message";
+
 #[derive(Default)]
 struct SummaryAccumulator {
     max_temp_c: Option<f32>,
@@ -1662,6 +1677,8 @@ struct SummaryAccumulator {
     disk_io_errors: u32,
     /// GPU-classified `last_error` transitions (device lost, acquire failed).
     gpu_device_errors: u32,
+    /// `last_error` transitions that name a load the stressor could not apply.
+    inconclusive_errors: u32,
     max_power_w: Option<u32>,
     /// `Metrics.errors` from stages that already reset their counter.
     completed_stage_errors: u64,
@@ -1672,10 +1689,58 @@ struct SummaryAccumulator {
     last_gpu_error: Option<String>,
     /// Message of the latest counted disk-classified error.
     last_disk_error: Option<String>,
+    /// Message of the latest counted inconclusive error.
+    last_inconclusive_error: Option<String>,
     scenario_finish: Option<DbFinishReason>,
 }
 
 impl SummaryAccumulator {
+    /// Route one `last_error` message into its component bucket. Device-loss text
+    /// stays GPU-classified even when marked inconclusive; every other
+    /// inconclusive message is kept out of the hardware counters.
+    fn classify_error(&mut self, msg: &str) {
+        let msg = msg.trim();
+        // A message with no text names no component.
+        if msg.is_empty() {
+            self.inconclusive_errors = self.inconclusive_errors.saturating_add(1);
+            self.last_inconclusive_error = Some(UNNAMED_ERROR.to_string());
+            return;
+        }
+        if is_inconclusive_message(msg) && !is_device_loss_message(msg) {
+            self.inconclusive_errors = self.inconclusive_errors.saturating_add(1);
+            self.last_inconclusive_error = Some(msg.to_string());
+        } else if is_gpu_error_message(msg) {
+            self.gpu_device_errors = self.gpu_device_errors.saturating_add(1);
+            self.last_gpu_error = Some(msg.to_string());
+        } else {
+            self.disk_io_errors = self.disk_io_errors.saturating_add(1);
+            self.last_disk_error = Some(msg.to_string());
+        }
+    }
+
+    /// Route one lane's newest `last_error` into the rollup, fatal or not.
+    /// Counts each distinct message once per lane; skips absent/blank messages
+    /// and messages that arrive with counted data errors.
+    fn route_lane_error(
+        &mut self,
+        classified: &mut Option<String>,
+        message: Option<&str>,
+        errors: u64,
+    ) {
+        if errors > 0 {
+            return;
+        }
+        let Some(msg) = message.map(str::trim).filter(|m| !m.is_empty()) else {
+            return;
+        };
+        if classified.as_deref() == Some(msg) {
+            return;
+        }
+        self.classify_error(msg);
+        self.last_error = Some(msg.to_string());
+        *classified = Some(msg.to_string());
+    }
+
     /// Fold one tick into the rollup. Returns how many new test errors this
     /// tick revealed so the caller can persist a `stress_test_event`.
     fn absorb(
@@ -1713,13 +1778,7 @@ impl SummaryAccumulator {
             // Count message transitions only; `latest_metrics` repeats the
             // same string every tick until the stressor replaces it.
             if metrics.errors == 0 && self.last_error.as_deref() != Some(err.as_str()) {
-                if is_gpu_error_message(err) {
-                    self.gpu_device_errors = self.gpu_device_errors.saturating_add(1);
-                    self.last_gpu_error = Some(err.clone());
-                } else {
-                    self.disk_io_errors = self.disk_io_errors.saturating_add(1);
-                    self.last_disk_error = Some(err.clone());
-                }
+                self.classify_error(err);
             }
             self.last_error = Some(err.clone());
         }
@@ -1855,6 +1914,7 @@ impl SummaryAccumulator {
             || summary.test_errors > 0
             || summary.disk_io_errors > 0
             || self.gpu_device_errors > 0
+            || self.inconclusive_errors > 0
             || summary.bsod_detected
             || summary.thermal_throttle_detected;
 
@@ -1875,6 +1935,17 @@ impl SummaryAccumulator {
                 FailureMode::DiskIoError {
                     message: self
                         .last_disk_error
+                        .clone()
+                        .or_else(|| self.last_error.clone())
+                        .unwrap_or_default(),
+                }
+            } else if self.inconclusive_errors > 0 {
+                // Ranked last: any hardware evidence above is stronger than a
+                // load the stressor could not apply.
+                FailureMode::AppError {
+                    exit_code: None,
+                    message: self
+                        .last_inconclusive_error
                         .clone()
                         .or_else(|| self.last_error.clone())
                         .unwrap_or_default(),
@@ -2009,13 +2080,28 @@ mod tests {
         }
     }
 
+    fn fatal_tick(last_error: Option<&str>) -> Metrics {
+        Metrics {
+            elapsed_secs: 1.0,
+            throughput: 0.0,
+            last_error: last_error.map(|s| s.to_string()),
+            fatal: true,
+            errors: 0,
+        }
+    }
+
     fn verdict_for(acc: SummaryAccumulator) -> RunVerdict {
+        verdict_with(acc, Vec::new())
+    }
+
+    /// Run verdict for an accumulator plus already-judged stages.
+    fn verdict_with(acc: SummaryAccumulator, outcomes: Vec<StageOutcome>) -> RunVerdict {
         let run_id = RecordId::new("stress_test_run", "verdict-test");
         let cancel = Arc::new(AtomicBool::new(false));
         let tool = TestTool::StressKit {
             stressor: "gpu_matmul".to_string(),
         };
-        acc.into_verdict(&run_id, &cancel, 60.0, &tool, Vec::new())
+        acc.into_verdict(&run_id, &cancel, 60.0, &tool, outcomes)
     }
 
     /// One finished stage carrying only the supplied verdict.
@@ -2034,17 +2120,89 @@ mod tests {
             "gpu_vram: 3 consecutive readback failures; aborting stage",
             "gpu_pcie acquire failed: no GPU adapters found",
             "readback map failed (1/3)",
-            "psu: inconclusive - GPU unavailable, GPU leg never ran (no GPU adapters found)",
             "psu: inconclusive - GPU leg stopped (GPU device failed (1 error(s)): Unknown: Device is lost)",
-            "psu: inconclusive - GPU leg stopped (queue stalled, 3 consecutive wait timeouts)",
-            "psu_transient: GPU unavailable (no GPU adapters found); the pulsed +12V load never ran, so this is not a valid PSU transient test",
             "psu_transient: GPU leg stopped responding, device wait timed out (Timeout)",
-            "psu_transient: GPU unavailable for pulsed load; one submit takes 140ms against a 100ms ON window (measured duty cycle 72%), so the +12V transient is not being generated",
             "psu_transient: GPU leg stopped (device lost); the pulsed +12V load ended, so this is not a valid PSU transient test",
             "stress-kit built without 'gpu' feature",
         ] {
             assert!(is_gpu_error_message(msg), "should classify as GPU: {msg}");
         }
+    }
+
+    /// Live stress-kit `inconclusive -` messages must land in the inconclusive
+    /// bucket, not in a hardware counter.
+    #[test]
+    fn inconclusive_messages_never_reach_a_hardware_counter() {
+        for msg in [
+            "psu: inconclusive - GPU unavailable, GPU leg never ran",
+            "psu: inconclusive - GPU unavailable, GPU leg never ran (no GPU adapters found)",
+            "psu: inconclusive - GPU leg stopped (queue stalled, 3 consecutive device-wait timeouts)",
+            "psu_transient: inconclusive - GPU unavailable (no GPU adapters found); the pulsed +12V load never ran, so this is not a valid PSU transient test",
+            "psu_transient: inconclusive - this GPU is too slow to pulse at this rate; one work unit takes 140ms against a 100ms on-window (measured duty cycle 72%), so the load is closer to continuous than square-wave. Test-applicability limit, not a hardware fault.",
+            "gpu: inconclusive - queue stalled, 3 consecutive device-wait timeouts",
+        ] {
+            let mut acc = SummaryAccumulator::default();
+            acc.classify_error(msg);
+            assert_eq!(acc.inconclusive_errors, 1, "not inconclusive: {msg}");
+            assert_eq!(acc.disk_io_errors, 0, "leaked into the disk counter: {msg}");
+            assert_eq!(acc.gpu_device_errors, 0, "leaked into the GPU counter: {msg}");
+        }
+    }
+
+    /// Device-loss text is hardware evidence even when marked inconclusive.
+    #[test]
+    fn device_loss_outranks_the_inconclusive_marker() {
+        let msg = "psu: inconclusive - GPU leg stopped (GPU device failed (1 error(s)): Unknown: Device is lost)";
+        let mut acc = SummaryAccumulator::default();
+        acc.classify_error(msg);
+        assert_eq!(acc.gpu_device_errors, 1);
+        assert_eq!(acc.inconclusive_errors, 0);
+    }
+
+    /// The pulse-rate warning is not fatal, so nothing outranks it — it must
+    /// still fail the run, and must not read as a disk fault.
+    #[test]
+    fn pulse_degraded_warning_fails_as_app_error_not_disk_io() {
+        let msg = "psu_transient: inconclusive - this GPU is too slow to pulse at this rate; \
+                   one work unit takes 140ms against a 100ms on-window (measured duty cycle \
+                   72%), so the load is closer to continuous than square-wave. \
+                   Test-applicability limit, not a hardware fault.";
+        let mut acc = SummaryAccumulator::default();
+        let snapshot = TelemetrySnapshot::default();
+        for _ in 0..3 {
+            acc.absorb(&tick(Some(msg), 0), &snapshot, "GFLOPS");
+        }
+        assert_eq!(acc.inconclusive_errors, 1, "repeated message counts once");
+
+        let verdict = verdict_for(acc);
+        assert_eq!(verdict.result, RunResult::Fail, "must never read as a pass");
+        assert_eq!(verdict.failure_mode.kind(), "app_error");
+        assert_eq!(
+            verdict.summary.disk_io_errors, 0,
+            "a PSU pulse warning is not a disk fault"
+        );
+    }
+
+    /// A genuine disk error alongside an inconclusive marker keeps the disk headline.
+    #[test]
+    fn real_disk_errors_outrank_an_inconclusive_message() {
+        let mut acc = SummaryAccumulator::default();
+        let snapshot = TelemetrySnapshot::default();
+        acc.absorb(
+            &tick(Some("psu: inconclusive - GPU unavailable, GPU leg never ran"), 0),
+            &snapshot,
+            "GFLOPS",
+        );
+        acc.absorb(
+            &tick(Some("disk thread 0: Access is denied. (os error 5)"), 0),
+            &snapshot,
+            "MiB/s",
+        );
+        assert_eq!(acc.disk_io_errors, 1);
+        assert_eq!(acc.inconclusive_errors, 1);
+
+        let verdict = verdict_for(acc);
+        assert_eq!(verdict.failure_mode.kind(), "disk_io_error");
     }
 
     #[test]
@@ -2227,6 +2385,118 @@ mod tests {
         })];
         let mode = rules_failure_mode(&outcomes, &mut summary).expect("failure mode expected");
         assert_eq!(mode, FailureMode::Tdr { count: 2 });
+    }
+
+    /// The concurrent-path shape that reached no verdict at all: a lane whose
+    /// only signal is a non-fatal tick carrying an inconclusive message.
+    #[test]
+    fn non_fatal_inconclusive_lane_message_reaches_the_run_verdict() {
+        let msg = "psu: inconclusive - GPU unavailable, GPU leg never ran";
+        let rules = VerdictRules::certification();
+        let snapshot = TelemetrySnapshot::default();
+
+        // Lane stats stay clean: nothing fatal, no counted data errors.
+        let mut stats = StageStats::begin(0, "psu", Stressor::Psu, &snapshot);
+        for _ in 0..2 {
+            stats.absorb_tick(&tick(Some(msg), 0), &snapshot, &rules);
+        }
+        assert!(!stats.fatal_abort);
+        assert_eq!(stats.errors, 0);
+
+        let mut acc = SummaryAccumulator::default();
+        let mut classified = None;
+        for _ in 0..3 {
+            acc.route_lane_error(&mut classified, Some(msg), 0);
+        }
+        assert_eq!(acc.inconclusive_errors, 1, "repeated lane message counts once");
+        assert_eq!(acc.disk_io_errors, 0, "inconclusive lane read as a disk fault");
+        assert_eq!(acc.gpu_device_errors, 0);
+
+        let verdict = verdict_with(acc, vec![outcome_with(evaluate_stage(&stats, &rules))]);
+        assert_ne!(verdict.result, RunResult::Pass, "non-fatal lane message dropped");
+        assert_eq!(verdict.failure_mode.kind(), "app_error");
+        assert_eq!(
+            verdict.failure_mode,
+            FailureMode::AppError {
+                exit_code: None,
+                message: msg.to_string(),
+            }
+        );
+    }
+
+    /// The same lane message repeated by a later fatal drain counts once.
+    #[test]
+    fn lane_error_counts_once_across_the_fatal_transition() {
+        let msg = "psu: inconclusive - GPU leg stopped (queue stalled, 3 device-wait timeouts)";
+        let mut acc = SummaryAccumulator::default();
+        let mut classified = None;
+        acc.route_lane_error(&mut classified, Some(msg), 0);
+        acc.route_lane_error(&mut classified, Some(msg), 0);
+        assert_eq!(acc.inconclusive_errors, 1);
+
+        // A new message on the fatal sample is a second, distinct signal.
+        acc.route_lane_error(&mut classified, Some("gpu: device is lost"), 0);
+        assert_eq!(acc.gpu_device_errors, 1);
+        assert_eq!(acc.inconclusive_errors, 1);
+    }
+
+    /// Absent and blank lane messages are routed nowhere.
+    #[test]
+    fn blank_lane_message_is_not_routed() {
+        let mut acc = SummaryAccumulator::default();
+        let mut classified = None;
+        acc.route_lane_error(&mut classified, None, 0);
+        acc.route_lane_error(&mut classified, Some(""), 0);
+        acc.route_lane_error(&mut classified, Some("   "), 0);
+        assert_eq!(acc.disk_io_errors, 0);
+        assert_eq!(acc.inconclusive_errors, 0);
+        assert!(classified.is_none());
+    }
+
+    /// An error with no text names no component, so it can never be a disk fault.
+    #[test]
+    fn empty_message_classifies_as_inconclusive_not_disk() {
+        for msg in ["", "   ", "\n"] {
+            let mut acc = SummaryAccumulator::default();
+            acc.classify_error(msg);
+            assert_eq!(acc.disk_io_errors, 0, "empty message filed as a disk fault");
+            assert_eq!(acc.gpu_device_errors, 0);
+            assert_eq!(acc.inconclusive_errors, 1);
+            assert!(acc.last_disk_error.is_none());
+        }
+
+        let mut acc = SummaryAccumulator::default();
+        acc.classify_error("");
+        let verdict = verdict_for(acc);
+        assert_eq!(verdict.result, RunResult::Fail);
+        assert_eq!(verdict.failure_mode.kind(), "app_error");
+        assert_eq!(verdict.summary.disk_io_errors, 0);
+    }
+
+    /// A lane that goes fatal with no message: the stage verdict carries the
+    /// failure and the run reports no disk I/O error.
+    #[test]
+    fn fatal_lane_without_a_message_fails_without_a_disk_error() {
+        let rules = VerdictRules::certification();
+        let snapshot = TelemetrySnapshot::default();
+        let mut stats = StageStats::begin(0, "disk", Stressor::Disk, &snapshot);
+        stats.absorb_tick(&tick(None, 0), &snapshot, &rules);
+        stats.absorb_final(&fatal_tick(None));
+        assert!(stats.fatal_abort);
+
+        let mut acc = SummaryAccumulator::default();
+        let mut classified = None;
+        acc.route_lane_error(&mut classified, None, stats.errors);
+        assert_eq!(acc.disk_io_errors, 0, "message-less abort read as a disk fault");
+
+        let stage = stage_verdict_for(&stats, &Some(rules.clone()), &rules)
+            .expect("rules attached, verdict expected");
+        assert!(!stage.pass);
+
+        let verdict = verdict_with(acc, vec![outcome_with(stage)]);
+        assert_eq!(verdict.result, RunResult::Fail);
+        assert_eq!(verdict.failure_mode.kind(), "app_error");
+        assert_eq!(verdict.summary.disk_io_errors, 0);
     }
 
     #[test]

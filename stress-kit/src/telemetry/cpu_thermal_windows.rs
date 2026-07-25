@@ -48,6 +48,9 @@ const IOCTL_WRITE_IO_PORT_BYTE: u32 = ctl_code(0x836, FILE_WRITE_ACCESS);
 const MSR_TEMPERATURE_TARGET: u32 = 0x1A2;
 const IA32_THERM_STATUS: u32 = 0x19C;
 const IA32_PACKAGE_THERM_STATUS: u32 = 0x1B1;
+/// Architectural on every x86 part, so a failed read means the device handle is
+/// gone rather than that this CPU lacks the register.
+const IA32_TIME_STAMP_COUNTER: u32 = 0x10;
 
 const AMD_D0F0: u32 = 0;
 const AMD_SMU_INDEX_REG: u32 = 0x60;
@@ -81,6 +84,8 @@ pub struct CpuThermalMonitor {
     /// `Global\Access_PCI`; null when unavailable. Serializes SMN index/data
     /// access against other sensor tools (LHM/HWiNFO/AIDA64/CPU-Z).
     pci_mutex: winnt::HANDLE,
+    /// Set once the device handle stops answering; no further readings publish.
+    device_lost: bool,
 }
 
 impl CpuThermalMonitor {
@@ -111,6 +116,7 @@ impl CpuThermalMonitor {
             cached: Vec::new(),
             last_polled: Instant::now() - MIN_POLL_INTERVAL,
             pci_mutex: open_pci_mutex(),
+            device_lost: false,
         };
         if vendor == Vendor::Intel {
             me.tj_max = me.read_tjmax();
@@ -124,8 +130,13 @@ impl CpuThermalMonitor {
     }
 
     /// Latest readings; throttled to [`MIN_POLL_INTERVAL`]. An empty read keeps
-    /// the prior cache rather than blanking the chart.
+    /// the prior cache rather than blanking the chart, unless the device handle
+    /// itself has stopped answering — then the cache is dropped and this returns
+    /// empty for the rest of the run.
     pub fn poll(&mut self) -> Vec<ThermalReading> {
+        if self.device_lost {
+            return Vec::new();
+        }
         if self.last_polled.elapsed() < MIN_POLL_INTERVAL {
             return self.cached.clone();
         }
@@ -133,8 +144,25 @@ impl CpuThermalMonitor {
         let readings = self.read_all();
         if !readings.is_empty() {
             self.cached = readings;
+        } else if let Some(err) = self.device_probe_error() {
+            self.device_lost = true;
+            self.cached.clear();
+            log::warn!(
+                "stress-kit/cpu-thermal: WinRing0 device stopped answering (err {err}); another \
+                 process loading this driver stops and deletes the service, which invalidates \
+                 this handle. CPU temps end here instead of repeating the last reading"
+            );
         }
         self.cached.clone()
+    }
+
+    /// `None` while the driver answers a TSC read on our handle; `Some(win32
+    /// error)` once the device is gone.
+    fn device_probe_error(&self) -> Option<u32> {
+        if self.read_msr(IA32_TIME_STAMP_COUNTER).is_some() {
+            return None;
+        }
+        Some(unsafe { errhandlingapi::GetLastError() })
     }
 
     fn read_all(&self) -> Vec<ThermalReading> {

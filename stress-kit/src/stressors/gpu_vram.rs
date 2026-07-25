@@ -83,7 +83,16 @@ pub(crate) fn run(
 ) {
     let ctx = match GpuContext::acquire(true) {
         Ok(c) => c,
-        Err(e) => return run_unsupported(format!("gpu_vram acquire failed: {e}"), cancel, tx, started_at),
+        Err(e) => {
+            return run_unsupported(
+                "gpu_vram",
+                "VRAM write-verify load",
+                &e,
+                cancel,
+                tx,
+                started_at,
+            )
+        }
     };
 
     let (elements, buffer_bytes) = element_count(memory_cap_mb, &ctx);

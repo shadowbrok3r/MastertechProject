@@ -214,6 +214,7 @@ fn supervisor(
                 if Instant::now() >= stage_deadline {
                     stage_cancel.store(true, Ordering::SeqCst);
                     let _ = stressor_handle.join();
+                    drain_remaining_metrics(&metrics_rx, &event_tx, stage_idx);
                     break 'stage ();
                 }
 

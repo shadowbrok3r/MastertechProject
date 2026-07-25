@@ -661,6 +661,14 @@ pub struct TelemetrySnapshotParams {
     pub warmup_ms: Option<u64>,
 }
 
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct TelemetrySnapshotRemoteParams {
+    #[schemars(description = "Web Console connection_string of the remote client (from remote_egui_list_targets).")]
+    pub connection_string: String,
+    #[schemars(description = "Milliseconds the client may wait for its sampler's first populated tick (default 3000, clamped 500-15000).")]
+    pub warmup_ms: Option<u64>,
+}
+
 /// String schema enumerating the reflected stressor labels.
 fn wire_stressor_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
     let labels: Vec<&'static str> = stress_runner::Stressor::labels().collect();
@@ -5868,7 +5876,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "telemetry_snapshot",
-        description = "Live hardware telemetry snapshot from this host's stress-kit TelemetryAgent: per-core load/frequency, memory, disk and network rates, GPU, top processes, plus Windows WHEA error / GPU TDR counters and thermal state. The sampler starts on first call and refreshes every 1s. Use during or after stress runs, or for a quick health read without running any script."
+        description = "Live hardware telemetry snapshot from THIS host's stress-kit TelemetryAgent (the machine running this MCP server — the admin/tech workstation, NOT a customer's computer): per-core load/frequency, memory, disk and network rates, GPU, top processes, plus Windows WHEA error / GPU TDR counters and thermal state. The sampler starts on first call and refreshes every 1s. Use during or after LOCAL stress runs, or for a quick health read of this workstation. To read temperatures, thermals, or board voltages on a connected customer machine, call telemetry_snapshot_remote instead — this tool cannot see remote hardware."
     )]
     async fn telemetry_snapshot(
         &self,
@@ -5883,6 +5891,86 @@ impl PluginToolProvider {
         }
         Ok(CallToolResult::success(vec![
             ContentBlock::json(snap).map_err(to_internal)?,
+        ]))
+    }
+
+    #[tool(
+        name = "telemetry_snapshot_remote",
+        description = "Live hardware telemetry read from a REMOTE connected client, proxied over the admin session (admin → client's stress-kit TelemetryAgent → result back). Use THIS when diagnosing a customer machine; `telemetry_snapshot` samples the admin workstation only and tells you nothing about the remote hardware. \
+Returns: per-core usage/frequency/temperature, memory + page file, per-GPU temperature/power/power-limit/clocks/fan/throttle reasons, every labelled thermal zone in `thermals[]`, the SuperIO board voltage rails in `voltages[]` (each with `label`, `volts`, `calibrated`), and WHEA / GPU-TDR counters. \
+ABSENT IS NOT ZERO: a sensor with no reading is `null`, never 0, and `sensor_availability` says which readings are missing. Do not treat a null as a cold CPU or a dead rail. \
+WHY READINGS GO MISSING: `cpu.package_temp_c` and every entry in `voltages[]` come from the WinRing0 kernel driver, which will NOT load while Memory Integrity (HVCI) or the Vulnerable Driver Blocklist is enabled. `sensor_availability.hvci_enabled` / `.vulnerable_driver_blocklist_enabled` / `.detail` report exactly which one is blocking; SetDriverProtections can turn them off (needs a reboot) if the customer consents. \
+`cpu.package_temp_c` is the hottest CPU-ish reading and `cpu.package_temp_source` names the label it came from — ALWAYS check the source before quoting a number. `CPU Package` or `CPU (Tctl)` is the real die sensor; `CPU Core N` is one core, not the package; a `TZ..` / ACPI zone label is a board thermal zone that runs far cooler than the die and must not be reported as a CPU temperature. `thermals[]` carries every labelled zone (including `NVMe Disk N` drive temps) so you can read them individually. \
+VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` means no per-board ratio is known), so read them as trend and droop under load, not as absolute volts. Never fail a board on an absolute number from this tool; compare idle vs loaded instead. `3VCC (chip)` is the sensor chip's OWN 3.3V supply, NOT the board's +3.3V PSU rail — there is no +3.3V PSU reading here."
+    )]
+    async fn telemetry_snapshot_remote(
+        &self,
+        Parameters(p): Parameters<TelemetrySnapshotRemoteParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let warmup_ms = p.warmup_ms.unwrap_or(3000).clamp(500, 15_000);
+        let request_id = format!("tel-{}", uuid::Uuid::new_v4());
+
+        let cmd = crate::Cmd::RequestTelemetrySnapshot {
+            request_id: request_id.clone(),
+            warmup_ms: Some(warmup_ms),
+        };
+        let serialized = bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
+            .map_err(|e| to_internal(format!("bincode serialize: {e}")))?;
+
+        let rx = register_pending_request(request_id.clone());
+        let _guard = PendingRequestGuard { request_id: request_id.clone() };
+
+        super::remote_egui_control::hub()
+            .send_raw_binary(&p.connection_string, serialized)
+            .map_err(to_internal)?;
+
+        log::info!(
+            "telemetry_snapshot_remote start: req={request_id} cs={} warmup_ms={warmup_ms}",
+            p.connection_string
+        );
+
+        let deadline = std::time::Duration::from_millis(warmup_ms + 20_000);
+        let (success, result_json) = match tokio::time::timeout(deadline, rx).await {
+            Ok(Ok(pair)) => pair,
+            Ok(Err(_)) => {
+                return Err(to_internal(format!(
+                    "telemetry_snapshot_remote: response channel closed for req={request_id} \
+                     (remote client {} may have disconnected mid-call)",
+                    p.connection_string
+                )));
+            }
+            Err(_) => {
+                log::error!(
+                    "telemetry_snapshot_remote TIMEOUT: req={request_id} cs={} after {:?}",
+                    p.connection_string,
+                    deadline
+                );
+                return Err(to_internal(format!(
+                    "telemetry_snapshot_remote timed out after {:?} (req={request_id} cs={}). \
+                     Run remote_channel_health: a wedged responder loop or a client build \
+                     predating this command never answers.",
+                    deadline, p.connection_string
+                )));
+            }
+        };
+
+        if !success {
+            return Err(to_internal(format!(
+                "remote telemetry read failed on {}: {result_json}",
+                p.connection_string
+            )));
+        }
+
+        let mut value: serde_json::Value = serde_json::from_str(&result_json)
+            .map_err(|e| to_internal(format!("remote telemetry payload was not JSON: {e}")))?;
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert(
+                "connection_string".to_string(),
+                serde_json::json!(p.connection_string),
+            );
+        }
+        Ok(CallToolResult::success(vec![
+            ContentBlock::json(value).map_err(to_internal)?,
         ]))
     }
 
@@ -7300,6 +7388,15 @@ Tools:
   connection_string, lanes[] (per-lane duration_secs IGNORED), shared duration_secs (1-7200),
   required service_number, optional diagnostic_session_id/preset_label/notes. Caps 1-8 lanes.
   Returns the same shape as stress_scenario_run_remote.
+- telemetry_snapshot_remote — live temperatures, per-core load/clock, memory, GPU power, and the
+  SuperIO board voltage rails for a REMOTE client. Args: connection_string, optional warmup_ms.
+  This is the ONLY way to see a customer machine's thermals from MCP — `telemetry_snapshot`
+  reads the admin workstation. Missing sensors come back `null` (never 0) with a reason in
+  `sensor_availability`: CPU package temp and the voltage rails need the WinRing0 driver, which
+  cannot load while Memory Integrity or the Vulnerable Driver Blocklist is on. Voltages are
+  UNCALIBRATED nominal-divider values — judge droop under load, not absolute volts.
+  Pair with a stress run: read it before, during, and after to catch thermal throttling
+  and rail droop that a pass/fail verdict alone hides.
 
 Workflow integration (customer QC / New Computer build on a REMOTE client):
 - Use scripts_run_remote for every QC step: Activate CPS, Activate SEB, Install Windows

@@ -932,6 +932,46 @@ mod tests {
         }
     }
 
+    /// A stage shorter than every warmup and min-sample window still fails when
+    /// the fatal lands on its final tick — the psu grace-window shape.
+    #[test]
+    fn short_stage_with_a_fatal_final_tick_fails() {
+        let reason = "psu: inconclusive - GPU unavailable, GPU leg never ran";
+        for rules in [VerdictRules::certification(), VerdictRules::default()] {
+            let mut stats =
+                StageStats::begin(0, "psu", Stressor::Psu, &snapshot(50.0, 4000, 90.0));
+            stats.absorb_tick(&metrics(100.0, 0), &snapshot(70.0, 4000, 95.0), &rules);
+            stats.absorb_tick(&fatal_metrics(reason), &snapshot(70.0, 4000, 95.0), &rules);
+            stats.finish(&snapshot(70.0, 4000, 95.0));
+
+            assert_eq!(stats.ticks, 2);
+            let verdict = evaluate_stage(&stats, &rules);
+            assert!(!verdict.pass, "2-tick fatal stage reported pass");
+            assert!(verdict
+                .violations
+                .iter()
+                .any(|v| matches!(v, RuleViolation::FatalAbort { .. })));
+            assert!(
+                verdict.violation_lines().iter().any(|l| l.contains(reason)),
+                "reason missing from operator lines: {:?}",
+                verdict.violation_lines()
+            );
+        }
+    }
+
+    /// A stage that dies before its first tick carries no tick data and still
+    /// cannot pass.
+    #[test]
+    fn stage_that_dies_before_its_first_tick_fails() {
+        let rules = VerdictRules::certification();
+        let mut stats = StageStats::begin(0, "gpu", Stressor::Gpu, &snapshot(50.0, 4000, 90.0));
+        stats.absorb_final(&fatal_metrics("gpu: inconclusive - no GPU adapters found"));
+        stats.finish(&snapshot(50.0, 4000, 90.0));
+
+        assert_eq!(stats.ticks, 0);
+        assert!(!evaluate_stage(&stats, &rules).pass, "zero-tick fatal stage reported pass");
+    }
+
     /// The post-loop absorb: a fatal that lands after the last periodic tick
     /// still reaches the verdict.
     #[test]

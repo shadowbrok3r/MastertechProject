@@ -4021,6 +4021,23 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                 log::info!("websockets -> OpenRelayTunnel request (session {})", &session_id[..session_id.len().min(8)]);
                 crate::tunnel_session::spawn_tunnel_session(session_id);
             }
+
+            Cmd::RequestTelemetrySnapshot { request_id, warmup_ms } => {
+                log::info!("websockets -> RequestTelemetrySnapshot req={request_id}");
+                let warmup = Duration::from_millis(warmup_ms.unwrap_or(3000).min(15_000));
+                let result_json = remote_telemetry_json(warmup).await.to_string();
+                let result_cmd = Cmd::RemotePluginToolResult {
+                    request_id,
+                    plugin_id: displays::NATIVE_TELEMETRY_PLUGIN_ID.to_string(),
+                    tool_name: displays::NATIVE_TELEMETRY_TOOL_NAME.to_string(),
+                    success: true,
+                    result_json,
+                };
+                if let Ok(payload) = encode_to_vec(&result_cmd, standard()) {
+                    sender.send(WsMessage::Binary(payload));
+                }
+            }
+
             _ => {}
         }
     }
@@ -4103,6 +4120,101 @@ pub fn hbitmap_to_png_bytes(
         .map_err(|e| e.to_string())?;
     
     Ok(png)
+}
+
+/// HVCI and vulnerable-driver-blocklist flags; `(None, None)` off Windows.
+#[cfg(target_os = "windows")]
+fn driver_protection_flags() -> (Option<bool>, Option<bool>) {
+    crate::utilities::windows::registry::read_driver_protections()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn driver_protection_flags() -> (Option<bool>, Option<bool>) {
+    (None, None)
+}
+
+/// Names the absent WinRing0-backed sensors and whichever driver protection blocks them.
+fn sensor_gap_detail(
+    package_temp: bool,
+    rails: bool,
+    hvci: Option<bool>,
+    blocklist: Option<bool>,
+) -> String {
+    let mut missing: Vec<&str> = Vec::new();
+    if !package_temp {
+        missing.push("CPU package temperature");
+    }
+    if !rails {
+        missing.push("SuperIO voltage rails");
+    }
+    if missing.is_empty() {
+        return "CPU package temperature and voltage rails both read.".to_string();
+    }
+    let gate = match (hvci, blocklist) {
+        (Some(true), Some(true)) => {
+            "Memory Integrity (HVCI) and the Vulnerable Driver Blocklist are both ON, so WinRing0 cannot load."
+        }
+        (Some(true), _) => "Memory Integrity (HVCI) is ON, so WinRing0 cannot load.",
+        (_, Some(true)) => "The Vulnerable Driver Blocklist is ON, so WinRing0 cannot load.",
+        (Some(false), Some(false)) => {
+            "Both driver protections are OFF, so the cause is an unsupported SuperIO chip, a WinRing0 service that never started, or a non-elevated client."
+        }
+        _ => "Driver protection state unreadable; the usual cause is Memory Integrity or the Vulnerable Driver Blocklist blocking WinRing0.",
+    };
+    format!("{} unavailable. {gate}", missing.join(" and "))
+}
+
+/// One-shot telemetry payload for `Cmd::RequestTelemetrySnapshot`. Waits up to
+/// `warmup` for the shared agent's first populated tick; absent sensors stay
+/// `null` rather than collapsing to zero.
+async fn remote_telemetry_json(warmup: Duration) -> serde_json::Value {
+    use crate::filesystem::system_info::current_telemetry_snapshot;
+
+    let deadline = Instant::now() + warmup;
+    let mut snap = current_telemetry_snapshot();
+    while !snap.is_populated() && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        snap = current_telemetry_snapshot();
+    }
+
+    let package_temp_c = snap.cpu_package_temp_c();
+    // Label whose reading the accessor picked, so an ACPI zone can't pass as a die sensor.
+    let package_temp_source = package_temp_c.and_then(|t| {
+        snap.thermals
+            .iter()
+            .find(|r| (r.temp_c - t).abs() < f32::EPSILON)
+            .map(|r| r.label.clone())
+    });
+    let rails_present = !snap.voltages.is_empty();
+    let (hvci, blocklist) = driver_protection_flags();
+    let package_status = if package_temp_c.is_some() { "ok" } else { "unavailable" };
+    let rails_status = if rails_present { "ok" } else { "unavailable" };
+
+    serde_json::json!({
+        "captured_at_unix_ms": snap.captured_at_unix_ms,
+        "hostname": sysinfo::System::host_name(),
+        "sampler_populated": snap.is_populated(),
+        "cpu": {
+            "package_temp_c": package_temp_c,
+            "package_temp_source": package_temp_source,
+            "cores": snap.cores,
+        },
+        "memory": snap.memory,
+        "gpus": snap.gpus,
+        "thermals": snap.thermals,
+        "voltages": snap.voltages,
+        "whea": snap.whea,
+        "whea_unavailable": snap.whea_unavailable,
+        "tdr": snap.tdr,
+        "sensor_availability": {
+            "cpu_package_temp": package_status,
+            "voltage_rails": rails_status,
+            "hvci_enabled": hvci,
+            "vulnerable_driver_blocklist_enabled": blocklist,
+            "detail": sensor_gap_detail(package_temp_c.is_some(), rails_present, hvci, blocklist),
+        },
+        "voltage_caveat": "Nominal-divider scaling (calibrated=false): read as trend and droop under load, not absolute volts. '3VCC (chip)' is the sensor chip's own 3.3V supply, NOT the board's +3.3V PSU rail.",
+    })
 }
 
 pub async fn live_computer_stats(tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>, mut stop_rx: tokio::sync::watch::Receiver<bool>) -> anyhow::Result<(), anyhow::Error> {

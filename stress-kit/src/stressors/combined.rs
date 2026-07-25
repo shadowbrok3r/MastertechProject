@@ -1,8 +1,13 @@
 //! Concurrent CPU + RAM + GPU load (OCCT-style whole-system torture). CPU FMA
 //! workers and a memory-bandwidth churn leg share the core pool while a driver
 //! thread hammers the GPU compute kernel. Headline throughput is combined
-//! CPU+GPU GFLOPS; the RAM leg is concurrent load only. Falls back to CPU+RAM
-//! (with a warning in `last_error`) when no GPU is available.
+//! CPU+GPU GFLOPS; the RAM leg is concurrent load only.
+//!
+//! With no usable GPU the CPU and RAM legs keep running, but every tick reports
+//! an `inconclusive -` reason in `last_error`: the stage is not a whole-system
+//! result and must not be graded as one. Ticks stay non-fatal so the CPU+RAM
+//! load is not aborted, and the reason avoids device-loss wording so a machine
+//! without a dGPU is never reported as failed hardware.
 
 #![cfg(feature = "gpu")]
 
@@ -199,8 +204,11 @@ fn gpu_driver(cancel: Arc<AtomicBool>, counter: Arc<AtomicU64>, warn: Arc<Mutex<
     let ctx = match GpuContext::acquire(true) {
         Ok(c) => c,
         Err(e) => {
-            let msg = format!("combined: GPU unavailable, running CPU+RAM only ({e})");
-            log::warn!("[stress-kit/combined] {msg}");
+            let msg = format!(
+                "combined: inconclusive - no usable GPU, the GPU leg never ran ({e}); the CPU \
+                 and RAM legs carried the whole load, so this is not a whole-system result"
+            );
+            log::error!("[stress-kit/combined] {msg}");
             set_warn(&warn, msg);
             return;
         }
@@ -303,8 +311,9 @@ fn gpu_driver(cancel: Arc<AtomicBool>, counter: Arc<AtomicU64>, warn: Arc<Mutex<
         }
         if wait_failures >= MAX_WAIT_FAILURES {
             let msg = format!(
-                "combined: GPU leg stopped (queue stalled, {MAX_WAIT_FAILURES} consecutive \
-                 device-wait timeouts); continuing CPU+RAM only"
+                "combined: inconclusive - GPU leg stopped (queue stalled, {MAX_WAIT_FAILURES} \
+                 consecutive device-wait timeouts); CPU+RAM only from here, so this is not a \
+                 whole-system result"
             );
             log::error!("[stress-kit/combined] {msg}");
             set_warn(&warn, msg);

@@ -132,18 +132,34 @@ pub(crate) fn run_core(
         | Stressor::GpuMatmul
         | Stressor::GpuVram
         | Stressor::GpuPcie => {
-            log::warn!("stress-kit built without 'gpu' feature; GPU stressor dispatched as no-op");
+            log::error!("stress-kit: {NO_GPU_FEATURE}");
             let _ = (config, thread_count);
-            let _ = tx.send(crate::Metrics {
-                elapsed_secs: started_at.elapsed().as_secs_f64(),
-                throughput: 0.0,
-                last_error: Some("stress-kit built without 'gpu' feature".into()),
-                fatal: false,
-                errors: 0,
-            });
-            while !cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                std::thread::sleep(std::time::Duration::from_millis(100));
+            emit_no_gpu_feature_fatal(tx, started_at);
+            let mut last_tick = Instant::now();
+            while !cancel.load(Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                // Re-emitted every tick so a newest-only drain still sees the fatal.
+                if last_tick.elapsed() >= std::time::Duration::from_millis(500) {
+                    emit_no_gpu_feature_fatal(tx, started_at);
+                    last_tick = Instant::now();
+                }
             }
         }
     }
+}
+
+/// Reason a GPU stage cannot run in a build without the `gpu` feature.
+#[cfg(not(feature = "gpu"))]
+const NO_GPU_FEATURE: &str =
+    "inconclusive - stress-kit built without the 'gpu' feature, the GPU load never ran";
+
+#[cfg(not(feature = "gpu"))]
+fn emit_no_gpu_feature_fatal(tx: &mpsc::Sender<Metrics>, started_at: Instant) {
+    let _ = tx.send(Metrics {
+        elapsed_secs: started_at.elapsed().as_secs_f64(),
+        throughput: 0.0,
+        last_error: Some(NO_GPU_FEATURE.to_string()),
+        fatal: true,
+        errors: 0,
+    });
 }

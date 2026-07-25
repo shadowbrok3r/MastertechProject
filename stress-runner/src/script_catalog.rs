@@ -294,3 +294,60 @@ fn concurrent_torture_spec(computer: RecordId, duration_secs: u64) -> RunSpec {
     };
     spec
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_computer() -> RecordId {
+        RecordId::new("computer", "test")
+    }
+
+    /// A catalog name with no `build_stress_script_spec` arm returns `None`, which
+    /// every caller treats as "unknown script" — the entry would list everywhere
+    /// (Scripts tab, terminal_mode, admin console, MCP) and silently do nothing.
+    #[test]
+    fn every_catalog_name_builds_a_spec() {
+        for name in STRESS_SCRIPT_NAMES {
+            assert!(
+                build_stress_script_spec(name, test_computer(), 60).is_some(),
+                "catalog name {name:?} has no build_stress_script_spec arm"
+            );
+        }
+    }
+
+    #[test]
+    fn every_catalog_name_is_recognized_as_stress() {
+        for name in STRESS_SCRIPT_NAMES {
+            assert!(is_stress_script(name), "{name:?} not recognized as stress");
+        }
+    }
+
+    /// Guards against a name being listed twice, which would run it twice in the
+    /// suite and break the displays catalog mirror.
+    #[test]
+    fn catalog_names_are_unique() {
+        let mut seen = std::collections::HashSet::new();
+        for name in STRESS_SCRIPT_NAMES {
+            assert!(seen.insert(*name), "duplicate catalog name {name:?}");
+        }
+    }
+
+    /// Every stressor reachable from a picker must round-trip through the wire
+    /// label MCP callers pass, so an AI can name anything the GUI can select.
+    #[test]
+    fn every_stressor_round_trips_its_wire_label() {
+        for s in Stressor::all() {
+            let label = s.as_str();
+            // as_str() falls back to "cpu" when a variant has no #[facet(rename)].
+            if *s != Stressor::Cpu {
+                assert_ne!(label, "cpu", "{s:?} has no #[facet(rename)]");
+            }
+            assert_eq!(
+                Stressor::from_str(label),
+                Some(*s),
+                "wire label {label:?} does not parse back to {s:?}"
+            );
+        }
+    }
+}

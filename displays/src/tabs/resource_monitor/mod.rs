@@ -57,17 +57,19 @@ pub enum HwView {
     Networks,
     Whea,
     Gpus,
+    Rails,
     Machine,
 }
 
 impl HwView {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Cores,
         Self::Memory,
         Self::Disks,
         Self::Networks,
         Self::Whea,
         Self::Gpus,
+        Self::Rails,
         Self::Machine,
     ];
 
@@ -79,6 +81,7 @@ impl HwView {
             Self::Networks => "Networks",
             Self::Whea => "WHEA",
             Self::Gpus => "GPUs",
+            Self::Rails => "Board rails",
             Self::Machine => "Machine",
         }
     }
@@ -346,7 +349,8 @@ impl ResourceMonitor {
         }
     }
 
-    /// Collapsing hardware sections: machine, GPUs, WHEA, memory, cores, disks, networks.
+    /// Collapsing hardware sections: machine, GPUs, WHEA, memory, cores, disks,
+    /// networks, board rails.
     #[cfg(feature = "native-telemetry")]
     fn show_hw_sections(&self, ui: &mut Ui) {
         ui.collapsing(HwView::Machine.label(), |ui| {
@@ -365,14 +369,25 @@ impl ResourceMonitor {
         ui.collapsing(HwView::Memory.label(), |ui| {
             hw_tables::show_memory(ui, &self.telemetry.memory);
         });
-        ui.collapsing(HwView::Cores.label(), |ui| {
-            hw_tables::show_cores(ui, &self.telemetry, "");
-        });
+        // Heading carries the package temp and changes every tick, so the
+        // open/closed state hangs off a fixed salt instead of the text.
+        let cores_header = match hw_tables::cpu_package_summary(&self.telemetry) {
+            Some(pkg) => format!("{} · {pkg}", HwView::Cores.label()),
+            None => HwView::Cores.label().to_string(),
+        };
+        eframe::egui::CollapsingHeader::new(cores_header)
+            .id_salt("resource_monitor_hw_cores")
+            .show(ui, |ui| {
+                hw_tables::show_cores(ui, &self.telemetry, "");
+            });
         ui.collapsing(HwView::Disks.label(), |ui| {
             hw_tables::show_disks(ui, &self.telemetry.disks, "");
         });
         ui.collapsing(HwView::Networks.label(), |ui| {
             hw_tables::show_networks(ui, &self.telemetry.networks, "");
+        });
+        ui.collapsing(HwView::Rails.label(), |ui| {
+            hw_tables::show_voltages(ui, &self.telemetry.voltages);
         });
     }
 
@@ -462,6 +477,7 @@ impl ResourceMonitor {
                 }
                 HwView::Whea => hw_tables::show_whea(ui, &self.telemetry.whea),
                 HwView::Gpus => hw_tables::show_gpus(ui, &self.telemetry.gpus),
+                HwView::Rails => hw_tables::show_voltages(ui, &self.telemetry.voltages),
                 HwView::Machine => {}
             }
 

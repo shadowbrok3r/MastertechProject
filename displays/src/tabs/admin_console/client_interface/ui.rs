@@ -310,17 +310,10 @@ impl WebSocketClient {
                 );
 
                 // ── Transfer ─────────────────────────────────────────
-                // While a transfer is in flight we replace the menu with
-                // a progress label so the operator can see the chunk
-                // counter without having to open the menu first.
                 #[cfg(not(target_arch = "wasm32"))]
-                if let Some((ref name, sent, total)) = self.file_transfer_progress {
-                    let short = name.rsplit(['/', '\\']).next().unwrap_or(name);
-                    ui.colored_label(
-                        Color32::YELLOW,
-                        format!("Sending {short}  {sent}/{total}"),
-                    );
-                } else {
+                {
+                    // Disabled while a transfer is in flight; a second one would truncate it.
+                    let transfer_busy = self.file_transfer_progress.is_some();
                     let transfer_color = if self.cmd_protocol_mismatch {
                         Color32::from_rgb(255, 200, 80)
                     } else {
@@ -332,7 +325,14 @@ impl WebSocketClient {
                             #[cfg(not(target_arch = "wasm32"))]
                             #[cfg(not(any(target_os = "ios", target_os = "android")))]
                             {
-                                if ui.button("Send File…").clicked() {
+                                if ui
+                                    .add_enabled(
+                                        !transfer_busy,
+                                        eframe::egui::Button::new("Send File…"),
+                                    )
+                                    .on_disabled_hover_text("A transfer is already in flight")
+                                    .clicked()
+                                {
                                     if let Some(path) = rfd::FileDialog::new().pick_file() {
                                         let path_str = path.display().to_string();
                                         let (tx, rx) = crossbeam::channel::bounded::<Cmd>(8);
@@ -411,6 +411,10 @@ impl WebSocketClient {
                         }
                     },
                 );
+
+                // ── Protections ──────────────────────────────────────
+                // Disable/re-enable Memory Integrity + the driver blocklist.
+                self.driver_protections_toolbar(ui);
 
                 ui.separator();
 
@@ -497,6 +501,15 @@ impl WebSocketClient {
                     };
                     ui.colored_label(badge_color, RichText::new(badge).small().strong())
                         .on_hover_text(badge_hover);
+
+                    if let Some((ref name, sent, total)) = self.file_transfer_progress {
+                        let short = name.rsplit(['/', '\\']).next().unwrap_or(name);
+                        ui.colored_label(
+                            Color32::YELLOW,
+                            RichText::new(format!("{short}  {sent}/{total}")).small(),
+                        )
+                        .on_hover_text(format!("Sending {name} — chunk {sent} of {total}"));
+                    }
                 });
             });
         });

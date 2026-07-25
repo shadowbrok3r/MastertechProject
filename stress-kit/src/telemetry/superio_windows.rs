@@ -326,9 +326,12 @@ impl SuperIoMonitor {
     }
 
     /// Reads the voltage bank; yields nothing when the ISA bus is held by a peer
-    /// or the fixed AVCC/3VCC channels show the HWM block isn't answering.
+    /// or the fixed AVCC/3VCC channels show the HWM block isn't answering. Either
+    /// skip restarts the consecutive-breach run, so only genuinely consecutive
+    /// reads can confirm a collapse.
     fn read_voltages(&mut self) -> Vec<VoltageReading> {
         let Some(_isa) = IsaGuard::acquire(&self.isa_mutexes) else {
+            self.rail_breaches = [0; RAIL_COUNT];
             return Vec::new();
         };
         let (ports, base) = (self.ports, self.hwm_base);

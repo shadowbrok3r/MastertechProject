@@ -121,19 +121,91 @@ pub struct VoltageReading {
     pub calibrated: bool,
 }
 
+/// Which CPU thermal sensors answered this tick. AMD Zen publishes only the
+/// package-level Tctl through the SMU — it has no per-core sensor — so
+/// [`CpuTempCoverage::PackageOnly`] is the normal, correct state there and a
+/// per-core list is legitimately empty.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CpuTempCoverage {
+    /// No CPU thermal sensor answered.
+    #[default]
+    None,
+    /// One overall CPU reading only (AMD Zen Tctl, or a lone package sensor).
+    PackageOnly,
+    /// Per-core readings answered (Intel DTS).
+    PerCore,
+}
+
 impl TelemetrySnapshot {
     /// True when the sampler has produced at least one real sysinfo refresh.
     pub fn is_populated(&self) -> bool {
         self.captured_at_unix_ms > 0 && !self.cores.is_empty() && self.memory.total_mb > 0
     }
 
-    /// Hottest CPU/package thermal reading this tick, from `thermals`.
+    /// Hottest CPU-side thermal reading this tick — package, per-core, or an
+    /// ACPI CPU zone, whichever is hottest.
     pub fn cpu_package_temp_c(&self) -> Option<f32> {
-        self.thermals.iter()
-            .filter(|r| { let l = r.label.to_lowercase();
-                l.contains("package") || l.contains("cpu") || l.contains("tctl") || l.contains("tdie") || l.starts_with("tz") })
-            .map(|r| r.temp_c)
-            .fold(None, |acc: Option<f32>, t| Some(acc.map_or(t, |m| m.max(t))))
+        self.hottest_thermal(is_cpu_thermal_label).map(|r| r.temp_c)
+    }
+
+    /// The one overall CPU sensor: `CPU Package` (Intel) or `CPU (Tctl)` (AMD
+    /// Zen), falling back to the hottest CPU zone; never a per-core reading.
+    pub fn cpu_package_reading(&self) -> Option<&ThermalReading> {
+        self.hottest_thermal(is_cpu_package_label).or_else(|| {
+            self.hottest_thermal(|l| is_cpu_thermal_label(l) && !is_cpu_core_label(l))
+        })
+    }
+
+    /// Per-core CPU readings (`CPU Core N`); empty on AMD Zen, which exposes no
+    /// per-core sensor — never fill it by copying [`Self::cpu_package_reading`].
+    pub fn cpu_core_readings(&self) -> Vec<&ThermalReading> {
+        self.thermals
+            .iter()
+            .filter(|r| is_cpu_core_label(&r.label))
+            .collect()
+    }
+
+    /// True when this platform reported at least one per-core CPU temperature.
+    pub fn has_per_core_cpu_temps(&self) -> bool {
+        self.thermals.iter().any(|r| is_cpu_core_label(&r.label))
+    }
+
+    /// One call telling a UI which CPU-temperature layout it can honestly render.
+    pub fn cpu_temp_coverage(&self) -> CpuTempCoverage {
+        if self.has_per_core_cpu_temps() {
+            CpuTempCoverage::PerCore
+        } else if self.cpu_package_reading().is_some() {
+            CpuTempCoverage::PackageOnly
+        } else {
+            CpuTempCoverage::None
+        }
+    }
+
+    /// Hottest reading whose label passes `pred`.
+    fn hottest_thermal(&self, pred: impl Fn(&str) -> bool) -> Option<&ThermalReading> {
+        self.thermals
+            .iter()
+            .filter(|r| pred(r.label.as_str()))
+            .max_by(|a, b| a.temp_c.total_cmp(&b.temp_c))
+    }
+
+    /// Every board rail published this tick, each with its label, volts and
+    /// `calibrated` flag; empty when no SuperIO sensor answered.
+    pub fn rails(&self) -> &[VoltageReading] {
+        &self.voltages
+    }
+
+    /// One rail by label, matched case-insensitively (`+12V`, `Vcore`, `VBAT`…).
+    pub fn rail_reading(&self, label: &str) -> Option<&VoltageReading> {
+        self.voltages
+            .iter()
+            .find(|v| v.label.eq_ignore_ascii_case(label))
+    }
+
+    /// True when any published rail was scaled with an assumed nominal divider.
+    pub fn any_uncalibrated_rails(&self) -> bool {
+        self.voltages.iter().any(|v| !v.calibrated)
     }
 
     pub fn rail_12v(&self) -> Option<f32> {
@@ -154,11 +226,30 @@ impl TelemetrySnapshot {
     }
 
     fn rail(&self, label: &str) -> Option<f32> {
-        self.voltages
-            .iter()
-            .find(|v| v.label.eq_ignore_ascii_case(label))
-            .map(|v| v.volts)
+        self.rail_reading(label).map(|v| v.volts)
     }
+}
+
+/// Any CPU-side thermal label: package, per-core, Tctl/Tdie, or an ACPI zone.
+fn is_cpu_thermal_label(label: &str) -> bool {
+    let l = label.to_lowercase();
+    l.contains("package")
+        || l.contains("cpu")
+        || l.contains("tctl")
+        || l.contains("tdie")
+        || l.starts_with("tz")
+}
+
+/// A per-core label, as emitted by the Intel DTS reader.
+fn is_cpu_core_label(label: &str) -> bool {
+    label.to_lowercase().starts_with("cpu core")
+}
+
+/// An overall/package CPU label, including AMD's `CPU (Tctl)`.
+fn is_cpu_package_label(label: &str) -> bool {
+    let l = label.to_lowercase();
+    !is_cpu_core_label(label)
+        && (l.contains("package") || l.contains("tctl") || l.contains("tdie"))
 }
 
 pub struct TelemetryAgent {
@@ -365,4 +456,64 @@ fn sampler_loop(
     }
 
     log::debug!("stress-kit/telemetry: thread exiting");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn snap(labels: &[(&str, f32)]) -> TelemetrySnapshot {
+        TelemetrySnapshot {
+            thermals: labels
+                .iter()
+                .map(|&(label, temp_c)| ThermalReading { label: label.into(), temp_c })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn amd_tctl_is_package_only_with_no_cores() {
+        let s = snap(&[("CPU (Tctl)", 61.5)]);
+        assert_eq!(s.cpu_temp_coverage(), CpuTempCoverage::PackageOnly);
+        assert!(!s.has_per_core_cpu_temps());
+        assert!(s.cpu_core_readings().is_empty());
+        assert_eq!(s.cpu_package_reading().map(|r| r.label.as_str()), Some("CPU (Tctl)"));
+    }
+
+    #[test]
+    fn intel_package_and_cores_are_separated() {
+        let s = snap(&[("CPU Package", 70.0), ("CPU Core 0", 68.0), ("CPU Core 1", 72.0)]);
+        assert_eq!(s.cpu_temp_coverage(), CpuTempCoverage::PerCore);
+        assert_eq!(s.cpu_core_readings().len(), 2);
+        assert_eq!(s.cpu_package_reading().map(|r| r.label.as_str()), Some("CPU Package"));
+        assert_eq!(s.cpu_package_temp_c(), Some(72.0));
+    }
+
+    #[test]
+    fn acpi_zone_only_still_yields_a_package_reading() {
+        let s = snap(&[("TZ00_0", 44.0), ("NVMe Disk 0", 38.0)]);
+        assert_eq!(s.cpu_temp_coverage(), CpuTempCoverage::PackageOnly);
+        assert_eq!(s.cpu_package_reading().map(|r| r.label.as_str()), Some("TZ00_0"));
+    }
+
+    #[test]
+    fn no_cpu_sensor_reports_no_coverage() {
+        let s = snap(&[("NVMe Disk 0", 38.0)]);
+        assert_eq!(s.cpu_temp_coverage(), CpuTempCoverage::None);
+        assert!(s.cpu_package_reading().is_none());
+    }
+
+    #[test]
+    fn rails_expose_labels_and_calibration() {
+        let s = TelemetrySnapshot {
+            voltages: vec![VoltageReading { label: "+12V".into(), volts: 11.9, calibrated: false }],
+            ..Default::default()
+        };
+        assert_eq!(s.rails().len(), 1);
+        assert!(s.any_uncalibrated_rails());
+        assert_eq!(s.rail_reading("+12v").map(|v| v.volts), Some(11.9));
+        assert_eq!(s.rail_12v(), Some(11.9));
+        assert!(!TelemetrySnapshot::default().any_uncalibrated_rails());
+    }
 }
