@@ -19,62 +19,130 @@ pub(super) const TICK: Duration = Duration::from_millis(500);
 pub(super) const MAX_DISPATCH_GROUPS: u32 = 65535;
 pub(super) const WG_SIZE: u32 = 64;
 
+/// Wall-clock bound on a buffer-map callback once the queue has been polled.
+pub(super) const MAP_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Uncaptured device errors logged in full before suppression kicks in.
 const LOGGED_DEVICE_ERRORS: u64 = 5;
+
+/// Longest an error detail may be before it is truncated.
+const MAX_DETAIL_CHARS: usize = 200;
+
+/// How long [`run_unsupported`] re-emits its fatal before returning.
+const UNSUPPORTED_LINGER: Duration = Duration::from_secs(2);
+
+/// Phrases stress-runner reads as hardware evidence of a lost GPU.
+const DEVICE_LOSS_PHRASES: [&str; 7] = [
+    "device is lost",
+    "device lost",
+    "device removed",
+    "dxgi_error",
+    "gpu device failed",
+    "gpu unavailable",
+    "gpu leg stopped",
+];
+
+fn mentions_device_loss(msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    DEVICE_LOSS_PHRASES.iter().any(|p| m.contains(p))
+}
+
+/// Whitespace-collapsed, length-capped copy of `s`.
+fn one_line(s: &str) -> String {
+    let flat = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= MAX_DETAIL_CHARS {
+        return flat;
+    }
+    flat.chars().take(MAX_DETAIL_CHARS).collect::<String>() + "..."
+}
+
+fn first_or(slot: &Mutex<Option<String>>, fallback: &str) -> String {
+    slot.lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+/// `Tooling` = wgpu rejected commands this crate issued, so the load never ran.
+/// `Device` = the driver reported a failure of its own.
+#[derive(Clone, Copy)]
+enum ErrorClass {
+    Tooling,
+    Device,
+}
 
 /// Shared device-failure state fed by the uncaptured-error handler and the
 /// device-lost callback. Stressor loops poll [`GpuHealth::failure`] each
 /// iteration and abort the stage instead of spinning on a dead device.
 #[derive(Clone, Default)]
 pub(super) struct GpuHealth {
-    error_count: Arc<AtomicU64>,
+    device_errors: Arc<AtomicU64>,
+    tooling_errors: Arc<AtomicU64>,
     lost: Arc<AtomicBool>,
-    first_error: Arc<Mutex<Option<String>>>,
+    first_device_error: Arc<Mutex<Option<String>>>,
+    first_tooling_error: Arc<Mutex<Option<String>>>,
 }
 
 impl GpuHealth {
-    fn note_error(&self, msg: String) {
-        let n = self.error_count.fetch_add(1, Ordering::Relaxed);
+    fn note_error(&self, err: &wgpu::Error) {
+        let text = one_line(&err.to_string());
+        // wgpu routes device loss to the device-lost callback and never here, so
+        // an uncaptured internal error is driver-side and the rest are ours.
+        let (class, kind) = match err {
+            wgpu::Error::Validation { .. } => (ErrorClass::Tooling, "validation error"),
+            wgpu::Error::OutOfMemory { .. } => (ErrorClass::Tooling, "out-of-memory error"),
+            wgpu::Error::Internal { .. } => (ErrorClass::Device, "internal driver error"),
+        };
+        // Device-loss text is hardware evidence whichever variant carried it.
+        let class = if mentions_device_loss(&text) {
+            ErrorClass::Device
+        } else {
+            class
+        };
+        let (counter, first) = match class {
+            ErrorClass::Tooling => (&self.tooling_errors, &self.first_tooling_error),
+            ErrorClass::Device => (&self.device_errors, &self.first_device_error),
+        };
+        let n = counter.fetch_add(1, Ordering::Relaxed);
         if n < LOGGED_DEVICE_ERRORS {
-            log::error!("[stress-kit/gpu] uncaptured device error: {msg}");
+            log::error!("[stress-kit/gpu] uncaptured {kind}: {text}");
         } else if n % 1000 == 0 {
-            log::error!("[stress-kit/gpu] device errors continue (total {n}); suppressing");
+            log::error!("[stress-kit/gpu] {kind}s continue (total {n}); suppressing");
         }
-        if let Ok(mut g) = self.first_error.lock() {
-            g.get_or_insert(msg);
+        if let Ok(mut g) = first.lock() {
+            g.get_or_insert(text);
         }
     }
 
     fn note_lost(&self, reason: String) {
         self.lost.store(true, Ordering::SeqCst);
         log::error!("[stress-kit/gpu] device lost: {reason}");
-        if let Ok(mut g) = self.first_error.lock() {
-            *g = Some(reason);
+        if let Ok(mut g) = self.first_device_error.lock() {
+            *g = Some(one_line(&reason));
         }
     }
 
-    pub(super) fn error_count(&self) -> u64 {
-        self.error_count.load(Ordering::Relaxed)
-    }
-
-    /// `Some(reason)` once the device has been lost or has reported any
-    /// validation error — both invalidate the stage's results.
+    /// `Some(reason)` once the device has been lost or has reported an error.
+    /// Driver-side failures read as hardware evidence; errors raised against
+    /// this crate's own commands read as inconclusive — no load ran.
     pub(super) fn failure(&self) -> Option<String> {
-        if self.lost.load(Ordering::Relaxed) || self.error_count() > 0 {
-            let detail = self
-                .first_error
-                .lock()
-                .ok()
-                .and_then(|g| g.clone())
-                .unwrap_or_else(|| "unknown device error".to_string());
-            Some(format!(
-                "GPU device failed ({} error(s)): {}",
-                self.error_count().max(1),
-                detail
-            ))
-        } else {
-            None
+        let device_errors = self.device_errors.load(Ordering::Relaxed);
+        if self.lost.load(Ordering::Relaxed) || device_errors > 0 {
+            let detail = first_or(&self.first_device_error, "unknown device error");
+            return Some(format!(
+                "GPU device failed ({} error(s)): {detail}",
+                device_errors.max(1)
+            ));
         }
+        let tooling_errors = self.tooling_errors.load(Ordering::Relaxed);
+        if tooling_errors > 0 {
+            let detail = first_or(&self.first_tooling_error, "unknown API error");
+            return Some(format!(
+                "inconclusive - wgpu rejected this stressor's own commands \
+                 ({tooling_errors} API error(s)), so the load never ran: {detail}"
+            ));
+        }
+        None
     }
 }
 
@@ -226,7 +294,7 @@ impl GpuContext {
         let health = GpuHealth::default();
         let health_err = health.clone();
         device.on_uncaptured_error(Box::new(move |err| {
-            health_err.note_error(err.to_string());
+            health_err.note_error(&err);
         }));
         let health_lost = health.clone();
         device.set_device_lost_callback(move |reason, message| {
@@ -278,9 +346,10 @@ pub(super) fn emit_fatal_tick(
     });
 }
 
-/// Idles until cancel, emitting a latched inconclusive fatal every tick so the
-/// stage cannot pass. `stage` is the message prefix, `load` names the work that
-/// did not run, `detail` is the acquisition failure.
+/// Emits a latched inconclusive fatal so the stage cannot pass, re-emits it for
+/// [`UNSUPPORTED_LINGER`], then returns rather than idling out the stage.
+/// `stage` is the message prefix, `load` names the work that did not run,
+/// `detail` is the acquisition failure.
 pub(super) fn run_unsupported(
     stage: &str,
     load: &str,
@@ -294,7 +363,8 @@ pub(super) fn run_unsupported(
     log::error!("[stress-kit/gpu] {reason}");
     emit_fatal_tick(tx, started_at, reason.clone(), 0);
     let mut last_tick = Instant::now();
-    while !cancel.load(Ordering::Relaxed) {
+    let linger_until = Instant::now() + UNSUPPORTED_LINGER;
+    while !cancel.load(Ordering::Relaxed) && Instant::now() < linger_until {
         std::thread::sleep(Duration::from_millis(50));
         // Re-emitted every tick so a newest-only drain still sees the fatal.
         if last_tick.elapsed() >= TICK {
@@ -302,4 +372,5 @@ pub(super) fn run_unsupported(
             last_tick = Instant::now();
         }
     }
+    log::debug!("[stress-kit/gpu] {stage}: no GPU to load, ending the stage");
 }

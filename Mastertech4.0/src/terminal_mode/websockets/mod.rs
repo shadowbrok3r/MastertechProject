@@ -4133,35 +4133,117 @@ fn driver_protection_flags() -> (Option<bool>, Option<bool>) {
     (None, None)
 }
 
-/// Names the absent WinRing0-backed sensors and whichever driver protection blocks them.
+/// Payload token for the sensor class stress-kit picked the CPU temperature from.
+fn cpu_temp_token(source: stress_kit::telemetry::CpuTempSource) -> &'static str {
+    use stress_kit::telemetry::CpuTempSource;
+    match source {
+        CpuTempSource::Die => "cpu_die_sensor",
+        CpuTempSource::AcpiZone => "acpi_zone_only",
+        CpuTempSource::None => "unavailable",
+    }
+}
+
+/// Payload token for whether the WHEA log was readable.
+fn whea_token(status: stress_kit::telemetry::WheaStatus) -> &'static str {
+    use stress_kit::telemetry::WheaStatus;
+    match status {
+        WheaStatus::Read => "ok",
+        WheaStatus::Unavailable => "unavailable",
+        WheaStatus::NotSampled => "not_sampled",
+    }
+}
+
+/// Per-rail status map plus the expected rails that carry no reading. `unavailable`
+/// when no rail answered at all, else `read` / `missing` per rail.
+fn rail_availability(
+    voltages: &[stress_kit::telemetry::VoltageReading],
+) -> (serde_json::Map<String, serde_json::Value>, Vec<String>) {
+    let expected = stress_kit::telemetry::expected_rail_labels();
+    let sensor_silent = voltages.is_empty();
+    let mut per_rail = serde_json::Map::new();
+    let mut missing = Vec::new();
+    for label in expected {
+        let read = voltages.iter().any(|v| v.label.eq_ignore_ascii_case(label));
+        if !read {
+            missing.push(label.to_string());
+        }
+        let status = match (sensor_silent, read) {
+            (true, _) => "unavailable",
+            (_, true) => "read",
+            (_, false) => "missing",
+        };
+        per_rail.insert(label.to_string(), status.into());
+    }
+    for v in voltages
+        .iter()
+        .filter(|v| !expected.iter().any(|l| l.eq_ignore_ascii_case(&v.label)))
+    {
+        per_rail.insert(v.label.clone(), "read".into());
+    }
+    (per_rail, missing)
+}
+
+/// Names every degraded sensor, what its absence does and does not mean, and
+/// whichever driver protection blocks WinRing0.
 fn sensor_gap_detail(
-    package_temp: bool,
-    rails: bool,
+    cpu_status: &str,
+    missing_rails: &[String],
+    rails_silent: bool,
+    whea_status: &str,
     hvci: Option<bool>,
     blocklist: Option<bool>,
 ) -> String {
-    let mut missing: Vec<&str> = Vec::new();
-    if !package_temp {
-        missing.push("CPU package temperature");
+    let cpu_die = cpu_status == cpu_temp_token(stress_kit::telemetry::CpuTempSource::Die);
+    let mut notes: Vec<String> = Vec::new();
+    if cpu_status == cpu_temp_token(stress_kit::telemetry::CpuTempSource::AcpiZone) {
+        notes.push(
+            "No CPU die sensor answered: package_temp_c is an ACPI board zone that reads far below \
+             the die and is not a CPU temperature."
+                .to_string(),
+        );
+    } else if !cpu_die {
+        notes.push("CPU package temperature was not measured.".to_string());
     }
-    if !rails {
-        missing.push("SuperIO voltage rails");
+    if rails_silent {
+        notes.push("No SuperIO voltage rail answered.".to_string());
+    } else if !missing_rails.is_empty() {
+        notes.push(format!(
+            "Rails not measured: {}. A missing rail is an unmapped channel or a read suppressed as \
+             implausible, not 0 V and not a healthy rail.",
+            missing_rails.join(", ")
+        ));
     }
-    if missing.is_empty() {
-        return "CPU package temperature and voltage rails both read.".to_string();
+    if whea_status == "unavailable" {
+        notes.push(
+            "The WHEA event source could not be opened, so no error count was taken; this is not a \
+             clean WHEA result."
+                .to_string(),
+        );
+    } else if whea_status == "not_sampled" {
+        notes.push("WHEA counters were not sampled on this run.".to_string());
     }
-    let gate = match (hvci, blocklist) {
-        (Some(true), Some(true)) => {
-            "Memory Integrity (HVCI) and the Vulnerable Driver Blocklist are both ON, so WinRing0 cannot load."
+    if notes.is_empty() {
+        return "CPU die sensor, every voltage rail and WHEA counters all read.".to_string();
+    }
+    // Rails publish only through the CPU monitor's WinRing0 handle, so either sensor reading proves it loaded.
+    let gate = if !cpu_die && rails_silent {
+        match (hvci, blocklist) {
+            (Some(true), Some(true)) => {
+                "Memory Integrity (HVCI) and the Vulnerable Driver Blocklist are both ON, so WinRing0 cannot load."
+            }
+            (Some(true), _) => "Memory Integrity (HVCI) is ON, so WinRing0 cannot load.",
+            (_, Some(true)) => "The Vulnerable Driver Blocklist is ON, so WinRing0 cannot load.",
+            (Some(false), Some(false)) => {
+                "Both driver protections are OFF, so the cause is an unsupported SuperIO chip, a WinRing0 service that never started, or a non-elevated client."
+            }
+            _ => "Driver protection state unreadable; the usual cause is Memory Integrity or the Vulnerable Driver Blocklist blocking WinRing0.",
         }
-        (Some(true), _) => "Memory Integrity (HVCI) is ON, so WinRing0 cannot load.",
-        (_, Some(true)) => "The Vulnerable Driver Blocklist is ON, so WinRing0 cannot load.",
-        (Some(false), Some(false)) => {
-            "Both driver protections are OFF, so the cause is an unsupported SuperIO chip, a WinRing0 service that never started, or a non-elevated client."
-        }
-        _ => "Driver protection state unreadable; the usual cause is Memory Integrity or the Vulnerable Driver Blocklist blocking WinRing0.",
+    } else if !cpu_die || !missing_rails.is_empty() {
+        "WinRing0 did load (the other sensor read), so the remaining gap is an unsupported CPU family or an unwired SuperIO channel, not a driver block."
+    } else {
+        ""
     };
-    format!("{} unavailable. {gate}", missing.join(" and "))
+    format!("{} {gate}", notes.join(" ")).trim_end().to_string()
 }
 
 /// One-shot telemetry payload for `Cmd::RequestTelemetrySnapshot`. Waits up to
@@ -4177,18 +4259,32 @@ async fn remote_telemetry_json(warmup: Duration) -> serde_json::Value {
         snap = current_telemetry_snapshot();
     }
 
-    let package_temp_c = snap.cpu_package_temp_c();
-    // Label whose reading the accessor picked, so an ACPI zone can't pass as a die sensor.
-    let package_temp_source = package_temp_c.and_then(|t| {
-        snap.thermals
-            .iter()
-            .find(|r| (r.temp_c - t).abs() < f32::EPSILON)
-            .map(|r| r.label.clone())
-    });
-    let rails_present = !snap.voltages.is_empty();
+    // Value and source come from one stress-kit pick, so the label always describes the number.
+    let cpu_pick = snap.cpu_temp_reading();
+    let package_temp_c = cpu_pick.as_ref().map(|(r, _)| r.temp_c);
+    let package_temp_source = cpu_pick.as_ref().map(|(r, _)| r.label.clone());
+    let package_status = cpu_temp_token(
+        cpu_pick
+            .as_ref()
+            .map_or(stress_kit::telemetry::CpuTempSource::None, |(_, s)| *s),
+    );
+    let rails_silent = snap.voltages.is_empty();
+    let (per_rail, missing_rails) = rail_availability(&snap.voltages);
+    let rails_status = match (rails_silent, missing_rails.is_empty()) {
+        (true, _) => "unavailable",
+        (_, true) => "ok",
+        (_, false) => "partial",
+    };
+    let whea_status = whea_token(snap.whea_status());
     let (hvci, blocklist) = driver_protection_flags();
-    let package_status = if package_temp_c.is_some() { "ok" } else { "unavailable" };
-    let rails_status = if rails_present { "ok" } else { "unavailable" };
+    let detail = sensor_gap_detail(
+        package_status,
+        &missing_rails,
+        rails_silent,
+        whea_status,
+        hvci,
+        blocklist,
+    );
 
     serde_json::json!({
         "captured_at_unix_ms": snap.captured_at_unix_ms,
@@ -4197,21 +4293,25 @@ async fn remote_telemetry_json(warmup: Duration) -> serde_json::Value {
         "cpu": {
             "package_temp_c": package_temp_c,
             "package_temp_source": package_temp_source,
+            "package_temp_kind": package_status,
             "cores": snap.cores,
         },
         "memory": snap.memory,
         "gpus": snap.gpus,
         "thermals": snap.thermals,
         "voltages": snap.voltages,
-        "whea": snap.whea,
+        "whea": snap.whea_counters(),
         "whea_unavailable": snap.whea_unavailable,
         "tdr": snap.tdr,
         "sensor_availability": {
             "cpu_package_temp": package_status,
             "voltage_rails": rails_status,
+            "rails": per_rail,
+            "rails_missing": missing_rails,
+            "whea": whea_status,
             "hvci_enabled": hvci,
             "vulnerable_driver_blocklist_enabled": blocklist,
-            "detail": sensor_gap_detail(package_temp_c.is_some(), rails_present, hvci, blocklist),
+            "detail": detail,
         },
         "voltage_caveat": "Nominal-divider scaling (calibrated=false): read as trend and droop under load, not absolute volts. '3VCC (chip)' is the sensor chip's own 3.3V supply, NOT the board's +3.3V PSU rail.",
     })
@@ -4530,4 +4630,115 @@ pub async fn create_client(mut client: ConnectedClient) -> anyhow::Result<Connec
         ),
     }
     Ok(client)
+}
+
+#[cfg(test)]
+mod telemetry_availability_tests {
+    use super::*;
+    use stress_kit::telemetry::{TelemetrySnapshot, ThermalReading, VoltageReading};
+
+    fn thermal(label: &str, temp_c: f32) -> ThermalReading {
+        ThermalReading { label: label.to_string(), temp_c }
+    }
+
+    fn rail(label: &str) -> VoltageReading {
+        VoltageReading { label: label.to_string(), volts: 12.0, calibrated: false }
+    }
+
+    fn snap(thermals: Vec<ThermalReading>) -> TelemetrySnapshot {
+        TelemetrySnapshot { thermals, ..Default::default() }
+    }
+
+    #[test]
+    fn a_firmware_cpu_zone_is_not_a_die_sensor() {
+        let s = snap(vec![thermal("TZ00_0", 44.0), thermal("CPUZ_0", 46.0)]);
+        let (reading, source) = s.cpu_temp_reading().expect("zone reading");
+        assert_eq!(reading.label, "CPUZ_0");
+        assert_eq!(cpu_temp_token(source), "acpi_zone_only");
+    }
+
+    #[test]
+    fn a_bare_board_zone_is_not_a_cpu_temperature() {
+        let s = snap(vec![thermal("TZ00_0", 44.0)]);
+        assert!(s.cpu_temp_reading().is_none());
+        assert_eq!(cpu_temp_token(s.cpu_temp_source()), "unavailable");
+    }
+
+    #[test]
+    fn die_sensor_wins_over_a_hotter_zone() {
+        let s = snap(vec![thermal("CPUZ_0", 90.0), thermal("CPU (Tctl)", 61.5)]);
+        let (reading, source) = s.cpu_temp_reading().expect("die reading");
+        assert_eq!(reading.label, "CPU (Tctl)");
+        assert_eq!(reading.temp_c, 61.5);
+        assert_eq!(cpu_temp_token(source), "cpu_die_sensor");
+    }
+
+    #[test]
+    fn no_cpu_thermal_yields_no_pick() {
+        let s = snap(vec![thermal("NVMe Disk 0", 38.0)]);
+        assert!(s.cpu_temp_reading().is_none());
+        assert_eq!(cpu_temp_token(s.cpu_temp_source()), "unavailable");
+    }
+
+    #[test]
+    fn whea_tokens_keep_unreadable_apart_from_clean() {
+        use stress_kit::telemetry::{WheaCounters, WheaStatus};
+        let read = TelemetrySnapshot {
+            whea: Some(WheaCounters::default()),
+            ..Default::default()
+        };
+        assert_eq!(whea_token(read.whea_status()), "ok");
+        let blocked = TelemetrySnapshot { whea_unavailable: true, ..Default::default() };
+        assert_eq!(whea_token(blocked.whea_status()), "unavailable");
+        assert!(blocked.whea_counters().is_none());
+        assert_eq!(whea_token(WheaStatus::NotSampled), "not_sampled");
+    }
+
+    #[test]
+    fn suppressed_rail_reports_missing_not_read() {
+        let rails = [rail("Vcore"), rail("+5V"), rail("3VCC (chip)"), rail("VBAT")];
+        let (per_rail, missing) = rail_availability(&rails);
+        assert_eq!(per_rail.get("+12V").and_then(|v| v.as_str()), Some("missing"));
+        assert_eq!(per_rail.get("Vcore").and_then(|v| v.as_str()), Some("read"));
+        assert_eq!(missing, vec!["+12V".to_string()]);
+    }
+
+    #[test]
+    fn silent_sensor_marks_every_rail_unavailable() {
+        let (per_rail, missing) = rail_availability(&[]);
+        assert!(per_rail.values().all(|v| v.as_str() == Some("unavailable")));
+        assert_eq!(
+            missing.len(),
+            stress_kit::telemetry::expected_rail_labels().len()
+        );
+    }
+
+    #[test]
+    fn detail_says_a_missing_rail_is_not_zero_volts() {
+        let detail = sensor_gap_detail(
+            "cpu_die_sensor",
+            &["+12V".to_string()],
+            false,
+            "ok",
+            Some(false),
+            Some(false),
+        );
+        assert!(detail.contains("+12V"));
+        assert!(detail.contains("not 0 V"));
+        assert!(detail.contains("WinRing0 did load"));
+    }
+
+    #[test]
+    fn detail_calls_out_an_unreadable_whea_source() {
+        let detail =
+            sensor_gap_detail("cpu_die_sensor", &[], false, "unavailable", Some(false), Some(false));
+        assert!(detail.contains("could not be opened"));
+        assert!(detail.contains("not a clean WHEA result"));
+    }
+
+    #[test]
+    fn all_sensors_read_reports_no_gap() {
+        let detail = sensor_gap_detail("cpu_die_sensor", &[], false, "ok", Some(false), Some(false));
+        assert_eq!(detail, "CPU die sensor, every voltage rail and WHEA counters all read.");
+    }
 }

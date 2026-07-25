@@ -2,26 +2,56 @@ use eframe::egui::{
     Align, Button, CentralPanel, ComboBox, FontId, Layout, RichText, ScrollArea, Ui, Vec2, Widget,
 };
 use crate::ui_tools::theme;
+#[cfg(feature = "native-telemetry")]
+use crate::ui_tools::icons;
 use process_table::ProcessTableViewer;
 use crate::channel_manager::ChannelManager;
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::SystemInformation;
+#[cfg(feature = "native-telemetry")]
+use std::collections::HashMap;
 
 pub mod machine_info;
 pub mod process_table;
+// Ungated: widgets.rs depends only on egui, theme and icons.
+pub mod widgets;
 #[cfg(feature = "native-telemetry")]
 pub mod chart_board;
 #[cfg(feature = "native-telemetry")]
 pub mod hw_tables;
-// `sysinfo_convert` is always exposed because its `sysinfo_to_machine_info`
-// helper doesn't depend on `stress_kit` — the `native-telemetry`-gated bits
-// are the per-function imports + the `sysinfo_to_telemetry` body.
+// Exposed unconditionally: `sysinfo_to_machine_info` needs no `stress_kit`.
 pub mod sysinfo_convert;
 
 pub use machine_info::{MachineDriveRow, MachineInfo};
 
 #[cfg(feature = "native-telemetry")]
 use stress_kit::telemetry::TelemetrySnapshot;
+
+/// Rendered in place of a value nothing measured.
+pub use widgets::ABSENT_TEXT as ABSENT;
+
+/// Width at or above which the dashboard lays panels out two per row.
+#[cfg(feature = "native-telemetry")]
+const TWO_COL_MIN_WIDTH: f32 = 760.0;
+
+/// Width at or above which a panel splits its own meters into two columns.
+#[cfg(feature = "native-telemetry")]
+const INNER_TWO_COL_MIN_WIDTH: f32 = 430.0;
+
+/// Path the snapshot came from; the wire payload carries no rates, page file or rails.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum TelemetrySource {
+    Local,
+    #[default]
+    Wire,
+}
+
+impl TelemetrySource {
+    /// True when the disk and adapter figures are per-second rates.
+    pub fn io_rates_measured(self) -> bool {
+        matches!(self, Self::Local)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ResourceMonitorState {
@@ -96,16 +126,16 @@ pub struct ResourceMonitor {
     #[cfg(feature = "native-telemetry")]
     telemetry: TelemetrySnapshot,
     #[cfg(feature = "native-telemetry")]
+    source: TelemetrySource,
+    /// Lowest volts seen per rail label since telemetry started.
+    #[cfg(feature = "native-telemetry")]
+    rail_minimums: HashMap<String, f32>,
+    #[cfg(feature = "native-telemetry")]
     chart_board: chart_board::ChartBoard,
     machine_info: Option<MachineInfo>,
     pub process_table_viewer: ProcessTableViewer,
     pub latest_sysinfo: Option<SystemInformation>,
-    /// When true, new sysinfo payloads still land in `latest_sysinfo`
-    /// (so tables stay current) but are NOT pushed into `chart_board`
-    /// — the charts freeze at whatever values they had when the
-    /// operator clicked Pause. Toggle from the chart header button on
-    /// the Home page; resume snaps charts back to live with the next
-    /// arriving sample.
+    /// When true, arriving payloads still refresh the panels but stop feeding `chart_board`.
     pub charts_paused: bool,
 }
 
@@ -121,6 +151,10 @@ impl Default for ResourceMonitor {
             #[cfg(feature = "native-telemetry")]
             telemetry: TelemetrySnapshot::default(),
             #[cfg(feature = "native-telemetry")]
+            source: TelemetrySource::default(),
+            #[cfg(feature = "native-telemetry")]
+            rail_minimums: HashMap::new(),
+            #[cfg(feature = "native-telemetry")]
             chart_board: chart_board::ChartBoard::default(),
             machine_info: None,
             process_table_viewer: ProcessTableViewer::new(),
@@ -131,9 +165,27 @@ impl Default for ResourceMonitor {
 }
 
 impl ResourceMonitor {
+    /// Local agent snapshot: I/O rates, page-file figures and board rails are real.
     #[cfg(feature = "native-telemetry")]
     pub fn set_telemetry(&mut self, snapshot: TelemetrySnapshot) {
         self.telemetry = snapshot;
+        self.source = TelemetrySource::Local;
+        self.track_rail_minimums();
+    }
+
+    /// Folds this tick's rails into the per-rail minimum seen.
+    #[cfg(feature = "native-telemetry")]
+    fn track_rail_minimums(&mut self) {
+        let rails: Vec<(String, f32)> = self
+            .telemetry
+            .rails()
+            .iter()
+            .map(|v| (v.label.clone(), v.volts))
+            .collect();
+        for (label, volts) in rails {
+            let seen = self.rail_minimums.entry(label).or_insert(volts);
+            *seen = seen.min(volts);
+        }
     }
 
     pub fn set_machine_info(&mut self, info: MachineInfo) {
@@ -153,19 +205,15 @@ impl ResourceMonitor {
             self.state = ResourceMonitorState::AllCharts;
         }
 
-        // Build the static-fact Machine panel from this same payload.
-        // Previously `set_machine_info` was never called from anywhere
-        // in the displays crate, so the Home page's Machine section
-        // always read "Machine info not available yet."
+        // Machine facts come from this same payload.
         self.machine_info = Some(sysinfo_convert::sysinfo_to_machine_info(&sysinfo));
 
         #[cfg(feature = "native-telemetry")]
         {
             self.telemetry = sysinfo_convert::sysinfo_to_telemetry(&sysinfo);
-            // Skip chart_board.push while paused so the line plots
-            // freeze. Telemetry tables (machine, gpus, whea, etc.)
-            // still update from `self.telemetry` so static facts
-            // stay fresh.
+            self.source = TelemetrySource::Wire;
+            self.track_rail_minimums();
+            // Paused charts stop taking samples; the panels keep refreshing.
             if !self.charts_paused {
                 self.chart_board.push(&self.telemetry);
             }
@@ -194,7 +242,7 @@ impl ResourceMonitor {
                             ResourceMonitorState::AllCharts | ResourceMonitorState::RequestingData
                         );
 
-                        if Button::new("📊 Live telemetry")
+                        if Button::new(format!("{} Live telemetry", icons::CHART))
                             .min_size(button_size)
                             .frame(true)
                             .stroke(button_stroke)
@@ -211,7 +259,7 @@ impl ResourceMonitor {
 
                         ui.add_space(10.);
 
-                        if Button::new("📋 Processes")
+                        if Button::new(format!("{} Processes", icons::LIST))
                             .min_size(button_size)
                             .stroke(button_stroke)
                             .fill(if matches!(self.state, ResourceMonitorState::Processes) {
@@ -284,60 +332,30 @@ impl ResourceMonitor {
         });
     }
 
-    /// Drain the sysinfo channel so the chart_board / process_table / etc.
-    /// pick up any frames that arrived while the parent wasn't calling
-    /// `display()` directly. Used by the Home page, which renders our
-    /// internals via the helper methods below instead of going through
-    /// the full `display()` chrome (combobox, top toolbar, etc.).
+    /// Drains the sysinfo channel for callers that skip `display()`.
     pub fn pump_telemetry(&mut self) {
         self.receive();
     }
 
-    /// Combobox-free overview for the Home page: live charts stacked in
-    /// one column and the per-section hardware tables (machine, GPUs,
-    /// WHEA, memory, cores, disks, networks) in the other. Falls back to
-    /// charts-over-tables stacking when the page is too narrow.
+    /// Home dashboard: machine line, KPI row, trend charts, per-item meter panels.
     pub fn show_compact_overview(&mut self, ui: &mut Ui) {
         self.receive();
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
 
         #[cfg(feature = "native-telemetry")]
         {
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new("Live telemetry")
-                        .color(theme::accent(ui))
-                        .strong(),
-                );
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let (icon, hover) = if self.charts_paused {
-                        (crate::ui_tools::icons::PLAY, "Resume live chart updates")
-                    } else {
-                        (crate::ui_tools::icons::PAUSE, "Pause live chart updates (latest_sysinfo + tables keep refreshing)")
-                    };
-                    if ui
-                        .small_button(icon)
-                        .on_hover_text(hover)
-                        .clicked()
-                    {
-                        self.charts_paused = !self.charts_paused;
-                    }
-                    if self.charts_paused {
-                        ui.colored_label(theme::warn(ui), "charts paused");
-                    }
-                });
+            self.dashboard_header(ui);
+            self.machine_line(ui);
+            self.headline_panel(ui);
+            let two_col = ui.available_width() >= TWO_COL_MIN_WIDTH;
+            hw_tables::panel(ui, icons::CHART, "Trends", |ui| {
+                if two_col {
+                    self.chart_board.show_compact(ui);
+                } else {
+                    self.chart_board.show_compact_column(ui);
+                }
             });
-            // Charts in one column, hardware tables in the other; stacked when too narrow.
-            if ui.available_width() >= 760.0 {
-                ui.columns(2, |cols| {
-                    self.chart_board.show_compact_column(&mut cols[0]);
-                    self.show_hw_sections(&mut cols[1]);
-                });
-            } else {
-                self.chart_board.show_compact(ui);
-                ui.add_space(8.0);
-                self.show_hw_sections(ui);
-            }
+            self.meter_groups(ui, two_col);
         }
 
         #[cfg(not(feature = "native-telemetry"))]
@@ -349,45 +367,146 @@ impl ResourceMonitor {
         }
     }
 
-    /// Collapsing hardware sections: machine, GPUs, WHEA, memory, cores, disks,
-    /// networks, board rails.
+    /// Title, capture time and the chart pause toggle.
     #[cfg(feature = "native-telemetry")]
-    fn show_hw_sections(&self, ui: &mut Ui) {
-        ui.collapsing(HwView::Machine.label(), |ui| {
-            if let Some(info) = self.machine_info.clone() {
-                info.show(ui);
-            } else {
+    fn dashboard_header(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("Live telemetry")
+                    .color(theme::accent(ui))
+                    .strong(),
+            );
+            ui.label(
+                RichText::new(format!(
+                    "captured @ {}",
+                    hw_tables::fmt_captured_at(self.telemetry.captured_at_unix_ms)
+                ))
+                .small()
+                .weak(),
+            );
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let (icon, hover) = if self.charts_paused {
+                    (icons::PLAY, "Resume live chart updates")
+                } else {
+                    (
+                        icons::PAUSE,
+                        "Pause live chart updates (latest_sysinfo + panels keep refreshing)",
+                    )
+                };
+                if ui.small_button(icon).on_hover_text(hover).clicked() {
+                    self.charts_paused = !self.charts_paused;
+                }
+                if self.charts_paused {
+                    ui.colored_label(theme::warn(ui), "charts paused");
+                }
+            });
+        });
+    }
+
+    /// Host, CPU, RAM, GPU and volume count on one line.
+    #[cfg(feature = "native-telemetry")]
+    fn machine_line(&self, ui: &mut Ui) {
+        match self.machine_info.as_ref() {
+            Some(info) => info.show_header_line(ui),
+            None => {
                 ui.colored_label(theme::weak_text(ui), "Machine info not available yet.");
             }
-        });
-        ui.collapsing(HwView::Gpus.label(), |ui| {
-            hw_tables::show_gpus(ui, &self.telemetry.gpus);
-        });
-        ui.collapsing(HwView::Whea.label(), |ui| {
-            hw_tables::show_whea(ui, &self.telemetry.whea);
-        });
-        ui.collapsing(HwView::Memory.label(), |ui| {
-            hw_tables::show_memory(ui, &self.telemetry.memory);
-        });
-        // Heading carries the package temp and changes every tick, so the
-        // open/closed state hangs off a fixed salt instead of the text.
-        let cores_header = match hw_tables::cpu_package_summary(&self.telemetry) {
-            Some(pkg) => format!("{} · {pkg}", HwView::Cores.label()),
-            None => HwView::Cores.label().to_string(),
-        };
-        eframe::egui::CollapsingHeader::new(cores_header)
-            .id_salt("resource_monitor_hw_cores")
-            .show(ui, |ui| {
-                hw_tables::show_cores(ui, &self.telemetry, "");
+        }
+    }
+
+    /// KPI gauges, the CPU temperature and process tiles, and the WHEA pill.
+    #[cfg(feature = "native-telemetry")]
+    fn headline_panel(&self, ui: &mut Ui) {
+        hw_tables::panel(ui, icons::p::GAUGE, "Headline", |ui| {
+            ui.horizontal_wrapped(|ui| {
+                hw_tables::cpu_load_gauge(ui, &self.telemetry);
+                hw_tables::ram_gauge(ui, &self.telemetry.memory);
+                hw_tables::gpu_load_gauge(ui, &self.telemetry.gpus);
+                ui.add_space(6.0);
+                hw_tables::cpu_temp_tile(ui, &self.telemetry);
+                ui.add_space(6.0);
+                hw_tables::process_count_tile(ui, &self.telemetry);
             });
-        ui.collapsing(HwView::Disks.label(), |ui| {
-            hw_tables::show_disks(ui, &self.telemetry.disks, "");
+            ui.add_space(6.0);
+            hw_tables::show_whea_pill(ui, &self.telemetry);
         });
-        ui.collapsing(HwView::Networks.label(), |ui| {
-            hw_tables::show_networks(ui, &self.telemetry.networks, "");
+    }
+
+    /// Per-item meter panels: cores, memory, storage, adapters, GPUs, rails.
+    #[cfg(feature = "native-telemetry")]
+    fn meter_groups(&self, ui: &mut Ui, two_col: bool) {
+        if two_col {
+            ui.columns(2, |cols| {
+                self.cores_panel(&mut cols[0]);
+                self.memory_panel(&mut cols[1]);
+            });
+            ui.columns(2, |cols| {
+                self.storage_panel(&mut cols[0]);
+                self.network_panel(&mut cols[1]);
+            });
+            ui.columns(2, |cols| {
+                self.gpu_panel(&mut cols[0]);
+                self.rails_panel(&mut cols[1]);
+            });
+        } else {
+            self.cores_panel(ui);
+            self.memory_panel(ui);
+            self.storage_panel(ui);
+            self.network_panel(ui);
+            self.gpu_panel(ui);
+            self.rails_panel(ui);
+        }
+    }
+
+    #[cfg(feature = "native-telemetry")]
+    fn cores_panel(&self, ui: &mut Ui) {
+        hw_tables::panel(ui, icons::p::CPU, HwView::Cores.label(), |ui| {
+            let columns = if ui.available_width() >= INNER_TWO_COL_MIN_WIDTH {
+                2
+            } else {
+                1
+            };
+            hw_tables::show_core_meters(ui, &self.telemetry, columns);
         });
-        ui.collapsing(HwView::Rails.label(), |ui| {
-            hw_tables::show_voltages(ui, &self.telemetry.voltages);
+    }
+
+    #[cfg(feature = "native-telemetry")]
+    fn memory_panel(&self, ui: &mut Ui) {
+        hw_tables::panel(ui, icons::p::MEMORY, HwView::Memory.label(), |ui| {
+            hw_tables::show_memory_panel(ui, &self.telemetry.memory, self.source);
+        });
+    }
+
+    /// Disk throughput meters over the machine's volume list.
+    #[cfg(feature = "native-telemetry")]
+    fn storage_panel(&self, ui: &mut Ui) {
+        hw_tables::panel(ui, icons::HARD_DRIVE, "Storage", |ui| {
+            hw_tables::show_disk_meters(ui, &self.telemetry.disks, self.source);
+            if let Some(info) = self.machine_info.as_ref() {
+                ui.add_space(6.0);
+                info.show_volumes(ui);
+            }
+        });
+    }
+
+    #[cfg(feature = "native-telemetry")]
+    fn network_panel(&self, ui: &mut Ui) {
+        hw_tables::panel(ui, icons::p::WIFI_HIGH, HwView::Networks.label(), |ui| {
+            hw_tables::show_network_meters(ui, &self.telemetry.networks, self.source);
+        });
+    }
+
+    #[cfg(feature = "native-telemetry")]
+    fn gpu_panel(&self, ui: &mut Ui) {
+        hw_tables::panel(ui, icons::p::GRAPHICS_CARD, HwView::Gpus.label(), |ui| {
+            hw_tables::show_gpu_panel(ui, &self.telemetry.gpus);
+        });
+    }
+
+    #[cfg(feature = "native-telemetry")]
+    fn rails_panel(&self, ui: &mut Ui) {
+        hw_tables::panel(ui, icons::p::LIGHTNING, HwView::Rails.label(), |ui| {
+            hw_tables::show_rail_meters(ui, &self.telemetry, &self.rail_minimums);
         });
     }
 
@@ -470,12 +589,14 @@ impl ResourceMonitor {
             #[cfg(feature = "native-telemetry")]
             match self.hw_view {
                 HwView::Cores => hw_tables::show_cores(ui, &self.telemetry, &self.filter),
-                HwView::Memory => hw_tables::show_memory(ui, &self.telemetry.memory),
+                HwView::Memory => {
+                    hw_tables::show_memory_panel(ui, &self.telemetry.memory, self.source)
+                }
                 HwView::Disks => hw_tables::show_disks(ui, &self.telemetry.disks, &self.filter),
                 HwView::Networks => {
                     hw_tables::show_networks(ui, &self.telemetry.networks, &self.filter)
                 }
-                HwView::Whea => hw_tables::show_whea(ui, &self.telemetry.whea),
+                HwView::Whea => hw_tables::show_whea(ui, &self.telemetry),
                 HwView::Gpus => hw_tables::show_gpus(ui, &self.telemetry.gpus),
                 HwView::Rails => hw_tables::show_voltages(ui, &self.telemetry.voltages),
                 HwView::Machine => {}

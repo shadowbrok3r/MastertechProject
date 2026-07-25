@@ -12,11 +12,18 @@ use wgpu::util::DeviceExt;
 
 use crate::Metrics;
 
-use super::gpu_common::{emit_fatal_tick, emit_tick, run_unsupported, GpuContext, TICK};
+use super::gpu_common::{
+    emit_fatal_tick, emit_tick, run_unsupported, GpuContext, MAP_WAIT_TIMEOUT, TICK,
+};
 
 const N: u32 = 2048;
 const TILE: u32 = 16;
 const OPS_PER_MATMUL: u64 = 2 * (N as u64) * (N as u64) * (N as u64);
+
+/// Consecutive device-wait timeouts tolerated before the run is declared stalled.
+const MAX_WAIT_FAILURES: u32 = 3;
+/// Consecutive unreadable verify rows tolerated before the stage aborts.
+const MAX_CONSECUTIVE_READBACK_ERRORS: u32 = 3;
 
 // Output rows checked against the CPU reference, one per matmul, cycled.
 const VERIFY_ROWS: usize = 8;
@@ -156,10 +163,14 @@ pub(crate) fn run(
 
     let groups = N.div_ceil(TILE);
     let mut last_tick = Instant::now();
+    // Confirmed-complete matmuls only; a timed-out wait is not work done.
     let mut matmuls_in_tick: u64 = 0;
     let mut matmul_count: u64 = 0;
     let mut total_errors: u64 = 0;
     let mut logged_mismatch = false;
+    let mut wait_failures: u32 = 0;
+    let mut readback_failures: u32 = 0;
+    let mut warn: Option<String> = None;
 
     while !cancel.load(Ordering::Relaxed) {
         let sample = (matmul_count % VERIFY_ROWS as u64) as usize;
@@ -179,60 +190,115 @@ pub(crate) fn run(
         }
         encoder.copy_buffer_to_buffer(&c_buf, verify_row * row_bytes, &readback_buf, 0, row_bytes);
         ctx.queue.submit(std::iter::once(encoder.finish()));
-        let _ = ctx.device.poll(wgpu::PollType::Wait);
+        // A wait timeout is neither an uncaptured error nor device-lost, so it has
+        // to be counted here or a hung queue reports full throughput.
+        let completed = match ctx.device.poll(wgpu::PollType::Wait) {
+            Ok(_) => {
+                wait_failures = 0;
+                true
+            }
+            Err(e) => {
+                wait_failures += 1;
+                let msg = format!(
+                    "gpu_matmul: inconclusive - device wait timed out ({e:?}) x{wait_failures}; \
+                     this matmul never completed"
+                );
+                log::warn!("[stress-kit/gpu_matmul] {msg}");
+                warn = Some(msg);
+                false
+            }
+        };
         if let Some(reason) = ctx.health.failure() {
             emit_fatal_tick(tx, started_at, format!("gpu_matmul: {reason}"), total_errors);
             return;
         }
-        matmuls_in_tick += 1;
-        matmul_count += 1;
+        if wait_failures >= MAX_WAIT_FAILURES {
+            emit_fatal_tick(
+                tx,
+                started_at,
+                format!(
+                    "gpu_matmul: inconclusive - queue stalled, {MAX_WAIT_FAILURES} consecutive \
+                     device-wait timeouts; the matmul load is not completing"
+                ),
+                total_errors,
+            );
+            return;
+        }
 
-        // Read back the sampled row and compare against the reference.
-        let slice = readback_buf.slice(..);
-        let (map_tx, map_rx) = mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |res| {
-            let _ = map_tx.send(res);
-        });
-        let _ = ctx.device.poll(wgpu::PollType::Wait);
-        if let Ok(Ok(())) = map_rx.recv() {
-            let view = slice.get_mapped_range();
-            let got: &[f32] = bytemuck::cast_slice(&view[..]);
-            let reference = &references[sample];
-            let mut first_bad: Option<(usize, f32, f32)> = None;
-            for col in 0..nu {
-                let g = got[col];
-                let r = reference[col];
-                if !g.is_finite() || (g - r).abs() > ABS_TOL + REL_TOL * r.abs() {
-                    total_errors += 1;
-                    first_bad.get_or_insert((col, g, r));
+        if completed {
+            matmuls_in_tick += 1;
+            matmul_count += 1;
+
+            // Read back the sampled row and compare against the reference.
+            let slice = readback_buf.slice(..);
+            let (map_tx, map_rx) = mpsc::channel();
+            slice.map_async(wgpu::MapMode::Read, move |res| {
+                let _ = map_tx.send(res);
+            });
+            // The map callback fires from inside the poll; a bounded recv keeps a
+            // submission that never completes from parking this thread forever.
+            let mapped = ctx.device.poll(wgpu::PollType::Wait).is_ok()
+                && matches!(map_rx.recv_timeout(MAP_WAIT_TIMEOUT), Ok(Ok(())));
+            if mapped {
+                let view = slice.get_mapped_range();
+                let got: &[f32] = bytemuck::cast_slice(&view[..]);
+                let reference = &references[sample];
+                let mut first_bad: Option<(usize, f32, f32)> = None;
+                for col in 0..nu {
+                    let g = got[col];
+                    let r = reference[col];
+                    if !g.is_finite() || (g - r).abs() > ABS_TOL + REL_TOL * r.abs() {
+                        total_errors += 1;
+                        first_bad.get_or_insert((col, g, r));
+                    }
                 }
-            }
-            drop(view);
-            readback_buf.unmap();
+                drop(view);
+                readback_buf.unmap();
+                readback_failures = 0;
 
-            if !logged_mismatch {
-                if let Some((col, g, r)) = first_bad {
-                    let row = sample * row_stride;
-                    log::error!(
-                        "[stress-kit/gpu_matmul] result mismatch at C[{row}][{col}]: got {g}, expected {r} — GPU compute fault"
+                if !logged_mismatch {
+                    if let Some((col, g, r)) = first_bad {
+                        let row = sample * row_stride;
+                        log::error!(
+                            "[stress-kit/gpu_matmul] result mismatch at C[{row}][{col}]: got {g}, expected {r} — GPU compute fault"
+                        );
+                        logged_mismatch = true;
+                    }
+                }
+            } else {
+                // Also resets the map context so the next `map_async` cannot panic.
+                readback_buf.unmap();
+                readback_failures += 1;
+                if readback_failures >= MAX_CONSECUTIVE_READBACK_ERRORS {
+                    let msg = format!(
+                        "gpu_matmul: inconclusive - {readback_failures} consecutive verify rows \
+                         could not be read back; the CPU-reference check never ran"
                     );
-                    logged_mismatch = true;
+                    log::error!("[stress-kit/gpu_matmul] {msg}");
+                    emit_fatal_tick(tx, started_at, msg, total_errors);
+                    return;
                 }
+                let msg = format!(
+                    "gpu_matmul: inconclusive - verify row unreadable \
+                     ({readback_failures}/{MAX_CONSECUTIVE_READBACK_ERRORS}); \
+                     this matmul's result was never checked"
+                );
+                log::warn!("[stress-kit/gpu_matmul] {msg}");
+                warn = Some(msg);
             }
-        } else {
-            readback_buf.unmap();
         }
 
         if last_tick.elapsed() >= TICK {
             let dt = last_tick.elapsed().as_secs_f64().max(f64::EPSILON);
             let total_ops = matmuls_in_tick * OPS_PER_MATMUL;
             let gflops = (total_ops as f64) / dt / 1e9;
+            let unchecked = warn.take();
             let err_msg = if total_errors > 0 {
                 Some(format!(
                     "{total_errors} matmul result mismatch(es) (cumulative); GPU is computing wrong arithmetic — hardware fault"
                 ))
             } else {
-                None
+                unchecked
             };
             emit_tick(tx, started_at, gflops, err_msg, total_errors);
             last_tick = Instant::now();

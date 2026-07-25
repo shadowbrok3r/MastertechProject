@@ -96,10 +96,11 @@ pub fn sysinfo_to_telemetry(info: &SystemInformation) -> TelemetrySnapshot {
             index: i,
             vendor: card.brand.clone(),
             name: card.name.clone(),
-            temp_c: Some(card.temperature as f32),
+            // Zero is a missing sensor, not a reading.
+            temp_c: (card.temperature > 0).then(|| card.temperature as f32),
             usage_pct: usage.map(|u| u.gpu as f32),
             memory_used_mb: usage.map(|u| u.memory_used / (1024 * 1024)),
-            memory_total_mb: Some(card.memory / (1024 * 1024)),
+            memory_total_mb: (card.memory > 0).then(|| card.memory / (1024 * 1024)),
             ..Default::default()
         });
     }

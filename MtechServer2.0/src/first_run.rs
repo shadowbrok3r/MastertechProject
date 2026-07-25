@@ -556,6 +556,10 @@ impl MtechServer {
                     .security_inventory
                     .get(&client.connection_string)
                     .cloned();
+                let transport = layout
+                    .ws_clients
+                    .get(&client.connection_string)
+                    .map(|w| (w.transport.kind(), w.is_connected));
 
                 let mut is_open = true;
                 // MtechServer2.0 is the wasm-only browser admin and has no
@@ -590,6 +594,7 @@ impl MtechServer {
                                     &fk_health_cache,
                                     inventory.as_deref(),
                                     None,
+                                    transport,
                                 );
                             });
                             if let Some(ws_client) =

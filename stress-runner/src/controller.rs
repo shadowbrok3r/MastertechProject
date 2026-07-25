@@ -33,7 +33,10 @@ use stress_kit::{
 };
 
 use crate::mapping::{default_target_kind, metric_from_snapshot};
-use crate::rules::{evaluate_stage, RuleViolation, StageStats, StageVerdict, VerdictRules};
+use crate::rules::{
+    evaluate_stage, is_device_loss_message, is_inconclusive_message, RuleViolation, StageStats,
+    StageVerdict, VerdictRules,
+};
 use crate::runtime;
 
 /// Tick interval for telemetry sampling and `StressTestMetric` row creation.
@@ -514,29 +517,10 @@ fn worker(
             total_wall_secs,
             repeat_until_total,
         } => {
-            let def = ScenarioDefinition {
-                stages: stage_specs
-                    .iter()
-                    .map(|s| ScenarioStage {
-                        label: s.label.clone(),
-                        config: StressConfig {
-                            stressor: s.stressor,
-                            threads: s.threads,
-                            timeout: None,
-                            memory_cap_mb: s.memory_cap_mb,
-                            disk_file_mb: s.disk_file_mb,
-                        },
-                        duration_secs: s.duration_secs,
-                    })
-                    .collect(),
+            drive_scenario(
+                &stage_specs,
                 total_wall_secs,
                 repeat_until_total,
-            };
-            let runner = ScenarioRunner::start(def);
-
-            drive_scenario(
-                &runner,
-                &stage_specs,
                 &telemetry,
                 &cancel,
                 &update_tx,
@@ -684,7 +668,8 @@ fn fatal_message(metrics: &Metrics) -> String {
 }
 
 /// Stage verdict when the run carries rules, plus unconditionally when the
-/// stressor aborted — a fatal abort must never leave a stage unjudged.
+/// stage's load is unproven — an abort, an inconclusive message, or no measured
+/// throughput must never leave a stage unjudged.
 fn stage_verdict_for(
     stats: &StageStats,
     rules: &Option<VerdictRules>,
@@ -692,7 +677,7 @@ fn stage_verdict_for(
 ) -> Option<StageVerdict> {
     match rules {
         Some(r) => Some(evaluate_stage(stats, r)),
-        None if stats.fatal_abort => Some(evaluate_stage(stats, effective)),
+        None if stats.load_unproven() => Some(evaluate_stage(stats, effective)),
         None => None,
     }
 }
@@ -1145,10 +1130,72 @@ fn drive_concurrent(
     acc.completed_stage_errors = acc.completed_stage_errors.saturating_add(total_test_errors);
 }
 
-/// Drive a scenario run.
+/// `ScenarioDefinition` for a slice of the run's stages.
+fn scenario_def(
+    stages: &[RunStage],
+    total_wall_secs: Option<u64>,
+    repeat_until_total: bool,
+) -> ScenarioDefinition {
+    ScenarioDefinition {
+        stages: stages
+            .iter()
+            .map(|s| ScenarioStage {
+                label: s.label.clone(),
+                config: StressConfig {
+                    stressor: s.stressor,
+                    threads: s.threads,
+                    timeout: None,
+                    memory_cap_mb: s.memory_cap_mb,
+                    disk_file_mb: s.disk_file_mb,
+                },
+                duration_secs: s.duration_secs,
+            })
+            .collect(),
+        total_wall_secs,
+        repeat_until_total,
+    }
+}
+
+/// Window a latched fatal is given to end its own stage before the stage is
+/// ended from here. Longer than stress-kit's 2 s unsupported-GPU linger, so only
+/// stressors that keep running past their fatal are cut off.
+const FATAL_STAGE_GRACE: Duration = Duration::from_secs(5);
+
+/// Stage to end early: a latched fatal that outlived the grace window, while no
+/// stage is already being ended and the scenario is not repeating.
+fn stage_to_end_early(
+    fatal_stage: Option<(usize, Instant)>,
+    ending_stage: Option<usize>,
+    repeat_until_total: bool,
+    now: Instant,
+) -> Option<usize> {
+    if ending_stage.is_some() || repeat_until_total {
+        return None;
+    }
+    let (index, latched_at) = fatal_stage?;
+    (now.duration_since(latched_at) >= FATAL_STAGE_GRACE).then_some(index)
+}
+
+/// First stage of the segment that resumes the list after `ended`; `None` ends
+/// the run because the list is exhausted or the operator cancelled.
+fn next_segment_start(ended: usize, stage_count: usize, cancelled: bool) -> Option<usize> {
+    let next = ended.saturating_add(1);
+    (!cancelled && next < stage_count).then_some(next)
+}
+
+/// Wall-clock budget a restarted segment inherits from the run's cap.
+fn remaining_wall_secs(total_wall_secs: Option<u64>, elapsed: Duration) -> Option<u64> {
+    total_wall_secs.map(|t| t.saturating_sub(elapsed.as_secs()))
+}
+
+/// Drive a scenario run. A stage whose stressor latches a fatal and keeps
+/// idling is ended early by stopping its runner and restarting the remaining
+/// stages as a new segment.
+#[allow(clippy::too_many_arguments)]
 fn drive_scenario(
-    runner: &ScenarioRunner,
     stage_specs: &[RunStage],
+    total_wall_secs: Option<u64>,
+    repeat_until_total: bool,
     telemetry: &Arc<TelemetryAgent>,
     cancel: &Arc<AtomicBool>,
     update_tx: &Sender<RunUpdate>,
@@ -1157,6 +1204,18 @@ fn drive_scenario(
     rules: &Option<VerdictRules>,
     outcomes: &mut Vec<StageOutcome>,
 ) {
+    let scenario_started = Instant::now();
+    let mut runner = ScenarioRunner::start(scenario_def(
+        stage_specs,
+        total_wall_secs,
+        repeat_until_total,
+    ));
+    // Absolute index of the running segment's first stage.
+    let mut stage_offset = 0usize;
+    // Stage with a latched fatal, and when it latched.
+    let mut fatal_stage: Option<(usize, Instant)> = None;
+    // Stage being ended early; events for any other stage of that segment are dropped.
+    let mut ending_stage: Option<usize> = None;
     let mut last_tick = Instant::now();
     let mut current_stage_index: Option<usize> = None;
     let mut current_stage_label: Option<String> = None;
@@ -1178,9 +1237,19 @@ fn drive_scenario(
             runner.stop();
         }
 
-        for event in runner.try_recv_all() {
+        // Drained before the loop body, which may replace `runner`.
+        let events = runner.try_recv_all();
+        for event in events {
             match event {
-                ScenarioEvent::StageStarted { index, label, stage_count } => {
+                ScenarioEvent::StageStarted { index, label, .. } => {
+                    // The stop that ends a stage can land after its segment
+                    // already opened the next one.
+                    if ending_stage.is_some() {
+                        continue;
+                    }
+                    let index = stage_offset + index;
+                    let stage_count = stage_specs.len();
+                    fatal_stage = None;
                     let stressor = stage_specs
                         .get(index)
                         .map(|s| s.stressor)
@@ -1219,6 +1288,10 @@ fn drive_scenario(
                     );
                 }
                 ScenarioEvent::Tick { stage_index, metrics } => {
+                    let stage_index = stage_offset + stage_index;
+                    if ending_stage.is_some_and(|s| s != stage_index) {
+                        continue;
+                    }
                     latest_metrics = metrics.clone();
                     current_stage_peak_throughput = Some(
                         current_stage_peak_throughput
@@ -1244,9 +1317,16 @@ fn drive_scenario(
                             RunUpdate::Error { message: fatal_message(&metrics) },
                         );
                     }
-                    let _ = stage_index; // already tracked in current_stage_index
+                    if metrics.fatal && fatal_stage.is_none() {
+                        fatal_stage = Some((stage_index, Instant::now()));
+                    }
                 }
                 ScenarioEvent::StageFinished { index } => {
+                    let index = stage_offset + index;
+                    if ending_stage.is_some_and(|s| s != index) {
+                        continue;
+                    }
+                    fatal_stage = None;
                     let elapsed = current_stage_started_at
                         .map(|s| s.elapsed().as_secs_f64())
                         .unwrap_or(0.0);
@@ -1301,11 +1381,60 @@ fn drive_scenario(
                     emit_stage_verdict(update_tx, outcomes.last());
                 }
                 ScenarioEvent::Finished { reason, total_elapsed_secs } => {
-                    acc.scenario_finish = Some(map_finish_reason(reason));
                     let _ = total_elapsed_secs;
-                    finished = true;
+                    match ending_stage.take() {
+                        Some(ended) => {
+                            // The stop that closed this segment is not the run's
+                            // finish reason, so it is not recorded.
+                            match next_segment_start(
+                                ended,
+                                stage_specs.len(),
+                                cancel.load(Ordering::Relaxed),
+                            ) {
+                                Some(next) => {
+                                    stage_offset = next;
+                                    runner = ScenarioRunner::start(scenario_def(
+                                        &stage_specs[next..],
+                                        remaining_wall_secs(
+                                            total_wall_secs,
+                                            scenario_started.elapsed(),
+                                        ),
+                                        false,
+                                    ));
+                                }
+                                None => finished = true,
+                            }
+                        }
+                        None => {
+                            acc.scenario_finish = Some(map_finish_reason(reason));
+                            finished = true;
+                        }
+                    }
                 }
             }
+        }
+
+        // A latched fatal has already decided the stage, and every stressor ends
+        // its load before latching one. A repeating scenario runs to its wall cap
+        // either way, so nothing is saved by ending a stage there.
+        if let Some(index) =
+            stage_to_end_early(fatal_stage, ending_stage, repeat_until_total, Instant::now())
+        {
+            ending_stage = Some(index);
+            fatal_stage = None;
+            runner.stop();
+            let remaining = stage_specs.len().saturating_sub(index + 1);
+            let label = current_stage_label.clone().unwrap_or_default();
+            send(
+                update_tx,
+                RunUpdate::Warning {
+                    message: format!(
+                        "stage '{label}' reported a fatal but its stressor is still running; \
+                         ending the stage now and continuing with the remaining \
+                         {remaining} stage(s)"
+                    ),
+                },
+            );
         }
 
         if last_tick.elapsed() >= TICK_INTERVAL && current_stage_index.is_some() {
@@ -1633,21 +1762,6 @@ fn is_gpu_error_message(msg: &str) -> bool {
         || m.contains("gpu leg stopped")
         || m.contains("readback map failed")
         || m.contains("without 'gpu' feature")
-}
-
-/// Device-loss vocabulary: hardware evidence that outranks an inconclusive marker.
-fn is_device_loss_message(msg: &str) -> bool {
-    let m = msg.to_ascii_lowercase();
-    m.contains("device is lost")
-        || m.contains("device lost")
-        || m.contains("device removed")
-        || m.contains("dxgi_error")
-}
-
-/// The `inconclusive -` marker stress-kit stamps on messages that report a load
-/// it could not apply, so the stage proves nothing about any component.
-fn is_inconclusive_message(msg: &str) -> bool {
-    msg.to_ascii_lowercase().contains("inconclusive -")
 }
 
 /// Stand-in for an error a stressor reported without text; carries the marker.
@@ -1981,8 +2095,8 @@ impl SummaryAccumulator {
 }
 
 /// Dominant `FailureMode` across failed stage verdicts, by severity:
-/// WHEA > TDR > temp > data mismatch > fatal abort > clock collapse >
-/// unstable throughput. A fatal abort outranks the throughput-derived rules
+/// WHEA > TDR > temp > data mismatch > unproven load > clock collapse >
+/// unstable throughput. An unproven load outranks the throughput-derived rules
 /// because those read a load that stopped running, but yields to the
 /// independent hardware evidence above it. Also folds throttle observations
 /// into the run summary flags.
@@ -1993,7 +2107,7 @@ fn rules_failure_mode(
     let mut tdr: Option<FailureMode> = None;
     let mut temp: Option<FailureMode> = None;
     let mut mismatch: Option<FailureMode> = None;
-    let mut fatal_abort: Option<FailureMode> = None;
+    let mut unproven: Option<FailureMode> = None;
     let mut collapse: Option<FailureMode> = None;
     let mut unstable: Option<FailureMode> = None;
     let mut droop: Option<FailureMode> = None;
@@ -2044,7 +2158,7 @@ fn rules_failure_mode(
                 // The stressor never ran its load: a tooling/environment error,
                 // not evidence against the hardware.
                 RuleViolation::FatalAbort { reason } => {
-                    fatal_abort.get_or_insert(FailureMode::AppError {
+                    unproven.get_or_insert(FailureMode::AppError {
                         exit_code: None,
                         message: reason.clone().unwrap_or_else(|| {
                             format!(
@@ -2054,13 +2168,29 @@ fn rules_failure_mode(
                         }),
                     });
                 }
+                RuleViolation::NoThroughput { ticks } => {
+                    unproven.get_or_insert(FailureMode::AppError {
+                        exit_code: None,
+                        message: format!(
+                            "stage '{}': inconclusive - no throughput measured over \
+                             {ticks} sampled tick(s); the stage's load never ran",
+                            verdict.label
+                        ),
+                    });
+                }
+                RuleViolation::Inconclusive { reason } => {
+                    unproven.get_or_insert(FailureMode::AppError {
+                        exit_code: None,
+                        message: reason.clone(),
+                    });
+                }
             }
         }
     }
 
     tdr.or(temp)
         .or(mismatch)
-        .or(fatal_abort)
+        .or(unproven)
         .or(collapse)
         .or(unstable)
         .or(droop)
@@ -2077,6 +2207,28 @@ mod tests {
             last_error: last_error.map(|s| s.to_string()),
             fatal: false,
             errors,
+        }
+    }
+
+    /// Tick carrying throughput, so a stage reads as having done work.
+    fn work_tick(throughput: f64, last_error: Option<&str>) -> Metrics {
+        Metrics {
+            elapsed_secs: 1.0,
+            throughput,
+            last_error: last_error.map(|s| s.to_string()),
+            fatal: false,
+            errors: 0,
+        }
+    }
+
+    fn stage_spec(label: &str, stressor: Stressor) -> RunStage {
+        RunStage {
+            label: label.to_string(),
+            stressor,
+            threads: 0,
+            duration_secs: 60,
+            memory_cap_mb: 256,
+            disk_file_mb: 16,
         }
     }
 
@@ -2497,6 +2649,186 @@ mod tests {
         assert_eq!(verdict.result, RunResult::Fail);
         assert_eq!(verdict.failure_mode.kind(), "app_error");
         assert_eq!(verdict.summary.disk_io_errors, 0);
+    }
+
+    /// The reported symptom: a stage whose only signal is a non-fatal
+    /// inconclusive message must not persist `result: "pass"`, and the update the
+    /// UI renders must not say pass either.
+    #[test]
+    fn inconclusive_stage_reports_fail_in_the_row_and_the_update() {
+        let msg = "psu: inconclusive - GPU unavailable, GPU leg never ran";
+        let rules = VerdictRules::certification();
+        let snapshot = TelemetrySnapshot::default();
+        let mut stats = StageStats::begin(0, "psu", Stressor::Psu, &snapshot);
+        for _ in 0..40 {
+            stats.absorb_tick(&work_tick(120.0, Some(msg)), &snapshot, &rules);
+        }
+        stats.finish(&snapshot);
+        assert!(!stats.fatal_abort, "no fatal was ever reported");
+
+        let verdict = stage_verdict_for(&stats, &Some(rules.clone()), &rules)
+            .expect("rules attached, verdict expected");
+        assert!(!verdict.pass);
+
+        let summary = stage_summary_from_stats(
+            &stats,
+            Stressor::Psu,
+            8,
+            60,
+            40.0,
+            Some(120.0),
+            Some(120.0),
+            "GFLOPS",
+            true,
+            Some(msg.to_string()),
+            Some(&verdict),
+        );
+        assert_eq!(summary.result.as_deref(), Some("fail"));
+
+        let (tx, rx) = bounded::<RunUpdate>(4);
+        emit_stage_verdict(
+            &tx,
+            Some(&StageOutcome {
+                summary,
+                verdict: Some(verdict),
+            }),
+        );
+        match rx.try_recv().expect("no stage verdict update") {
+            RunUpdate::StageVerdict { pass, violations, .. } => {
+                assert!(!pass, "stage update still reported pass");
+                assert!(
+                    violations.iter().any(|v| v.contains("inconclusive -")),
+                    "violations: {violations:?}"
+                );
+            }
+            other => panic!("unexpected update: {other:?}"),
+        }
+    }
+
+    /// A stage that measured nothing is judged even with no rules attached, its
+    /// row reads fail, and it files as a tooling error.
+    #[test]
+    fn zero_work_stage_is_judged_without_rules() {
+        let effective = VerdictRules::default();
+        let snapshot = TelemetrySnapshot::default();
+        let mut stats = StageStats::begin(0, "gpu_compute", Stressor::Gpu, &snapshot);
+        for _ in 0..30 {
+            stats.absorb_tick(&tick(None, 0), &snapshot, &effective);
+        }
+        assert!(stats.produced_no_work());
+
+        let verdict = stage_verdict_for(&stats, &None, &effective)
+            .expect("a stage that measured nothing must be judged");
+        assert!(!verdict.pass);
+
+        let summary = stage_summary_from_stats(
+            &stats,
+            Stressor::Gpu,
+            0,
+            60,
+            30.0,
+            None,
+            None,
+            "GFLOPS",
+            false,
+            None,
+            Some(&verdict),
+        );
+        assert_eq!(summary.result.as_deref(), Some("fail"));
+
+        let mut run_summary = RunSummary::default();
+        let mode =
+            rules_failure_mode(&[outcome_with(verdict)], &mut run_summary).expect("failure mode");
+        assert_eq!(mode.kind(), "app_error", "no measured work is not a hardware fault");
+        assert!(!run_summary.thermal_throttle_detected);
+        assert!(!run_summary.vrm_throttle_detected);
+    }
+
+    /// A stage-level inconclusive keeps the stressor's own wording and files as
+    /// a tooling error, not hardware evidence.
+    #[test]
+    fn stage_inconclusive_maps_to_app_error() {
+        let msg = "gpu: inconclusive - queue stalled, 3 consecutive device-wait timeouts";
+        let mut summary = RunSummary::default();
+        let outcomes = vec![outcome_with(StageVerdict {
+            index: 0,
+            label: "gpu_compute".to_string(),
+            pass: false,
+            violations: vec![RuleViolation::Inconclusive {
+                reason: msg.to_string(),
+            }],
+            warnings: Vec::new(),
+        })];
+        let mode = rules_failure_mode(&outcomes, &mut summary).expect("failure mode expected");
+        assert_eq!(
+            mode,
+            FailureMode::AppError {
+                exit_code: None,
+                message: msg.to_string(),
+            }
+        );
+        assert!(!summary.thermal_throttle_detected);
+        assert!(!summary.vrm_throttle_detected);
+    }
+
+    /// A stressor that idles after latching a fatal gets its grace window to end
+    /// the stage itself, then the stage is ended from here.
+    #[test]
+    fn stuck_fatal_ends_the_stage_after_the_grace_window() {
+        let latched = Instant::now();
+        assert_eq!(
+            stage_to_end_early(Some((6, latched)), None, false, latched),
+            None,
+            "a fresh fatal must be left to end its own stage"
+        );
+        assert_eq!(
+            stage_to_end_early(Some((6, latched)), None, false, latched + FATAL_STAGE_GRACE),
+            Some(6)
+        );
+        // No fatal, a stage already ending, and repeating scenarios: no action.
+        assert_eq!(
+            stage_to_end_early(None, None, false, latched + FATAL_STAGE_GRACE),
+            None
+        );
+        assert_eq!(
+            stage_to_end_early(Some((6, latched)), Some(6), false, latched + FATAL_STAGE_GRACE),
+            None
+        );
+        assert_eq!(
+            stage_to_end_early(Some((6, latched)), None, true, latched + FATAL_STAGE_GRACE),
+            None
+        );
+    }
+
+    /// Ending a stage early must not abort the stages after it.
+    #[test]
+    fn ending_a_stage_early_resumes_the_remaining_stages() {
+        assert_eq!(next_segment_start(6, 12, false), Some(7));
+        assert_eq!(next_segment_start(10, 12, false), Some(11));
+        // The last stage, and an operator cancel, end the run instead.
+        assert_eq!(next_segment_start(11, 12, false), None);
+        assert_eq!(next_segment_start(6, 12, true), None);
+    }
+
+    /// The resumed segment holds exactly the stages after the one that ended and
+    /// inherits what is left of the run's wall cap.
+    #[test]
+    fn resumed_segment_holds_the_remaining_stages_and_budget() {
+        let specs = vec![
+            stage_spec("cpu", Stressor::Cpu),
+            stage_spec("gpu", Stressor::Gpu),
+            stage_spec("disk", Stressor::Disk),
+        ];
+        let next = next_segment_start(1, specs.len(), false).expect("disk stage remains");
+        let def = scenario_def(&specs[next..], Some(30), false);
+        assert_eq!(def.stages.len(), 1);
+        assert_eq!(def.stages[0].label, "disk");
+        assert_eq!(def.stages[0].config.stressor, Stressor::Disk);
+        assert!(!def.repeat_until_total);
+
+        assert_eq!(remaining_wall_secs(None, Duration::from_secs(90)), None);
+        assert_eq!(remaining_wall_secs(Some(600), Duration::from_secs(90)), Some(510));
+        assert_eq!(remaining_wall_secs(Some(60), Duration::from_secs(90)), Some(0));
     }
 
     #[test]

@@ -1,6 +1,9 @@
-use eframe::egui::{Align, Layout, Ui};
+use eframe::egui::{Align, Layout, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
 use facet::Facet;
+
+use super::ABSENT;
+use crate::ui_tools::{icons, theme};
 
 #[derive(Clone, Debug, Default)]
 pub struct MachineDriveRow {
@@ -29,6 +32,22 @@ pub struct MachineInfo {
 }
 
 impl MachineInfo {
+    /// Host, CPU, RAM, GPU and volume count on one wrapped line.
+    pub fn show_header_line(&self, ui: &mut Ui) {
+        ui.horizontal_wrapped(|ui| {
+            fact(ui, icons::DESKTOP, &self.hostname, "host");
+            fact(ui, icons::p::CPU, &self.cpu, "CPU");
+            fact(ui, icons::p::MEMORY, &self.ram_gb, "RAM");
+            fact(ui, icons::p::GRAPHICS_CARD, &self.gpu, "GPU");
+            let volumes = match self.drives.len() {
+                0 => String::new(),
+                1 => "1 volume".to_string(),
+                n => format!("{n} volumes"),
+            };
+            fact(ui, icons::HARD_DRIVE, &volumes, "volumes");
+        });
+    }
+
     pub fn show(&self, ui: &mut Ui) {
         TableBuilder::new(ui)
             .striped(true)
@@ -61,8 +80,13 @@ impl MachineInfo {
             });
 
         ui.add_space(16.0);
+        self.show_volumes(ui);
+    }
 
+    /// Per-volume letter, filesystem and free/total space.
+    pub fn show_volumes(&self, ui: &mut Ui) {
         if self.drives.is_empty() {
+            ui.colored_label(theme::weak_text(ui), "No volumes reported.");
             return;
         }
 
@@ -107,6 +131,21 @@ impl MachineInfo {
                 }
             });
     }
+}
+
+/// Icon plus one machine fact; an empty or `?` value renders as the absent marker.
+fn fact(ui: &mut Ui, glyph: &str, value: &str, hover: &str) {
+    let known = !value.trim().is_empty() && value.trim() != "?";
+    ui.label(icons::icon_colored(glyph, theme::accent(ui)).small())
+        .on_hover_text(hover);
+    let text = if known { value } else { ABSENT };
+    let color = if known {
+        theme::strong_text(ui)
+    } else {
+        theme::weak_text(ui)
+    };
+    ui.label(RichText::new(text).small().color(color));
+    ui.add_space(8.0);
 }
 
 #[cfg(test)]

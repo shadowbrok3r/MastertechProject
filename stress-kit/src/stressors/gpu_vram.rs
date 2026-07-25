@@ -16,7 +16,8 @@ use wgpu::util::DeviceExt;
 use crate::Metrics;
 
 use super::gpu_common::{
-    emit_fatal_tick, emit_tick, run_unsupported, GpuContext, MAX_DISPATCH_GROUPS, TICK, WG_SIZE,
+    emit_fatal_tick, emit_tick, run_unsupported, GpuContext, MAP_WAIT_TIMEOUT,
+    MAX_DISPATCH_GROUPS, TICK, WG_SIZE,
 };
 
 const MAX_CONSECUTIVE_READBACK_ERRORS: u32 = 3;
@@ -283,7 +284,9 @@ pub(crate) fn run(
             let _ = tx_map.send(res);
         });
         let _ = ctx.device.poll(wgpu::PollType::Wait);
-        let err_count = match rx_map.recv() {
+        // Bounded: the sender lives in the closure wgpu holds, so a submission
+        // that neither completes nor is declared lost would park this thread.
+        let err_count = match rx_map.recv_timeout(MAP_WAIT_TIMEOUT) {
             Ok(Ok(())) => {
                 let view = slice.get_mapped_range();
                 let count = u32::from_le_bytes([view[0], view[1], view[2], view[3]]) as u64;

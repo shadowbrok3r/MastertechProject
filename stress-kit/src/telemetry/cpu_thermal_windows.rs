@@ -22,7 +22,7 @@ use winapi::um::{
     errhandlingapi, fileapi, handleapi, ioapiset, processthreadsapi, synchapi, winbase, winnt,
 };
 
-use super::ThermalReading;
+use super::{CpuDieReader, CpuDieThermal};
 
 /// Device name baked into this WinRing0 build; the user-mode path and the
 /// service name both use it.
@@ -58,9 +58,18 @@ const AMD_SMU_DATA_REG: u32 = 0x64;
 const AMD_SMN_THM_CUR_TEMP: u32 = 0x00059800;
 
 const MIN_POLL_INTERVAL: Duration = Duration::from_millis(500);
+/// Age of the last successful read at which cached temps are dropped.
+const STALE_AFTER: Duration = Duration::from_secs(3);
 const MAX_CORES: usize = 64;
-const CPU_MIN_PLAUSIBLE_C: f32 = 0.0;
+/// Floor for a die reading; the degenerate Intel readout (== TjMax) lands on
+/// exactly 0 °C, and no powered die sits below a serviceable room's ambient.
+const CPU_MIN_PLAUSIBLE_C: f32 = 5.0;
 const CPU_MAX_PLAUSIBLE_C: f32 = 125.0;
+
+const _: () = assert!(
+    STALE_AFTER.as_millis() >= MIN_POLL_INTERVAL.as_millis(),
+    "cache would expire before the next read could refresh it"
+);
 
 /// Bounded wait for the shared PCI mutex; proceed unlocked past this so a stuck
 /// peer can't stall the sampler thread.
@@ -79,8 +88,10 @@ pub struct CpuThermalMonitor {
     device: winnt::HANDLE,
     vendor: Vendor,
     tj_max: u32,
-    cached: Vec<ThermalReading>,
+    cached: Option<CpuDieThermal>,
     last_polled: Instant,
+    /// Timestamp of the last read that produced a die value.
+    last_good: Instant,
     /// `Global\Access_PCI`; null when unavailable. Serializes SMN index/data
     /// access against other sensor tools (LHM/HWiNFO/AIDA64/CPU-Z).
     pci_mutex: winnt::HANDLE,
@@ -113,8 +124,9 @@ impl CpuThermalMonitor {
             device,
             vendor,
             tj_max: 100,
-            cached: Vec::new(),
+            cached: None,
             last_polled: Instant::now() - MIN_POLL_INTERVAL,
+            last_good: Instant::now(),
             pci_mutex: open_pci_mutex(),
             device_lost: false,
         };
@@ -122,38 +134,70 @@ impl CpuThermalMonitor {
             me.tj_max = me.read_tjmax();
         }
         me.cached = me.read_all();
-        log::info!(
-            "stress-kit/cpu-thermal: WinRing0 loaded ({} reading(s))",
-            me.cached.len()
-        );
+        me.last_good = Instant::now();
+        match me.cached.as_ref() {
+            Some(die) => log::info!(
+                "stress-kit/cpu-thermal: WinRing0 loaded; {:?} die sensor, package {:?}, {} \
+                 per-core value(s)",
+                die.reader,
+                die.package_c,
+                die.core_temp_count()
+            ),
+            None => log::warn!(
+                "stress-kit/cpu-thermal: WinRing0 loaded but no plausible CPU die reading; temps \
+                 stay absent (IO ports remain available for board rails)"
+            ),
+        }
         Some(me)
     }
 
-    /// Latest readings; throttled to [`MIN_POLL_INTERVAL`]. An empty read keeps
-    /// the prior cache rather than blanking the chart, unless the device handle
-    /// itself has stopped answering — then the cache is dropped and this returns
-    /// empty for the rest of the run.
-    pub fn poll(&mut self) -> Vec<ThermalReading> {
+    /// Latest die readings; throttled to [`MIN_POLL_INTERVAL`]. A failed read keeps
+    /// the prior cache only until it is [`STALE_AFTER`] old; once the device handle
+    /// is proven gone, the cache is dropped and this returns `None` for the rest of
+    /// the run.
+    pub fn poll(&mut self) -> Option<CpuDieThermal> {
         if self.device_lost {
-            return Vec::new();
+            return None;
         }
+        self.drop_stale_cache();
         if self.last_polled.elapsed() < MIN_POLL_INTERVAL {
             return self.cached.clone();
         }
         self.last_polled = Instant::now();
-        let readings = self.read_all();
-        if !readings.is_empty() {
-            self.cached = readings;
-        } else if let Some(err) = self.device_probe_error() {
-            self.device_lost = true;
-            self.cached.clear();
-            log::warn!(
-                "stress-kit/cpu-thermal: WinRing0 device stopped answering (err {err}); another \
-                 process loading this driver stops and deletes the service, which invalidates \
-                 this handle. CPU temps end here instead of repeating the last reading"
-            );
+        match self.read_all() {
+            Some(die) => {
+                self.last_good = Instant::now();
+                self.cached = Some(die);
+            }
+            None => {
+                if let Some(err) = self.device_probe_error() {
+                    self.device_lost = true;
+                    self.cached = None;
+                    log::warn!(
+                        "stress-kit/cpu-thermal: WinRing0 device stopped answering (err {err}); \
+                         another process loading this driver stops and deletes the service, which \
+                         invalidates this handle. CPU temps end here instead of repeating the last \
+                         reading"
+                    );
+                } else {
+                    self.drop_stale_cache();
+                }
+            }
         }
         self.cached.clone()
+    }
+
+    /// Clears the cache when the last successful read is [`STALE_AFTER`] old.
+    fn drop_stale_cache(&mut self) {
+        let age = self.last_good.elapsed();
+        if self.cached.is_none() || age < STALE_AFTER {
+            return;
+        }
+        log::warn!(
+            "stress-kit/cpu-thermal: no CPU die reading for {age:.1?} while the device still \
+             answers; dropping cached temps instead of republishing them"
+        );
+        self.cached = None;
     }
 
     /// `None` while the driver answers a TSC read on our handle; `Some(win32
@@ -165,51 +209,49 @@ impl CpuThermalMonitor {
         Some(unsafe { errhandlingapi::GetLastError() })
     }
 
-    fn read_all(&self) -> Vec<ThermalReading> {
+    fn read_all(&self) -> Option<CpuDieThermal> {
         match self.vendor {
             Vendor::Intel => self.read_intel(),
             Vendor::Amd => self.read_amd(),
-            Vendor::Other => Vec::new(),
+            Vendor::Other => None,
         }
     }
 
-    fn read_intel(&self) -> Vec<ThermalReading> {
-        let mut out = Vec::new();
-        if let Some(t) = dts_temp(self.read_msr(IA32_PACKAGE_THERM_STATUS), self.tj_max)
-            .and_then(plausible_cpu_temp)
-        {
-            out.push(ThermalReading { label: "CPU Package".into(), temp_c: t });
-        }
-        let cores = std::thread::available_parallelism()
+    /// Package DTS plus one DTS read per logical core; a core whose sensor does not
+    /// answer stays `None` in its own slot.
+    fn read_intel(&self) -> Option<CpuDieThermal> {
+        let package_c = dts_temp(self.read_msr(IA32_PACKAGE_THERM_STATUS), self.tj_max)
+            .and_then(plausible_cpu_temp);
+        let count = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1)
             .min(MAX_CORES);
         let prev = set_affinity(0);
-        let mut hottest = None;
-        for core in 0..cores {
-            set_affinity(core);
-            if let Some(t) = dts_temp(self.read_msr(IA32_THERM_STATUS), self.tj_max)
-                .and_then(plausible_cpu_temp)
-            {
-                out.push(ThermalReading { label: format!("CPU Core {core}"), temp_c: t });
-                hottest = Some(hottest.map_or(t, |h: f32| h.max(t)));
-            }
-        }
+        let cores: Vec<Option<f32>> = (0..count)
+            .map(|core| {
+                set_affinity(core);
+                dts_temp(self.read_msr(IA32_THERM_STATUS), self.tj_max).and_then(plausible_cpu_temp)
+            })
+            .collect();
         restore_affinity(prev);
-        // Fall back to hottest core when the package sensor is absent.
-        if !out.iter().any(|r| r.label == "CPU Package") {
-            if let Some(h) = hottest {
-                out.push(ThermalReading { label: "CPU Package".into(), temp_c: h });
-            }
+
+        let any_core = cores.iter().any(Option::is_some);
+        if package_c.is_none() && !any_core {
+            return None;
         }
-        out
+        Some(CpuDieThermal {
+            package_c,
+            cores: if any_core { cores } else { Vec::new() },
+            reader: CpuDieReader::IntelDts,
+        })
     }
 
-    fn read_amd(&self) -> Vec<ThermalReading> {
-        match self.read_amd_tctl() {
-            Some(t) => vec![ThermalReading { label: "CPU (Tctl)".into(), temp_c: t }],
-            None => Vec::new(),
-        }
+    fn read_amd(&self) -> Option<CpuDieThermal> {
+        Some(CpuDieThermal {
+            package_c: Some(self.read_amd_tctl()?),
+            cores: Vec::new(),
+            reader: CpuDieReader::AmdTctl,
+        })
     }
 
     fn read_tjmax(&self) -> u32 {
@@ -422,7 +464,7 @@ fn dts_temp(msr_value: Option<u64>, tj_max: u32) -> Option<f32> {
 }
 
 /// Drop physically implausible readings (garbage MSR/SMU values — e.g. a VM with
-/// no real thermal sensor behind the register).
+/// no real thermal sensor behind the register, or a readout equal to TjMax).
 fn plausible_cpu_temp(t: f32) -> Option<f32> {
     (CPU_MIN_PLAUSIBLE_C..=CPU_MAX_PLAUSIBLE_C)
         .contains(&t)
@@ -632,5 +674,56 @@ fn classify(action: &str, code: u32) -> String {
              loaded. Close other qc-app instances (a reboot clears it)."
         ),
         other => format!("{action} failed (err {other})"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Thermal-status MSR value with the valid bit set and this readout.
+    fn therm_status(readout: u32) -> Option<u64> {
+        Some(((1u32 << 31) | (readout << 16)) as u64)
+    }
+
+    #[test]
+    fn a_readout_equal_to_tjmax_publishes_nothing() {
+        assert_eq!(dts_temp(therm_status(100), 100), Some(0.0));
+        assert_eq!(
+            dts_temp(therm_status(100), 100).and_then(plausible_cpu_temp),
+            None
+        );
+        assert_eq!(
+            dts_temp(therm_status(127), 100).and_then(plausible_cpu_temp),
+            None
+        );
+    }
+
+    #[test]
+    fn a_cleared_valid_bit_publishes_nothing() {
+        assert_eq!(dts_temp(Some((30u32 << 16) as u64), 100), None);
+        assert_eq!(dts_temp(None, 100), None);
+    }
+
+    #[test]
+    fn a_real_readout_survives_the_floor() {
+        assert_eq!(
+            dts_temp(therm_status(30), 100).and_then(plausible_cpu_temp),
+            Some(70.0)
+        );
+        assert_eq!(
+            dts_temp(therm_status(0), 100).and_then(plausible_cpu_temp),
+            Some(100.0)
+        );
+    }
+
+    #[test]
+    fn implausible_values_are_rejected_at_both_ends() {
+        assert_eq!(plausible_cpu_temp(-49.0), None);
+        assert_eq!(plausible_cpu_temp(0.0), None);
+        assert_eq!(plausible_cpu_temp(4.9), None);
+        assert_eq!(plausible_cpu_temp(5.0), Some(5.0));
+        assert_eq!(plausible_cpu_temp(125.0), Some(125.0));
+        assert_eq!(plausible_cpu_temp(125.1), None);
     }
 }

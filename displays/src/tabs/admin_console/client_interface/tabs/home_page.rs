@@ -29,7 +29,7 @@ use crate::{PlatformSpawner, Spawner};
 use database::schema::{HardwareComponent, HardwareKind, RecordId, RecordIdExt, SystemInformation};
 use database::db;
 use eframe::egui::{
-    Align, Button, Id, Layout, ProgressBar, RichText, ScrollArea, Ui, Vec2, Window,
+    Align, Button, Id, Label, Layout, ProgressBar, RichText, ScrollArea, Ui, Vec2, Window,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -54,6 +54,14 @@ const HISTORY_PER_COMPONENT: usize = 5;
 /// stops waiting. Matches the transport's 45 s liveness window, after
 /// which no reply is coming; the revert button must be usable again.
 const DRIVER_PROTECTIONS_TIMEOUT: Duration = Duration::from_secs(45);
+/// How long a successful driver-protections outcome stays on the toolbar.
+const DRIVER_PROTECTIONS_STATUS_OK_TTL: Duration = Duration::from_secs(20);
+/// How long a failed driver-protections outcome stays on the toolbar.
+const DRIVER_PROTECTIONS_STATUS_ERR_TTL: Duration = Duration::from_secs(90);
+/// Width cap for the toolbar's driver-protections status label.
+const DRIVER_PROTECTIONS_STATUS_MAX_WIDTH: f32 = 300.0;
+/// Share of the remaining toolbar width the status label may take.
+const DRIVER_PROTECTIONS_STATUS_ROW_SHARE: f32 = 0.35;
 /// How many driver-protections audit records the `computer` row keeps.
 const DRIVER_PROTECTIONS_HISTORY_KEEP: i64 = 50;
 
@@ -207,6 +215,28 @@ struct DriverProtectionsStatus {
     terse: String,
     detail: String,
     ok: bool,
+    /// When the outcome landed; the toolbar drops it after its TTL.
+    shown_at: Instant,
+}
+
+impl DriverProtectionsStatus {
+    fn new(ok: bool, terse: String, detail: String) -> Self {
+        Self {
+            terse,
+            detail,
+            ok,
+            shown_at: Instant::now(),
+        }
+    }
+
+    fn expired(&self) -> bool {
+        let ttl = if self.ok {
+            DRIVER_PROTECTIONS_STATUS_OK_TTL
+        } else {
+            DRIVER_PROTECTIONS_STATUS_ERR_TTL
+        };
+        self.shown_at.elapsed() >= ttl
+    }
 }
 
 /// How a `DriverProtectionsResult` lines up with the outstanding request.
@@ -284,11 +314,8 @@ impl HomePage {
         self.driver_protections_sent_at = None;
         self.driver_protections_pending = None;
         self.driver_protections_outstanding = None;
-        self.driver_protections_status = Some(DriverProtectionsStatus {
-            terse,
-            detail,
-            ok: success,
-        });
+        self.driver_protections_status =
+            Some(DriverProtectionsStatus::new(success, terse, detail));
     }
 
     /// Marks a `SetDriverProtections` as in flight under `request_id` and starts
@@ -348,15 +375,15 @@ impl HomePage {
              request — {detail}",
             attribution.label(),
         );
-        self.driver_protections_status = Some(DriverProtectionsStatus {
-            terse: format!("{} reply — not this request: {terse}", attribution.label()),
-            detail: format!(
+        self.driver_protections_status = Some(DriverProtectionsStatus::new(
+            false,
+            format!("{} reply — not this request: {terse}", attribution.label()),
+            format!(
                 "{} client reply — NOT attributed to a request from this page, so it does not \
                  describe the change you are waiting on: {detail}",
                 attribution.label(),
             ),
-            ok: false,
-        });
+        ));
     }
 
     /// Clears a wait that outlived `DRIVER_PROTECTIONS_TIMEOUT` so both the
@@ -376,14 +403,25 @@ impl HomePage {
              — clearing busy",
             expired.as_ref().map(|r| r.id.as_str()).unwrap_or("<none>"),
         );
-        self.driver_protections_status = Some(DriverProtectionsStatus {
-            terse: format!("No reply in {secs}s — state unknown"),
-            detail: format!(
+        self.driver_protections_status = Some(DriverProtectionsStatus::new(
+            false,
+            format!("No reply in {secs}s — state unknown"),
+            format!(
                 "No response from client within {secs}s — the machine may be in EITHER state. \
                  Re-check it and re-send before it leaves the bench."
             ),
-            ok: false,
-        });
+        ));
+    }
+
+    /// Drops a shown outcome once its TTL elapses.
+    fn expire_driver_protections_status(&mut self) {
+        if self
+            .driver_protections_status
+            .as_ref()
+            .is_some_and(|s| s.expired())
+        {
+            self.driver_protections_status = None;
+        }
     }
 }
 
@@ -408,15 +446,33 @@ pub fn terse_driver_protections_status(
     if !success {
         return format!("Failed: {}", short_reason(message));
     }
-    let state = match (hvci_enabled, blocklist_enabled) {
-        (Some(true), Some(true)) => "on",
-        (Some(false), Some(false)) => "off",
-        _ => return "Protections state unreadable".to_string(),
-    };
-    if reboot_required {
-        format!("Protections {state} — reboot required")
+    let on_off = |v: bool| if v { "on" } else { "off" };
+    let reboot = if reboot_required {
+        " — reboot required"
     } else {
-        format!("Protections already {state}")
+        ""
+    };
+    match (hvci_enabled, blocklist_enabled) {
+        (Some(true), Some(true)) | (Some(false), Some(false)) => {
+            let state = on_off(hvci_enabled == Some(true));
+            if reboot_required {
+                format!("Protections {state} — reboot required")
+            } else {
+                format!("Protections already {state}")
+            }
+        }
+        (Some(h), Some(b)) => format!(
+            "MIXED: HVCI {}, blocklist {}{reboot}",
+            on_off(h),
+            on_off(b)
+        ),
+        (Some(h), None) => {
+            format!("PARTIAL: HVCI {}, blocklist unreadable{reboot}", on_off(h))
+        }
+        (None, Some(b)) => {
+            format!("PARTIAL: HVCI unreadable, blocklist {}{reboot}", on_off(b))
+        }
+        (None, None) => "Protections state unreadable".to_string(),
     }
 }
 
@@ -1139,6 +1195,7 @@ impl HomePage {
     fn render_driver_protections_menu(&mut self, ui: &mut Ui, conn: &str) -> Option<bool> {
         // Polled panel, so an elapsed-check on repaint bounds the wait.
         self.expire_driver_protections_wait();
+        self.expire_driver_protections_status();
         let is_root = crate::tabs::admin_console::current_user_is_root();
         let busy = self.driver_protections_busy;
         if busy {
@@ -1214,8 +1271,21 @@ impl HomePage {
             } else {
                 theme::error(ui)
             };
-            ui.label(RichText::new(status.terse.as_str()).color(color).small())
+            // Width capped to a fraction of the row.
+            let cell = Vec2::new(
+                (ui.available_width() * DRIVER_PROTECTIONS_STATUS_ROW_SHARE)
+                    .clamp(0.0, DRIVER_PROTECTIONS_STATUS_MAX_WIDTH),
+                ui.spacing().interact_size.y,
+            );
+            ui.allocate_ui_with_layout(cell, Layout::left_to_right(Align::Center), |ui| {
+                ui.add(
+                    Label::new(RichText::new(status.terse.as_str()).color(color).small())
+                        .truncate(),
+                )
                 .on_hover_text(status.detail.as_str());
+            });
+            // Repaint so the TTL drops the label without waiting for input.
+            ui.ctx().request_repaint_after(Duration::from_secs(1));
         }
 
         if !is_root {
@@ -1982,5 +2052,36 @@ fn fmt_relative(now: &chrono::DateTime<chrono::Utc>, then: &chrono::DateTime<chr
         format!("{}h ago", secs / 3600)
     } else {
         format!("{}d ago", secs / 86_400)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::terse_driver_protections_status;
+
+    fn terse(hvci: Option<bool>, blocklist: Option<bool>) -> String {
+        terse_driver_protections_status(true, hvci, blocklist, None, None, true, "")
+    }
+
+    /// A half-applied change must not read as an unreadable box.
+    #[test]
+    fn mixed_protection_states_are_named() {
+        assert_eq!(
+            terse(Some(true), Some(true)),
+            "Protections on — reboot required"
+        );
+        assert_eq!(
+            terse(Some(false), Some(true)),
+            "MIXED: HVCI off, blocklist on — reboot required"
+        );
+        assert_eq!(
+            terse(Some(false), None),
+            "PARTIAL: HVCI off, blocklist unreadable — reboot required"
+        );
+        assert_eq!(
+            terse(None, Some(true)),
+            "PARTIAL: HVCI unreadable, blocklist on — reboot required"
+        );
+        assert_eq!(terse(None, None), "Protections state unreadable");
     }
 }

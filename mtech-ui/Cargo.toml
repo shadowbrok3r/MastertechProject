@@ -10,7 +10,8 @@ puffin = []
 [dependencies]
 egui_dock.workspace = true
 regex.workspace = true
-chrono.workspace = true
+# egui_logger uses chrono::Local, which the workspace default-features=false pin omits.
+chrono = { workspace = true, features = ["clock"] }
 log.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true

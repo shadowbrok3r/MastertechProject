@@ -108,20 +108,20 @@ struct Rail {
     nominal: Band,
 }
 
-const RAIL_COUNT: usize = 5;
+const RAIL_COUNT: usize = super::RAIL_LABELS.len();
 
 /// Channel-to-rail map and nominal dividers for the NCT67xx 0x48x layout;
 /// index assignment and divider are both board-specific in reality.
 const NUVOTON_RAILS: [Rail; RAIL_COUNT] = [
     Rail {
-        label: "Vcore",
+        label: super::RAIL_LABELS[0],
         index: 0,
         factor: 1.0,
         reportable: Band { min: 0.05, max: 2.04 },
         nominal: Band { min: 0.50, max: 1.80 },
     },
     Rail {
-        label: "+5V",
+        label: super::RAIL_LABELS[1],
         index: 1,
         factor: 5.0,
         reportable: Band { min: 2.00, max: 8.00 },
@@ -129,21 +129,21 @@ const NUVOTON_RAILS: [Rail; RAIL_COUNT] = [
     },
     // Chip supply, not the board's +3.3V PSU rail; labelled so nothing reads it as one.
     Rail {
-        label: "3VCC (chip)",
+        label: super::RAIL_LABELS[2],
         index: 3,
         factor: 2.0,
         reportable: Band { min: 1.50, max: 4.08 },
         nominal: Band { min: 3.14, max: 3.47 },
     },
     Rail {
-        label: "+12V",
+        label: super::RAIL_LABELS[3],
         index: 4,
         factor: 12.0,
         reportable: Band { min: 4.00, max: 20.00 },
         nominal: Band { min: 11.40, max: 12.60 },
     },
     Rail {
-        label: "VBAT",
+        label: super::RAIL_LABELS[4],
         index: 8,
         factor: 2.0,
         reportable: Band { min: 1.00, max: 4.08 },

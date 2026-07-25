@@ -5898,9 +5898,11 @@ impl PluginToolProvider {
         name = "telemetry_snapshot_remote",
         description = "Live hardware telemetry read from a REMOTE connected client, proxied over the admin session (admin → client's stress-kit TelemetryAgent → result back). Use THIS when diagnosing a customer machine; `telemetry_snapshot` samples the admin workstation only and tells you nothing about the remote hardware. \
 Returns: per-core usage/frequency/temperature, memory + page file, per-GPU temperature/power/power-limit/clocks/fan/throttle reasons, every labelled thermal zone in `thermals[]`, the SuperIO board voltage rails in `voltages[]` (each with `label`, `volts`, `calibrated`), and WHEA / GPU-TDR counters. \
-ABSENT IS NOT ZERO: a sensor with no reading is `null`, never 0, and `sensor_availability` says which readings are missing. Do not treat a null as a cold CPU or a dead rail. \
-WHY READINGS GO MISSING: `cpu.package_temp_c` and every entry in `voltages[]` come from the WinRing0 kernel driver, which will NOT load while Memory Integrity (HVCI) or the Vulnerable Driver Blocklist is enabled. `sensor_availability.hvci_enabled` / `.vulnerable_driver_blocklist_enabled` / `.detail` report exactly which one is blocking; SetDriverProtections can turn them off (needs a reboot) if the customer consents. \
-`cpu.package_temp_c` is the hottest CPU-ish reading and `cpu.package_temp_source` names the label it came from — ALWAYS check the source before quoting a number. `CPU Package` or `CPU (Tctl)` is the real die sensor; `CPU Core N` is one core, not the package; a `TZ..` / ACPI zone label is a board thermal zone that runs far cooler than the die and must not be reported as a CPU temperature. `thermals[]` carries every labelled zone (including `NVMe Disk N` drive temps) so you can read them individually. \
+ABSENT MEANS NOT MEASURED: a null field, a rail absent from `voltages[]`, and `whea: null` all mean the reading was never taken — never read one as 0, as a cold CPU, as a dead rail, or as 'no errors'. `sensor_availability` grades every sensor; check it before quoting any number and keep investigating whatever it does not report as read. \
+CPU TEMPERATURE HAS TWO POSSIBLE SOURCES: `sensor_availability.cpu_package_temp` (repeated as `cpu.package_temp_kind`) is `cpu_die_sensor` = a real CPU sensor answered (`CPU Package`, `CPU (Tctl)`, or `CPU Core N` — a core is one core, not the package); `acpi_zone_only` = NO CPU sensor answered and `cpu.package_temp_c` is a firmware-named CPU ACPI zone (`CPUZ_0`, `TCPU`) that runs far below the die, so it must NOT be quoted as a CPU temperature; `unavailable` = no CPU-side thermal at all — including every machine whose only zones are bare board zones (`TZ00_0`), which are never reported as a CPU temperature. `cpu.package_temp_source` names the exact sensor the value came from, and a die sensor is always preferred over a hotter zone. `thermals[]` carries every labelled zone (including bare board zones and `NVMe Disk N` drive temps) so you can read them individually. \
+VOLTAGE RAILS ARE GRADED PER RAIL: `sensor_availability.voltage_rails` is `ok` (every expected rail read), `partial` (some read, some not), or `unavailable` (no rail answered). `sensor_availability.rails` gives `Vcore`, `+5V`, `3VCC (chip)`, `+12V`, `VBAT` each as `read` / `missing` / `unavailable`, and `rails_missing[]` lists the gaps. A `missing` rail was suppressed — unmapped channel, implausible read, or a collapse awaiting confirmation — so it is neither 0 V nor healthy: '+12V missing' NEVER means the +12V rail is fine. \
+WHEA: `sensor_availability.whea` is `ok` (counters read), `unavailable` (the WHEA event source could not be opened, so no count was taken — absence of evidence, NOT a clean result; never clear a machine of hardware errors on it), or `not_sampled` (no sampler tick yet). \
+WHY READINGS GO MISSING: the CPU die sensor and every entry in `voltages[]` come from the WinRing0 kernel driver, which will NOT load while Memory Integrity (HVCI) or the Vulnerable Driver Blocklist is enabled. `sensor_availability.hvci_enabled` / `.vulnerable_driver_blocklist_enabled` / `.detail` report exactly which one is blocking; SetDriverProtections can turn them off (needs a reboot) if the customer consents. \
 VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` means no per-board ratio is known), so read them as trend and droop under load, not as absolute volts. Never fail a board on an absolute number from this tool; compare idle vs loaded instead. `3VCC (chip)` is the sensor chip's OWN 3.3V supply, NOT the board's +3.3V PSU rail — there is no +3.3V PSU reading here."
     )]
     async fn telemetry_snapshot_remote(
@@ -7391,9 +7393,12 @@ Tools:
 - telemetry_snapshot_remote — live temperatures, per-core load/clock, memory, GPU power, and the
   SuperIO board voltage rails for a REMOTE client. Args: connection_string, optional warmup_ms.
   This is the ONLY way to see a customer machine's thermals from MCP — `telemetry_snapshot`
-  reads the admin workstation. Missing sensors come back `null` (never 0) with a reason in
-  `sensor_availability`: CPU package temp and the voltage rails need the WinRing0 driver, which
-  cannot load while Memory Integrity or the Vulnerable Driver Blocklist is on. Voltages are
+  reads the admin workstation. An absent reading means NOT MEASURED, never 0 and never healthy;
+  `sensor_availability` grades each sensor: `cpu_package_temp` = cpu_die_sensor / acpi_zone_only
+  (a firmware CPU zone, not a die temp) / unavailable, `rails` = per-rail read / missing / unavailable
+  with `rails_missing[]`, `whea` = ok / unavailable (event source unreadable, NOT 'no errors') /
+  not_sampled. CPU die temp and the rails need the WinRing0 driver, which cannot load while
+  Memory Integrity or the Vulnerable Driver Blocklist is on. Voltages are
   UNCALIBRATED nominal-divider values — judge droop under load, not absolute volts.
   Pair with a stress run: read it before, during, and after to catch thermal throttling
   and rail droop that a pass/fail verdict alone hides.

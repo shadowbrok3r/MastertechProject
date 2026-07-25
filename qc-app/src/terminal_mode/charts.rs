@@ -76,13 +76,8 @@ impl TuiChartBoard {
         self.top_net_mbps.push(t, top_net as f64);
         self.process_count.push(t, snap.processes.len() as f64);
 
-        let cpu_temp = snap
-            .thermals
-            .iter()
-            .filter(|s| s.label.starts_with("CPU"))
-            .map(|s| s.temp_c)
-            .fold(f32::NEG_INFINITY, f32::max);
-        if cpu_temp.is_finite() {
+        // The snapshot's own CPU pick: die first, never a bare board zone.
+        if let Some(cpu_temp) = snap.cpu_package_temp_c() {
             self.cpu_temp_c.push(t, cpu_temp as f64);
         }
         let gpu_temp = snap

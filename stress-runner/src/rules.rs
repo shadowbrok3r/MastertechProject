@@ -1,6 +1,8 @@
 //! Per-stage verdict rules: configurable pass/fail policy evaluated from
 //! 1 Hz tick data. Absent telemetry (WHEA/TDR/temps off-Windows) never
-//! violates a rule, so dev runs pass vacuously.
+//! violates a rule, so dev runs pass vacuously. Signals that the stage's load
+//! never ran — a fatal abort, an `inconclusive -` message, no measured
+//! throughput — are rule-independent and fail under every policy.
 
 use serde::{Deserialize, Serialize};
 use stress_kit::telemetry::TelemetrySnapshot;
@@ -145,6 +147,10 @@ pub enum RuleViolation {
     /// The stressor gave up before its intended load finished, so nothing this
     /// stage measured proves the hardware is healthy.
     FatalAbort { reason: Option<String> },
+    /// No throughput sample was ever measured, over enough ticks to have shown one.
+    NoThroughput { ticks: u32 },
+    /// The stressor named a load it could not apply.
+    Inconclusive { reason: String },
 }
 
 impl RuleViolation {
@@ -182,6 +188,11 @@ impl RuleViolation {
                 ),
                 None => "inconclusive: stressor aborted before its load completed".to_string(),
             },
+            Self::NoThroughput { ticks } => format!(
+                "inconclusive - no throughput measured over {ticks} sampled tick(s); \
+                 the stage's load never ran"
+            ),
+            Self::Inconclusive { reason } => reason.clone(),
         }
     }
 }
@@ -231,9 +242,15 @@ pub struct StageStats {
     tp_sum: f64,
     tp_sum_sq: f64,
     pub tp_samples: u32,
+    /// A sample with throughput above zero was folded this stage, from a
+    /// periodic tick or an off-cadence final sample. Latched.
+    pub observed_throughput: bool,
     pub errors: u64,
     /// Newest `Metrics.last_error` folded in this stage.
     pub last_error: Option<String>,
+    /// First `inconclusive -` message folded this stage, device-loss text
+    /// excluded so it stays hardware-classified. Latched.
+    pub inconclusive_reason: Option<String>,
     /// A stressor reported `Metrics.fatal` at least once this stage. Latched:
     /// later clean ticks never clear it.
     pub fatal_abort: bool,
@@ -278,8 +295,10 @@ impl StageStats {
             tp_sum: 0.0,
             tp_sum_sq: 0.0,
             tp_samples: 0,
+            observed_throughput: false,
             errors: 0,
             last_error: None,
+            inconclusive_reason: None,
             fatal_abort: false,
             fatal_reason: None,
             whea_baseline: whea_count(snapshot),
@@ -295,13 +314,22 @@ impl StageStats {
         }
     }
 
-    /// Fold the stressor-reported counters of one sample: cumulative errors,
-    /// newest `last_error`, and the latched fatal flag.
+    /// Fold the stressor-reported side of one sample: cumulative errors, newest
+    /// `last_error`, and the latched throughput-seen, inconclusive, fatal flags.
     fn absorb_metrics(&mut self, metrics: &Metrics) {
         // `Metrics.errors` is cumulative within the stage's stressor.
         self.errors = self.errors.max(metrics.errors);
-        if metrics.last_error.is_some() {
-            self.last_error = metrics.last_error.clone();
+        if metrics.throughput > 0.0 {
+            self.observed_throughput = true;
+        }
+        if let Some(msg) = &metrics.last_error {
+            self.last_error = Some(msg.clone());
+            if self.inconclusive_reason.is_none()
+                && is_inconclusive_message(msg)
+                && !is_device_loss_message(msg)
+            {
+                self.inconclusive_reason = Some(msg.clone());
+            }
         }
         if metrics.fatal {
             self.fatal_abort = true;
@@ -472,6 +500,18 @@ impl StageStats {
         }
         Some((self.sum_cpu_temp / self.cpu_temp_samples as f64) as f32)
     }
+
+    /// `true` when the stage was sampled long enough to have shown throughput
+    /// and never did: no work unit completed, so no load ran.
+    pub fn produced_no_work(&self) -> bool {
+        self.ticks >= NO_WORK_MIN_TICKS && !self.observed_throughput
+    }
+
+    /// `true` when something about this stage says its load did not run: the
+    /// stressor aborted, named a load it could not apply, or measured nothing.
+    pub fn load_unproven(&self) -> bool {
+        self.fatal_abort || self.inconclusive_reason.is_some() || self.produced_no_work()
+    }
 }
 
 /// Consecutive-breach run tracking for one temp reading against a limit.
@@ -530,6 +570,28 @@ fn tdr_count(snapshot: &TelemetrySnapshot) -> u32 {
         .unwrap_or(0)
 }
 
+/// Sampled ticks a stage needs before zero throughput reads as "no load ran".
+/// Every stressor derives throughput from a work counter it advances inside its
+/// worker loop, so ten seconds of zero means no work unit completed; below that
+/// a stage can still be waiting on its first sample (allocation, warm-up) or be
+/// shorter than the sampling cadence.
+const NO_WORK_MIN_TICKS: u32 = 10;
+
+/// Device-loss vocabulary: hardware evidence that outranks an inconclusive marker.
+pub(crate) fn is_device_loss_message(msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    m.contains("device is lost")
+        || m.contains("device lost")
+        || m.contains("device removed")
+        || m.contains("dxgi_error")
+}
+
+/// The `inconclusive -` marker stress-kit stamps on messages that report a load
+/// it could not apply, so the stage proves nothing about any component.
+pub(crate) fn is_inconclusive_message(msg: &str) -> bool {
+    msg.to_ascii_lowercase().contains("inconclusive -")
+}
+
 /// Stressors whose tick throughput is bursty or pattern-phased by design;
 /// CV never applies.
 fn cv_exempt(stressor: Stressor) -> bool {
@@ -553,6 +615,21 @@ pub fn evaluate_stage(stats: &StageStats, rules: &VerdictRules) -> StageVerdict 
         violations.push(RuleViolation::FatalAbort {
             reason: stats.fatal_reason.clone().or_else(|| stats.last_error.clone()),
         });
+    }
+    if stats.produced_no_work() {
+        violations.push(RuleViolation::NoThroughput { ticks: stats.ticks });
+    }
+    if let Some(reason) = &stats.inconclusive_reason {
+        violations.push(RuleViolation::Inconclusive {
+            reason: reason.clone(),
+        });
+    }
+    if stats.ticks == 0 {
+        warnings.push(
+            "stage produced no monitored ticks — temperature, clock, and throughput \
+             rules not checked"
+                .to_string(),
+        );
     }
 
     if rules.whea_fails {
@@ -664,6 +741,16 @@ mod tests {
             throughput,
             errors,
             ..Default::default()
+        }
+    }
+
+    fn warn_metrics(throughput: f64, reason: &str) -> Metrics {
+        Metrics {
+            elapsed_secs: 1.0,
+            throughput,
+            last_error: Some(reason.to_string()),
+            fatal: false,
+            errors: 0,
         }
     }
 
@@ -1004,6 +1091,133 @@ mod tests {
         stats.absorb_final(&fatal_metrics("disk thread 0: write failed"));
         assert_eq!(stats.last_error.as_deref(), Some("disk thread 0: write failed"));
         assert!(stats.fatal_abort);
+    }
+
+    /// A stage that measured no throughput never ran its load, so it cannot
+    /// pass under any policy — the backstop for stressors that report no fatal.
+    #[test]
+    fn stage_with_no_throughput_sample_cannot_pass() {
+        for rules in [VerdictRules::certification(), VerdictRules::default()] {
+            let mut stats = stats_for(&rules);
+            for _ in 0..30 {
+                stats.absorb_tick(&metrics(0.0, 0), &snapshot(45.0, 4000, 3.0), &rules);
+            }
+            stats.finish(&snapshot(45.0, 4000, 3.0));
+            assert!(!stats.observed_throughput);
+            assert!(stats.produced_no_work());
+
+            let verdict = evaluate_stage(&stats, &rules);
+            assert!(!verdict.pass, "zero-work stage reported pass");
+            assert!(
+                verdict
+                    .violations
+                    .iter()
+                    .any(|v| matches!(v, RuleViolation::NoThroughput { ticks: 30 })),
+                "violations: {:?}",
+                verdict.violations
+            );
+            let lines = verdict.violation_lines();
+            assert!(
+                lines.iter().any(|l| l.contains("inconclusive -")),
+                "zero-work line must carry the inconclusive marker: {lines:?}"
+            );
+        }
+    }
+
+    /// Honest zero-throughput cases: a stage shorter than the sampling window,
+    /// and one whose stressor needed time before its first sample.
+    #[test]
+    fn short_or_slow_starting_stages_are_not_failed_for_zero_work() {
+        let rules = VerdictRules::certification();
+
+        let mut short = stats_for(&rules);
+        for _ in 0..(NO_WORK_MIN_TICKS - 1) {
+            short.absorb_tick(&metrics(0.0, 0), &snapshot(45.0, 4000, 3.0), &rules);
+        }
+        assert!(!short.produced_no_work());
+        assert!(evaluate_stage(&short, &rules).pass, "short stage failed for zero work");
+
+        // Allocation / warm-up: 20 dead ticks, then the load reports.
+        let mut warmup = stats_for(&rules);
+        for _ in 0..20 {
+            warmup.absorb_tick(&metrics(0.0, 0), &snapshot(45.0, 4000, 3.0), &rules);
+        }
+        for _ in 0..40 {
+            warmup.absorb_tick(&metrics(100.0, 0), &snapshot(70.0, 4000, 95.0), &rules);
+        }
+        let verdict = evaluate_stage(&warmup, &rules);
+        assert!(verdict.pass, "warm-up stage failed: {:?}", verdict.violations);
+    }
+
+    /// A sample that lands off the 1 Hz cadence still counts as measured work.
+    #[test]
+    fn off_cadence_throughput_sample_counts_as_work() {
+        let rules = VerdictRules::certification();
+        let mut stats = stats_for(&rules);
+        for _ in 0..30 {
+            stats.absorb_tick(&metrics(0.0, 0), &snapshot(45.0, 4000, 3.0), &rules);
+        }
+        stats.absorb_final(&metrics(250.0, 0));
+        assert!(stats.observed_throughput);
+        assert!(!stats.produced_no_work());
+        assert!(evaluate_stage(&stats, &rules).pass);
+    }
+
+    /// A non-fatal `inconclusive -` message means the load never ran: the stage
+    /// must stop reporting pass, and must not read as bad hardware.
+    #[test]
+    fn non_fatal_inconclusive_message_cannot_pass() {
+        let msg = "psu_transient: inconclusive - this GPU is too slow to pulse at this rate";
+        for rules in [VerdictRules::certification(), VerdictRules::default()] {
+            let mut stats = StageStats::begin(
+                0,
+                "psu_transient",
+                Stressor::PsuTransient,
+                &snapshot(50.0, 4000, 90.0),
+            );
+            for _ in 0..40 {
+                stats.absorb_tick(&warn_metrics(120.0, msg), &snapshot(70.0, 4000, 95.0), &rules);
+            }
+            stats.finish(&snapshot(70.0, 4000, 95.0));
+            assert!(!stats.fatal_abort, "the stressor never went fatal");
+            assert_eq!(stats.errors, 0, "no counted data errors");
+            assert_eq!(stats.inconclusive_reason.as_deref(), Some(msg));
+
+            let verdict = evaluate_stage(&stats, &rules);
+            assert!(!verdict.pass, "inconclusive stage reported pass");
+            let lines = verdict.violation_lines();
+            assert!(
+                lines.iter().any(|l| l.contains("inconclusive -")),
+                "marker missing: {lines:?}"
+            );
+            for word in [
+                "gpu unavailable",
+                "gpu leg stopped",
+                "device is lost",
+                "device removed",
+                "dxgi_error",
+            ] {
+                assert!(
+                    !lines.iter().any(|l| l.to_ascii_lowercase().contains(word)),
+                    "device-loss wording '{word}' in {lines:?}"
+                );
+            }
+        }
+    }
+
+    /// Device-loss text stays hardware evidence: it is never filed as the
+    /// stage's inconclusive reason, even carrying the marker.
+    #[test]
+    fn device_loss_message_is_not_filed_as_inconclusive() {
+        let rules = VerdictRules::certification();
+        let msg = "psu: inconclusive - GPU leg stopped (GPU device failed: Device is lost)";
+        let mut stats = stats_for(&rules);
+        stats.absorb_tick(&warn_metrics(100.0, msg), &snapshot(70.0, 4000, 95.0), &rules);
+        assert!(stats.inconclusive_reason.is_none());
+        assert!(!evaluate_stage(&stats, &rules)
+            .violations
+            .iter()
+            .any(|v| matches!(v, RuleViolation::Inconclusive { .. })));
     }
 
     #[test]
