@@ -147,6 +147,65 @@ pub struct CrashIngest {
     pub verdicts: Vec<CrashVerdict>,
 }
 
+/// `dump_kind` for NVIDIA Aftermath / Unreal Engine GPU crash dumps.
+pub const GPU_DUMP_KIND: &str = "gpu_aftermath";
+
+/// Every crash the fleet holds for one machine: its sightings newest-first,
+/// the parent signature of each, and every verdict on those signatures.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MachineCrashHistory {
+    pub sightings: Vec<CrashSighting>,
+    pub signatures: Vec<CrashSignature>,
+    pub verdicts: Vec<CrashVerdict>,
+}
+
+impl MachineCrashHistory {
+    pub fn signature_for(&self, sighting: &CrashSighting) -> Option<&CrashSignature> {
+        self.signatures.iter().find(|s| s.id == sighting.signature)
+    }
+
+    pub fn verdicts_for(&self, signature: &RecordId) -> Vec<&CrashVerdict> {
+        self.verdicts.iter().filter(|v| &v.signature == signature).collect()
+    }
+
+    pub fn has_verdict(&self, signature: &RecordId) -> bool {
+        self.verdicts.iter().any(|v| &v.signature == signature)
+    }
+
+    /// Bugcheck/DXGI codes on this machine, most frequent first.
+    pub fn counts_by_code(&self) -> Vec<(String, usize)> {
+        let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for s in &self.sightings {
+            let code = match self.signature_for(s) {
+                Some(sig) => sig.bugcheck_code.clone(),
+                None => {
+                    use super::RecordIdExt;
+                    let key = s.signature.key_string();
+                    key.split_once('_').map(|(c, _)| c.to_string()).unwrap_or(key)
+                }
+            };
+            *counts.entry(code).or_default() += 1;
+        }
+        sorted_by_count(counts)
+    }
+
+    /// Sighting counts per `dump_kind`, most frequent first.
+    pub fn counts_by_kind(&self) -> Vec<(String, usize)> {
+        let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for s in &self.sightings {
+            let kind = if s.dump_kind.is_empty() { "minidump".to_string() } else { s.dump_kind.clone() };
+            *counts.entry(kind).or_default() += 1;
+        }
+        sorted_by_count(counts)
+    }
+}
+
+fn sorted_by_count(counts: std::collections::HashMap<String, usize>) -> Vec<(String, usize)> {
+    let mut out: Vec<(String, usize)> = counts.into_iter().collect();
+    out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    out
+}
+
 /// Outcome of a session-link reconcile sweep.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReconcileReport {
@@ -533,6 +592,75 @@ fn parsed_crash_from_triage(
     })
 }
 
+/// Extract a crash from a `com.mastertech.gpu-dumps` `read_gpu_dump_context`
+/// result: the plugin ships the embedded `FGenericCrashContext` XML as text and
+/// `dump-triage` turns it into the signature fields. Non-GPU payloads yield
+/// nothing.
+pub fn parse_gpu_crash_payload(payload: &serde_json::Value) -> Vec<ParsedCrash> {
+    let data = payload.get("data").unwrap_or(payload);
+    let Some(xml) = data
+        .get("xml")
+        .or_else(|| data.get("crash_context_xml"))
+        .and_then(|v| v.as_str())
+    else {
+        return Vec::new();
+    };
+    let path = data.get("path").and_then(|v| v.as_str()).unwrap_or_default();
+    parsed_crash_from_gpu_xml(xml, path).into_iter().collect()
+}
+
+/// Convert one crash context into a `ParsedCrash`: the DXGI reason becomes the
+/// bugcheck code, the GPU driver stem the module, the deepest ACTIVE breadcrumb
+/// the failure bucket, and the driver version the module version — so GPU
+/// crashes inherit signature dedup, the machines rollup, and verdicts.
+fn parsed_crash_from_gpu_xml(xml: &str, client_path: &str) -> Option<ParsedCrash> {
+    let mut gpu = dump_triage::gpu::parse_crash_context_xml(xml)?;
+
+    // `<crash folder>/<file>` so the (signature, connection, dump_name) dedup
+    // key never collides across titles reusing a fixed artifact name.
+    let norm = client_path.replace('\\', "/");
+    let mut parts = norm.rsplit('/');
+    let file = parts.next().unwrap_or_default().to_string();
+    let folder = parts.next().unwrap_or_default().to_string();
+    if !file.is_empty() {
+        gpu.dump_name = Some(file.clone());
+        gpu.dump_time = dump_triage::gpu::time_from_gpu_dump_name(&file);
+    }
+    if !folder.is_empty() {
+        gpu.crash_folder = Some(folder.clone());
+    }
+    let dump_name = match (folder.is_empty(), file.is_empty()) {
+        (false, false) => Some(format!("{folder}/{file}")),
+        (true, false) => Some(file),
+        _ => gpu.crash_guid.clone(),
+    };
+
+    let bugcheck_code = normalize_bugcheck_code(gpu.dxgi_reason.as_deref()?)?;
+    let module = normalize_module(&gpu.gpu_driver_module, "gpu")?;
+    let caused_by = gpu.gpu_adapter_name.clone().map(|adapter| {
+        match gpu.gpu_driver_version.as_deref() {
+            Some(v) => format!("{adapter} driver {v}"),
+            None => adapter,
+        }
+    });
+
+    Some(ParsedCrash {
+        bugcheck_code,
+        bugcheck_name: gpu.dxgi_reason_name.clone().unwrap_or_default(),
+        module: module.clone(),
+        offset: None,
+        process_name: gpu.process_name.clone().or_else(|| gpu.game_name.clone()),
+        failure_bucket: gpu.deepest_breadcrumb(),
+        caused_by,
+        module_version: gpu.module_version(),
+        dump_name,
+        dump_time: gpu.dump_time.clone(),
+        raw_excerpt: gpu.summary(),
+        loaded_modules: vec![module_stem(&module)],
+        triage: serde_json::to_value(&gpu).ok(),
+    })
+}
+
 const SIGNATURE_UPSERT: &str = "UPSERT $id MERGE { \
         bugcheck_code: $bugcheck_code, \
         bugcheck_name: IF $bugcheck_name != '' THEN $bugcheck_name ELSE (bugcheck_name ?? '') END, \
@@ -772,6 +900,81 @@ impl CrashSignature {
             .take(0)?;
         Ok(rows)
     }
+}
+
+/// Every crash sighting for one machine, newest first. Matches the linked
+/// `computer` record and the connection string in two index-backed statements
+/// (csight_computer / csight_connection), so sightings ingested before the
+/// client was linked still appear. The two are disjoint on `computer`.
+pub async fn sightings_for_computer(
+    computer: Option<&RecordId>,
+    connection_string: &str,
+    limit: u32,
+) -> anyhow::Result<Vec<CrashSighting>> {
+    use super::RecordIdExt;
+    let mut rows: Vec<CrashSighting> = Vec::new();
+    if let Some(comp) = computer {
+        let by_computer: Vec<CrashSighting> = db()
+            .query(
+                "SELECT * FROM crash_sighting WHERE computer == $comp \
+                 ORDER BY created_at DESC LIMIT $limit",
+            )
+            .bind(("comp", comp.clone()))
+            .bind(("limit", limit as i64))
+            .await?
+            .take(0)?;
+        rows.extend(by_computer);
+    }
+    let cs = connection_string.trim();
+    if !cs.is_empty() {
+        let by_connection: Vec<CrashSighting> = db()
+            .query(
+                "SELECT * FROM crash_sighting WHERE connection_string == $cs \
+                 AND computer == NONE ORDER BY created_at DESC LIMIT $limit",
+            )
+            .bind(("cs", cs.to_string()))
+            .bind(("limit", limit as i64))
+            .await?
+            .take(0)?;
+        rows.extend(by_connection);
+    }
+    let mut seen = std::collections::HashSet::new();
+    rows.retain(|s| seen.insert(s.id.key_string()));
+    rows.sort_by_key(|s| std::cmp::Reverse(s.created_at.to_utc()));
+    rows.truncate(limit as usize);
+    Ok(rows)
+}
+
+/// One machine's crash history with its signatures and verdicts resolved.
+/// Signatures are read by direct id addressing (a `WHERE id == <id>` filter
+/// silently matches nothing); verdicts come back in one batched statement.
+pub async fn machine_crash_history(
+    computer: Option<&RecordId>,
+    connection_string: &str,
+    limit: u32,
+) -> anyhow::Result<MachineCrashHistory> {
+    use super::RecordIdExt;
+    let sightings = sightings_for_computer(computer, connection_string, limit).await?;
+    if sightings.is_empty() {
+        return Ok(MachineCrashHistory::default());
+    }
+    let mut ids: Vec<RecordId> = sightings.iter().map(|s| s.signature.clone()).collect();
+    ids.sort_by_key(|id| id.key_string());
+    ids.dedup();
+
+    let mut signatures = Vec::with_capacity(ids.len());
+    for id in &ids {
+        if let Some(sig) = db().select::<Option<CrashSignature>>(id.clone()).await? {
+            signatures.push(sig);
+        }
+    }
+    let verdicts: Vec<CrashVerdict> = db()
+        .query("SELECT * FROM crash_verdict WHERE signature IN $ids ORDER BY created_at DESC")
+        .bind(("ids", ids))
+        .await?
+        .take(0)?;
+
+    Ok(MachineCrashHistory { sightings, signatures, verdicts })
 }
 
 impl CrashVerdict {
@@ -1222,5 +1425,66 @@ Probably caused by : rtwlane.sys ( rtwlane+18e2b )\n";
     fn pe_timestamp_versions() {
         assert_eq!(pe_timestamp_version(1688256000), "built 2023-07-02");
         assert_eq!(pe_timestamp_version(0xF0000000), "pe:0xf0000000");
+    }
+
+    /// A GPU crash context normalizes onto the `0x887a0007_nvlddmkm` signature
+    /// and keeps the GPU blob as the sighting's triage payload.
+    #[test]
+    fn gpu_crash_context_maps_onto_a_signature() {
+        let xml = "<FGenericCrashContext><CrashType>GPUCrash</CrashType>\
+            <ExecutableName>FortniteClient-Win64-Shipping</ExecutableName>\
+            <GPUCrash.D3DDeviceRemovedReason>-2005270521</GPUCrash.D3DDeviceRemovedReason>\
+            <RHI.AdapterName>NVIDIA GeForce RTX 5090</RHI.AdapterName>\
+            <RHI.UserDriverVersion>610.47</RHI.UserDriverVersion>\
+            <RHI.InternalDriverVersion>32.0.16.1047</RHI.InternalDriverVersion>\
+            <RHI.VendorId>10DE</RHI.VendorId><RHI.Aftermath>true</RHI.Aftermath>\
+            <Breadcrumbs>{{Frame 1},A,{{{Scene},A,{{{VirtualTextureUpdate},A}}}}}</Breadcrumbs>\
+            </FGenericCrashContext>";
+        let payload = serde_json::json!({
+            "tool": "read_gpu_dump_context",
+            "data": {
+                "path": "C:\\Users\\t\\AppData\\Local\\FortniteGame\\Saved\\Crashes\\UECC-Windows-ABC_0000\\D3D12.0.2026.06.18-23.01.01.nv-gpudmp",
+                "xml": xml
+            }
+        });
+        let crashes = parse_gpu_crash_payload(&payload);
+        assert_eq!(crashes.len(), 1);
+        let c = &crashes[0];
+        assert_eq!(c.bugcheck_code, "0x887a0007");
+        assert_eq!(c.bugcheck_name, "DXGI_ERROR_DEVICE_RESET");
+        assert_eq!(c.module, "nvlddmkm");
+        assert_eq!(c.module_version.as_deref(), Some("610.47 (32.0.16.1047)"));
+        assert_eq!(c.failure_bucket.as_deref(), Some("VirtualTextureUpdate"));
+        assert_eq!(c.loaded_modules, vec!["nvlddmkm".to_string()]);
+        assert_eq!(c.process_name.as_deref(), Some("FortniteClient-Win64-Shipping"));
+        assert_eq!(
+            c.dump_name.as_deref(),
+            Some("UECC-Windows-ABC_0000/D3D12.0.2026.06.18-23.01.01.nv-gpudmp")
+        );
+        assert_eq!(c.dump_time.as_deref(), Some("06/18/2026 23:01 local"));
+        let blob = c.triage.as_ref().expect("gpu blob");
+        assert_eq!(blob.get("kind").and_then(|v| v.as_str()), Some(GPU_DUMP_KIND));
+        use super::RecordIdExt;
+        assert!(crash_signature_record_id(&c.bugcheck_code, &c.module)
+            .key_string()
+            .contains("0x887a0007_nvlddmkm"));
+    }
+
+    /// The GPU and kernel payload parsers do not poach each other's blobs.
+    #[test]
+    fn gpu_and_kernel_payloads_do_not_cross_parse() {
+        let kernel = serde_json::json!({
+            "bugcheck_code": "0x133",
+            "bugcheck_name": "DPC_WATCHDOG_VIOLATION",
+            "blamed_module": "nvlddmkm.sys",
+            "drivers": [],
+            "rip_in_kernel_image": false
+        });
+        assert!(parse_gpu_crash_payload(&serde_json::json!({ "triage": kernel })).is_empty());
+        assert!(parse_gpu_crash_payload(&serde_json::json!({ "data": { "xml": "nope" } })).is_empty());
+        assert!(parse_kernel_triage_payload(&serde_json::json!({
+            "data": { "xml": "<FGenericCrashContext/>" }
+        }))
+        .is_empty());
     }
 }

@@ -416,17 +416,32 @@ impl ResourceMonitor {
     #[cfg(feature = "native-telemetry")]
     fn headline_panel(&self, ui: &mut Ui) {
         hw_tables::panel(ui, icons::p::GAUGE, "Headline", |ui| {
-            ui.horizontal_wrapped(|ui| {
-                hw_tables::cpu_load_gauge(ui, &self.telemetry);
-                hw_tables::ram_gauge(ui, &self.telemetry.memory);
-                hw_tables::gpu_load_gauge(ui, &self.telemetry.gpus);
-                ui.add_space(6.0);
-                hw_tables::cpu_temp_tile(ui, &self.telemetry);
-                ui.add_space(6.0);
-                hw_tables::process_count_tile(ui, &self.telemetry);
+            ui.horizontal_top(|ui| {
+                ui.vertical(|ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        hw_tables::cpu_load_gauge(ui, &self.telemetry);
+                        hw_tables::ram_gauge(ui, &self.telemetry.memory);
+                        hw_tables::gpu_load_gauge(ui, &self.telemetry.gpus);
+                        ui.add_space(6.0);
+                        hw_tables::cpu_temp_tile(ui, &self.telemetry);
+                        ui.add_space(6.0);
+                        hw_tables::process_count_tile(ui, &self.telemetry);
+                    });
+                    ui.add_space(6.0);
+                    hw_tables::show_whea_pill(ui, &self.telemetry);
+                });
+
+                ui.add_space(16.0);
+
+                // Identity and rails fill the width the gauge cluster leaves.
+                ui.vertical(|ui| {
+                    if let Some(info) = self.machine_info.as_ref() {
+                        info.show_header_line(ui);
+                        ui.add_space(6.0);
+                    }
+                    self.rails_panel(ui);
+                });
             });
-            ui.add_space(6.0);
-            hw_tables::show_whea_pill(ui, &self.telemetry);
         });
     }
 
@@ -442,17 +457,13 @@ impl ResourceMonitor {
                 self.storage_panel(&mut cols[0]);
                 self.network_panel(&mut cols[1]);
             });
-            ui.columns(2, |cols| {
-                self.gpu_panel(&mut cols[0]);
-                self.rails_panel(&mut cols[1]);
-            });
+            self.gpu_panel(ui);
         } else {
             self.cores_panel(ui);
             self.memory_panel(ui);
             self.storage_panel(ui);
             self.network_panel(ui);
             self.gpu_panel(ui);
-            self.rails_panel(ui);
         }
     }
 
@@ -475,15 +486,11 @@ impl ResourceMonitor {
         });
     }
 
-    /// Disk throughput meters over the machine's volume list.
+    /// Per-volume capacity meters carrying filesystem and throughput inline.
     #[cfg(feature = "native-telemetry")]
     fn storage_panel(&self, ui: &mut Ui) {
         hw_tables::panel(ui, icons::HARD_DRIVE, "Storage", |ui| {
             hw_tables::show_disk_meters(ui, &self.telemetry.disks, self.source);
-            if let Some(info) = self.machine_info.as_ref() {
-                ui.add_space(6.0);
-                info.show_volumes(ui);
-            }
         });
     }
 

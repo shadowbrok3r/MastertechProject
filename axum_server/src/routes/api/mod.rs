@@ -3,6 +3,7 @@ pub mod surreal;
 pub mod orders;
 pub mod order_lookup;
 pub mod parts;
+pub mod firmware;
 pub mod preboot;
 pub mod qc_fleet;
 pub mod qc_tcp;
@@ -38,6 +39,7 @@ pub fn routes(state: crate::AppState) -> axum::Router {
             axum::routing::get(order_lookup::order_by_serial)
         )
         .merge(qc_fleet::qc_fleet_routes())
+        .merge(firmware::firmware_routes())
         .merge(preboot::preboot_routes())
         .merge(build::build_routes())
         .merge(admin::admin_routes())

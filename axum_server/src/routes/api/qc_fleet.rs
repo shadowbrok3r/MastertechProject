@@ -36,6 +36,7 @@ use database::schema::fleet::{
     FleetCommandKind as DbFleetCommandKind, FleetCommandStatus as DbFleetCommandStatus,
     FleetEvent, FleetEventKind,
 };
+use database::schema::firmware::FirmwareCapsule;
 use database::schema::{
     random_record_id, Datetime as DbDatetime, FLEET_AGENT_TABLE, FLEET_COMMAND_TABLE,
     FLEET_EVENT_TABLE,
@@ -44,6 +45,7 @@ use database::db;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
+use crate::routes::api::admin::PeerAddr;
 use crate::AppState;
 
 // ── Data types ────────────────────────────────────────────────────────────────
@@ -55,6 +57,12 @@ pub struct FleetCommand {
     pub issued_at: String,
     pub kind: FleetCommandKind,
     pub status: CommandStatus,
+    /// Times this command has been handed to an agent.
+    #[serde(default)]
+    pub deliveries: u32,
+    /// Resolved wire payload for kinds the agent reads as `custom` ops.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_payload: Option<serde_json::Value>,
 }
 
 /// External tagging on purpose: lets the wire body be
@@ -66,8 +74,32 @@ pub struct FleetCommand {
 pub enum FleetCommandKind {
     /// Send an immediate QC report.
     SendReport,
+    /// Flash a published BIOS capsule. `capsule_id` must name a
+    /// `firmware_capsule` row — the operator never supplies a URL, so the set
+    /// of flashable images is exactly what we have published.
+    BiosUpdate {
+        capsule_id: String,
+        /// Must be `true`; a missing or false value is rejected.
+        #[serde(default)]
+        confirm: bool,
+        /// Version the capsule installs. Defaults to the published row's
+        /// version when omitted.
+        #[serde(default)]
+        expected_version: Option<u32>,
+        /// Permit a same-version reflash and skip the prior-failure block.
+        /// Never bypasses the firmware's power gate.
+        #[serde(default)]
+        force: bool,
+    },
     /// Custom free-form command (future expansion).
     Custom { payload: serde_json::Value },
+}
+
+impl FleetCommandKind {
+    /// Irreversible commands get at-most-once delivery.
+    fn is_destructive(&self) -> bool {
+        matches!(self, Self::BiosUpdate { .. })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -75,6 +107,8 @@ pub enum FleetCommandKind {
 pub enum CommandStatus {
     Pending,
     Acknowledged,
+    /// Delivered once already and not acked; refused a second delivery.
+    Expired,
 }
 
 /// Per-agent runtime record.
@@ -351,11 +385,31 @@ pub async fn get_agent(
 }
 
 /// `POST /api/v1/qc/agents/:machine_id/command` — enqueue a command.
+///
+/// Root-only: this is the rail that can flash a BIOS, so it is gated the same
+/// way `/api/v1/admin` is and the operator is recorded on the mirrored row.
 pub async fn issue_command(
     State(app): State<AppState>,
     Path(machine_id): Path<String>,
+    PeerAddr(peer): PeerAddr,
+    headers: axum::http::HeaderMap,
     Json(req): Json<IssueCommandRequest>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
+    let viewer = match app.admin.require_root(&headers).await {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+
+    // Resolve and validate before anything is queued.
+    let agent_payload = match resolve_command(&req.kind).await {
+        Ok(p) => p,
+        Err(msg) => {
+            tracing::warn!(machine_id = %machine_id, by = %viewer.email, %msg, "fleet.command_rejected");
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg })))
+                .into_response();
+        }
+    };
+
     let mut state = app.fleet.lock().await;
     let now = now_utc();
     let id = format!("{}-{}", &machine_id[..machine_id.len().min(8)], epoch_secs());
@@ -365,6 +419,8 @@ pub async fn issue_command(
         issued_at: now.clone(),
         kind: req.kind.clone(),
         status: CommandStatus::Pending,
+        deliveries: 0,
+        agent_payload,
     };
 
     let detail = serde_json::to_value(&cmd).ok();
@@ -374,46 +430,159 @@ pub async fn issue_command(
             state.audit(&machine_id, "command_issued", detail.clone());
             drop(state);
 
+            let actor = Actor {
+                requested_by: Some(viewer.email.clone()),
+                peer_ip: peer.map(|p| p.to_string()),
+                user_agent: headers
+                    .get(axum::http::header::USER_AGENT)
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_string),
+            };
             tracing::info!(
                 machine_id = %machine_id,
                 command_id = %id,
                 kind = ?req.kind,
+                by = %viewer.email,
                 "fleet.command_issued",
             );
-            mirror_command_issued(&machine_id, &cmd);
+            mirror_command_issued(&machine_id, &cmd, actor);
             mirror_event(machine_id, FleetEventKind::CommandIssued, detail);
 
-            (StatusCode::OK, Json(serde_json::json!({ "command_id": id })))
+            (StatusCode::OK, Json(serde_json::json!({ "command_id": id }))).into_response()
         }
         None => {
             tracing::warn!(
                 machine_id = %machine_id,
+                by = %viewer.email,
                 "fleet.command_issued -> 404 (agent unknown)",
             );
             (
                 StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": "agent not found" })),
+                Json(serde_json::json!({
+                    "error": "agent not found",
+                    "hint": "the machine must have registered (POST /api/v1/qc/register) under this exact machine_id",
+                })),
             )
+                .into_response()
         }
     }
 }
 
+/// Who asked for a command, recorded durably alongside it.
+pub struct Actor {
+    pub requested_by: Option<String>,
+    pub peer_ip: Option<String>,
+    pub user_agent: Option<String>,
+}
+
+/// Validate a command and, for kinds the agent consumes as a `custom` op,
+/// build the exact payload it will receive. Rejecting here means an invalid
+/// BIOS flash never reaches a queue.
+async fn resolve_command(kind: &FleetCommandKind) -> Result<Option<serde_json::Value>, String> {
+    let FleetCommandKind::BiosUpdate { capsule_id, confirm, expected_version, force } = kind else {
+        return Ok(None);
+    };
+    if !confirm {
+        return Err("bios_update requires confirm:true".into());
+    }
+    let capsule = FirmwareCapsule::get(capsule_id)
+        .await
+        .map_err(|e| format!("capsule lookup failed: {e}"))?
+        .ok_or_else(|| format!("no published capsule '{capsule_id}'"))?;
+    if capsule.bucket_path.is_none() {
+        return Err(format!("capsule '{capsule_id}' has no artifact"));
+    }
+    // A caller-supplied version must agree with what the capsule installs,
+    // otherwise the firmware's gate would be checking the wrong number.
+    let version = match expected_version {
+        Some(v) if *v != capsule.version => {
+            return Err(format!(
+                "expected_version 0x{v:08x} disagrees with capsule '{capsule_id}' (0x{:08x})",
+                capsule.version
+            ));
+        }
+        _ => capsule.version,
+    };
+
+    Ok(Some(serde_json::json!({
+        "op": "bios_update",
+        // Relative so the firmware resolves it against its own target and can
+        // use the raw-TCP transport; it never trusts an operator-supplied host.
+        "url": format!("/api/v1/firmware/capsules/{capsule_id}"),
+        "confirm": true,
+        "force": force,
+        "expected_version": version,
+        "sha256": capsule.sha256,
+        "board_product": capsule.board_product,
+        "fw_class": capsule.fw_class,
+    })))
+}
+
 /// `GET /api/v1/qc/agents/:machine_id/commands` — agent polls pending commands.
+///
+/// Delivery is counted. An irreversible command that was already handed over
+/// once and never acked is expired rather than served again — a flash that
+/// resets the box mid-apply must not be retried automatically.
 pub async fn poll_commands(
     State(app): State<AppState>,
     Path(machine_id): Path<String>,
 ) -> impl IntoResponse {
-    let state = app.fleet.lock().await;
-    match state.agents.get(&machine_id) {
-        Some(rec) => {
-            let pending: Vec<&FleetCommand> = rec
-                .pending_commands
-                .iter()
-                .filter(|c| c.status == CommandStatus::Pending)
-                .collect();
-            (StatusCode::OK, Json(serde_json::to_value(pending).unwrap_or_default()))
+    let mut state = app.fleet.lock().await;
+    let Some(rec) = state.agents.get_mut(&machine_id) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "agent not found" })),
+        );
+    };
+
+    let mut served = Vec::new();
+    let mut expired = Vec::new();
+    for cmd in rec.pending_commands.iter_mut() {
+        if cmd.status != CommandStatus::Pending {
+            continue;
         }
-        None => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "agent not found" }))),
+        if cmd.kind.is_destructive() && cmd.deliveries >= 1 {
+            cmd.status = CommandStatus::Expired;
+            expired.push(cmd.id.clone());
+            continue;
+        }
+        cmd.deliveries += 1;
+        served.push(to_agent_json(cmd));
+    }
+    rec.pending_commands.retain(|c| c.status == CommandStatus::Pending);
+
+    for id in &expired {
+        state.audit(
+            &machine_id,
+            "command_expired",
+            Some(serde_json::json!({ "id": id, "reason": "at-most-once" })),
+        );
+    }
+    drop(state);
+
+    for id in expired {
+        tracing::warn!(
+            machine_id = %machine_id,
+            command_id = %id,
+            "fleet.command_expired (destructive, already delivered)",
+        );
+        mirror_command_failed(&id);
+    }
+    (StatusCode::OK, Json(serde_json::Value::Array(served)))
+}
+
+/// Render a command the way the agent expects it. Typed kinds the firmware
+/// reads through its `custom.payload.op` dispatch are projected into that shape
+/// with a server-built URL, so the agent never sees a caller-supplied host.
+fn to_agent_json(cmd: &FleetCommand) -> serde_json::Value {
+    match &cmd.agent_payload {
+        Some(payload) => serde_json::json!({
+            "id": cmd.id,
+            "issued_at": cmd.issued_at,
+            "status": "pending",
+            "kind": { "custom": { "payload": payload } },
+        }),
+        None => serde_json::to_value(cmd).unwrap_or_default(),
     }
 }
 
@@ -935,7 +1104,7 @@ fn mirror_event(machine_id: String, kind: FleetEventKind, payload: Option<serde_
 }
 
 /// Create a `fleet_command` row in `pending` state.
-fn mirror_command_issued(machine_id: &str, cmd: &FleetCommand) {
+fn mirror_command_issued(machine_id: &str, cmd: &FleetCommand, actor: Actor) {
     let machine_id = machine_id.to_string();
     let external_id = cmd.id.clone();
     let issued_at = parse_rfc3339(&cmd.issued_at);
@@ -951,6 +1120,9 @@ fn mirror_command_issued(machine_id: &str, cmd: &FleetCommand) {
             issued_at,
             acked_at: None,
             payload,
+            requested_by: actor.requested_by,
+            peer_ip: actor.peer_ip,
+            user_agent: actor.user_agent,
         };
         let res: Result<Option<DbFleetCommand>, _> =
             db().create(FLEET_COMMAND_TABLE).content(row).await;
@@ -986,9 +1158,37 @@ fn mirror_command_acked(external_id: &str) {
     });
 }
 
+/// Terminal-fail a mirrored command (expired by at-most-once delivery).
+fn mirror_command_failed(external_id: &str) {
+    let external_id = external_id.to_string();
+    tokio::spawn(async move {
+        let q = format!(
+            "UPDATE {table} SET status = 'failed' \
+             WHERE external_id = $eid AND status = 'pending'",
+            table = FLEET_COMMAND_TABLE
+        );
+        if let Err(e) = db().query(q).bind(("eid", external_id.clone())).await {
+            tracing::warn!(
+                external_id = %external_id,
+                error = %e,
+                "fleet.mirror_command_failed failed",
+            );
+        }
+    });
+}
+
 fn command_to_db(kind: &FleetCommandKind) -> (DbFleetCommandKind, Option<serde_json::Value>) {
     match kind {
         FleetCommandKind::SendReport => (DbFleetCommandKind::SendReport, None),
+        FleetCommandKind::BiosUpdate { capsule_id, confirm, expected_version, force } => (
+            DbFleetCommandKind::BiosUpdate,
+            Some(serde_json::json!({
+                "capsule_id": capsule_id,
+                "confirm": confirm,
+                "expected_version": expected_version,
+                "force": force,
+            })),
+        ),
         FleetCommandKind::Custom { payload } => {
             (DbFleetCommandKind::Custom, Some(payload.clone()))
         }
@@ -1026,8 +1226,87 @@ pub async fn hydrate_from_db(state: &SharedFleetState) -> anyhow::Result<usize> 
         };
         guard.agents.insert(r.machine_id, agent);
     }
-    tracing::info!(loaded = count, "fleet.hydrate_from_db");
+
+    // The runtime queue is in-memory, so without this a redeploy leaves rows
+    // reading 'pending' forever while the agent polls an empty queue.
+    let mut replayed = 0usize;
+    let mut dropped = 0usize;
+    match load_pending_commands().await {
+        Ok(rows) => {
+            for (machine_id, cmd) in rows {
+                // A flash is never replayed automatically: after a restart we
+                // cannot know whether the box already took it. Fail it and let
+                // an operator re-issue deliberately.
+                if cmd.kind.is_destructive() {
+                    mirror_command_failed(&cmd.id);
+                    tracing::warn!(
+                        machine_id = %machine_id,
+                        command_id = %cmd.id,
+                        "fleet.hydrate dropped a pending destructive command; re-issue it manually",
+                    );
+                    dropped += 1;
+                    continue;
+                }
+                if let Some(rec) = guard.agents.get_mut(&machine_id) {
+                    rec.pending_commands.push_back(cmd);
+                    replayed += 1;
+                }
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, "fleet.hydrate could not replay commands"),
+    }
+
+    tracing::info!(loaded = count, replayed, dropped, "fleet.hydrate_from_db");
     Ok(count)
+}
+
+/// Load still-pending mirrored commands, newest last, as runtime commands.
+async fn load_pending_commands() -> anyhow::Result<Vec<(String, FleetCommand)>> {
+    let q = format!(
+        "SELECT * FROM {table} WHERE status = 'pending' ORDER BY issued_at",
+        table = FLEET_COMMAND_TABLE
+    );
+    let mut resp = db().query(q).await?;
+    let rows: Vec<DbFleetCommand> = resp.take(0)?;
+
+    let mut out = Vec::new();
+    for r in rows {
+        let payload = r.payload.clone().unwrap_or(serde_json::Value::Null);
+        let kind = match r.kind {
+            DbFleetCommandKind::SendReport => FleetCommandKind::SendReport,
+            DbFleetCommandKind::BiosUpdate => FleetCommandKind::BiosUpdate {
+                capsule_id: payload
+                    .get("capsule_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                confirm: payload.get("confirm").and_then(|v| v.as_bool()).unwrap_or(false),
+                expected_version: payload
+                    .get("expected_version")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32),
+                force: payload.get("force").and_then(|v| v.as_bool()).unwrap_or(false),
+            },
+            // The DB enum carries a stress-scenario variant the wire enum has
+            // no counterpart for; carry it through as a custom payload.
+            DbFleetCommandKind::RunStressScenario | DbFleetCommandKind::Custom => {
+                FleetCommandKind::Custom { payload: payload.clone() }
+            }
+        };
+        let agent_payload = resolve_command(&kind).await.unwrap_or(None);
+        out.push((
+            r.machine_id.clone(),
+            FleetCommand {
+                id: r.external_id,
+                issued_at: db_datetime_to_iso(&r.issued_at),
+                kind,
+                status: CommandStatus::Pending,
+                deliveries: 0,
+                agent_payload,
+            },
+        ));
+    }
+    Ok(out)
 }
 
 fn db_datetime_to_iso(dt: &DbDatetime) -> String {

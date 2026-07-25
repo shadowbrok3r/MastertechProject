@@ -95,6 +95,14 @@ pub struct FleetCommand {
     pub acked_at: Option<Datetime>,
     /// Optional opaque payload for `Custom` commands.
     pub payload: Option<serde_json::Value>,
+    /// Email of the Root operator who issued it.
+    #[surreal(default)]
+    pub requested_by: Option<String>,
+    /// Socket address the issuing request came from.
+    #[surreal(default)]
+    pub peer_ip: Option<String>,
+    #[surreal(default)]
+    pub user_agent: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, SurrealValue)]
@@ -107,6 +115,9 @@ pub enum FleetCommandKind {
     /// Ask the agent to run a multi-stage stress scenario. Stage list is in `payload`.
     #[surreal(value = "run_stress_scenario")]
     RunStressScenario,
+    /// Flash a published BIOS capsule. Details are in `payload`.
+    #[surreal(value = "bios_update")]
+    BiosUpdate,
     /// Free-form command the operator stamped into `payload`.
     #[surreal(value = "custom")]
     Custom,
@@ -117,6 +128,7 @@ impl FleetCommandKind {
         match self {
             Self::SendReport => "send_report",
             Self::RunStressScenario => "run_stress_scenario",
+            Self::BiosUpdate => "bios_update",
             Self::Custom => "custom",
         }
     }

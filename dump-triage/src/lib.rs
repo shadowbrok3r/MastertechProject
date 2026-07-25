@@ -13,6 +13,7 @@
 
 pub mod bugcheck;
 pub mod diff;
+pub mod gpu;
 pub mod header;
 pub mod triage;
 
@@ -26,6 +27,8 @@ pub use header::{
     dump_type_name, parse_kernel_header, sniff_format, DumpFormat, KernelDumpHeader,
     DMP_HEADER64_SIZE,
 };
+
+pub use gpu::{parse_crash_context_xml, GpuCrashDump, GPU_AFTERMATH_DUMP_KIND};
 
 /// One frame of a scanned stack walk. `trust` is `"context"` for the crash
 /// RIP and `"scan"` for a value found on the stack that lands inside a module.

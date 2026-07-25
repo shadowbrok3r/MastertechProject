@@ -10,10 +10,12 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Tabs, Wrap},
 };
 use uefi::Identify;
+use uefi::boot;
 use uefi::boot::{MemoryType, OpenProtocolAttributes, OpenProtocolParams, ScopedProtocol};
 use uefi::mem::memory_map::MemoryMap;
 use uefi::proto::console;
 use uefi::proto::console::gop::GraphicsOutput;
+use uefi::proto::media::fs::SimpleFileSystem;
 use uefi::proto::network::ip4config2::Ip4Config2;
 use uefi::proto::network::snp::SimpleNetwork;
 use uefi::proto::pci::root_bridge::PciRootBridgeIo;
@@ -72,6 +74,7 @@ const TABS: [&str; 14] = [
     "Log",
 ];
 
+const TAB_FIRMWARE: usize = 3;
 const TAB_BIOS: usize = 4;
 const TAB_STRESS: usize = 7;
 const TAB_ORDER: usize = 8;
@@ -514,12 +517,33 @@ struct Smbios {
     bios_version: String,
     bios_date: String,
     chassis_type: String,
+    /// Type 3 chassis type code with the lock bit masked off.
+    chassis_code: u8,
     chassis_serial: String,
     chassis_asset: String,
     oem_strings: Vec<String>,
+    batteries: Vec<Battery>,
     mem_max_bytes: u64,
     mem_slots: u16,
     mem_ecc: String,
+}
+
+impl Smbios {
+    /// Chassis types that run on a battery (Type 3 codes).
+    fn is_portable(&self) -> bool {
+        matches!(self.chassis_code, 8..=11 | 14 | 30..=32)
+    }
+}
+
+/// SMBIOS Type 22 portable battery. Static at boot: proves a bay exists and
+/// gives design capacity, but never the current charge.
+#[derive(Default)]
+struct Battery {
+    location: String,
+    manufacturer: String,
+    device_name: String,
+    design_voltage_mv: u16,
+    design_capacity_mwh: u32,
 }
 
 /// SMBIOS Type 3 chassis type code -> name (subset).
@@ -671,12 +695,27 @@ fn collect_smbios() -> Smbios {
                 s.bios_date = st.str_at(0x08);
             }
             3 => {
+                // Bit 7 of the type byte is the chassis-lock flag.
+                s.chassis_code = st.u8_at(0x05) & 0x7F;
                 s.chassis_type = chassis_name(st.u8_at(0x05)).to_string();
                 s.chassis_serial = st.str_at(0x07);
                 s.chassis_asset = st.str_at(0x08);
             }
             11 => {
                 s.oem_strings = st.strings.clone();
+            }
+            22 => {
+                // DesignCapacity is mWh scaled by the multiplier when the SBDS
+                // fields are used (design capacity 0 means "see SBDS").
+                let raw_cap = st.u16_at(0x0F) as u32;
+                let mult = st.u8_at(0x15) as u32;
+                s.batteries.push(Battery {
+                    location: st.str_at(0x04),
+                    manufacturer: st.str_at(0x05),
+                    device_name: st.str_at(0x08),
+                    design_voltage_mv: st.u16_at(0x0A),
+                    design_capacity_mwh: raw_cap * if mult == 0 { 1 } else { mult },
+                });
             }
             16 => {
                 // Max capacity: 0x07 is KB as u32; if 0x80000000 use the
@@ -1445,7 +1484,7 @@ fn fingerprint_json(info: &SysInfo) -> String {
     out.push_str(",\"bios_settings\":");
     out.push_str(&hii::audit_json(&info.hii).to_string());
     out.push_str(",\"firmware_update\":");
-    out.push_str(&capsule::esrt_json(&info.esrt).to_string());
+    out.push_str(&capsule::esrt_json(&info.esrt, &info.power).to_string());
     out.push_str(",\"boot_diagnostics\":");
     out.push_str(&bootdiag::diag_json(&info.bootdiag).to_string());
     // Raw serial sources behind the effective `system.serial`, for fidelity.
@@ -1589,10 +1628,29 @@ fn http_get_url(target: &str, url: &str) -> Result<(u16, Vec<u8>), String> {
     }
 }
 
-/// Download a firmware capsule (up to 64 MiB) over EFI HTTP. Capsules come from
-/// vendor/orchestrator `https://` URLs, so this always takes the DNS+TLS path.
-fn download_capsule(url: &str) -> Result<Vec<u8>, String> {
-    let (code, body) = http_efi::get_capped(url, 64 << 20)?;
+/// Body ceiling for a firmware capsule.
+const CAPSULE_MAX_BYTES: usize = 64 << 20;
+
+/// Download a firmware capsule, picking the transport like [`http_get_url`].
+/// Target-relative paths and absolute `http://<IPv4>` URLs go over raw TCP4;
+/// only genuine DNS/TLS URLs need the EFI HTTP driver, which most of the fleet
+/// does not have.
+fn download_capsule(target: &str, url: &str) -> Result<Vec<u8>, String> {
+    let (code, body) = if url.starts_with('/') {
+        let u = parse_upload_url(target);
+        if u.needs_efi_http {
+            http_efi::get_capped(&format!("{}{}", u.full.trim_end_matches('/'), url), CAPSULE_MAX_BYTES)?
+        } else {
+            net_tcp::get_capped(&u.host_port, url, CAPSULE_MAX_BYTES)?
+        }
+    } else {
+        let u = parse_upload_url(url);
+        if u.needs_efi_http {
+            http_efi::get_capped(&u.full, CAPSULE_MAX_BYTES)?
+        } else {
+            net_tcp::get_capped(&u.host_port, &u.path, CAPSULE_MAX_BYTES)?
+        }
+    };
     if code != 200 {
         return Err(format!("HTTP {code} fetching capsule"));
     }
@@ -1600,6 +1658,161 @@ fn download_capsule(url: &str) -> Result<Vec<u8>, String> {
         return Err("empty capsule body".into());
     }
     Ok(body)
+}
+
+/// Read a capsule off an attached FAT volume (the boot USB). Needs no network,
+/// so this is the delivery path that always works. `path` is backslash-separated
+/// and relative to a volume root, e.g. `bios\\update.cap`.
+fn load_capsule_from_disk(path: &str) -> Result<Vec<u8>, String> {
+    use uefi::proto::media::file::{File, FileAttribute, FileMode, FileType};
+
+    let cpath = uefi::CString16::try_from(path.replace('/', "\\").as_str())
+        .map_err(|_| format!("path is not valid UCS-2: {path}"))?;
+    let handles = boot::find_handles::<SimpleFileSystem>()
+        .map_err(|e| format!("no filesystems ({e:?})"))?;
+
+    let mut last = format!("{path} not found on any volume");
+    for h in handles {
+        let mut sfs = match unsafe {
+            boot::open_protocol::<SimpleFileSystem>(
+                OpenProtocolParams {
+                    handle: h,
+                    agent: boot::image_handle(),
+                    controller: None,
+                },
+                OpenProtocolAttributes::GetProtocol,
+            )
+        } {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let Ok(mut root) = sfs.open_volume() else {
+            continue;
+        };
+        let Ok(handle) = root.open(&cpath, FileMode::Read, FileAttribute::empty()) else {
+            continue;
+        };
+        let Ok(FileType::Regular(mut f)) = handle.into_type() else {
+            last = format!("{path} is a directory");
+            continue;
+        };
+        let size = match f.get_boxed_info::<uefi::proto::media::file::FileInfo>() {
+            Ok(i) => i.file_size() as usize,
+            Err(e) => {
+                last = format!("stat {path}: {e:?}");
+                continue;
+            }
+        };
+        if size == 0 || size > CAPSULE_MAX_BYTES {
+            last = format!("{path} is {size} bytes (max {CAPSULE_MAX_BYTES})");
+            continue;
+        }
+        let mut buf = vec![0u8; size];
+        match f.read(&mut buf) {
+            Ok(n) if n == size => {
+                logln(format!("capsule: read {n} bytes from {path}"));
+                return Ok(buf);
+            }
+            Ok(n) => last = format!("short read: {n} of {size} bytes"),
+            Err(e) => last = format!("read {path}: {e:?}"),
+        }
+    }
+    Err(last)
+}
+
+/// Load the capsule named by `app.capsule_src` (a volume path, or a URL when it
+/// has a scheme), describe it, and run the pre-flight gates without flashing.
+fn load_and_inspect_capsule(
+    app: &mut App,
+    terminal: &mut Terminal<ratatui_uefi::UefiOutputBackend>,
+) -> Result<()> {
+    let src = app.capsule_src.trim().to_string();
+    if src.is_empty() {
+        app.status = "set a capsule path or URL first (press 'e')".into();
+        return Ok(());
+    }
+    app.capsule_bytes.clear();
+    app.capsule_note.clear();
+    app.capsule_blocked = true;
+    app.fw_armed = false;
+    app.status = format!("loading capsule from {src} ...");
+    terminal.draw(|frame| render(frame, app))?;
+
+    let loaded = if src.contains("://") {
+        let target = app.target.clone();
+        download_capsule(&target, &src)
+    } else {
+        load_capsule_from_disk(&src)
+    };
+    let bytes = match loaded {
+        Ok(b) => b,
+        Err(e) => {
+            app.capsule_note.push(format!("load failed: {e}"));
+            app.status = format!("capsule load failed: {e}");
+            return Ok(());
+        }
+    };
+
+    match capsule::inspect(&bytes) {
+        Ok(lines) => app.capsule_note.extend(lines),
+        Err(e) => {
+            app.capsule_note.push(format!("malformed: {e}"));
+            app.status = format!("capsule malformed: {e}");
+            return Ok(());
+        }
+    }
+
+    // A local flash is authorized by physical presence plus the two-press
+    // confirm, so no expected version is demanded; power is still enforced.
+    match capsule::preflight(&app.info.esrt, &app.info.power, None, true) {
+        Ok(warns) => {
+            for w in warns {
+                app.capsule_note.push(format!("ok      {w}"));
+            }
+            app.capsule_blocked = false;
+            app.capsule_bytes = bytes;
+            app.status = "capsule loaded - press F twice to flash".into();
+        }
+        Err(e) => {
+            app.capsule_note.push(format!("BLOCKED {e}"));
+            app.status = format!("pre-flight refused: {e}");
+        }
+    }
+    Ok(())
+}
+
+/// Flash the loaded capsule. Returns only on failure; success resets the box.
+fn do_bios_flash(
+    app: &mut App,
+    terminal: &mut Terminal<ratatui_uefi::UefiOutputBackend>,
+) -> Result<()> {
+    if app.stress.is_active() {
+        app.status = "stop the stress test before flashing ('s')".into();
+        return Ok(());
+    }
+    if let Err(e) = capsule::preflight(&app.info.esrt, &app.info.power, None, true) {
+        app.status = format!("flash refused: {e}");
+        return Ok(());
+    }
+    app.status = format!(
+        "FLASHING {} bytes - DO NOT POWER OFF",
+        app.capsule_bytes.len()
+    );
+    terminal.draw(|frame| render(frame, app))?;
+
+    let bytes = core::mem::take(&mut app.capsule_bytes);
+    match capsule::apply_capsule(&bytes, &app.info.esrt) {
+        Ok(msg) => {
+            app.status = format!("capsule applied: {msg}");
+            app.info = SysInfo::collect();
+        }
+        Err(e) => {
+            app.status = format!("BIOS update failed: {e}");
+            app.capsule_note.push(format!("FAILED  {e}"));
+            app.capsule_bytes = bytes;
+        }
+    }
+    Ok(())
 }
 
 /// HTTP(S) POST via the EFI HTTP protocol — used for `https://` (TLS) and for
@@ -1829,7 +2042,24 @@ mod net_tcp {
     /// HTTP GET over raw TCP4 returning (status code, body). Reads until
     /// Content-Length is satisfied or the peer closes (Connection: close).
     pub fn get(target: &str, path: &str) -> Result<(u16, Vec<u8>), String> {
+        get_capped(target, path, DEFAULT_BODY_CAP)
+    }
+
+    /// Body ceiling for ordinary JSON responses.
+    pub const DEFAULT_BODY_CAP: usize = 4 << 20;
+
+    /// GET with an explicit body ceiling. Exceeding it, or a body shorter than
+    /// the advertised Content-Length, is an error — never a truncated success.
+    pub fn get_capped(target: &str, path: &str, max_cap: usize) -> Result<(u16, Vec<u8>), String> {
         if tcp4_absent() {
+            // smolnet has a fixed whole-request deadline and ignores
+            // Content-Length, so it cannot be trusted with a large body.
+            if max_cap > DEFAULT_BODY_CAP {
+                return Err(
+                    "firmware IPv4 stack absent; the smoltcp fallback cannot carry a body this large"
+                        .into(),
+                );
+            }
             return crate::smolnet::get(target, path);
         }
         let (rip, rport) =
@@ -1865,7 +2095,7 @@ mod net_tcp {
                 last = "null child handle".into();
                 continue;
             };
-            let result = get_child(child_handle, idx, rip, rport, path, target);
+            let result = get_child(child_handle, idx, rip, rport, path, target, max_cap);
             let _ = unsafe { (sb.0.destroy_child)(&mut sb.0, child) };
             match result {
                 Ok(out) => return Ok(out),
@@ -1885,6 +2115,7 @@ mod net_tcp {
         rport: u16,
         path: &str,
         host: &str,
+        max_cap: usize,
     ) -> Result<(u16, Vec<u8>), String> {
         let mut tcp = unsafe {
             boot::open_protocol::<Tcp4>(
@@ -1969,7 +2200,7 @@ mod net_tcp {
 
         // Drain the response until Content-Length is satisfied or FIN.
         let mut full: Vec<u8> = Vec::new();
-        let mut rxbuf = vec![0u8; 16 * 1024];
+        let mut rxbuf = vec![0u8; 64 * 1024];
         let mut header_end: Option<usize> = None;
         let mut content_len: Option<usize> = None;
         loop {
@@ -2031,8 +2262,9 @@ mod net_tcp {
                     break;
                 }
             }
-            if full.len() > 4 << 20 {
-                break;
+            if full.len() > max_cap {
+                let _ = unsafe { ((*tcp_ptr).configure)(tcp_ptr, core::ptr::null()) };
+                return Err(format!("response body exceeded {max_cap} bytes"));
             }
         }
         let _ = unsafe { ((*tcp_ptr).configure)(tcp_ptr, core::ptr::null()) };
@@ -2050,6 +2282,9 @@ mod net_tcp {
             .unwrap_or(0);
         let mut body = full.split_off(he);
         if let Some(cl) = content_len {
+            if body.len() < cl {
+                return Err(format!("short body: {} of {cl} bytes", body.len()));
+            }
             body.truncate(cl);
         }
         logln(format!("tcp: GET if{idx} {code} ({}B)", body.len()));
@@ -3197,6 +3432,64 @@ fn smb_read_word(root: &mut ScopedProtocol<PciRootBridgeIo>, base: u16, addr7: u
     Some(((lo as u16) << 8) | hi as u16)
 }
 
+/// SMBus Read-Word in wire order (LSB first) — what SBS Smart Battery returns.
+fn smb_read_word_le(root: &mut ScopedProtocol<PciRootBridgeIo>, base: u16, addr7: u8, reg: u8) -> Option<u16> {
+    smb_run(root, base, (addr7 << 1) | 1, reg, None, 0x4C)?;
+    let lo = io_r(root, base + 5)?;
+    let hi = io_r(root, base + 6)?;
+    io_w(root, base, 0x9E);
+    Some(((hi as u16) << 8) | lo as u16)
+}
+
+/// SBS Smart Battery SMBus address.
+const SBS_ADDR: u8 = 0x0B;
+
+/// Power source for the capsule pre-flight: chassis type and SMBIOS type 22 give
+/// portability and battery presence, the SBS Smart Battery gives live charge.
+fn collect_power(d: &Smbios) -> capsule::PowerState {
+    let mut p = capsule::PowerState {
+        portable: d.is_portable(),
+        battery_present: !d.batteries.is_empty(),
+        charge_pct: None,
+        discharging: None,
+        source: if d.present { "smbios" } else { "none" },
+    };
+    if !p.portable {
+        return p;
+    }
+    let Some(mut root) = rb_open() else {
+        return p;
+    };
+    let Some(base) = smbus_base(&mut root) else {
+        return p;
+    };
+    // Acquire INUSE (single read; the act of reading sets the semaphore).
+    let _ = io_r(&mut root, base);
+
+    if let Some(status) = smb_read_word_le(&mut root, base, SBS_ADDR, 0x16) {
+        p.battery_present = true;
+        p.discharging = Some(status & 0x0040 != 0);
+        p.source = "sbs";
+    }
+    if let Some(soc) = smb_read_word_le(&mut root, base, SBS_ADDR, 0x0D) {
+        if soc <= 100 {
+            p.charge_pct = Some(soc as u8);
+            p.source = "sbs";
+        }
+    }
+    // Negative current means the pack is draining, i.e. no AC.
+    if let Some(cur) = smb_read_word_le(&mut root, base, SBS_ADDR, 0x0A) {
+        let draining = (cur as i16) < 0;
+        p.discharging = Some(p.discharging.unwrap_or(false) || draining);
+        p.source = "sbs";
+    }
+    logln(format!(
+        "power: portable={} battery={} charge={:?} discharging={:?} src={}",
+        p.portable, p.battery_present, p.charge_pct, p.discharging, p.source
+    ));
+    p
+}
+
 /// Per-DIMM SPD/temperature/PMIC over SMBus (Intel i801 only).
 struct SpdDimm {
     addr: u8,
@@ -3413,6 +3706,7 @@ struct SysInfo {
     mem_errors: Vec<MemError>,
     hii: hii::HiiAudit,
     esrt: capsule::EsrtInfo,
+    power: capsule::PowerState,
     bootdiag: bootdiag::BootDiag,
 }
 
@@ -3546,6 +3840,7 @@ impl SysInfo {
         info.mem_errors = collect_mem_errors();
         info.hii = hii::collect();
         info.esrt = capsule::collect();
+        info.power = collect_power(&info.dmi);
         info.bootdiag = bootdiag::collect(&info);
         info
     }
@@ -3765,7 +4060,8 @@ fn page_memory(frame: &mut Frame, area: Rect, info: &SysInfo) {
     frame.render_widget(para(lines, "Memory"), area);
 }
 
-fn page_firmware(frame: &mut Frame, area: Rect, info: &SysInfo) {
+fn page_firmware(frame: &mut Frame, area: Rect, app: &App) {
+    let info = &app.info;
     let d = &info.dmi;
     let mut lines = vec![
         header("Firmware"),
@@ -3854,6 +4150,63 @@ fn page_firmware(frame: &mut Frame, area: Rect, info: &SysInfo) {
         Span::styled(format!("{:<14}", "Capsule-on-disk"), Style::default().fg(palette::LABEL)),
         yn(esrt.capsule_on_disk),
     ]));
+
+    // Power gate — a flash on a portable off AC is refused outright.
+    let p = &info.power;
+    let power_desc = match (p.portable, p.charge_pct, p.discharging) {
+        (false, _, _) => format!("AC-only chassis ({})", p.source),
+        (true, Some(c), Some(true)) => format!("portable, ON BATTERY {c}%"),
+        (true, Some(c), _) => format!("portable, AC, {c}%"),
+        (true, None, Some(true)) => "portable, ON BATTERY, charge unknown".to_string(),
+        (true, None, _) => format!("portable, charge unknown ({})", p.source),
+    };
+    let power_ok = capsule::power_verdict(p);
+    lines.push(Line::from(vec![
+        Span::styled(format!("{:<14}", "Power"), Style::default().fg(palette::LABEL)),
+        Span::styled(
+            power_desc,
+            Style::default().fg(if power_ok.is_ok() { palette::GOOD } else { palette::ERR }),
+        ),
+    ]));
+    for b in &d.batteries {
+        lines.push(kv(
+            "Battery",
+            format!(
+                "{} {} @ {} ({} mV, {} mWh design)",
+                b.manufacturer, b.device_name, b.location, b.design_voltage_mv, b.design_capacity_mwh
+            ),
+        ));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(header("Capsule flash"));
+    let caret = if app.editing == EditField::Capsule { "_" } else { "" };
+    lines.push(kv("Source", format!("{}{caret}", app.capsule_src)));
+    if app.capsule_note.is_empty() {
+        lines.push(kv("Loaded", "nothing - 'e' path, 'f' load".to_string()));
+    } else {
+        for n in &app.capsule_note {
+            let c = if n.starts_with("BLOCKED") || n.starts_with("FAILED") || n.starts_with("load failed") || n.starts_with("malformed") {
+                palette::ERR
+            } else if n.starts_with("ok") {
+                palette::GOOD
+            } else {
+                palette::TEXT
+            };
+            lines.push(Line::from(Span::styled(format!("  {n}"), Style::default().fg(c))));
+        }
+    }
+    if app.fw_armed {
+        lines.push(Line::from(Span::styled(
+            "  ARMED - press F again to FLASH. Irreversible, no rollback.",
+            Style::default().fg(palette::ERR),
+        )));
+    } else if !app.capsule_bytes.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  ready - press F to arm",
+            Style::default().fg(palette::ACCENT),
+        )));
+    }
 
     lines.push(Line::from(""));
     lines.push(header("Hardware error logs (intermittent-fault triage)"));
@@ -4195,7 +4548,7 @@ fn fw_data(info: &SysInfo) -> wasmrt::FwData {
         })
         .to_string(),
     );
-    fw.push("esrt", capsule::esrt_json(&info.esrt).to_string());
+    fw.push("esrt", capsule::esrt_json(&info.esrt, &info.power).to_string());
     fw.push("bootdiag", bootdiag::diag_json(&info.bootdiag).to_string());
     fw.push("bios_settings", hii::audit_json(&info.hii).to_string());
     fw
@@ -5628,7 +5981,7 @@ fn render(frame: &mut Frame, app: &App) {
         0 => page_overview(frame, root[1], &app.info),
         1 => page_system(frame, root[1], &app.info),
         2 => page_memory(frame, root[1], &app.info),
-        3 => page_firmware(frame, root[1], &app.info),
+        TAB_FIRMWARE => page_firmware(frame, root[1], app),
         TAB_BIOS => page_bios(frame, root[1], &app.info),
         5 => page_network(frame, root[1], app),
         6 => page_storage(frame, root[1], &app.info),
@@ -5662,6 +6015,14 @@ fn render(frame: &mut Frame, app: &App) {
             ("f", "fetch"),
             ("ENTER", "run"),
             ("Tab/->", "next"),
+            ("q", "quit"),
+        ],
+        TAB_FIRMWARE => &[
+            ("e", "capsule path"),
+            ("f", "load"),
+            ("F F", "FLASH BIOS"),
+            ("r", "refresh"),
+            ("Tab", "next"),
             ("q", "quit"),
         ],
         _ => &[
@@ -5700,6 +6061,7 @@ enum EditField {
     Target,
     Serial,
     Plugin,
+    Capsule,
 }
 
 struct App {
@@ -5753,6 +6115,16 @@ struct App {
     direct_stream: bool,
     /// Ticks toward the next console-discovery attempt while unlinked.
     direct_discover_tick: u32,
+    /// Capsule source: a volume-relative path, or a URL when it has a scheme.
+    capsule_src: String,
+    /// Loaded capsule awaiting a flash.
+    capsule_bytes: Vec<u8>,
+    /// Inspection + pre-flight report for the loaded capsule.
+    capsule_note: Vec<String>,
+    /// Pre-flight refused the loaded capsule; blocks arming.
+    capsule_blocked: bool,
+    /// Second 'F' will flash. Cleared by any other key.
+    fw_armed: bool,
 }
 
 impl App {
@@ -5799,6 +6171,11 @@ fn run() -> Result<()> {
         direct: None,
         direct_stream: false,
         direct_discover_tick: 0,
+        capsule_src: "bios\\update.cap".to_string(),
+        capsule_bytes: Vec::new(),
+        capsule_note: Vec::new(),
+        capsule_blocked: false,
+        fw_armed: false,
     };
 
     terminal.clear()?;
@@ -5906,6 +6283,7 @@ fn run() -> Result<()> {
             let field = match app.editing {
                 EditField::Serial => &mut app.order.serial,
                 EditField::Plugin => &mut app.plugin_id_in,
+                EditField::Capsule => &mut app.capsule_src,
                 _ => &mut app.target,
             };
             match key.code {
@@ -5922,6 +6300,12 @@ fn run() -> Result<()> {
                 _ => {}
             }
             continue;
+        }
+
+        // Arming is single-shot: anything other than a second 'F' disarms.
+        if app.fw_armed && key.code != terminput::KeyCode::Char('F') {
+            app.fw_armed = false;
+            app.status = "flash disarmed".into();
         }
 
         match key.code {
@@ -5958,6 +6342,8 @@ fn run() -> Result<()> {
                     EditField::Serial
                 } else if app.tab == TAB_PLUGINS {
                     EditField::Plugin
+                } else if app.tab == TAB_FIRMWARE {
+                    EditField::Capsule
                 } else {
                     EditField::Target
                 };
@@ -6075,6 +6461,23 @@ fn run() -> Result<()> {
             terminput::KeyCode::Char('f') if app.tab == TAB_PLUGINS => {
                 fetch_registry_plugin(&mut app, &mut terminal)?;
             }
+            // Firmware tab: load + inspect a capsule, then a two-press flash.
+            terminput::KeyCode::Char('f') if app.tab == TAB_FIRMWARE => {
+                load_and_inspect_capsule(&mut app, &mut terminal)?;
+            }
+            terminput::KeyCode::Char('F') if app.tab == TAB_FIRMWARE => {
+                if app.capsule_bytes.is_empty() {
+                    app.status = "load a capsule first ('e' path, 'f' load)".into();
+                } else if app.capsule_blocked {
+                    app.status = "pre-flight refused this capsule; see the Firmware tab".into();
+                } else if !app.fw_armed {
+                    app.fw_armed = true;
+                    app.status = "ARMED - press F again to FLASH (irreversible)".into();
+                } else {
+                    app.fw_armed = false;
+                    do_bios_flash(&mut app, &mut terminal)?;
+                }
+            }
             terminput::KeyCode::Char('s') if app.tab == TAB_STRESS => {
                 if app.stress.is_active() {
                     app.stress.stop();
@@ -6178,13 +6581,27 @@ fn agent_poll(
 
     let mut ran = 0usize;
     for cmd in &cmds {
-        execute_command(app, cmd, terminal)?;
-        let ack = format!("{{\"command_id\":{}}}", jq(&cmd.id));
-        let _ = http_post_json(&app.target, &format!("/api/v1/qc/agents/{mid}/ack"), ack.as_bytes());
+        // A destructive op acks itself before its point of no return; acking
+        // again here would be harmless but the outcome says when it is needed.
+        if execute_command(app, cmd, terminal, &mid)? == CmdOutcome::NeedsAck {
+            ack_command(&app.target, &mid, &cmd.id);
+        }
         ran += 1;
     }
     app.status = format!("agent: executed {ran} command(s)");
     Ok(())
+}
+
+/// Whether the caller still owes the server an ack for a command.
+#[derive(PartialEq, Eq)]
+enum CmdOutcome {
+    NeedsAck,
+    Acked,
+}
+
+fn ack_command(target: &str, mid: &str, id: &str) {
+    let ack = format!("{{\"command_id\":{}}}", jq(id));
+    let _ = http_post_json(target, &format!("/api/v1/qc/agents/{mid}/ack"), ack.as_bytes());
 }
 
 /// One pending fleet command. `kind` is `"send_report"` or `{"custom":{"payload":…}}`.
@@ -6206,10 +6623,11 @@ fn execute_command(
     app: &mut App,
     cmd: &AgentCommand,
     terminal: &mut Terminal<ratatui_uefi::UefiOutputBackend>,
-) -> Result<()> {
+    mid: &str,
+) -> Result<CmdOutcome> {
     if cmd.kind.as_str() == Some("send_report") {
         let _ = upload_fingerprint(app);
-        return Ok(());
+        return Ok(CmdOutcome::NeedsAck);
     }
     match cmd.kind.pointer("/custom/payload/op").and_then(|v| v.as_str()) {
         Some("fingerprint") | Some("send_report") => {
@@ -6226,9 +6644,9 @@ fn execute_command(
                 }
             }
         }
-        // Flash a BIOS capsule. Requires an explicit url + confirm:true; on
-        // success it resets and never returns. A version gate rejects
-        // downgrades before download when expected_version is supplied.
+        // Flash a BIOS capsule. Requires url + confirm:true, and an
+        // expected_version unless force:true. On success it resets and never
+        // returns, so the ack is posted before the point of no return.
         Some("bios_update") => {
             let url = cmd.kind.pointer("/custom/payload/url").and_then(|v| v.as_str());
             let confirm = cmd
@@ -6236,38 +6654,82 @@ fn execute_command(
                 .pointer("/custom/payload/confirm")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            if let Some(v) = cmd
+            let force = cmd
+                .kind
+                .pointer("/custom/payload/force")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let expected = cmd
                 .kind
                 .pointer("/custom/payload/expected_version")
                 .and_then(|v| v.as_u64())
-            {
-                match capsule::update_verdict(&app.info.esrt, v as u32) {
-                    Ok(msg) => logln(format!("bios_update: version gate {msg}")),
-                    Err(e) => {
-                        app.status = format!("bios_update rejected: {e}");
+                .map(|v| v as u32);
+
+            let Some(url) = url.filter(|_| confirm) else {
+                app.status = "bios_update ignored (needs url + confirm:true)".into();
+                return Ok(CmdOutcome::NeedsAck);
+            };
+            if app.stress.is_active() {
+                app.status = "bios_update refused: stress test running".into();
+                logln("bios_update: refused, stress active".into());
+                return Ok(CmdOutcome::NeedsAck);
+            }
+            match capsule::preflight(&app.info.esrt, &app.info.power, expected, force) {
+                Ok(warns) => {
+                    for w in warns {
+                        logln(format!("bios_update: {w}"));
+                    }
+                }
+                Err(e) => {
+                    app.status = format!("bios_update rejected: {e}");
+                    logln(format!("bios_update: {e}"));
+                    return Ok(CmdOutcome::NeedsAck);
+                }
+            }
+
+            app.status = format!("bios_update: fetching {url} ...");
+            terminal.draw(|frame| render(frame, app))?;
+            let target = app.target.clone();
+            let bytes = match download_capsule(&target, url) {
+                Ok(b) => b,
+                Err(e) => {
+                    app.status = format!("capsule download failed: {e}");
+                    return Ok(CmdOutcome::NeedsAck);
+                }
+            };
+            if let Err(e) = capsule::inspect(&bytes) {
+                app.status = format!("capsule malformed: {e}");
+                return Ok(CmdOutcome::NeedsAck);
+            }
+            // The orchestrator publishes a digest with every capsule; the LAN
+            // transport is plaintext, so check it before the point of no return.
+            match cmd.kind.pointer("/custom/payload/sha256").and_then(|v| v.as_str()) {
+                Some(want) => {
+                    if let Err(e) = capsule::verify_sha256(&bytes, want) {
+                        app.status = format!("capsule integrity check failed: {e}");
                         logln(format!("bios_update: {e}"));
-                        return Ok(());
+                        return Ok(CmdOutcome::NeedsAck);
                     }
+                    logln("bios_update: sha256 verified".into());
+                }
+                None if force => logln("bios_update: no sha256 supplied (forced)".into()),
+                None => {
+                    app.status = "bios_update rejected: payload has no sha256".into();
+                    return Ok(CmdOutcome::NeedsAck);
                 }
             }
-            match (url, confirm) {
-                (Some(url), true) => {
-                    app.status = format!("bios_update: fetching {url} ...");
-                    terminal.draw(|frame| render(frame, app))?;
-                    match download_capsule(url) {
-                        Ok(bytes) => {
-                            app.status = format!("bios_update: applying {} bytes", bytes.len());
-                            terminal.draw(|frame| render(frame, app))?;
-                            // Resets on success; only returns on failure.
-                            if let Err(e) = capsule::apply_capsule(&bytes) {
-                                app.status = format!("BIOS update failed: {e}");
-                            }
-                        }
-                        Err(e) => app.status = format!("capsule download failed: {e}"),
-                    }
-                }
-                _ => app.status = "bios_update ignored (needs url + confirm:true)".into(),
+
+            // Ack now: apply_capsule resets on success and would otherwise leave
+            // the command Pending forever, re-flashing on every later poll.
+            app.status = format!("bios_update: applying {} bytes", bytes.len());
+            terminal.draw(|frame| render(frame, app))?;
+            ack_command(&target, mid, &cmd.id);
+
+            if let Err(e) = capsule::apply_capsule(&bytes, &app.info.esrt) {
+                app.status = format!("BIOS update failed: {e}");
+                logln(format!("bios_update: {e}"));
             }
+            return Ok(CmdOutcome::Acked);
         }
         // Fetch a WASM plugin by URL and invoke a tool on it in firmware.
         Some("run_plugin") => {
@@ -6345,7 +6807,7 @@ fn execute_command(
         }
         _ => {}
     }
-    Ok(())
+    Ok(CmdOutcome::NeedsAck)
 }
 
 /// Send the current fingerprint (with stress summary) to the upload target,

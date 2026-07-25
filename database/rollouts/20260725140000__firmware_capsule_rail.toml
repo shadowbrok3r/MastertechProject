@@ -1,0 +1,77 @@
+id = "20260725140000__firmware_capsule_rail"
+name = "firmware_capsule_rail"
+state = "planned"
+source_schema_hash = "74eb9566360be9d27af9667d962233f3027a11d9f6d218b77111b5ea2262123d"
+target_schema_hash = "74eb9566360be9d27af9667d962233f3027a11d9f6d218b77111b5ea2262123d"
+compatibility = "phased"
+renames = []
+
+# BIOS capsule rail for the UEFI app.
+#
+# 1. New `firmware_capsule` table — the complete allow-list of images the fleet
+#    is permitted to flash. A bios_update command names a capsule_id; the
+#    orchestrator rewrites it to its own /api/v1/firmware/capsules/{id} route,
+#    so the firmware never receives an operator-supplied host.
+# 2. Three provenance fields on `fleet_command` (+ an index on requested_by).
+#    A flash is irreversible, so the actor is recorded durably instead of only
+#    in axum_server's 500-entry in-memory audit ring.
+#
+# `kind` on fleet_command already accepts any string; the new 'bios_update'
+# value needs no DDL change, only the widened comment in the .surql.
+#
+# The `capsules` bucket is NOT defined here — its backend path is
+# environment-dependent, so FirmwareCapsule::publish calls define_bucket
+# (IF NOT EXISTS) the same way user buckets are handled.
+#
+# Purely additive: nothing is dropped or retyped, so there is no `complete`
+# phase beyond what `start` does.
+
+[[steps]]
+id = "create_firmware_capsule"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE firmware_capsule TYPE ANY SCHEMALESS CHANGEFEED 30d PERMISSIONS FULL;
+
+DEFINE INDEX OVERWRITE fwcap_capsule_id    ON firmware_capsule FIELDS capsule_id UNIQUE;
+DEFINE INDEX OVERWRITE fwcap_board_product ON firmware_capsule FIELDS board_product;
+DEFINE INDEX OVERWRITE fwcap_fw_class      ON firmware_capsule FIELDS fw_class;
+DEFINE INDEX OVERWRITE fwcap_published_at  ON firmware_capsule FIELDS published_at;
+
+DEFINE FIELD OVERWRITE capsule_id       ON firmware_capsule TYPE string         PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE board_product    ON firmware_capsule TYPE string         PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE fw_class         ON firmware_capsule TYPE string         PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE version          ON firmware_capsule TYPE int            PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE lowest_supported ON firmware_capsule TYPE option<int>    PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE sha256           ON firmware_capsule TYPE string         PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE size_bytes       ON firmware_capsule TYPE int            PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE bucket_path      ON firmware_capsule TYPE option<string> PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE published_by     ON firmware_capsule TYPE string         PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE published_at     ON firmware_capsule TYPE datetime       PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE notes            ON firmware_capsule TYPE option<string> PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "fleet_command_actor_fields"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE requested_by ON fleet_command TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE peer_ip      ON fleet_command TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE user_agent   ON fleet_command TYPE none | string PERMISSIONS FULL;
+
+DEFINE INDEX OVERWRITE fcmd_requested_by ON fleet_command FIELDS requested_by;
+"""
+
+[[steps]]
+id = "rollback_firmware_capsule_rail"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE TABLE IF EXISTS firmware_capsule;
+
+REMOVE INDEX IF EXISTS fcmd_requested_by ON fleet_command;
+REMOVE FIELD IF EXISTS requested_by ON fleet_command;
+REMOVE FIELD IF EXISTS peer_ip      ON fleet_command;
+REMOVE FIELD IF EXISTS user_agent   ON fleet_command;
+"""

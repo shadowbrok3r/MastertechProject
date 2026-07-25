@@ -523,6 +523,7 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
         whea: None,
         tdr: None,
         cpu_cores,
+        voltages: Vec::new(),
     })
 }
 
@@ -696,5 +697,6 @@ pub async fn get_sysinfo_no_gpu() -> anyhow::Result<SystemInformation, anyhow::E
         whea: None,
         tdr: None,
         cpu_cores,
+        voltages: Vec::new(),
     })
 }

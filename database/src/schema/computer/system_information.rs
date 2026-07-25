@@ -65,6 +65,11 @@ pub struct SystemInformation {
     /// older clients until they upgrade the LiveData builder.
     #[serde(default)]
     pub cpu_cores: Vec<CpuCoreLive>,
+    /// SuperIO board rails. Empty when the client could not read them, which
+    /// includes every client older than this field. Same no-`skip_serializing_if`
+    /// rule as `whea` — see the comment above.
+    #[serde(default)]
+    pub voltages: Vec<VoltageRail>,
 }
 
 /// Per-logical-core row on the LiveData wire (mirrors stress-kit `CoreSample`).
@@ -95,6 +100,15 @@ pub struct WheaCounters {
 pub struct TdrCounters {
     pub delta_since_program_start: u64,
     pub absolute_since_boot: u64,
+}
+
+/// Mirror of `stress_kit::telemetry::VoltageReading`. `calibrated` is false
+/// whenever the value came from an assumed board divider.
+#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default, Facet)]
+pub struct VoltageRail {
+    pub label: String,
+    pub volts: f32,
+    pub calibrated: bool,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default, Facet )]
@@ -222,7 +236,14 @@ mod mirror_shape_fp {
 
     #[test]
     fn system_information_pin() {
-        assert_eq!(shape_fingerprint::<SystemInformation>(), 0xee82_69a2_83f1_10d9);
+        assert_eq!(shape_fingerprint::<SystemInformation>(), 0x157b_4a0d_93f2_cbbc);
+    }
+
+    // Reduced projection of stress_kit::telemetry::VoltageReading
+    // (stress-kit/src/telemetry/mod.rs:124), all 3 of its fields.
+    #[test]
+    fn voltage_rail_pin() {
+        assert_eq!(shape_fingerprint::<VoltageRail>(), 0xde12_4a3d_f928_9703);
     }
 
     // Reduced projection of stress-kit CoreSample (stress-kit/src/telemetry/core.rs:8).

@@ -43,18 +43,26 @@ DEFINE FIELD machine_id      ON fleet_command TYPE string                  PERMI
 DEFINE FIELD external_id     ON fleet_command TYPE string                  PERMISSIONS FULL;
 
 -- --- Command type ---
--- One of: 'send_report' | 'run_stress_scenario' | 'custom'.
+-- One of: 'send_report' | 'run_stress_scenario' | 'bios_update' | 'custom'.
 -- Mirrors `database::schema::fleet::FleetCommandKind`.
 DEFINE FIELD kind            ON fleet_command TYPE string                  PERMISSIONS FULL;
 
 -- --- Lifecycle status ---
--- One of: 'pending' | 'acknowledged' | 'failed'. `failed` is reserved
--- for an explicit failure ack from the agent (not yet wired).
+-- One of: 'pending' | 'acknowledged' | 'failed'. `failed` also covers a
+-- destructive command refused a second delivery (at-most-once).
 DEFINE FIELD status          ON fleet_command TYPE string DEFAULT 'pending' PERMISSIONS FULL;
 
 -- --- Timing ---
 DEFINE FIELD issued_at       ON fleet_command TYPE datetime DEFAULT time::now() PERMISSIONS FULL;
 DEFINE FIELD acked_at        ON fleet_command TYPE none | datetime         PERMISSIONS FULL;
 
--- --- Optional opaque payload (Custom commands stash JSON here) ---
+-- --- Optional opaque payload (Custom + BiosUpdate stash JSON here) ---
 DEFINE FIELD payload         ON fleet_command TYPE none | object           PERMISSIONS FULL;
+
+-- --- Provenance: who asked for this, from where ---
+-- A BIOS flash is irreversible, so the actor is recorded durably rather
+-- than only in the in-memory audit ring.
+DEFINE INDEX fcmd_requested_by   ON fleet_command FIELDS requested_by;
+DEFINE FIELD requested_by    ON fleet_command TYPE none | string           PERMISSIONS FULL;
+DEFINE FIELD peer_ip         ON fleet_command TYPE none | string           PERMISSIONS FULL;
+DEFINE FIELD user_agent      ON fleet_command TYPE none | string           PERMISSIONS FULL;

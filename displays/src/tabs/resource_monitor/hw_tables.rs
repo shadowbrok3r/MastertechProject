@@ -11,6 +11,7 @@ use super::widgets::{
     self, Absent, Gauge, Meter, Ramp, Reading, StatTile, Status, StatusPill, GAUGE_SIZE,
     METER_SIZE, PILL_SIZE, TILE_SIZE,
 };
+use super::sysinfo_convert::fmt_bytes;
 use super::{ABSENT, TelemetrySource};
 use crate::ui_tools::{icons, theme};
 
@@ -331,48 +332,60 @@ pub fn show_disk_meters(ui: &mut Ui, disks: &[DiskRateSample], source: Telemetry
     }
 
     let size = meter_size(ui);
-    if !source.io_rates_measured() {
-        for d in disks {
-            widgets::linear_meter(
-                ui,
-                size,
-                &Meter {
-                    label: &d.name,
-                    value: Reading::NOT_SAMPLED,
-                    unit: "MB/s",
-                    ramp: Ramp::Series(SERIES_DISK),
-                    ..Default::default()
-                },
-            );
-        }
-        caption(
-            ui,
-            "The wire payload lists devices without I/O counters, so no rate was measured.",
-        );
-        return;
-    }
+    let rates_measured = source.io_rates_measured();
+    let mut any_capacity = false;
 
-    let peak = disks
-        .iter()
-        .map(|d| d.read_mb_per_s + d.write_mb_per_s)
-        .fold(0.0_f32, f32::max);
     for d in disks {
-        let text = format!("{:.2} R / {:.2} W", d.read_mb_per_s, d.write_mb_per_s);
+        // Filesystem and throughput ride the row, so no separate volume table is needed.
+        let mut label = d.name.clone();
+        if !d.file_system.trim().is_empty() {
+            label.push_str(" · ");
+            label.push_str(d.file_system.trim());
+        }
+
+        let used = d.used_fraction();
+        any_capacity |= used.is_some();
+
+        let mut detail = match used {
+            Some(_) => format!(
+                "{} free of {}",
+                fmt_bytes(d.available_bytes),
+                fmt_bytes(d.total_bytes)
+            ),
+            None => "capacity not reported".to_string(),
+        };
+        if rates_measured {
+            detail.push_str(&format!(
+                " · {:.2} R / {:.2} W MB/s",
+                d.read_mb_per_s, d.write_mb_per_s
+            ));
+        }
+
         widgets::linear_meter(
             ui,
             size,
             &Meter {
-                label: &d.name,
-                value: Reading::Measured(d.read_mb_per_s + d.write_mb_per_s),
-                unit: "MB/s",
-                decimals: 2,
-                range: (0.0, peak.max(1.0)),
+                label: &label,
+                value: match used {
+                    Some(frac) => Reading::Measured(frac * 100.0),
+                    None => Reading::NOT_SAMPLED,
+                },
+                unit: "%",
+                decimals: 0,
+                range: (0.0, 100.0),
                 ramp: Ramp::Series(SERIES_DISK),
-                value_text: Some(text.as_str()),
+                value_text: Some(detail.as_str()),
             },
         );
     }
-    caption(ui, &format!("Bars scaled to the busiest device, {peak:.2} MB/s."));
+
+    if !any_capacity {
+        caption(ui, "No volume reported a capacity, so no usage could be shown.");
+    } else if !rates_measured {
+        caption(ui, "Bars show capacity used; the payload carried no I/O counters.");
+    } else {
+        caption(ui, "Bars show capacity used.");
+    }
 }
 
 /// Per-adapter meters; wire-payload volume is labelled cumulative, not a rate.

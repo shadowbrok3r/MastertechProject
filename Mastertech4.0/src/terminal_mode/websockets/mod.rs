@@ -4383,6 +4383,15 @@ pub async fn live_computer_stats(tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>
                                 absolute_since_boot: t.absolute_since_boot,
                             });
                         }
+                        systeminfo.voltages = snapshot
+                            .voltages
+                            .iter()
+                            .map(|v| database::schema::VoltageRail {
+                                label: v.label.clone(),
+                                volts: v.volts,
+                                calibrated: v.calibrated,
+                            })
+                            .collect();
                         // ACPI thermal zones from the WMI fallback —
                         // sysinfo's Component temperature surface goes
                         // empty on modern Windows so `component_temps`

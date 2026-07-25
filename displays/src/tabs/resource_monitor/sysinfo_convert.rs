@@ -57,15 +57,29 @@ pub fn sysinfo_to_telemetry(info: &SystemInformation) -> TelemetrySnapshot {
         });
     }
 
+    for rail in &info.voltages {
+        snap.voltages.push(stress_kit::telemetry::VoltageReading {
+            label: rail.label.clone(),
+            volts: rail.volts,
+            calibrated: rail.calibrated,
+        });
+    }
+
     for disk in &info.disks {
+        // Only the parts that are present, so a blank device name leaves no empty parens.
+        let name = match (disk.mount_point.trim(), disk.device_name.trim()) {
+            ("", "") => "Unknown volume".to_string(),
+            ("", dev) => dev.to_string(),
+            (mount, "") => mount.to_string(),
+            (mount, dev) => format!("{mount} ({dev})"),
+        };
         snap.disks.push(DiskRateSample {
-            name: if disk.mount_point.is_empty() {
-                disk.device_name.clone()
-            } else {
-                format!("{} ({})", disk.mount_point, disk.device_name)
-            },
+            name,
             read_mb_per_s: 0.0,
             write_mb_per_s: 0.0,
+            total_bytes: disk.total_space,
+            available_bytes: disk.available_space,
+            file_system: disk.file_system.clone(),
         });
     }
 
@@ -195,7 +209,7 @@ pub fn sysinfo_to_machine_info(info: &SystemInformation) -> crate::tabs::resourc
     }
 }
 
-fn fmt_bytes(bytes: u64) -> String {
+pub(super) fn fmt_bytes(bytes: u64) -> String {
     const KIB: f64 = 1024.0;
     const MIB: f64 = KIB * 1024.0;
     const GIB: f64 = MIB * 1024.0;

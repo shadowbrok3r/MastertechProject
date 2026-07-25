@@ -13,6 +13,9 @@ use crate::ui_tools::{icons, theme};
 
 const HISTORY_SECS: f64 = 120.0;
 const MAX_SAMPLES: usize = 2048;
+/// Narrowest value domain a heatmap maps across, as a fraction of the domain's top.
+const MIN_SPAN_FRAC: f64 = 0.04;
+
 /// Narrowest time window a heatmap maps across.
 const MIN_WINDOW_SECS: f64 = 10.0;
 /// Width below which the charts stack in one column.
@@ -617,8 +620,14 @@ impl CoreHeatmap {
                 return;
             };
 
-            let (lo, raw_hi) = domain.unwrap_or((v_min, v_max));
-            let hi = if raw_hi - lo < 1.0 { lo + 1.0 } else { raw_hi };
+            // An observed domain widens to MIN_SPAN_FRAC of its top so a pinned value spans the ramp.
+            let (lo, hi) = match domain {
+                Some(explicit) => explicit,
+                None => {
+                    let min_span = (v_max.abs() * MIN_SPAN_FRAC).max(1.0);
+                    ((v_max - min_span).min(v_min), v_max)
+                }
+            };
             let rows = self.cores.len().max(1);
             let gutter = if compact { 18.0 } else { 26.0 };
             let axis_h = if compact { 0.0 } else { 12.0 };
