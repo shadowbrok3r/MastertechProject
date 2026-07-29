@@ -20,7 +20,7 @@ use wgpu::util::DeviceExt;
 
 use crate::Metrics;
 
-use super::gpu_common::GpuContext;
+use super::gpu_common::{wait_latest, GpuContext};
 
 const TICK: Duration = Duration::from_millis(500);
 
@@ -291,7 +291,7 @@ fn gpu_driver(cancel: Arc<AtomicBool>, counter: Arc<AtomicU64>, warn: Arc<Mutex<
         }
         ctx.queue.submit(std::iter::once(encoder.finish()));
         // Only a confirmed-complete dispatch counts toward GFLOPS.
-        match ctx.device.poll(wgpu::PollType::Wait) {
+        match ctx.device.poll(wait_latest()) {
             Ok(_) => {
                 counter.fetch_add(1, Ordering::Relaxed);
                 wait_failures = 0;

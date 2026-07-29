@@ -22,6 +22,25 @@ pub(super) const WG_SIZE: u32 = 64;
 /// Wall-clock bound on a buffer-map callback once the queue has been polled.
 pub(super) const MAP_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Bound on a single device wait; exceeding it yields `PollError::Timeout`.
+pub(super) const DEVICE_WAIT_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Bounded wait on the most recent submission.
+pub(super) fn wait_latest() -> wgpu::PollType {
+    wgpu::PollType::Wait {
+        submission_index: None,
+        timeout: Some(DEVICE_WAIT_TIMEOUT),
+    }
+}
+
+/// Bounded wait on a specific submission.
+pub(super) fn wait_for(index: wgpu::SubmissionIndex) -> wgpu::PollType {
+    wgpu::PollType::Wait {
+        submission_index: Some(index),
+        timeout: Some(DEVICE_WAIT_TIMEOUT),
+    }
+}
+
 /// Uncaptured device errors logged in full before suppression kicks in.
 const LOGGED_DEVICE_ERRORS: u64 = 5;
 
@@ -210,12 +229,12 @@ fn pick_adapter(adapters: Vec<Adapter>, prefer_discrete: bool) -> Option<Adapter
 
 impl GpuContext {
     pub(super) fn acquire(prefer_discrete: bool) -> Result<Self, String> {
-        let instance = Instance::new(&InstanceDescriptor {
+        let instance = Instance::new(InstanceDescriptor {
             backends: Backends::PRIMARY,
-            ..Default::default()
+            ..InstanceDescriptor::new_without_display_handle()
         });
 
-        let adapters = instance.enumerate_adapters(Backends::PRIMARY);
+        let adapters = pollster::block_on(instance.enumerate_adapters(Backends::PRIMARY));
         if adapters.is_empty() {
             return Err("no GPU adapters found".into());
         }
@@ -247,6 +266,7 @@ impl GpuContext {
                     power_preference: power,
                     compatible_surface: None,
                     force_fallback_adapter: false,
+                    apply_limit_buckets: false,
                 }))
                 .map_err(|e| format!("no usable GPU adapter: {e}"))?;
                 let info = fallback.get_info();
@@ -286,6 +306,7 @@ impl GpuContext {
             label: Some("stress-kit GPU stressor"),
             required_features: Features::empty(),
             required_limits: limits,
+            experimental_features: wgpu::ExperimentalFeatures::disabled(),
             memory_hints: wgpu::MemoryHints::Performance,
             trace: wgpu::Trace::Off,
         }))
@@ -293,7 +314,7 @@ impl GpuContext {
 
         let health = GpuHealth::default();
         let health_err = health.clone();
-        device.on_uncaptured_error(Box::new(move |err| {
+        device.on_uncaptured_error(Arc::new(move |err| {
             health_err.note_error(&err);
         }));
         let health_lost = health.clone();

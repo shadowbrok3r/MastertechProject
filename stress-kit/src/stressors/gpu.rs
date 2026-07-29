@@ -10,7 +10,7 @@ use wgpu::util::DeviceExt;
 
 use crate::Metrics;
 
-use super::gpu_common::{emit_fatal_tick, emit_tick, run_unsupported, GpuContext, TICK};
+use super::gpu_common::{emit_fatal_tick, emit_tick, run_unsupported, wait_latest, GpuContext, TICK};
 
 const SHADER: &str = r#"
 struct Params {
@@ -180,7 +180,7 @@ pub(crate) fn run(
         ctx.queue.submit(std::iter::once(encoder.finish()));
         // A wait timeout is neither an uncaptured error nor device-lost, so it has
         // to be counted here or a hung device looks healthy.
-        match ctx.device.poll(wgpu::PollType::Wait) {
+        match ctx.device.poll(wait_latest()) {
             Ok(_) => {
                 dispatches_in_tick += 1;
                 wait_failures = 0;

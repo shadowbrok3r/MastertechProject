@@ -20,7 +20,7 @@ use wgpu::util::DeviceExt;
 
 use crate::Metrics;
 
-use super::gpu_common::{emit_fatal_tick, emit_tick, GpuContext, TICK};
+use super::gpu_common::{emit_fatal_tick, emit_tick, wait_for, wait_latest, GpuContext, TICK};
 
 const CHAIN_DEPTH: usize = 8;
 const ITERS_PER_BURST: u64 = 200_000;
@@ -349,14 +349,14 @@ fn gpu_driver(
     while !stop.load(Ordering::Relaxed) {
         while pending.len() >= MAX_INFLIGHT_DISPATCHES {
             let Some(oldest) = pending.front().cloned() else { break };
-            match ctx.device.poll(wgpu::PollType::WaitForSubmissionIndex(oldest)) {
+            match ctx.device.poll(wait_for(oldest)) {
                 Ok(_) => {
                     pending.pop_front();
                     counter.fetch_add(1, Ordering::Relaxed);
                     last_progress = Instant::now();
                 }
                 // Oldest stays tracked unless a full drain confirms it completed.
-                Err(e) => match ctx.device.poll(wgpu::PollType::Wait) {
+                Err(e) => match ctx.device.poll(wait_latest()) {
                     Ok(_) => {
                         counter.fetch_add(pending.len() as u64, Ordering::Relaxed);
                         pending.clear();
@@ -424,7 +424,7 @@ fn gpu_driver(
 
     // Skipped once stalled: the wait would block for wgpu's full internal timeout.
     if last_progress.elapsed() < DRAIN_STALL_LIMIT {
-        let _ = ctx.device.poll(wgpu::PollType::Wait);
+        let _ = ctx.device.poll(wait_latest());
     }
 }
 

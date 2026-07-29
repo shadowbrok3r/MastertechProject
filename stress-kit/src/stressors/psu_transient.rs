@@ -18,7 +18,7 @@ use wgpu::util::DeviceExt;
 
 use crate::Metrics;
 
-use super::gpu_common::{emit_fatal_tick, emit_tick, GpuContext, TICK};
+use super::gpu_common::{emit_fatal_tick, emit_tick, wait_for, wait_latest, GpuContext, TICK};
 
 /// Target length of the GPU burst; submits stop as soon as it elapses.
 const PULSE_ON: Duration = Duration::from_millis(100);
@@ -389,7 +389,7 @@ fn gpu_driver(
         pending.clear();
         // Skipped once stalled: the wait would block for wgpu's full internal timeout.
         let stalled = last_progress.elapsed() >= DRAIN_STALL_LIMIT;
-        if !stalled && check_poll(ctx.device.poll(wgpu::PollType::Wait), &stall) {
+        if !stalled && check_poll(ctx.device.poll(wait_latest()), &stall) {
             // An empty queue confirms every unit still tracked at the boundary.
             counter.fetch_add(queued, Ordering::Relaxed);
             last_progress = Instant::now();
@@ -426,7 +426,7 @@ fn gpu_driver(
 
     // Skipped once stalled: the wait would block for wgpu's full internal timeout.
     if last_progress.elapsed() < DRAIN_STALL_LIMIT {
-        let _ = check_poll(ctx.device.poll(wgpu::PollType::Wait), &stall);
+        let _ = check_poll(ctx.device.poll(wait_latest()), &stall);
     }
 }
 
@@ -471,10 +471,7 @@ fn drain_to(
     index: wgpu::SubmissionIndex,
     stall: &Arc<Mutex<Option<String>>>,
 ) -> bool {
-    check_poll(
-        ctx.device.poll(wgpu::PollType::WaitForSubmissionIndex(index)),
-        stall,
-    )
+    check_poll(ctx.device.poll(wait_for(index)), stall)
 }
 
 /// Publishes a device-wait timeout through `stall` and clears it once a wait completes.

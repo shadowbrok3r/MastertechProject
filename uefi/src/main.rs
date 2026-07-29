@@ -138,6 +138,9 @@ const DIRECT_PUMP_IDLE_MS: u64 = 200;
 /// Direct-link listener port on the console (mirror of displays' DIRECT_PORT).
 const DIRECT_PORT: u16 = 9209;
 
+/// Budget for one TCP connect or transmit; a dropped SYN costs the loop all of it.
+const TCP_CONNECT_TIMEOUT_MS: u32 = 10_000;
+
 /// Redraw floor so live values keep ticking without a state change.
 const REDRAW_MIN_MS: u64 = 200;
 
@@ -1690,41 +1693,117 @@ fn parse_upload_url(target: &str) -> UploadUrl {
     }
 }
 
+/// Consecutive relay failures that open the breaker.
+const RELAY_TRIP_AFTER: u32 = 3;
+
+/// First suppression window; doubles per re-trip up to [`RELAY_MUTE_MAX_MS`].
+const RELAY_MUTE_BASE_MS: u64 = 5_000;
+
+/// Ceiling on the suppression window.
+const RELAY_MUTE_MAX_MS: u64 = 60_000;
+
+/// Breaker that suppresses relay HTTP while the target keeps failing. A failed
+/// connect costs the run loop a full [`TCP_CONNECT_TIMEOUT_MS`] pump, so an
+/// unreachable relay is muted rather than retried on every poll.
+mod relay_gate {
+    use core::sync::atomic::{AtomicU32, AtomicU64, Ordering::Relaxed};
+
+    static NOW_MS: AtomicU64 = AtomicU64::new(0);
+    static MUTE_UNTIL_MS: AtomicU64 = AtomicU64::new(0);
+    static FAILS: AtomicU32 = AtomicU32::new(0);
+    static TRIPS: AtomicU32 = AtomicU32::new(0);
+
+    /// Publish the run loop's clock; the breaker times its backoff from it.
+    pub fn tick(now_ms: u64) {
+        NOW_MS.store(now_ms, Relaxed);
+    }
+
+    /// True while relay requests are suppressed.
+    pub fn muted() -> bool {
+        NOW_MS.load(Relaxed) < MUTE_UNTIL_MS.load(Relaxed)
+    }
+
+    /// Milliseconds until the breaker closes.
+    pub fn remaining_ms() -> u64 {
+        MUTE_UNTIL_MS.load(Relaxed).saturating_sub(NOW_MS.load(Relaxed))
+    }
+
+    /// Clear the breaker on a target change or an operator retry.
+    pub fn reset() {
+        FAILS.store(0, Relaxed);
+        TRIPS.store(0, Relaxed);
+        MUTE_UNTIL_MS.store(0, Relaxed);
+    }
+
+    /// Record a request outcome; a failure streak opens the breaker. A connect
+    /// timeout trips it alone, having already spent a full connect budget.
+    pub fn note(ok: bool, err: Option<&str>) {
+        if ok {
+            reset();
+            return;
+        }
+        let timed_out = err.is_some_and(|e| e.contains("TIMEOUT"));
+        let streak = FAILS.fetch_add(1, Relaxed) + 1;
+        if !timed_out && streak < super::RELAY_TRIP_AFTER {
+            return;
+        }
+        FAILS.store(0, Relaxed);
+        let shift = TRIPS.fetch_add(1, Relaxed).min(3);
+        let window = (super::RELAY_MUTE_BASE_MS << shift).min(super::RELAY_MUTE_MAX_MS);
+        MUTE_UNTIL_MS.store(NOW_MS.load(Relaxed).saturating_add(window), Relaxed);
+        super::logln(format!(
+            "relay: unreachable - muting relay HTTP for {}s",
+            window / 1000
+        ));
+    }
+}
+
 /// GET `path` from the upload target's host, picking the transport like the
 /// fingerprint upload does. `tcp://` (QC frame) targets are redirected to the
 /// axum HTTP port on the same host. Returns (status code, body).
 fn http_get_json(target: &str, path: &str) -> Result<(u16, Vec<u8>), String> {
+    if relay_gate::muted() {
+        return Err(format!("relay muted {}ms", relay_gate::remaining_ms()));
+    }
     let u = parse_upload_url(target);
-    if u.is_qc_tcp {
+    let res = if u.is_qc_tcp {
         let host = u
             .host_port
             .rsplit_once(':')
             .map(|(h, _)| h.to_string())
             .unwrap_or_else(|| u.host_port.clone());
-        return net_tcp::get(&format!("{host}:8082"), path);
-    }
-    if u.needs_efi_http {
-        return http_efi::get(&format!("{}://{}{}", u.scheme, u.host_port, path));
-    }
-    net_tcp::get(&u.host_port, path)
+        net_tcp::get(&format!("{host}:8082"), path)
+    } else if u.needs_efi_http {
+        http_efi::get(&format!("{}://{}{}", u.scheme, u.host_port, path))
+    } else {
+        net_tcp::get(&u.host_port, path)
+    };
+    // A served status code still proves the relay is reachable.
+    relay_gate::note(res.is_ok(), res.as_ref().err().map(|e| e.as_str()));
+    res
 }
 
 /// POST `body` to `path` on the upload target's host, picking the transport like
 /// [`http_get_json`]. `tcp://` targets redirect to the axum HTTP port.
 fn http_post_json(target: &str, path: &str, body: &[u8]) -> Result<String, String> {
+    if relay_gate::muted() {
+        return Err(format!("relay muted {}ms", relay_gate::remaining_ms()));
+    }
     let u = parse_upload_url(target);
-    if u.is_qc_tcp {
+    let res = if u.is_qc_tcp {
         let host = u
             .host_port
             .rsplit_once(':')
             .map(|(h, _)| h.to_string())
             .unwrap_or_else(|| u.host_port.clone());
-        return net_tcp::post(&format!("{host}:8082"), path, body);
-    }
-    if u.needs_efi_http {
-        return http_efi::post(&format!("{}://{}{}", u.scheme, u.host_port, path), body);
-    }
-    net_tcp::post(&u.host_port, path, body)
+        net_tcp::post(&format!("{host}:8082"), path, body)
+    } else if u.needs_efi_http {
+        http_efi::post(&format!("{}://{}{}", u.scheme, u.host_port, path), body)
+    } else {
+        net_tcp::post(&u.host_port, path, body)
+    };
+    relay_gate::note(res.is_ok(), res.as_ref().err().map(|e| e.as_str()));
+    res
 }
 
 /// GET an absolute or target-relative URL, picking the transport like
@@ -2279,7 +2358,7 @@ mod net_tcp {
         if st != Status::SUCCESS {
             return Err(format!("connect call: {st:?}"));
         }
-        let st = unsafe { pump(tcp_ptr, &ct.completion_token.status, 10_000) };
+        let st = unsafe { pump(tcp_ptr, &ct.completion_token.status, super::TCP_CONNECT_TIMEOUT_MS) };
         if st != Status::SUCCESS {
             return Err(format!("connect: {st:?}"));
         }
@@ -2309,7 +2388,7 @@ mod net_tcp {
         if st != Status::SUCCESS {
             return Err(format!("transmit call: {st:?}"));
         }
-        let st = unsafe { pump(tcp_ptr, &txtok.completion_token.status, 10_000) };
+        let st = unsafe { pump(tcp_ptr, &txtok.completion_token.status, super::TCP_CONNECT_TIMEOUT_MS) };
         if st != Status::SUCCESS {
             return Err(format!("transmit: {st:?}"));
         }
@@ -2536,7 +2615,7 @@ mod net_tcp {
         if st != Status::SUCCESS {
             return Err(format!("connect call: {st:?}"));
         }
-        let st = unsafe { pump(tcp_ptr, &ct.completion_token.status, 10_000) };
+        let st = unsafe { pump(tcp_ptr, &ct.completion_token.status, super::TCP_CONNECT_TIMEOUT_MS) };
         if st != Status::SUCCESS {
             return Err(format!("connect: {st:?}"));
         }
@@ -2571,7 +2650,7 @@ mod net_tcp {
         if st != Status::SUCCESS {
             return Err(format!("transmit call: {st:?}"));
         }
-        let st = unsafe { pump(tcp_ptr, &txtok.completion_token.status, 10_000) };
+        let st = unsafe { pump(tcp_ptr, &txtok.completion_token.status, super::TCP_CONNECT_TIMEOUT_MS) };
         if st != Status::SUCCESS {
             return Err(format!("transmit: {st:?}"));
         }
@@ -4710,7 +4789,8 @@ fn fw_data(info: &SysInfo) -> wasmrt::FwData {
 /// GET queued remote-viewer input from the relay and inject it into the loop.
 /// Returns true if any events were injected (drives the adaptive poll rate).
 fn poll_preboot_input(app: &mut App) -> bool {
-    if app.target.is_empty() {
+    // A linked console delivers input as FRAME_TAG_PREBOOT_INPUT; this would duplicate it.
+    if app.direct.is_some() || app.target.is_empty() {
         return false;
     }
     let serial = order::encode_path_segment(&effective_serial(&app.info));
@@ -4786,6 +4866,7 @@ fn adopt_relay(app: &mut App, url: &str, src: TargetSource) {
     }
     let prev = core::mem::replace(&mut app.target, url.to_string());
     let prev_src = core::mem::replace(&mut app.target_src, src);
+    relay_gate::reset();
     app.present_registered = false;
     app.present_next_ms = 0;
     logln(format!(
@@ -5214,7 +5295,8 @@ fn send_presence_heartbeat(app: &mut App) {
 /// so an auto-stream can't outlive a dead relay; manual 'v' state is honored
 /// until the viewer that saw it leaves.
 fn viewer_check(app: &mut App) {
-    if app.target.is_empty() {
+    // A linked console drives streaming over FRAME_TAG_PREBOOT_STREAM_CTL instead.
+    if app.direct.is_some() || app.target.is_empty() {
         return;
     }
     let serial = order::encode_path_segment(&effective_serial(&app.info));
@@ -7158,6 +7240,7 @@ fn run() -> Result<()> {
     loop {
         app.stress.tick();
         let now = clock.now_ms();
+        relay_gate::tick(now);
         // A grown log ring changes the Log tab.
         if log_seq() != last_log_seq {
             last_log_seq = log_seq();
@@ -7290,6 +7373,7 @@ fn run() -> Result<()> {
             // A hand-edited target outranks discovery and is never overwritten.
             if before.is_some_and(|b| b != app.target) {
                 app.target_src = TargetSource::Operator;
+                relay_gate::reset();
                 app.status = relay_line(&app);
             }
             continue;
@@ -7807,6 +7891,7 @@ fn execute_command(
             if let Some(t) = cmd.kind.pointer("/custom/payload/target").and_then(|v| v.as_str()) {
                 app.target = t.to_string();
                 app.target_src = TargetSource::Operator;
+                relay_gate::reset();
             }
             app.streaming = true;
             app.stream_frame = 0;

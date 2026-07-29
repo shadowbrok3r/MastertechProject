@@ -303,12 +303,11 @@ mod wgpu_scan {
     use wgpu::{Backends, Instance, InstanceDescriptor};
 
     pub(super) fn enumerate() -> (bool, Vec<WgpuAdapter>) {
-        let instance = Instance::new(&InstanceDescriptor {
+        let instance = Instance::new(InstanceDescriptor {
             backends: Backends::PRIMARY,
-            ..Default::default()
+            ..InstanceDescriptor::new_without_display_handle()
         });
-        let adapters = instance
-            .enumerate_adapters(Backends::PRIMARY)
+        let adapters = pollster::block_on(instance.enumerate_adapters(Backends::PRIMARY))
             .into_iter()
             .map(|a| {
                 let info = a.get_info();

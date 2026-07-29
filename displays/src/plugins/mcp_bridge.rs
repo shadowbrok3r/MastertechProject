@@ -7570,7 +7570,7 @@ impl ServerHandler for PluginToolProvider {
         &self,
         request: rmcp::model::CallToolRequestParams,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
-    ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
+    ) -> Result<rmcp::model::CallToolResponse, rmcp::ErrorData> {
         let tool_name = request.name.to_string();
         let args_value: serde_json::Value = request
             .arguments
@@ -7597,9 +7597,15 @@ impl ServerHandler for PluginToolProvider {
         let result = Self::tool_router().call(tcc).await;
 
         match &result {
-            Ok(call_result) => {
-                let body = serde_json::to_string_pretty(call_result)
-                    .unwrap_or_else(|_| "{}".to_string());
+            Ok(response) => {
+                // Only the completed payload serializes; the rest log their debug form.
+                let body = match response {
+                    rmcp::model::CallToolResponse::Complete(call_result) => {
+                        serde_json::to_string_pretty(call_result)
+                            .unwrap_or_else(|_| "{}".to_string())
+                    }
+                    other => format!("{other:?}"),
+                };
                 crate::mcp_tool_log::finish_call(&request_id, true, body);
             }
             Err(err) => {

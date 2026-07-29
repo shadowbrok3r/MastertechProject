@@ -13,7 +13,7 @@ use wgpu::util::DeviceExt;
 use crate::Metrics;
 
 use super::gpu_common::{
-    emit_fatal_tick, emit_tick, run_unsupported, GpuContext, MAP_WAIT_TIMEOUT, TICK,
+    emit_fatal_tick, emit_tick, run_unsupported, wait_latest, GpuContext, MAP_WAIT_TIMEOUT, TICK,
 };
 
 const N: u32 = 2048;
@@ -192,7 +192,7 @@ pub(crate) fn run(
         ctx.queue.submit(std::iter::once(encoder.finish()));
         // A wait timeout is neither an uncaptured error nor device-lost, so it has
         // to be counted here or a hung queue reports full throughput.
-        let completed = match ctx.device.poll(wgpu::PollType::Wait) {
+        let completed = match ctx.device.poll(wait_latest()) {
             Ok(_) => {
                 wait_failures = 0;
                 true
@@ -237,10 +237,10 @@ pub(crate) fn run(
             });
             // The map callback fires from inside the poll; a bounded recv keeps a
             // submission that never completes from parking this thread forever.
-            let mapped = ctx.device.poll(wgpu::PollType::Wait).is_ok()
+            let mapped = ctx.device.poll(wait_latest()).is_ok()
                 && matches!(map_rx.recv_timeout(MAP_WAIT_TIMEOUT), Ok(Ok(())));
-            if mapped {
-                let view = slice.get_mapped_range();
+            let view = mapped.then(|| slice.get_mapped_range().ok()).flatten();
+            if let Some(view) = view {
                 let got: &[f32] = bytemuck::cast_slice(&view[..]);
                 let reference = &references[sample];
                 let mut first_bad: Option<(usize, f32, f32)> = None;

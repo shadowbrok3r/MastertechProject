@@ -16,7 +16,7 @@ use wgpu::util::DeviceExt;
 use crate::Metrics;
 
 use super::gpu_common::{
-    emit_fatal_tick, emit_tick, run_unsupported, GpuContext, MAP_WAIT_TIMEOUT,
+    emit_fatal_tick, emit_tick, run_unsupported, wait_latest, GpuContext, MAP_WAIT_TIMEOUT,
     MAX_DISPATCH_GROUPS, TICK, WG_SIZE,
 };
 
@@ -185,8 +185,8 @@ pub(crate) fn run(
     });
     let pipeline_layout = ctx.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("gpu_vram pipeline layout"),
-        bind_group_layouts: &[&bind_layout],
-        push_constant_ranges: &[],
+        bind_group_layouts: &[Some(&bind_layout)],
+        immediate_size: 0,
     });
 
     let write_pipeline = ctx.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -269,7 +269,7 @@ pub(crate) fn run(
         }
         encoder.copy_buffer_to_buffer(&errors_buf, 0, &readback_buf, 0, 16);
         ctx.queue.submit(std::iter::once(encoder.finish()));
-        let _ = ctx.device.poll(wgpu::PollType::Wait);
+        let _ = ctx.device.poll(wait_latest());
 
         // A failed device renders every readback meaningless — a stale map
         // can "succeed" with zeros and masquerade as a clean pass.
@@ -283,19 +283,22 @@ pub(crate) fn run(
         slice.map_async(wgpu::MapMode::Read, move |res| {
             let _ = tx_map.send(res);
         });
-        let _ = ctx.device.poll(wgpu::PollType::Wait);
+        let _ = ctx.device.poll(wait_latest());
         // Bounded: the sender lives in the closure wgpu holds, so a submission
         // that neither completes nor is declared lost would park this thread.
-        let err_count = match rx_map.recv_timeout(MAP_WAIT_TIMEOUT) {
-            Ok(Ok(())) => {
-                let view = slice.get_mapped_range();
+        let view = match rx_map.recv_timeout(MAP_WAIT_TIMEOUT) {
+            Ok(Ok(())) => slice.get_mapped_range().ok(),
+            _ => None,
+        };
+        let err_count = match view {
+            Some(view) => {
                 let count = u32::from_le_bytes([view[0], view[1], view[2], view[3]]) as u64;
                 drop(view);
                 readback_buf.unmap();
                 consecutive_readback_errors = 0;
                 count
             }
-            _ => {
+            None => {
                 readback_buf.unmap();
                 consecutive_readback_errors += 1;
                 if consecutive_readback_errors >= MAX_CONSECUTIVE_READBACK_ERRORS {

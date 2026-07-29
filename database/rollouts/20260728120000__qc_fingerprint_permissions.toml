@@ -1,6 +1,6 @@
 id = "20260728120000__qc_fingerprint_permissions"
 name = "qc_fingerprint_permissions"
-state = "planned"
+state = "completed"
 # qc_fingerprint was never in database/schema/, so SurrealDB auto-defined it on
 # the first write as `DEFINE TABLE qc_fingerprint TYPE ANY SCHEMALESS
 # PERMISSIONS NONE` (verified on surrealdb-dev via INFO FOR DB). axum_server
@@ -13,8 +13,8 @@ state = "planned"
 # the row.
 #
 # source == target because this only pushes committed file state.
-source_schema_hash = "3d00fa00d6d2cac8b78cf86e1a875754cde13f26c49b7db1ca2b672c4eff0514"
-target_schema_hash = "3d00fa00d6d2cac8b78cf86e1a875754cde13f26c49b7db1ca2b672c4eff0514"
+source_schema_hash = "37ddb2ca236c8c47f1aa03e59e5f1db3841d7b962216058f1246e78edf9034b1"
+target_schema_hash = "37ddb2ca236c8c47f1aa03e59e5f1db3841d7b962216058f1246e78edf9034b1"
 compatibility = "phased"
 renames = []
 
