@@ -455,15 +455,140 @@ pub fn verify_sha256(data: &[u8], expected: &str) -> Result<(), String> {
     }
 }
 
+/// Intel flash-descriptor signature (FLVALSIG), at offset 0x10 of a full SPI image.
+const FLVALSIG: u32 = 0x0FF0_A55A;
+
+/// EFI_OS_INDICATIONS_BOOT_TO_FW_UI.
+const OS_IND_BOOT_TO_FW_UI: u64 = 0x0000_0000_0000_0001;
+
+/// True when the firmware honours a request to boot into its setup UI.
+pub fn boot_to_fw_ui_supported(info: &EsrtInfo) -> bool {
+    info.os_indications_supported & OS_IND_BOOT_TO_FW_UI != 0
+}
+
+/// Set `OsIndications` so the next boot enters firmware setup, preserving any
+/// bits already present. The caller resets; this only arms the request.
+pub fn request_boot_to_fw_ui(info: &EsrtInfo) -> Result<(), String> {
+    if !boot_to_fw_ui_supported(info) {
+        return Err(format!(
+            "firmware does not advertise BOOT_TO_FW_UI (OsIndicationsSupported 0x{:016x})",
+            info.os_indications_supported
+        ));
+    }
+    let name = uefi::cstr16!("OsIndications");
+    let mut buf = [0u8; 8];
+    let current = runtime::get_variable(name, &VariableVendor::GLOBAL_VARIABLE, &mut buf)
+        .map(|(data, _)| {
+            let mut v = 0u64;
+            for (i, &b) in data.iter().take(8).enumerate() {
+                v |= (b as u64) << (8 * i);
+            }
+            v
+        })
+        .unwrap_or(0);
+    let next = current | OS_IND_BOOT_TO_FW_UI;
+    runtime::set_variable(
+        name,
+        &VariableVendor::GLOBAL_VARIABLE,
+        uefi_raw::table::runtime::VariableAttributes::NON_VOLATILE
+            | uefi_raw::table::runtime::VariableAttributes::BOOTSERVICE_ACCESS
+            | uefi_raw::table::runtime::VariableAttributes::RUNTIME_ACCESS,
+        &next.to_le_bytes(),
+    )
+    .map_err(|e| format!("set OsIndications: {e:?}"))?;
+    logln(format!(
+        "fwui: OsIndications 0x{current:016x} -> 0x{next:016x}; next boot enters setup"
+    ));
+    Ok(())
+}
+
+/// A raw vendor SPI image (what MSI M-FLASH consumes), not a UEFI capsule.
+pub struct VendorRom {
+    /// Board id from MSI's `$MNID` tag, e.g. `7E06`.
+    pub board_id: Option<String>,
+    /// Version assembled from MSI's `$EXI1`/`$EXI2`/`$EXI3` tags, e.g. `AJ0`.
+    pub version: Option<String>,
+    /// Image filename from the `$MSESGN$` signature block.
+    pub signature: Option<String>,
+}
+
+/// Read the ASCII run following `tag`, up to `len` bytes, stopping at a `$` or
+/// a non-printable byte.
+fn tag_value(bytes: &[u8], tag: &[u8], len: usize) -> Option<String> {
+    let at = bytes.windows(tag.len()).position(|w| w == tag)? + tag.len();
+    let end = (at + len).min(bytes.len());
+    let s: String = bytes[at..end]
+        .iter()
+        .take_while(|&&c| c != b'$' && (32..127).contains(&c))
+        .map(|&c| c as char)
+        .collect();
+    (!s.is_empty()).then_some(s)
+}
+
+/// Identify a raw vendor SPI image. `None` when this isn't one.
+///
+/// A full flash image carries the Intel descriptor signature at 0x10 rather
+/// than a capsule header, so the capsule fields at that offset are really
+/// descriptor bytes and decode as nonsense.
+pub fn detect_vendor_rom(bytes: &[u8]) -> Option<VendorRom> {
+    if bytes.len() < 0x14 {
+        return None;
+    }
+    if u32::from_le_bytes(bytes[0x10..0x14].try_into().ok()?) != FLVALSIG {
+        return None;
+    }
+    let version = match (
+        tag_value(bytes, b"$EXI1", 1),
+        tag_value(bytes, b"$EXI2", 1),
+        tag_value(bytes, b"$EXI3", 1),
+    ) {
+        (Some(a), Some(b), Some(c)) => Some(format!("{a}{b}{c}")),
+        _ => None,
+    };
+    Some(VendorRom {
+        board_id: tag_value(bytes, b"$MNID", 8),
+        version,
+        signature: tag_value(bytes, b"$MSESGN$", 32),
+    })
+}
+
 /// Describe a capsule's headers so an operator can check it before arming.
+/// Returns `Err` for anything that is not a capsule, so the caller cannot arm
+/// a flash for a file `apply_capsule` will refuse.
 pub fn inspect(bytes: &[u8]) -> Result<Vec<String>, String> {
     if bytes.len() < core::mem::size_of::<CapsuleHeader>() {
         return Err("capsule shorter than its header".into());
+    }
+    if let Some(rom) = detect_vendor_rom(bytes) {
+        let board = rom.board_id.unwrap_or_else(|| "unknown".into());
+        let ver = rom.version.unwrap_or_else(|| "unknown".into());
+        let sig = rom.signature.unwrap_or_default();
+        return Err(format!(
+            "raw vendor SPI image (board {board}, version {ver}{}) - flash it \
+             with the board's own updater (MSI M-FLASH), not UpdateCapsule",
+            if sig.is_empty() {
+                String::new()
+            } else {
+                format!(", {sig}")
+            }
+        ));
     }
     let guid = guid_from_slice(&bytes[0..16]).ok_or("unreadable capsule GUID")?;
     let header_size = u32::from_le_bytes(bytes[16..20].try_into().unwrap());
     let raw_flags = u32::from_le_bytes(bytes[20..24].try_into().unwrap());
     let image_size = u32::from_le_bytes(bytes[24..28].try_into().unwrap());
+    // Same guard `apply_capsule` applies, so inspect never green-lights a file
+    // the flash would refuse.
+    if (header_size as usize) < core::mem::size_of::<CapsuleHeader>()
+        || (image_size as usize) < header_size as usize
+        || image_size as usize > bytes.len()
+    {
+        return Err(format!(
+            "not a capsule: header fields inconsistent (header={header_size} \
+             image={image_size} loaded={})",
+            bytes.len()
+        ));
+    }
     let flags = CapsuleFlags::from_bits_truncate(raw_flags);
 
     let mut out = vec![
@@ -494,10 +619,14 @@ pub fn inspect(bytes: &[u8]) -> Result<Vec<String>, String> {
                     ));
                 }
             }
-            None => out.push("fmp     header unparseable".into()),
+            None => return Err("FMP capsule header unparseable".into()),
         }
     } else {
-        out.push("fmp     not an FMP capsule - target cannot be verified".into());
+        // Without an FMP payload there is no UpdateImageTypeId to match against
+        // the ESRT, so the target board cannot be verified before flashing.
+        return Err(format!(
+            "not an FMP capsule (guid {guid}); target board cannot be verified"
+        ));
     }
     Ok(out)
 }

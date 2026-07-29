@@ -26,6 +26,13 @@ pub const DIRECT_PORT: u16 = 9209;
 /// Relay port assumed when the configured base url carries none (axum's default).
 const DEFAULT_RELAY_PORT: u16 = 8082;
 
+/// Keepalive cadence toward the box; shorter than the firmware's own so either
+/// side notices a dead peer within a few seconds.
+const PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Lock attempts before a session read/send gives up.
+const LOCK_RETRIES: usize = 64;
+
 /// Per-session shared state, updated by the reader task and read by egui.
 struct Session {
     /// Latest decoded frame bytes (bincode `PreBootFrame`).
@@ -151,13 +158,14 @@ impl DirectHub {
         });
     }
 
-    /// Snapshot the live sessions for the roster (sweeps sessions idle >90s).
+    /// Snapshot the live sessions for the roster. Read-only: a session lives
+    /// until its socket dies, so an idle box is never swept out from under a
+    /// working connection.
     pub fn agents(&self) -> Vec<DirectAgent> {
-        let Ok(mut map) = self.inner.try_lock() else {
+        let Ok(map) = self.inner.try_lock() else {
             return Vec::new();
         };
         let now = std::time::Instant::now();
-        map.retain(|_, s| now.duration_since(s.last_seen).as_secs() < 90);
         map.iter()
             .map(|(serial, s)| DirectAgent {
                 serial: serial.clone(),
@@ -175,8 +183,16 @@ impl DirectHub {
         self.inner.try_lock().ok().and_then(|m| m.get(serial).map(|s| s.frame_seq)).unwrap_or(0)
     }
 
+    /// Briefly retries the lock: a momentary contention must not read as a
+    /// disconnected box, since callers gate real work on this.
     pub fn is_connected(&self, serial: &str) -> bool {
-        self.inner.try_lock().ok().map(|m| m.contains_key(serial)).unwrap_or(false)
+        for _ in 0..LOCK_RETRIES {
+            if let Ok(m) = self.inner.try_lock() {
+                return m.contains_key(serial);
+            }
+            std::thread::yield_now();
+        }
+        false
     }
 
     /// Take (and clear) the last plugin result for `serial`, if any.
@@ -184,14 +200,20 @@ impl DirectHub {
         self.inner.try_lock().ok()?.get_mut(serial)?.plugin_result.take()
     }
 
+    /// Retries the lock so a keystroke isn't silently dropped on contention.
     fn send_tagged(&self, serial: &str, tag: u8, body: &[u8]) -> bool {
-        let Ok(map) = self.inner.try_lock() else {
-            return false;
-        };
-        let Some(s) = map.get(serial) else {
-            return false;
-        };
-        s.tx.send(frame_bytes(tag, body)).is_ok()
+        for _ in 0..LOCK_RETRIES {
+            let Ok(map) = self.inner.try_lock() else {
+                std::thread::yield_now();
+                continue;
+            };
+            let Some(s) = map.get(serial) else {
+                return false;
+            };
+            return s.tx.send(frame_bytes(tag, body)).is_ok();
+        }
+        log::warn!("preboot direct: '{serial}' send tag 0x{tag:02x} gave up on the session lock");
+        false
     }
 
     pub fn send_input(&self, serial: &str, ev: &PreBootEvent) -> bool {
@@ -326,7 +348,23 @@ async fn handle_conn(
     let (mut rd, mut wr) = sock.into_split();
     let serial_r = serial.clone();
     let inner_r = inner.clone();
-    // Reader: decode inbound frames into the session.
+    let ping_tx = {
+        let map = inner.lock().await;
+        map.get(&serial).map(|s| s.tx.clone())
+    };
+    // Keepalive: pings the box so a half-open socket surfaces as a write error
+    // rather than a session that lingers forever.
+    let pinger = tokio::spawn(async move {
+        let Some(tx) = ping_tx else { return };
+        loop {
+            tokio::time::sleep(PING_INTERVAL).await;
+            if tx.send(frame_bytes(tcp_protocol::FRAME_TAG_PING, &[])).is_err() {
+                break;
+            }
+        }
+    });
+    // Reader: decode inbound frames into the session. Any frame - including a
+    // ping or pong - counts as liveness.
     let reader = tokio::spawn(async move {
         loop {
             let (tag, body) = match read_frame(&mut rd).await {
@@ -334,7 +372,9 @@ async fn handle_conn(
                 Err(_) => break,
             };
             let mut map = inner_r.lock().await;
-            let Some(s) = map.get_mut(&serial_r) else { break };
+            // A live socket whose session went missing is re-registered by the
+            // writer's cleanup, so skip the frame rather than tearing it down.
+            let Some(s) = map.get_mut(&serial_r) else { continue };
             s.last_seen = std::time::Instant::now();
             match tag {
                 t if t == preboot::FRAME_TAG_PREBOOT_FRAME => {
@@ -343,6 +383,9 @@ async fn handle_conn(
                 }
                 t if t == preboot::FRAME_TAG_PREBOOT_PLUGIN_RESULT => {
                     s.plugin_result = preboot::decode_plugin_result(&body);
+                }
+                t if t == tcp_protocol::FRAME_TAG_PING => {
+                    let _ = s.tx.send(frame_bytes(tcp_protocol::FRAME_TAG_PONG, &[]));
                 }
                 _ => {}
             }
@@ -354,6 +397,7 @@ async fn handle_conn(
             break;
         }
     }
+    pinger.abort();
     reader.abort();
     inner.lock().await.remove(&serial);
     log::info!("preboot direct: '{serial}' unlinked");

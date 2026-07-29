@@ -138,6 +138,10 @@ const DIRECT_PUMP_IDLE_MS: u64 = 200;
 /// Direct-link listener port on the console (mirror of displays' DIRECT_PORT).
 const DIRECT_PORT: u16 = 9209;
 
+/// Idle gap after which the direct link sends a keepalive ping. A static screen
+/// emits no frames, so without this the console sees the session as stale.
+const DIRECT_KEEPALIVE_MS: u64 = 10_000;
+
 /// Budget for one TCP connect or transmit; a dropped SYN costs the loop all of it.
 const TCP_CONNECT_TIMEOUT_MS: u32 = 10_000;
 
@@ -4562,8 +4566,9 @@ fn page_bios(frame: &mut Frame, area: Rect, info: &SysInfo) {
 }
 
 /// Boot Doctor: why won't Windows boot — the boot chain, checked pre-OS.
-fn page_boot(frame: &mut Frame, area: Rect, info: &SysInfo) {
+fn page_boot(frame: &mut Frame, area: Rect, app: &App) {
     use bootdiag::Severity;
+    let info = &app.info;
     let d = &info.bootdiag;
     let cols = Layout::default()
         .direction(Direction::Horizontal)
@@ -4671,14 +4676,23 @@ fn page_boot(frame: &mut Frame, area: Rect, info: &SysInfo) {
             Style::default().fg(palette::MUTED),
         )));
     }
-    for e in &d.boot_entries {
+    for (i, e) in d.boot_entries.iter().enumerate() {
         let color = if e.is_windows { palette::GOOD } else { palette::TEXT };
+        let sel = i == app.boot_sel.min(d.boot_entries.len().saturating_sub(1));
         elines.push(Line::from(vec![
+            Span::styled(
+                if sel { "> " } else { "  " },
+                Style::default().fg(palette::ACCENT),
+            ),
             Span::styled(format!("Boot{:04X} ", e.num), Style::default().fg(palette::LABEL)),
-            Span::styled(fit(&e.description, 40), Style::default().fg(color)),
+            Span::styled(fit(&e.description, 38), Style::default().fg(color)),
             Span::styled(
                 if e.active { "" } else { " [off]" },
                 Style::default().fg(palette::ERR),
+            ),
+            Span::styled(
+                if e.in_boot_order { "" } else { " [not in BootOrder]" },
+                Style::default().fg(palette::WARN),
             ),
         ]));
     }
@@ -5214,6 +5228,17 @@ fn direct_pump(
                             logln(format!("direct: stream_ctl -> {}", ctl.stream));
                         }
                     }
+                    t if t == tcp_protocol::FRAME_TAG_PING => {
+                        if let Some(link) = app.direct.as_mut() {
+                            if let Err(e) = link.send(tcp_protocol::FRAME_TAG_PONG, &[]) {
+                                logln(format!("direct: pong failed: {e}"));
+                                app.direct = None;
+                                app.direct_stream = false;
+                                return Ok(true);
+                            }
+                        }
+                    }
+                    t if t == tcp_protocol::FRAME_TAG_PONG => {}
                     t if t == preboot::FRAME_TAG_PREBOOT_PLUGIN_RUN => {
                         if let Some(req) = preboot::decode_plugin_run(&body) {
                             let res = run_plugin_direct(app, &req, terminal);
@@ -6814,7 +6839,7 @@ fn render(frame: &mut Frame, app: &App) {
         TAB_ORDER => page_order(frame, root[1], app),
         9 => page_readiness(frame, root[1], &app.info),
         10 => page_diag(frame, root[1], &app.info),
-        TAB_BOOT => page_boot(frame, root[1], &app.info),
+        TAB_BOOT => page_boot(frame, root[1], app),
         TAB_PLUGINS => page_plugins(frame, root[1], app),
         _ => page_log(frame, root[1]),
     }
@@ -6846,7 +6871,15 @@ fn render(frame: &mut Frame, app: &App) {
             ("e", "capsule path"),
             ("f", "load"),
             ("F F", "FLASH BIOS"),
+            ("U U", "BIOS setup"),
             ("r", "refresh"),
+            ("Tab", "next"),
+            ("q", "quit"),
+        ],
+        TAB_BOOT => &[
+            ("Up/Dn", "select entry"),
+            ("B B", "boot selected"),
+            ("r", "rescan"),
             ("Tab", "next"),
             ("q", "quit"),
         ],
@@ -7009,6 +7042,14 @@ struct App {
     capsule_blocked: bool,
     /// Second 'F' will flash. Cleared by any other key.
     fw_armed: bool,
+    /// Two-press guard for the reboot-into-setup handoff.
+    fw_setup_armed: bool,
+    /// Clock of the last byte written to the direct link, for the keepalive.
+    direct_tx_ms: u64,
+    /// Highlighted Boot#### row on the Boot tab.
+    boot_sel: usize,
+    /// Two-press guard for booting the highlighted entry.
+    boot_armed: bool,
 }
 
 impl App {
@@ -7262,6 +7303,10 @@ fn run() -> Result<()> {
         capsule_note: Vec::new(),
         capsule_blocked: false,
         fw_armed: false,
+        fw_setup_armed: false,
+        direct_tx_ms: 0,
+        boot_sel: 0,
+        boot_armed: false,
     };
 
     terminal.clear()?;
@@ -7316,6 +7361,7 @@ fn run() -> Result<()> {
                 if let Some(body) = app.stream_throttle.body_if_dirty(&mut pf) {
                     if want_direct {
                         if let Some(link) = app.direct.as_mut() {
+                            app.direct_tx_ms = now;
                             if let Err(e) =
                                 link.send(tcp_protocol::preboot::FRAME_TAG_PREBOOT_FRAME, &body)
                             {
@@ -7337,6 +7383,25 @@ fn run() -> Result<()> {
                     }
                 }
                 app.stream_frame = app.stream_frame.wrapping_add(1);
+            }
+        }
+
+        // Keepalive: a static screen sends no frames, so without this the
+        // console's session goes stale and a live link is reaped.
+        if app.direct.is_some() && now.saturating_sub(app.direct_tx_ms) >= DIRECT_KEEPALIVE_MS {
+            let sent = app
+                .direct
+                .as_mut()
+                .map(|l| l.send(tcp_protocol::FRAME_TAG_PING, &[]));
+            match sent {
+                Some(Ok(())) => app.direct_tx_ms = now,
+                Some(Err(e)) => {
+                    logln(format!("direct: keepalive failed, dropping link: {e}"));
+                    app.direct = None;
+                    app.direct_stream = false;
+                    app.dirty = true;
+                }
+                None => {}
             }
         }
 
@@ -7419,6 +7484,12 @@ fn run() -> Result<()> {
         }
 
         // Arming is single-shot: anything other than a second 'F' disarms.
+        if app.fw_setup_armed && key.code != terminput::KeyCode::Char('U') {
+            app.fw_setup_armed = false;
+        }
+        if app.boot_armed && key.code != terminput::KeyCode::Char('B') {
+            app.boot_armed = false;
+        }
         if app.fw_armed && key.code != terminput::KeyCode::Char('F') {
             app.fw_armed = false;
             app.status = "flash disarmed".into();
@@ -7642,6 +7713,71 @@ fn run() -> Result<()> {
                 } else {
                     app.fw_armed = false;
                     do_bios_flash(&mut app, &mut terminal)?;
+                }
+            }
+            // Boot tab: pick an entry, then two presses to boot it once.
+            terminput::KeyCode::Up if app.tab == TAB_BOOT => {
+                app.boot_sel = app.boot_sel.saturating_sub(1);
+                app.boot_armed = false;
+                app.dirty = true;
+            }
+            terminput::KeyCode::Down if app.tab == TAB_BOOT => {
+                let last = app.info.bootdiag.boot_entries.len().saturating_sub(1);
+                app.boot_sel = (app.boot_sel + 1).min(last);
+                app.boot_armed = false;
+                app.dirty = true;
+            }
+            terminput::KeyCode::Char('B') if app.tab == TAB_BOOT => {
+                let entries = &app.info.bootdiag.boot_entries;
+                let pick = entries
+                    .get(app.boot_sel)
+                    .map(|e| (e.num, e.description.clone()))
+                    .or_else(|| {
+                        bootdiag::default_boot_target(entries).map(|n| (n, "default".to_string()))
+                    });
+                match pick {
+                    None => app.status = "no boot entries to boot".into(),
+                    Some((num, desc)) if !app.boot_armed => {
+                        app.boot_armed = true;
+                        app.status =
+                            format!("press B again to reboot into Boot{num:04X} ({desc})");
+                    }
+                    Some((num, desc)) => {
+                        app.boot_armed = false;
+                        match bootdiag::set_boot_next(num) {
+                            Ok(()) => {
+                                app.status = format!("booting Boot{num:04X} ({desc})...");
+                                terminal.draw(|frame| render(frame, &app))?;
+                                uefi::runtime::reset(
+                                    uefi::runtime::ResetType::WARM,
+                                    uefi::Status::SUCCESS,
+                                    None,
+                                );
+                            }
+                            Err(e) => app.status = format!("BootNext failed: {e}"),
+                        }
+                    }
+                }
+            }
+            // Hand off to the board's own updater: arm setup entry, then reset.
+            terminput::KeyCode::Char('U') if app.tab == TAB_FIRMWARE => {
+                if !app.fw_setup_armed {
+                    app.fw_setup_armed = true;
+                    app.status = "press U again to reboot into BIOS setup".into();
+                } else {
+                    app.fw_setup_armed = false;
+                    match capsule::request_boot_to_fw_ui(&app.info.esrt) {
+                        Ok(()) => {
+                            app.status = "rebooting into BIOS setup...".into();
+                            terminal.draw(|frame| render(frame, &app))?;
+                            uefi::runtime::reset(
+                                uefi::runtime::ResetType::WARM,
+                                uefi::Status::SUCCESS,
+                                None,
+                            );
+                        }
+                        Err(e) => app.status = format!("setup entry refused: {e}"),
+                    }
                 }
             }
             terminput::KeyCode::Char('s') if app.tab == TAB_STRESS => {

@@ -124,6 +124,33 @@ fn read_var(name: &str) -> Option<Vec<u8>> {
         .map(|(b, _)| b.into_vec())
 }
 
+/// Point `BootNext` at one `Boot####` entry, so the next boot runs it once and
+/// the firmware then reverts to `BootOrder`. Non-destructive: `BootOrder` is
+/// untouched, so nothing about the machine's normal boot changes.
+pub fn set_boot_next(num: u16) -> Result<(), String> {
+    runtime::set_variable(
+        cstr16!("BootNext"),
+        &VariableVendor::GLOBAL_VARIABLE,
+        uefi_raw::table::runtime::VariableAttributes::NON_VOLATILE
+            | uefi_raw::table::runtime::VariableAttributes::BOOTSERVICE_ACCESS
+            | uefi_raw::table::runtime::VariableAttributes::RUNTIME_ACCESS,
+        &num.to_le_bytes(),
+    )
+    .map_err(|e| format!("set BootNext=Boot{num:04X}: {e:?}"))?;
+    logln(format!("boot: BootNext -> Boot{num:04X}"));
+    Ok(())
+}
+
+/// The entry a plain reboot would land on: the first active `BootOrder` member,
+/// preferring a Windows entry when one is present in the order.
+pub fn default_boot_target(entries: &[BootEntry]) -> Option<u16> {
+    entries
+        .iter()
+        .find(|e| e.in_boot_order && e.active && e.is_windows)
+        .or_else(|| entries.iter().find(|e| e.in_boot_order && e.active))
+        .map(|e| e.num)
+}
+
 /// Open a file relative to an ESP root and return its size if present.
 fn check_file(root: &mut uefi::proto::media::file::Directory, path: &uefi::CStr16) -> Option<u64> {
     let handle = root.open(path, FileMode::Read, FileAttribute::empty()).ok()?;
