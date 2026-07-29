@@ -23,7 +23,7 @@ tracing-subscriber = { version="0.3", features=["env-filter", "json"] }
 tracing = "0.1"
 uuid = { version = "1", features = ["v4", "fast-rng"] }
 anyhow = "1"
-base64 = "0.22"
+base64 = "0.23.0"
 chrono = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]

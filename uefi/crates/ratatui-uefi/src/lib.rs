@@ -12,6 +12,70 @@ impl UefiOutputBackend {
     pub fn new(output: ScopedProtocol<console::text::Output>) -> Self {
         Self { output }
     }
+
+    /// Writes a run with one reposition, one color change and one string write,
+    /// skipping the reposition and the color change when already in effect.
+    fn emit_run(&mut self, run: &Run, state: &mut ConsoleState) {
+        if run.is_empty() {
+            return;
+        }
+
+        let mut positioned = state.cursor == Some((run.x, run.y));
+        if !positioned {
+            positioned = self
+                .output
+                .set_cursor_position(run.x as usize, run.y as usize)
+                .is_ok();
+        }
+
+        if !state.holds_color(run.fg, run.bg) {
+            state.color = match self.output.set_color(run.fg, run.bg) {
+                Ok(()) => Some((run.fg, run.bg)),
+                Err(_) => None,
+            };
+        }
+
+        // Best-effort. Real firmware consoles return a warning/error for glyphs
+        // missing from their font (e.g. box drawing, middle dot) which the uefi
+        // crate surfaces as an `Err`. Propagating it would abort the entire frame
+        // and the app would exit, so a failed run is repainted cell by cell.
+        if self.output.write_str(&run.text).is_err() {
+            self.emit_run_per_cell(run, state);
+        } else if positioned {
+            state.cursor = Some((run.end_x(), run.y));
+        } else {
+            state.cursor = None;
+        }
+    }
+
+    /// Repaints a failed run one absolutely positioned cell at a time, degrading
+    /// a glyph the firmware font lacks to a solid cell in the foreground color.
+    fn emit_run_per_cell(&mut self, run: &Run, state: &mut ConsoleState) {
+        let mut colored = false;
+
+        for i in 0..run.ends.len() {
+            let Some(symbol) = run.symbol(i) else {
+                continue;
+            };
+            let x = run.x.saturating_add(i as u16) as usize;
+            let y = run.y as usize;
+
+            if !colored {
+                let _ = self.output.set_color(run.fg, run.bg);
+                colored = true;
+            }
+            let _ = self.output.set_cursor_position(x, y);
+            if self.output.write_str(symbol).is_err() {
+                let _ = self.output.set_cursor_position(x, y);
+                let _ = self.output.set_color(run.fg, clamp_bg(run.fg));
+                let _ = self.output.write_str(" ");
+                colored = false;
+            }
+        }
+
+        state.cursor = None;
+        state.color = None;
+    }
 }
 
 fn to_uefi_color(color: ratatui::style::Color) -> Option<console::text::Color> {
@@ -121,6 +185,95 @@ fn xterm_to_rgb(i: u8) -> (u8, u8, u8) {
     }
 }
 
+/// Compares discriminants; `console::text::Color` does not implement `PartialEq`.
+fn same_color(a: console::text::Color, b: console::text::Color) -> bool {
+    a as u32 == b as u32
+}
+
+/// Cursor position and color attribute the console was last left in; `None` is unknown.
+struct ConsoleState {
+    cursor: Option<(u16, u16)>,
+    color: Option<(console::text::Color, console::text::Color)>,
+}
+
+impl ConsoleState {
+    const fn unknown() -> Self {
+        Self {
+            cursor: None,
+            color: None,
+        }
+    }
+
+    fn holds_color(&self, fg: console::text::Color, bg: console::text::Color) -> bool {
+        matches!(self.color, Some((f, b)) if same_color(f, fg) && same_color(b, bg))
+    }
+}
+
+/// Consecutive cells on one row sharing a resolved color pair, written as one string.
+struct Run {
+    x: u16,
+    y: u16,
+    fg: console::text::Color,
+    bg: console::text::Color,
+    text: String,
+    /// Byte offset one past each cell's symbol in `text`.
+    ends: Vec<usize>,
+}
+
+impl Run {
+    fn new() -> Self {
+        Self {
+            x: 0,
+            y: 0,
+            fg: console::text::Color::White,
+            bg: console::text::Color::Black,
+            text: String::new(),
+            ends: Vec::new(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.ends.is_empty()
+    }
+
+    fn restart(&mut self, x: u16, y: u16, fg: console::text::Color, bg: console::text::Color) {
+        self.x = x;
+        self.y = y;
+        self.fg = fg;
+        self.bg = bg;
+        self.text.clear();
+        self.ends.clear();
+    }
+
+    fn push(&mut self, symbol: &str) {
+        self.text.push_str(symbol);
+        self.ends.push(self.text.len());
+    }
+
+    /// Column one past the run's last cell; one cell counts as one column.
+    fn end_x(&self) -> u16 {
+        self.x.saturating_add(self.ends.len() as u16)
+    }
+
+    fn extends(&self, x: u16, y: u16, fg: console::text::Color, bg: console::text::Color) -> bool {
+        !self.is_empty()
+            && y == self.y
+            && x == self.end_x()
+            && same_color(fg, self.fg)
+            && same_color(bg, self.bg)
+    }
+
+    /// Symbol of the nth cell in the run.
+    fn symbol(&self, i: usize) -> Option<&str> {
+        let end = *self.ends.get(i)?;
+        let start = match i.checked_sub(1) {
+            Some(prev) => *self.ends.get(prev)?,
+            None => 0,
+        };
+        self.text.get(start..end)
+    }
+}
+
 /// EFI text backgrounds only support the first 8 (dark) colors; clamp the
 /// bright variants down so set_color never gets an invalid attribute.
 fn clamp_bg(color: console::text::Color) -> console::text::Color {
@@ -148,7 +301,16 @@ impl ratatui::backend::Backend for UefiOutputBackend {
     where
         I: Iterator<Item = (u16, u16, &'a ratatui::buffer::Cell)>,
     {
+        let mut state = ConsoleState::unknown();
+        let mut run = Run::new();
+
         for (x, y, cell) in content {
+            let symbol = cell.symbol();
+            // A zero-width symbol would desynchronize the run's column arithmetic.
+            if symbol.is_empty() {
+                continue;
+            }
+
             let mut fg = to_uefi_color(cell.fg).unwrap_or(console::text::Color::White);
             let mut bg = to_uefi_color(cell.bg).unwrap_or(console::text::Color::Black);
 
@@ -158,24 +320,14 @@ impl ratatui::backend::Backend for UefiOutputBackend {
             }
             let bg = clamp_bg(bg);
 
-            // Best-effort, per cell. Real firmware consoles often return a
-            // warning/error for glyphs missing from their font (e.g. box
-            // drawing, middle dot) which the uefi crate surfaces as an `Err`.
-            // Propagating it would abort the entire frame and the app would
-            // exit; instead we ignore per-cell failures. Alignment is safe
-            // because the cursor is repositioned absolutely for every cell.
-            let _ = self.output.set_cursor_position(x as usize, y as usize);
-            let _ = self.output.set_color(fg, bg);
-            if self.output.write_str(cell.symbol()).is_err() {
-                // Glyph missing from the firmware font: degrade to a solid
-                // cell painted in the foreground color so filled glyphs
-                // (chart markers, block elements) stay visible.
-                let _ = self.output.set_cursor_position(x as usize, y as usize);
-                let _ = self.output.set_color(fg, clamp_bg(fg));
-                let _ = self.output.write_str(" ");
-                let _ = self.output.set_color(fg, bg);
+            if !run.extends(x, y, fg, bg) {
+                self.emit_run(&run, &mut state);
+                run.restart(x, y, fg, bg);
             }
+            run.push(symbol);
         }
+
+        self.emit_run(&run, &mut state);
 
         Ok(())
     }
@@ -266,7 +418,7 @@ impl ratatui::backend::Backend for UefiOutputBackend {
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        // No-op?
+        // No-op: draw writes every run before returning, nothing is buffered here.
         Ok(())
     }
 }

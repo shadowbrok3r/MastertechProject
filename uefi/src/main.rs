@@ -27,10 +27,13 @@ mod charts;
 mod hii;
 mod netraw;
 mod order;
+mod pecheck;
+mod smart;
 mod smolnet;
 mod stream;
 mod stress;
 mod styling;
+mod volsig;
 mod wasmrt;
 
 /// Built-in demo plugin (Mastertech ABI) for the Plugins tab self-test.
@@ -76,33 +79,118 @@ const TABS: [&str; 14] = [
 
 const TAB_FIRMWARE: usize = 3;
 const TAB_BIOS: usize = 4;
+const TAB_NETWORK: usize = 5;
 const TAB_STRESS: usize = 7;
 const TAB_ORDER: usize = 8;
 const TAB_BOOT: usize = 11;
 const TAB_PLUGINS: usize = 12;
 
-/// Idle ticks (~33 ms each) between command polls while agent mode is on (~5 s).
-const AGENT_POLL_TICKS: u32 = 150;
+/// Milliseconds between command polls while agent mode is on.
+const AGENT_POLL_MS: u64 = 5_000;
 
-/// Idle ticks (~33 ms each) between remote-input polls while streaming (~400 ms).
-const PREBOOT_INPUT_POLL_TICKS: u32 = 12;
+/// Milliseconds between remote-input polls while streaming and idle.
+const PREBOOT_INPUT_POLL_MS: u64 = 400;
 
-/// Idle ticks (~33 ms each) between presence heartbeats (~45 s).
-const PRESENCE_HEARTBEAT_TICKS: u32 = 1350;
+/// Milliseconds between remote-input polls while a viewer is typing.
+const PREBOOT_INPUT_FAST_MS: u64 = 33;
 
-/// Idle ticks (~33 ms each) between console-discovery attempts (~15 s).
-const DIRECT_DISCOVER_TICKS: u32 = 450;
+/// Milliseconds of fast remote-input polling after each event received.
+const PREBOOT_INPUT_ACTIVE_MS: u64 = 1_000;
+
+/// Milliseconds after a handled key that the loop keeps its short stall.
+const KEY_ACTIVE_MS: u64 = 2_000;
+
+/// Milliseconds between presence heartbeats.
+const PRESENCE_HEARTBEAT_MS: u64 = 45_000;
+
+/// Milliseconds between relay viewer-flag checks.
+const VIEWER_CHECK_MS: u64 = 5_000;
+
+/// Base milliseconds between console-discovery attempts.
+const DIRECT_DISCOVER_MS: u64 = 15_000;
+
+/// Milliseconds before the first discovery attempt after presence is armed.
+const DIRECT_DISCOVER_FIRST_MS: u64 = 1_000;
+
+/// Ceiling for the doubling discovery backoff.
+const DIRECT_DISCOVER_MAX_MS: u64 = 60_000;
+
+/// UDP beacon listen budget per discovery attempt.
+const DISCOVER_LISTEN_MS: u64 = 250;
+
+/// Listen budget ceiling once the backoff has spread attempts out; one full
+/// ~3s console beacon period, so a widened attempt catches a beacon.
+const DISCOVER_LISTEN_MAX_MS: u64 = 3_200;
+
+/// Listen budget for the one-shot discovery pass fired by 'c' and 'd'; spans a
+/// full ~3s console beacon period so the relay is learned on the first try.
+const DISCOVER_LISTEN_KICK_MS: u64 = 3_200;
+
+/// Relay port assumed for a v1 beacon (axum_server's default listener).
+const AXUM_DEFAULT_PORT: u16 = 8082;
+
+/// Milliseconds between direct-socket service polls while the console streams.
+const DIRECT_PUMP_MS: u64 = 33;
+
+/// Milliseconds between direct-socket service polls while it is only linked.
+const DIRECT_PUMP_IDLE_MS: u64 = 200;
 
 /// Direct-link listener port on the console (mirror of displays' DIRECT_PORT).
 const DIRECT_PORT: u16 = 9209;
 
-/// Idle ticks (~33 ms each) between relay viewer-flag checks (~5 s).
-const VIEWER_CHECK_TICKS: u32 = 150;
+/// Redraw floor so live values keep ticking without a state change.
+const REDRAW_MIN_MS: u64 = 200;
+
+/// Stall ceiling while a stress run, a viewer or the operator needs the loop hot.
+const BUSY_STALL_MS: u64 = 20;
+
+/// Stall ceiling when no deadline is imminent.
+const IDLE_STALL_MAX_MS: u64 = 250;
+
+/// Stall floor, so the loop always yields to firmware timers.
+const MIN_STALL_MS: u64 = 1;
+
+/// Monotonic millisecond clock over the TSC, falling back to the milliseconds
+/// the loop itself stalled when the TSC reads as unusable.
+struct Clock {
+    hz: u64,
+    epoch: u64,
+    tsc_ok: bool,
+    stalled_ms: u64,
+}
+
+impl Clock {
+    fn new() -> Self {
+        let hz = stress::calibrate_tsc_hz();
+        Self {
+            hz: hz.max(1),
+            epoch: stress::rdtsc(),
+            tsc_ok: hz >= 1_000_000,
+            stalled_ms: 0,
+        }
+    }
+
+    fn now_ms(&self) -> u64 {
+        if !self.tsc_ok {
+            return self.stalled_ms;
+        }
+        let ticks = stress::rdtsc().wrapping_sub(self.epoch) as u128;
+        (ticks * 1000 / self.hz as u128) as u64
+    }
+
+    fn stall(&mut self, ms: u64) {
+        boot::stall(core::time::Duration::from_millis(ms));
+        self.stalled_ms = self.stalled_ms.saturating_add(ms);
+    }
+}
 
 /// In-memory ring log. Single-threaded app, but a Mutex keeps it simple and
 /// also lets us back the `log` facade (so the uefi crate's own debug!/trace!
 /// messages land here too).
 static LOG: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Bumped on every appended line; the run loop redraws when it moves.
+static LOG_SEQ: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 fn logln(s: String) {
     if let Ok(mut g) = LOG.lock() {
@@ -112,6 +200,11 @@ fn logln(s: String) {
             g.drain(0..n - 500);
         }
     }
+    LOG_SEQ.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+}
+
+fn log_seq() -> u64 {
+    LOG_SEQ.load(core::sync::atomic::Ordering::Relaxed)
 }
 
 fn log_snapshot() -> Vec<String> {
@@ -1206,8 +1299,10 @@ fn run_dhcp() -> (Vec<IfaceIp>, Option<netraw::RawNet>, String) {
     }
 }
 
+/// Quote a string as a JSON literal. Firmware strings carry NULs and other
+/// control bytes, which a strict parser rejects unless escaped.
 fn jq(s: &str) -> String {
-    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+    serde_json::Value::String(s.to_string()).to_string()
 }
 
 /// Build the hardware fingerprint as a JSON document for upload.
@@ -1239,16 +1334,32 @@ fn fingerprint_json(info: &SysInfo) -> String {
         macs.push_str(&jq(&n.mac));
     }
     let mut disks = String::new();
+    // Each SMART record pairs with at most one block device, matched by capacity.
+    let mut sata_used = vec![false; info.sata.len()];
     for (i, dk) in info.disks.iter().enumerate() {
         if i > 0 {
             disks.push(',');
         }
+        let paired = info.sata.iter().enumerate().find_map(|(j, s)| {
+            (s.capacity != 0 && s.capacity == dk.capacity && sata_used.get(j) == Some(&false))
+                .then_some(j)
+        });
+        let smart = match paired.and_then(|j| {
+            if let Some(f) = sata_used.get_mut(j) {
+                *f = true;
+            }
+            info.sata.get(j)
+        }) {
+            Some(s) => format!(",\"sata_smart\":{}", smart::drive_json(s)),
+            None => String::new(),
+        };
         disks.push_str(&format!(
-            "{{\"capacity_bytes\":{},\"removable\":{},\"bus\":{},\"drive_type\":{}}}",
+            "{{\"capacity_bytes\":{},\"removable\":{},\"bus\":{},\"drive_type\":{}{}}}",
             dk.capacity,
             dk.removable,
             jq(dk.bus),
-            jq(drive_type(dk.bus))
+            jq(drive_type(dk.bus)),
+            smart
         ));
     }
     let mut gpus = String::new();
@@ -1313,7 +1424,7 @@ fn fingerprint_json(info: &SysInfo) -> String {
             "\"cpu\":{{\"model\":{},\"socket\":{},\"cores\":{},\"threads\":{},\"features\":[{}]}},",
             "\"gpu\":[{}],",
             "\"memory\":{{\"total_bytes\":{},\"usable_bytes\":{},\"max_bytes\":{},\"slots\":{},\"ecc\":{},\"dimms\":[{}]}},",
-            "\"storage\":[{}],\"nvme\":[{}],",
+            "\"storage\":[{}],\"nvme\":[{}],\"sata\":{},",
             "\"firmware\":{{\"uefi_vendor\":{},\"uefi_spec\":{},\"bios_vendor\":{},\"bios_version\":{},\"bios_date\":{},\"chassis\":{},\"rtc\":{}}},",
             "\"security\":{{\"secure_boot_capable\":{},\"secure_boot_enabled\":{},\"tpm\":{},\"msdm_present\":{},\"msdm_key\":{}}},",
             "\"win11_ready\":{},",
@@ -1345,6 +1456,7 @@ fn fingerprint_json(info: &SysInfo) -> String {
         dimms,
         disks,
         nvme,
+        smart::sata_json_string(&info.sata),
         jq(&info.fw_vendor),
         jq(&info.uefi_revision),
         jq(&d.bios_vendor),
@@ -1487,6 +1599,8 @@ fn fingerprint_json(info: &SysInfo) -> String {
     out.push_str(&capsule::esrt_json(&info.esrt, &info.power).to_string());
     out.push_str(",\"boot_diagnostics\":");
     out.push_str(&bootdiag::diag_json(&info.bootdiag).to_string());
+    out.push_str(",\"volume_signatures\":");
+    out.push_str(&volsig::volumes_json(&info.volumes).to_string());
     // Raw serial sources behind the effective `system.serial`, for fidelity.
     out.push_str(",\"identity\":");
     out.push_str(
@@ -1803,8 +1917,10 @@ fn do_bios_flash(
     let bytes = core::mem::take(&mut app.capsule_bytes);
     match capsule::apply_capsule(&bytes, &app.info.esrt) {
         Ok(msg) => {
+            app.status = format!("capsule applied: {msg} - {RESCAN_NOTICE}");
+            terminal.draw(|frame| render(frame, app))?;
+            app.set_info(SysInfo::collect());
             app.status = format!("capsule applied: {msg}");
-            app.info = SysInfo::collect();
         }
         Err(e) => {
             app.status = format!("BIOS update failed: {e}");
@@ -3682,6 +3798,8 @@ struct SysInfo {
     pci_net: Vec<PciNet>,
     disks: Vec<Disk>,
     nvme: Vec<NvmeDrive>,
+    sata: Vec<smart::SataDrive>,
+    volumes: Vec<volsig::VolumeSig>,
     gpus: Vec<Gpu>,
     secure_boot: Option<bool>,
     tpm: Option<String>,
@@ -3815,6 +3933,8 @@ impl SysInfo {
         info.pci_net = collect_pci_net();
         info.disks = collect_storage();
         info.nvme = collect_nvme();
+        info.sata = smart::collect_sata();
+        info.volumes = volsig::collect_volumes();
         info.gpus = collect_gpus();
         info.secure_boot = secure_boot();
         info.tpm = tpm_version();
@@ -4357,6 +4477,16 @@ fn page_boot(frame: &mut Frame, area: Rect, info: &SysInfo) {
     if d.bootmgfw_present {
         left.push(kv("bootmgfw size", human_bytes(d.bootmgfw_size)));
     }
+    if let Some(pe) = &d.bootmgfw_pe {
+        let ok = pecheck::is_valid(pe);
+        left.push(Line::from(vec![
+            Span::styled("PE structure    ", Style::default().fg(palette::LABEL)),
+            Span::styled(
+                pecheck::verdict_label(pe),
+                Style::default().fg(if ok { palette::GOOD } else { palette::ERR }),
+            ),
+        ]));
+    }
     left.push(Line::from(""));
     left.push(header("Windows boot entry"));
     match d.windows_entry {
@@ -4383,8 +4513,26 @@ fn page_boot(frame: &mut Frame, area: Rect, info: &SysInfo) {
         .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
         .split(cols[1]);
 
-    let mut vlines = vec![header("Verdict")];
-    for (sev, msg) in &d.verdicts {
+    let roll = bootdiag::overall(d);
+    let (roll_tag, roll_color) = match roll {
+        Severity::Ok => ("OK", palette::GOOD),
+        Severity::Warn => ("WARN", palette::WARN),
+        Severity::Fail => ("FAIL", palette::ERR),
+    };
+    let mut vlines = vec![
+        header("Verdict"),
+        Line::from(vec![
+            Span::styled("overall  ", Style::default().fg(palette::LABEL)),
+            Span::styled(
+                roll_tag,
+                Style::default().fg(roll_color).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+    ];
+    // Display order only; the JSON array keeps push order.
+    let mut ranked: Vec<&(Severity, String)> = d.verdicts.iter().collect();
+    ranked.sort_by(|a, b| b.0.rank().cmp(&a.0.rank()));
+    for (sev, msg) in ranked {
         let (tag, color) = match sev {
             Severity::Ok => ("OK  ", palette::GOOD),
             Severity::Warn => ("WARN", palette::WARN),
@@ -4550,6 +4698,11 @@ fn fw_data(info: &SysInfo) -> wasmrt::FwData {
     );
     fw.push("esrt", capsule::esrt_json(&info.esrt, &info.power).to_string());
     fw.push("bootdiag", bootdiag::diag_json(&info.bootdiag).to_string());
+    fw.push("sata", smart::sata_json_string(&info.sata));
+    fw.push(
+        "volume_signatures",
+        volsig::volumes_json(&info.volumes).to_string(),
+    );
     fw.push("bios_settings", hii::audit_json(&info.hii).to_string());
     fw
 }
@@ -4577,17 +4730,8 @@ fn poll_preboot_input(app: &mut App) -> bool {
 }
 
 /// Register once (full fingerprint), then heartbeat, so a networked box appears
-/// and stays fresh in the admin console without operator action. Between
-/// heartbeats a cheap viewer-flag poll auto-starts/stops TUI streaming.
-fn presence_tick(app: &mut App) {
-    app.present_tick = app.present_tick.saturating_add(1);
-    if app.present_tick % VIEWER_CHECK_TICKS == 0 {
-        viewer_check(app);
-    }
-    if app.present_tick < PRESENCE_HEARTBEAT_TICKS {
-        return;
-    }
-    app.present_tick = 0;
+/// and stays fresh in the admin console without operator action.
+fn presence_beat(app: &mut App) {
     // Retry registration each interval until the fingerprint upload lands, then
     // just heartbeat. The heartbeat itself upserts the connected_client row, so
     // the box shows in the roster even if the full fingerprint hasn't yet.
@@ -4595,7 +4739,7 @@ fn presence_tick(app: &mut App) {
         match upload_fingerprint(app) {
             Ok(_) => {
                 app.present_registered = true;
-                app.status = format!("presence: registered with {}", app.target);
+                app.status = relay_line(app);
             }
             Err(e) => app.status = format!("presence: register failed: {e}"),
         }
@@ -4603,12 +4747,142 @@ fn presence_tick(app: &mut App) {
     send_presence_heartbeat(app);
 }
 
-/// Find a console direct-link endpoint: a LAN UDP beacon first (relay-free),
-/// else the relay's console registry over HTTP. Returns `ip[:port]`.
-fn discover_console_addr(app: &App) -> Option<String> {
-    if let Some(addr) = netraw::discover_console(tcp_protocol::preboot::DISCOVERY_PORT, 800) {
-        return Some(addr);
+/// One-line relay summary: the target, where it came from, and whether this
+/// machine has registered with it.
+fn relay_line(app: &App) -> String {
+    if app.target.is_empty() {
+        return "relay: none - listening for a console beacon ('e' sets one by hand)".to_string();
     }
+    let presence = if !app.present {
+        "presence off"
+    } else if app.present_registered {
+        "presence registered"
+    } else {
+        "presence pending"
+    };
+    format!("relay: {} [{}] - {presence}", app.target, app.target_src.label())
+}
+
+/// Relay url assumed for a v1 beacon: the console that sent it is the
+/// Mastertech host, on axum's default port.
+fn derived_relay(addr: &str) -> Option<String> {
+    let ip = netraw::parse_ipv4(addr)?;
+    Some(format!("http://{}:{AXUM_DEFAULT_PORT}", netraw::ip_str(ip)))
+}
+
+/// Take a discovered relay url as the target unless a stronger source already
+/// set it. Re-registers presence against the new relay.
+fn adopt_relay(app: &mut App, url: &str, src: TargetSource) {
+    if !tcp_protocol::preboot::is_valid_relay_url(url) {
+        return;
+    }
+    if !app.target.is_empty() && app.target_src > src {
+        return;
+    }
+    // Same url from a stronger source: record the provenance, change nothing else.
+    if app.target == url {
+        app.target_src = src;
+        return;
+    }
+    let prev = core::mem::replace(&mut app.target, url.to_string());
+    let prev_src = core::mem::replace(&mut app.target_src, src);
+    app.present_registered = false;
+    app.present_next_ms = 0;
+    logln(format!(
+        "relay: adopted {url} ({}) - was '{prev}' ({})",
+        src.label(),
+        prev_src.label()
+    ));
+    app.status = relay_line(app);
+}
+
+/// This machine's IPv4 subnet mask, from the raw SNP lease or the UEFI stack.
+fn local_mask(app: &App) -> Option<[u8; 4]> {
+    if let Some(rn) = app.raw_net {
+        if rn.mask != [0; 4] {
+            return Some(rn.mask);
+        }
+    }
+    app.ifaces.iter().filter_map(|i| netraw::parse_ipv4(&i.mask)).find(|m| *m != [0; 4])
+}
+
+/// True when `relay`'s host is the beaconing console's own IPv4, or an IPv4 on
+/// the same subnet as it.
+fn relay_on_beacon_subnet(app: &App, relay: &str, addr: &str) -> bool {
+    let host = relay
+        .strip_prefix("http://")
+        .or_else(|| relay.strip_prefix("https://"))
+        .unwrap_or(relay);
+    let host = host.split(['/', '?', '#']).next().unwrap_or(host);
+    let (Some(r), Some(c)) = (netraw::parse_ipv4(host), netraw::parse_ipv4(addr)) else {
+        return false;
+    };
+    if r == c {
+        return true;
+    }
+    match local_mask(app) {
+        Some(m) => (0..4).all(|i| (r[i] & m[i]) == (c[i] & m[i])),
+        None => false,
+    }
+}
+
+/// Hold an off-subnet advertised relay for operator confirmation instead of
+/// adopting it: uploads to it carry serial, SMBIOS and OA3 key material.
+fn offer_relay(app: &mut App, url: &str) {
+    if app.target == url || app.pending_relay.as_deref() == Some(url) {
+        return;
+    }
+    app.pending_relay = Some(url.to_string());
+    logln(format!("relay: off-subnet relay {url} offered - 'y' accepts"));
+    app.status = format!("beacon offers off-subnet relay {url} - 'y' accepts");
+}
+
+/// Settle the relay target from a beacon: the url a v2 beacon advertises when
+/// it names the beacon's own subnet, else the axum default on the beacon's own
+/// IPv4. An off-subnet advertised url waits for the operator.
+fn adopt_beacon_relay(app: &mut App, b: &tcp_protocol::preboot::Beacon) {
+    if let Some(url) = b.relay.as_deref() {
+        if relay_on_beacon_subnet(app, url, &b.addr) {
+            adopt_relay(app, url, TargetSource::Advertised);
+            return;
+        }
+        if let Some(fallback) = derived_relay(&b.addr) {
+            adopt_relay(app, &fallback, TargetSource::Derived);
+        }
+        offer_relay(app, url);
+        return;
+    }
+    if let Some(url) = derived_relay(&b.addr) {
+        adopt_relay(app, &url, TargetSource::Derived);
+    }
+}
+
+/// Listen for a console beacon and take the relay it names, without dialing —
+/// works before a DHCP lease exists. True when a beacon was heard.
+fn listen_for_relay(app: &mut App, listen_ms: u64) -> bool {
+    match netraw::discover_console(tcp_protocol::preboot::DISCOVERY_PORT, listen_ms) {
+        Some(b) => {
+            adopt_beacon_relay(app, &b);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Find a console direct-link endpoint: a LAN UDP beacon first (relay-free),
+/// else the relay's console registry over HTTP. A beacon also settles the relay
+/// target — advertised by a v2 beacon, or derived from a v1 beacon's IPv4.
+/// Returns `ip[:port]` and whether a beacon was heard.
+fn discover_console_addr(app: &mut App, listen_ms: u64) -> (Option<String>, bool) {
+    if let Some(b) = netraw::discover_console(tcp_protocol::preboot::DISCOVERY_PORT, listen_ms) {
+        adopt_beacon_relay(app, &b);
+        return (Some(b.addr), true);
+    }
+    (relay_console_addr(app), false)
+}
+
+/// Ask the relay's console registry for a console endpoint over HTTP.
+fn relay_console_addr(app: &App) -> Option<String> {
     if app.target.is_empty() {
         return None;
     }
@@ -4627,21 +4901,22 @@ fn discover_console_addr(app: &App) -> Option<String> {
 
 /// Discover a console (UDP beacon or relay) and dial it. On success, sends
 /// HELLO(serial) so the console registers a session, then keeps the socket in
-/// `app.direct`. Any failure leaves the relay path untouched.
-fn direct_discover(app: &mut App) {
+/// `app.direct`. Any failure leaves the relay path untouched. Returns whether a
+/// beacon was heard.
+fn direct_discover(app: &mut App, listen_ms: u64) -> bool {
     if app.direct.is_some() {
-        return;
+        return false;
     }
     // Prefer a LAN UDP beacon (no relay round-trip); fall back to asking the
     // relay for a console endpoint over HTTP.
-    let addr = discover_console_addr(app);
-    let Some(mut addr) = addr else { return };
+    let (addr, heard) = discover_console_addr(app, listen_ms);
+    let Some(mut addr) = addr else { return heard };
     if !addr.contains(':') {
         addr = format!("{addr}:{DIRECT_PORT}");
     }
     let serial = effective_serial(&app.info);
     if serial.is_empty() {
-        return;
+        return heard;
     }
     match net_tcp::DirectLink::connect(&addr) {
         Ok(mut link) => {
@@ -4658,63 +4933,202 @@ fn direct_discover(app: &mut App) {
         }
         Err(e) => logln(format!("direct: dial {addr} failed: {e}")),
     }
+    heard
+}
+
+/// One immediate discovery pass for the moment the network comes up ('c'/'d'),
+/// so the relay is learned now instead of at the next backoff deadline. Re-arms
+/// the backoff at its base interval, never tighter. Returns whether a beacon
+/// was heard.
+fn kick_discovery(app: &mut App, clock: &Clock) -> bool {
+    if app.direct.is_some() {
+        return false;
+    }
+    let heard = direct_discover(app, DISCOVER_LISTEN_KICK_MS);
+    let now = clock.now_ms();
+    app.discover_backoff_ms = DIRECT_DISCOVER_MS;
+    if app.direct.is_some() {
+        app.direct_pump_next_ms = now;
+    } else {
+        app.discover_next_ms = now.saturating_add(DIRECT_DISCOVER_MS);
+    }
+    heard
+}
+
+/// Short names of the `connect_all` steps, in run order.
+const CONNECT_STEPS: [&str; 5] = ["drivers", "lease", "console", "presence", "agent"];
+
+/// This machine's IPv4, from the firmware stack lease or the raw SNP lease.
+fn local_ip(app: &App) -> Option<String> {
+    if let Some(f) = app.ifaces.iter().find(|f| f.ip != "0.0.0.0") {
+        return Some(f.ip.clone());
+    }
+    app.raw_net
+        .filter(|rn| rn.ip != [0; 4])
+        .map(|rn| netraw::ip_str(rn.ip))
+}
+
+/// This machine's IPv4 subnet mask as a string.
+fn local_mask_str(app: &App) -> Option<String> {
+    if let Some(f) = app.ifaces.iter().find(|f| f.ip != "0.0.0.0") {
+        return Some(f.mask.clone());
+    }
+    app.raw_net
+        .filter(|rn| rn.mask != [0; 4])
+        .map(|rn| netraw::ip_str(rn.mask))
+}
+
+/// Binds drivers, leases, finds the console, arms presence and enables
+/// auto-poll in one pass. Draws before each step, records its pass/fail, and
+/// skips steps that are already satisfied.
+fn connect_all(
+    app: &mut App,
+    terminal: &mut Terminal<ratatui_uefi::UefiOutputBackend>,
+    clock: &Clock,
+) -> Result<()> {
+    app.connect_steps.clear();
+    // The progress line and the step table only render on the Network page.
+    app.tab = TAB_NETWORK;
+
+    app.status = "connect 1/5: binding NIC drivers...".into();
+    terminal.draw(|frame| render(frame, app))?;
+    connect_network_stack();
+    app.info.nics = collect_nics();
+    app.info.pci_net = collect_pci_net();
+    app.invalidate_fw();
+    let nics = app.info.nics.len();
+    app.connect_steps.push(if nics == 0 {
+        (false, "no UEFI NIC driver".to_string())
+    } else {
+        (true, format!("{nics} bound"))
+    });
+
+    if local_ip(app).is_some() {
+        app.connect_steps.push((true, "already held".to_string()));
+    } else {
+        app.status = "connect 2/5: DHCP - up to 30s per interface...".into();
+        terminal.draw(|frame| render(frame, app))?;
+        let (ifaces, raw, note) = run_dhcp();
+        app.ifaces = ifaces;
+        app.raw_net = raw;
+        app.connect_steps.push(match local_ip(app) {
+            Some(ip) => (true, ip),
+            None => (false, fit(&note, 21)),
+        });
+    }
+    let leased = local_ip(app).is_some();
+
+    if app.direct.is_some() {
+        app.connect_steps.push((true, "already linked".to_string()));
+    } else {
+        app.status = "connect 3/5: listening for a console beacon...".into();
+        terminal.draw(|frame| render(frame, app))?;
+        let heard = if leased {
+            kick_discovery(app, clock)
+        } else {
+            listen_for_relay(app, DISCOVER_LISTEN_KICK_MS)
+        };
+        app.connect_steps.push(if app.direct.is_some() {
+            (true, "direct link".to_string())
+        } else if heard {
+            (true, "beacon heard".to_string())
+        } else if app.target_src == TargetSource::Operator {
+            (true, "relay preset".to_string())
+        } else {
+            (false, "no beacon heard".to_string())
+        });
+    }
+
+    // Presence and the agent are skipped without a lease or a direct link.
+    let networked = leased || app.direct.is_some();
+    let now = clock.now_ms();
+    if !networked {
+        app.connect_steps.push((false, "no network".to_string()));
+        app.connect_steps.push((false, "no network".to_string()));
+    } else {
+        if app.present {
+            app.reset_discovery(now);
+            app.connect_steps.push((true, "already on".to_string()));
+        } else {
+            app.arm_presence(now, false);
+            app.connect_steps.push((true, "armed".to_string()));
+        }
+        let was_agent = app.agent;
+        app.agent = true;
+        app.agent_next_ms = clock.now_ms();
+        app.connect_steps
+            .push((true, if was_agent { "already on".into() } else { "auto-poll on".into() }));
+    }
+
+    let ok = app.connect_steps.iter().filter(|(ok, _)| *ok).count();
+    app.status = format!("connect: {ok}/5 ok - {}", relay_line(app));
+    app.dirty = true;
+    Ok(())
 }
 
 /// Drain any frames the console sent over the direct socket: input events (into
 /// the injected queue), stream control, and plugin-run requests. Drops the link
-/// on a transport error so discovery can re-establish it.
+/// on a transport error so discovery can re-establish it. Returns true when the
+/// link produced anything, including a drop.
 fn direct_pump(
     app: &mut App,
     terminal: &mut Terminal<ratatui_uefi::UefiOutputBackend>,
-) -> Result<()> {
+) -> Result<bool> {
     use tcp_protocol::preboot;
+    let mut handled = false;
     for _ in 0..8 {
         let polled = match app.direct.as_mut() {
             Some(link) => link.poll_frame(4),
-            None => return Ok(()),
+            None => return Ok(handled),
         };
         match polled {
-            Ok(Some((tag, body))) => match tag {
-                t if t == preboot::FRAME_TAG_PREBOOT_INPUT => {
-                    if let Some(ev) = preboot::decode_event(&body) {
-                        if let Some(te) = stream::event_to_terminput(&ev) {
-                            app.injected.push(te);
-                        }
-                    }
-                }
-                t if t == preboot::FRAME_TAG_PREBOOT_STREAM_CTL => {
-                    if let Some(ctl) = preboot::decode_stream_ctl(&body) {
-                        app.direct_stream = ctl.stream;
-                        app.stream_throttle = stream::Throttle::new();
-                        logln(format!("direct: stream_ctl -> {}", ctl.stream));
-                    }
-                }
-                t if t == preboot::FRAME_TAG_PREBOOT_PLUGIN_RUN => {
-                    if let Some(req) = preboot::decode_plugin_run(&body) {
-                        let res = run_plugin_direct(app, &req, terminal);
-                        if let Some(link) = app.direct.as_mut() {
-                            let out = preboot::encode_plugin_result(&res);
-                            if let Err(e) = link.send(preboot::FRAME_TAG_PREBOOT_PLUGIN_RESULT, &out) {
-                                logln(format!("direct: plugin result send failed: {e}"));
-                                app.direct = None;
-                                app.direct_stream = false;
-                                return Ok(());
+            Ok(Some((tag, body))) => {
+                handled = true;
+                match tag {
+                    t if t == preboot::FRAME_TAG_PREBOOT_INPUT => {
+                        if let Some(ev) = preboot::decode_event(&body) {
+                            if let Some(te) = stream::event_to_terminput(&ev) {
+                                app.injected.push(te);
                             }
                         }
                     }
+                    t if t == preboot::FRAME_TAG_PREBOOT_STREAM_CTL => {
+                        if let Some(ctl) = preboot::decode_stream_ctl(&body) {
+                            app.direct_stream = ctl.stream;
+                            app.stream_throttle = stream::Throttle::new();
+                            logln(format!("direct: stream_ctl -> {}", ctl.stream));
+                        }
+                    }
+                    t if t == preboot::FRAME_TAG_PREBOOT_PLUGIN_RUN => {
+                        if let Some(req) = preboot::decode_plugin_run(&body) {
+                            let res = run_plugin_direct(app, &req, terminal);
+                            if let Some(link) = app.direct.as_mut() {
+                                let out = preboot::encode_plugin_result(&res);
+                                if let Err(e) =
+                                    link.send(preboot::FRAME_TAG_PREBOOT_PLUGIN_RESULT, &out)
+                                {
+                                    logln(format!("direct: plugin result send failed: {e}"));
+                                    app.direct = None;
+                                    app.direct_stream = false;
+                                    return Ok(true);
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
-            },
+            }
             Ok(None) => break,
             Err(e) => {
                 logln(format!("direct: link dropped: {e}"));
                 app.direct = None;
                 app.direct_stream = false;
+                handled = true;
                 break;
             }
         }
     }
-    Ok(())
+    Ok(handled)
 }
 
 /// Run a plugin for a direct-link request: registry id or URL fetched over the
@@ -4752,16 +5166,15 @@ fn run_plugin_direct(
     };
     app.status = format!("direct: running plugin ({} B)", bytes.len());
     let _ = terminal.draw(|frame| render(frame, app));
-    let tool = if req.tool.trim().is_empty() {
-        match wasmrt::run(&bytes, &host, None, fw_data(&app.info)) {
-            Ok(p) => first_tool_name(&p.tools).unwrap_or_else(|| "selftest".to_string()),
-            Err(e) => return PbPluginResult { error: format!("load: {e}"), ..Default::default() },
-        }
-    } else {
-        req.tool.trim().to_string()
-    };
+    let req_tool = req.tool.trim().to_string();
     let args = if req.args.trim().is_empty() { "{}" } else { req.args.trim() };
-    match wasmrt::run(&bytes, &host, Some((&tool, args)), fw_data(&app.info)) {
+    let call = if req_tool.is_empty() {
+        wasmrt::Call::FirstTool(args)
+    } else {
+        wasmrt::Call::Tool(&req_tool, args)
+    };
+    let fw = app.fw();
+    match wasmrt::run(&bytes, &host, call, fw) {
         Ok(run) => {
             app.status = format!("direct: plugin {} ok", run.id);
             PbPluginResult {
@@ -4770,14 +5183,14 @@ fn run_plugin_direct(
                 name: run.name,
                 version: run.version,
                 tools: run.tools,
-                tool,
+                tool: run.tool,
                 result: run.result,
                 log: run.log,
                 stdout: run.stdout,
                 error: String::new(),
             }
         }
-        Err(e) => PbPluginResult { tool, error: e, ..Default::default() },
+        Err(e) => PbPluginResult { tool: req_tool, error: e, ..Default::default() },
     }
 }
 
@@ -4861,13 +5274,6 @@ fn upload_logs(app: &mut App) {
     };
 }
 
-/// First tool name from an `mcp_tools` JSON blob (array or `{"tools":[..]}`).
-fn first_tool_name(tools_json: &str) -> Option<String> {
-    let v: serde_json::Value = serde_json::from_str(tools_json).ok()?;
-    let arr = v.as_array().or_else(|| v.get("tools").and_then(|t| t.as_array()))?;
-    arr.first()?.get("name")?.as_str().map(|s| s.to_string())
-}
-
 /// GET `/api/v1/plugins/{id}/wasm` from the upload target and stash the bytes;
 /// introspection output (id/version/tools) lands in `plugin_out`.
 fn fetch_registry_plugin(
@@ -4892,13 +5298,14 @@ fn fetch_registry_plugin(
                 app.status = format!("fetch: not wasm ({} B)", bytes.len());
                 return Ok(());
             }
-            app.plugin_wasm = bytes;
+            app.set_plugin_wasm(bytes);
             // Introspect without invoking: id/name/version/tools into the pane.
             let host = {
                 let s = effective_serial(&app.info);
                 if s.is_empty() { "uefi".to_string() } else { s }
             };
-            match wasmrt::run(&app.plugin_wasm, &host, None, fw_data(&app.info)) {
+            let fw = app.fw();
+            match wasmrt::run(&app.plugin_wasm, &host, wasmrt::Call::Load, fw) {
                 Ok(run) => {
                     app.plugin_out.clear();
                     app.plugin_out.push(format!("fetched: {} B", app.plugin_wasm.len()));
@@ -4907,6 +5314,7 @@ fn fetch_registry_plugin(
                     for chunk in wrap_text(&format!("tools: {}", run.tools), 60) {
                         app.plugin_out.push(chunk);
                     }
+                    app.plugin_tools = run.tools;
                     app.status = format!("{id} fetched - ENTER runs its first tool");
                 }
                 Err(e) => {
@@ -4949,39 +5357,39 @@ fn run_fetched_plugin(
     terminal: &mut Terminal<ratatui_uefi::UefiOutputBackend>,
 ) -> Result<()> {
     let bytes = app.plugin_wasm.clone();
-    let host = {
-        let s = effective_serial(&app.info);
-        if s.is_empty() { "uefi".to_string() } else { s }
+    let tool = wasmrt::first_tool_name(&app.plugin_tools);
+    app.status = match &tool {
+        Some(t) => format!("running {t} ..."),
+        None => "running plugin ...".to_string(),
     };
-    let tool = match wasmrt::run(&bytes, &host, None, fw_data(&app.info)) {
-        Ok(probe) => first_tool_name(&probe.tools).unwrap_or_else(|| "selftest".to_string()),
-        Err(e) => {
-            app.status = format!("plugin load failed: {e}");
-            return Ok(());
-        }
-    };
-    app.status = format!("running {} ...", tool);
     terminal.draw(|frame| render(frame, app))?;
-    run_wasm_plugin(app, &bytes, &tool, "{}");
+    if let Some(tools) = run_wasm_plugin(app, &bytes, tool.as_deref(), "{}") {
+        app.plugin_tools = tools;
+    }
     Ok(())
 }
 
-/// Load and invoke a plugin, formatting the run into `app.plugin_out`.
-fn run_wasm_plugin(app: &mut App, bytes: &[u8], tool: &str, args: &str) {
+/// Load and invoke a plugin (its first advertised tool when `tool` is `None`),
+/// formatting the run into `app.plugin_out`. Returns its tool descriptors.
+fn run_wasm_plugin(app: &mut App, bytes: &[u8], tool: Option<&str>, args: &str) -> Option<String> {
     let host = {
         let s = effective_serial(&app.info);
         if s.is_empty() { "uefi".to_string() } else { s }
     };
-    let fw = fw_data(&app.info);
+    let fw = app.fw();
+    let call = match tool {
+        Some(t) => wasmrt::Call::Tool(t, args),
+        None => wasmrt::Call::FirstTool(args),
+    };
     app.plugin_out.clear();
-    match wasmrt::run(bytes, &host, Some((tool, args)), fw) {
+    match wasmrt::run(bytes, &host, call, fw) {
         Ok(run) => {
             app.plugin_out.push(format!("id: {}", run.id));
             app.plugin_out.push(format!("name: {} v{}", run.name, run.version));
             for chunk in wrap_text(&format!("tools: {}", run.tools), 60) {
                 app.plugin_out.push(chunk);
             }
-            app.plugin_out.push(format!("tool: {tool}"));
+            app.plugin_out.push(format!("tool: {}", run.tool));
             for chunk in wrap_text(&format!("result: {}", run.result), 60) {
                 app.plugin_out.push(chunk);
             }
@@ -4994,10 +5402,12 @@ fn run_wasm_plugin(app: &mut App, bytes: &[u8], tool: &str, args: &str) {
                 app.plugin_out.push(format!("log: {l}"));
             }
             app.status = format!("plugin {} ran ok", run.id);
+            Some(run.tools)
         }
         Err(e) => {
             app.plugin_out.push(format!("error: {e}"));
             app.status = format!("plugin failed: {e}");
+            None
         }
     }
 }
@@ -5010,158 +5420,259 @@ fn wrap_text(s: &str, width: usize) -> Vec<String> {
         .collect()
 }
 
-fn page_network(frame: &mut Frame, area: Rect, app: &App) {
-    let info = &app.info;
-    let mut lines = Vec::new();
+/// Label/value row sized for the Network tab's left column.
+fn nrow(k: &str, v: &str, w: usize, c: ratatui::style::Color) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{k:<9}"), Style::default().fg(palette::LABEL)),
+        Span::styled(fit(v, w.saturating_sub(9)), Style::default().fg(c)),
+    ])
+}
 
-    // UEFI interfaces (only present when a network driver is bound).
-    lines.push(header("UEFI interfaces (SimpleNetwork)"));
+/// Two key hints on one row of the Network tab's right column.
+fn nkeys(k1: &str, d1: &str, k2: &str, d2: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{k1} "), Style::default().fg(palette::ACCENT)),
+        Span::styled(format!("{d1:<14}"), Style::default().fg(palette::MUTED)),
+        Span::styled(format!("{k2} "), Style::default().fg(palette::ACCENT)),
+        Span::styled(d2.to_string(), Style::default().fg(palette::MUTED)),
+    ])
+}
+
+/// What each `connect_all` step will do, shown before the first run.
+const CONNECT_PLAN: [&str; 5] = [
+    "bind NIC drivers",
+    "get a DHCP lease",
+    "find the console",
+    "appear in console",
+    "poll for commands",
+];
+
+fn page_network(frame: &mut Frame, area: Rect, app: &App) {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(4)])
+        .split(area);
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(44), Constraint::Min(0)])
+        .split(rows[0]);
+    let lw = cols[0].width.saturating_sub(2) as usize;
+    let rw = cols[1].width.saturating_sub(2) as usize;
+    let body_h = rows[0].height.saturating_sub(2) as usize;
+
+    let info = &app.info;
+    let mut l: Vec<Line> = Vec::new();
+
+    l.push(header("UEFI NIC drivers"));
     if info.nics.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "none - no UEFI network driver is bound",
+        l.push(Line::from(Span::styled(
+            fit("none bound", lw),
             Style::default().fg(palette::ERR),
         )));
+        if !info.pci_net.is_empty() {
+            l.push(Line::from(Span::styled(
+                fit("enable the UEFI Network Stack in BIOS", lw),
+                Style::default().fg(palette::ERR),
+            )));
+        }
     } else {
-        for (i, n) in info.nics.iter().enumerate() {
-            let link = if !n.media_supported {
-                Span::styled("link n/a", Style::default().fg(palette::MUTED))
+        let detail = info.nics.len() == 1;
+        for (i, n) in info.nics.iter().take(2).enumerate() {
+            let (link, c) = if !n.media_supported {
+                ("link n/a", palette::MUTED)
             } else if n.media_present {
-                Span::styled("link up", Style::default().fg(palette::GOOD))
+                ("link up", palette::GOOD)
             } else {
-                Span::styled("link down", Style::default().fg(palette::ERR))
+                ("link down", palette::ERR)
             };
-            lines.push(Line::from(vec![
-                Span::styled(format!("NIC {i}  "), Style::default().fg(palette::ACCENT)),
-                Span::styled(format!("{}  ", n.mac), Style::default().fg(palette::TEXT)),
-                link,
+            l.push(Line::from(vec![
+                Span::styled(format!("NIC {i} "), Style::default().fg(palette::ACCENT)),
                 Span::styled(
-                    format!("  type {}  MTU {}  {}", n.if_type, n.mtu, n.state),
+                    format!("{:<18}", fit(&n.mac, 17)),
+                    Style::default().fg(palette::TEXT),
+                ),
+                Span::styled(link, Style::default().fg(c)),
+            ]));
+            if detail {
+                l.push(Line::from(Span::styled(
+                    fit(
+                        &format!("      type {}  MTU {}  {}", n.if_type, n.mtu, n.state),
+                        lw,
+                    ),
                     Style::default().fg(palette::MUTED),
+                )));
+            }
+        }
+    }
+
+    l.push(header("Network hardware (PCI)"));
+    if info.pci_net.is_empty() {
+        l.push(Line::from(Span::styled(
+            "none found",
+            Style::default().fg(palette::MUTED),
+        )));
+    } else {
+        for p in info.pci_net.iter().take(2) {
+            l.push(Line::from(vec![
+                Span::styled(
+                    format!("{:<8}", fit(&p.loc, 8)),
+                    Style::default().fg(palette::ACCENT),
+                ),
+                Span::styled(
+                    fit(
+                        &format!(
+                            "{} [{:04x}:{:04x}] {}",
+                            pci_vendor_name(p.vendor),
+                            p.vendor,
+                            p.device,
+                            p.kind
+                        ),
+                        lw.saturating_sub(8),
+                    ),
+                    Style::default().fg(palette::TEXT),
                 ),
             ]));
         }
     }
 
-    // Raw PCI hardware (works with no driver — proves the NIC is physically present).
-    lines.push(Line::from(""));
-    lines.push(header("Network hardware (PCI bus)"));
-    if info.pci_net.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "no PCI network controllers found",
-            Style::default().fg(palette::MUTED),
+    l.push(header("IPv4"));
+    match local_ip(app) {
+        Some(ip) => {
+            let cidr = match local_mask_str(app).as_deref().and_then(netraw::parse_ipv4) {
+                Some(m) => format!("{ip}/{}", m.iter().map(|b| b.count_ones()).sum::<u32>()),
+                None => ip,
+            };
+            l.push(nrow("address", &cidr, lw, palette::GOOD));
+        }
+        None => l.push(nrow("address", "no lease", lw, palette::MUTED)),
+    }
+
+    l.push(header("Relay (upload target)"));
+    l.push(nrow(
+        "presence",
+        if !app.present {
+            "off - 'n' arms it"
+        } else if app.present_registered {
+            "registered with the relay"
+        } else {
+            "armed, not registered yet"
+        },
+        lw,
+        if app.present_registered {
+            palette::GOOD
+        } else if app.present {
+            palette::WARN
+        } else {
+            palette::MUTED
+        },
+    ));
+    if app.editing == EditField::Target {
+        l.push(Line::from(Span::styled(
+            fit("[EDITING - type host:port, ENTER saves]", lw),
+            Style::default().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
         )));
+    }
+    if let Some(url) = app.pending_relay.as_deref() {
+        l.push(Line::from(Span::styled(
+            fit(&format!("OFFER {url} - 'y' accepts"), lw),
+            Style::default().fg(palette::WARN),
+        )));
+    }
+    if app.target.is_empty() {
+        l.push(nrow("target", "none - 'e' sets one", lw, palette::ERR));
     } else {
-        for p in &info.pci_net {
-            lines.push(Line::from(vec![
-                Span::styled(format!("{}  ", p.loc), Style::default().fg(palette::ACCENT)),
+        let u = parse_upload_url(&app.target);
+        l.push(nrow("target", &u.full, lw, palette::TEXT));
+        l.push(nrow(
+            "source",
+            app.target_src.label(),
+            lw,
+            if app.target_src == TargetSource::Default {
+                palette::WARN
+            } else {
+                palette::GOOD
+            },
+        ));
+        l.push(nrow(
+            "sends by",
+            if u.is_qc_tcp {
+                "QC TCP (framed)"
+            } else if u.needs_efi_http {
+                "EFI HTTP (DNS+TLS)"
+            } else {
+                "raw TCP4 (plain http)"
+            },
+            lw,
+            palette::LABEL,
+        ));
+    }
+    l.truncate(body_h);
+
+    let mut r: Vec<Line> = Vec::new();
+    for (i, name) in CONNECT_STEPS.iter().enumerate() {
+        match app.connect_steps.get(i) {
+            Some((ok, detail)) => r.push(Line::from(vec![
                 Span::styled(
-                    format!("{} ", pci_vendor_name(p.vendor)),
+                    format!("{} {:<9}", i + 1, name),
                     Style::default().fg(palette::TEXT),
                 ),
                 Span::styled(
-                    format!("[{:04x}:{:04x}]  ", p.vendor, p.device),
+                    if *ok { "ok " } else { "-- " },
+                    Style::default().fg(if *ok { palette::GOOD } else { palette::ERR }),
+                ),
+                Span::styled(
+                    fit(detail, rw.saturating_sub(14)),
                     Style::default().fg(palette::MUTED),
                 ),
-                Span::styled(p.kind, Style::default().fg(palette::LABEL)),
-            ]));
-        }
-    }
-
-    // IP leases (after DHCP).
-    lines.push(Line::from(""));
-    lines.push(header("IPv4 (press 'd' for DHCP)"));
-    if app.ifaces.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "no lease yet",
-            Style::default().fg(palette::MUTED),
-        )));
-    } else {
-        for (i, f) in app.ifaces.iter().enumerate() {
-            let up = f.ip != "0.0.0.0";
-            lines.push(Line::from(vec![
-                Span::styled(format!("if {i}  "), Style::default().fg(palette::ACCENT)),
+            ])),
+            None => r.push(Line::from(vec![
                 Span::styled(
-                    format!("{:<16}", f.ip),
-                    Style::default().fg(if up { palette::GOOD } else { palette::BAD }),
+                    format!("{} {:<9}", i + 1, name),
+                    Style::default().fg(palette::TEXT),
                 ),
-                Span::styled(format!("mask {}", f.mask), Style::default().fg(palette::MUTED)),
-            ]));
+                Span::styled(
+                    fit(CONNECT_PLAN.get(i).copied().unwrap_or(""), rw.saturating_sub(11)),
+                    Style::default().fg(palette::MUTED),
+                ),
+            ])),
         }
     }
+    r.push(header("Single steps"));
+    r.push(nkeys("c", "bind drivers", "d", "lease+presence"));
+    r.push(nkeys("n", "presence", "e", "relay url"));
+    r.push(nkeys("a", "poll once", "A", "auto-poll"));
+    r.push(nkeys("p", "upload now", "y", "accept offer"));
+    r.push(nkeys("v", "relay stream", "u", "send logs"));
+    r.truncate(body_h);
 
-    // Upload target + status.
-    lines.push(Line::from(""));
-    lines.push(header("Upload target"));
-    let editing_target = app.editing == EditField::Target;
-    if editing_target {
-        lines.push(Line::from(Span::styled(
-            "[ EDITING - type host or host:port, then press ENTER to save ]",
-            Style::default().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
-        )));
-    }
-    let shown = if app.target.is_empty() {
-        "<host:port>".to_string()
-    } else {
-        app.target.clone()
-    };
-    lines.push(Line::from(vec![
-        Span::styled("target: ", Style::default().fg(palette::MUTED)),
-        Span::styled(shown, Style::default().fg(palette::TEXT)),
-        Span::styled(
-            if editing_target { "_" } else { "" },
-            Style::default().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
-        ),
-    ]));
-    if !app.target.is_empty() {
-        let u = parse_upload_url(&app.target);
-        lines.push(Line::from(vec![
-            Span::styled("will POST to: ", Style::default().fg(palette::MUTED)),
-            Span::styled(u.full, Style::default().fg(palette::LABEL)),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("transport:    ", Style::default().fg(palette::MUTED)),
-            Span::styled(
-                if u.is_qc_tcp {
-                    "QC TCP (framed, connected_client)"
-                } else if u.needs_efi_http {
-                    "EFI HTTP (DNS+TLS via firmware)"
-                } else {
-                    "raw TCP4 (plain http, IP only)"
-                },
-                Style::default().fg(palette::LABEL),
-            ),
-        ]));
-    }
-    lines.push(Line::from(Span::styled(
-        if editing_target {
-            "ENTER save"
-        } else {
-            "'e' edit target    'p' send POST"
-        },
-        Style::default().fg(palette::MUTED),
-    )));
-    if !app.status.is_empty() {
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![
-            Span::styled("status: ", Style::default().fg(palette::MUTED)),
-            Span::styled(app.status.clone(), Style::default().fg(palette::GOOD)),
-        ]));
-    }
+    frame.render_widget(
+        Paragraph::new(l).style(base_style()).block(panel("Connection")),
+        cols[0],
+    );
+    frame.render_widget(
+        Paragraph::new(r)
+            .style(base_style())
+            .block(panel("Connect - Shift+C runs 1-5")),
+        cols[1],
+    );
 
-    // Guidance.
-    if info.nics.is_empty() && !info.pci_net.is_empty() {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "NIC present but no UEFI driver - enable the UEFI Network Stack in",
-            Style::default().fg(palette::ERR),
-        )));
-        lines.push(Line::from(Span::styled(
-            "BIOS setup, then press 'c' to connect drivers and rescan.",
-            Style::default().fg(palette::ERR),
-        )));
-    }
-    frame.render_widget(para(lines, "Network"), area);
+    let title = format!("Status - {}", fit(&mode_line(app), 55));
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            app.status.clone(),
+            Style::default().fg(palette::GOOD),
+        )))
+        .style(base_style())
+        .wrap(Wrap { trim: false })
+        .block(panel(&title)),
+        rows[1],
+    );
 }
+
+/// Failing attribute rows rendered per drive before the pane runs out of lines.
+const SATA_ATTR_ROWS: usize = 2;
+/// Columns left for the status text on a drive line at an 80-column console.
+const SATA_STATUS_COLS: usize = 24;
 
 fn page_storage(frame: &mut Frame, area: Rect, info: &SysInfo) {
     let mut lines = vec![header("Block devices (whole disks)")];
@@ -5210,6 +5721,101 @@ fn page_storage(frame: &mut Frame, area: Rect, info: &SysInfo) {
                     ),
                     Span::styled(format!("warn 0x{:02x}", s.critical_warning), Style::default().fg(warn_color)),
                 ]));
+            }
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(header("SATA / ATA (SMART)"));
+    if info.sata.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "no ATA pass-thru controller",
+            Style::default().fg(palette::MUTED),
+        )));
+    } else {
+        for d in &info.sata {
+            if d.status == smart::SmartStatus::NoHandle {
+                lines.push(Line::from(Span::styled(
+                    "UNVERIFIED no ATA pass-thru handle (RAID/RST or USB bridge)",
+                    Style::default().fg(palette::WARN),
+                )));
+                continue;
+            }
+            let (tag, color) = if d.is_failing() {
+                ("FAILING   ", palette::ERR)
+            } else if d.is_verified() {
+                ("healthy   ", palette::GOOD)
+            } else {
+                ("UNVERIFIED", palette::WARN)
+            };
+            let status_text = d
+                .unverified_reason()
+                .unwrap_or_else(|| d.status.label());
+            let name = if d.model.is_empty() {
+                "unknown drive".to_string()
+            } else {
+                d.model.clone()
+            };
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("{tag} "),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(format!("{:<22}", fit(&name, 22)), Style::default().fg(palette::ACCENT)),
+                Span::styled(
+                    format!("{:<11}", if d.capacity == 0 { "-".into() } else { human_bytes(d.capacity) }),
+                    Style::default().fg(palette::TEXT),
+                ),
+                Span::styled(
+                    format!("port {:<5}", if d.port == 0xFFFF { "-".to_string() } else { d.port.to_string() }),
+                    Style::default().fg(palette::LABEL),
+                ),
+                Span::styled(
+                    fit(&status_text, SATA_STATUS_COLS),
+                    Style::default().fg(palette::MUTED),
+                ),
+            ]));
+            if let Some(q) = &d.quirk {
+                lines.push(Line::from(Span::styled(
+                    format!("  note  {q}"),
+                    Style::default().fg(palette::MUTED),
+                )));
+            }
+            // Only failing attributes; passing pre-fail rows would clip the pane.
+            let flagged: Vec<&smart::SmartAttr> = d
+                .attrs
+                .iter()
+                .filter(|a| a.judgment == smart::AttrJudgment::Failing)
+                .collect();
+            for a in flagged.iter().take(SATA_ATTR_ROWS) {
+                let (jtag, jcolor) = if smart::is_aliased(d, a.id) {
+                    ("aliased raw", palette::MUTED)
+                } else {
+                    ("FAILING", palette::ERR)
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("  {:>3} {:<28}", a.id, fit(&a.name, 28)),
+                        Style::default().fg(palette::TEXT),
+                    ),
+                    Span::styled(
+                        format!(
+                            "val {:<5}worst {:<5}thr {:<5}",
+                            a.value,
+                            a.worst,
+                            a.threshold.map_or("-".to_string(), |t| t.to_string())
+                        ),
+                        Style::default().fg(palette::TEXT),
+                    ),
+                    Span::styled(jtag, Style::default().fg(jcolor)),
+                ]));
+            }
+            let hidden = flagged.len().saturating_sub(SATA_ATTR_ROWS);
+            if hidden > 0 {
+                lines.push(Line::from(Span::styled(
+                    format!("  +{hidden} more failing attribute(s) in the fingerprint upload"),
+                    Style::default().fg(palette::MUTED),
+                )));
             }
         }
     }
@@ -5954,6 +6560,101 @@ fn page_log(frame: &mut Frame, area: Rect) {
     );
 }
 
+/// Host part of the relay target, without scheme or path.
+fn relay_host(app: &App) -> String {
+    let hp = parse_upload_url(&app.target).host_port;
+    hp.split(':').next().unwrap_or(&hp).to_string()
+}
+
+/// Three-letter provenance tag for the relay target.
+fn target_src_tag(src: TargetSource) -> &'static str {
+    match src {
+        TargetSource::Default => "def",
+        TargetSource::Derived => "der",
+        TargetSource::Advertised => "adv",
+        TargetSource::Operator => "ops",
+    }
+}
+
+/// One-line connection state for the tab panel's bottom border.
+fn conn_status_line(app: &App, area_w: usize) -> Line<'static> {
+    let w = area_w.saturating_sub(2);
+    let mut segs: Vec<(String, Style)> = Vec::with_capacity(6);
+
+    let (net, net_c) = match local_ip(app) {
+        Some(ip) => (fit(&ip, 15), palette::GOOD),
+        None => ("down".to_string(), palette::ERR),
+    };
+    segs.push((format!("NET {net}"), Style::default().fg(net_c)));
+
+    let (rly, rly_c) = if app.target.is_empty() {
+        ("none".to_string(), palette::ERR)
+    } else {
+        let c = if app.target_src == TargetSource::Default {
+            palette::WARN
+        } else {
+            palette::GOOD
+        };
+        (
+            format!("{}/{}", fit(&relay_host(app), 15), target_src_tag(app.target_src)),
+            c,
+        )
+    };
+    segs.push((format!("RLY {rly}"), Style::default().fg(rly_c)));
+
+    let (prs, prs_c) = if !app.present {
+        ("off", palette::MUTED)
+    } else if app.present_registered {
+        ("reg", palette::GOOD)
+    } else {
+        ("arm", palette::WARN)
+    };
+    segs.push((format!("PRS {prs}"), Style::default().fg(prs_c)));
+
+    let (agt, agt_c) = if app.agent {
+        ("auto", palette::GOOD)
+    } else if app.agent_ran {
+        ("once", palette::MUTED)
+    } else {
+        ("off", palette::MUTED)
+    };
+    segs.push((format!("AGT {agt}"), Style::default().fg(agt_c)));
+
+    let (str_v, str_c) = if app.direct_stream {
+        ("dir", palette::GOOD)
+    } else if app.streaming {
+        ("rly", palette::GOOD)
+    } else {
+        ("off", palette::MUTED)
+    };
+    segs.push((format!("STR {str_v}"), Style::default().fg(str_c)));
+
+    if app.pending_relay.is_some() {
+        segs.push(("OFFER:y".to_string(), Style::default().fg(palette::WARN)));
+    }
+
+    // One-space separators when two-space would overflow the border run.
+    let total = segs.iter().map(|(s, _)| s.chars().count()).sum::<usize>();
+    let gaps = segs.len().saturating_sub(1);
+    let sep = if total + gaps * 2 > w { " " } else { "  " };
+    let mut spans = Vec::with_capacity(segs.len() * 2);
+    let mut used = 0usize;
+    for (i, (text, style)) in segs.into_iter().enumerate() {
+        let lead = if i > 0 { sep.len() } else { 0 };
+        let room = w.saturating_sub(used + lead);
+        if room == 0 {
+            break;
+        }
+        if lead > 0 {
+            spans.push(Span::styled(sep.to_string(), Style::default().fg(palette::MUTED)));
+        }
+        let text = fit(&text, room);
+        used += lead + text.chars().count();
+        spans.push(Span::styled(text, style));
+    }
+    Line::from(spans)
+}
+
 fn render(frame: &mut Frame, app: &App) {
     let root = Layout::default()
         .direction(Direction::Vertical)
@@ -5966,7 +6667,10 @@ fn render(frame: &mut Frame, app: &App) {
 
     let tabs = Tabs::new(TABS.to_vec())
         .select(app.tab)
-        .block(panel("MASTERTECH UEFI"))
+        .block(
+            panel("MASTERTECH UEFI")
+                .title_bottom(conn_status_line(app, root[0].width as usize)),
+        )
         .style(Style::default().fg(palette::MUTED).bg(palette::BG))
         .highlight_style(
             Style::default()
@@ -5983,7 +6687,7 @@ fn render(frame: &mut Frame, app: &App) {
         2 => page_memory(frame, root[1], &app.info),
         TAB_FIRMWARE => page_firmware(frame, root[1], app),
         TAB_BIOS => page_bios(frame, root[1], &app.info),
-        5 => page_network(frame, root[1], app),
+        TAB_NETWORK => page_network(frame, root[1], app),
         6 => page_storage(frame, root[1], &app.info),
         TAB_STRESS => page_stress(frame, root[1], app),
         TAB_ORDER => page_order(frame, root[1], app),
@@ -6027,31 +6731,44 @@ fn render(frame: &mut Frame, app: &App) {
         ],
         _ => &[
             ("Tab", "next"),
-            ("r", "refresh"),
-            ("c/d", "net"),
-            ("e", "target"),
-            ("p", "post"),
-            ("u", "logs"),
-            ("v", "stream"),
-            ("a/A", "agent"),
+            ("Shift+C", "connect"),
+            ("r", "rescan"),
+            ("e", "relay"),
+            (
+                "n",
+                if app.present {
+                    "presence off"
+                } else {
+                    "presence on"
+                },
+            ),
+            ("A", "agent"),
             ("q", "quit"),
         ],
     };
-    let mut spans = Vec::with_capacity(hints.len() * 2);
-    for (k, label) in hints {
+    // Two-space separators, no trailing pad.
+    let mut spans = Vec::with_capacity(hints.len() * 3);
+    for (i, (k, label)) in hints.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled("  ", Style::default().fg(palette::MUTED)));
+        }
         spans.push(Span::styled(
             format!("{k} "),
             Style::default().fg(palette::ACCENT),
         ));
         spans.push(Span::styled(
-            format!("{label}   "),
+            (*label).to_string(),
             Style::default().fg(palette::MUTED),
         ));
     }
+    let status = fit(&app.status, root[2].width.saturating_sub(4) as usize);
     let footer = Paragraph::new(Line::from(spans))
         .centered()
         .style(base_style())
-        .block(panel(""));
+        .block(panel("").title_bottom(Line::from(Span::styled(
+            format!(" {status} "),
+            Style::default().fg(palette::GOOD),
+        ))));
     frame.render_widget(footer, root[2]);
 }
 
@@ -6064,19 +6781,52 @@ enum EditField {
     Capsule,
 }
 
+/// Where the current relay target came from. Ordered weakest to strongest: a
+/// discovery pass only replaces the target when its source ranks at least as
+/// high, so nothing can overwrite what the operator typed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum TargetSource {
+    Default,
+    Derived,
+    Advertised,
+    Operator,
+}
+
+impl TargetSource {
+    fn label(self) -> &'static str {
+        match self {
+            TargetSource::Default => "compile-time default",
+            TargetSource::Derived => "derived from beacon",
+            TargetSource::Advertised => "advertised by console",
+            TargetSource::Operator => "operator-set",
+        }
+    }
+}
+
 struct App {
     info: SysInfo,
     tab: usize,
     target: String,
+    /// Provenance of `target`; gates relay auto-adoption.
+    target_src: TargetSource,
+    /// Advertised relay outside the beacon's subnet, awaiting a 'y' from the
+    /// operator before it becomes the target.
+    pending_relay: Option<String>,
     editing: EditField,
     ifaces: Vec<IfaceIp>,
     status: String,
     stress: stress::StressEngine,
     order: order::OrderPanel,
+    /// The screen shows state that changed since the last frame.
+    dirty: bool,
     /// Autonomous fleet-command polling enabled.
     agent: bool,
-    /// Idle-tick counter toward the next command poll.
-    agent_tick: u32,
+    /// Clock time of the next command poll.
+    agent_next_ms: u64,
+    /// A fleet-command poll has run at least once.
+    agent_ran: bool,
+    /// Pass/fail and detail for each step of the last `connect_all` run.
+    connect_steps: Vec<(bool, String)>,
     /// Raw SimpleNetwork lease (set when DHCP succeeded only via the SNP path).
     raw_net: Option<netraw::RawNet>,
     /// Rendered output from the last WASM plugin run.
@@ -6085,14 +6835,20 @@ struct App {
     plugin_id_in: String,
     /// Last fetched registry plugin (wasm bytes); Enter runs it over the demo.
     plugin_wasm: Vec<u8>,
+    /// `mcp_tools` blob of `plugin_wasm`, read at fetch time; empty when unknown.
+    plugin_tools: String,
+    /// `fw_data(&info)` memo; `None` until built, cleared whenever `info` changes.
+    fw_cache: Option<wasmrt::FwData>,
     /// Pre-boot TUI streaming to the admin console is active.
     streaming: bool,
     /// Monotonic streamed-frame counter.
     stream_frame: u64,
-    /// Idle-tick counter toward the next remote-input poll.
-    stream_tick: u32,
-    /// Tick of the last poll that returned input (drives fast/slow polling).
-    stream_last_input_tick: u32,
+    /// Clock time of the next remote-input poll.
+    stream_input_next_ms: u64,
+    /// Remote input keeps polling fast until this clock time.
+    stream_input_active_ms: u64,
+    /// A key was handled recently; keep the loop hot until this clock time.
+    key_active_ms: u64,
     /// Dirty-frame suppressor for the stream.
     stream_throttle: stream::Throttle,
     /// Remote viewer events queued for injection into the input loop.
@@ -6101,7 +6857,10 @@ struct App {
     /// shows in the admin console without operator action.
     present: bool,
     present_registered: bool,
-    present_tick: u32,
+    /// Clock time of the next heartbeat.
+    present_next_ms: u64,
+    /// Clock time of the next relay viewer-flag check.
+    viewer_next_ms: u64,
     /// Streaming was started by the relay's viewer flag, not the 'v' key.
     stream_auto: bool,
     /// Consecutive viewer-flag checks with no viewer (auto-stop hysteresis).
@@ -6113,8 +6872,12 @@ struct App {
     direct: Option<net_tcp::DirectLink>,
     /// Console asked us (over the direct socket) to stream frames.
     direct_stream: bool,
-    /// Ticks toward the next console-discovery attempt while unlinked.
-    direct_discover_tick: u32,
+    /// Clock time of the next direct-socket service poll.
+    direct_pump_next_ms: u64,
+    /// Clock time of the next console-discovery attempt while unlinked.
+    discover_next_ms: u64,
+    /// Gap between discovery attempts; doubles on every miss.
+    discover_backoff_ms: u64,
     /// Capsule source: a volume-relative path, or a URL when it has a scheme.
     capsule_src: String,
     /// Loaded capsule awaiting a flash.
@@ -6128,49 +6891,251 @@ struct App {
 }
 
 impl App {
+    /// Firmware data for a plugin run, built once per `info` generation.
+    fn fw(&mut self) -> wasmrt::FwData {
+        match &self.fw_cache {
+            Some(fw) => fw.clone(),
+            None => {
+                let fw = fw_data(&self.info);
+                logln("wasm: fw_data rebuilt".to_string());
+                self.fw_cache = Some(fw.clone());
+                fw
+            }
+        }
+    }
+
+    /// Drop the `fw_data` memo derived from `info`.
+    fn invalidate_fw(&mut self) {
+        self.fw_cache = None;
+    }
+
+    /// Replace `info` and drop the data derived from it.
+    fn set_info(&mut self, info: SysInfo) {
+        self.info = info;
+        self.invalidate_fw();
+    }
+
+    /// Replace the fetched plugin bytes and drop its cached tool list.
+    fn set_plugin_wasm(&mut self, bytes: Vec<u8>) {
+        self.plugin_wasm = bytes;
+        self.plugin_tools.clear();
+    }
+
     fn next(&mut self) {
         self.tab = (self.tab + 1) % TABS.len();
     }
     fn prev(&mut self) {
         self.tab = (self.tab + TABS.len() - 1) % TABS.len();
     }
+
+    /// Turn presence on and schedule its heartbeat, viewer check and discovery.
+    /// An already-registered caller waits a full interval for its first beat.
+    fn arm_presence(&mut self, now: u64, registered: bool) {
+        self.present = true;
+        self.present_registered = registered;
+        self.present_next_ms = if registered {
+            now.saturating_add(PRESENCE_HEARTBEAT_MS)
+        } else {
+            now
+        };
+        self.viewer_next_ms = now.saturating_add(VIEWER_CHECK_MS);
+        self.reset_discovery(now);
+    }
+
+    /// Turn presence off and drop the direct link and any auto-started stream.
+    fn clear_presence(&mut self) {
+        self.present = false;
+        self.present_registered = false;
+        self.direct = None;
+        self.direct_stream = false;
+        if self.stream_auto {
+            self.streaming = false;
+            self.stream_auto = false;
+        }
+        self.stream_throttle = stream::Throttle::new();
+    }
+
+    /// Restart console discovery at the base interval.
+    fn reset_discovery(&mut self, now: u64) {
+        self.discover_backoff_ms = DIRECT_DISCOVER_MS;
+        self.discover_next_ms = now.saturating_add(DIRECT_DISCOVER_FIRST_MS);
+    }
+
+    /// True when the loop must poll instead of blocking on the keyboard.
+    fn polling(&self) -> bool {
+        self.stress.is_active()
+            || self.agent
+            || self.streaming
+            || self.present
+            || self.direct.is_some()
+    }
+}
+
+/// One-line description of what the run loop is currently doing.
+fn mode_line(app: &App) -> String {
+    if !app.polling() {
+        return "idle - Shift+C connects".to_string();
+    }
+    let mut on: Vec<&str> = Vec::new();
+    on.push(if app.present {
+        "presence on"
+    } else {
+        "presence off"
+    });
+    if app.direct.is_some() {
+        on.push(if app.direct_stream {
+            "direct link streaming"
+        } else {
+            "direct link"
+        });
+    }
+    if app.streaming {
+        on.push("relay stream");
+    }
+    if app.agent {
+        on.push("agent");
+    }
+    if app.stress.is_active() {
+        on.push("stress run");
+    }
+    format!("polling - {}", on.join(", "))
+}
+
+/// Shown before every `SysInfo::collect()`; the SMART and volume probes block.
+const RESCAN_NOTICE: &str = "rescanning hardware (SMART + volume probe, up to 60s)...";
+
+/// Run every background job whose deadline has passed: fleet-command polls,
+/// presence heartbeats and viewer checks, direct-link service, and console
+/// discovery. Each deadline is re-armed from the clock after the job returns,
+/// so a slow network op can never queue a burst of catch-up work.
+fn service_background(
+    app: &mut App,
+    terminal: &mut Terminal<ratatui_uefi::UefiOutputBackend>,
+    clock: &Clock,
+) -> Result<()> {
+    let now = clock.now_ms();
+    if app.agent && now >= app.agent_next_ms {
+        agent_poll(app, terminal)?;
+        app.agent_next_ms = clock.now_ms().saturating_add(AGENT_POLL_MS);
+        app.dirty = true;
+    }
+    if app.present && now >= app.viewer_next_ms {
+        viewer_check(app);
+        app.viewer_next_ms = clock.now_ms().saturating_add(VIEWER_CHECK_MS);
+        app.dirty = true;
+    }
+    if app.present && now >= app.present_next_ms {
+        presence_beat(app);
+        app.present_next_ms = clock.now_ms().saturating_add(PRESENCE_HEARTBEAT_MS);
+        app.dirty = true;
+    }
+    // Service the direct socket (input/stream-ctl/plugin frames), or back off
+    // through discovery attempts until a console listener answers.
+    if app.direct.is_some() {
+        if now >= app.direct_pump_next_ms {
+            if direct_pump(app, terminal)? {
+                app.dirty = true;
+            }
+            let interval = if app.direct_stream {
+                DIRECT_PUMP_MS
+            } else {
+                DIRECT_PUMP_IDLE_MS
+            };
+            app.direct_pump_next_ms = clock.now_ms().saturating_add(interval);
+        }
+    } else if app.present && now >= app.discover_next_ms {
+        // The console beacons every ~3s, so widen the listen window as the
+        // backoff spreads attempts out, holding the listen duty cycle at ~10%.
+        let listen = (app.discover_backoff_ms / 10)
+            .clamp(DISCOVER_LISTEN_MS, DISCOVER_LISTEN_MAX_MS);
+        direct_discover(app, listen);
+        let after = clock.now_ms();
+        if app.direct.is_some() {
+            app.discover_backoff_ms = DIRECT_DISCOVER_MS;
+            app.direct_pump_next_ms = after;
+        } else {
+            app.discover_next_ms = after.saturating_add(app.discover_backoff_ms);
+            app.discover_backoff_ms =
+                app.discover_backoff_ms.saturating_mul(2).min(DIRECT_DISCOVER_MAX_MS);
+        }
+        app.dirty = true;
+    }
+    Ok(())
+}
+
+/// Milliseconds to stall: the gap to the nearest deadline, capped by how hot
+/// the loop currently needs to run and floored so it always yields.
+fn next_stall_ms(app: &App, now: u64, last_draw_ms: u64, streaming: bool) -> u64 {
+    let mut next = last_draw_ms.saturating_add(REDRAW_MIN_MS);
+    if app.agent {
+        next = next.min(app.agent_next_ms);
+    }
+    if app.present {
+        next = next.min(app.present_next_ms).min(app.viewer_next_ms);
+        if app.direct.is_none() {
+            next = next.min(app.discover_next_ms);
+        }
+    }
+    if app.direct.is_some() {
+        next = next.min(app.direct_pump_next_ms);
+    }
+    if streaming {
+        next = next.min(app.stream_input_next_ms);
+    }
+    let hot = app.stress.is_active()
+        || now < app.stream_input_active_ms
+        || now < app.key_active_ms;
+    let ceiling = if hot { BUSY_STALL_MS } else { IDLE_STALL_MAX_MS };
+    next.saturating_sub(now).clamp(MIN_STALL_MS, ceiling)
 }
 
 fn run() -> Result<()> {
     init_ratatui_perf();
     let (mut terminal, mut input_reader) = create_ui()?;
+    logln(RESCAN_NOTICE.to_string());
     let info = SysInfo::collect();
     let default_serial = effective_serial(&info);
     let mut app = App {
         info,
         tab: 0,
         target: DEFAULT_URL.to_string(),
+        target_src: TargetSource::Default,
+        pending_relay: None,
         editing: EditField::None,
         ifaces: Vec::new(),
         status: String::new(),
         stress: stress::StressEngine::new(),
         order: order::OrderPanel::new(default_serial),
+        dirty: true,
         agent: false,
-        agent_tick: 0,
+        agent_next_ms: 0,
+        agent_ran: false,
+        connect_steps: Vec::new(),
         raw_net: None,
         plugin_out: Vec::new(),
         plugin_id_in: "com.mastertech.uefi-diag".to_string(),
         plugin_wasm: Vec::new(),
+        plugin_tools: String::new(),
+        fw_cache: None,
         streaming: false,
         stream_frame: 0,
-        stream_tick: 0,
-        stream_last_input_tick: 0,
+        stream_input_next_ms: 0,
+        stream_input_active_ms: 0,
+        key_active_ms: 0,
         stream_throttle: stream::Throttle::new(),
         injected: Vec::new(),
         present: false,
         present_registered: false,
-        present_tick: 0,
+        present_next_ms: 0,
+        viewer_next_ms: 0,
         stream_auto: false,
         viewer_miss: 0,
         stream_manual_off: false,
         direct: None,
         direct_stream: false,
-        direct_discover_tick: 0,
+        direct_pump_next_ms: 0,
+        discover_next_ms: 0,
+        discover_backoff_ms: DIRECT_DISCOVER_MS,
         capsule_src: "bios\\update.cap".to_string(),
         capsule_bytes: Vec::new(),
         capsule_note: Vec::new(),
@@ -6180,90 +7145,109 @@ fn run() -> Result<()> {
 
     terminal.clear()?;
 
-    // No network at boot: DHCP/connect are explicit ('d'/'c') so a flaky NIC or
-    // a hanging driver bind can never stall or freeze startup.
-    app.status = "ready - 'c' connect drivers, 'd' DHCP".into();
+    // No network at boot: connecting is explicit so a flaky NIC or a hanging
+    // driver bind can never stall or freeze startup.
+    app.status =
+        "ready - press Shift+C to connect (drivers, DHCP, console, presence, agent)".into();
+
+    let mut clock = Clock::new();
+    let mut last_draw_ms = 0u64;
+    let mut last_log_seq = log_seq();
+    let mut was_linked = false;
 
     loop {
         app.stress.tick();
-        // Render, and while streaming capture the just-rendered buffer into a
-        // wire frame; the CompletedFrame's borrow ends when the block returns.
+        let now = clock.now_ms();
+        // A grown log ring changes the Log tab.
+        if log_seq() != last_log_seq {
+            last_log_seq = log_seq();
+            app.dirty = true;
+        }
+        // A dropped link re-arms discovery at the base interval.
+        if was_linked && app.direct.is_none() {
+            app.reset_discovery(now);
+        }
+        was_linked = app.direct.is_some();
+
         // Direct socket (preferred when a console has linked + asked to stream)
         // or the HTTP relay (when 'v'/viewer-flag streaming is on).
         let want_direct = app.direct.is_some() && app.direct_stream;
         let want_relay = app.streaming && !app.target.is_empty();
-        let captured = {
-            let completed = terminal.draw(|frame| render(frame, &app))?;
-            if want_direct || want_relay {
-                Some(stream::buffer_to_frame(completed.buffer, app.stream_frame))
-            } else {
-                None
-            }
-        };
-        if let Some(mut pf) = captured {
-            // Send the frame body only when the screen changed.
-            if let Some(body) = app.stream_throttle.body_if_dirty(&mut pf) {
-                if want_direct {
-                    if let Some(link) = app.direct.as_mut() {
-                        if let Err(e) =
-                            link.send(tcp_protocol::preboot::FRAME_TAG_PREBOOT_FRAME, &body)
-                        {
-                            logln(format!("direct: frame send failed: {e}"));
-                            app.direct = None;
-                            app.direct_stream = false;
+        let streaming = want_direct || want_relay;
+
+        // Redraw on a state change, else at the floor cadence so live values move.
+        // While streaming the rendered buffer is captured into a wire frame; the
+        // CompletedFrame's borrow ends when the block returns.
+        if app.dirty || now.saturating_sub(last_draw_ms) >= REDRAW_MIN_MS {
+            app.dirty = false;
+            last_draw_ms = now;
+            let captured = {
+                let completed = terminal.draw(|frame| render(frame, &app))?;
+                if streaming {
+                    Some(stream::buffer_to_frame(completed.buffer, app.stream_frame))
+                } else {
+                    None
+                }
+            };
+            if let Some(mut pf) = captured {
+                // Send the frame body only when the screen changed.
+                if let Some(body) = app.stream_throttle.body_if_dirty(&mut pf) {
+                    if want_direct {
+                        if let Some(link) = app.direct.as_mut() {
+                            if let Err(e) =
+                                link.send(tcp_protocol::preboot::FRAME_TAG_PREBOOT_FRAME, &body)
+                            {
+                                logln(format!("direct: frame send failed: {e}"));
+                                app.direct = None;
+                                app.direct_stream = false;
+                                // Undelivered: re-arm so the next draw re-sends.
+                                app.stream_throttle = stream::Throttle::new();
+                            }
+                        }
+                    } else {
+                        let serial = order::encode_path_segment(&effective_serial(&app.info));
+                        let path = format!("/api/v1/qc/preboot/{serial}/frame");
+                        if let Err(e) = http_post_json(&app.target, &path, &body) {
+                            logln(format!("stream: frame POST failed: {e}"));
+                            // Undelivered: re-arm so the next draw re-sends.
+                            app.stream_throttle = stream::Throttle::new();
                         }
                     }
-                } else {
-                    let serial = order::encode_path_segment(&effective_serial(&app.info));
-                    let path = format!("/api/v1/qc/preboot/{serial}/frame");
-                    if let Err(e) = http_post_json(&app.target, &path, &body) {
-                        logln(format!("stream: frame POST failed: {e}"));
-                    }
                 }
-            }
-            app.stream_frame = app.stream_frame.wrapping_add(1);
-            // Fast-poll input (every tick, ~one round-trip) for ~1s after any
-            // activity, then back off to the slow timer — keystroke latency is
-            // one RTT while typing, near-zero churn when idle.
-            app.stream_tick = app.stream_tick.wrapping_add(1);
-            let active = app.stream_tick.wrapping_sub(app.stream_last_input_tick) < 30;
-            let interval = if active { 1 } else { PREBOOT_INPUT_POLL_TICKS };
-            if app.stream_tick % interval == 0 && poll_preboot_input(&mut app) {
-                app.stream_last_input_tick = app.stream_tick;
+                app.stream_frame = app.stream_frame.wrapping_add(1);
             }
         }
 
-        // Blocking input when idle; poll + frame ticks while a stress run,
-        // agent polling, or streaming needs the loop to keep spinning. A
-        // queued remote-viewer event is consumed as if it were typed locally.
+        // Poll remote input a round-trip apart for ~1s after any event, then at
+        // the slow interval.
+        if streaming && now >= app.stream_input_next_ms {
+            let interval = if now < app.stream_input_active_ms {
+                PREBOOT_INPUT_FAST_MS
+            } else {
+                PREBOOT_INPUT_POLL_MS
+            };
+            let got = poll_preboot_input(&mut app);
+            let after = clock.now_ms();
+            app.stream_input_next_ms = after.saturating_add(interval);
+            if got {
+                app.stream_input_active_ms = after.saturating_add(PREBOOT_INPUT_ACTIVE_MS);
+            }
+        }
+
+        // Blocking input when idle; poll + deadline-driven background work while
+        // a stress run, agent polling, presence or streaming needs the loop to
+        // keep turning. A queued remote-viewer event is consumed as if it were
+        // typed locally.
         let event = if !app.injected.is_empty() {
             // FIFO: keystrokes must replay in the order they were typed.
             Some(app.injected.remove(0))
-        } else if app.stress.is_active() || app.agent || app.streaming || app.present || app.direct.is_some() {
+        } else if app.polling() {
             let ev = input_reader.poll_event()?;
             if ev.is_none() {
-                uefi::boot::stall(core::time::Duration::from_millis(33));
-                if app.agent {
-                    app.agent_tick = app.agent_tick.saturating_add(1);
-                    if app.agent_tick >= AGENT_POLL_TICKS {
-                        app.agent_tick = 0;
-                        agent_poll(&mut app, &mut terminal)?;
-                    }
-                }
-                if app.present {
-                    presence_tick(&mut app);
-                }
-                // Service the direct socket (input/stream-ctl/plugin frames), or
-                // periodically try to discover + dial a console listener.
-                if app.direct.is_some() {
-                    direct_pump(&mut app, &mut terminal)?;
-                } else if app.present {
-                    app.direct_discover_tick = app.direct_discover_tick.saturating_add(1);
-                    if app.direct_discover_tick >= DIRECT_DISCOVER_TICKS {
-                        app.direct_discover_tick = 0;
-                        direct_discover(&mut app);
-                    }
-                }
+                service_background(&mut app, &mut terminal, &clock)?;
+                let now = clock.now_ms();
+                let stall = next_stall_ms(&app, now, last_draw_ms, streaming);
+                clock.stall(stall);
                 continue;
             }
             ev
@@ -6273,6 +7257,9 @@ fn run() -> Result<()> {
         let Some(terminput::Event::Key(key)) = event else {
             continue;
         };
+        // Any key can move the screen, and typing keeps the loop hot.
+        app.dirty = true;
+        app.key_active_ms = clock.now_ms().saturating_add(KEY_ACTIVE_MS);
         logln(format!(
             "key={:?} editing={:?} tab={}",
             key.code, app.editing, app.tab
@@ -6280,6 +7267,7 @@ fn run() -> Result<()> {
 
         // While editing a field, all printable keys feed it.
         if app.editing != EditField::None {
+            let before = (app.editing == EditField::Target).then(|| app.target.clone());
             let field = match app.editing {
                 EditField::Serial => &mut app.order.serial,
                 EditField::Plugin => &mut app.plugin_id_in,
@@ -6299,6 +7287,11 @@ fn run() -> Result<()> {
                 terminput::KeyCode::Char(c) if !c.is_control() => field.push(c),
                 _ => {}
             }
+            // A hand-edited target outranks discovery and is never overwritten.
+            if before.is_some_and(|b| b != app.target) {
+                app.target_src = TargetSource::Operator;
+                app.status = relay_line(&app);
+            }
             continue;
         }
 
@@ -6315,11 +7308,28 @@ fn run() -> Result<()> {
                 }
                 break;
             }
-            terminput::KeyCode::Char('r') => app.info = SysInfo::collect(),
+            terminput::KeyCode::Char('r') => {
+                app.status = RESCAN_NOTICE.into();
+                terminal.draw(|frame| render(frame, &app))?;
+                app.set_info(SysInfo::collect());
+                app.status = "rescanned".into();
+            }
             terminput::KeyCode::Char('c') => {
+                app.status = RESCAN_NOTICE.into();
+                terminal.draw(|frame| render(frame, &app))?;
                 connect_network_stack();
-                app.info = SysInfo::collect();
-                app.status = "connect: bound network stack + rescanned".into();
+                app.set_info(SysInfo::collect());
+                app.reset_discovery(clock.now_ms());
+                // Beacon-only: no lease yet, so learn the relay without dialing.
+                app.status = "connect: listening for a console beacon...".into();
+                terminal.draw(|frame| render(frame, &app))?;
+                let heard = listen_for_relay(&mut app, DISCOVER_LISTEN_KICK_MS);
+                let beacon = if heard { "beacon heard" } else { "no beacon" };
+                app.status =
+                    format!("connect: bound network stack, {beacon} - {}", relay_line(&app));
+            }
+            terminput::KeyCode::Char('C') => {
+                connect_all(&mut app, &mut terminal, &clock)?;
             }
             terminput::KeyCode::Char('d') => {
                 app.status = "DHCP: working (up to 30s)...".into();
@@ -6330,11 +7340,31 @@ fn run() -> Result<()> {
                 app.raw_net = raw;
                 app.status = status;
                 // Network is up by operator choice — auto-appear in the console.
+                let now = clock.now_ms();
                 if networked && !app.present {
-                    app.present = true;
-                    app.present_registered = false;
-                    // Fire the first presence attempt on the next tick.
-                    app.present_tick = PRESENCE_HEARTBEAT_TICKS;
+                    app.arm_presence(now, false);
+                } else {
+                    app.reset_discovery(now);
+                }
+                if networked {
+                    let lease = core::mem::replace(
+                        &mut app.status,
+                        "DHCP done - listening for a console beacon...".to_string(),
+                    );
+                    terminal.draw(|frame| render(frame, &app))?;
+                    kick_discovery(&mut app, &clock);
+                    app.status = format!("{lease} - {}", relay_line(&app));
+                }
+            }
+            terminput::KeyCode::Char('n') => {
+                let now = clock.now_ms();
+                if app.present {
+                    app.clear_presence();
+                    app.status =
+                        "net presence OFF - blocking input ('n' re-arms heartbeat)".into();
+                } else {
+                    app.arm_presence(now, false);
+                    app.status = "net presence ON - heartbeat + console discovery".into();
                 }
             }
             terminput::KeyCode::Char('e') => {
@@ -6391,9 +7421,11 @@ fn run() -> Result<()> {
                         Ok(s) => {
                             // A successful upload proves the target is
                             // reachable - arm presence without needing 'd'.
+                            let now = clock.now_ms();
                             if !app.present {
-                                app.present = true;
-                                app.present_registered = true;
+                                app.arm_presence(now, true);
+                            } else {
+                                app.reset_discovery(now);
                             }
                             format!("OK: {s}")
                         }
@@ -6401,12 +7433,21 @@ fn run() -> Result<()> {
                     };
                 }
             }
+            terminput::KeyCode::Char('y') => {
+                match app.pending_relay.take() {
+                    Some(url) => {
+                        adopt_relay(&mut app, &url, TargetSource::Operator);
+                        app.status = relay_line(&app);
+                    }
+                    None => app.status = "no relay offer to accept".into(),
+                }
+            }
             terminput::KeyCode::Char('a') => {
                 agent_poll(&mut app, &mut terminal)?;
             }
             terminput::KeyCode::Char('A') => {
                 app.agent = !app.agent;
-                app.agent_tick = 0;
+                app.agent_next_ms = clock.now_ms();
                 app.status = if app.agent {
                     "agent mode ON - auto-polling commands".into()
                 } else {
@@ -6421,9 +7462,11 @@ fn run() -> Result<()> {
                 app.stream_frame = 0;
                 app.stream_throttle = stream::Throttle::new();
                 app.status = if app.streaming {
-                    format!("streaming TUI -> {}", app.target)
+                    format!("relay streaming TUI -> {}", app.target)
+                } else if app.direct.is_some() {
+                    "relay streaming off - the direct link still carries frames".into()
                 } else {
-                    "streaming off (auto-resume when this viewer leaves)".into()
+                    "relay streaming off (auto-resume when this viewer leaves)".into()
                 };
             }
             terminput::KeyCode::Char('u') => {
@@ -6453,7 +7496,7 @@ fn run() -> Result<()> {
                     app.status =
                         format!("no fetched plugin - running demo ('f' fetches {})", app.plugin_id_in);
                     terminal.draw(|frame| render(frame, &app))?;
-                    run_wasm_plugin(&mut app, DEMO_PLUGIN, "selftest", "{}");
+                    run_wasm_plugin(&mut app, DEMO_PLUGIN, Some("selftest"), "{}");
                 } else {
                     run_fetched_plugin(&mut app, &mut terminal)?;
                 }
@@ -6552,6 +7595,7 @@ fn agent_poll(
         app.status = "agent: set a target first ('e')".into();
         return Ok(());
     }
+    app.agent_ran = true;
     let mid = order::encode_path_segment(&serial);
     app.status = "agent: registering + polling...".into();
     terminal.draw(|frame| render(frame, app))?;
@@ -6748,7 +7792,9 @@ fn execute_command(
                 Some(url) => {
                     let target = app.target.clone();
                     match http_get_url(&target, url) {
-                        Ok((200, bytes)) => run_wasm_plugin(app, &bytes, tool, &args),
+                        Ok((200, bytes)) => {
+                            run_wasm_plugin(app, &bytes, Some(tool), &args);
+                        }
                         Ok((code, _)) => app.status = format!("run_plugin: HTTP {code}"),
                         Err(e) => app.status = format!("run_plugin fetch failed: {e}"),
                     }
@@ -6760,9 +7806,11 @@ fn execute_command(
         Some("stream_start") => {
             if let Some(t) = cmd.kind.pointer("/custom/payload/target").and_then(|v| v.as_str()) {
                 app.target = t.to_string();
+                app.target_src = TargetSource::Operator;
             }
             app.streaming = true;
             app.stream_frame = 0;
+            app.stream_throttle = stream::Throttle::new();
             app.status = format!("streaming to {}", app.target);
         }
         Some("stream_stop") => {

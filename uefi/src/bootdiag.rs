@@ -33,6 +33,34 @@ pub enum Severity {
     Fail,
 }
 
+impl Severity {
+    /// Ascending order of concern; higher wins a roll-up.
+    pub const fn rank(self) -> u8 {
+        match self {
+            Self::Ok => 0,
+            Self::Warn => 1,
+            Self::Fail => 2,
+        }
+    }
+
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Warn => "warn",
+            Self::Fail => "fail",
+        }
+    }
+}
+
+/// Highest severity across the findings.
+pub fn overall(d: &BootDiag) -> Severity {
+    d.verdicts
+        .iter()
+        .map(|(s, _)| *s)
+        .max_by_key(|s| s.rank())
+        .unwrap_or(Severity::Ok)
+}
+
 pub struct BootEntry {
     pub num: u16,
     pub active: bool,
@@ -46,6 +74,7 @@ pub struct BootDiag {
     pub esp_found: bool,
     pub bootmgfw_present: bool,
     pub bootmgfw_size: u64,
+    pub bootmgfw_pe: Option<crate::pecheck::PeVerdict>,
     pub fallback_present: bool,
     pub bcd_present: bool,
     pub bcd_size: u64,
@@ -133,9 +162,17 @@ fn probe_esp(diag: &mut BootDiag) {
             continue;
         }
         diag.esp_found = true;
-        if let Some(sz) = check_file(&mut root, cstr16!("EFI\\Microsoft\\Boot\\bootmgfw.efi")) {
-            diag.bootmgfw_present = true;
-            diag.bootmgfw_size = sz;
+        match crate::pecheck::read_file(&mut root, cstr16!("EFI\\Microsoft\\Boot\\bootmgfw.efi")) {
+            crate::pecheck::FileBytes::Read { size, bytes } => {
+                diag.bootmgfw_present = true;
+                diag.bootmgfw_size = size;
+                diag.bootmgfw_pe = Some(crate::pecheck::validate(&bytes, size));
+            }
+            crate::pecheck::FileBytes::TooLarge { size } => {
+                diag.bootmgfw_present = true;
+                diag.bootmgfw_size = size;
+            }
+            _ => {}
         }
         if let Some(sz) = check_file(&mut root, cstr16!("EFI\\Microsoft\\Boot\\BCD")) {
             diag.bcd_present = true;
@@ -270,6 +307,102 @@ fn storage_mode(info: &SysInfo) -> Option<String> {
         .and_then(|s| s.current.clone())
 }
 
+/// Short identity for a drive in a verdict line.
+fn drive_label(d: &crate::smart::SataDrive) -> String {
+    match (d.model.is_empty(), d.port) {
+        (true, 0xFFFF) => "an ATA device".to_string(),
+        (true, p) => format!("port {p}"),
+        (false, p) => format!("{} (port {p})", d.model),
+    }
+}
+
+/// SATA SMART findings, capped so the verdict pane stays readable.
+fn smart_findings(diag: &mut BootDiag, info: &SysInfo) {
+    const MAX_DRIVES: usize = 2;
+    const MAX_ATTRS: usize = 3;
+    let failing: Vec<&crate::smart::SataDrive> =
+        info.sata.iter().filter(|d| d.is_failing()).collect();
+    for d in failing.iter().take(MAX_DRIVES) {
+        let attrs: Vec<String> = d
+            .alarm_attrs()
+            .take(MAX_ATTRS)
+            .map(|a| format!("{} {}<={}", a.name, a.value, a.threshold.unwrap_or(0)))
+            .collect();
+        let detail = if attrs.is_empty() {
+            "the drive reports SMART threshold exceeded".to_string()
+        } else {
+            attrs.join(", ")
+        };
+        diag.verdicts.push((
+            Severity::Fail,
+            format!(
+                "SMART failure on {}: {detail}. Image the drive and replace it — full attribute list on the Storage page.",
+                drive_label(d)
+            ),
+        ));
+    }
+    let hidden = failing.len().saturating_sub(MAX_DRIVES);
+    if hidden > 0 {
+        diag.verdicts.push((
+            Severity::Fail,
+            format!("{hidden} further drive(s) report failing SMART attributes — see the Storage page."),
+        ));
+    }
+    // Absence of SMART is reported as unverified, never as health.
+    let no_handle = info
+        .sata
+        .iter()
+        .any(|d| d.status == crate::smart::SmartStatus::NoHandle);
+    let fixed_ata = info
+        .disks
+        .iter()
+        .any(|d| !d.removable && matches!(d.bus, "SATA" | "ATAPI" | "SCSI/SAS"));
+    if no_handle && fixed_ata {
+        diag.verdicts.push((
+            Severity::Warn,
+            "No ATA pass-thru handle while non-NVMe disks are present — SMART unavailable (RAID/RST mode or a USB bridge). Drive health was NOT verified.".into(),
+        ));
+    }
+    let mut unread = info
+        .sata
+        .iter()
+        .filter(|d| d.status != crate::smart::SmartStatus::NoHandle)
+        .filter_map(|d| d.unverified_reason().map(|r| (d, r)));
+    if let Some((d, reason)) = unread.next() {
+        let extra = unread.count();
+        let more = if extra > 0 {
+            format!(" (+{extra} more)")
+        } else {
+            String::new()
+        };
+        diag.verdicts.push((
+            Severity::Warn,
+            format!(
+                "SMART unavailable on {}: {reason}{more}. Drive health was NOT verified.",
+                drive_label(d)
+            ),
+        ));
+    }
+}
+
+/// Volume findings in volsig's wording, BitLocker first, capped for the pane.
+fn volume_findings(diag: &mut BootDiag, info: &SysInfo) {
+    const MAX_VOLUMES: usize = 3;
+    let mut ordered = info.volumes.clone();
+    ordered.sort_by_key(|v| u8::from(v.kind != crate::volsig::VolKind::BitLocker));
+    let found = crate::volsig::verdicts(&ordered);
+    let hidden = found.len().saturating_sub(MAX_VOLUMES);
+    for f in found.into_iter().take(MAX_VOLUMES) {
+        diag.verdicts.push(f);
+    }
+    if hidden > 0 {
+        diag.verdicts.push((
+            Severity::Warn,
+            format!("{hidden} further volume finding(s) in the uploaded report."),
+        ));
+    }
+}
+
 fn synthesize(diag: &mut BootDiag, info: &SysInfo) {
     let disks_visible = !info.nvme.is_empty() || !info.disks.is_empty();
 
@@ -338,6 +471,14 @@ fn synthesize(diag: &mut BootDiag, info: &SysInfo) {
             format!("Firmware recorded a fatal hardware error last boot (BERT: {}).", info.bert.severity),
         ));
     }
+    if let Some(pe) = &diag.bootmgfw_pe {
+        if !crate::pecheck::is_valid(pe) {
+            diag.verdicts
+                .push((Severity::Fail, crate::pecheck::verdict_detail(pe)));
+        }
+    }
+    smart_findings(diag, info);
+    volume_findings(diag, info);
     if diag.verdicts.is_empty() {
         diag.verdicts.push((
             Severity::Ok,
@@ -388,15 +529,20 @@ pub fn diag_json(d: &BootDiag) -> serde_json::Value {
         .iter()
         .map(|(sev, msg)| {
             serde_json::json!({
-                "severity": match sev { Severity::Ok => "ok", Severity::Warn => "warn", Severity::Fail => "fail" },
+                "severity": sev.key(),
+                "rank": sev.rank(),
                 "message": msg,
             })
         })
         .collect();
+    let roll = overall(d);
     serde_json::json!({
         "esp_found": d.esp_found,
         "bootmgfw_present": d.bootmgfw_present,
         "bootmgfw_size": d.bootmgfw_size,
+        "bootmgfw_pe": d.bootmgfw_pe.as_ref().map(crate::pecheck::verdict_json),
+        "overall": roll.key(),
+        "overall_rank": roll.rank(),
         "fallback_present": d.fallback_present,
         "bcd_present": d.bcd_present,
         "windows_entry": d.windows_entry.map(|n| format!("Boot{n:04X}")),

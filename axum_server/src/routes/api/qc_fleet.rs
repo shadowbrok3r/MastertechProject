@@ -840,6 +840,18 @@ fn derive_machine_key(payload: &serde_json::Value) -> String {
     "unknown".to_string()
 }
 
+/// Classifies an upsert result. `Ok(None)` means the statement returned an
+/// empty result set — a permission-filtered no-op, not a write.
+fn upsert_outcome<E: std::fmt::Display>(
+    res: Result<Option<serde_json::Value>, E>,
+) -> Result<(), String> {
+    match res {
+        Ok(Some(v)) if !v.is_null() => Ok(()),
+        Ok(_) => Err("upsert returned no record (table permissions or filtered write)".to_string()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 pub async fn store_fingerprint(
     payload: serde_json::Value,
     source_ip: Option<String>,
@@ -889,8 +901,10 @@ pub async fn store_fingerprint(
         raw: payload.clone(),
     };
 
-    let res: Result<Option<HardwareFingerprint>, _> =
+    let res: Result<Option<serde_json::Value>, _> =
         db().upsert(fingerprint_record_id(&serial)).content(rec).await;
+    let fingerprint_write = upsert_outcome(res);
+    let mut warnings: Vec<String> = Vec::new();
 
     // Project the hardware fields into a `computer` record keyed by serial.
     // OS/business fields are left blank for the Windows agent / order linkage.
@@ -977,8 +991,9 @@ pub async fn store_fingerprint(
         }
         let cid = RecordId::new(COMPUTER_TABLE, serial.clone());
         let r: Result<Option<serde_json::Value>, _> = db().upsert(cid).merge(patch).await;
-        if let Err(e) = r {
-            tracing::warn!(serial = %serial, error = %e, "qc.fingerprint computer upsert failed");
+        if let Err(e) = upsert_outcome(r) {
+            tracing::error!(serial = %serial, error = %e, "qc.fingerprint computer upsert failed");
+            warnings.push(format!("computer: {e}"));
         }
     }
 
@@ -1019,23 +1034,71 @@ pub async fn store_fingerprint(
                 client_kind: kind.to_string(),
             })
             .await;
-        if let Err(e) = r {
-            tracing::warn!(serial = %serial, error = %e, "qc.fingerprint connected_client upsert failed");
+        if let Err(e) = upsert_outcome(r) {
+            tracing::error!(serial = %serial, error = %e, "qc.fingerprint connected_client upsert failed");
+            warnings.push(format!("connected_client: {e}"));
         }
     }
 
     // Append-only history alongside the upserted current row.
     mirror_event(serial.clone(), FleetEventKind::Report, Some(payload));
 
-    match res {
-        Ok(_) => {
+    match fingerprint_write {
+        Ok(()) => {
             tracing::info!(serial = %serial, "qc.fingerprint stored");
-            serde_json::json!({ "status": "stored", "serial": serial, "win11_ready": win11_ready })
+            let mut out = serde_json::json!({
+                "status": "stored",
+                "serial": serial,
+                "win11_ready": win11_ready,
+            });
+            if !warnings.is_empty() {
+                out["warnings"] = serde_json::json!(warnings);
+            }
+            out
         }
         Err(e) => {
-            tracing::warn!(serial = %serial, error = %e, "qc.fingerprint upsert failed");
-            serde_json::json!({ "status": "error", "error": e.to_string() })
+            tracing::error!(serial = %serial, error = %e, "qc.fingerprint upsert failed");
+            let mut out = serde_json::json!({
+                "status": "error",
+                "serial": serial,
+                "error": e,
+            });
+            if !warnings.is_empty() {
+                out["warnings"] = serde_json::json!(warnings);
+            }
+            out
         }
+    }
+}
+
+#[cfg(test)]
+mod upsert_outcome_tests {
+    use super::upsert_outcome;
+
+    type Res = Result<Option<serde_json::Value>, String>;
+
+    #[test]
+    fn empty_result_set_is_a_failure() {
+        let noop: Res = Ok(None);
+        assert!(upsert_outcome(noop).is_err());
+    }
+
+    #[test]
+    fn null_record_is_a_failure() {
+        let null: Res = Ok(Some(serde_json::Value::Null));
+        assert!(upsert_outcome(null).is_err());
+    }
+
+    #[test]
+    fn returned_record_is_a_write() {
+        let ok: Res = Ok(Some(serde_json::json!({ "serial": "FX96N" })));
+        assert!(upsert_outcome(ok).is_ok());
+    }
+
+    #[test]
+    fn driver_error_is_propagated() {
+        let err: Res = Err("boom".to_string());
+        assert_eq!(upsert_outcome(err).unwrap_err(), "boom");
     }
 }
 

@@ -348,13 +348,27 @@ pub mod preboot {
     /// firmware listens on. LAN-local (255.255.255.255) — never routed.
     pub const DISCOVERY_PORT: u16 = 9210;
 
-    /// Discovery-beacon magic + version. Payload is `MTCB\x01<addr UTF-8>` where
-    /// addr is the console's direct-link `ip:port`. Deliberately not bincode so
+    /// Discovery-beacon magic + versions. v1 payload is `MTCB\x01<addr UTF-8>`;
+    /// v2 payload is `MTCB\x02<addr UTF-8>\x00<relay base url UTF-8>`, where addr
+    /// is the console's direct-link `ip:port` and the relay is the Mastertech
+    /// relay base url (e.g. `http://192.168.22.139:8082`). NUL separates the two
+    /// because it cannot appear in an `IPv4:port`. Deliberately not bincode so
     /// the firmware can parse it straight from a raw UDP payload.
     const BEACON_MAGIC: &[u8; 4] = b"MTCB";
     const BEACON_VERSION: u8 = 1;
+    pub const BEACON_VERSION_2: u8 = 2;
 
-    /// Build a discovery beacon advertising `addr` (the console's `ip:port`).
+    /// Longest relay url accepted from a v2 beacon.
+    pub const MAX_RELAY_URL_BYTES: usize = 256;
+
+    /// Endpoints advertised by a discovery beacon; `relay` is None for v1.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct Beacon {
+        pub addr: String,
+        pub relay: Option<String>,
+    }
+
+    /// Build a v1 discovery beacon advertising `addr` (the console's `ip:port`).
     pub fn encode_beacon(addr: &str) -> Vec<u8> {
         let mut v = Vec::with_capacity(5 + addr.len());
         v.extend_from_slice(BEACON_MAGIC);
@@ -363,20 +377,78 @@ pub mod preboot {
         v
     }
 
-    /// Parse a discovery beacon payload, returning the advertised `ip:port`.
-    /// Rejects anything without the magic/version and anything that isn't a
-    /// real `IPv4:port` with a non-zero port, so a stray or malformed datagram
-    /// on the port can't become a dial target.
-    pub fn parse_beacon(payload: &[u8]) -> Option<String> {
-        if payload.len() < 6 || &payload[0..4] != BEACON_MAGIC || payload[4] != BEACON_VERSION {
-            return None;
+    /// Build a v2 discovery beacon advertising `addr` and the relay base url.
+    pub fn encode_beacon_v2(addr: &str, relay: &str) -> Vec<u8> {
+        let mut v = Vec::with_capacity(6 + addr.len() + relay.len());
+        v.extend_from_slice(BEACON_MAGIC);
+        v.push(BEACON_VERSION_2);
+        v.extend_from_slice(addr.as_bytes());
+        v.push(0);
+        v.extend_from_slice(relay.as_bytes());
+        v
+    }
+
+    /// True for an `http://`/`https://` url of at most [`MAX_RELAY_URL_BYTES`]
+    /// bytes whose authority is non-empty and free of control characters,
+    /// whitespace and userinfo.
+    pub fn is_valid_relay_url(url: &str) -> bool {
+        if url.len() > MAX_RELAY_URL_BYTES || url.chars().any(char::is_control) {
+            return false;
         }
-        let addr = core::str::from_utf8(&payload[5..]).ok()?.trim();
+        let Some(rest) =
+            url.strip_prefix("http://").or_else(|| url.strip_prefix("https://"))
+        else {
+            return false;
+        };
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+        !authority.is_empty()
+            && !authority.contains('@')
+            && !authority.chars().any(|c| c.is_ascii_whitespace())
+    }
+
+    /// Accept an `IPv4:port` with a non-zero port, so a stray or malformed
+    /// datagram on the port can't become a dial target.
+    fn parse_beacon_addr(bytes: &[u8]) -> Option<String> {
+        let addr = core::str::from_utf8(bytes).ok()?.trim();
         let sa = addr.parse::<core::net::SocketAddrV4>().ok()?;
         if sa.port() == 0 {
             return None;
         }
         Some(addr.to_string())
+    }
+
+    /// Parse a v1 discovery beacon payload, returning the advertised `ip:port`.
+    /// Rejects anything without the magic/version and anything that isn't a
+    /// real `IPv4:port` with a non-zero port.
+    pub fn parse_beacon(payload: &[u8]) -> Option<String> {
+        if payload.len() < 6 || &payload[0..4] != BEACON_MAGIC || payload[4] != BEACON_VERSION {
+            return None;
+        }
+        parse_beacon_addr(&payload[5..])
+    }
+
+    /// Parse a v1 or v2 discovery beacon payload; v1 yields `relay: None`. Address
+    /// checks match [`parse_beacon`], and a v2 relay url must satisfy
+    /// [`is_valid_relay_url`] so a malformed datagram can't become a huge or
+    /// hostile target string.
+    pub fn parse_beacon_v2(payload: &[u8]) -> Option<Beacon> {
+        if payload.len() < 6 || &payload[0..4] != BEACON_MAGIC {
+            return None;
+        }
+        match payload[4] {
+            BEACON_VERSION => parse_beacon(payload).map(|addr| Beacon { addr, relay: None }),
+            BEACON_VERSION_2 => {
+                let body = &payload[5..];
+                let sep = body.iter().position(|b| *b == 0)?;
+                let addr = parse_beacon_addr(&body[..sep])?;
+                let relay = core::str::from_utf8(body.get(sep + 1..)?).ok()?.trim();
+                if !is_valid_relay_url(relay) {
+                    return None;
+                }
+                Some(Beacon { addr, relay: Some(relay.to_string()) })
+            }
+            _ => None,
+        }
     }
 
     pub fn encode_frame(f: &PreBootFrame) -> Vec<u8> {
@@ -525,6 +597,49 @@ mod tests {
         assert_eq!(parse_beacon(b"MTCB\x011.2.3.4:5:9209"), None);
         assert_eq!(parse_beacon(b"MTCB\x011.2.3.4:0"), None);
         assert_eq!(parse_beacon(b"MTCB\x01999.1.1.1:80"), None);
+    }
+
+    #[test]
+    fn beacon_v2_roundtrip_and_reject() {
+        use super::preboot::{Beacon, MAX_RELAY_URL_BYTES, encode_beacon, encode_beacon_v2, parse_beacon_v2};
+        let v2 = encode_beacon_v2("192.168.22.139:9209", "http://192.168.22.139:8082");
+        assert_eq!(
+            parse_beacon_v2(&v2),
+            Some(Beacon {
+                addr: "192.168.22.139:9209".to_string(),
+                relay: Some("http://192.168.22.139:8082".to_string()),
+            })
+        );
+        // v1 payloads still parse, with no relay.
+        assert_eq!(
+            parse_beacon_v2(&encode_beacon("192.168.22.139:9209")),
+            Some(Beacon { addr: "192.168.22.139:9209".to_string(), relay: None })
+        );
+        // A v2 relay url must carry an http(s) scheme and be non-empty.
+        assert_eq!(parse_beacon_v2(&encode_beacon_v2("1.2.3.4:9209", "192.168.1.5:8082")), None);
+        assert_eq!(parse_beacon_v2(&encode_beacon_v2("1.2.3.4:9209", "ftp://1.2.3.4:8082")), None);
+        assert_eq!(parse_beacon_v2(&encode_beacon_v2("1.2.3.4:9209", "")), None);
+        // A scheme with no authority, or an authority with whitespace, is rejected.
+        assert_eq!(parse_beacon_v2(&encode_beacon_v2("1.2.3.4:9209", "http://")), None);
+        assert_eq!(parse_beacon_v2(&encode_beacon_v2("1.2.3.4:9209", "https:///api")), None);
+        assert_eq!(
+            parse_beacon_v2(&encode_beacon_v2("1.2.3.4:9209", "http:// space host")),
+            None
+        );
+        assert_eq!(
+            parse_beacon_v2(&encode_beacon_v2("1.2.3.4:9209", "http://evil@1.2.3.4:8082")),
+            None
+        );
+        // Oversized and control-character relay urls are rejected.
+        let long = format!("http://{}", "a".repeat(MAX_RELAY_URL_BYTES));
+        assert_eq!(parse_beacon_v2(&encode_beacon_v2("1.2.3.4:9209", &long)), None);
+        assert_eq!(parse_beacon_v2(&encode_beacon_v2("1.2.3.4:9209", "http://1.2.3.4\u{7}:8082")), None);
+        // v2 without the NUL separator, and with a bad addr, are rejected.
+        assert_eq!(parse_beacon_v2(b"MTCB\x021.2.3.4:9209http://1.2.3.4:8082"), None);
+        assert_eq!(parse_beacon_v2(&encode_beacon_v2("1.2.3.4:0", "http://1.2.3.4:8082")), None);
+        assert_eq!(parse_beacon_v2(&encode_beacon_v2("nohost", "http://1.2.3.4:8082")), None);
+        assert_eq!(parse_beacon_v2(b"random udp junk"), None);
+        assert_eq!(parse_beacon_v2(b"MTCB\x031.2.3.4:9209"), None);
     }
 
     #[test]

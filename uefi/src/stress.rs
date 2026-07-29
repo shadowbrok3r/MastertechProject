@@ -187,7 +187,7 @@ extern "efiapi" fn ap_entry(arg: *mut c_void) {
 // ---------------------------------------------------------------------------
 
 #[inline(always)]
-fn rdtsc() -> u64 {
+pub fn rdtsc() -> u64 {
     #[cfg(target_arch = "x86_64")]
     unsafe {
         core::arch::x86_64::_rdtsc()
@@ -1209,7 +1209,7 @@ fn open_mp() -> Option<ScopedProtocol<MpServices>> {
 }
 
 /// TSC frequency from a 50 ms firmware stall; rates only need ~1% accuracy.
-fn calibrate_tsc_hz() -> u64 {
+pub fn calibrate_tsc_hz() -> u64 {
     let t0 = rdtsc();
     boot::stall(Duration::from_millis(50));
     let t1 = rdtsc();

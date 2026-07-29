@@ -778,9 +778,9 @@ dependencies = [
 
 [[package]]
 name = "terminput"
-version = "0.5.14"
+version = "0.5.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8908e11ccbb43dca64278fb750affa925c3655112859c69d017e7b44f598165b"
+checksum = "33fe296cb813b5bad99a8eb911e6a08e48f0854ee1e8b427073e657a509a7097"
 dependencies = [
  "bitflags 2.13.0",
 ]
@@ -893,9 +893,9 @@ dependencies = [
 
 [[package]]
 name = "uefi"
-version = "0.38.0"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8f2e1b4a439d82899da4dc0ee8ac742db07a9ff493bc4f31d345c24e12e17e9"
+checksum = "a58ad7512f7c38b58aa536c3839dbb1d5a122d14a7e2245b06ded49edcb7585a"
 dependencies = [
  "bitflags 2.13.0",
  "cfg-if",
@@ -939,9 +939,9 @@ dependencies = [
 
 [[package]]
 name = "uefi-raw"
-version = "0.15.0"
+version = "0.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8868c2fb03f31e55ccf9b47f72e17097bb88c45306cb82f5a2258935520c72d6"
+checksum = "1a36f49db0b04a8dfd246a26ddf8d2526a2ffd8cf946ae7fe603fd0c5fbd2786"
 dependencies = [
  "bitflags 2.13.0",
  "uguid",
@@ -1002,9 +1002,9 @@ checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
 name = "wasmi"
-version = "2.0.0-beta.4"
+version = "2.0.0-beta.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2897025eb0a00a5f859248d540eca60b94642e2739b6cd66ee7d3e6145e11233"
+checksum = "8d455a1cf78c306ca4b082e69eb26b9f02836335195dca82cf229cf6e7a2db29"
 dependencies = [
  "spin",
  "wasmi_collections",
@@ -1015,24 +1015,24 @@ dependencies = [
 
 [[package]]
 name = "wasmi_collections"
-version = "2.0.0-beta.4"
+version = "2.0.0-beta.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11d3222b60d898a7477d74d5141182be88fa448e45d92660fd932c49ca310247"
+checksum = "601914021b9915fddd7a5419f12d3ac3bc43ee8fbd2bc29bdf577684c1f10203"
 
 [[package]]
 name = "wasmi_core"
-version = "2.0.0-beta.4"
+version = "2.0.0-beta.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "afdcdb04f3ef500d20870a108d77bfab654c10ebece2594b2d96c47ff993e584"
+checksum = "9424a2f447780d08159e603295a451c5e5a4760681d8c2fcce207f45994639e5"
 dependencies = [
  "libm",
 ]
 
 [[package]]
 name = "wasmi_ir"
-version = "2.0.0-beta.4"
+version = "2.0.0-beta.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1001ec455fb1dbbdd96b3dba082170836d62be23e1b15a322e9d1f836c5e0fee"
+checksum = "572ca7edddece4060624822abd1de6bdf3755f7c0f6c8188e553d2266b4eeab4"
 dependencies = [
  "wasmi_core",
 ]

@@ -7,4 +7,4 @@ publish = false
 
 [dependencies]
 ratatui = { version = "0.30.2", default-features = false, features = ["layout-cache", "std"] }
-uefi = { version = "0.38.0", features = ["alloc"] }
+uefi = { version = "0.39.0", features = ["alloc"] }

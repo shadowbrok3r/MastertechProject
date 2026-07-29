@@ -23,6 +23,9 @@ use crate::{PlatformSpawner, Spawner};
 /// Default direct-link listen port on the console.
 pub const DIRECT_PORT: u16 = 9209;
 
+/// Relay port assumed when the configured base url carries none (axum's default).
+const DEFAULT_RELAY_PORT: u16 = 8082;
+
 /// Per-session shared state, updated by the reader task and read by egui.
 struct Session {
     /// Latest decoded frame bytes (bincode `PreBootFrame`).
@@ -121,19 +124,24 @@ impl DirectHub {
         });
     }
 
-    /// Broadcast a LAN UDP discovery beacon (`ip:port`) every ~3s so firmware
-    /// can find this console without any relay round-trip. A fresh socket bound
-    /// to the chosen LAN IP each cycle forces egress on that interface (a
-    /// 0.0.0.0-bound limited broadcast would leave only the OS-default NIC on a
-    /// multi-homed host) and tracks DHCP address changes.
+    /// Broadcast a LAN UDP discovery beacon (`ip:port` plus the relay base url)
+    /// every ~3s so firmware can find this console without any relay round-trip.
+    /// A fresh socket bound to the chosen LAN IP each cycle forces egress on that
+    /// interface (a 0.0.0.0-bound limited broadcast would leave only the
+    /// OS-default NIC on a multi-homed host) and tracks DHCP address changes.
+    /// Falls back to a v1 beacon when no relay url can be resolved.
     fn beacon(&self, base: String, port: u16) {
         PlatformSpawner::spawn(async move {
-            let dest = format!("255.255.255.255:{}", tcp_protocol::preboot::DISCOVERY_PORT);
+            let dest = format!("255.255.255.255:{}", preboot::DISCOVERY_PORT);
             loop {
                 if let Some(ip) = lan_ip_toward(&base) {
                     if let Ok(sock) = std::net::UdpSocket::bind(std::net::SocketAddr::new(ip, 0)) {
                         if sock.set_broadcast(true).is_ok() {
-                            let msg = tcp_protocol::preboot::encode_beacon(&format!("{ip}:{port}"));
+                            let addr = format!("{ip}:{port}");
+                            let msg = match relay_url_for(&base, ip) {
+                                Some(relay) => preboot::encode_beacon_v2(&addr, &relay),
+                                None => preboot::encode_beacon(&addr),
+                            };
                             let _ = sock.send_to(&msg, &dest);
                         }
                     }
@@ -236,6 +244,34 @@ fn lan_ip_toward(base_url: &str) -> Option<std::net::IpAddr> {
         return None;
     }
     Some(ip)
+}
+
+/// Relay base url to advertise in a beacon: the console's own configured relay,
+/// with a loopback/unspecified/`localhost` host rewritten to `ip` (the same LAN
+/// IP the direct addr advertises) so firmware reaches the relay this console
+/// actually uses. Falls back to [`DEFAULT_RELAY_PORT`] when the rewritten base
+/// carries no port. None when no valid http(s) url can be built.
+fn relay_url_for(base: &str, ip: std::net::IpAddr) -> Option<String> {
+    let std::net::IpAddr::V4(v4) = ip else { return None };
+    let base = base.trim().trim_end_matches('/');
+    let (scheme, rest) = base.split_once("://")?;
+    if scheme != "http" && scheme != "https" {
+        return None;
+    }
+    let authority = rest.split('/').next().unwrap_or("");
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((h, p)) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => (h, p.parse::<u16>().ok()),
+        _ => (authority, None),
+    };
+    let local = host.is_empty()
+        || host.eq_ignore_ascii_case("localhost")
+        || host.parse::<std::net::IpAddr>().map(|h| h.is_loopback() || h.is_unspecified()).unwrap_or(false);
+    let url = if local {
+        format!("{scheme}://{v4}:{}", port.unwrap_or(DEFAULT_RELAY_PORT))
+    } else {
+        base.to_string()
+    };
+    preboot::is_valid_relay_url(&url).then_some(url)
 }
 
 /// Frame one payload as `[u32 LE total_len][tag][body]` (total_len counts tag).

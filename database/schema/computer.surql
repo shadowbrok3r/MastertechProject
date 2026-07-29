@@ -18,14 +18,16 @@ DEFINE FIELD device_serial     ON computer TYPE none | string    PERMISSIONS FUL
 DEFINE FIELD drives            ON computer TYPE array<object>    PERMISSIONS FULL;
 DEFINE FIELD drives.*          ON computer TYPE object           PERMISSIONS FULL;
 DEFINE FIELD gpu               ON computer TYPE string           PERMISSIONS FULL;
-DEFINE FIELD hostname          ON computer TYPE string           PERMISSIONS FULL;
+-- Defaulted so a MERGE that creates the row (the qc_fingerprint projection
+-- sets no OS-side fields) does not fail the whole statement.
+DEFINE FIELD hostname          ON computer TYPE string DEFAULT '' PERMISSIONS FULL;
 DEFINE FIELD installed_programs   ON computer TYPE none | array<object> PERMISSIONS FULL;
 DEFINE FIELD installed_programs.* ON computer TYPE object        PERMISSIONS FULL;
 DEFINE FIELD motherboard_asset_tag ON computer TYPE none | string PERMISSIONS FULL;
 DEFINE FIELD motherboard_name  ON computer TYPE none | string    PERMISSIONS FULL;
 DEFINE FIELD motherboard_serial ON computer TYPE none | string   PERMISSIONS FULL;
 DEFINE FIELD motherboard_vendor ON computer TYPE none | string   PERMISSIONS FULL;
-DEFINE FIELD operating_system  ON computer TYPE string           PERMISSIONS FULL;
+DEFINE FIELD operating_system  ON computer TYPE string DEFAULT '' PERMISSIONS FULL;
 DEFINE FIELD order_service     ON computer TYPE none | object    PERMISSIONS FULL;
 DEFINE FIELD product_name      ON computer TYPE none | string    PERMISSIONS FULL;
 DEFINE FIELD product_serial    ON computer TYPE none | string    PERMISSIONS FULL;

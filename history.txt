@@ -1,0 +1,4 @@
+#V2
+INFO FOR TABLE qc_fingerprint;
+RETURN (INFO FOR DB).tables;
+RETURN (INFO FOR TABLE computer).fields;

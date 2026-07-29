@@ -62,15 +62,16 @@ pub(crate) fn open_snp() -> Result<ScopedProtocol<SimpleNetwork>, String> {
     Ok(snp)
 }
 
-/// Poll the NIC for one frame, up to `timeout_ms`. Returns the frame length.
-fn recv_frame(snp: &SimpleNetwork, buf: &mut [u8], timeout_ms: u64) -> Option<usize> {
+/// Poll the NIC for one frame, up to `timeout_ms`. Returns the frame length and
+/// the milliseconds actually spent waiting.
+fn recv_frame(snp: &SimpleNetwork, buf: &mut [u8], timeout_ms: u64) -> (Option<usize>, u64) {
     let mut waited = 0u64;
     loop {
         if let Ok(n) = snp.receive(buf, None, None, None, None) {
-            return Some(n);
+            return (Some(n), waited);
         }
         if waited >= timeout_ms {
-            return None;
+            return (None, waited);
         }
         let _ = boot::stall(Duration::from_millis(5));
         waited += 5;
@@ -244,8 +245,10 @@ pub fn dhcp() -> Result<RawNet, String> {
     let mut got_offer = false;
     let mut waited = 0u64;
     while waited < 5000 {
-        let Some(n) = recv_frame(&snp, &mut buf, 5000 - waited) else { break };
-        waited += 50;
+        let (got, spent) = recv_frame(&snp, &mut buf, 5000 - waited);
+        // 1ms floor bounds the loop when frames arrive with no wait.
+        waited += spent.max(1);
+        let Some(n) = got else { break };
         if let Some((mt, yi, sid, mk, gw)) = parse_dhcp(&buf[..n], xid) {
             if mt == 2 {
                 yiaddr = yi;
@@ -267,8 +270,10 @@ pub fn dhcp() -> Result<RawNet, String> {
         .map_err(|e| format!("REQUEST tx: {e:?}"))?;
     let mut waited = 0u64;
     while waited < 5000 {
-        let Some(n) = recv_frame(&snp, &mut buf, 5000 - waited) else { break };
-        waited += 50;
+        let (got, spent) = recv_frame(&snp, &mut buf, 5000 - waited);
+        // 1ms floor bounds the loop when frames arrive with no wait.
+        waited += spent.max(1);
+        let Some(n) = got else { break };
         if let Some((mt, _, _, mk, gw)) = parse_dhcp(&buf[..n], xid) {
             if mt == 5 {
                 if mk != [0; 4] {
@@ -330,8 +335,10 @@ impl RawNet {
                 .map_err(|e| format!("ARP tx: {e:?}"))?;
             let mut waited = 0u64;
             while waited < 1000 {
-                let Some(n) = recv_frame(snp, &mut buf, 1000 - waited) else { break };
-                waited += 50;
+                let (got, spent) = recv_frame(snp, &mut buf, 1000 - waited);
+                // 1ms floor bounds the loop when frames arrive with no wait.
+                waited += spent.max(1);
+                let Some(n) = got else { break };
                 if let Some(mac) = parse_arp_reply(&buf[..n], target) {
                     return Ok(mac);
                 }
@@ -392,22 +399,31 @@ fn udp_payload_for_port(frame: &[u8], want_port: u16) -> Option<&[u8]> {
 }
 
 /// Listen for a console discovery beacon on `port` for up to `budget_ms` and
-/// return the advertised console `ip:port`. Pure SNP receive (no UEFI IP4/UDP4
-/// stack), so it works on the raw path; best-effort when the UEFI stack owns
-/// the NIC. Returns None on timeout or if no beacon parsed.
-pub fn discover_console(port: u16, budget_ms: u64) -> Option<String> {
+/// return the advertised console endpoint plus the relay url a v2 beacon
+/// carries. Pure SNP receive (no UEFI IP4/UDP4 stack), so it works on the raw
+/// path; best-effort when the UEFI stack owns the NIC. Returns None on timeout
+/// or if no beacon parsed.
+pub fn discover_console(port: u16, budget_ms: u64) -> Option<tcp_protocol::preboot::Beacon> {
     let snp = open_snp().ok()?;
     let mut buf = [0u8; 2048];
     let mut waited = 0u64;
     while waited < budget_ms {
-        let Some(n) = recv_frame(&snp, &mut buf, budget_ms - waited) else {
+        let (got, spent) = recv_frame(&snp, &mut buf, budget_ms - waited);
+        // 1ms floor bounds the loop when frames arrive with no wait.
+        waited += spent.max(1);
+        let Some(n) = got else {
             break;
         };
-        waited += 50;
         if let Some(payload) = udp_payload_for_port(&buf[..n], port) {
-            if let Some(addr) = tcp_protocol::preboot::parse_beacon(payload) {
-                logln(format!("netraw: discovery beacon -> {addr}"));
-                return Some(addr);
+            if let Some(b) = tcp_protocol::preboot::parse_beacon_v2(payload) {
+                match b.relay.as_deref() {
+                    Some(relay) => logln(format!(
+                        "netraw: discovery beacon -> {} (relay {relay})",
+                        b.addr
+                    )),
+                    None => logln(format!("netraw: discovery beacon v1 -> {}", b.addr)),
+                }
+                return Some(b);
             }
         }
     }

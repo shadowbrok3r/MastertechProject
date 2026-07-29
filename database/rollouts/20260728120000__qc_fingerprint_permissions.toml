@@ -1,0 +1,50 @@
+id = "20260728120000__qc_fingerprint_permissions"
+name = "qc_fingerprint_permissions"
+state = "planned"
+# qc_fingerprint was never in database/schema/, so SurrealDB auto-defined it on
+# the first write as `DEFINE TABLE qc_fingerprint TYPE ANY SCHEMALESS
+# PERMISSIONS NONE` (verified on surrealdb-dev via INFO FOR DB). axum_server
+# signs in as the `guest` record-access user, so every UPSERT was filtered to a
+# no-op: no error, empty result set, table permanently empty.
+#
+# Also defaults computer.hostname / computer.operating_system. Both are
+# `TYPE string` with no DEFAULT, so the qc_fingerprint -> computer MERGE
+# projection (which sets no OS-side fields) errored whenever it had to create
+# the row.
+#
+# source == target because this only pushes committed file state.
+source_schema_hash = "3d00fa00d6d2cac8b78cf86e1a875754cde13f26c49b7db1ca2b672c4eff0514"
+target_schema_hash = "3d00fa00d6d2cac8b78cf86e1a875754cde13f26c49b7db1ca2b672c4eff0514"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "qc_fingerprint_permissions_full"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE qc_fingerprint TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE qcfp_serial      ON qc_fingerprint FIELDS serial;
+DEFINE INDEX OVERWRITE qcfp_captured_at ON qc_fingerprint FIELDS captured_at;
+DEFINE FIELD OVERWRITE serial      ON qc_fingerprint TYPE string   DEFAULT ''          PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE uuid        ON qc_fingerprint TYPE string   DEFAULT ''          PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE captured_at ON qc_fingerprint TYPE datetime DEFAULT time::now() PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE cpu_model   ON qc_fingerprint TYPE string   DEFAULT ''          PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE cpu_cores   ON qc_fingerprint TYPE number   DEFAULT 0           PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE ram_bytes   ON qc_fingerprint TYPE number   DEFAULT 0           PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE dimm_count  ON qc_fingerprint TYPE number   DEFAULT 0           PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE disk_count  ON qc_fingerprint TYPE number   DEFAULT 0           PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE win11_ready ON qc_fingerprint TYPE bool     DEFAULT false       PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE hostname         ON computer TYPE string DEFAULT '' PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE operating_system ON computer TYPE string DEFAULT '' PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "qc_fingerprint_permissions_revert"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE qc_fingerprint TYPE ANY SCHEMALESS PERMISSIONS NONE;
+DEFINE FIELD OVERWRITE hostname         ON computer TYPE string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE operating_system ON computer TYPE string PERMISSIONS FULL;
+"""

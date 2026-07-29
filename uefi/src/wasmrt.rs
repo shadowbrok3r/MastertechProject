@@ -65,9 +65,31 @@ pub struct PluginRun {
     pub name: String,
     pub version: String,
     pub tools: String,
+    /// Tool invoked by this run; empty for a load-only run.
+    pub tool: String,
     pub result: String,
     pub log: Vec<String>,
     pub stdout: String,
+}
+
+/// What a run does after loading the module.
+pub enum Call<'a> {
+    /// Read metadata and tool descriptors only.
+    Load,
+    /// Invoke the module's first advertised tool with these args.
+    FirstTool(&'a str),
+    /// Invoke a named tool with these args.
+    Tool(&'a str, &'a str),
+}
+
+/// Tool name a `FirstTool` run falls back to when `mcp_tools` names none.
+const DEFAULT_TOOL: &str = "selftest";
+
+/// First tool name from an `mcp_tools` JSON blob (array or `{"tools":[..]}`).
+pub fn first_tool_name(tools_json: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(tools_json).ok()?;
+    let arr = v.as_array().or_else(|| v.get("tools").and_then(|t| t.as_array()))?;
+    arr.first()?.get("name")?.as_str().map(|s| s.to_string())
 }
 
 fn caller_mem(caller: &Caller<HostState>) -> Option<Memory> {
@@ -358,13 +380,13 @@ fn read_packed(
     read_str(mem, &*store, ptr, len)
 }
 
-/// Load a plugin and read its metadata + tool descriptors. When `call` is
-/// `Some((tool, args_json))`, also invoke `handle_mcp_call` and capture the
-/// result. Never runs the module's start/`_start`; only the named exports.
+/// Load a plugin and read its metadata + tool descriptors, then invoke
+/// `handle_mcp_call` as `call` selects and capture the result. Never runs the
+/// module's start/`_start`; only the named exports.
 pub fn run(
     bytes: &[u8],
     hostname: &str,
-    call: Option<(&str, &str)>,
+    call: Call<'_>,
     fw: FwData,
 ) -> Result<PluginRun, String> {
     if bytes.len() < 8 || &bytes[0..4] != b"\0asm" {
@@ -393,8 +415,17 @@ pub fn run(
     let tools = read_packed(&instance, &mut store, &mem, "mcp_tools");
 
     let mut result = String::new();
-    if let Some((tool, args)) = call {
-        result = invoke(&instance, &mut store, &mem, tool, args)?;
+    let mut tool = String::new();
+    match call {
+        Call::Load => {}
+        Call::FirstTool(args) => {
+            tool = first_tool_name(&tools).unwrap_or_else(|| DEFAULT_TOOL.to_string());
+            result = invoke(&instance, &mut store, &mem, &tool, args)?;
+        }
+        Call::Tool(name, args) => {
+            tool = name.to_string();
+            result = invoke(&instance, &mut store, &mem, name, args)?;
+        }
     }
 
     if let Ok(f) = instance.get_typed_func::<(), ()>(&store, "on_unload") {
@@ -407,6 +438,7 @@ pub fn run(
         name,
         version,
         tools,
+        tool,
         result,
         log: state.log,
         stdout: String::from_utf8_lossy(&state.stdout).into_owned(),
