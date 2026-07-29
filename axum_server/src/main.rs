@@ -1,14 +1,13 @@
 use database::schema::prestashop_schema::MissedCallOrder;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use tower_http::{add_extension::AddExtensionLayer, cors::CorsLayer};
-use middleware::{context::Ctx, middleware_log::middleware_logger};
+use tower_http::cors::CorsLayer;
+use middleware::middleware_log::middleware_logger;
 use axum::{middleware::map_response, Router};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use tokio::sync::Mutex;
 use std::sync::Arc;
 use dotenv::dotenv;
-use uuid::Uuid;
 use log::info;
 
 pub mod middleware;
@@ -89,9 +88,8 @@ async fn main() -> anyhow::Result<()> {
     // IPv4 stack (no Tcp4/Http); reassembles chunked datagrams.
     tokio::spawn(routes::api::qc_udp::serve());
 
-    // `mw_record_request` runs ahead of the response logger so it can install a
-    // per-request Ctx; the AddExtensionLayer below is only the fallback for
-    // paths that bypass the recorder.
+    // `mw_record_request` installs the per-request Ctx. Paths that bypass it
+    // get a fresh Ctx from the extractor, so no req_id is ever shared.
     let app = Router::new()
         .merge(routes(app_state.clone()))
         .layer(map_response(middleware_logger))
@@ -99,11 +97,7 @@ async fn main() -> anyhow::Result<()> {
             app_state.clone(),
             middleware::request_recorder::mw_record_request,
         ))
-        .layer(CorsLayer::permissive())
-        .layer(AddExtensionLayer::new(Ctx::new(
-            Ok("Shadowbroker".to_string()),
-            Uuid::new_v4(),
-        )));
+        .layer(CorsLayer::permissive());
 
     axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(async {

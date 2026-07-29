@@ -429,6 +429,74 @@ static GLOBAL_ARTIFACTS: Lazy<Arc<Mutex<ArtifactStore>>> =
 static TELEMETRY_AGENT: Lazy<Arc<stress_runner::TelemetryAgent>> =
     Lazy::new(|| Arc::new(stress_runner::TelemetryAgent::start(1000)));
 
+// ─── Pre-boot direct link (MCP → UEFI firmware over the :9209 socket) ──────────
+
+/// Handle to the admin console's direct-link hub, installed once the console
+/// starts its listener. `None` until then; every preboot tool reports that.
+static PREBOOT_HUB: Lazy<std::sync::Mutex<Option<crate::tabs::admin_console::preboot_direct::DirectHub>>> =
+    Lazy::new(|| std::sync::Mutex::new(None));
+
+/// Publish the console's hub so the preboot MCP tools can reach the firmware.
+pub fn set_preboot_hub(hub: crate::tabs::admin_console::preboot_direct::DirectHub) {
+    if let Ok(mut g) = PREBOOT_HUB.lock() {
+        *g = Some(hub);
+    }
+}
+
+fn preboot_hub() -> Result<crate::tabs::admin_console::preboot_direct::DirectHub, ErrorData> {
+    PREBOOT_HUB
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .ok_or_else(|| {
+            ErrorData::new(
+                ErrorCode::INTERNAL_ERROR,
+                "pre-boot direct hub not started; open the Admin Console so it binds :9209".to_string(),
+                None,
+            )
+        })
+}
+
+/// Map a tool-supplied key name to the firmware's lossy key code.
+fn parse_pb_key(s: &str) -> Option<tcp_protocol::preboot::PbKeyCode> {
+    use tcp_protocol::preboot::PbKeyCode as K;
+    let mut chars = s.chars();
+    if let (Some(c), None) = (chars.next(), chars.next()) {
+        return Some(K::Char(c));
+    }
+    let lower = s.to_ascii_lowercase();
+    if let Some(n) = lower.strip_prefix('f').and_then(|n| n.parse::<u8>().ok()) {
+        return (1..=12).contains(&n).then_some(K::F(n));
+    }
+    Some(match lower.as_str() {
+        "enter" | "return" => K::Enter,
+        "esc" | "escape" => K::Esc,
+        "backspace" => K::Backspace,
+        "tab" => K::Tab,
+        "up" => K::Up,
+        "down" => K::Down,
+        "left" => K::Left,
+        "right" => K::Right,
+        "home" => K::Home,
+        "end" => K::End,
+        "pageup" | "pgup" => K::PageUp,
+        "pagedown" | "pgdn" => K::PageDown,
+        "delete" | "del" => K::Delete,
+        "insert" | "ins" => K::Insert,
+        "space" => K::Char(' '),
+        _ => return None,
+    })
+}
+
+/// Flatten a decoded firmware frame into one string per terminal row.
+fn preboot_frame_lines(f: &tcp_protocol::preboot::PreBootFrame) -> Vec<String> {
+    let cols = f.cols.max(1) as usize;
+    f.cells
+        .chunks(cols)
+        .map(|row| row.iter().map(|c| c.symbol.as_str()).collect::<String>().trim_end().to_string())
+        .collect()
+}
+
 // ─── Plugin store directory ────────────────────────────────────────────────────
 
 pub(crate) fn plugin_store_root() -> PathBuf {
@@ -534,6 +602,65 @@ impl PluginToolProvider {
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct ListPluginsParams {}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct PrebootListParams {}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct PrebootScreenParams {
+    #[schemars(description = "Firmware serial, from preboot_list_clients")]
+    pub serial: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct PrebootStreamParams {
+    #[schemars(description = "Firmware serial, from preboot_list_clients")]
+    pub serial: String,
+    #[schemars(description = "true starts frame streaming, false stops it")]
+    pub stream: bool,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct PrebootInputParams {
+    #[schemars(description = "Firmware serial, from preboot_list_clients")]
+    pub serial: String,
+    #[schemars(
+        description = "Key to send: a single character, or one of enter, esc, backspace, tab, \
+                       up, down, left, right, home, end, pageup, pagedown, delete, insert, f1-f12"
+    )]
+    pub key: String,
+    #[schemars(description = "Hold Ctrl (default false)")]
+    pub ctrl: Option<bool>,
+    #[schemars(description = "Hold Alt (default false)")]
+    pub alt: Option<bool>,
+    #[schemars(description = "Hold Shift (default false)")]
+    pub shift: Option<bool>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct PrebootTypeParams {
+    #[schemars(description = "Firmware serial, from preboot_list_clients")]
+    pub serial: String,
+    #[schemars(description = "Literal text to type, one character key per char")]
+    pub text: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct PrebootRunPluginParams {
+    #[schemars(description = "Firmware serial, from preboot_list_clients")]
+    pub serial: String,
+    #[schemars(
+        description = "Registry plugin id or an http URL the firmware fetches. \
+                       Empty runs the firmware's embedded demo plugin."
+    )]
+    pub source: Option<String>,
+    #[schemars(description = "Tool name to invoke; empty picks the plugin's first advertised tool")]
+    pub tool: Option<String>,
+    #[schemars(description = "JSON-encoded argument string passed to the plugin tool")]
+    pub args: Option<String>,
+    #[schemars(description = "How long to wait for the firmware's result (default 30000ms)")]
+    pub timeout_ms: Option<u64>,
+}
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct EnablePluginParams {
@@ -2059,6 +2186,201 @@ impl PluginToolProvider {
         Ok(CallToolResult::success(vec![plugin_value_to_content(
             result,
         )?]))
+    }
+
+    // ── Pre-boot direct link (MCP → UEFI firmware over :9209) ───────────────────
+
+    #[tool(
+        name = "preboot_list_clients",
+        description = "List UEFI pre-boot boxes currently linked to this console over the direct :9209 socket. \
+                       These are firmware clients running before any OS, so none of the Windows-agent tools \
+                       (remote_egui_*, driver_snapshot_*, scripts_run_remote) apply to them - use the preboot_* \
+                       tools instead. Returns serial, socket peer, and seconds since the last frame."
+    )]
+    async fn preboot_list_clients(
+        &self,
+        Parameters(_p): Parameters<PrebootListParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let hub = preboot_hub()?;
+        let agents: Vec<serde_json::Value> = hub
+            .agents()
+            .into_iter()
+            .map(|a| serde_json::json!({ "serial": a.serial, "peer": a.peer, "idle_secs": a.idle_secs }))
+            .collect();
+        Ok(CallToolResult::success(vec![
+            ContentBlock::json(serde_json::json!({ "clients": agents })).map_err(to_internal)?,
+        ]))
+    }
+
+    #[tool(
+        name = "preboot_stream_ctl",
+        description = "Start or stop TUI frame streaming from a pre-boot box. Frames are only pushed while \
+                       streaming is on, so call this with stream=true before preboot_screen or the screen \
+                       will be stale or empty."
+    )]
+    async fn preboot_stream_ctl(
+        &self,
+        Parameters(p): Parameters<PrebootStreamParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let hub = preboot_hub()?;
+        let sent = hub.send_stream_ctl(&p.serial, p.stream);
+        Ok(CallToolResult::success(vec![ContentBlock::json(
+            serde_json::json!({ "serial": p.serial, "stream": p.stream, "sent": sent }),
+        )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "preboot_screen",
+        description = "Read the pre-boot box's current TUI screen as text, one string per terminal row. \
+                       This is how to see what the firmware is displaying - the Storage tab's SMART/ATA \
+                       attributes, the log ring, stress results. Requires preboot_stream_ctl {stream:true} first."
+    )]
+    async fn preboot_screen(
+        &self,
+        Parameters(p): Parameters<PrebootScreenParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let hub = preboot_hub()?;
+        if !hub.is_connected(&p.serial) {
+            return Err(ErrorData::new(
+                ErrorCode::INVALID_PARAMS,
+                format!("no direct link for serial '{}'; call preboot_list_clients", p.serial),
+                None,
+            ));
+        }
+        let Some(bytes) = hub.latest_frame(&p.serial) else {
+            return Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
+                "serial": p.serial,
+                "lines": Vec::<String>::new(),
+                "note": "no frame yet - call preboot_stream_ctl {stream:true} and retry",
+            }))
+            .map_err(to_internal)?]));
+        };
+        let frame = tcp_protocol::preboot::decode_frame(&bytes).ok_or_else(|| {
+            ErrorData::new(ErrorCode::INTERNAL_ERROR, "frame decode failed".to_string(), None)
+        })?;
+        let lines = preboot_frame_lines(&frame);
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
+            "serial": p.serial,
+            "frame": frame.frame,
+            "cols": frame.cols,
+            "rows": frame.rows,
+            "lines": lines,
+        }))
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "preboot_send_key",
+        description = "Send one keypress to a pre-boot box, as if typed on its keyboard. Use this to drive \
+                       the firmware TUI: tab switches panes, and single letters are its command keys \
+                       (for example 'c' connect, 'd' DHCP, 'v' stream, 'e' edit target)."
+    )]
+    async fn preboot_send_key(
+        &self,
+        Parameters(p): Parameters<PrebootInputParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let hub = preboot_hub()?;
+        let code = parse_pb_key(&p.key).ok_or_else(|| {
+            ErrorData::new(ErrorCode::INVALID_PARAMS, format!("unrecognized key '{}'", p.key), None)
+        })?;
+        let ev = tcp_protocol::preboot::PreBootEvent::Key(tcp_protocol::preboot::PreBootKey {
+            code,
+            ctrl: p.ctrl.unwrap_or(false),
+            alt: p.alt.unwrap_or(false),
+            shift: p.shift.unwrap_or(false),
+        });
+        let sent = hub.send_input(&p.serial, &ev);
+        Ok(CallToolResult::success(vec![ContentBlock::json(
+            serde_json::json!({ "serial": p.serial, "key": p.key, "sent": sent }),
+        )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "preboot_type",
+        description = "Type literal text into a pre-boot box, one character key per character. Use for \
+                       fields like the relay target editor; use preboot_send_key for Enter and named keys."
+    )]
+    async fn preboot_type(
+        &self,
+        Parameters(p): Parameters<PrebootTypeParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let hub = preboot_hub()?;
+        let mut sent = 0usize;
+        for ch in p.text.chars() {
+            let ev = tcp_protocol::preboot::PreBootEvent::Key(tcp_protocol::preboot::PreBootKey {
+                code: tcp_protocol::preboot::PbKeyCode::Char(ch),
+                ctrl: false,
+                alt: false,
+                shift: false,
+            });
+            if hub.send_input(&p.serial, &ev) {
+                sent += 1;
+            }
+        }
+        Ok(CallToolResult::success(vec![ContentBlock::json(
+            serde_json::json!({ "serial": p.serial, "chars": p.text.chars().count(), "sent": sent }),
+        )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "preboot_run_plugin",
+        description = "Run a WASM plugin inside the UEFI firmware and return its result. `source` is a registry \
+                       plugin id or an http URL the firmware fetches itself; empty runs the embedded demo plugin. \
+                       This is the extension point for pre-OS diagnostics - the plugin executes before any OS \
+                       is booted, so it works on machines that cannot boot at all."
+    )]
+    async fn preboot_run_plugin(
+        &self,
+        Parameters(p): Parameters<PrebootRunPluginParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let hub = preboot_hub()?;
+        if !hub.is_connected(&p.serial) {
+            return Err(ErrorData::new(
+                ErrorCode::INVALID_PARAMS,
+                format!("no direct link for serial '{}'; call preboot_list_clients", p.serial),
+                None,
+            ));
+        }
+        // Drain any result left by a previous run so the poll below can't return it.
+        let _ = hub.take_plugin_result(&p.serial);
+        let req = tcp_protocol::preboot::PbPluginRun {
+            source: p.source.unwrap_or_default(),
+            tool: p.tool.unwrap_or_default(),
+            args: p.args.unwrap_or_default(),
+        };
+        if !hub.run_plugin(&p.serial, &req) {
+            return Err(ErrorData::new(
+                ErrorCode::INTERNAL_ERROR,
+                "direct link dropped the plugin-run frame".to_string(),
+                None,
+            ));
+        }
+        let budget = std::time::Duration::from_millis(p.timeout_ms.unwrap_or(30_000));
+        let deadline = std::time::Instant::now() + budget;
+        while std::time::Instant::now() < deadline {
+            if let Some(r) = hub.take_plugin_result(&p.serial) {
+                return Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
+                    "serial": p.serial,
+                    "ok": r.ok,
+                    "plugin": { "id": r.id, "name": r.name, "version": r.version, "tools": r.tools },
+                    "tool": r.tool,
+                    "result": r.result,
+                    "log": r.log,
+                    "stdout": r.stdout,
+                    "error": r.error,
+                }))
+                .map_err(to_internal)?]));
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        Err(ErrorData::new(
+            ErrorCode::INTERNAL_ERROR,
+            format!("firmware returned no plugin result within {}ms", budget.as_millis()),
+            None,
+        ))
     }
 
     // ── Remote egui (MCP → Web Console WebSocket) ───────────────────────────────

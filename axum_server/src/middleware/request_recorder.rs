@@ -34,6 +34,9 @@ pub async fn mw_record_request(
     let record = cfg.enabled && (cfg.record_admin || !is_admin_path);
 
     let req_id = Uuid::new_v4();
+    // Logged before the handler runs: a request that never returns has no
+    // response-side line, so this is the only record that it was in flight.
+    tracing::debug!(%req_id, method = %req.method(), %path, "->> REQUEST      - begin");
     req.extensions_mut().insert(Ctx::new(Ok("Shadowbroker".to_string()), req_id));
 
     if !record {

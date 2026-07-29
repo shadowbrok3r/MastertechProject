@@ -434,6 +434,7 @@ impl AdminConsole {
         if crate::get_current_user_from_auth().map(|u| u.is_admin()).unwrap_or(false) {
             self.direct_hub.start(preboot_direct::DIRECT_PORT);
             self.direct_hub.advertise(self.preboot_base_url.clone());
+            crate::plugins::mcp_bridge::set_preboot_hub(self.direct_hub.clone());
         }
         self.filesystem.receive();
         while let Ok((cs, cust_ok, comp_ok)) = self.fk_health_rx.try_recv() {

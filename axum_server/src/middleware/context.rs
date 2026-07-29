@@ -38,7 +38,7 @@ impl<S: Send + Sync> FromRequestParts<S> for Ctx {
     fn from_request_parts(
         parts: &mut Parts,
         _state: &S,
-    ) 
+    )
         -> impl Future<Output = ApiResult<Self>> + Send
     {
         Box::pin(async {
@@ -46,10 +46,10 @@ impl<S: Send + Sync> FromRequestParts<S> for Ctx {
                 "->> {:<12} - Ctx::from_request_parts - extract Ctx from extension",
                 "EXTRACTOR"
             );
-            parts.extensions.get::<Ctx>().cloned().ok_or(ApiError {
-                req_id: Uuid::new_v4(),
-                error: Error::Generic { description: "Error".to_string() },
-            })
+            // A path that bypassed the recorder still gets its own req_id.
+            Ok(parts.extensions.get::<Ctx>().cloned().unwrap_or_else(|| {
+                Ctx::new(Ok("Shadowbroker".to_string()), Uuid::new_v4())
+            }))
         })
     }
 }
