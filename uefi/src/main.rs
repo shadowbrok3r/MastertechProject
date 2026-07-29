@@ -860,8 +860,11 @@ fn fmt_mac(m: &uefi::proto::network::EfiMacAddr) -> String {
 fn collect_nics() -> Vec<Nic> {
     let mut out = Vec::new();
     let Ok(handles) = uefi::boot::find_handles::<SimpleNetwork>() else {
+        logln("net: no SNP handles (no NIC driver connected)".into());
         return out;
     };
+    let found = handles.len();
+    let mut unopenable = 0usize;
     for handle in handles {
         let params = OpenProtocolParams {
             handle,
@@ -874,7 +877,10 @@ fn collect_nics() -> Vec<Nic> {
             uefi::boot::open_protocol::<SimpleNetwork>(params, OpenProtocolAttributes::GetProtocol)
         } {
             Ok(s) => s,
-            Err(_) => continue,
+            Err(_) => {
+                unopenable += 1;
+                continue;
+            }
         };
         let m = snp.mode();
         let mac = fmt_mac(&m.current_address);
@@ -891,6 +897,11 @@ fn collect_nics() -> Vec<Nic> {
             mtu: m.max_packet_size,
             state: format!("{:?}", m.state),
         });
+    }
+    if out.is_empty() && found > 0 {
+        logln(format!(
+            "net: {found} SNP handle(s) present but {unopenable} could not be opened"
+        ));
     }
     out
 }
@@ -1166,19 +1177,42 @@ fn collect_pcie_links() -> Vec<PcieLink> {
     out
 }
 
-/// Ask the firmware to (re)bind drivers to every controller, recursively. This
-/// is the equivalent of the UEFI shell's `connect -r`, and can make SNP appear
-/// for a NIC that has a UEFI driver which BDS simply hadn't connected (e.g. a
-/// NIC that isn't in the boot order). It cannot conjure a driver that the
-/// firmware doesn't have (i.e. when the network stack is disabled).
-/// Connect drivers onto the NIC handles only (recursive), binding the MNP→IP4
-/// stack without touching unrelated controllers that can hang on a flaky unit.
+/// Bind the MNP→IP4 stack onto already-bound NICs, and fall back to a full
+/// `connect -r` when no SNP handle exists at all.
+///
+/// The narrow pass only reaches controllers that already expose SNP, so it
+/// cannot bind a NIC that BDS never connected (one that isn't in the boot
+/// order, or was skipped by Fast Boot). The wide pass is the UEFI shell's
+/// `connect -r`; it is kept for that case only, because connecting every
+/// controller can stall on an unrelated flaky device. Neither can conjure a
+/// driver the firmware doesn't have (network stack disabled in setup).
 fn connect_network_stack() {
-    if let Ok(handles) = uefi::boot::find_handles::<SimpleNetwork>() {
-        for h in handles {
+    let snp_handles = uefi::boot::find_handles::<SimpleNetwork>().unwrap_or_default();
+    if !snp_handles.is_empty() {
+        for h in snp_handles {
             let _ = uefi::boot::connect_controller(h, &[], None, true);
         }
+        return;
     }
+
+    let Ok(all) = uefi::boot::locate_handle_buffer(uefi::boot::SearchType::AllHandles) else {
+        logln("net: no SNP handles and no handle buffer to sweep".into());
+        return;
+    };
+    logln(format!(
+        "net: no SNP handle bound - sweeping {} controllers (connect -r)",
+        all.len()
+    ));
+    let mut connected = 0usize;
+    for h in all.iter() {
+        if uefi::boot::connect_controller(*h, &[], None, true).is_ok() {
+            connected += 1;
+        }
+    }
+    let now = uefi::boot::find_handles::<SimpleNetwork>().map(|h| h.len()).unwrap_or(0);
+    logln(format!(
+        "net: connect -r bound {connected} controller(s); SNP handles now {now}"
+    ));
 }
 
 /// Count handles exposing a protocol GUID (0 when none / NOT_FOUND).
@@ -5552,9 +5586,14 @@ fn page_network(frame: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(palette::ERR),
         )));
         if !info.pci_net.is_empty() {
+            // The NIC is on the bus, so the driver is either unconnected or absent.
             l.push(Line::from(Span::styled(
-                fit("enable the UEFI Network Stack in BIOS", lw),
+                fit("NIC on PCI but no driver connected - press 'c'", lw),
                 Style::default().fg(palette::ERR),
+            )));
+            l.push(Line::from(Span::styled(
+                fit("still none? enable Network Stack in BIOS", lw),
+                Style::default().fg(palette::WARN),
             )));
         }
     } else {
