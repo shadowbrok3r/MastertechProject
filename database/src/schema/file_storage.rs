@@ -342,6 +342,17 @@ pub async fn file_exists(bucket: &str, path: &str) -> anyhow::Result<bool, anyho
 ///     println!("File: {} ({} bytes)", entry.filename(), entry.size.unwrap_or(0));
 /// }
 /// ```
+/// Tests whether `key` names `clean_prefix` itself or something beneath it, matching on path segments.
+fn key_in_prefix(key: &str, clean_prefix: &str) -> bool {
+    if clean_prefix.is_empty() {
+        return true;
+    }
+    match key.trim_start_matches('/').strip_prefix(clean_prefix) {
+        Some(rest) => rest.is_empty() || rest.starts_with('/'),
+        None => false,
+    }
+}
+
 pub async fn list_files(bucket: &str, prefix: &str) -> anyhow::Result<Vec<FileEntry>, anyhow::Error> {
     log::info!("file_storage::list_files -> bucket: {}, prefix: {}", bucket, prefix);
     let bucket_name = sanitize_bucket_name(bucket);
@@ -373,7 +384,7 @@ pub async fn list_files(bucket: &str, prefix: &str) -> anyhow::Result<Vec<FileEn
         .into_iter()
         .filter_map(|entry| {
             let key = entry.file.key.trim_start_matches('/').to_string();
-            if !clean_prefix.is_empty() && !key.starts_with(clean_prefix) {
+            if !key_in_prefix(&key, clean_prefix) {
                 return None;
             }
             let is_directory = key.ends_with('/');
@@ -426,7 +437,7 @@ pub async fn list_files_with_options(
             let key = entry.file.key.clone();
 
             if let Some(pfx) = clean_prefix {
-                if !pfx.is_empty() && !key.starts_with(pfx) {
+                if !key_in_prefix(&key, pfx) {
                     return None;
                 }
             }
@@ -831,6 +842,30 @@ mod tests {
             resolve_backend(&join_bucket_path("/surrealbuckets/", "logan_lees")),
             "file:/surrealbuckets/logan_lees"
         );
+    }
+
+    #[test]
+    fn test_key_in_prefix() {
+        // An empty prefix accepts everything.
+        assert!(key_in_prefix("/1-TUNEUP/notes.txt", ""));
+
+        // Keys are stored with a leading slash; the prefix arrives without one.
+        assert!(key_in_prefix("/1-TUNEUP/notes.txt", "1-TUNEUP"));
+        assert!(key_in_prefix("1-TUNEUP/notes.txt", "1-TUNEUP"));
+        assert!(key_in_prefix("/1-TUNEUP/Sub/notes.txt", "1-TUNEUP/Sub"));
+
+        // The prefix itself, with and without a trailing slash.
+        assert!(key_in_prefix("/1-TUNEUP", "1-TUNEUP"));
+        assert!(key_in_prefix("/1-TUNEUP/", "1-TUNEUP"));
+
+        // A sibling that merely extends the name is not beneath the prefix.
+        assert!(!key_in_prefix("/1-TUNEUP-OLD/notes.txt", "1-TUNEUP"));
+        assert!(!key_in_prefix("/1-TUNEUP2/notes.txt", "1-TUNEUP"));
+        assert!(!key_in_prefix("/1-TUNEUPS", "1-TUNEUP"));
+
+        // Unrelated keys and deeper prefixes than the key.
+        assert!(!key_in_prefix("/2-DIAGNOSTIC/notes.txt", "1-TUNEUP"));
+        assert!(!key_in_prefix("/1-TUNEUP/notes.txt", "1-TUNEUP/Sub"));
     }
 
     #[test]
