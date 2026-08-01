@@ -21,7 +21,6 @@ async-trait.workspace = true
 once_cell.workspace = true
 structdiff.workspace = true
 anyhow.workspace = true
-rusty-s3.workspace = true
 futures.workspace = true
 regex.workspace = true
 chrono = {workspace=true}

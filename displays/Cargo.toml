@@ -83,7 +83,6 @@ stress-kit = { workspace = true, optional = true }
 stress-runner = { workspace = true }
 ratatui = { workspace = true }
 dotenv = { version = "0.15" }
-rusty-s3 = { workspace = true }
 rmcp = { workspace = true }
 axum = { workspace = true }
 wasmtime = { workspace = true, optional = true }
@@ -100,7 +99,6 @@ egui_inspection = "0.35"
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 dump-triage = { path = "../dump-triage", default-features = false }
 ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tls", "rustls_ring"]}
-rusty-s3 = { workspace = true, features = ["wasm_bindgen"]}
 wasm-bindgen-futures = { workspace=true, optional = true }
 web-time = { workspace=true, optional = true }
 wasm-cookies = { workspace = true}
