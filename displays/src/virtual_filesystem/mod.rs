@@ -1076,8 +1076,8 @@ impl FileSystem {
             if let Some(pos) = self.current_prefix.rfind('/') {
                 self.current_prefix.truncate(pos);
             } else {
-                // If no `/` is found, directly set to "/"
-                self.current_prefix = "/".to_string();
+                // No parent segment: root is the empty prefix.
+                self.current_prefix.clear();
             }
     
             info!("Navigated up to root: '{}'", self.current_prefix);
@@ -1775,33 +1775,46 @@ mod tests {
         assert_eq!(fs.current_prefix, "");
         assert!(fs.navigation_stack.is_empty());
 
-        // Navigate to "1-TUNEUP/"
+        // A trailing slash is normalized away; root is not pushed onto the stack.
         fs.navigate_to("1-TUNEUP/".to_string());
-        assert_eq!(fs.current_prefix, "1-TUNEUP/");
-        assert_eq!(fs.navigation_stack, vec![""]);
+        assert_eq!(fs.current_prefix, "1-TUNEUP");
+        assert!(fs.navigation_stack.is_empty());
 
-        // Navigate to "1-TUNEUP/Subfolder/"
         fs.navigate_to("1-TUNEUP/Subfolder/".to_string());
-        assert_eq!(fs.current_prefix, "1-TUNEUP/Subfolder/");
-        assert_eq!(fs.navigation_stack, vec!["", "1-TUNEUP/"]);
+        assert_eq!(fs.current_prefix, "1-TUNEUP/Subfolder");
+        assert_eq!(fs.navigation_stack, vec!["1-TUNEUP"]);
 
-        // Navigate up
+        // Pops the stack.
         let result = fs.navigate_up();
         assert!(result.unwrap());
-        assert_eq!(fs.current_prefix, "1-TUNEUP/");
-        assert_eq!(fs.navigation_stack, vec![""]);
+        assert_eq!(fs.current_prefix, "1-TUNEUP");
+        assert!(fs.navigation_stack.is_empty());
 
-        // Navigate up again
+        // Stack empty: truncates the last segment, landing on the empty root prefix.
         let result = fs.navigate_up();
         assert!(result.unwrap());
         assert_eq!(fs.current_prefix, "");
         assert!(fs.navigation_stack.is_empty());
 
-        // Attempt to navigate up from root
+        // Already at root.
         let result = fs.navigate_up();
-        assert!(result.unwrap());
+        assert!(!result.unwrap());
         assert_eq!(fs.current_prefix, "");
         assert!(fs.navigation_stack.is_empty());
+    }
+
+    #[test]
+    fn test_navigate_to_is_slash_insensitive() {
+        let mut fs = FileSystem::new();
+
+        fs.navigate_to("1-TUNEUP/".to_string());
+        let stack_after_slashed = fs.navigation_stack.clone();
+        assert_eq!(fs.current_prefix, "1-TUNEUP");
+
+        // Re-navigating without the slash resolves to the same prefix, so it is a no-op.
+        fs.navigate_to("1-TUNEUP".to_string());
+        assert_eq!(fs.current_prefix, "1-TUNEUP");
+        assert_eq!(fs.navigation_stack, stack_after_slashed);
     }
 }
 
