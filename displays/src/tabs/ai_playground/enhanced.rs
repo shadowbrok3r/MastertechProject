@@ -149,16 +149,16 @@ impl EnhancedAiPlayground {
             .frame(Frame::default().inner_margin(Margin::symmetric(6, 2)))
             .exact_size(28.)
             .show_separator_line(false)
-            .show_inside(ui, |ui| self.show_chat_topbar(ui));
+            .show(ui, |ui| self.show_chat_topbar(ui));
 
         eframe::egui::Panel::bottom("enhanced_ai_input")
             .frame(Frame::default().inner_margin(Margin::same(6)))
             .exact_size(92.)
-            .show_inside(ui, |ui| self.show_chat_input(ui));
+            .show(ui, |ui| self.show_chat_input(ui));
 
         CentralPanel::default()
             .frame(Frame::central_panel(ui.style()).inner_margin(Margin::same(10)))
-            .show_inside(ui, |ui| self.show_chat_content(ui));
+            .show(ui, |ui| self.show_chat_content(ui));
 
         self.handle_enhanced_ai_events(ui);
     }

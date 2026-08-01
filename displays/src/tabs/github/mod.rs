@@ -4,7 +4,7 @@ use std::str::FromStr;
 use chrono::DateTime;
 use crossbeam::channel::Sender;
 use database::schema::User;
-use eframe::egui::{Align, Button, CentralPanel, Color32, Context, Direction, FontId, Frame, Layout, RichText, Stroke, TextEdit, Ui};
+use eframe::egui::{Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Layout, RichText, Stroke, TextEdit, Ui};
 use egui_extras::{Column, TableBuilder};
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 use futures::StreamExt;

@@ -152,7 +152,6 @@ impl TabViewer for MastertechContext {
                 displays::tabs::plugins_tab::plugins_tab_ui(ui, &self.plugin_manager)
             }
             TabId::Terminal => self.terminal_tab(ui),
-            _ => {}
         }
     }
 

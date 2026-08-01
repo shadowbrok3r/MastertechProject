@@ -772,6 +772,19 @@ pub struct RunSummary {
     #[serde(default)]
     #[surreal(default)]
     pub min_v12_v: Option<f32>,
+    /// Adapter the GPU work actually bound, as reported by wgpu. NONE on runs
+    /// with no GPU stage and on rows older than this field.
+    #[serde(default)]
+    #[surreal(default)]
+    pub gpu_adapter_name: Option<String>,
+    /// wgpu `DeviceType` of that adapter: `DiscreteGpu`, `IntegratedGpu`, `Cpu`, …
+    #[serde(default)]
+    #[surreal(default)]
+    pub gpu_adapter_device_type: Option<String>,
+    /// `true` when a discrete adapter was requested but a non-discrete one was bound.
+    #[serde(default)]
+    #[surreal(default)]
+    pub gpu_adapter_integrated_fallback: Option<bool>,
 }
 
 // ============================================================

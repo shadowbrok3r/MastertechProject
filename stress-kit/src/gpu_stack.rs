@@ -78,6 +78,19 @@ impl GpuStackReport {
         !self.broken.is_empty()
     }
 
+    /// True when wgpu found an adapter the GPU stressors can actually run on.
+    /// CPU-backed rasterizers answer wgpu but exercise no GPU, so they do not
+    /// count. Gate GPU benchmarks on this rather than on NVML telemetry, which
+    /// is NVIDIA-only and reports nothing on AMD or Intel.
+    pub fn has_hardware_gpu(&self) -> bool {
+        self.wgpu_adapters.iter().any(|a| {
+            let n = a.to_lowercase();
+            !(n.contains("microsoft basic")
+                || n.contains("llvmpipe")
+                || n.contains("swiftshader"))
+        })
+    }
+
     /// Joined verdict lines, `None` when healthy.
     pub fn summary(&self) -> Option<String> {
         if self.broken.is_empty() {

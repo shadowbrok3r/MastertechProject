@@ -485,7 +485,6 @@ impl PluginManager {
                         let (done_tx, done_rx) = crossbeam::channel::bounded::<(bool, String)>(1);
                         let wasm_bytes2 = wasm_bytes.clone();
                         let tool_name2 = tool_name.clone();
-                        let plugin_id2 = plugin_id.clone();
                         std::thread::spawn(move || {
                             let (event_tx, _event_rx) = crossbeam::channel::bounded::<crate::plugins::PluginEvent>(16);
                             let engine = &*WASM_BG_ENGINE;

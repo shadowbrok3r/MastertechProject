@@ -620,7 +620,7 @@ impl WebConsole {
                     .corner_radius(radius),
             )
             .exact_size(40.0_f32)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.heading(
                         RichText::new(menu_item(icons::MONITOR, "Web Console"))
@@ -656,7 +656,7 @@ impl WebConsole {
                         .stroke(stroke)
                         .corner_radius(radius),
                 )
-                .show_inside(ui, |ui| {
+                .show(ui, |ui| {
                     if let Some(conn_string) = &self.selected_client.clone() {
                         let has_connection = self.connections.contains_key(conn_string);
                         
@@ -750,7 +750,7 @@ impl WebConsole {
                     .fill(Color32::from_rgb(12, 14, 18))
                     .inner_margin(Margin::same(12)),
             )
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ClientGrid::show(ui, self);
             });
     }

@@ -20,7 +20,7 @@ use database::schema::{
     // TicketData, merge_task, merge_ticket, merge_customer, merge_computer,ComputerData, CustomerData, LiveTaskPayload
 };
 
-use crate::terminal_mode::styling::{CATPPUCCIN, THEME};
+use crate::terminal_mode::styling::{Glyph, CATPPUCCIN, THEME};
 
 /// The current page/tab being displayed in the merge modal
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -225,7 +225,7 @@ impl DuplicateMergeModal {
                     MergeModalPage::Summary => false,
                 };
                 
-                let indicator = if has_conflict { "⚠" } else { "✅" };
+                let indicator = if has_conflict { Glyph::Warning.as_str() } else { Glyph::Ok.as_str() };
                 let label = format!("{} {}", page.as_str(), indicator);
                 
                 let style = if i == self.tab_index {
@@ -328,7 +328,7 @@ impl DuplicateMergeModal {
     }
     
     fn draw_identical_message(&self, f: &mut Frame, area: Rect, entity: &str) {
-        let message = Paragraph::new(format!("✅ {} records are identical - no action needed", entity))
+        let message = Paragraph::new(format!("{} {} records are identical - no action needed", Glyph::Ok.as_str(), entity))
             .style(Style::default().fg(CATPPUCCIN.green))
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: true });
@@ -454,7 +454,11 @@ impl DuplicateMergeModal {
         
         // Task
         if let Some(ref dup) = self.check_result.task {
-            let status = if dup.is_identical { "✅ Identical" } else { "⚠ Conflict" };
+            let status = if dup.is_identical {
+                format!("{} Identical", Glyph::Ok.as_str())
+            } else {
+                format!("{} Conflict", Glyph::Warning.as_str())
+            };
             let status_color = if dup.is_identical { CATPPUCCIN.green } else { CATPPUCCIN.yellow };
             lines.push(Line::from(vec![
                 Span::styled(format!("{:<15}", "Task"), Style::default().fg(CATPPUCCIN.text)),
@@ -465,7 +469,11 @@ impl DuplicateMergeModal {
         
         // Service Order
         if let Some(ref dup) = self.check_result.service_order {
-            let status = if dup.is_identical { "✅ Identical" } else { "⚠ Conflict" };
+            let status = if dup.is_identical {
+                format!("{} Identical", Glyph::Ok.as_str())
+            } else {
+                format!("{} Conflict", Glyph::Warning.as_str())
+            };
             let status_color = if dup.is_identical { CATPPUCCIN.green } else { CATPPUCCIN.yellow };
             lines.push(Line::from(vec![
                 Span::styled(format!("{:<15}", "Service Order"), Style::default().fg(CATPPUCCIN.text)),
@@ -476,7 +484,11 @@ impl DuplicateMergeModal {
         
         // Customer
         if let Some(ref dup) = self.check_result.customer {
-            let status = if dup.is_identical { "✅ Identical" } else { "⚠ Conflict" };
+            let status = if dup.is_identical {
+                format!("{} Identical", Glyph::Ok.as_str())
+            } else {
+                format!("{} Conflict", Glyph::Warning.as_str())
+            };
             let status_color = if dup.is_identical { CATPPUCCIN.green } else { CATPPUCCIN.yellow };
             lines.push(Line::from(vec![
                 Span::styled(format!("{:<15}", "Customer"), Style::default().fg(CATPPUCCIN.text)),
@@ -487,7 +499,11 @@ impl DuplicateMergeModal {
         
         // Computer
         if let Some(ref dup) = self.check_result.computer {
-            let status = if dup.is_identical { "✅ Identical" } else { "⚠ Conflict" };
+            let status = if dup.is_identical {
+                format!("{} Identical", Glyph::Ok.as_str())
+            } else {
+                format!("{} Conflict", Glyph::Warning.as_str())
+            };
             let status_color = if dup.is_identical { CATPPUCCIN.green } else { CATPPUCCIN.yellow };
             let computer_res = if self.resolution.add_second_computer {
                 "Add as Second Computer"

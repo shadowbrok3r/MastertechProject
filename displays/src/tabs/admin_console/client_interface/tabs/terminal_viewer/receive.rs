@@ -60,12 +60,14 @@ impl RemoteTerminal {
                     current_area
                 );
 
-                if tx.send((frame_index, resized_buffer)).is_err() {
-                    log::warn!("Failed to send buffer to UI thread");
+                // Dropping a frame when the queue is full is preferable to
+                // retaining a multi-MiB buffer the viewer may never read.
+                if tx.try_send((frame_index, resized_buffer)).is_err() {
+                    log::debug!("Dropped terminal buffer: queue full or disconnected");
                     return;
                 }
             }
-            Err(e) => log::warn!("Error decoding message: {e:?}"),
+            Err(e) => log::debug!("Error decoding message: {e:?}"),
         }
     }
 }

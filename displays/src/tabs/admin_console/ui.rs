@@ -11,7 +11,7 @@ use super::ClientUiAction;
 use super::SessionLayout;
 use crate::get_database_users;
 use crate::ui_tools::{icons, theme};
-use crate::{PlatformSpawner, Spawner};
+use crate::Spawner;
 use log::info;
 
 use super::{AdminConsole, RightPanel};

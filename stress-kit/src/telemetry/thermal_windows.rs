@@ -40,6 +40,7 @@ const MIN_PLAUSIBLE_C: f32 = -10.0;
 const MAX_PLAUSIBLE_C: f32 = 200.0;
 
 #[derive(Deserialize, Debug, Clone)]
+#[serde(rename = "MSAcpi_ThermalZoneTemperature")]
 #[serde(rename_all = "PascalCase")]
 #[allow(dead_code)]
 struct MsAcpiThermalZone {
@@ -116,7 +117,7 @@ fn read_zones(wmi: &WMIConnection) -> Vec<ThermalReading> {
     let zones: Vec<MsAcpiThermalZone> = match wmi.query() {
         Ok(z) => z,
         Err(e) => {
-            log::trace!("stress-kit/thermal: WMI query failed: {e}");
+            log::warn!("stress-kit/thermal: MSAcpi_ThermalZoneTemperature query failed: {e}");
             return Vec::new();
         }
     };

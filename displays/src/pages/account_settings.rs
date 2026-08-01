@@ -1,5 +1,5 @@
 #![allow(deprecated)]
-use eframe::egui::{vec2, Align, Button, CentralPanel, Color32, ComboBox, Context, Direction, FontId, Frame, Id, InnerResponse, Key, Layout, PopupCloseBehavior, Rect, RichText, ScrollArea, TextEdit, Ui, UiBuilder, Vec2, Widget};
+use eframe::egui::{vec2, Align, Button, CentralPanel, Color32, ComboBox, Direction, FontId, Frame, Id, InnerResponse, Key, Layout, PopupCloseBehavior, Rect, RichText, ScrollArea, TextEdit, Ui, UiBuilder, Vec2, Widget};
 use database::{schema::{McpSettings, SortDirection, Status, Store, User}, DatabaseSelection, PlatformSpawner, Spawner, SurrealValue, db};
 use crate::{app_state::{AppState, MainPages, SharedContext}, tabs::tasks::task_layout::{SortField, SortOptions}, ui_tools::icons};
 use egui_extras::{Size, StripBuilder};

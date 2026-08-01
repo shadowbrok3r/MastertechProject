@@ -83,7 +83,6 @@ impl RowCodec<RegistryValueEntry> for RegistryValueCodec {
 #[derive(Clone)]
 struct RegistryTreeNode {
     name: String,
-    full_path: String,
     children_loaded: bool,
     children: Vec<String>,
     subkey_count: u32,
@@ -93,7 +92,6 @@ pub struct RegistryEditor {
     pub values_table: DataTable<RegistryValueEntry>,
     pub values_viewer: RegistryValueRowViewer,
     pub action_rx: Receiver<RegistryAction>,
-    action_tx: Sender<RegistryAction>,
 
     tree_nodes: BTreeMap<String, RegistryTreeNode>,
     expanded: BTreeSet<String>,
@@ -136,7 +134,7 @@ impl RegistryEditor {
     pub fn new() -> Self {
         let (action_tx, action_rx) = crossbeam::channel::unbounded();
         let mut viewer = RegistryValueRowViewer::default();
-        viewer.action_tx = Some(action_tx.clone());
+        viewer.action_tx = Some(action_tx);
 
         let hives = vec![
             ("HKEY_LOCAL_MACHINE", "HKLM"),
@@ -154,7 +152,6 @@ impl RegistryEditor {
                 full.to_string(),
                 RegistryTreeNode {
                     name: format!("{} ({})", short, full),
-                    full_path: full.to_string(),
                     children_loaded: false,
                     children: Vec::new(),
                     subkey_count: 0,
@@ -166,7 +163,6 @@ impl RegistryEditor {
             "ROOT".to_string(),
             RegistryTreeNode {
                 name: "Computer".to_string(),
-                full_path: "ROOT".to_string(),
                 children_loaded: true,
                 children: root_children,
                 subkey_count: 5,
@@ -180,7 +176,6 @@ impl RegistryEditor {
             values_table: DataTable::new(),
             values_viewer: viewer,
             action_rx,
-            action_tx,
             tree_nodes,
             expanded,
             selected_key: String::new(),
@@ -212,7 +207,6 @@ impl RegistryEditor {
         for key in &subkeys {
             self.tree_nodes.entry(key.path.clone()).or_insert_with(|| RegistryTreeNode {
                 name: key.name.clone(),
-                full_path: key.path.clone(),
                 children_loaded: false,
                 children: Vec::new(),
                 subkey_count: key.subkey_count,
@@ -486,7 +480,7 @@ impl RegistryEditor {
             .default_size(280.)
             .min_size(200.)
             .max_size(500.)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.label(RichText::new("Registry Keys").strong().color(Color32::LIGHT_GRAY));
                 ui.separator();
 
@@ -522,7 +516,7 @@ impl RegistryEditor {
             });
 
         // Right panel: values
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             if self.selected_key.is_empty() {
                 ui.centered_and_justified(|ui| {
                     ui.label(RichText::new("Select a registry key to view its values").italics().color(Color32::GRAY));

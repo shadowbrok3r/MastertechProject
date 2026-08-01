@@ -87,7 +87,6 @@ pub struct EventLogViewer {
     pub table: DataTable<EventLogEntry>,
     pub viewer: EventLogRowViewer,
     pub action_rx: Receiver<EventLogAction>,
-    action_tx: Sender<EventLogAction>,
     pub loading: bool,
     pub selected_log: String,
     pub max_entries: u32,
@@ -106,13 +105,12 @@ impl EventLogViewer {
     pub fn new() -> Self {
         let (action_tx, action_rx) = crossbeam::channel::unbounded();
         let mut viewer = EventLogRowViewer::default();
-        viewer.action_tx = Some(action_tx.clone());
+        viewer.action_tx = Some(action_tx);
 
         Self {
             table: DataTable::new(),
             viewer,
             action_rx,
-            action_tx,
             loading: false,
             selected_log: "System".to_string(),
             max_entries: 200,

@@ -34,6 +34,42 @@ pub mod gpu_stack;
 pub mod scenario;
 pub mod telemetry;
 
+/// Identity of the adapter a GPU stressor actually bound, so a run record can
+/// name the device it certified rather than leaving it unattributed.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AdapterIdentity {
+    pub name: String,
+    pub vendor_id: u32,
+    pub device_id: u32,
+    /// wgpu `DeviceType`: `DiscreteGpu`, `IntegratedGpu`, `Cpu`, …
+    pub device_type: String,
+    pub backend: String,
+    pub driver: String,
+    /// A discrete adapter was requested but a non-discrete one was bound.
+    pub integrated_fallback: bool,
+}
+
+static LAST_ADAPTER: Mutex<Option<AdapterIdentity>> = Mutex::new(None);
+
+/// Adapter bound by the most recent GPU acquisition, or `None` when no GPU
+/// stressor has run in this process.
+pub fn last_selected_adapter() -> Option<AdapterIdentity> {
+    LAST_ADAPTER.lock().ok().and_then(|g| g.clone())
+}
+
+/// Clears the recorded adapter so one run cannot inherit the previous one's.
+pub fn clear_selected_adapter() {
+    if let Ok(mut g) = LAST_ADAPTER.lock() {
+        *g = None;
+    }
+}
+
+pub(crate) fn record_selected_adapter(identity: AdapterIdentity) {
+    if let Ok(mut g) = LAST_ADAPTER.lock() {
+        *g = Some(identity);
+    }
+}
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;

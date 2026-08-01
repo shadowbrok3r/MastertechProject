@@ -186,6 +186,9 @@ pub struct WebSocketClient {
     /// Fleet Intel page: crash-signature intelligence + driver time machine.
     #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
     pub fleet_intel: tabs::fleet_intel_viewer::FleetIntelViewer,
+    /// Crash Dumps page: this machine's crash history, signatures, and verdicts.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+    pub crash_dumps: tabs::crash_dump_viewer::CrashDumpViewer,
     /// "Service Record" page: the matched task's full modal (ticket,
     /// notes, recommendations, diagnostics, history) for this client.
     pub service_record: ServiceRecordViewer,
@@ -216,6 +219,8 @@ impl Drop for WebSocketClient {
         if self.remote_egui_mcp_rx.is_some() {
             crate::plugins::remote_egui_control::hub().unregister(&self.client.connection_string);
         }
+        crate::mcp_tool_log::drop_client(&self.client.connection_string);
+        crate::plugins::remote_script_notify::drop_session(&self.client.connection_string);
     }
 }
 
@@ -370,6 +375,8 @@ Get-WmiObject")
             mcp_tool_log_viewer: McpToolLogViewer::new(),
             #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
             fleet_intel: tabs::fleet_intel_viewer::FleetIntelViewer::new(),
+            #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+            crash_dumps: tabs::crash_dump_viewer::CrashDumpViewer::new(),
             service_record: ServiceRecordViewer::new(),
             home_page: HomePage::new(),
             egui_viewer_active: false,
@@ -490,7 +497,7 @@ Get-WmiObject")
                     let mut v = vec![tag];
                     v.extend(ser);
                     if loud {
-                        log::error!(
+                        log::debug!(
                             target: "egui_remote",
                             "[admin_ws_popout] send {:?} ({} bytes)",
                             input_ev,

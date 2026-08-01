@@ -1,9 +1,6 @@
-mod colors;
-mod catpuccin;
 mod color_cycle;
-mod theme;
+mod glyphs;
 
 pub use color_cycle::*;
-pub use catpuccin::*;
-pub use colors::*;
-pub use theme::*;
+pub use glyphs::*;
+pub use displays::ui_tools::tui_theme::*;

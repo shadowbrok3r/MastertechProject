@@ -47,11 +47,11 @@ impl Machine {
         let mut cards = Vec::new();
         let nvml = &self.nvml;
         for n in 0..nvml.device_count()? {
-            let device = nvml.device_by_index(n)? ;
+            let Ok(device) = nvml.device_by_index(n) else { continue };
             cards.push(GraphicsCard{
-                id: device.uuid()?,
-                name: device.name()?,
-                brand: match device.brand()? {
+                id: device.uuid().unwrap_or_default(),
+                name: device.name().unwrap_or_default(),
+                brand: match device.brand().unwrap_or(nvml_wrapper::enum_wrappers::device::Brand::Unknown) {
                     nvml_wrapper::enum_wrappers::device::Brand::GeForce => "GeForce".to_string(),
                     nvml_wrapper::enum_wrappers::device::Brand::Quadro => "Quadro".to_string(),
                     nvml_wrapper::enum_wrappers::device::Brand::Tesla => "Tesla".to_string(),
@@ -65,12 +65,14 @@ impl Machine {
                     nvml_wrapper::enum_wrappers::device::Brand::TitanRTX => "TitanRTX".to_string(),
                     _ => "Unknown/VPC/VPW".to_string()
                 },
-                memory: device.memory_info()?.total,
-                temperature: device.temperature(nvml_wrapper::enum_wrappers::device::TemperatureSensor::Gpu)?,
+                memory: device.memory_info().map(|m| m.total).unwrap_or(0),
+                temperature: device
+                    .temperature(nvml_wrapper::enum_wrappers::device::TemperatureSensor::Gpu)
+                    .unwrap_or(0),
                 nvidia_info: NvidiaInfo {
-                    driver_version: nvml.sys_driver_version().unwrap(),
-                    nvml_version: nvml.sys_nvml_version().unwrap(),
-                    cuda_version: nvml.sys_cuda_driver_version().unwrap()
+                    driver_version: nvml.sys_driver_version().unwrap_or_default(),
+                    nvml_version: nvml.sys_nvml_version().unwrap_or_default(),
+                    cuda_version: nvml.sys_cuda_driver_version().unwrap_or_default()
                 }
             });
         }
@@ -87,7 +89,7 @@ impl Machine {
         let mut cards = Vec::new();
         let nvml = &self.nvml;
         for n in 0..nvml.device_count()? {
-            let device = nvml.device_by_index(n)?;
+            let Ok(device) = nvml.device_by_index(n) else { continue };
             let mut processes = Vec::new();
             let stats = device.process_utilization_stats(None);
             if stats.is_ok() {
@@ -102,14 +104,20 @@ impl Machine {
                 }
             }
 
+            // Per-metric queries degrade individually: GeForce parts answer
+            // NotSupported for encoder/decoder utilization, and one miss must
+            // not drop the card or the whole sysinfo payload.
+            let util = device.utilization_rates().ok();
             cards.push(GraphicsUsage {
-                id: device.uuid()?,
-                memory_used: device.memory_info()?.used,
-                encoder: device.encoder_utilization()?.utilization,
-                decoder: device.decoder_utilization()?.utilization,
-                gpu: device.utilization_rates()?.gpu,
-                memory_usage: device.utilization_rates()?.memory,
-                temperature: device.temperature(TemperatureSensor::Gpu)?,
+                id: device.uuid().unwrap_or_default(),
+                memory_used: device.memory_info().map(|m| m.used).unwrap_or(0),
+                encoder: device.encoder_utilization().map(|u| u.utilization).unwrap_or(0),
+                decoder: device.decoder_utilization().map(|u| u.utilization).unwrap_or(0),
+                gpu: util.as_ref().map(|u| u.gpu).unwrap_or(0),
+                memory_usage: util.as_ref().map(|u| u.memory).unwrap_or(0),
+                temperature: device
+                    .temperature(TemperatureSensor::Gpu)
+                    .unwrap_or(0),
                 processes
             });
         }

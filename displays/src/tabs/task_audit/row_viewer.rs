@@ -1,9 +1,9 @@
 use crate::{channel_manager::ChannelManager, chats::ChatView, Spawner};
 use crate::ui_tools::{icons, theme};
 use eframe::egui::{Color32, ComboBox, Hyperlink, Id, Label, Widget};
-use database::schema::{Store, TaskNotePayload, User, LiveTaskPayload, helper_traits::parse_email_user, prestashop::{Prestashop, OrderState}, prestashop_schema::{Employee, MissedCallOrder, PrestashopPayload}};
+use database::schema::{Store, TaskNotePayload, User, LiveTaskPayload, helper_traits::parse_email_user, prestashop::{OrderState}, prestashop_schema::{Employee, MissedCallOrder, PrestashopPayload}};
 use std::collections::HashMap;
-use database::schema::prestashop::xml::{modify_xml, remove_xml_tag};
+use database::schema::prestashop::order_write;
 use database::xidax_order_url;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use egui_data_table::{viewer::RowCodec, RowViewer};
@@ -22,6 +22,31 @@ pub enum RowFieldUpdate {
     SplitRep { order_id: String, employee: Option<Employee> },
 }
 
+impl RowFieldUpdate {
+    pub fn order_id(&self) -> &str {
+        match self {
+            Self::Status { order_id, .. }
+            | Self::SalesRep { order_id, .. }
+            | Self::SplitRep { order_id, .. } => order_id,
+        }
+    }
+
+    /// Table column the field is rendered in.
+    pub fn column(&self) -> usize {
+        match self {
+            Self::Status { .. } => 3,
+            Self::SalesRep { .. } => 4,
+            Self::SplitRep { .. } => 5,
+        }
+    }
+}
+
+/// A rejected Prestashop write, carrying the value the table must be restored to.
+pub struct WriteFailure {
+    pub revert: RowFieldUpdate,
+    pub message: String,
+}
+
 #[derive(serde::Serialize)]
 pub struct TaskRowViewer {
     pub filter: String,
@@ -37,6 +62,11 @@ pub struct TaskRowViewer {
     pub create_task_channel: (Sender<PrestashopPayload>, Receiver<PrestashopPayload>),
     #[serde(skip)]
     pub field_update_channel: (Sender<RowFieldUpdate>, Receiver<RowFieldUpdate>),
+    #[serde(skip)]
+    pub write_failure_channel: (Sender<WriteFailure>, Receiver<WriteFailure>),
+    /// Order id -> (column, message) for the last rejected write.
+    #[serde(skip)]
+    pub write_errors: HashMap<String, (usize, String)>,
     #[serde(skip)]
     pub note_created_channel: (Sender<String>, Receiver<String>),
     pub missed_calls: Vec<MissedCallOrder>,
@@ -56,6 +86,7 @@ impl Default for TaskRowViewer {
         let tur_channel = PrestashopPayload::create_unbounded_channel();
         let create_task_channel = PrestashopPayload::create_unbounded_channel();
         let field_update_channel = crossbeam::channel::unbounded();
+        let write_failure_channel = crossbeam::channel::unbounded();
         let note_created_channel = crossbeam::channel::unbounded();
         let open_task_channel = crossbeam::channel::unbounded();
         Self {
@@ -63,6 +94,8 @@ impl Default for TaskRowViewer {
             tur_channel,
             create_task_channel,
             field_update_channel,
+            write_failure_channel,
+            write_errors: HashMap::new(),
             note_created_channel,
             open_task_channel,
             existing_tasks: HashMap::new(),
@@ -80,6 +113,17 @@ impl Default for TaskRowViewer {
 }
 
 impl TaskRowViewer {
+    /// Marks a rejected write in the cell it originated from.
+    fn show_write_error(&self, ui: &mut eframe::egui::Ui, order_id: &str, column: usize) {
+        if let Some((failed_column, message)) = self.write_errors.get(order_id) {
+            if *failed_column == column {
+                let color = ui.style().visuals.error_fg_color;
+                ui.label(icons::icon_colored(icons::STATUS_WARN, color))
+                    .on_hover_text(format!("Prestashop rejected this change, value reverted:\n{message}"));
+            }
+        }
+    }
+
     /// Rebuilds the service-number to task lookup from the task list.
     pub fn sync_existing_tasks(&mut self, tasks: &[LiveTaskPayload]) {
         self.existing_tasks.clear();
@@ -194,28 +238,38 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                 let current_state = &row.order.current_state;
                 let current_display = OrderState::from_id_str(current_state);
                 let order_id = row.order.id.clone();
-                
-                ComboBox::from_id_salt(Id::new(format!("status_{}", order_id)))
-                    .selected_text(current_display)
-                    .width(100.)
-                    .show_ui(ui, |ui| {
-                        for state in [OrderState::CheckinShelf, OrderState::InRepair, OrderState::DoneShelf] {
-                            let is_current = state.to_id_str() == current_state;
-                            if ui.selectable_label(is_current, state.as_str()).clicked() && !is_current {
-                                // Only update if selecting a different status
-                                let new_state = state.to_id_str().to_string();
-                                let order_id_clone = order_id.clone();
-                                log::info!("Status changed for order: {order_id_clone}, new_state: {new_state}");
-                                let _ = self.field_update_channel.0.try_send(RowFieldUpdate::Status {
-                                    order_id: order_id.clone(),
-                                    new_state: new_state.clone(),
-                                });
-                                PlatformSpawner::spawn(async move {
-                                    update_order_field(&order_id_clone, "current_state", &new_state).await;
-                                });
+                let previous_state = current_state.clone();
+
+                ui.horizontal(|ui| {
+                    ComboBox::from_id_salt(Id::new(format!("status_{}", order_id)))
+                        .selected_text(current_display)
+                        .width(100.)
+                        .show_ui(ui, |ui| {
+                            for state in [OrderState::CheckinShelf, OrderState::InRepair, OrderState::DoneShelf] {
+                                let is_current = state.to_id_str() == current_state;
+                                if ui.selectable_label(is_current, state.as_str()).clicked() {
+                                    let new_state = state.to_id_str().to_string();
+                                    log::info!("Status changed for order: {order_id}, new_state: {new_state}");
+                                    self.write_errors.remove(&order_id);
+                                    let _ = self.field_update_channel.0.try_send(RowFieldUpdate::Status {
+                                        order_id: order_id.clone(),
+                                        new_state: new_state.clone(),
+                                    });
+                                    spawn_field_write(
+                                        order_id.clone(),
+                                        "current_state",
+                                        new_state,
+                                        RowFieldUpdate::Status {
+                                            order_id: order_id.clone(),
+                                            new_state: previous_state.clone(),
+                                        },
+                                        self.write_failure_channel.0.clone(),
+                                    );
+                                }
                             }
-                        }
-                    });
+                        });
+                    self.show_write_error(ui, &order_id, column);
+                });
             },
             4 => {
                 // Sales Rep ComboBox
@@ -227,50 +281,67 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                 
                 // Check if current is the checkin shelf employee (id 1347)
                 let is_checkin_shelf = current_emp_id == "1347";
-                
-                ComboBox::from_id_salt(Id::new(format!("sales_rep_{}", order_id)))
-                    .selected_text(current_name)
-                    .width(100.)
-                    .height(200.)
-                    .show_ui(ui, |ui| {
-                        // Add CheckinShelf option to put back on checkin shelf
-                        if ui.selectable_label(is_checkin_shelf, "Check-in Shelf").clicked() && !is_checkin_shelf {
-                            let order_id_clone = order_id.clone();
-                            log::info!("Sales Rep changed to Check-in Shelf for order: {}", order_id_clone);
-                            let _ = self.field_update_channel.0.try_send(RowFieldUpdate::SalesRep {
-                                order_id: order_id.clone(),
-                                employee: Employee { id: "1347".to_string(), email: "Check-in Shelf".to_string(), ..Default::default() },
-                            });
-                            PlatformSpawner::spawn(async move {
-                                update_order_field(&order_id_clone, "id_employee_sales_rep", "1347").await;
-                            });
-                        }
-                        ui.separator();
-                        for user in users.iter().filter(|u| u.is_active()) {
-                            let user_emp_id = user.get_employee_id().map(|id| id.to_string()).unwrap_or_default();
-                            let is_selected = user_emp_id == current_emp_id;
-                            if ui.selectable_label(is_selected, user.get_username()).clicked() && !is_selected {
-                                // Only update if selecting a different employee
-                                if let Some(emp_id) = user.get_employee_id() {
-                                    let order_id_clone = order_id.clone();
-                                    let emp_id_str = emp_id.to_string();
-                                    log::info!("Sales Rep changed for order: {order_id_clone}, new emp_id: {emp_id_str}");
-                                    let _ = self.field_update_channel.0.try_send(RowFieldUpdate::SalesRep {
+                let previous_rep = current_emp.clone();
+
+                ui.horizontal(|ui| {
+                    ComboBox::from_id_salt(Id::new(format!("sales_rep_{}", order_id)))
+                        .selected_text(current_name)
+                        .width(100.)
+                        .height(200.)
+                        .show_ui(ui, |ui| {
+                            // Add CheckinShelf option to put back on checkin shelf
+                            if ui.selectable_label(is_checkin_shelf, "Check-in Shelf").clicked() {
+                                log::info!("Sales Rep changed to Check-in Shelf for order: {order_id}");
+                                self.write_errors.remove(&order_id);
+                                let _ = self.field_update_channel.0.try_send(RowFieldUpdate::SalesRep {
+                                    order_id: order_id.clone(),
+                                    employee: Employee { id: "1347".to_string(), email: "Check-in Shelf".to_string(), ..Default::default() },
+                                });
+                                spawn_field_write(
+                                    order_id.clone(),
+                                    "id_employee_sales_rep",
+                                    "1347".to_string(),
+                                    RowFieldUpdate::SalesRep {
                                         order_id: order_id.clone(),
-                                        employee: Employee {
-                                            id: emp_id_str.clone(),
-                                            email: user.get_email().to_string(),
-                                            firstname: user.get_username().to_string(),
-                                            ..Default::default()
-                                        },
-                                    });
-                                    PlatformSpawner::spawn(async move {
-                                        update_order_field(&order_id_clone, "id_employee_sales_rep", &emp_id_str).await;
-                                    });
+                                        employee: previous_rep.clone(),
+                                    },
+                                    self.write_failure_channel.0.clone(),
+                                );
+                            }
+                            ui.separator();
+                            for user in users.iter().filter(|u| u.is_active()) {
+                                let user_emp_id = user.get_employee_id().map(|id| id.to_string()).unwrap_or_default();
+                                let is_selected = user_emp_id == current_emp_id;
+                                if ui.selectable_label(is_selected, user.get_username()).clicked() {
+                                    if let Some(emp_id) = user.get_employee_id() {
+                                        let emp_id_str = emp_id.to_string();
+                                        log::info!("Sales Rep changed for order: {order_id}, new emp_id: {emp_id_str}");
+                                        self.write_errors.remove(&order_id);
+                                        let _ = self.field_update_channel.0.try_send(RowFieldUpdate::SalesRep {
+                                            order_id: order_id.clone(),
+                                            employee: Employee {
+                                                id: emp_id_str.clone(),
+                                                email: user.get_email().to_string(),
+                                                firstname: user.get_username().to_string(),
+                                                ..Default::default()
+                                            },
+                                        });
+                                        spawn_field_write(
+                                            order_id.clone(),
+                                            "id_employee_sales_rep",
+                                            emp_id_str,
+                                            RowFieldUpdate::SalesRep {
+                                                order_id: order_id.clone(),
+                                                employee: previous_rep.clone(),
+                                            },
+                                            self.write_failure_channel.0.clone(),
+                                        );
+                                    }
                                 }
                             }
-                        }
-                    });
+                        });
+                    self.show_write_error(ui, &order_id, column);
+                });
             },
             5 => {
                 // Split Rep ComboBox
@@ -282,50 +353,67 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                 
                 // Check if current is empty/none
                 let is_none = current_emp_id.is_empty();
-                
-                ComboBox::from_id_salt(Id::new(format!("split_rep_{}", order_id)))
-                    .selected_text(current_name)
-                    .width(100.)
-                    .height(200.)
-                    .show_ui(ui, |ui| {
-                        // Add option to clear split rep
-                        if ui.selectable_label(is_none, "None").clicked() && !is_none {
-                            let order_id_clone = order_id.clone();
-                            log::info!("Split Rep cleared for order: {order_id_clone}");
-                            let _ = self.field_update_channel.0.try_send(RowFieldUpdate::SplitRep {
-                                order_id: order_id.clone(),
-                                employee: None,
-                            });
-                            PlatformSpawner::spawn(async move {
-                                update_order_field(&order_id_clone, "id_employee_split_rep", "").await;
-                            });
-                        }
-                        ui.separator();
-                        for user in users.iter().filter(|u| u.is_active()) {
-                            let user_emp_id = user.get_employee_id().map(|id| id.to_string()).unwrap_or_default();
-                            let is_selected = user_emp_id == current_emp_id;
-                            if ui.selectable_label(is_selected, user.get_username()).clicked() && !is_selected {
-                                // Only update if selecting a different employee
-                                if let Some(emp_id) = user.get_employee_id() {
-                                    let order_id_clone = order_id.clone();
-                                    let emp_id_str = emp_id.to_string();
-                                    log::info!("Split Rep changed for order: {order_id_clone}, new emp_id: {emp_id_str}");
-                                    let _ = self.field_update_channel.0.try_send(RowFieldUpdate::SplitRep {
+                let previous_split = row.split_rep.clone();
+
+                ui.horizontal(|ui| {
+                    ComboBox::from_id_salt(Id::new(format!("split_rep_{}", order_id)))
+                        .selected_text(current_name)
+                        .width(100.)
+                        .height(200.)
+                        .show_ui(ui, |ui| {
+                            // Add option to clear split rep
+                            if ui.selectable_label(is_none, "None").clicked() {
+                                log::info!("Split Rep cleared for order: {order_id}");
+                                self.write_errors.remove(&order_id);
+                                let _ = self.field_update_channel.0.try_send(RowFieldUpdate::SplitRep {
+                                    order_id: order_id.clone(),
+                                    employee: None,
+                                });
+                                spawn_field_write(
+                                    order_id.clone(),
+                                    "id_employee_split_rep",
+                                    "0".to_string(),
+                                    RowFieldUpdate::SplitRep {
                                         order_id: order_id.clone(),
-                                        employee: Some(Employee {
-                                            id: emp_id_str.clone(),
-                                            email: user.get_email().to_string(),
-                                            firstname: user.get_username().to_string(),
-                                            ..Default::default()
-                                        }),
-                                    });
-                                    PlatformSpawner::spawn(async move {
-                                        update_order_field(&order_id_clone, "id_employee_split_rep", &emp_id_str).await;
-                                    });
+                                        employee: previous_split.clone(),
+                                    },
+                                    self.write_failure_channel.0.clone(),
+                                );
+                            }
+                            ui.separator();
+                            for user in users.iter().filter(|u| u.is_active()) {
+                                let user_emp_id = user.get_employee_id().map(|id| id.to_string()).unwrap_or_default();
+                                let is_selected = user_emp_id == current_emp_id;
+                                if ui.selectable_label(is_selected, user.get_username()).clicked() {
+                                    if let Some(emp_id) = user.get_employee_id() {
+                                        let emp_id_str = emp_id.to_string();
+                                        log::info!("Split Rep changed for order: {order_id}, new emp_id: {emp_id_str}");
+                                        self.write_errors.remove(&order_id);
+                                        let _ = self.field_update_channel.0.try_send(RowFieldUpdate::SplitRep {
+                                            order_id: order_id.clone(),
+                                            employee: Some(Employee {
+                                                id: emp_id_str.clone(),
+                                                email: user.get_email().to_string(),
+                                                firstname: user.get_username().to_string(),
+                                                ..Default::default()
+                                            }),
+                                        });
+                                        spawn_field_write(
+                                            order_id.clone(),
+                                            "id_employee_split_rep",
+                                            emp_id_str,
+                                            RowFieldUpdate::SplitRep {
+                                                order_id: order_id.clone(),
+                                                employee: previous_split.clone(),
+                                            },
+                                            self.write_failure_channel.0.clone(),
+                                        );
+                                    }
                                 }
                             }
-                        }
-                    });
+                        });
+                    self.show_write_error(ui, &order_id, column);
+                });
             },
             6 => {
                 let call = self.missed_calls.iter().find(|o| o.id == row.order.id).cloned();
@@ -504,27 +592,18 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
     fn new_empty_row(&mut self) -> PrestashopPayload { PrestashopPayload::default() }
 }
 
-/// Helper function to update an order field via Prestashop API
-async fn update_order_field(order_id: &str, field: &str, new_value: &str) {
-    let api = Prestashop::default();
-    match api.request_raw_resource_by_id("orders", order_id).await {
-        Ok(xml) => {
-            match modify_xml(&xml, field, new_value) {
-                Ok(new_xml) => {
-                    log::info!("new_xml: {new_xml}");
-                    match remove_xml_tag(&new_xml, "tax_exempt") {
-                        Ok(final_xml) => {
-                            match api.modify_prestashop_order(&final_xml).await {
-                                Ok(_) => info!("Successfully updated {} to {} for order {}", field, new_value, order_id),
-                                Err(e) => log::error!("Error modifying prestashop order: {e:?}"),
-                            }
-                        }
-                        Err(e) => log::error!("Error removing tax_exempt tag: {:?}", e),
-                    }
-                }
-                Err(e) => log::error!("Error modifying XML: {e:?}")
-            }
-        },
-        Err(e) => log::error!("Error getting XML order: {e:?}"),
-    }
+/// Writes one order field through the serialized writer, reverting the table row on failure.
+fn spawn_field_write(
+    order_id: String,
+    field: &'static str,
+    value: String,
+    revert: RowFieldUpdate,
+    failure_tx: Sender<WriteFailure>,
+) {
+    PlatformSpawner::spawn(async move {
+        if let Err(e) = order_write::set_order_field(&order_id, field, &value).await {
+            log::error!("Failed to set {field}={value} on order {order_id}: {e:?}");
+            let _ = failure_tx.try_send(WriteFailure { revert, message: format!("{e}") });
+        }
+    });
 }

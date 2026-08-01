@@ -736,6 +736,12 @@ impl log::Log for EguiLogger {
                 time: chrono::Local::now(),
             });
 
+            // Drop the oldest records in batches so the front-shift cost is
+            // amortized over TRIM_CHUNK pushes instead of paid on every one.
+            if logger.logs.len() > MAX_RETAINED_LOGS + TRIM_CHUNK {
+                drop(logger.logs.drain(..TRIM_CHUNK));
+            }
+
             if !logger.categories.contains_key(record.target()) {
                 logger
                     .categories
@@ -754,6 +760,11 @@ struct Record {
     target: String,
     time: chrono::DateTime<chrono::Local>,
 }
+
+/// Records retained in memory for the Logs tab; older ones are dropped at push.
+const MAX_RETAINED_LOGS: usize = 20_000;
+/// Records dropped per trim once [`MAX_RETAINED_LOGS`] is exceeded.
+const TRIM_CHUNK: usize = 2_048;
 
 struct Logger {
     logs: Vec<Record>,

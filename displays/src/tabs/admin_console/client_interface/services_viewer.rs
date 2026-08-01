@@ -96,7 +96,6 @@ pub struct ServicesViewer {
     pub table: DataTable<WindowsService>,
     pub viewer: ServiceRowViewer,
     pub action_rx: Receiver<ServiceViewerAction>,
-    action_tx: Sender<ServiceViewerAction>,
     pub loading: bool,
     pub entries: Vec<WindowsService>,
     pub status_message: Option<(String, bool)>,
@@ -113,13 +112,12 @@ impl ServicesViewer {
     pub fn new() -> Self {
         let (action_tx, action_rx) = crossbeam::channel::unbounded();
         let mut viewer = ServiceRowViewer::default();
-        viewer.action_tx = Some(action_tx.clone());
+        viewer.action_tx = Some(action_tx);
 
         Self {
             table: DataTable::new(),
             viewer,
             action_rx,
-            action_tx,
             loading: false,
             entries: Vec::new(),
             status_message: None,

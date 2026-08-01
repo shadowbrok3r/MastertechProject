@@ -21,6 +21,22 @@ const FILE_CHUNK_SIZE: usize = 4 * 1024 * 1024;
 /// Stream a file from disk to the master in `FILE_CHUNK_SIZE` chunks over the
 /// bounded file channel. Each `send().await` blocks when the channel is full,
 /// pacing reads to the socket so we never buffer the whole file in RAM.
+/// Newest service order for this client's customer. The console sends an empty
+/// service number when the tech doesn't type one, but connected_client already
+/// carries the customer link, so the number is recoverable from the DB.
+async fn resolve_service_number() -> Option<String> {
+    let customer = crate::filesystem::get_client_hash().customer?;
+    let mut res = db()
+        .query(
+            "SELECT VALUE service_number FROM service_order              WHERE customer = $c ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(("c", customer))
+        .await
+        .ok()?;
+    let nums: Vec<String> = res.take(0).ok()?;
+    nums.into_iter().find(|n| !n.trim().is_empty())
+}
+
 async fn stream_file_download(
     path: &str,
     file_tx: tokio::sync::mpsc::Sender<crate::transport::TcpFrame>,
@@ -475,9 +491,9 @@ fn enumerate_crash_dumps() -> Vec<std::path::PathBuf> {
     out
 }
 
-/// Zip all Windows crash dumps (MEMORY.DMP + Minidump\* + LiveKernelReports\*)
-/// into a temp file, streaming each source through the deflate encoder so a
-/// multi-GB MEMORY.DMP never lands in RAM. Returns the temp zip path.
+/// Zip every crash artifact (MEMORY.DMP + Minidump\* + LiveKernelReports\* +
+/// UE/GPU crash folders under GpuCrashes/) into a temp file, streaming each
+/// source through the deflate encoder. Returns the temp zip path.
 fn build_crash_dump_zip() -> Result<std::path::PathBuf, String> {
     use zip::write::SimpleFileOptions;
     use zip::ZipWriter;
@@ -511,6 +527,9 @@ fn build_crash_dump_zip() -> Result<std::path::PathBuf, String> {
         &mut added,
     );
 
+    // UE/GPU crash folders across every user profile, age- and size-capped.
+    add_ue_crashes_to_zip(&mut zip, options, &mut added);
+
     zip.finish().map_err(|e| e.to_string())?;
     log::info!("Crash-dump zip built with {added} file(s): {}", out_path.display());
     Ok(out_path)
@@ -541,6 +560,174 @@ fn add_dir_to_zip<W: std::io::Write + std::io::Seek>(
             }
         }
     }
+}
+
+/// UE crash folders older than this are not collected.
+const UE_CRASH_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 60 * 60);
+/// Newest UE crash folders collected per machine.
+const UE_CRASH_MAX_FOLDERS: usize = 40;
+/// Total UE-artifact bytes allowed in one archive.
+const UE_CRASH_TOTAL_BUDGET: u64 = 256 * 1024 * 1024;
+/// Per-file cap by tier: crash context, logs, everything else.
+const UE_CRASH_TIER_CAP: [u64; 3] = [4 * 1024 * 1024, 16 * 1024 * 1024, 8 * 1024 * 1024];
+
+/// One Unreal Engine crash folder under a user profile.
+struct UeCrashFolder {
+    path: std::path::PathBuf,
+    user: String,
+    game: String,
+    modified: std::time::SystemTime,
+}
+
+/// Collection tier: 0 = crash context (Aftermath dump, runtime xml,
+/// breadcrumbs), 1 = logs and settings, 2 = everything else.
+fn ue_artifact_tier(file_name: &str) -> usize {
+    let n = file_name.to_ascii_lowercase();
+    if n.ends_with(".nv-gpudmp")
+        || n.ends_with(".runtime-xml")
+        || n.ends_with(".xml")
+        || n.starts_with("breadcrumbs")
+    {
+        0
+    } else if n.ends_with(".log") || n.ends_with(".txt") || n.ends_with(".ini") {
+        1
+    } else {
+        2
+    }
+}
+
+/// Crash folders under `C:\Users\*\AppData\Local\*\Saved\Crashes\*`, newest
+/// first, within `UE_CRASH_MAX_AGE` and capped at `UE_CRASH_MAX_FOLDERS`.
+fn enumerate_ue_crash_folders() -> Vec<UeCrashFolder> {
+    const SKIP_PROFILES: [&str; 4] = ["public", "default", "default user", "all users"];
+    let mut out: Vec<UeCrashFolder> = Vec::new();
+    let Ok(profiles) = std::fs::read_dir(r"C:\Users") else {
+        return out;
+    };
+    for profile in profiles.filter_map(|e| e.ok()) {
+        let user = profile.file_name().to_string_lossy().to_string();
+        if SKIP_PROFILES.contains(&user.to_ascii_lowercase().as_str()) {
+            continue;
+        }
+        let Ok(titles) = std::fs::read_dir(profile.path().join(r"AppData\Local")) else {
+            continue;
+        };
+        for title in titles.filter_map(|e| e.ok()) {
+            let crashes = title.path().join(r"Saved\Crashes");
+            if !crashes.is_dir() {
+                continue;
+            }
+            let game = title.file_name().to_string_lossy().to_string();
+            let Ok(folders) = std::fs::read_dir(&crashes) else {
+                continue;
+            };
+            for folder in folders.filter_map(|e| e.ok()) {
+                let path = folder.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                // Unreadable mtime counts as current so a decisive artifact is
+                // never dropped by the age filter.
+                let modified = folder
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .unwrap_or_else(|_| std::time::SystemTime::now());
+                if modified.elapsed().map(|age| age > UE_CRASH_MAX_AGE).unwrap_or(false) {
+                    continue;
+                }
+                out.push(UeCrashFolder {
+                    path,
+                    user: user.clone(),
+                    game: game.clone(),
+                    modified,
+                });
+            }
+        }
+    }
+    out.sort_by(|a, b| b.modified.cmp(&a.modified));
+    out.truncate(UE_CRASH_MAX_FOLDERS);
+    out
+}
+
+/// Stream UE/GPU crash artifacts into `zip` under
+/// `GpuCrashes/<user>/<game>/<crashfolder>/`. Tier 0 is written for every
+/// folder before any tier 1 or 2 file, so Aftermath dumps and crash contexts
+/// cannot be starved by a large UEMinidump.dmp. Returns bytes written.
+fn add_ue_crashes_to_zip<W: std::io::Write + std::io::Seek>(
+    zip: &mut zip::ZipWriter<W>,
+    options: zip::write::SimpleFileOptions,
+    added: &mut u32,
+) -> u64 {
+    use walkdir::WalkDir;
+
+    let folders = enumerate_ue_crash_folders();
+    if folders.is_empty() {
+        return 0;
+    }
+
+    let mut candidates: Vec<(usize, String, std::path::PathBuf, u64)> = Vec::new();
+    for folder in &folders {
+        let folder_name = folder
+            .path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "crash".to_string());
+        for entry in WalkDir::new(&folder.path).into_iter().filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let Ok(size) = entry.metadata().map(|m| m.len()) else {
+                continue;
+            };
+            let file_name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let tier = ue_artifact_tier(&file_name);
+            if size > UE_CRASH_TIER_CAP[tier] {
+                continue;
+            }
+            let rel = path.strip_prefix(&folder.path).unwrap_or(path);
+            let name = format!(
+                "GpuCrashes/{}/{}/{}/{}",
+                folder.user,
+                folder.game,
+                folder_name,
+                rel.to_string_lossy().replace('\\', "/")
+            );
+            candidates.push((tier, name, path.to_path_buf(), size));
+        }
+    }
+    // Stable sort keeps newest-folder order within each tier.
+    candidates.sort_by_key(|(tier, _, _, _)| *tier);
+
+    let mut written: u64 = 0;
+    let mut over_budget: u32 = 0;
+    for (_, name, path, size) in candidates {
+        if written.saturating_add(size) > UE_CRASH_TOTAL_BUDGET {
+            over_budget += 1;
+            continue;
+        }
+        let Ok(mut f) = std::fs::File::open(&path) else {
+            continue;
+        };
+        if zip.start_file(name, options).is_ok() {
+            match std::io::copy(&mut f, zip) {
+                Ok(n) => {
+                    written += n;
+                    *added += 1;
+                }
+                Err(e) => log::warn!("UE crash artifact copy failed for {}: {e}", path.display()),
+            }
+        }
+    }
+    log::info!(
+        "UE/GPU crash artifacts: {} folder(s), {} MiB written, {over_budget} file(s) over budget",
+        folders.len(),
+        written / (1024 * 1024)
+    );
+    written
 }
 
 /// Resolve special folder paths using Windows API or fallback to environment variables
@@ -2656,6 +2843,19 @@ if (Test-Path $path) {{
             }
 
             Cmd::RunRemoteScripts { scripts, service_number, customer_email, diagnostic_session_id } => {
+                // The console leaves this blank when the tech doesn't type it; the
+                // linkage is already in the DB, so resolve it rather than abort.
+                let service_number = if service_number.trim().is_empty() {
+                    match resolve_service_number().await {
+                        Some(n) => {
+                            log::info!("websockets -> RunRemoteScripts: resolved SO={n} from customer linkage");
+                            n
+                        }
+                        None => service_number,
+                    }
+                } else {
+                    service_number
+                };
                 log::info!("websockets -> RunRemoteScripts: {} scripts, SO={}", scripts.len(), service_number);
 
                 // Spawn the script loop so the TCP session loop can continue
@@ -3274,8 +3474,11 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                                     }
                                 };
                                 let telemetry = Arc::new(TelemetryAgent::start(1000));
-                                std::thread::sleep(std::time::Duration::from_millis(1500));
-                                let include_gpu = !telemetry.snapshot().gpus.is_empty();
+                                // The benchmarks run on wgpu, so ask wgpu. NVML telemetry is
+                                // NVIDIA-only and needs a warm sampler; either miss skips a
+                                // perfectly usable card.
+                                let include_gpu =
+                                    stress_kit::gpu_stack::check_gpu_stack().has_hardware_gpu();
                                 let secs = stress_runner::DEFAULT_BENCH_SECS;
                                 let _ = bench_tx.send(BenchMsg::Log(format!(
                                     "{secs}s per benchmark, gpu kinds {}",
@@ -3627,6 +3830,11 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                 preset_label,
                 notes,
             } => {
+                // Blank from the console: recover it from the customer linkage.
+                let service_number = match service_number {
+                    Some(s) if !s.trim().is_empty() => Some(s),
+                    _ => resolve_service_number().await,
+                };
                 run_remote_stress_plan(
                     self.command_tx.clone(),
                     RemoteStressPlanRequest::Scenario {
@@ -3649,6 +3857,11 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                 preset_label,
                 notes,
             } => {
+                // Blank from the console: recover it from the customer linkage.
+                let service_number = match service_number {
+                    Some(s) if !s.trim().is_empty() => Some(s),
+                    _ => resolve_service_number().await,
+                };
                 run_remote_stress_plan(
                     self.command_tx.clone(),
                     RemoteStressPlanRequest::Concurrent {
@@ -3920,7 +4133,6 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                                 set_open_service_cache(CachedOpenServiceLookup {
                                     match_: Some(match_),
                                     candidates,
-                                    resolved_at: std::time::SystemTime::now(),
                                 });
                             }
                             Err(e) => {
@@ -4038,9 +4250,110 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                 }
             }
 
-            _ => {}
+            // RemoteExec. Every arm answers immediately and never awaits job
+            // completion; the work runs detached and is polled via RemoteJobQuery.
+            Cmd::RemoteExecCapabilities { request_id } => {
+                let caps = crate::remote_exec::capabilities();
+                send_remote_exec_result(sender, request_id, "remote_exec_capabilities", true, serde_json::json!(caps));
+            }
+
+            Cmd::RemoteControlArm {
+                request_id,
+                session_id,
+                tech,
+                diagnostic_session_id,
+                reason,
+                ttl_secs,
+            } => {
+                let status = crate::remote_exec::arm(
+                    session_id,
+                    tech,
+                    diagnostic_session_id,
+                    reason,
+                    ttl_secs,
+                );
+                send_remote_exec_result(sender, request_id, "remote_exec_arm", true, serde_json::json!(status));
+            }
+
+            Cmd::RemoteControlDisarm { request_id, kill_running } => {
+                let status = crate::remote_exec::disarm(kill_running);
+                send_remote_exec_result(sender, request_id, "remote_exec_disarm", true, serde_json::json!(status));
+            }
+
+            Cmd::RemoteJobStart { request_id, job_id, tech, reason, risk, spec } => {
+                match crate::remote_exec::start(job_id, tech, reason, risk, spec) {
+                    Ok(snap) => send_remote_exec_result(
+                        sender, request_id, "remote_exec_start", true, serde_json::json!(snap),
+                    ),
+                    Err(why) => send_remote_exec_result(
+                        sender, request_id, "remote_exec_start", false,
+                        serde_json::json!({ "error": why }),
+                    ),
+                }
+            }
+
+            Cmd::RemoteJobSignal { request_id, job_id, signal } => {
+                match crate::remote_exec::signal(&job_id, signal) {
+                    Ok(snap) => send_remote_exec_result(
+                        sender, request_id, "remote_exec_signal", true, serde_json::json!(snap),
+                    ),
+                    Err(why) => send_remote_exec_result(
+                        sender, request_id, "remote_exec_signal", false,
+                        serde_json::json!({ "error": why }),
+                    ),
+                }
+            }
+
+            Cmd::RemoteJobQuery { request_id, job_id, from_seq, max_bytes } => {
+                let snaps = crate::remote_exec::query(job_id.as_deref(), from_seq, max_bytes);
+                send_remote_exec_result(
+                    sender,
+                    request_id,
+                    "remote_exec_query",
+                    true,
+                    serde_json::json!({ "jobs": snaps, "gate": crate::remote_exec::status() }),
+                );
+            }
+
+            // An unhandled variant used to vanish with no trace, which reads as
+            // a hang to the admin rather than a version mismatch.
+            other => {
+                log::warn!(
+                    "websockets -> unhandled Cmd variant {}; client build may predate the admin",
+                    cmd_variant_name(&other)
+                );
+            }
         }
     }
+}
+
+/// Reply to a RemoteExec command over the existing result envelope.
+fn send_remote_exec_result(
+    sender: &mut ClientTransport,
+    request_id: String,
+    tool_name: &str,
+    success: bool,
+    payload: serde_json::Value,
+) {
+    let result_cmd = Cmd::RemotePluginToolResult {
+        request_id,
+        plugin_id: displays::remote_exec::NATIVE_REMOTE_EXEC_PLUGIN_ID.to_string(),
+        tool_name: tool_name.to_string(),
+        success,
+        result_json: payload.to_string(),
+    };
+    if let Ok(bytes) = encode_to_vec(&result_cmd, standard()) {
+        sender.send(WsMessage::Binary(bytes));
+    }
+}
+
+/// Variant name only — never the payload, which can carry customer data.
+fn cmd_variant_name(cmd: &Cmd) -> String {
+    format!("{cmd:?}")
+        .split(|c: char| c == ' ' || c == '(' || c == '{')
+        .next()
+        .unwrap_or("unknown")
+        .to_string()
 }
 
 /// Convert HBITMAP to PNG bytes (Windows only)

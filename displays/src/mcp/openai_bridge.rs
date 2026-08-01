@@ -63,7 +63,8 @@ impl OpenAiMcpSession {
         })
     }
 
-    /// Stream command completions using Chat Completions API with streaming (Gemini-compatible).
+    /// Stream command completions from the Responses API, emitting suggestions as
+    /// soon as each object in the model's JSON array closes.
     pub async fn stream_command_completions(
         &self,
         partial: &str,
@@ -121,15 +122,13 @@ impl OpenAiMcpSession {
         };
 
         let api_base = effective_api_base();
-        let url = format!("{}/chat/completions", api_base.trim_end_matches('/'));
+        let url = format!("{}/responses", api_base.trim_end_matches('/'));
         let api_key = effective_api_key();
         if api_key.is_empty() { log::warn!("No OpenAI/Gemini API key set – streaming will fail"); }
 
         let request_body = serde_json::json!({
             "model": self.model,
-            "messages": [
-                { "role": "user", "content": prompt }
-            ],
+            "input": prompt,
             "stream": true,
             "temperature": 0.2,
             "response_mime_type": "application/json",
@@ -155,13 +154,6 @@ impl OpenAiMcpSession {
             log::error!("Chat completions streaming HTTP error {} body={} partial='{}'", status, err_text, partial);
             return Ok(());
         }
-
-        #[derive(Debug, serde::Deserialize)]
-        struct SseDelta { content: Option<String> }
-        #[derive(Debug, serde::Deserialize)]
-        struct SseChoice { delta: Option<SseDelta>, finish_reason: Option<String> }
-        #[derive(Debug, serde::Deserialize)]
-        struct SseChunk { choices: Option<Vec<SseChoice>> }
 
         let mut sse = resp.bytes_stream();
         let mut json_buffer = String::new();
@@ -243,21 +235,25 @@ impl OpenAiMcpSession {
                 let payload = line.strip_prefix("data:").unwrap().trim();
                 if payload.is_empty() { continue; }
                 if payload == "[DONE]" { break; }
-                match serde_json::from_str::<SseChunk>(payload) {
-                    Ok(chunk) => {
-                        if let Some(choices) = chunk.choices {
-                            for choice in choices {
-                                if let Some(delta) = choice.delta {
-                                    if let Some(content) = delta.content {
-                                        json_buffer.push_str(&content);
-                                        try_emit_partial(self, &json_buffer, &mut last_emitted_count, &progress_tx, &mut emitted);
-                                    }
+                match serde_json::from_str::<serde_json::Value>(payload) {
+                    Ok(event) => {
+                        match event["type"].as_str() {
+                            // Both documented spellings of the text delta event.
+                            Some("response.output_text.delta") | Some("response.content_part.delta") => {
+                                let delta = event["delta"].as_str().or_else(|| event["delta"]["text"].as_str());
+                                if let Some(content) = delta {
+                                    json_buffer.push_str(content);
+                                    try_emit_partial(self, &json_buffer, &mut last_emitted_count, &progress_tx, &mut emitted);
                                 }
-                                if choice.finish_reason.is_some() && !emitted {
+                            }
+                            Some("response.completed") | Some("response.done") | Some("response.failed")
+                            | Some("response.incomplete") => {
+                                if !emitted {
                                     let _ = self.process_suggestions_json(&json_buffer, progress_tx.clone());
                                     emitted = true;
                                 }
                             }
+                            _ => {}
                         }
                         if !emitted && json_buffer.contains("\"suggestions\"") && json_buffer.trim_end().ends_with('}') {
                             if self.process_suggestions_json(&json_buffer, progress_tx.clone()).is_ok() { emitted = true; }

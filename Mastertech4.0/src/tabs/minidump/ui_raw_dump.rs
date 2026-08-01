@@ -29,10 +29,10 @@ impl MiniDumpApp {
     fn ui_raw_dump_good(&mut self, ui: &mut Ui, dump: &Minidump<Mmap>) {
         eframe::egui::Panel::left("streams")
             .frame(Frame::new())
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 self.ui_raw_dump_streams(ui, dump);
             });
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 if self.raw_dump_ui_state.cur_stream == 0 {
                     self.ui_raw_dump_top_level(ui, dump);

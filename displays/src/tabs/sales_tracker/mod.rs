@@ -91,7 +91,7 @@ impl Default for SalesTracker {
 
 impl SalesTracker {
 	pub fn ui(&mut self, ui: &mut Ui) {
-		eframe::egui::Panel::top("SalesTopPanel").show_inside(ui, |ui| {
+		eframe::egui::Panel::top("SalesTopPanel").show(ui, |ui| {
 			ui.horizontal(|ui| {
 				// search box
 				TextEdit::singleline(&mut self.viewer.filter)
@@ -150,7 +150,7 @@ impl SalesTracker {
 		});
 
 		// summary footer
-		eframe::egui::Panel::bottom("SalesBottom").show_inside(ui, |ui| {
+		eframe::egui::Panel::bottom("SalesBottom").show(ui, |ui| {
 			ui.columns(9, |ui| {
 				let uid = self.user.get_employee_id().map(|id| id.to_string()).unwrap_or_default();
 				let my_orders = self.orders.get(&uid).cloned().unwrap_or_default();
@@ -216,7 +216,7 @@ impl SalesTracker {
 		};
 		self.viewer.date_label = date_label.to_string();
 
-		CentralPanel::default().show_inside(ui, |ui| {
+		CentralPanel::default().show(ui, |ui| {
 			ui.group(|ui| {
 				Renderer::new(&mut self.table, &mut self.viewer)
                     .with_style_modify(|s| {

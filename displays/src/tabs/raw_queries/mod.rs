@@ -36,7 +36,7 @@ impl Default for QueryEditor {
 impl QueryEditor {
     pub fn ui(&mut self, ui: &mut Ui) {
         eframe::egui::Panel::bottom("query_editor_top")
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     FileViewer::default()
                         .id_source("Script Editor")
@@ -63,7 +63,7 @@ impl QueryEditor {
             });
 
             CentralPanel::default()
-                .show_inside(ui, |ui| {
+                .show(ui, |ui| {
                     ui.vertical_centered(|ui| {
                         ScrollArea::vertical()
                             .auto_shrink([false, true])

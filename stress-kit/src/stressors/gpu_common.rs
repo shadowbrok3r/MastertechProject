@@ -175,6 +175,8 @@ pub(super) struct GpuContext {
     pub health: GpuHealth,
 }
 
+use crate::AdapterIdentity;
+
 /// CPU-backed rasterizers (WARP / Basic Render Driver, llvmpipe, SwiftShader):
 /// they answer wgpu but exercise no GPU.
 fn is_software_adapter(info: &wgpu::AdapterInfo) -> bool {
@@ -283,12 +285,46 @@ impl GpuContext {
 
         let info = adapter.get_info();
         log::info!(
-            "[stress-kit/gpu] selected: {} ({:?}, vendor 0x{:04x}, device 0x{:04x})",
+            "[stress-kit/gpu] selected: {} ({:?}, vendor 0x{:04x}, device 0x{:04x}, {:?})",
             info.name,
             info.backend,
             info.vendor,
-            info.device
+            info.device,
+            info.device_type
         );
+
+        // A discrete card that is live in WMI but absent from wgpu means this
+        // work would land on the iGPU and certify the wrong device.
+        let integrated_fallback =
+            prefer_discrete && !matches!(info.device_type, wgpu::DeviceType::DiscreteGpu);
+        if integrated_fallback {
+            let stack = crate::gpu_stack::check_gpu_stack();
+            if stack.is_broken() {
+                return Err(format!(
+                    "refusing to certify on '{}' ({:?}): a discrete GPU is present but \
+                     invisible to the user-mode stack — {}",
+                    info.name,
+                    info.device_type,
+                    stack.broken.join("; ")
+                ));
+            }
+            log::warn!(
+                "[stress-kit/gpu] no discrete adapter on this machine; running on '{}' ({:?})",
+                info.name,
+                info.device_type
+            );
+        }
+
+        crate::record_selected_adapter(AdapterIdentity {
+            name: info.name.clone(),
+            vendor_id: info.vendor,
+            device_id: info.device,
+            device_type: format!("{:?}", info.device_type),
+            backend: format!("{:?}", info.backend),
+            driver: info.driver.clone(),
+            integrated_fallback,
+        });
+
         let vendor_label = format!(
             "{} / {} (vendor 0x{:04x}, device 0x{:04x})",
             info.name, info.driver, info.vendor, info.device

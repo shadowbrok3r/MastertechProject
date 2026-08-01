@@ -113,7 +113,7 @@ impl ProcessTableViewer {
     pub fn show(&mut self, ui: &mut Ui) {
         eframe::egui::Panel::top("Process Viewer Top Panel")
             .exact_size(30.)
-            .show_inside(ui, |ui| 
+            .show(ui, |ui| 
         {
             ui.horizontal_top(|ui| {
                 TextEdit::singleline(&mut self.process_viewer.filter)
@@ -151,9 +151,10 @@ impl ProcessTableViewer {
             });
         });
 
+        let mut hotkeys_open = self.process_viewer.open_hotkeys;
         eframe::egui::Panel::bottom(Id::new("Task Audit Hot Keys"))
             .max_size(240.)
-            .show_animated_inside(ui, self.process_viewer.open_hotkeys, |ui| 
+            .show_collapsible(ui, &mut hotkeys_open, |ui|
         {
             ui.vertical_centered(|ui| ui.heading("Hotkeys"));
             ui.vertical_centered_justified(|ui| ui.separator());
@@ -181,7 +182,7 @@ impl ProcessTableViewer {
         });
 
         CentralPanel::default()
-            .show_inside(ui, |ui| 
+            .show(ui, |ui| 
         {
             ui.horizontal(|ui| {
                 ui.add_space(10.);

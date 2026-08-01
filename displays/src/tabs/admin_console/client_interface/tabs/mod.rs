@@ -12,3 +12,5 @@ pub mod desktop_viewer;
 pub mod beta_terminal;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub mod fleet_intel_viewer;
+#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+pub mod crash_dump_viewer;

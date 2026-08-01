@@ -3,7 +3,7 @@ use serde::Serialize;
 use crate::{app_state::{AppState, SharedContext}, PlatformSpawner, Spawner};
 use crossbeam::channel::Sender;
 use database::{schema::{Store, User}, Database, SurrealValue};
-use eframe::egui::{Align, Button, CentralPanel, Color32, ComboBox, Context, Direction, FontId, Frame, Layout, RichText, TextEdit, Vec2, Widget};
+use eframe::egui::{Align, Button, CentralPanel, Color32, ComboBox, Direction, FontId, Frame, Layout, RichText, TextEdit, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::{error, info};
 #[cfg(target_arch = "wasm32")]

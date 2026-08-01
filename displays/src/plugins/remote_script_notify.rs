@@ -78,21 +78,44 @@ pub fn notify_deploy_ack(plugin_id: &str, success: bool, message: &str) {
     }
 }
 
+/// Log lines retained per in-flight session; the oldest are dropped past this.
+const MAX_ACCUM_LOGS: usize = 2_000;
+/// Results retained per in-flight session.
+const MAX_ACCUM_RESULTS: usize = 2_000;
+
 /// Called by the admin console's receive handler when a `RemoteScriptLog` message arrives from a client.
 pub fn notify_remote_script_log(conn: &str, msg: String) {
     if let Ok(mut accum) = REMOTE_SCRIPT_ACCUM.lock() {
-        accum.entry(conn.to_string()).or_default().logs.push(msg);
+        let logs = &mut accum.entry(conn.to_string()).or_default().logs;
+        logs.push(msg);
+        if logs.len() > MAX_ACCUM_LOGS {
+            let excess = logs.len() - MAX_ACCUM_LOGS;
+            logs.drain(..excess);
+        }
     }
 }
 
 /// Called by the admin console's receive handler when a `RemoteScriptResult` message arrives.
 pub fn notify_remote_script_result(conn: &str, name: String, status: String) {
     if let Ok(mut accum) = REMOTE_SCRIPT_ACCUM.lock() {
-        accum
-            .entry(conn.to_string())
-            .or_default()
-            .results
-            .push((name, status));
+        let results = &mut accum.entry(conn.to_string()).or_default().results;
+        results.push((name, status));
+        if results.len() > MAX_ACCUM_RESULTS {
+            let excess = results.len() - MAX_ACCUM_RESULTS;
+            results.drain(..excess);
+        }
+    }
+}
+
+/// Drop a client's accumulator when its admin session tears down. Dropping any
+/// pending sender makes its MCP waiter fail fast instead of waiting for a timeout.
+pub fn drop_session(conn: &str) {
+    if let Ok(mut accum) = REMOTE_SCRIPT_ACCUM.lock() {
+        accum.remove(conn);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Ok(mut guard) = REMOTE_SCRIPT_PENDING.lock() {
+        guard.remove(conn);
     }
 }
 

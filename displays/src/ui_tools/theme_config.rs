@@ -326,7 +326,7 @@ impl ThemeConfig {
         };
         eframe::egui::Panel::top("Theme Menu top bar")
         .exact_size(panel_h)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.horizontal(|ui|{
                 let reset = Button::new("Reset to Default")
                     .min_size(Vec2::new(70., 25.))

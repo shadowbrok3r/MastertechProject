@@ -1,5 +1,5 @@
 
-use ratatui::{crossterm::event::KeyCode, layout::{Constraint, Direction, Layout, Margin, Rect}, prelude::Backend, style::{Modifier, Style, Stylize}, widgets::{canvas::{Canvas, Line}, Block, Borders, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation, StatefulWidget, Table, TableState, Widget, WidgetRef, FrameExt}, Frame};
+use ratatui::{crossterm::event::KeyCode, layout::{Constraint, Direction, Layout, Margin, Rect}, prelude::Backend, style::{Modifier, Style, Stylize}, widgets::{canvas::{Canvas, Line}, Block, Borders, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation, StatefulWidget, Table, TableState, Widget}, Frame};
 use crate::terminal_mode::{styling::{CATPPUCCIN, THEME}, widgets::HandleWidget};
 use std::{collections::HashMap, time::Instant};
 use super::SysinfoTab;

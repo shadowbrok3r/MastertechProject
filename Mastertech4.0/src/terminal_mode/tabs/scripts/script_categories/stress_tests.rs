@@ -48,7 +48,9 @@ impl<'a> ScriptsTab<'a> {
         let name = item_text.to_string();
 
         std::thread::spawn(move || {
-            let include_gpu = !telemetry.snapshot().gpus.is_empty();
+            // Gate on the wgpu adapter the benchmarks actually use, not on
+            // NVML telemetry.
+            let include_gpu = stress_kit::gpu_stack::check_gpu_stack().has_hardware_gpu();
             let secs = stress_runner::DEFAULT_BENCH_SECS;
             let _ = log_tx.try_send(format!(
                 "{name}: {secs}s per benchmark, gpu kinds {}",

@@ -386,6 +386,12 @@ impl <'a>TerminalApp<'a> {
         self.event_manager.process_events();
         self.tasks_tab.borrow_mut().check_tasks();
 
+        // Reserved above everything else: painting it is what admits RemoteExec jobs.
+        let (banner_area, area) = crate::remote_exec::banner_tui::split(area);
+        if let Some(banner_area) = banner_area {
+            crate::remote_exec::banner_tui::render(f, banner_area);
+        }
+
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(4), Constraint::Fill(1)]);

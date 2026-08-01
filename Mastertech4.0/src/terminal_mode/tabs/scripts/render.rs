@@ -1,5 +1,5 @@
 use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect}, prelude::Backend, style::{Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget, Wrap}, Frame};
-use crate::terminal_mode::{events::action_handler::WidgetId, fx::effect::animated_border, styling::{CATPPUCCIN, THEME}, tabs::checklist::TodoItem, widgets::{ButtonType, HandleWidget, ShrinkArea}};
+use crate::terminal_mode::{events::action_handler::WidgetId, fx::effect::animated_border, styling::{checkbox, CATPPUCCIN, SCROLL_DOWN, SCROLL_LEFT, SCROLL_RIGHT, SCROLL_THUMB, SCROLL_TRACK_H, SCROLL_TRACK_V, SCROLL_UP, THEME}, tabs::checklist::TodoItem, widgets::{ButtonType, HandleWidget, ShrinkArea}};
 use super::{checklist::Status, ScriptsTab};
 use displays::get_current_user_from_auth;
 use unicode_width::UnicodeWidthStr;
@@ -154,12 +154,12 @@ impl<'a> ScriptsTab<'a> {
             v_scrollbar_state = v_scrollbar_state.position(start_line as usize);
 
             let v_scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalLeft)
-                .begin_symbol(Some("🢁"))
+                .begin_symbol(Some(SCROLL_UP))
                 .track_style(Style::new().fg(THEME.surface))
-                .track_symbol(Some("║║"))
-                .thumb_symbol("⦕⦖")
+                .track_symbol(Some(SCROLL_TRACK_V))
+                .thumb_symbol(SCROLL_THUMB)
                 .thumb_style(Style::new().fg(THEME.accent))
-                .end_symbol(Some("🢃"));
+                .end_symbol(Some(SCROLL_DOWN));
 
             f.render_stateful_widget(
                 v_scrollbar,
@@ -174,12 +174,12 @@ impl<'a> ScriptsTab<'a> {
             h_scrollbar_state = h_scrollbar_state.position(scroll_x as usize);
 
             let h_scrollbar = Scrollbar::new(ScrollbarOrientation::HorizontalBottom)
-                .begin_symbol(Some("⟸"))
+                .begin_symbol(Some(SCROLL_LEFT))
                 .track_style(Style::new().fg(THEME.surface))
-                .track_symbol(Some("⥈"))
-                .thumb_symbol("|⟗|")
+                .track_symbol(Some(SCROLL_TRACK_H))
+                .thumb_symbol(SCROLL_THUMB)
                 .thumb_style(Style::new().fg(THEME.accent))
-                .end_symbol(Some("⟹"));
+                .end_symbol(Some(SCROLL_RIGHT));
             f.render_stateful_widget(
                 h_scrollbar,
                 h_scroll_area,
@@ -239,10 +239,7 @@ impl<'a> ScriptsTab<'a> {
                 );
 
                 for item in &list.items {
-                    let symbol = match item.status {
-                        Status::Completed => "\u{25fc}", // ◼
-                        Status::Todo => "\u{25fb}",       // ◻
-                    };
+                    let symbol = checkbox(item.status == Status::Completed);
 
                     let mut style = match item.status {
                         Status::Completed => Style::default().fg(THEME.accent),
@@ -292,12 +289,12 @@ impl<'a> ScriptsTab<'a> {
         *scroll_state = scroll_state.position(list_state.offset());
 
         let vertical_scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalLeft)
-            .begin_symbol(Some("↑ ↑"))
+            .begin_symbol(Some(SCROLL_UP))
             .track_style(Style::new().fg(THEME.surface))
-            .track_symbol(Some("║ ║"))
-            .thumb_symbol("|▮|")
-            .thumb_style(Style::new().fg(THEME.accent)) // .bg(CATPPUCCIN.base)
-            .end_symbol(Some("↓ ↓"));
+            .track_symbol(Some(SCROLL_TRACK_V))
+            .thumb_symbol(SCROLL_THUMB)
+            .thumb_style(Style::new().fg(THEME.accent))
+            .end_symbol(Some(SCROLL_DOWN));
 
         f.render_stateful_widget(
             vertical_scrollbar, 
@@ -453,10 +450,9 @@ impl<'a> ScriptsTab<'a> {
                 vec![ListItem::new("No Options")],
                 |items| {
                     items.iter().map(|item| {
-                        let (marker, color) = match item.status {
-                            Status::Todo => ("\u{25fb} ", THEME.tertiary),
-                            Status::Completed => ("\u{25fc} ", THEME.accent),
-                        };
+                        let checked = item.status == Status::Completed;
+                        let marker = format!("{} ", checkbox(checked));
+                        let color = THEME.checkbox(checked);
                         ListItem::new(Line::from(vec![
                             Span::styled(marker, Style::new().fg(color)),
                             Span::styled(item.text.clone(), Style::new().fg(THEME.text)),
@@ -974,8 +970,12 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 .position(scroll_offset as usize)
                 .viewport_content_length(viewport_rect.height as usize);
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalLeft)
-                .begin_symbol(Some("↑"))
-                .end_symbol(Some("↓"));
+                .begin_symbol(Some(SCROLL_UP))
+                .track_style(Style::new().fg(THEME.surface))
+                .track_symbol(Some(SCROLL_TRACK_V))
+                .thumb_symbol(SCROLL_THUMB)
+                .thumb_style(Style::new().fg(THEME.accent))
+                .end_symbol(Some(SCROLL_DOWN));
             f.render_stateful_widget(scrollbar, sb_rect, &mut *scroll_state);
         }
 

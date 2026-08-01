@@ -29,7 +29,7 @@ use tokio::{fs, io::{self, AsyncWriteExt}, process::Command};
 #[cfg(target_os = "windows")]
 use crate::utilities::scripts::{
     install_webroot, install_sas, install_supereasybackup, install_program,
-    InstalledProgram, AntiVirusProduct, ScheduledTask, StartupProgram, StartupState,
+    InstalledProgram, AntiVirusProduct, ScheduledTask,
     get_running_processes, check_power_options,
 };
 

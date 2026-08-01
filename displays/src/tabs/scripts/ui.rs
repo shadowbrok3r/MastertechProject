@@ -48,7 +48,6 @@ mod colors {
     pub const RUNNING: Color32 = Color32::from_rgb(249, 226, 175);
     pub const COMPLETED: Color32 = Color32::from_rgb(166, 227, 161);
     pub const FAILED: Color32 = Color32::from_rgb(243, 139, 168);
-    pub const SKIPPED: Color32 = Color32::from_rgb(147, 153, 178);
     
     pub const LOG_INFO: Color32 = Color32::from_rgb(205, 214, 244);
     pub const LOG_SUCCESS: Color32 = Color32::from_rgb(166, 227, 161);

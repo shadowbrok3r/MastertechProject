@@ -1,4 +1,4 @@
-use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent}, layout::{Constraint, Direction, Layout, Position, Rect, Size}, prelude::{Backend, StatefulWidget}, style::{Color, Style}, widgets::{Block, Borders, WidgetRef}, Frame};
+use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent}, layout::{Constraint, Direction, Layout, Position, Rect, Size}, prelude::{Backend, StatefulWidget}, style::Style, widgets::{Block, Borders, WidgetRef}, Frame};
 use crate::terminal_mode::{styling::{CATPPUCCIN, THEME}, widgets::{button::ButtonState, ButtonType, HandleWidget, ShrinkArea, SHORTCUT_SET}};
 use crate::terminal_mode::widgets::tui_scroll_view::ScrollView;
 use super::ServiceFormTab;

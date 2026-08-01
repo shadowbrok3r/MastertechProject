@@ -1,7 +1,7 @@
 use ratatui::{buffer::Buffer, crossterm::event::{KeyCode, KeyModifiers}, layout::{Position, Rect}, style::{Color, Style, Stylize}, text::Line, widgets::{Block, BorderType, Borders, Widget, WidgetRef}};
 use crate::terminal_mode::{events::action_handler::{get_event_sender, WidgetEvent, WidgetId}, styling::{CATPPUCCIN, ThemeRole, THEME}};
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use super::{button::{ButtonState, Theme}, ButtonType};
+use super::{button::ButtonState, ButtonType};
 use super::tui_textarea::{CursorMove, TextArea};
 use std::cell::RefCell;
 use std::time::Instant;
@@ -258,7 +258,6 @@ impl <'a> ButtonType <'a> for InputField <'a> {
         let t = self.theme.resolve();
         match *self.state.borrow() {
             ButtonState::Normal => (t.background, THEME.text_muted, t.shadow, THEME.border_idle()),
-            ButtonState::Selected => (t.background, THEME.text, t.shadow, THEME.tertiary),
             ButtonState::Active => (t.background, THEME.text, t.shadow, THEME.accent),
             ButtonState::Hovered => (t.background, THEME.text, t.shadow, THEME.tertiary),
             ButtonState::AltClicked => (t.background, THEME.text_muted, t.shadow, THEME.border_idle()),

@@ -1,5 +1,5 @@
 use crate::mcp_tool_log::{self, McpToolCallLog, McpToolCallStatus};
-use crate::ui_tools::{icons, theme};
+use crate::ui_tools::icons;
 use crate::{PlatformSpawner, Spawner};
 use eframe::egui::{Align, Button, Color32, Layout, RichText, ScrollArea, TextEdit, Ui, Widget};
 use egui_json_tree::{
@@ -524,23 +524,7 @@ fn json_tree(ui: &mut Ui, id_salt: &str, value: &JsonValue, clicks: &mut Vec<Str
 /// blocks shift presets along with the rest of the admin console
 /// instead of staying on egui_json_tree's hardcoded dark palette.
 fn themed_json_visuals(ui: &Ui) -> JsonTreeVisuals {
-    let mut highlight = theme::accent(ui);
-    highlight = Color32::from_rgba_unmultiplied(
-        highlight.r(),
-        highlight.g(),
-        highlight.b(),
-        80,
-    );
-    JsonTreeVisuals {
-        object_key_color: theme::info(ui),
-        array_idx_color: theme::weak_text(ui),
-        null_color: theme::accent_secondary(ui),
-        bool_color: theme::accent_secondary(ui),
-        number_color: theme::warn(ui),
-        string_color: theme::success(ui),
-        highlight_color: highlight,
-        punctuation_color: theme::weak_text(ui),
-    }
+    crate::ui_tools::hex_json::json_visuals(ui)
 }
 
 /// Walk an entry's args + result, return every distinct RecordID found.

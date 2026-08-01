@@ -9,6 +9,11 @@ use super::tabs::home_page::{
 };
 use super::{deserialize_exact, deserializer, is_zstd_frame, ui::WsDisplayState, History, WebSocketClient};
 
+/// Transcript entries retained per session; the oldest are dropped past this.
+const MAX_HISTORY: usize = 2_000;
+/// Unterminated client output held before it is flushed into the transcript.
+const MAX_BUFFER_BYTES: usize = 256 * 1024;
+
 impl WebSocketClient {
     pub fn receive(&mut self, ctx: &Context) {
         #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
@@ -264,6 +269,15 @@ impl WebSocketClient {
                                                 );
                                             }
                                             #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+                                            if success && crate::plugins::crash_intel_hooks::is_gpu_crash_result(&plugin_id, &tool_name) {
+                                                crate::plugins::crash_intel_hooks::ingest_gpu_crash_result(
+                                                    self.client.connection_string.clone(),
+                                                    self.client.computer.clone(),
+                                                    tool_name.clone(),
+                                                    result_json.clone(),
+                                                );
+                                            }
+                                            #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
                                             if success && crate::plugins::driver_intel_hooks::is_driver_snapshot_result(&plugin_id, &tool_name) {
                                                 crate::plugins::driver_intel_hooks::ingest_driver_snapshot(
                                                     self.client.connection_string.clone(),
@@ -399,6 +413,13 @@ impl WebSocketClient {
             let _ = self.msg_from_client_tx.try_send(WsMessage::Binary(bin));
         }
         
+        // Drained here, not in `RemoteTerminal::ui`, so a queued multi-MiB
+        // buffer is never retained while the Terminal view is inactive.
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.remote_terminal.poll_frames() {
+            ctx.request_repaint();
+        }
+
         if let Ok(state) = self.display_state_channel.1.try_recv() {
             self.state = state;
         }
@@ -414,6 +435,20 @@ impl WebSocketClient {
             if let Cmd::FileSystemAction(file_system_action) = command {
                 self.helper_delegate.handle_filesystem_action(&file_system_action);
             }
+        }
+
+        self.trim_history();
+    }
+
+    /// Drops the oldest transcript entries past [`MAX_HISTORY`].
+    fn trim_history(&mut self) {
+        if self.history.len() > MAX_HISTORY {
+            let excess = self.history.len() - MAX_HISTORY;
+            self.history.drain(..excess);
+        }
+        if self.my_command_history.len() > MAX_HISTORY {
+            let excess = self.my_command_history.len() - MAX_HISTORY;
+            self.my_command_history.drain(..excess);
         }
     }
     
@@ -1000,6 +1035,15 @@ impl WebSocketClient {
                             );
                         }
                         #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+                        if success && crate::plugins::crash_intel_hooks::is_gpu_crash_result(&plugin_id, &tool_name) {
+                            crate::plugins::crash_intel_hooks::ingest_gpu_crash_result(
+                                self.client.connection_string.clone(),
+                                self.client.computer.clone(),
+                                tool_name.clone(),
+                                result_json.clone(),
+                            );
+                        }
+                        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
                         if success && crate::plugins::driver_intel_hooks::is_driver_snapshot_result(&plugin_id, &tool_name) {
                             crate::plugins::driver_intel_hooks::ingest_driver_snapshot(
                                 self.client.connection_string.clone(),
@@ -1091,6 +1135,16 @@ impl WebSocketClient {
                         if !msg.ends_with('\n') {
                             self.buffer.push('\n');
                         }
+                        // Output that never idles 500 ms carries no DONE marker, so
+                        // flush on size to keep the buffer bounded.
+                        if self.buffer.len() > MAX_BUFFER_BYTES {
+                            self.history.push(History {
+                                from: "Client".to_string(),
+                                message: std::mem::take(&mut self.buffer),
+                                timestamp: chrono::Local::now().to_rfc3339(),
+                            });
+                            self.notifications = self.notifications.saturating_add(1);
+                        }
                     }
                 }
             }
@@ -1163,7 +1217,7 @@ impl WebSocketClient {
         }
         
         self.loading = false;
-        log::info!("Text data: {text:#?}");
+        log::debug!("Text data: {text}");
     
         // Append the incoming text to the buffer
         self.buffer.push_str(&text);

@@ -1,4 +1,5 @@
 use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, RichText, ScrollArea, TextEdit, Ui, Vec2, Widget};
+use crate::remote_viewer::ratagui::{terminal_font, TERMINAL_FONT_SIZE};
 use crate::tabs::admin_console::WebSocketClient;
 use crate::ui_tools::icons::{self};
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};
@@ -17,6 +18,18 @@ pub struct History {
     pub from: String,
     pub message: String,
     pub timestamp: String
+}
+
+/// Bytes of the in-flight output buffer shown in the live preview.
+const PREVIEW_TAIL_BYTES: usize = 4096;
+
+/// Trailing [`PREVIEW_TAIL_BYTES`] of `s`, snapped up to a UTF-8 boundary.
+fn tail_preview(s: &str) -> &str {
+    let mut i = s.len().saturating_sub(PREVIEW_TAIL_BYTES);
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
+    &s[i..]
 }
 
 
@@ -168,7 +181,7 @@ impl WebSocketClient {
         let text_response = &mut None;
         eframe::egui::Panel::bottom(id)
             .default_size(ui.available_height()/1.2) // .resizable(false)
-            .show_inside(ui, |ui| 
+            .show(ui, |ui| 
         {
             ui.visuals_mut().extreme_bg_color= Color32::BLACK;
             ui.visuals_mut().code_bg_color = Color32::BLACK;
@@ -470,7 +483,7 @@ impl WebSocketClient {
             .stroke(ui.global_style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
             .inner_margin(Margin::same(6))
         )
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             let id = Id::new(format!("scroll_area-{:?}", self.client.client_hash));
 
             let tab_press = ui.input(|i| i.key_pressed(Key::Tab));
@@ -496,20 +509,23 @@ impl WebSocketClient {
                 ui.set_width(ui.available_width());
                 let max_msg_width = ui.available_width() / 2.2;
 
-                // Display history messages
-                let mut display_messages = self.history.clone();
-                
-                // If there's a buffer with ongoing output, show it as a temporary preview
-                if !self.buffer.is_empty() {
-                    display_messages.push(History {
+                // Taken rather than cloned so the hover-state writes below don't
+                // borrow `self.history`; moved back once the loop ends.
+                let display_messages = std::mem::take(&mut self.history);
+
+                // If there's a buffer with ongoing output, show its tail as a temporary preview
+                let buffer_preview = if self.buffer.is_empty() {
+                    None
+                } else {
+                    Some(History {
                         from: "Client".to_string(),
-                        message: format!("{}\n[Receiving...]", self.buffer.trim()),
+                        message: format!("{}\n[Receiving...]", tail_preview(self.buffer.trim())),
                         timestamp: chrono::Local::now().to_rfc3339(),
-                    });
-                }
+                    })
+                };
 
                 // Render messages with improved styling
-                for item in &display_messages {
+                for item in display_messages.iter().chain(buffer_preview.iter()) {
                     let is_message_from_myself = if item.from.eq("You"){ true } else { false };
                     let username_txt_color = ui.global_style().visuals.hyperlink_color;
                     let from = if is_message_from_myself {
@@ -625,7 +641,10 @@ impl WebSocketClient {
                                     ), |ui| {
                                         ui.set_width(ui.available_width());
                                         // crate::markdown_editor::viewer::easy_mark(ui, &item.message);
-                                        ui.label(RichText::new(&item.message).monospace());
+                                        // Same face and size as the ratagui terminals.
+                                        ui.label(RichText::new(&item.message).font(
+                                            terminal_font(TERMINAL_FONT_SIZE as f32),
+                                        ));
                                     });
                                 });
                             });
@@ -644,6 +663,8 @@ impl WebSocketClient {
                         }
                     });
                 };
+
+                self.history = display_messages;
 
                 // After rendering, process the buffer
                 // Note: Buffer processing is now handled in receive.rs when DONE is detected

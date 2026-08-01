@@ -1,10 +1,15 @@
 use crate::remote_viewer::ratagui::{RataguiBackend, TerminalEvent};
-use crossbeam::channel::{unbounded, Sender, Receiver};
+use crossbeam::channel::{bounded, unbounded, Sender, Receiver};
 use web_time::Instant;
 use ratatui::prelude::*;
 
 pub mod ui;
 pub mod receive;
+
+/// Queued terminal buffers. Each is a full `width * height` cell grid (~2.4 MiB
+/// at the 250x250 default), so the queue is kept shallow and stale frames are
+/// dropped by the sender rather than retained.
+const BUFFER_QUEUE_DEPTH: usize = 2;
 
 pub struct RemoteTerminal {
     pub terminal: Terminal<RataguiBackend>,
@@ -22,12 +27,14 @@ pub struct RemoteTerminal {
     pub current_area: Rect,
     last_target_area: Rect,
     pub(crate) latest_frame_index: u64,
+    /// Set once [`RemoteTerminal::poll_frames`] has applied a frame.
+    pub(crate) has_received_frame: bool,
     msg_to_client: Sender<ewebsock::WsMessage>,
 }
 
 impl RemoteTerminal {
     pub fn new(msg_to_client: Sender<ewebsock::WsMessage>, size_tx: Sender<Rect>) -> Self {
-        let (buffer_tx, buffer_rx) = unbounded();
+        let (buffer_tx, buffer_rx) = bounded(BUFFER_QUEUE_DEPTH);
         let (_event_tx, event_rx) = unbounded(); // New: Event channel
         let _ = msg_to_client.try_send(ewebsock::WsMessage::Text("READY".to_string()));
 
@@ -47,6 +54,7 @@ impl RemoteTerminal {
             event_rx, _event_tx,
             buffer_rx, buffer_tx,
             latest_frame_index: 0,
+            has_received_frame: false,
             last_log_frame_count: 0,
             last_log: Instant::now(),
             last_repaint: Instant::now(),

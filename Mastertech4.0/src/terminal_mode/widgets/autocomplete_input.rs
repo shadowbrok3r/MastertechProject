@@ -11,7 +11,7 @@ use crate::terminal_mode::{
     styling::{CATPPUCCIN, ThemeRole, THEME}
 };
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use super::{button::{ButtonState, Theme}, ButtonType};
+use super::{button::ButtonState, ButtonType};
 use crossbeam::channel::Sender;
 use super::tui_textarea::{CursorMove, TextArea};
 use std::cell::RefCell;
@@ -341,7 +341,6 @@ impl<'a> ButtonType<'a> for AutoCompleteInput<'a> {
         let t = self.theme.resolve();
         match *self.state.borrow() {
             ButtonState::Normal => (t.background, THEME.text_muted, t.shadow, THEME.border_idle()),
-            ButtonState::Selected => (t.background, THEME.text, t.shadow, THEME.tertiary),
             ButtonState::Active => (t.background, THEME.text, t.shadow, THEME.accent),
             ButtonState::Hovered => (t.background, THEME.text, t.shadow, THEME.tertiary),
             ButtonState::AltClicked => (t.background, THEME.text_muted, t.shadow, THEME.border_idle()),

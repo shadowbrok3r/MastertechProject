@@ -1210,6 +1210,11 @@ pub fn reinstall_custom_fonts(ctx: &Context) {
 }
 
 fn setup_custom_fonts(ctx: &Context) {
+    ctx.set_fonts(font_definitions());
+}
+
+/// The app's font stack. Exposed so callers can assert glyph coverage without a context.
+pub fn font_definitions() -> FontDefinitions {
     // Start with the default fonts (we will be adding to them rather than replacing them).
     let mut fonts = FontDefinitions::default();
     fonts.font_data.insert(
@@ -1264,6 +1269,8 @@ fn setup_custom_fonts(ctx: &Context) {
         vec!["Regular".to_owned()],
     );
 
+    // Sole face: anything the terminal UI emits that CascadiaMono lacks must
+    // surface as tofu during development rather than silently break the grid.
     fonts.families.insert(
         FontFamily::Name("CascadiaMono".into()),
         vec!["CascadiaMono".to_owned()],
@@ -1280,7 +1287,7 @@ fn setup_custom_fonts(ctx: &Context) {
 
     crate::ui_tools::icons::install_fonts(&mut fonts);
 
-    ctx.set_fonts(fonts);
+    fonts
 }
 
 pub fn default_tree() -> DockSession {

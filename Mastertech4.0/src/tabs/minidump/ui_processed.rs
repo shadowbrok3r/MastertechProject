@@ -70,12 +70,12 @@ impl MiniDumpApp {
             .resizable(true)
             .default_size((ui.available_height() / 2.0).round())
             .frame(Frame::new())
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 self.ui_processed_data(ui, ctx, state);
             });
         eframe::egui::Panel::bottom("progress")
             .frame(Frame::new())
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
                     let stats = self.analysis_state.stats.lock().unwrap();
@@ -110,7 +110,7 @@ impl MiniDumpApp {
             });
         egui::CentralPanel::default()
             .frame(Frame::new())
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.separator();
 
                 if let Some(stack) = state.threads.get(self.processed_ui_state.cur_thread) {
@@ -128,7 +128,7 @@ impl MiniDumpApp {
         eframe::egui::Panel::left("overall info")
             .default_size((ui.available_width() / 2.0).round())
             .frame(Frame::new())
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ScrollArea::vertical().show(ui, |ui| {
                     ui.heading("Process");
                     ui.separator();
@@ -181,7 +181,7 @@ impl MiniDumpApp {
             });
         egui::CentralPanel::default()
             .frame(Frame::new())
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.heading("Thread ");
                     ComboBox::from_label("  ")

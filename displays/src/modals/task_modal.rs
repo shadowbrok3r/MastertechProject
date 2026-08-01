@@ -1235,7 +1235,7 @@ impl DisplayModal for TaskModal {
         ui.set_max_size(max_space);
         ui.style_mut().override_font_id = Some(FontId::proportional(13.0));
 
-        eframe::egui::Panel::top(format!("Top panel header {}", self.task.id.key_string())).exact_size(28.).show_inside(ui, |ui| {
+        eframe::egui::Panel::top(format!("Top panel header {}", self.task.id.key_string())).exact_size(28.).show(ui, |ui| {
 
             ui.columns(3, |ui| {
                 ui[0].with_layout(Layout::left_to_right(Align::Center), |ui| {

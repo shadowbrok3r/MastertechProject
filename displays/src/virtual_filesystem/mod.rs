@@ -576,7 +576,7 @@ impl FileSystem {
         eframe::egui::Panel::top("FileBrowserTop")
             .frame(top_panel_frame)
             .exact_size(40.)
-            .show_inside(ui, |ui| 
+            .show(ui, |ui| 
         {
             ui.horizontal_centered(|ui| {
                 // Navigation buttons on the left
@@ -623,7 +623,7 @@ impl FileSystem {
         eframe::egui::Panel::bottom("FileBrowserBottom")
             .frame(btm_panel_frame)
             .show_separator_line(false)
-            .show_inside(ui, |ui| 
+            .show(ui, |ui| 
                 ui.vertical_centered(|ui | 
                     self.show_progress(ui)
                 )
@@ -637,14 +637,14 @@ impl FileSystem {
             if size.x > 1000. {
                 eframe::egui::Panel::right(Id::new("FileBrowserSidePanel"))
                     .default_size(ui.available_width()/2.0)
-                    .show_inside(ui, |ui| 
+                    .show(ui, |ui| 
                 {
                     self.file_editor.show(ui, file);
                 });
             } else {
                 eframe::egui::Panel::bottom(Id::new("FileBrowserBottomPanel"))
                     .default_size(ui.available_height()/2.0)
-                    .show_inside(ui, |ui| 
+                    .show(ui, |ui| 
                 {
                     self.file_editor.show(ui, file);
                 });
@@ -715,7 +715,7 @@ impl FileSystem {
         }
 
         let central_response = CentralPanel::default().frame(panel_frame)
-            .show_inside(ui, |ui| 
+            .show(ui, |ui| 
         {
             ScrollArea::vertical()
                 .id_salt(self.scroll_id)

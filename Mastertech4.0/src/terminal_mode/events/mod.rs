@@ -128,6 +128,8 @@ impl <'a>TerminalApp<'a> {
                 let ctrl_key = key_event.modifiers.contains(KeyModifiers::CONTROL);
                 let current_tab = menu_bar.current_tab.borrow().clone();
                 match key_event.code {
+                    // Revoking remote control outranks whatever tab has focus.
+                    KeyCode::F(12) => crate::remote_exec::banner_tui::end_session(),
                     KeyCode::Char('q') if ctrl_key => {
                         log::info!("Quitting from remote key event");
                         *quit = true;
@@ -210,6 +212,8 @@ impl <'a>TerminalApp<'a> {
                     Event::Key(key_event) => {
                         let ctrl_key = key_event.modifiers.contains(KeyModifiers::CONTROL);
                         match key_event.code {
+                            // Revoking remote control outranks whatever tab has focus.
+                            KeyCode::F(12) => crate::remote_exec::banner_tui::end_session(),
                             KeyCode::Char('q') if ctrl_key => {
                                 log::info!("Quitting");
                                 *quit = true;

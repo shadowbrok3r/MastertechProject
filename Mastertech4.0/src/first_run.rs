@@ -412,7 +412,6 @@ impl MasterTechApp {
                                     set_open_service_cache(CachedOpenServiceLookup {
                                         match_: Some(match_),
                                         candidates,
-                                        resolved_at: std::time::SystemTime::now(),
                                     });
                                 }
                                 Err(e) => {

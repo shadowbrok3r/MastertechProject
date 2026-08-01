@@ -15,6 +15,18 @@ pub const BUILD_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const MAX_DEPTH: usize = 12;
 
+/// `Cmd`'s variants in declaration order — which is bincode's encoding order.
+pub fn cmd_variant_names() -> Vec<&'static str> {
+    match <crate::Cmd as Facet>::SHAPE.ty {
+        Type::User(UserType::Enum(ref e)) => e
+            .variants
+            .iter()
+            .map(|v| v.rename.unwrap_or(v.name))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// Wraps a `Facet` value so `Display` redacts `#[facet(sensitive)]` fields and
 /// prints byte blobs as `<N bytes>`.
 pub struct Redacted<'a, T: ?Sized>(&'a T);
@@ -122,7 +134,173 @@ mod tests {
     // bump deliberately when Cmd's wire shape changes; this is the drift review gate.
     #[test]
     fn cmd_shape_fp_pin() {
-        assert_eq!(*super::CMD_SHAPE_FP, 0x8cb5_5a3e_9aba_98c3);
+        assert_eq!(*super::CMD_SHAPE_FP, 0x3dc4_fee3_d484_1045);
+    }
+
+    /// `Cmd` variant order as shipped. Bincode encodes a variant by its
+    /// position, so admin and client only agree while this stays a prefix of
+    /// the live enum: inserting, reordering, renaming or deleting a variant
+    /// silently re-points every later one at the wrong payload.
+    ///
+    /// Appending is the sanctioned change and needs no edit here.
+    const CMD_APPEND_ONLY_PREFIX: &[&str] = &[
+        "LiveData",
+        "TaskManager",
+        "FileSystemAction",
+        "PullKeys",
+        "PullTicket",
+        "InteractiveInput",
+        "ShellCommand",
+        "StartInteractiveShell",
+        "QuitInteractive",
+        "ReadEvents",
+        "Quit",
+        "KillProcess",
+        "OpenProcessInExplorer",
+        "ListDirectory",
+        "DirectoryListing",
+        "GetDrives",
+        "DriveList",
+        "DownloadRemoteFile",
+        "DownloadRemoteDirectory",
+        "DownloadCrashDumps",
+        "ScanDirectorySize",
+        "DirectorySizeResult",
+        "FileChunk",
+        "ExecuteRemoteFile",
+        "PreviewRemoteFile",
+        "FilePreviewContent",
+        "UploadToClient",
+        "RequestThumbnail",
+        "ThumbnailResponse",
+        "SaveRemoteFile",
+        "SaveResult",
+        "RebootSystem",
+        "LaunchTerminalMode",
+        "ShutdownSystem",
+        "LockWorkstation",
+        "LogOffUser",
+        "ReadEventLog",
+        "EventLogResponse",
+        "ListServices",
+        "ServiceListResponse",
+        "ControlService",
+        "ServiceActionResponse",
+        "ListScheduledTasks",
+        "ScheduledTaskListResponse",
+        "ToggleScheduledTask",
+        "RunScheduledTask",
+        "ScheduledTaskActionResponse",
+        "ListRegistryKeys",
+        "RegistryKeyResponse",
+        "BackupRegistryKey",
+        "RegistryBackupResponse",
+        "CommitRegistryEdits",
+        "RegistryEditResponse",
+        "GatherSecurityInventory",
+        "SecurityInventoryResponse",
+        "ListInstalledPrograms",
+        "InstalledProgramsResponse",
+        "UninstallProgram",
+        "UninstallProgramResult",
+        "RunWindowsUpdate",
+        "WindowsUpdateResult",
+        "ListStartupApps",
+        "StartupAppsResponse",
+        "ToggleStartupApp",
+        "StartupAppActionResponse",
+        "GetRemoteScriptList",
+        "RemoteScriptListResponse",
+        "RunRemoteScripts",
+        "RemoteScriptLog",
+        "RemoteScriptResult",
+        "RemoteScriptsComplete",
+        "RunScriptContent",
+        "LoadWasmPlugin",
+        "LoadWasmPluginResult",
+        "SetFrameCapture",
+        "DirectFileTransfer",
+        "DirectFileTransferResult",
+        "MastertechSelfUpdateChunk",
+        "MastertechSelfUpdateRelaunching",
+        "MastertechSelfUpdateResult",
+        "CallRemotePluginTool",
+        "RemotePluginToolResult",
+        "AnalyzeCrashDumps",
+        "BuildWorkerHello",
+        "CompilePluginRequest",
+        "CompilePluginProgress",
+        "CompilePluginResult",
+        "AppPing",
+        "AppPong",
+        "RequestOpenServiceCandidates",
+        "OpenServiceCandidatesResponse",
+        "None",
+        "RunRemoteScenario",
+        "RunRemoteConcurrent",
+        "DesktopStreamStart",
+        "DesktopStreamStop",
+        "DesktopListMonitors",
+        "DesktopMonitorList",
+        "OpenRelayTunnel",
+        "SetDriverProtections",
+        "DriverProtectionsResult",
+        "RequestTelemetrySnapshot",
+        "RemoteExecCapabilities",
+        "RemoteControlArm",
+        "RemoteControlDisarm",
+        "RemoteJobStart",
+        "RemoteJobSignal",
+        "RemoteJobQuery",
+    ];
+
+    /// `Err` when `live` is not `pinned` plus zero or more appended variants.
+    fn check_append_only(live: &[&str], pinned: &[&str]) -> Result<(), String> {
+        if live.is_empty() {
+            return Err("variant list is empty; the reflection walk is broken".into());
+        }
+        if live.len() < pinned.len() {
+            return Err(format!(
+                "lost {} variant(s). Removing one shifts every later variant's bincode index, so \
+                 a peer on an older build decodes new payloads as the wrong command. Deprecate in \
+                 place instead.",
+                pinned.len() - live.len()
+            ));
+        }
+        for (i, expected) in pinned.iter().enumerate() {
+            if &live[i] != expected {
+                return Err(format!(
+                    "variant {i} is {:?} but must stay {expected:?}. Bincode encodes a variant by \
+                     position: inserting, reordering or renaming one re-points every later variant \
+                     at the wrong payload on any peer running an older build. Append instead, then \
+                     add the new name to the end of CMD_APPEND_ONLY_PREFIX.",
+                    live[i]
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cmd_variants_are_append_only() {
+        if let Err(why) = check_append_only(&super::cmd_variant_names(), CMD_APPEND_ONLY_PREFIX) {
+            panic!("Cmd {why}");
+        }
+    }
+
+    #[test]
+    fn append_only_check_accepts_an_append() {
+        assert!(check_append_only(&["A", "B", "C"], &["A", "B"]).is_ok());
+    }
+
+    #[test]
+    fn append_only_check_rejects_insert_reorder_rename_and_removal() {
+        let pinned = &["A", "B", "C"];
+        assert!(check_append_only(&["A", "X", "B", "C"], pinned).is_err(), "insert");
+        assert!(check_append_only(&["B", "A", "C"], pinned).is_err(), "reorder");
+        assert!(check_append_only(&["A", "B2", "C"], pinned).is_err(), "rename");
+        assert!(check_append_only(&["A", "B"], pinned).is_err(), "removal");
+        assert!(check_append_only(&[], pinned).is_err(), "empty");
     }
 
     // bump deliberately when the dump-triage result contract changes.

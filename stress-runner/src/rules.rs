@@ -151,6 +151,9 @@ pub enum RuleViolation {
     NoThroughput { ticks: u32 },
     /// The stressor named a load it could not apply.
     Inconclusive { reason: String },
+    /// A GPU rule was configured but no GPU telemetry was ever sampled, so the
+    /// limit could not be evaluated. An ungradeable limit is not a pass.
+    GpuTelemetryMissing { rule: String, ticks: u32 },
 }
 
 impl RuleViolation {
@@ -171,6 +174,9 @@ impl RuleViolation {
             ),
             Self::GpuTemp { limit_c, peak_c, sustained_ticks } => format!(
                 "GPU over {limit_c:.0}C for {sustained_ticks}s (peak {peak_c:.1}C)"
+            ),
+            Self::GpuTelemetryMissing { rule, ticks } => format!(
+                "{rule} could not be evaluated: no GPU telemetry in {ticks} ticks"
             ),
             Self::ClockCollapse { below_pct, ticks } => format!(
                 "clock under {:.0}% of stage max for {ticks}s",
@@ -227,6 +233,9 @@ pub struct StageStats {
     pub sum_cpu_temp: f64,
     pub cpu_temp_samples: u32,
     pub max_gpu_temp_c: Option<f32>,
+    /// Ticks that carried at least one GPU telemetry sample. Zero means every
+    /// GPU rule below was unevaluable.
+    pub gpu_temp_samples: u32,
     /// Lowest +12V sample this stage; `None` when no SuperIO rail was readable.
     pub min_v12_v: Option<f32>,
     pub max_avg_clock_mhz: Option<u32>,
@@ -281,6 +290,7 @@ impl StageStats {
             sum_cpu_temp: 0.0,
             cpu_temp_samples: 0,
             max_gpu_temp_c: None,
+            gpu_temp_samples: 0,
             min_v12_v: None,
             max_avg_clock_mhz: None,
             cpu_temp_over_run: 0,
@@ -393,6 +403,7 @@ impl StageStats {
             .fold(None::<f32>, |acc, t| Some(acc.map_or(t, |m| m.max(t))));
         if let Some(t) = tick_max_gpu_temp {
             self.max_gpu_temp_c = Some(self.max_gpu_temp_c.map_or(t, |m| m.max(t)));
+            self.gpu_temp_samples = self.gpu_temp_samples.saturating_add(1);
         }
         if let Some(rule) = &rules.max_gpu_temp_c {
             track_over_run(
@@ -605,6 +616,21 @@ fn cv_exempt(stressor: Stressor) -> bool {
     )
 }
 
+/// Stressors that put load on the GPU, so a GPU rule is expected to be
+/// evaluable during them. A CPU-only stage is not graded on GPU telemetry.
+fn touches_gpu(stressor: Stressor) -> bool {
+    matches!(
+        stressor,
+        Stressor::Gpu
+            | Stressor::GpuMatmul
+            | Stressor::GpuVram
+            | Stressor::GpuPcie
+            | Stressor::Psu
+            | Stressor::PsuTransient
+            | Stressor::Combined
+    )
+}
+
 /// Evaluate one finished stage against the rules.
 pub fn evaluate_stage(stats: &StageStats, rules: &VerdictRules) -> StageVerdict {
     let mut violations = Vec::new();
@@ -667,7 +693,12 @@ pub fn evaluate_stage(stats: &StageStats, rules: &VerdictRules) -> StageVerdict 
         }
     }
     if let Some(rule) = &rules.max_gpu_temp_c {
-        if stats.worst_gpu_temp_over >= rule.consecutive_ticks {
+        if stats.gpu_temp_samples == 0 && stats.ticks > 0 && touches_gpu(stats.stressor) {
+            violations.push(RuleViolation::GpuTelemetryMissing {
+                rule: format!("max_gpu_temp_c {:.0}C", rule.limit_c),
+                ticks: stats.ticks,
+            });
+        } else if stats.worst_gpu_temp_over >= rule.consecutive_ticks {
             violations.push(RuleViolation::GpuTemp {
                 limit_c: rule.limit_c,
                 peak_c: stats.max_gpu_temp_c.unwrap_or(rule.limit_c),
@@ -733,6 +764,19 @@ mod tests {
             }],
             ..Default::default()
         }
+    }
+
+    /// Snapshot carrying a GPU reading, for stages that load the GPU.
+    fn snapshot_with_gpu(temp_c: f32, freq_mhz: u64, usage: f32, gpu_temp_c: f32) -> TelemetrySnapshot {
+        let mut snap = snapshot(temp_c, freq_mhz, usage);
+        snap.gpus = vec![stress_kit::telemetry::GpuSample {
+            index: 0,
+            vendor: "test".into(),
+            name: "test gpu".into(),
+            temp_c: Some(gpu_temp_c),
+            ..Default::default()
+        }];
+        snap
     }
 
     fn metrics(throughput: f64, errors: u64) -> Metrics {
@@ -1221,8 +1265,55 @@ mod tests {
     }
 
     #[test]
+    fn gpu_stage_without_gpu_telemetry_cannot_pass() {
+        let cert = VerdictRules::certification();
+        assert!(cert.max_gpu_temp_c.is_some(), "cert must configure a GPU temp rule");
+
+        let mut stats = StageStats::begin(0, "gpu", Stressor::Gpu, &snapshot(50.0, 4000, 90.0));
+        for _ in 0..30 {
+            stats.absorb_tick(&metrics(100.0, 0), &snapshot(70.0, 4000, 95.0), &cert);
+        }
+        stats.finish(&snapshot(70.0, 4000, 95.0));
+
+        let verdict = evaluate_stage(&stats, &cert);
+        assert!(!verdict.pass, "a GPU limit that was never evaluable must not pass");
+        assert!(verdict
+            .violations
+            .iter()
+            .any(|v| matches!(v, RuleViolation::GpuTelemetryMissing { .. })));
+    }
+
+    #[test]
+    fn gpu_stage_with_telemetry_passes_normally() {
+        let cert = VerdictRules::certification();
+        let snap = snapshot_with_gpu(70.0, 4000, 95.0, 60.0);
+        let mut stats = StageStats::begin(0, "gpu", Stressor::Gpu, &snap);
+        for _ in 0..30 {
+            stats.absorb_tick(&metrics(100.0, 0), &snap, &cert);
+        }
+        stats.finish(&snap);
+
+        let verdict = evaluate_stage(&stats, &cert);
+        assert!(verdict.pass, "violations: {:?}", verdict.violations);
+        assert_eq!(stats.gpu_temp_samples, 30);
+    }
+
+    #[test]
+    fn cpu_stage_is_not_graded_on_absent_gpu_telemetry() {
+        let cert = VerdictRules::certification();
+        let mut stats = StageStats::begin(0, "cpu", Stressor::Cpu, &snapshot(50.0, 4000, 90.0));
+        for _ in 0..30 {
+            stats.absorb_tick(&metrics(100.0, 0), &snapshot(70.0, 4000, 95.0), &cert);
+        }
+        stats.finish(&snapshot(70.0, 4000, 95.0));
+
+        let verdict = evaluate_stage(&stats, &cert);
+        assert!(verdict.pass, "violations: {:?}", verdict.violations);
+    }
+
+    #[test]
     fn rail_droop_only_fails_when_opted_in() {
-        let mut snap = snapshot(70.0, 4000, 95.0);
+        let mut snap = snapshot_with_gpu(70.0, 4000, 95.0, 60.0);
         snap.voltages = vec![VoltageReading {
             label: "+12V".into(),
             volts: 10.9,

@@ -95,7 +95,7 @@ impl Default for Koth {
 impl Koth {
     pub fn ui(&mut self, ui: &mut Ui) {
         eframe::egui::Panel::top("KothTopPanel")
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.horizontal(|ui| {
                 // Search box should drive the active table's viewer
                 let filter_ref = match self.koth_selection {
@@ -307,7 +307,7 @@ impl Koth {
 
         if let KothSelection::Me = self.koth_selection {
             eframe::egui::Panel::bottom("KothBottom")
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.columns(9, |ui| {
                     // Summary row below the table (unchanged logic)
                     let my_emp_id = self.user.get_employee_id().map(|id| id.to_string()).unwrap_or_default();
@@ -393,7 +393,7 @@ impl Koth {
         }
 
         CentralPanel::default()
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.group(|ui| {
                 match self.koth_selection {
                     KothSelection::Me => {

@@ -1,7 +1,7 @@
 use eframe::egui::{Button, Color32, ComboBox, FontId, Grid, Hyperlink, Id, Margin, RichText, ScrollArea, Spinner, TextEdit, Ui, Vec2, Widget};
 use database::schema::{CarboniteResponse, ComputerData, CustomerData, LiveTaskPayload, Record, RecordIdExt, Status, TicketData, User};
-use database::schema::prestashop::{OrderState, Prestashop};
-use database::schema::prestashop::xml::{modify_xml, remove_xml_tag};
+use database::schema::prestashop::OrderState;
+use database::schema::prestashop::order_write;
 // use database::schema::helper_traits::parse_email_user;
 use database::db;
 use database::xidax_order_url;
@@ -12,27 +12,10 @@ use chrono::{DateTime, Utc};
 
 use super::return_colors;
 
-/// Helper function to update an order field via Prestashop API
+/// Writes one order field through the serialized writer shared with the audit table.
 async fn update_order_field(order_id: &str, field: &str, new_value: &str) {
-    let api = Prestashop::default();
-    match api.request_raw_resource_by_id("orders", order_id).await {
-        Ok(xml) => {
-            match modify_xml(&xml, field, new_value) {
-                Ok(new_xml) => {
-                    match remove_xml_tag(&new_xml, "tax_exempt") {
-                        Ok(final_xml) => {
-                            match api.modify_prestashop_order(&final_xml).await {
-                                Ok(_) => log::info!("Successfully updated {} to {} for order {}", field, new_value, order_id),
-                                Err(e) => log::error!("Error modifying prestashop order: {e:?}"),
-                            }
-                        }
-                        Err(e) => log::error!("Error removing tax_exempt tag: {e:?}"),
-                    }
-                }
-                Err(e) => log::error!("Error modifying XML: {e:?}")
-            }
-        },
-        Err(e) => log::error!("Error getting XML order: {e:?}"),
+    if let Err(e) = order_write::set_order_field(order_id, field, new_value).await {
+        log::error!("Failed to set {field}={new_value} on order {order_id}: {e:?}");
     }
 }
 

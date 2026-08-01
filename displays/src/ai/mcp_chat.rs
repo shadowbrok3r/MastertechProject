@@ -32,6 +32,11 @@ fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+/// Text of a `*.delta` event, which carries either a bare string or a content part.
+fn delta_text(event: &serde_json::Value) -> Option<&str> {
+    event["delta"].as_str().or_else(|| event["delta"]["text"].as_str())
+}
+
 fn text_of(result: &rmcp::model::CallToolResult) -> String {
     let body: String = result
         .content
@@ -107,10 +112,14 @@ pub fn history_json_from_messages(msgs: &[ChatMessage]) -> Vec<serde_json::Value
     out
 }
 
-/// Streams a chat completion from the OpenAI-compatible endpoint in `mcp_settings`
-/// via raw SSE (so the model's `reasoning` tokens are captured — async-openai drops
-/// them). Optionally exposes the Mastertech MCP tools and runs the tool-call loop.
-/// Emits `Reasoning`, `Text`, and tool-activity messages over `response_tx`.
+/// Streams a model response from the OpenAI-compatible endpoint in `mcp_settings`
+/// via raw SSE against the Responses API (so the model's `reasoning` tokens are
+/// captured — async-openai drops them). Optionally exposes the Mastertech MCP tools
+/// and runs the tool-call loop. Emits `Reasoning`, `Text`, and tool-activity
+/// messages over `response_tx`.
+///
+/// The endpoint is stateless: `store` and `previous_response_id` are rejected, so
+/// the whole input list is resent on each turn of the tool loop.
 pub async fn stream_chat(
     input: String,
     prior: Vec<serde_json::Value>,
@@ -121,7 +130,7 @@ pub async fn stream_chat(
     let base = effective_api_base();
     let key = effective_api_key();
     let model = effective_model(gpts::MODEL);
-    let url = format!("{}/chat/completions", base.trim_end_matches('/'));
+    let url = format!("{}/responses", base.trim_end_matches('/'));
 
     if key.trim().is_empty() {
         send(
@@ -145,11 +154,9 @@ pub async fn stream_chat(
                     .map(|t| {
                         serde_json::json!({
                             "type": "function",
-                            "function": {
-                                "name": t.name,
-                                "description": t.description,
-                                "parameters": t.schema_as_json_value(),
-                            }
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": t.schema_as_json_value(),
                         })
                     })
                     .collect::<Vec<_>>();
@@ -171,17 +178,19 @@ pub async fn stream_chat(
         (None, Vec::new())
     };
 
-    let mut messages: Vec<serde_json::Value> = Vec::new();
-    messages.push(serde_json::json!({ "role": "system", "content": SYSTEM_PROMPT }));
-    messages.extend(prior);
-    messages.push(serde_json::json!({ "role": "user", "content": input }));
+    // `prior` is already `{role, content}`, which the Responses API accepts as an
+    // input item alongside the `function_call`/`function_call_output` items below.
+    let mut items: Vec<serde_json::Value> = Vec::new();
+    items.extend(prior);
+    items.push(serde_json::json!({ "role": "user", "content": input }));
 
     let http = reqwest::Client::new();
 
     loop {
         let mut body = serde_json::json!({
             "model": model,
-            "messages": messages,
+            "instructions": SYSTEM_PROMPT,
+            "input": items,
             "stream": true,
             "reasoning": { "enabled": true },
         });
@@ -243,37 +252,67 @@ pub async fn stream_chat(
                     Ok(j) => j,
                     Err(_) => continue,
                 };
-                let Some(delta) = json["choices"].get(0).map(|c| &c["delta"]) else { continue };
+                let Some(kind) = json["type"].as_str() else { continue };
+                let idx = json["output_index"].as_u64().unwrap_or(0);
 
-                if let Some(content) = delta["content"].as_str() {
-                    if !content.is_empty() {
-                        send(&response_tx, &thread_id, assistant_id.clone(), SentFrom::Gpt, ChatMessageType::Text(content.to_string()));
-                    }
-                }
-                let reasoning = delta["reasoning"].as_str().or_else(|| delta["reasoning_content"].as_str());
-                if let Some(r) = reasoning {
-                    if !r.is_empty() {
-                        send(&response_tx, &thread_id, think_id.clone(), SentFrom::Gpt, ChatMessageType::Reasoning(r.to_string()));
-                    }
-                }
-                if let Some(calls) = delta["tool_calls"].as_array() {
-                    for tc in calls {
-                        let idx = tc["index"].as_u64().unwrap_or(0);
-                        let entry = tool_acc.entry(idx).or_default();
-                        if let Some(id) = tc["id"].as_str() {
-                            if !id.is_empty() {
-                                entry.0 = id.to_string();
+                match kind {
+                    // Text and reasoning each have two documented event spellings.
+                    "response.output_text.delta" | "response.content_part.delta" => {
+                        if let Some(text) = delta_text(&json) {
+                            if !text.is_empty() {
+                                send(&response_tx, &thread_id, assistant_id.clone(), SentFrom::Gpt, ChatMessageType::Text(text.to_string()));
                             }
                         }
-                        if let Some(name) = tc["function"]["name"].as_str() {
-                            if !name.is_empty() {
-                                entry.1 = name.to_string();
+                    }
+                    "response.reasoning.delta"
+                    | "response.reasoning_text.delta"
+                    | "response.reasoning_summary_text.delta" => {
+                        if let Some(text) = delta_text(&json) {
+                            if !text.is_empty() {
+                                send(&response_tx, &thread_id, think_id.clone(), SentFrom::Gpt, ChatMessageType::Reasoning(text.to_string()));
                             }
                         }
-                        if let Some(args) = tc["function"]["arguments"].as_str() {
-                            entry.2.push_str(args);
+                    }
+                    // Carries call_id and name on `added`, complete arguments on `done`.
+                    "response.output_item.added" | "response.output_item.done" => {
+                        let item = &json["item"];
+                        if item["type"].as_str() == Some("function_call") {
+                            let entry = tool_acc.entry(idx).or_default();
+                            if let Some(id) = item["call_id"].as_str() {
+                                if !id.is_empty() {
+                                    entry.0 = id.to_string();
+                                }
+                            }
+                            if let Some(name) = item["name"].as_str() {
+                                if !name.is_empty() {
+                                    entry.1 = name.to_string();
+                                }
+                            }
+                            if let Some(args) = item["arguments"].as_str() {
+                                if !args.is_empty() {
+                                    entry.2 = args.to_string();
+                                }
+                            }
                         }
                     }
+                    "response.function_call_arguments.delta" => {
+                        if let Some(d) = json["delta"].as_str() {
+                            tool_acc.entry(idx).or_default().2.push_str(d);
+                        }
+                    }
+                    "response.function_call_arguments.done" => {
+                        if let Some(args) = json["arguments"].as_str() {
+                            tool_acc.entry(idx).or_default().2 = args.to_string();
+                        }
+                    }
+                    "response.failed" | "response.incomplete" | "error" => {
+                        let detail = json["response"]["error"]["message"]
+                            .as_str()
+                            .or_else(|| json["message"].as_str())
+                            .unwrap_or("the model reported a failed response");
+                        send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Error(detail.to_string()));
+                    }
+                    _ => {}
                 }
             }
         }
@@ -286,13 +325,15 @@ pub async fn stream_chat(
         let mut calls: Vec<(u64, (String, String, String))> = tool_acc.into_iter().collect();
         calls.sort_by_key(|(idx, _)| *idx);
 
-        let tc_json = calls
-            .iter()
-            .map(|(_, (id, name, args))| {
-                serde_json::json!({ "id": id, "type": "function", "function": { "name": name, "arguments": args } })
-            })
-            .collect::<Vec<_>>();
-        messages.push(serde_json::json!({ "role": "assistant", "content": null, "tool_calls": tc_json }));
+        // Each call is echoed back before its output so the stateless endpoint sees both.
+        for (_, (call_id, name, args)) in &calls {
+            items.push(serde_json::json!({
+                "type": "function_call",
+                "call_id": call_id,
+                "name": name,
+                "arguments": args,
+            }));
+        }
 
         for (_, (call_id, name, args)) in calls {
             send(
@@ -306,7 +347,11 @@ pub async fn stream_chat(
                 Some(client) => call_tool(client, &name, &args).await,
                 None => "Mastertech tools are not connected.".to_string(),
             };
-            messages.push(serde_json::json!({ "role": "tool", "tool_call_id": call_id, "content": result_text }));
+            items.push(serde_json::json!({
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": result_text,
+            }));
         }
     }
 

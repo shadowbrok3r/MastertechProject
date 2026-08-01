@@ -1,5 +1,5 @@
 use crate::{terminal_mode::{systems::{communication_system::DataMessage, notification_system::{Notification, NotificationType}}, TerminalApp}, utilities::load_encrypted_user_data};
-use database::{schema::User, Database, db};
+use database::{schema::User, Database};
 use displays::{app_state::{AppState, MainPages}, pages::login_page::HASH};
 
 impl <'a>TerminalApp<'a> {

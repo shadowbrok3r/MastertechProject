@@ -1,7 +1,6 @@
 use database::schema::{TaskNotePayload, User, helper_traits::EmployeeHelper, prestashop::OrderState, prestashop_schema::{self, Employee, MissedCallOrder, PrestashopPayload}, utilities::{create_full_task_payload, get_missing_call_days, get_prestashop_payload, needs_call_today}};
 use crossbeam::channel::Sender;
 use egui_data_table::DataTable;
-use itertools::Itertools;
 use chrono::Utc;
 
 use crate::{PlatformSpawner, Spawner};
@@ -85,26 +84,45 @@ impl TaskAuditViewer { // NEED TO LOOK INTO SOME NOTES THINKING THERE IS NOT A S
         log::info!("Time elapsed: {elapsed:?}");
     }
 
+    /// Writes a field update into every cached copy of the order's row.
+    fn apply_field_update(&mut self, update: &RowFieldUpdate) {
+        for table in self.service_map.values_mut() {
+            for row in table.iter_mut() {
+                match update {
+                    RowFieldUpdate::Status { order_id, new_state } if &row.order.id == order_id => {
+                        row.order.current_state = new_state.clone();
+                    }
+                    RowFieldUpdate::SalesRep { order_id, employee } if &row.order.id == order_id => {
+                        row.sales_rep = Some(employee.clone());
+                    }
+                    RowFieldUpdate::SplitRep { order_id, employee } if &row.order.id == order_id => {
+                        row.split_rep = employee.clone();
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
     pub fn receive(&mut self, store_users: Vec<User>, _frame: &mut eframe::Frame) {
         // Apply immediate in-table edits emitted by the row comboboxes so the
         // table reflects status / sales rep / split rep changes right away.
         while let Ok(update) = self.services_viewer.field_update_channel.1.try_recv() {
-            for table in self.service_map.values_mut() {
-                for row in table.iter_mut() {
-                    match &update {
-                        RowFieldUpdate::Status { order_id, new_state } if &row.order.id == order_id => {
-                            row.order.current_state = new_state.clone();
-                        }
-                        RowFieldUpdate::SalesRep { order_id, employee } if &row.order.id == order_id => {
-                            row.sales_rep = Some(employee.clone());
-                        }
-                        RowFieldUpdate::SplitRep { order_id, employee } if &row.order.id == order_id => {
-                            row.split_rep = employee.clone();
-                        }
-                        _ => {}
-                    }
-                }
-            }
+            self.apply_field_update(&update);
+        }
+
+        // A rejected write restores the previous value and flags the cell it came from.
+        while let Ok(failure) = self.services_viewer.write_failure_channel.1.try_recv() {
+            log::error!(
+                "Reverting order {} after rejected write: {}",
+                failure.revert.order_id(),
+                failure.message
+            );
+            self.services_viewer.write_errors.insert(
+                failure.revert.order_id().to_string(),
+                (failure.revert.column(), failure.message.clone()),
+            );
+            self.apply_field_update(&failure.revert);
         }
 
         // When a note is created from the "needs call today" view, the order
@@ -141,10 +159,14 @@ impl TaskAuditViewer { // NEED TO LOOK INTO SOME NOTES THINKING THERE IS NOT A S
                 .or_insert(DataTable::default());
 
 
+            // Replace by order id so a re-read refreshes the row in place.
             if let Some(k) = self.service_map.get_mut(&key) {
-                if !k.iter().contains(&order) {
-                    log::info!("Order: {order:?}");
-                    k.push(order);
+                match k.iter_mut().find(|row| row.order.id == order.order.id) {
+                    Some(existing) => *existing = order,
+                    None => {
+                        log::info!("Loaded order {}", order.order.id);
+                        k.push(order);
+                    }
                 }
             }
 

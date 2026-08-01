@@ -317,8 +317,6 @@ pub struct RemoteExplorer {
     pub file_viewer: RemoteFileRowViewer,
     /// Receiver for actions dispatched from the table viewer
     pub action_rx: Receiver<ExplorerAction>,
-    /// Sender kept so we can clone into the viewer on reset
-    action_tx: Sender<ExplorerAction>,
     /// Detail-rows vs thumbnail-grid layout.
     pub view_mode: ExplorerViewMode,
     /// Thumbnail edge length in icon mode, also the default column-0 width.
@@ -353,6 +351,8 @@ pub struct RemoteExplorer {
     download_save_path: Option<PathBuf>,
     /// Bytes written for the in-progress download.
     download_written: u64,
+    /// Thumbnail paths whose egui image caches still need releasing.
+    pending_forget: Vec<String>,
 }
 
 impl Default for RemoteExplorer {
@@ -385,7 +385,7 @@ impl RemoteExplorer {
         let (action_tx, action_rx) = crossbeam::channel::unbounded();
         let thumb_cache: ThumbCache = Arc::new(Mutex::new(HashMap::new()));
         let mut file_viewer = RemoteFileRowViewer::default();
-        file_viewer.action_tx = Some(action_tx.clone());
+        file_viewer.action_tx = Some(action_tx);
         file_viewer.thumb_cache = thumb_cache.clone();
 
         Self {
@@ -414,7 +414,6 @@ impl RemoteExplorer {
             file_table: DataTable::new(),
             file_viewer,
             action_rx,
-            action_tx,
             view_mode: ExplorerViewMode::List,
             thumb_px: 96.0,
             auto_load_thumbs: false,
@@ -432,6 +431,7 @@ impl RemoteExplorer {
             #[cfg(not(target_arch = "wasm32"))]
             download_save_path: None,
             download_written: 0,
+            pending_forget: Vec::new(),
         }
     }
     
@@ -622,7 +622,16 @@ impl RemoteExplorer {
     /// generate one — record the failure so the stream pump skips it.
     /// Non-empty bytes land in the shared cache (icon-mode grid) and, when
     /// this path was explicitly requested for preview, the preview pane.
-    pub fn handle_thumbnail(&mut self, path: String, png_data: Vec<u8>, _ctx: &eframe::egui::Context) {
+    /// Release the bytes, decoded-image and texture egui cached for paths
+    /// dropped from [`Self::thumb_cache`].
+    pub fn forget_pending_images(&mut self, ctx: &eframe::egui::Context) {
+        for path in self.pending_forget.drain(..) {
+            ctx.forget_image(&format!("bytes://rexpl/{path}"));
+        }
+    }
+
+    pub fn handle_thumbnail(&mut self, path: String, png_data: Vec<u8>, ctx: &eframe::egui::Context) {
+        self.forget_pending_images(ctx);
         if png_data.is_empty() {
             self.failed_thumbs.insert(path.clone());
             if self.preview_pending.as_deref() == Some(path.as_str()) {
@@ -668,6 +677,9 @@ impl RemoteExplorer {
         self.manual_stream = false;
         self.file_viewer.selected_paths.clear();
         if let Ok(mut cache) = self.thumb_cache.lock() {
+            // egui keeps the bytes, decoded image and texture per uri, so the
+            // uris have to be forgotten too — done once a Context is in hand.
+            self.pending_forget.extend(cache.keys().cloned());
             cache.clear();
         }
 
@@ -881,8 +893,8 @@ impl RemoteExplorer {
     #[cfg(target_arch = "wasm32")]
     pub fn start_downloads(&mut self, _paths: Vec<String>, _cmd_tx: &Sender<Cmd>) {}
 
-    /// Prompt for a save location and ask the client to zip + stream all of
-    /// its crash dumps (MEMORY.DMP + Minidump + LiveKernelReports).
+    /// Prompt for a save location and ask the client to zip + stream all of its
+    /// crash artifacts (MEMORY.DMP, Minidump, LiveKernelReports, UE/GPU crashes).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn start_crash_dump_download(&mut self, cmd_tx: &Sender<Cmd>) {
         if self.download_in_progress() {
@@ -1007,6 +1019,7 @@ impl RemoteExplorer {
 
     /// Display the explorer UI
     pub fn display(&mut self, ui: &mut Ui, cmd_tx: &Sender<Cmd>) {
+        self.forget_pending_images(ui.ctx());
         let inner_margin = Margin::same(4);
         let stroke = Stroke::new(0.7_f32, Color32::from_additive_luminance(100));
         let radius = CornerRadius::same(5);
@@ -1029,7 +1042,7 @@ impl RemoteExplorer {
         if let Some(error) = &self.error {
             eframe::egui::Panel::bottom("RemoteExplorerError")
                 .exact_size(25.)
-                .show_inside(ui, |ui| {
+                .show(ui, |ui| {
                     ui.colored_label(ui.style().visuals.error_fg_color, error.clone());
                 });
         }
@@ -1053,7 +1066,7 @@ impl RemoteExplorer {
         
         CentralPanel::default()
             .frame(panel_frame)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 self.display_file_list(ui, cmd_tx);
             });
     }
@@ -1077,7 +1090,7 @@ impl RemoteExplorer {
         eframe::egui::Panel::top("RemoteExplorerTop")
             .frame(Frame::default().outer_margin(Margin::symmetric(5, 2)))
             .exact_size(36.)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
                     // Up — parent directory.
                     if ui
@@ -1238,7 +1251,7 @@ impl RemoteExplorer {
             .default_size(160.)
             .min_size(140.)
             .max_size(260.)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 let mut navigate_to_path: Option<String> = None;
 
                 ScrollArea::vertical().show(ui, |ui| {
@@ -1293,7 +1306,7 @@ impl RemoteExplorer {
             .default_size(280.)
             .min_size(200.)
             .max_size(450.)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 // Calculate available height to split between tools list and preview
                 let total_height = ui.available_height();
                 let has_preview = self.preview_visible && 

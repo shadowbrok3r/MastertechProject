@@ -38,7 +38,7 @@ impl MastertechContext {
     pub fn file_browse(&mut self, ui: &mut Ui) {
         eframe::egui::Panel::top("file_browser_mode_panel")
             .exact_size(30.0)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     eframe::egui::ComboBox::from_id_salt("files_panel_mode")
                         .selected_text(match self.files_panel_mode {
@@ -317,7 +317,7 @@ impl FileBrowser {
     }
 
     pub fn central_panel(&mut self, ui: &mut Ui) {
-        CentralPanel::default().show_inside(ui, |ui| {
+        CentralPanel::default().show(ui, |ui| {
             ui.shrink_width_to_current();
             ui.shrink_height_to_current();
             ui.add_space(ui.spacing().item_spacing.y * 1.5);
@@ -357,7 +357,7 @@ impl FileBrowser {
     }
 
     pub fn top_panel(&mut self, ui: &mut Ui) {
-        eframe::egui::Panel::top("file_browser_top").show_inside(ui, |ui| {
+        eframe::egui::Panel::top("file_browser_top").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(self.path != env::current_dir().unwrap_or_default(), |ui| {
                     if ui.button(icons::HOME).on_hover_text("Home").clicked() {
@@ -406,7 +406,7 @@ impl FileBrowser {
     }
 
     pub fn bottom_panel(&mut self, ui: &mut Ui) {
-        eframe::egui::Panel::bottom("file_browser_bottom").show_inside(ui, |ui| {
+        eframe::egui::Panel::bottom("file_browser_bottom").show(ui, |ui| {
             if self.progress as u64 == self.source_dir_size && self.animated_progress {
                 self.progress = 0.0;
                 self.animated_progress = false;
@@ -465,7 +465,7 @@ impl FileBrowser {
             .default_size(170.0)
             .min_size(140.0)
             .max_size(300.0)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ScrollArea::vertical()
                     .id_salt("file_browser_sidebar_scroll")
                     .show(ui, |ui| {
@@ -530,6 +530,7 @@ impl FileBrowser {
         let mut do_rename = false;
         let mut clear_clipboard = false;
         let mut request_meta: Vec<PathBuf> = Vec::new();
+        let mut is_expanded = is_open;
 
         eframe::egui::Panel::right("file_browser_selection")
             .frame(sidebar_frame)
@@ -537,7 +538,7 @@ impl FileBrowser {
             .default_size(260.0)
             .min_size(210.0)
             .max_size(440.0)
-            .show_animated_inside(ui, is_open, |ui| {
+            .show_collapsible(ui, &mut is_expanded, |ui| {
                 ScrollArea::vertical()
                     .id_salt("file_browser_selection_scroll")
                     .show(ui, |ui| {

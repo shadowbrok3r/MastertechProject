@@ -132,7 +132,6 @@ pub struct InstalledProgramsViewer {
     pub table: DataTable<InstalledProgram>,
     pub viewer: InstalledProgramRowViewer,
     pub action_rx: Receiver<InstalledProgramAction>,
-    action_tx: Sender<InstalledProgramAction>,
     pub loading: bool,
     pub entries: Vec<InstalledProgram>,
     /// `(text, success)` rendered next to the toolbar. Mirrors
@@ -155,13 +154,12 @@ impl InstalledProgramsViewer {
     pub fn new() -> Self {
         let (action_tx, action_rx) = crossbeam::channel::unbounded();
         let mut viewer = InstalledProgramRowViewer::default();
-        viewer.action_tx = Some(action_tx.clone());
+        viewer.action_tx = Some(action_tx);
 
         Self {
             table: DataTable::new(),
             viewer,
             action_rx,
-            action_tx,
             loading: false,
             entries: Vec::new(),
             status_message: None,

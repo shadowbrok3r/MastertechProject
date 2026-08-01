@@ -156,7 +156,7 @@ impl<'de> Deserialize<'de> for SerializableColor {
         Ok(SerializableColor(color))
     }
 }
-use ratatui::buffer::Cell;
+use ratatui::buffer::{Cell, CellDiffOption};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -179,7 +179,7 @@ impl From<Cell> for SerializableCell {
             bg: cell.bg.into(),
             underline_color: cell.underline_color.into(),
             modifier: cell.modifier,
-            skip: cell.skip,
+            skip: cell.diff_option == CellDiffOption::Skip,
         }
     }
 }
@@ -191,7 +191,7 @@ impl From<SerializableCell> for Cell {
         cell.set_bg(wrapper.bg.into());
         cell.underline_color = wrapper.underline_color.into();
         cell.modifier = wrapper.modifier;
-        cell.set_skip(wrapper.skip);
+        cell.set_diff_option(if wrapper.skip { CellDiffOption::Skip } else { CellDiffOption::None });
         cell.set_symbol(&wrapper.symbol);
 
         cell

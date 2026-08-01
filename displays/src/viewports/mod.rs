@@ -1,4 +1,3 @@
-#![allow(deprecated)]
 use crate::{app_state::SharedContext, modals::{task_modal::ModalAction, ModalType, ModalWindow}};
 use crate::tabs::admin_console::SessionLayout;
 use eframe::egui::{CentralPanel, Context, ViewportBuilder, ViewportId, Window};
@@ -47,7 +46,7 @@ impl SharedContext {
                 Window::new(client_id.as_str())
                     .min_size([1100., 950.])
                     .show(ctx, |ui| {
-                        CentralPanel::default().show_inside(ui, |ui| {
+                        CentralPanel::default().show(ui, |ui| {
                             ui.set_min_size([1100., 950.].into());
                             if let Some(ws_client) = ws_layout.ws_clients.get_mut(client_id) {
                                 ws_client.show(ui);

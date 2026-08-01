@@ -1,11 +1,11 @@
 #![allow(deprecated)]
 use anyhow::{Error, Result};
 use crossbeam::channel::Sender;
-use database::{Database, db};
+use database::Database;
 use serde::{Deserialize, Serialize};
 use crate::{PlatformSpawner, Spawner};
 use eframe::egui::{
-    Align, Button, CentralPanel, Color32, Context, Direction, FontId, Frame, Id, Key, KeyboardShortcut, Layout, Modifiers, Pos2, Spinner, Stroke, TextEdit, Vec2, Widget
+    Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Id, Key, KeyboardShortcut, Layout, Modifiers, Pos2, Spinner, TextEdit, Vec2, Widget
 };
 use egui_extras::{Size, StripBuilder};
 use log::{error, info};

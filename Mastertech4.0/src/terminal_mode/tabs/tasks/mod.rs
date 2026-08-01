@@ -22,10 +22,7 @@ pub enum SortColumn {
     #[default]
     DueDate,
     Status,
-    Task,
-    Assignee,
     Priority,
-    Description,
 }
 
 /// Which set of tasks the list shows.
@@ -95,14 +92,10 @@ pub struct TasksTab<'a> {
     pub table_area: RefCell<Rect>,
     /// Visible row screen rects paired with their item index (for hit-testing).
     pub row_areas: RefCell<Vec<(usize, Rect)>>,
-    /// Header area for click detection
-    pub header_area: RefCell<Rect>,
     /// Current edit mode
     pub edit_mode: RefCell<EditMode>,
     /// Effect stage for animations
     pub effect_stage: RefCell<EffectStage<UniqueEffectId>>,
-    /// Whether effects have been initialized
-    pub effects_init: RefCell<bool>,
     /// Current sort column
     pub sort_column: RefCell<SortColumn>,
     /// Current sort direction
@@ -150,10 +143,8 @@ impl<'a> TasksTab<'a> {
             current_user: User::default(),
             table_area: RefCell::new(Rect::default()),
             row_areas: RefCell::new(Vec::new()),
-            header_area: RefCell::new(Rect::default()),
             edit_mode: RefCell::new(EditMode::None),
             effect_stage: RefCell::new(EffectStage::default()),
-            effects_init: RefCell::new(false),
             sort_column: RefCell::new(SortColumn::default()),
             sort_direction: RefCell::new(SortDirection::default()),
             hovered_row: RefCell::new(None),
@@ -224,7 +215,6 @@ impl<'a> TasksTab<'a> {
             SortColumn::DueDate => self.sort_due_btn.set_label(format!("Due{}", indicator)),
             SortColumn::Status => self.sort_status_btn.set_label(format!("Status{}", indicator)),
             SortColumn::Priority => self.sort_priority_btn.set_label(format!("Priority{}", indicator)),
-            _ => {}
         }
     }
     
@@ -237,8 +227,6 @@ impl<'a> TasksTab<'a> {
             let cmp = match sort_col {
                 SortColumn::DueDate => a.due_date.cmp(&b.due_date),
                 SortColumn::Status => a.status.as_str().cmp(b.status.as_str()),
-                SortColumn::Task => a.task_name.cmp(&b.task_name),
-                SortColumn::Assignee => a.assignee.key_string().cmp(&b.assignee.key_string()),
                 SortColumn::Priority => {
                     // Custom order: Express > Fire > RFS > QC > Normal
                     let priority_order = |p: &Priority| match p {
@@ -250,7 +238,6 @@ impl<'a> TasksTab<'a> {
                     };
                     priority_order(&a.priority).cmp(&priority_order(&b.priority))
                 }
-                SortColumn::Description => a.task_description.cmp(&b.task_description),
             };
             
             match sort_dir {
@@ -285,11 +272,6 @@ impl<'a> TasksTab<'a> {
         self.open_task_modal.replace(None);
     }
     
-    /// Check if modal is open
-    pub fn is_modal_open(&self) -> bool {
-        self.open_task_modal.borrow().is_some()
-    }
-
     pub fn check_tasks(&mut self) {
         let mut needs_rebuild = false;
         if let Ok(mut ctx) = self.ctx.lock() {
@@ -325,15 +307,6 @@ impl<'a> TasksTab<'a> {
             .find(|u| &u.get_id() == user_id)
             .map(|u| u.get_username().to_owned())
             .unwrap_or_else(|| user_id.key_string())
-    }
-    
-    /// Check if a task at the given row can be edited (is assigned to current user)
-    pub fn can_edit(&self, row: usize) -> bool {
-        if let Some(task) = self.items.get(row) {
-            task.assignee == self.current_user.get_id()
-        } else {
-            false
-        }
     }
     
     /// Toggle edit mode for a specific column

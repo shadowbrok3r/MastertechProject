@@ -166,7 +166,7 @@ impl PrestashopOrderForm {
         eframe::egui::Panel::top("PrestashopOrderTopPanel")
         .exact_size(25.)
         .frame(Frame::dark_canvas(ui.style()))
-        .show_inside(ui, |ui|{
+        .show(ui, |ui|{
             ui.horizontal_top(|ui| {
                 ui.add_space(5.);
                 if ui.button("New Order +").clicked() {
@@ -224,7 +224,7 @@ impl PrestashopOrderForm {
         });
 
         CentralPanel::default()
-        .show_inside(ui, |ui|{
+        .show(ui, |ui|{
             ScrollArea::vertical()
             .auto_shrink(false)
             .show(ui, |ui| {

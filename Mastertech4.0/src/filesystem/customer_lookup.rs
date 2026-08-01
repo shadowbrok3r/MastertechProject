@@ -28,10 +28,6 @@ pub static OPEN_SERVICE_CACHE: OnceLock<Mutex<Option<CachedOpenServiceLookup>>> 
 pub struct CachedOpenServiceLookup {
     pub match_: Option<PrestashopCustomerMatch>,
     pub candidates: Vec<OpenServiceCandidate>,
-    /// Wall-clock instant the lookup completed.  Useful so the admin
-    /// modal can show "Suggestions cached N minutes ago" and decide
-    /// whether to nudge a refresh.
-    pub resolved_at: std::time::SystemTime,
 }
 
 /// Replace the in-memory open-service cache.  Called by

@@ -5,7 +5,7 @@ use log::*;
 pub use ratatui::crossterm::event::KeyCode as Key;
 use crate::terminal_mode::tabs::logger::LoggerMode;
 use crate::terminal_mode::widgets::HandleWidget;
-use crate::terminal_mode::styling::{CATPPUCCIN, THEME};
+use crate::terminal_mode::styling::{Glyph, CATPPUCCIN, THEME};
 
 use super::{Logger, MyLogFormatter};
 
@@ -56,7 +56,7 @@ impl <'a>HandleWidget<'a> for Logger {
         // Flash copy confirmation in the title for a few seconds.
         let unfiltered_title = match self.copied_feedback {
             Some((at, lines)) if at.elapsed().as_secs() < 4 => {
-                format!("Unfiltered Logs — Copied {lines} lines to clipboard ✔")
+                format!("Unfiltered Logs — Copied {lines} lines to clipboard {}", Glyph::Ok.as_str())
             }
             _ => "Unfiltered Logs".to_string(),
         };

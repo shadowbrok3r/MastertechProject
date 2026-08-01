@@ -33,6 +33,48 @@ use web_time::Instant;
 /// so the UI can still show what's currently running.
 const MAX_ENTRIES_PER_CLIENT: usize = 200;
 
+/// Absolute ceiling per client, reached only when every entry is still `Pending`.
+const HARD_CAP_PER_CLIENT: usize = MAX_ENTRIES_PER_CLIENT * 2;
+
+/// Longest args/result payload retained per entry; longer ones keep head + tail.
+const MAX_PAYLOAD_BYTES: usize = 8 * 1024;
+
+/// Largest index `<= i` that lands on a UTF-8 boundary.
+fn floor_boundary(s: &str, mut i: usize) -> usize {
+    if i >= s.len() {
+        return s.len();
+    }
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// Smallest index `>= i` that lands on a UTF-8 boundary.
+fn ceil_boundary(s: &str, mut i: usize) -> usize {
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
+}
+
+/// Replaces the middle of an oversized payload with a byte count.
+fn clamp_payload(s: String) -> String {
+    if s.len() <= MAX_PAYLOAD_BYTES {
+        return s;
+    }
+    let keep = MAX_PAYLOAD_BYTES / 2;
+    let head = floor_boundary(&s, keep);
+    let tail = ceil_boundary(&s, s.len() - keep);
+    format!(
+        "{}\n… [{} of {} bytes truncated] …\n{}",
+        &s[..head],
+        tail - head,
+        s.len(),
+        &s[tail..]
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum McpToolCallStatus {
     Pending,
@@ -93,18 +135,17 @@ pub fn start_call(
         request_id,
         plugin_id,
         tool_name,
-        args_json,
+        args_json: clamp_payload(args_json),
         status: McpToolCallStatus::Pending,
         started_at: Instant::now(),
         finished_at: None,
         result_json: None,
     };
-    let list = g
-        .by_client
+    g.by_client
         .entry(connection_string.to_string())
-        .or_default();
-    list.push_back(entry);
-    evict_overflow(list);
+        .or_default()
+        .push_back(entry);
+    evict_overflow(&mut g, connection_string);
 }
 
 /// Mark a call as finished. Looks up the client by `request_id` so
@@ -123,7 +164,7 @@ pub fn finish_call(request_id: &str, success: bool, result_json: String) {
                 McpToolCallStatus::Error
             };
             e.finished_at = Some(Instant::now());
-            e.result_json = Some(result_json);
+            e.result_json = Some(clamp_payload(result_json));
         }
     }
 }
@@ -191,16 +232,38 @@ pub fn clear(connection_string: &str) {
     }
 }
 
-fn evict_overflow(list: &mut VecDeque<McpToolCallLog>) {
+/// Drop a client's bucket and any in-flight request mappings pointing at it.
+pub fn drop_client(connection_string: &str) {
+    let Ok(mut g) = store().lock() else { return };
+    g.by_client.remove(connection_string);
+    g.request_to_client.retain(|_, cs| cs != connection_string);
+}
+
+fn evict_overflow(inner: &mut StoreInner, connection_string: &str) {
+    let Some(list) = inner.by_client.get_mut(connection_string) else {
+        return;
+    };
+    let mut evicted: Vec<String> = Vec::new();
     while list.len() > MAX_ENTRIES_PER_CLIENT {
         let evict_idx = list
             .iter()
             .position(|e| !matches!(e.status, McpToolCallStatus::Pending));
         match evict_idx {
             Some(i) => {
-                list.remove(i);
+                if let Some(e) = list.remove(i) {
+                    evicted.push(e.request_id);
+                }
+            }
+            // Every entry is still in flight, so only the hard cap can shed one.
+            None if list.len() > HARD_CAP_PER_CLIENT => {
+                if let Some(e) = list.pop_front() {
+                    evicted.push(e.request_id);
+                }
             }
             None => break,
         }
+    }
+    for request_id in evicted {
+        inner.request_to_client.remove(&request_id);
     }
 }

@@ -480,9 +480,12 @@ fn probe_nuvoton(ports: IoPorts, index: u16, data: u16) -> NuvotonProbe {
             return NuvotonProbe::Silent;
         }
         let Some(chip) = nuvoton_chip(id_high, id_low) else {
-            log::debug!(
-                "stress-kit/superio: port 0x{index:02X} chip id 0x{id_high:02X}{id_low:02X} is \
-                 not a supported NCT67xx"
+            // Logged at info: the chip id is the one fact that turns "voltages
+            // unavailable" into an actionable gap, and it is otherwise lost.
+            log::info!(
+                "stress-kit/superio: port 0x{index:02X} chip id 0x{id_high:02X}{id_low:02X} \
+                 ({}) has no reader; board voltages unavailable",
+                known_unsupported_chip(id_high, id_low).unwrap_or("unrecognized")
             );
             return NuvotonProbe::Answered;
         };
@@ -537,6 +540,18 @@ fn nuvoton_chip(id_high: u8, id_low: u8) -> Option<&'static str> {
         .iter()
         .find(|(h, l, _)| *h == id_high && *l == id_low)
         .map(|(_, _, name)| *name)
+}
+
+/// Names a Nuvoton part that is identified but has no reader here, so the log
+/// says which chip is missing rather than only its id. These use the NCT6687
+/// EC-space layout, not the 0x48x bank/register map [`NUVOTON_CLASSIC`] reads.
+fn known_unsupported_chip(id_high: u8, id_low: u8) -> Option<&'static str> {
+    match (id_high, id_low) {
+        (0xD5, 0x92) => Some("NCT6687D"),
+        (0xD4, 0x92) => Some("NCT6687D-M"),
+        (0xC7, 0x32) => Some("NCT6683D"),
+        _ => None,
+    }
 }
 
 /// Normalizes a reported base to its window start, then accepts it only if the

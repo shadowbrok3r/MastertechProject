@@ -196,20 +196,34 @@ impl Widget for &mut RataguiBackend {
     }
 }
 
+/// Family every terminal surface renders with, registered as a single face in
+/// `app_state::font_definitions`.
+pub const TERMINAL_FONT_FAMILY: &str = "CascadiaMono";
+
+/// Point size the terminal surfaces start at before any `fit_font_to_grid`.
+pub const TERMINAL_FONT_SIZE: u16 = 12;
+
+/// A `FontId` in the terminal family.
+pub fn terminal_font(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name(TERMINAL_FONT_FAMILY.into()))
+}
+
 impl RataguiBackend {
     /// Creates a new `RataguiBackend` with the specified width and height.
     pub fn new(width: u16, height: u16, event_tx: Sender<TerminalEvent>) -> Self {
+        let font = terminal_font(TERMINAL_FONT_SIZE as f32);
         Self {
             width,
             height,
             buffer: Buffer::empty(Rect::new(0, 0, width, height)),
             cursor: false,
-            font_size: 16,
+            // Must match the FontIds below or `fit_font_to_grid` scales by the wrong ratio.
+            font_size: TERMINAL_FONT_SIZE,
             pos: (0, 0).into(),
-            regular_font: FontId::new(12.0, FontFamily::Name("CascadiaMono".into())),
-            bold_font: FontId::new(12.0, FontFamily::Name("CascadiaMono".into())),
-            italic_font: FontId::new(12.0, FontFamily::Name("CascadiaMono".into())),
-            bolditalic_font: FontId::new(12.0, FontFamily::Name("CascadiaMono".into())),
+            regular_font: font.clone(),
+            bold_font: font.clone(),
+            italic_font: font.clone(),
+            bolditalic_font: font,
             timestamp: Default::default(),
             blinking_slow: false,
             blinking_fast: false,

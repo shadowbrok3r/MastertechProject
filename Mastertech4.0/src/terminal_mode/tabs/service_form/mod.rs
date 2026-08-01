@@ -1,7 +1,7 @@
 use crate::terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, modals::DuplicateMergeModal, styling::ThemeRole, widgets::{autocomplete_input::AutoCompleteInput, button::{Button, ButtonState}, input_field::InputField, ButtonType}};
 use std::{rc::Rc, sync::{Arc, Mutex}, cell::RefCell};
-use database::schema::{prestashop_schema::OrderRow, GetKeysResponse};
-use ratatui::{layout::Rect, style::Style};
+use database::schema::GetKeysResponse;
+use ratatui::layout::Rect;
 use crate::terminal_mode::widgets::tui_scroll_view::ScrollViewState;
 use reqwest::Client;
 
@@ -19,7 +19,6 @@ pub struct ServiceFormTab<'a> {
     order_number: Rc<InputField<'a>>,
     // Other display only fields
     pub other_fields: Vec<InputField<'a>>,
-    pub order_row_fields: Vec<(InputField<'a>, InputField<'a>)>,
 
     // Row 1: Customer Info
     pub customer_name: InputField<'a>,
@@ -101,7 +100,6 @@ impl<'a> ServiceFormTab<'a> {
             carbonite_device_id_btn: Button::new("Device ID",WidgetId("CopyCarboniteDeviceId".to_string())).theme(ThemeRole::Neutral),
             activation_code_btn: Button::new("Activation Code",WidgetId("CopyActivationCode".to_string())).theme(ThemeRole::Neutral),
             recurly_id_btn: Button::new("Recurly ID",WidgetId("CopyRecurlyId".to_string())).theme(ThemeRole::Neutral),
-            order_row_fields: Vec::new(),
             order_number: service_num_field,
             other_fields,
             client,

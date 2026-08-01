@@ -2,7 +2,7 @@
 use crate::{schema::{prestashop::xml::{modify_xml, remove_xml_tag}, prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ClientScope, ConnectedClient, Priority, Qc, Record, RecordId, RecordIdExt, SurrealValue, Store, TaskNotePayload, User, UserAuthorization, CUSTOMER_TABLE, TASK_TABLE}, PlatformSpawner, Spawner, db};
 #[allow(unused_imports)]
 use super::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, LocalSebData, Notification, TicketData};
-use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, Utc, Weekday};
+use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, Weekday};
 use std::{collections::HashMap, fmt::Debug};
 use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;

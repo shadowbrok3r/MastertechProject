@@ -11,6 +11,7 @@ pub mod customer_messages;
 pub mod customer_threads;
 pub mod order;
 pub mod koth;
+pub mod order_write;
 pub mod xml;
 
 pub use customer_messages::*;
@@ -153,15 +154,18 @@ impl<'a> Prestashop<'a> {
         id: &str,
     ) -> anyhow::Result<String, anyhow::Error> {
         let url = format!("{PRESTASHOP_API_URL_WASM}/{resource}/{id}");
-        let response: String = self
-            .client
-            .get(url.clone())
-            .send()
-            .await?
-            .text()
-            .await?;
+        let response = self.client.get(url.clone()).send().await?;
+        let status = response.status();
+        let body = response.text().await?;
 
-        Ok(response)
+        if !status.is_success() {
+            anyhow::bail!("GET {url} -> HTTP {status}: {}", truncate_body(&body));
+        }
+        if let Some(error) = xml::first_prestashop_error(&body) {
+            anyhow::bail!("GET {url} -> Prestashop error: {error}");
+        }
+
+        Ok(body)
     }
 
     pub async fn request_subresources_by_id<T>(
@@ -510,17 +514,34 @@ impl<'a> Prestashop<'a> {
         &self,
         xml_payload: &str,
     ) -> anyhow::Result<String, anyhow::Error> {
-        // Send HTTP POST request with the XML payload
-        let response_text = self.client
-            .put(format!("{PRESTASHOP_API_URL_WASM}/orders"))
+        let url = format!("{PRESTASHOP_API_URL_WASM}/orders");
+        let response = self.client
+            .put(&url)
             .header("Content-type", "application/xml")
             .body(xml_payload.to_string())
             .send()
-            .await?
-            .text()
             .await?;
+        let status = response.status();
+        let body = response.text().await?;
 
-        Ok(response_text)
+        if !status.is_success() {
+            anyhow::bail!("PUT {url} -> HTTP {status}: {}", truncate_body(&body));
+        }
+        if let Some(error) = xml::first_prestashop_error(&body) {
+            anyhow::bail!("PUT {url} -> Prestashop rejected the order: {error}");
+        }
+
+        Ok(body)
+    }
+}
+
+/// Caps an error body so a full HTML page cannot flood the log.
+fn truncate_body(body: &str) -> String {
+    const LIMIT: usize = 600;
+    let trimmed = body.trim();
+    match trimmed.char_indices().nth(LIMIT) {
+        Some((idx, _)) => format!("{}… ({} bytes total)", &trimmed[..idx], trimmed.len()),
+        None => trimmed.to_string(),
     }
 }
 

@@ -21,8 +21,6 @@ pub struct ScriptsTab {
     pub service_number_input: String,
     /// Whether the log should auto-scroll
     pub auto_scroll_logs: bool,
-    /// Drag state for egui_dnd
-    drag_state: Option<usize>,
 }
 
 impl Default for ScriptsTab {
@@ -38,7 +36,6 @@ impl ScriptsTab {
             channels: ScriptChannels::default(),
             service_number_input: String::new(),
             auto_scroll_logs: true,
-            drag_state: None,
         }
     }
 

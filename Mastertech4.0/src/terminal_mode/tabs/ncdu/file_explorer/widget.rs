@@ -10,6 +10,7 @@ use ratatui::{
 };
 use rayon::prelude::*;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use crate::terminal_mode::styling::Glyph;
 use super::{File, FileExplorer};
 
 const BAR_LEN: usize = 16;                      // inner cells of the size bar
@@ -145,7 +146,8 @@ fn line_for<'a>(file: &'a File, theme: &Theme, inner_w: usize, cache: &SizeCache
     let style = if file.is_dir() { *theme.dir_style() } else { *theme.item_style() };
 
     // 1️⃣  Filename + icon -----------------------
-    let mut name = format!("{} {}", if file.is_dir() { "🗀 " } else { "🗋 " }, file.name());
+    let icon = if file.is_dir() { Glyph::Folder } else { Glyph::File };
+    let mut name = format!("{} {}", icon.as_str(), file.name());
 
     // size lookup
     let size_opt = if file.is_dir() {

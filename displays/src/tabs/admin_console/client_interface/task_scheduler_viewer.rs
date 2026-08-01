@@ -101,7 +101,6 @@ pub struct TaskSchedulerViewer {
     pub table: DataTable<ScheduledTask>,
     pub viewer: TaskSchedulerRowViewer,
     pub action_rx: Receiver<TaskSchedulerAction>,
-    action_tx: Sender<TaskSchedulerAction>,
     pub loading: bool,
     pub entries: Vec<ScheduledTask>,
     pub detail_task: Option<ScheduledTask>,
@@ -118,13 +117,12 @@ impl TaskSchedulerViewer {
     pub fn new() -> Self {
         let (action_tx, action_rx) = crossbeam::channel::unbounded();
         let mut viewer = TaskSchedulerRowViewer::default();
-        viewer.action_tx = Some(action_tx.clone());
+        viewer.action_tx = Some(action_tx);
 
         Self {
             table: DataTable::new(),
             viewer,
             action_rx,
-            action_tx,
             loading: false,
             entries: Vec::new(),
             detail_task: None,

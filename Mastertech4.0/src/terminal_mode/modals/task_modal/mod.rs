@@ -19,7 +19,7 @@ use chrono::Utc;
 use crossbeam::channel::{Receiver, Sender};
 use crate::terminal_mode::{
     events::action_handler::WidgetId,
-    styling::{CATPPUCCIN, ThemeRole},
+    styling::{CATPPUCCIN, Glyph, ThemeRole},
     widgets::button::Button,
     widgets::tui_textarea::TextArea,
 };
@@ -269,7 +269,7 @@ impl<'a> TaskModal<'a> {
         }
 
         // Create close button
-        let close_btn = Button::new("✕ Close", WidgetId("TaskModalClose".to_string()))
+        let close_btn = Button::new(format!("{} Close", Glyph::Close.as_str()), WidgetId("TaskModalClose".to_string()))
             .theme(ThemeRole::Input);
 
         let (ticket_tx, ticket_rx) = crossbeam::channel::unbounded();
@@ -442,11 +442,6 @@ impl<'a> TaskModal<'a> {
     /// Request modal to close
     pub fn request_close(&self) {
         *self.should_close.borrow_mut() = true;
-    }
-
-    /// Get the modal ID (task key)
-    pub fn get_id(&self) -> &str {
-        &self.modal_id
     }
 
     /// Username for a user record id, falling back to the raw key.

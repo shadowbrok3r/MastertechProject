@@ -12,7 +12,7 @@ use ratatui::{
 use database::schema::{Status, TaskNotePayload};
 use unicode_width::UnicodeWidthStr;
 use crate::terminal_mode::{
-    styling::{CATPPUCCIN, THEME},
+    styling::{CATPPUCCIN, Glyph, THEME},
     widgets::{tui_textarea::CursorMove, ButtonType, HandleWidget},
 };
 use super::{ModalFocus, ModalPage, TaskModal};
@@ -754,7 +754,7 @@ impl<'a> TaskModal<'a> {
         let title = if self.sending_note {
             " Sending… ".to_string()
         } else if self.note_private {
-            " New Note 🔒 PRIVATE ".to_string()
+            format!(" New Note {} PRIVATE ", Glyph::Private.as_str())
         } else {
             " New Note ".to_string()
         };

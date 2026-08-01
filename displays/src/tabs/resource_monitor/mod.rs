@@ -229,7 +229,7 @@ impl ResourceMonitor {
 
         eframe::egui::Panel::top("Resource Monitor Top Panel")
             .exact_size(25.)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 eframe::egui::MenuBar::new().ui(ui, |ui| {
                     ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                         let button_stroke = ui.style().visuals.window_stroke;
@@ -308,7 +308,7 @@ impl ResourceMonitor {
                 });
             });
 
-        CentralPanel::default().show_inside(ui, |ui| {
+        CentralPanel::default().show(ui, |ui| {
             match self.state {
                 ResourceMonitorState::Stop => {}
                 ResourceMonitorState::RequestingData => {
@@ -516,10 +516,9 @@ impl ResourceMonitor {
     }
 
     fn show_all_charts(&mut self, ui: &mut Ui) {
-        #[allow(deprecated)]
         eframe::egui::Panel::top("resource_monitor_live_view")
             .exact_size(34.0)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     ComboBox::from_id_salt("resource_monitor_live_view")

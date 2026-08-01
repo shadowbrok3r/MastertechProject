@@ -1,6 +1,7 @@
 use eframe::egui::{Button, CentralPanel, ComboBox, Id, Layout, RichText, ScrollArea, Separator, Spinner, TextEdit, Ui, Widget};
 use eframe::egui::{Color32, Grid, Style, scroll_area};
 use database::schema::prestashop::{OrderState, OrderType};
+use crate::ui_tools::icons;
 use crate::{PlatformSpawner, TaskUiActions};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use database::schema::{Store, User};
@@ -42,12 +43,13 @@ impl TaskAuditViewer {
         if let Some(order) = self.services_viewer.selected.clone() {
             let header = &format!("{} - {}", order.customer.name, order.order.id);
 
+            let mut side_panel_open = self.services_viewer.selected.is_some();
             eframe::egui::Panel::right(Id::new("Task Audit Side Panel"))
                 .default_size(280.)
                 .max_size(900.)
                 .resizable(true)
                 .show_separator_line(true)
-                .show_animated_inside(ui, self.services_viewer.selected.is_some(), |ui|
+                .show_collapsible(ui, &mut side_panel_open, |ui|
             {
                 ui.vertical_centered_justified(|ui| {
                     ui.add_space(5.);
@@ -160,7 +162,7 @@ impl TaskAuditViewer {
          
         eframe::egui::Panel::top("Task Audit Top Panel")
             .exact_size(30.)
-            .show_inside(ui, |ui| 
+            .show(ui, |ui| 
         {
             ui.horizontal_top(|ui| {
                 TextEdit::singleline(&mut self.services_viewer.filter)
@@ -269,6 +271,24 @@ impl TaskAuditViewer {
                     Self::get_services(selected.clone(), current_user.clone(), order_tx, svcs, start_idx, self.missed_calls_tx.clone(), self.services_viewer.store_selection.to_string());
                 }
                 ui.add_space(10.);
+                // Re-reads the rows already on screen, which Load skips.
+                if Button::new(icons::icon(icons::REFRESH)).ui(ui).on_hover_text("Re-read the loaded orders from Prestashop").clicked() {
+                    self.loading = true;
+                    self.services_viewer.write_errors.clear();
+                    let order_tx = self.order_channel.0.clone();
+                    let selected = self.audit_selection.clone();
+                    let key = selected.cache_key();
+
+                    let start_idx = self
+                        .index
+                        .entry(key.clone())
+                        .or_insert(0)
+                        .clone();
+
+                    self.time = Some(web_time::Instant::now());
+                    Self::get_services(selected.clone(), current_user.clone(), order_tx, Vec::new(), start_idx, self.missed_calls_tx.clone(), self.services_viewer.store_selection.to_string());
+                }
+                ui.add_space(10.);
                 if Button::new(" Load +10 ").ui(ui).clicked() {
                     let order_tx = self.order_channel.0.clone();
                     let selected = self.audit_selection.clone();
@@ -300,7 +320,7 @@ impl TaskAuditViewer {
         });
 
         CentralPanel::default()
-            .show_inside(ui, |ui| 
+            .show(ui, |ui| 
         {
             if let Some(table) = self.service_map.get_mut(&self.audit_selection.cache_key()) {
                 // style.single_click_edit_mode = true;

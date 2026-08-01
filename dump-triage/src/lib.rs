@@ -177,6 +177,31 @@ pub struct KernelDumpTriage {
     pub rsp_region: Option<HexRegion>,
 }
 
+/// Extensions a Windows kernel module name may end in.
+const MODULE_EXTENSIONS: [&str; 4] = ["sys", "dll", "exe", "inf"];
+
+/// True when `s` could be a Windows module name or a path ending in one.
+/// Rejects the truncated stems and mojibake a misresolved dump string yields.
+pub fn is_plausible_module_name(s: &str) -> bool {
+    if s.is_empty() || s.chars().count() > 260 || s.chars().any(char::is_control) {
+        return false;
+    }
+    let base = s.rsplit(['\\', '/']).next().unwrap_or(s);
+    if !(3..=64).contains(&base.chars().count()) {
+        return false;
+    }
+    if !base.bytes().all(|b| b.is_ascii_graphic()) {
+        return false;
+    }
+    let Some((stem, ext)) = base.rsplit_once('.') else {
+        return false;
+    };
+    if !MODULE_EXTENSIONS.iter().any(|m| ext.eq_ignore_ascii_case(m)) {
+        return false;
+    }
+    stem.bytes().any(|b| b.is_ascii_alphanumeric())
+}
+
 /// True for the NT kernel image / HAL module names (lowercase).
 pub fn is_kernel_image(name: &str) -> bool {
     matches!(
@@ -401,5 +426,48 @@ mod contract_tests {
         assert!(kd.scanned_stack.is_empty());
         assert!(kd.rip_region.is_none());
         assert_eq!(kd.drivers[0].timestamp, None);
+    }
+}
+
+#[cfg(test)]
+mod classifier_tests {
+    use super::is_plausible_module_name;
+
+    #[test]
+    fn accepts_real_module_names() {
+        for ok in [
+            "ntoskrnl.exe",
+            "Ntfs.sys",
+            "tm.sys",
+            "hal.dll",
+            "mcupdate_GenuineIntel.dll",
+            "nvlddmkm.sys",
+            r"\SystemRoot\system32\ntoskrnl.exe",
+            r"\??\C:\Windows\System32\drivers\Ntfs.sys",
+        ] {
+            assert!(is_plausible_module_name(ok), "should accept {ok:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_halved_stems_and_mojibake() {
+        for bad in [
+            "",
+            "ntoskr",
+            "nvlddm",
+            "tm.",
+            "clips",
+            "BasicDis",
+            "ntoskrnl.exe\u{0}",
+            "저&氀1堀昀椀渀椀琀礀 䴀漀戀椀氀攀",
+            "저&氀1଀",
+        ] {
+            assert!(!is_plausible_module_name(bad), "should reject {bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_localized_directory_component_still_passes() {
+        assert!(is_plausible_module_name(r"C:\Ünïcode\Ntfs.sys"));
     }
 }

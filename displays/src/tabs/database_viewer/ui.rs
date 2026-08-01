@@ -8,7 +8,7 @@ impl DatabaseEditor {
         self.receive(ui.ctx());
         eframe::egui::Panel::top("Database Editor Top Panel")
             .exact_size(30.)
-            .show_inside(ui, |ui| 
+            .show(ui, |ui| 
         {
             ui.horizontal_top(|ui| {
                 ui.add(TextEdit::singleline(&mut self.database_viewer.filter)
@@ -89,7 +89,7 @@ impl DatabaseEditor {
         });
 
         CentralPanel::default()
-            .show_inside(ui, |ui| 
+            .show(ui, |ui| 
         {
             if let Some(table) = self.table_map.get_mut(&self.database_viewer.selected_table.as_str().to_string()) {
                 Renderer::new(table, &mut self.database_viewer)

@@ -36,7 +36,7 @@ pub mod psu_transient;
 #[cfg(feature = "gpu")]
 pub mod combined;
 #[cfg(feature = "gpu")]
-mod gpu_common;
+pub(crate) mod gpu_common;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};

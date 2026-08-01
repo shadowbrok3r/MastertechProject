@@ -6,6 +6,9 @@ use eframe::egui::{
 
 use crate::{Cmd, PlatformSpawner, RemoteScriptItem, RemoteScriptStatus, Spawner};
 
+/// Log lines retained in the viewer; the oldest are dropped past this.
+const MAX_LOG_LINES: usize = 5_000;
+
 struct ScriptCategoryGroup {
     name: String,
     items: Vec<ScriptCheckItem>,
@@ -149,6 +152,11 @@ impl RemoteScriptsViewer {
             self.reboot_recommended = true;
         }
         self.log_messages.push(msg);
+        // A shorter buffer makes `HomePage::ingest_script_log` re-parse from the start.
+        if self.log_messages.len() > MAX_LOG_LINES {
+            let excess = self.log_messages.len() - MAX_LOG_LINES;
+            self.log_messages.drain(..excess);
+        }
     }
 
     pub fn set_script_result(&mut self, name: String, status: RemoteScriptStatus) {
@@ -196,7 +204,7 @@ impl RemoteScriptsViewer {
         }
 
         let panel_id = ui.id().with("scripts_top_bar");
-        eframe::egui::Panel::top(panel_id).show_inside(ui, |ui| {
+        eframe::egui::Panel::top(panel_id).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label("SO #:");
                 ui.add(
@@ -255,7 +263,7 @@ impl RemoteScriptsViewer {
 
         if self.reboot_recommended && !self.running {
             let banner_id = ui.id().with("scripts_reboot_banner");
-            eframe::egui::Panel::top(banner_id).show_inside(ui, |ui| {
+            eframe::egui::Panel::top(banner_id).show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
                         RichText::new(
@@ -282,7 +290,7 @@ impl RemoteScriptsViewer {
         eframe::egui::Panel::left(side_id)
             .resizable(false)
             .default_size(160.0_f32)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.heading("Categories");
                 ui.separator();
                 for (i, cat) in self.categories.iter().enumerate() {
@@ -304,7 +312,7 @@ impl RemoteScriptsViewer {
             .resizable(true)
             .default_size(200.0_f32)
             .min_size(80.0_f32)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.strong("Script Log");
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -329,7 +337,7 @@ impl RemoteScriptsViewer {
                 });
             });
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             if let Some(cat) = self.categories.get_mut(self.selected_category) {
                 ui.heading(&cat.name);
                 ui.separator();

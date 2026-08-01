@@ -40,6 +40,8 @@ pub enum WsDisplayState {
     /// Fleet Intel: crash-signature intelligence (dump analysis, prior
     /// verdicts) and the driver time machine (snapshots, drift, blocklist).
     FleetIntel,
+    /// Crash Dumps: this machine's own sightings, signatures, and verdicts.
+    CrashDumps,
 }
 
 impl WebSocketClient {
@@ -70,7 +72,7 @@ impl WebSocketClient {
         // having to remember which tab they last clicked.
         eframe::egui::Panel::top(Id::new(format!("ClientTopPanel-{}", self.client.client_hash)))
         .exact_size(38.)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.add_space(4.);
             ui.horizontal(|ui| {
                 let btn_color = ui.style().visuals.error_fg_color;
@@ -151,9 +153,19 @@ impl WebSocketClient {
                         ui.close();
                     }
                     if ui
+                        .button(format!("{} Crash Dumps", icons::CRITICAL))
+                        .on_hover_text(
+                            "Every crash recorded for THIS machine: minidumps, live-kernel reports, and GPU (Aftermath) dumps with their signatures, fleet prevalence, and verdicts",
+                        )
+                        .clicked()
+                    {
+                        let _ = self.display_state_channel.0.try_send(WsDisplayState::CrashDumps);
+                        ui.close();
+                    }
+                    if ui
                         .button(format!("{} Download crash dumps", icons::DOWNLOAD))
                         .on_hover_text(
-                            "Zip and download this client's MEMORY.DMP, Minidump\\*, and LiveKernelReports\\* in one archive",
+                            "Zip and download this client's MEMORY.DMP, Minidump\\*, LiveKernelReports\\*, and UE/GPU crash folders (Aftermath dumps + crash context, last 30 days) in one archive",
                         )
                         .clicked()
                     {
@@ -438,6 +450,7 @@ impl WebSocketClient {
                     WsDisplayState::ServiceRecord => "Service Record",
                     WsDisplayState::RemoteDesktop => "Remote Desktop",
                     WsDisplayState::FleetIntel    => "Fleet Intel",
+                    WsDisplayState::CrashDumps    => "Crash Dumps",
                 };
                 ui.label(
                     RichText::new(current_view)
@@ -527,7 +540,7 @@ impl WebSocketClient {
                 {
                     self.egui_viewer.poll_frames();
 
-                    let terminal_has_data = self.remote_terminal.latest_frame_index > 0;
+                    let terminal_has_data = self.remote_terminal.has_received_frame;
                     let egui_has_data = self.egui_viewer.has_received_frame;
 
                     if terminal_has_data {
@@ -564,7 +577,7 @@ impl WebSocketClient {
                                             let mut v = vec![tag];
                                             v.extend(ser);
                                             if loud {
-                                                log::error!(
+                                                log::debug!(
                                                     target: "egui_remote",
                                                     "[admin_ws_embed] send {:?} ({} bytes)",
                                                     ev,
@@ -669,6 +682,17 @@ impl WebSocketClient {
                 #[cfg(not(all(feature = "tokio", not(target_arch = "wasm32"))))]
                 {
                     ui.label("Fleet Intel requires the native tokio build.");
+                }
+            },
+            WsDisplayState::CrashDumps => {
+                #[cfg(all(feature = "tokio", not(target_arch = "wasm32")))]
+                {
+                    let client = self.client.clone();
+                    self.crash_dumps.display(ui, &client);
+                }
+                #[cfg(not(all(feature = "tokio", not(target_arch = "wasm32"))))]
+                {
+                    ui.label("Crash Dumps requires the native tokio build.");
                 }
             },
             WsDisplayState::RemoteDesktop => {

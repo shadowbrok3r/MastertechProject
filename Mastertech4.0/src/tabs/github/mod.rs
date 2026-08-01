@@ -120,7 +120,7 @@ impl MastertechContext {
                     .outer_margin(10.)
                     .inner_margin(10.)
             )
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.with_layout(
                     Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center),
                     |ui| {

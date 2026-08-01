@@ -351,7 +351,7 @@ Use script tools (list_scripts, read_script, save_script, delete_script) to mana
 PowerShell/batch scripts in the user's SurrealDB toolbox. \
 Avoid destructive actions without explicit approval.";
 
-#[tool_handler]
+#[tool_handler(router = self.tool_router)]
 impl ServerHandler for DiagnosticToolProvider {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().enable_experimental().build())

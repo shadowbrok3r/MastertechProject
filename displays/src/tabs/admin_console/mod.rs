@@ -688,7 +688,7 @@ impl SharedContext {
             )
             .show_separator_line(true)
             .exact_size(26.)
-            .show_inside(ui, |ui |
+            .show(ui, |ui |
         {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.set_height(20.);
@@ -938,6 +938,7 @@ impl SharedContext {
             });
         });
 
+        let mut left_open = self.web_console_layout.open_menu;
         eframe::egui::Panel::left("Client_Side_panel")
             .frame(
                 Frame::default()
@@ -950,7 +951,7 @@ impl SharedContext {
             .show_separator_line(false)
             .min_size(400.)
             .max_size(500.)
-            .show_animated_inside(ui, self.web_console_layout.open_menu, |ui |
+            .show_collapsible(ui, &mut left_open, |ui |
         {
             ui.with_layout(Layout::top_down(Align::Min), |ui| {
                 // Full panel width so the list's scrollbar sits flush against
@@ -1231,7 +1232,7 @@ impl SharedContext {
         // Right panel: Script Editor / Chat, opened from the Panels menu, so an
         // operator can drive the AI (or edit a script) while watching the
         // focused client run things in the central panel.
-        let right_open = self.web_console_layout.right_panel.is_some();
+        let mut right_open = self.web_console_layout.right_panel.is_some();
         eframe::egui::Panel::right("Client_Right_panel")
             .frame(
                 Frame::default()
@@ -1244,7 +1245,7 @@ impl SharedContext {
             .show_separator_line(false)
             .min_size(440.)
             .max_size(900.)
-            .show_animated_inside(ui, right_open, |ui| {
+            .show_collapsible(ui, &mut right_open, |ui| {
                 match self.web_console_layout.right_panel {
                     // Chat owns its own compact top bar (threads + close), so no
                     // extra header here. Its ✕ raises a close request we drain.
@@ -1270,7 +1271,7 @@ impl SharedContext {
                 }
             });
 
-        CentralPanel::default().show_inside(ui, |ui| {
+        CentralPanel::default().show(ui, |ui| {
             let ws_layout = &mut self.web_console_layout;
             // let connection_string = ws_layout.c
             if !ws_layout.error.is_empty() {

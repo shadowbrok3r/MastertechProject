@@ -1,12 +1,13 @@
 use crate::remote_viewer::ratagui::{RataguiBackend, TerminalEvent};
 use crate::tabs::admin_console::client_interface::tabs::command_shell::History;
+use crate::ui_tools::tui_theme::{CATPPUCCIN, THEME};
 use crossbeam::channel::{unbounded, Receiver, Sender};
-use eframe::egui::{Color32, EventFilter, Frame, Id, Margin, Stroke, Ui};
+use eframe::egui::{EventFilter, Frame, Id, Margin, Stroke, Ui};
 use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Paragraph, Wrap},
     Terminal,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -120,7 +121,7 @@ impl BetaTerminal {
                 continue;
             }
             for raw in entry.message.split('\n') {
-                self.scrollback.push(parse_ansi(raw, THEME_OUTPUT));
+                self.scrollback.push(parse_ansi(raw, THEME.text_muted));
             }
         }
         self.last_history_idx = history.len();
@@ -170,41 +171,41 @@ impl BetaTerminal {
 
     fn build_prompt_lines(&self, command: Option<&str>) -> (Line<'static>, Line<'static>) {
         let mut top_spans: Vec<Span<'static>> = vec![
-            Span::styled("┌─[", style(THEME_PROMPT_FRAME).add_modifier(Modifier::BOLD)),
-            Span::styled(self.user.clone(), style(THEME_USER).add_modifier(Modifier::BOLD)),
-            Span::styled("@", style(THEME_PROMPT_FRAME)),
-            Span::styled(self.host.clone(), style(THEME_HOST).add_modifier(Modifier::BOLD)),
+            Span::styled("┌─[", style(THEME.accent).add_modifier(Modifier::BOLD)),
+            Span::styled(self.user.clone(), style(THEME.success).add_modifier(Modifier::BOLD)),
+            Span::styled("@", style(THEME.accent)),
+            Span::styled(self.host.clone(), style(THEME.accent_soft).add_modifier(Modifier::BOLD)),
         ];
         if !self.ip.is_empty() {
-            top_spans.push(Span::styled(" - ", style(THEME_DIM)));
-            top_spans.push(Span::styled(self.ip.clone(), style(THEME_IP)));
+            top_spans.push(Span::styled(" - ", style(THEME.overlay)));
+            top_spans.push(Span::styled(self.ip.clone(), style(THEME.tertiary)));
         }
         top_spans.push(Span::styled(
             "] - [",
-            style(THEME_PROMPT_FRAME).add_modifier(Modifier::BOLD),
+            style(THEME.accent).add_modifier(Modifier::BOLD),
         ));
         top_spans.push(Span::styled(
             self.cwd.clone(),
-            style(THEME_CWD).add_modifier(Modifier::BOLD),
+            style(THEME.warning).add_modifier(Modifier::BOLD),
         ));
         top_spans.push(Span::styled(
             "]",
-            style(THEME_PROMPT_FRAME).add_modifier(Modifier::BOLD),
+            style(THEME.accent).add_modifier(Modifier::BOLD),
         ));
         let top = Line::from(top_spans);
 
         let mut bottom_spans: Vec<Span<'static>> = vec![
-            Span::styled("└─[", style(THEME_PROMPT_FRAME).add_modifier(Modifier::BOLD)),
-            Span::styled("$", style(THEME_PROMPT_DOLLAR).add_modifier(Modifier::BOLD)),
+            Span::styled("└─[", style(THEME.accent).add_modifier(Modifier::BOLD)),
+            Span::styled("$", style(THEME.accent_soft).add_modifier(Modifier::BOLD)),
             Span::styled(
                 "] ",
-                style(THEME_PROMPT_FRAME).add_modifier(Modifier::BOLD),
+                style(THEME.accent).add_modifier(Modifier::BOLD),
             ),
         ];
         if let Some(cmd) = command {
             bottom_spans.push(Span::styled(
                 cmd.to_string(),
-                style(THEME_INPUT).add_modifier(Modifier::BOLD),
+                style(THEME.text).add_modifier(Modifier::BOLD),
             ));
         }
         let bottom = Line::from(bottom_spans);
@@ -221,25 +222,25 @@ impl BetaTerminal {
         let rest: String = after_chars.collect();
         let cursor_style = if cursor_on {
             Style::default()
-                .bg(THEME_INPUT)
-                .fg(THEME_BG)
+                .bg(THEME.text)
+                .fg(THEME.bg)
                 .add_modifier(Modifier::BOLD)
         } else {
-            style(THEME_INPUT).add_modifier(Modifier::BOLD)
+            style(THEME.text).add_modifier(Modifier::BOLD)
         };
         let bottom = Line::from(vec![
-            Span::styled("└─[", style(THEME_PROMPT_FRAME).add_modifier(Modifier::BOLD)),
-            Span::styled("$", style(THEME_PROMPT_DOLLAR).add_modifier(Modifier::BOLD)),
+            Span::styled("└─[", style(THEME.accent).add_modifier(Modifier::BOLD)),
+            Span::styled("$", style(THEME.accent_soft).add_modifier(Modifier::BOLD)),
             Span::styled(
                 "] ",
-                style(THEME_PROMPT_FRAME).add_modifier(Modifier::BOLD),
+                style(THEME.accent).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 before.to_string(),
-                style(THEME_INPUT).add_modifier(Modifier::BOLD),
+                style(THEME.text).add_modifier(Modifier::BOLD),
             ),
             Span::styled(cursor_char.to_string(), cursor_style),
-            Span::styled(rest, style(THEME_INPUT).add_modifier(Modifier::BOLD)),
+            Span::styled(rest, style(THEME.text).add_modifier(Modifier::BOLD)),
         ]);
         (top, bottom)
     }
@@ -252,7 +253,7 @@ impl BetaTerminal {
             self.scrollback.push(Line::from(vec![Span::styled(
                 "MasterTech beta shell — Tab: completions · ↑/↓: history · Ctrl+L: clear · Ctrl+C: cancel · mouse wheel scrolls"
                     .to_string(),
-                style(THEME_DIM).add_modifier(Modifier::ITALIC),
+                style(THEME.overlay).add_modifier(Modifier::ITALIC),
             )]));
             self.scrollback.push(Line::from(Span::raw(String::new())));
         }
@@ -288,33 +289,51 @@ impl BetaTerminal {
         let scrollback = self.scrollback.clone();
         let scroll_offset = self.scroll_offset;
 
+        let title = if self.ip.is_empty() {
+            format!(" {} ", self.host)
+        } else {
+            format!(" {} - {} ", self.host, self.ip)
+        };
+
         let _ = self.terminal.draw(|f| {
             let area = f.area();
-            f.render_widget(Block::default().style(Style::default().bg(THEME_BG)), area);
+            f.render_widget(Block::default().style(Style::default().bg(THEME.bg)), area);
+
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title(title)
+                .title_style(THEME.title())
+                .border_style(Style::new().fg(THEME.tertiary))
+                .style(Style::new().bg(THEME.bg).fg(THEME.text));
+            let body = block.inner(area);
+            f.render_widget(block, area);
+
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Min(1), Constraint::Length(2)])
-                .split(area);
+                .split(body);
 
             let total = scrollback.len() as u16;
             let visible = chunks[0].height;
             let bottom_offset = total.saturating_sub(visible).saturating_sub(scroll_offset);
             let para = Paragraph::new(scrollback)
-                .style(Style::default().fg(THEME_OUTPUT).bg(THEME_BG))
+                .style(Style::default().fg(THEME.text_muted).bg(THEME.bg))
                 .wrap(Wrap { trim: false })
                 .scroll((bottom_offset, 0));
             f.render_widget(para, chunks[0]);
 
             let prompt = Paragraph::new(vec![prompt_top, prompt_bottom])
-                .style(Style::default().bg(THEME_BG))
+                .style(Style::default().bg(THEME.bg))
                 .wrap(Wrap { trim: false });
             f.render_widget(prompt, chunks[1]);
         });
 
+        // Chrome comes from the ratatui block; the egui frame only pads the grid.
         let inner = Frame::new()
-            .fill(Color32::from_rgb(15, 11, 23))
-            .stroke(Stroke::new(1.0, Color32::from_rgb(80, 38, 78)))
-            .inner_margin(Margin::same(6))
+            .fill(RataguiBackend::rat_to_egui_color(&THEME.bg, false))
+            .stroke(Stroke::NONE)
+            .inner_margin(Margin::same(4))
             .show(ui, |ui| {
                 ui.add(self.terminal.backend_mut());
             });
@@ -352,7 +371,7 @@ impl BetaTerminal {
         let cancel = |term: &mut BetaTerminal, interactive: bool| -> Option<BetaTerminalAction> {
             term.scrollback.push(Line::from(vec![Span::styled(
                 "^C".to_string(),
-                style(THEME_RED).add_modifier(Modifier::BOLD),
+                style(THEME.error).add_modifier(Modifier::BOLD),
             )]));
             term.input.clear();
             term.cursor = 0;
@@ -624,18 +643,6 @@ fn default_user() -> String {
         .unwrap_or_else(|_| "operator".to_string())
 }
 
-const THEME_BG: Color = Color::Rgb(15, 11, 23);
-const THEME_PROMPT_FRAME: Color = Color::Rgb(255, 61, 138);
-const THEME_PROMPT_DOLLAR: Color = Color::Rgb(255, 121, 178);
-const THEME_USER: Color = Color::Rgb(166, 227, 161);
-const THEME_HOST: Color = Color::Rgb(245, 194, 231);
-const THEME_IP: Color = Color::Rgb(116, 199, 236);
-const THEME_CWD: Color = Color::Rgb(249, 226, 175);
-const THEME_INPUT: Color = Color::Rgb(245, 224, 220);
-const THEME_OUTPUT: Color = Color::Rgb(180, 190, 254);
-const THEME_DIM: Color = Color::Rgb(127, 132, 156);
-const THEME_RED: Color = Color::Rgb(243, 139, 168);
-
 fn parse_ansi(input: &str, default_fg: Color) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut buf = String::new();
@@ -720,7 +727,7 @@ fn apply_sgr(mut s: Style, code: &str, default_fg: Color) -> Style {
                 }
             }
             39 => s = s.fg(default_fg),
-            49 => s = s.bg(THEME_BG),
+            49 => s = s.bg(THEME.bg),
             _ => {}
         }
     }
@@ -729,14 +736,13 @@ fn apply_sgr(mut s: Style, code: &str, default_fg: Color) -> Style {
 
 fn ansi_basic(n: u32) -> Color {
     match n {
-        0 => Color::Rgb(69, 71, 90),
-        1 => Color::Rgb(243, 139, 168),
-        2 => Color::Rgb(166, 227, 161),
-        3 => Color::Rgb(249, 226, 175),
-        4 => Color::Rgb(137, 180, 250),
-        5 => Color::Rgb(245, 194, 231),
-        6 => Color::Rgb(148, 226, 213),
-        7 => Color::Rgb(205, 214, 244),
-        _ => Color::Rgb(205, 214, 244),
+        0 => CATPPUCCIN.surface1,
+        1 => CATPPUCCIN.red,
+        2 => CATPPUCCIN.green,
+        3 => CATPPUCCIN.yellow,
+        4 => CATPPUCCIN.blue,
+        5 => CATPPUCCIN.pink,
+        6 => CATPPUCCIN.teal,
+        _ => CATPPUCCIN.text,
     }
 }

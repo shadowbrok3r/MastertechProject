@@ -16,8 +16,12 @@ pub mod rerun_mtech;
 pub mod mtech_glass;
 pub mod theme_chrome;
 pub mod theme_config;
+pub mod tui_theme;
 pub mod notification_center;
+pub mod dump_text;
+pub mod hex_json;
 pub mod icons;
+pub mod info_card;
 pub mod selection_stats;
 
 pub use mtech_ui::{dock_style, egui_logger, theme};
@@ -47,7 +51,9 @@ pub fn style_from_json(json: &[u8]) -> anyhow::Result<Style> {
     match serde_json::from_slice::<Style>(json) {
         Ok(style) => Ok(style),
         Err(e) => {
-            log::warn!("theme strict-decode failed ({e}); migrating against egui Style defaults");
+            log::debug!(
+                "stored theme predates the current egui Style schema ({e}); migrating against egui Style defaults"
+            );
             let stored: serde_json::Value =
                 serde_json::from_slice(json).context("theme is not valid JSON; cannot migrate")?;
             let default =

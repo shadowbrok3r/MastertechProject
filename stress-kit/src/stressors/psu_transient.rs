@@ -40,6 +40,11 @@ const GPU_OPS_PER_INVOCATION: u64 = (INNER_ITERS as u64) * 6 + (INNER_ITERS as u
 const MAX_INFLIGHT_SUBMITS: usize = 3;
 /// Wall-clock window without confirmed GPU work before the leg is declared stalled.
 const DRAIN_STALL_LIMIT: Duration = Duration::from_secs(90);
+
+/// Latched when the GPU driver thread exits without recording a reason.
+const GPU_LEG_DOWN_UNEXPECTED: &str =
+    "psu_transient: inconclusive - the GPU pulse thread exited without reporting a reason \
+     (panic); the pulsed +12V load stopped, so this is not a valid PSU transient test";
 /// Timed single-unit submits taken before the burst loop starts.
 const CALIBRATION_SAMPLES: u32 = 3;
 /// Bursts between measured duty-cycle logs.
@@ -163,7 +168,16 @@ pub(crate) fn run(
         last_gpu = gpu_now;
         last_tick = Instant::now();
 
-        match fatal_slot.lock().ok().and_then(|g| g.clone()) {
+        // A driver thread that ended without latching a reason panicked; without
+        // this the run continues CPU-only and passes.
+        let latched = fatal_slot.lock().ok().and_then(|g| g.clone());
+        let fatal = latched.or_else(|| {
+            gpu_handle
+                .is_finished()
+                .then(|| GPU_LEG_DOWN_UNEXPECTED.to_string())
+        });
+
+        match fatal {
             // The verdict is decided; the surviving CPU-only load proves nothing.
             Some(reason) => {
                 emit_latched_fatal(tx, started_at, gflops, reason);

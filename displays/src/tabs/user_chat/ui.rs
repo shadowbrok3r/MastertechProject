@@ -26,7 +26,7 @@ impl UserChat {
         eframe::egui::Panel::top(self.chat_title.clone())
             .frame(Frame::default().inner_margin(Margin::same(4)))
             .exact_size(28.)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     if !self.edit_title {
                         let t = self.chat_title.clone();
@@ -53,7 +53,7 @@ impl UserChat {
 
         eframe::egui::Panel::left("ChatHistoryPanel")
             .exact_size(120.)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.vertical_centered_justified(|ui| {
                     ui.add_space(10.);
                     let selected_thread = &mut self.selected_thread.clone();
@@ -114,11 +114,11 @@ impl UserChat {
             .frame(Frame::default().inner_margin(Margin::same(8)))
             .default_size(150.)
             .max_size(300.)
-            .show_inside(ui, |ui| self.chat_input(ui) );
+            .show(ui, |ui| self.chat_input(ui) );
 
         CentralPanel::default()
             .frame(Frame::dark_canvas(ui.style()))
-            .show_inside(ui, |ui| self.display_thread(ui) );
+            .show(ui, |ui| self.display_thread(ui) );
 
     }
     

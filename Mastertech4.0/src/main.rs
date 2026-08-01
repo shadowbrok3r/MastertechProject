@@ -20,6 +20,7 @@ pub mod tcp_listener;
 pub mod tunnel_session;
 pub mod relay_control;
 pub mod remote_desktop;
+pub mod remote_exec;
 pub mod remote_self_update;
 
 impl eframe::App for app_state::MasterTechApp {
@@ -34,7 +35,7 @@ impl eframe::App for app_state::MasterTechApp {
                 let rx = capture.frame_rx.clone();
                 let input_tx = capture.input_tx.clone();
                 mgr.register(Box::new(capture));
-                mgr.set_plugin_enabled("com.mastertech.egui-frame-capture", true);
+                // Capture stays off until an admin sends `Cmd::SetFrameCapture { enabled: true }`.
                 mgr.register(Box::new(displays::plugins::EguiRemoteViewer::new()));
                 // mgr.register(Box::new(displays::plugins::HelloMastertechPlugin::default()));
                 (rx, input_tx)
@@ -106,6 +107,8 @@ impl eframe::App for app_state::MasterTechApp {
         });
 
         self.receive_ui(ui.ctx(), frame);
+        // Before any tab content: painting this is what admits RemoteExec jobs.
+        remote_exec::banner_egui::show(ui);
         self.menu_bar(ui);
 
         match &self.context.shared_ctx.state {
@@ -318,15 +321,13 @@ async fn run_gui(log_to_file: bool, force_cpu: bool) -> eframe::Result<()> {
     multi_log::MultiLogger::init(loggers, log::Level::Info)
         .expect("Error initializing multi_logger");
 
-    tokio::spawn(async move {
-        utilities::ai::run_mcp_server_tcp().await?;
-        Ok::<(), anyhow::Error>(())
-    });
+    // A stale job the registry still calls running belongs to a dead process.
+    remote_exec::recover_on_start();
+
     // GPU (glow) first, then the egui_skia software renderer, then terminal mode.
-    let mut gui_ok = false;
-    if force_cpu {
+    let gui_ok = if force_cpu {
         log::info!("--cpu/--software set; forcing the egui_skia software renderer");
-        gui_ok = try_software_gui();
+        try_software_gui()
     } else {
         let eframe_app = eframe::run_native(
             format!("Mastertech-{}", database::version_with_build!()).as_str(),
@@ -343,13 +344,13 @@ async fn run_gui(log_to_file: bool, force_cpu: bool) -> eframe::Result<()> {
             }),
         );
         match eframe_app {
-            Ok(()) => gui_ok = true,
+            Ok(()) => true,
             Err(e) => {
                 error!("eframe glow init failed: {e:?}; trying egui_skia software renderer");
-                gui_ok = try_software_gui();
+                try_software_gui()
             }
         }
-    }
+    };
 
     if gui_ok {
         displays::signal_shutdown();

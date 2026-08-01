@@ -373,7 +373,7 @@ impl ChatView {
             }
         }
 
-        eframe::egui::Panel::top(format!("Top panel header {:?}", task_id)).exact_size(24.).show_inside(ui, |ui| {
+        eframe::egui::Panel::top(format!("Top panel header {:?}", task_id)).exact_size(24.).show(ui, |ui| {
             ui.vertical_centered(|ui| {
                 if Button::new(RichText::new("Refresh").strong().heading()).ui(ui).clicked() {
                     self.refresh_notes();
@@ -385,7 +385,7 @@ impl ChatView {
             .default_size(300.)
             // .max_width(500.)
             .resizable(false)
-            .show_inside(ui, |ui| 
+            .show(ui, |ui| 
         {
             ui.visuals_mut().extreme_bg_color= Color32::BLACK;
             ui.visuals_mut().code_bg_color = Color32::BLACK;
@@ -492,7 +492,7 @@ impl ChatView {
 
         CentralPanel::default()
             .frame(Frame::new().inner_margin(Margin::same(2)).fill(theme::bg_surface(ui)))
-            .show_inside(ui, |ui| 
+            .show(ui, |ui| 
         {
             
             ScrollArea::vertical()

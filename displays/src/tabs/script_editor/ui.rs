@@ -20,7 +20,7 @@ impl ScriptEditor {
                 .stroke(Stroke::new(1.0_f32, Color32::from_additive_luminance(150)))
                 .outer_margin(Margin::symmetric(0, 2))
             )
-            .show_inside(ui, |ui|
+            .show(ui, |ui|
         {
             ui.add_space(2.);
             ui.horizontal_top(|ui| {
@@ -125,6 +125,7 @@ impl ScriptEditor {
                 });
         }
 
+        let mut file_browser_open = self.open_file_browser;
         eframe::egui::Panel::right(Id::new("Script editor sidebar"))
         .default_size(160.)
         .frame(
@@ -132,7 +133,7 @@ impl ScriptEditor {
             .inner_margin(Margin::symmetric(4, 2))
             .outer_margin(Margin::symmetric(2, 4))
         )
-        .show_animated_inside(ui, self.open_file_browser, |ui| {
+        .show_collapsible(ui, &mut file_browser_open, |ui| {
             ui.vertical_centered_justified(|ui| {
                 ui.add_space(10.);
                 ui.label(RichText::new("Toolbox").heading());
@@ -179,7 +180,7 @@ impl ScriptEditor {
                 Frame::default()
                 .outer_margin(Margin::symmetric(2, 4))
             )
-            .show_inside(ui, |ui|
+            .show(ui, |ui|
         {
             FileViewer::default()
                 .id_source("Script Editor")

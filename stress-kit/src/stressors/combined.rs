@@ -304,7 +304,10 @@ fn gpu_driver(cancel: Arc<AtomicBool>, counter: Arc<AtomicU64>, warn: Arc<Mutex<
             }
         }
         if let Some(reason) = ctx.health.failure() {
-            let msg = format!("combined: GPU leg stopped ({reason}); continuing CPU+RAM only");
+            let msg = format!(
+                "combined: inconclusive - GPU leg stopped ({reason}); CPU+RAM only from here, \
+                 so this is not a whole-system result"
+            );
             log::error!("[stress-kit/combined] {msg}");
             set_warn(&warn, msg);
             return;

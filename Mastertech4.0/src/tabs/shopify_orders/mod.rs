@@ -152,7 +152,7 @@ impl ShopifyOrdersTab {
 
         let mut action = None;
 
-        egui::Panel::top("shopify_orders_top").exact_size(62.0).show_inside(ui, |ui| {
+        egui::Panel::top("shopify_orders_top").exact_size(62.0).show(ui, |ui| {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 if ui.add_enabled(!self.recent_busy, egui::Button::new("Refresh")).clicked() {
@@ -214,12 +214,12 @@ impl ShopifyOrdersTab {
             egui::Panel::right(Id::new("shopify_order_detail"))
                 .default_size(360.0)
                 .resizable(true)
-                .show_inside(ui, |ui| {
+                .show(ui, |ui| {
                     action = self.ui_detail(ui);
                 });
         }
 
-        CentralPanel::default().show_inside(ui, |ui| {
+        CentralPanel::default().show(ui, |ui| {
             if let Some(e) = self.recent_error.as_ref() {
                 ui.colored_label(ui.visuals().error_fg_color, e);
             }

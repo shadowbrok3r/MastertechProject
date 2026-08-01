@@ -468,7 +468,7 @@ impl StockTable {
     pub fn ui(&mut self, ui: &mut Ui) {
         eframe::egui::Panel::top("StockTopPanel")
             .exact_size(30.)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.horizontal_top(|ui| {
                     ComboBox::new("Stock Selection", "")
                     .selected_text(self.stock_selection.as_str())
@@ -1036,7 +1036,7 @@ impl StockTable {
             if let Some(ref summary) = self.cost_summary {
                 eframe::egui::Panel::bottom("CostBreakdownBottom")
                     .exact_size(30.)
-                    .show_inside(ui, |ui| {
+                    .show(ui, |ui| {
                         ui.horizontal_centered(|ui| {
                             ui.spacing_mut().item_spacing.x = 25.0;
                             Hyperlink::from_label_and_url(
@@ -1077,7 +1077,7 @@ impl StockTable {
             if let Some(ref s) = self.bulk_summary {
                 eframe::egui::Panel::bottom("BulkCostBreakdownBottom")
                     .exact_size(30.)
-                    .show_inside(ui, |ui| {
+                    .show(ui, |ui| {
                         ui.horizontal_centered(|ui| {
                             ui.spacing_mut().item_spacing.x = 22.0;
                             ui.colored_label(Color32::LIGHT_BLUE, format!("Orders: {}", s.order_count));
@@ -1122,14 +1122,14 @@ impl StockTable {
         // central panel.
         render_history_windows(ui.ctx(), &mut self.history_windows);
 
-        CentralPanel::default().show_inside(ui, |ui| {
+        CentralPanel::default().show(ui, |ui| {
             // Right-side paste-list import panel (Store Inventory only).
             if self.stock_selection == StockSelection::StoreInventory && self.import_panel_open {
                 Panel::right("inventory_import_panel")
                     .resizable(true)
                     .default_size(420.)
                     .min_size(320.)
-                    .show_inside(ui, |ui| {
+                    .show(ui, |ui| {
                         self.render_import_panel(ui);
                     });
             }
@@ -1145,7 +1145,7 @@ impl StockTable {
                     .resizable(true)
                     .default_size(360.)
                     .min_size(280.)
-                    .show_inside(ui, |ui| {
+                    .show(ui, |ui| {
                         self.render_serial_history_panel(ui);
                     });
             }
@@ -1388,7 +1388,7 @@ impl StockTable {
                     .resizable(true)
                     .default_size(46.)
                     .min_size(30.)
-                    .show_inside(ui, |ui| {
+                    .show(ui, |ui| {
                         ui.horizontal_wrapped(|ui| {
                             ui.spacing_mut().item_spacing.x = 12.0;
                             render_selection_stats(ui, count, &stats);
@@ -1538,7 +1538,7 @@ impl StockTable {
                 uniq
             };
 
-            Panel::bottom("EverestBottom").show_inside(ui, |ui| {
+            Panel::bottom("EverestBottom").show(ui, |ui| {
                 ui.add_space(4.);
                 ui.columns(5, |cols| {
                     cols[0].label(format!("Items: {}", order.items.len()));
@@ -1582,7 +1582,7 @@ impl StockTable {
                 .resizable(true)
                 .default_size(360.)
                 .min_size(280.)
-                .show_inside(ui, |ui| {
+                .show(ui, |ui| {
                     self.render_serial_history_panel(ui);
                 });
         }
@@ -1593,13 +1593,13 @@ impl StockTable {
                 .resizable(true)
                 .default_size(300.)
                 .min_size(220.)
-                .show_inside(ui, |ui| {
+                .show(ui, |ui| {
                     self.render_customer_panel(ui);
                 });
         }
 
         // Center: breadcrumb trail above the active view's content.
-        CentralPanel::default().show_inside(ui, |ui| {
+        CentralPanel::default().show(ui, |ui| {
             self.render_everest_breadcrumb(ui);
 
             match self.everest_view {

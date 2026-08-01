@@ -10,8 +10,8 @@ use std::sync::Mutex;
 
 use database::schema::{
     crash_intel::{
-        parse_dump_decode_payload, parse_kernel_triage_payload, payload_status, CrashIngest,
-        CrashSignature, ParsedCrash, SightingContext,
+        parse_dump_decode_payload, parse_gpu_crash_payload, parse_kernel_triage_payload,
+        payload_status, CrashIngest, CrashSignature, ParsedCrash, SightingContext, GPU_DUMP_KIND,
     },
     DiagnosticCategory, DiagnosticEntry, DiagnosticSession, PluginUsageRef, RecordId,
     DIAGNOSTIC_SESSION_TABLE,
@@ -179,6 +179,31 @@ pub fn ingest_kernel_triage_result(
     spawn_ingest(connection_string, computer, tool_name, "minidump", crashes);
 }
 
+/// GPU/UE crash-artifact collector plugin.
+pub const GPU_DUMPS_PLUGIN_ID: &str = "com.mastertech.gpu-dumps";
+
+/// True for GPU crash-context results worth ingesting.
+pub fn is_gpu_crash_result(plugin_id: &str, tool_name: &str) -> bool {
+    plugin_id == GPU_DUMPS_PLUGIN_ID && tool_name == "read_gpu_dump_context"
+}
+
+/// Parses a GPU crash context and persists it with `dump_kind = 'gpu_aftermath'`.
+pub fn ingest_gpu_crash_result(
+    connection_string: String,
+    computer: Option<RecordId>,
+    tool_name: String,
+    result_json: String,
+) {
+    let Ok(payload) = serde_json::from_str::<serde_json::Value>(&result_json) else {
+        return;
+    };
+    let crashes = parse_gpu_crash_payload(&payload);
+    if crashes.is_empty() {
+        return;
+    }
+    spawn_ingest(connection_string, computer, tool_name, GPU_DUMP_KIND, crashes);
+}
+
 /// Session/task/computer linkage resolved for new crash sightings.
 #[derive(Debug, Default, Clone)]
 pub struct SightingLinks {
@@ -314,9 +339,14 @@ fn spawn_ingest(
 /// Diff a batch of parsed triages against the newest and surface driver-set
 /// deltas as a per-client notice.
 fn surface_cross_dump_diffs(connection_string: &str, crashes: &[ParsedCrash]) {
+    // A GPU blob deserializes into an all-default triage, so exclude it by kind.
     let triages: Vec<dump_triage::KernelDumpTriage> = crashes
         .iter()
         .filter_map(|c| c.triage.as_ref())
+        .filter(|t| {
+            t.get("kind").and_then(|v| v.as_str())
+                != Some(dump_triage::gpu::GPU_AFTERMATH_DUMP_KIND)
+        })
         .filter_map(|t| serde_json::from_value(t.clone()).ok())
         .collect();
     if triages.len() < 2 {

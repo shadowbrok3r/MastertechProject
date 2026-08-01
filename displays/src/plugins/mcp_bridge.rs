@@ -14,6 +14,14 @@
 //! [`EguiInputEvent`](super::remote::EguiInputEvent) when an operator has an active Web Console
 //! WebSocket session (same binary format as the Mastertech Viewer tab).
 //!
+//! **RemoteExec (elevated shell jobs owned by a connected client):**
+//! `remote_exec_capabilities`, `remote_exec_arm`, `remote_exec_disarm`, `remote_exec_start`,
+//! `remote_exec_tail`, `remote_exec_wait`, `remote_exec_signal`, `remote_exec_list` — for work no
+//! named script or plugin tool can do. Unlike `call_remote_plugin_tool`, a job outlives the
+//! PluginManager watchdog and the admin's connection, and reports a real exit code. Gated by the
+//! client's consent banner ([`crate::remote_exec`]); replies arrive as `Cmd::RemotePluginToolResult`
+//! under [`crate::remote_exec::NATIVE_REMOTE_EXEC_PLUGIN_ID`], so there is no separate result route.
+//!
 //! **Authoring (WASM plugin lifecycle):**
 //! - `plugin_source` — read or write Rust source for a plugin
 //! - `plugin_compile` — compile source to a WASM artifact
@@ -58,9 +66,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
-use super::remote_script_notify::{
-    RemoteScriptSession, REMOTE_SCRIPT_ACCUM, REMOTE_SCRIPT_PENDING,
-};
 use super::PluginManager;
 
 // ─── Remote plugin tool call response routing ───────────────────────────────────
@@ -2113,6 +2118,302 @@ pub struct PluginCompileStatusParams {
     pub forget_on_done: Option<bool>,
 }
 
+// ─── RemoteExec param types ───────────────────────────────────────────────────
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct RemoteExecCapabilitiesParams {
+    #[schemars(description = "Web Console connection_string of the remote client")]
+    pub connection_string: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct RemoteExecArmParams {
+    #[schemars(description = "Web Console connection_string of the remote client")]
+    pub connection_string: String,
+    #[schemars(description = "Technician or agent identity recorded on every job")]
+    pub tech: String,
+    #[schemars(description = "Diagnostic session id this remote-control lease belongs to (from create_diagnostic_session)")]
+    pub diagnostic_session_id: String,
+    #[schemars(description = "Why remote control is needed. Shown verbatim on the client's consent banner.")]
+    pub reason: String,
+    #[schemars(description = "Lease lifetime in seconds (default 3600, clamped to 8h by the client)")]
+    #[serde(default, deserialize_with = "deserialize_lenient_u64")]
+    pub ttl_secs: Option<u64>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct RemoteExecDisarmParams {
+    #[schemars(description = "Web Console connection_string of the remote client")]
+    pub connection_string: String,
+    #[schemars(description = "Also terminate every running job (default false — jobs keep running, but no new ones are admitted)")]
+    pub kill_running: Option<bool>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct RemoteExecStartParams {
+    #[schemars(description = "Web Console connection_string of the remote client")]
+    pub connection_string: String,
+    #[schemars(description = "Script body. Written to a temp file on the client and run by the chosen shell — no quoting/escaping needed.")]
+    pub script: String,
+    #[schemars(description = "Technician or agent identity recorded on the job")]
+    pub tech: String,
+    #[schemars(description = "Why this job is being run. REQUIRED (non-empty) when risk is 'destructive'.")]
+    pub reason: String,
+    #[schemars(description = "Interpreter: 'powershell' (default), 'pwsh', or 'cmd'")]
+    pub shell: Option<String>,
+    #[schemars(description = "Risk tier: 'read' (default, changes nothing), 'mutate' (reversible change), 'destructive' (removes data or changes boot/driver/security state)")]
+    pub risk: Option<String>,
+    #[schemars(description = "Working directory for the process")]
+    pub cwd: Option<String>,
+    #[schemars(description = "Extra environment variables as a JSON object, e.g. {\"KEY\":\"value\"}")]
+    #[serde(default, deserialize_with = "deserialize_lenient_args")]
+    pub env: Option<serde_json::Value>,
+    #[schemars(description = "Hard wall-clock cap in seconds (client default 3600). A job producing no output for 600s is killed as wedged regardless.")]
+    #[serde(default, deserialize_with = "deserialize_lenient_u64")]
+    pub timeout_secs: Option<u64>,
+    #[schemars(description = "Discard captured output instead of buffering it. Use when the script handles credentials.")]
+    pub redact: Option<bool>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct RemoteExecTailParams {
+    #[schemars(description = "Web Console connection_string of the remote client")]
+    pub connection_string: String,
+    #[schemars(description = "Job id returned by remote_exec_start")]
+    pub job_id: String,
+    #[schemars(description = "Resume from this sequence number (use the previous call's next_seq). Default 0 = from the start of what the ring still holds.")]
+    #[serde(default, deserialize_with = "deserialize_lenient_u64")]
+    pub from_seq: Option<u64>,
+    #[schemars(description = "Cap on output bytes returned (default 65536)")]
+    #[serde(default, deserialize_with = "deserialize_lenient_u64")]
+    pub max_bytes: Option<u64>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct RemoteExecWaitParams {
+    #[schemars(description = "Web Console connection_string of the remote client")]
+    pub connection_string: String,
+    #[schemars(description = "Job id returned by remote_exec_start")]
+    pub job_id: String,
+    #[schemars(description = "Give up waiting after this many seconds (default 300, max 900). Returning early does NOT stop the job — poll again or call remote_exec_tail.")]
+    #[serde(default, deserialize_with = "deserialize_lenient_u64")]
+    pub timeout_secs: Option<u64>,
+    #[schemars(description = "Seconds between polls (default 3, min 1)")]
+    #[serde(default, deserialize_with = "deserialize_lenient_u64")]
+    pub poll_interval_secs: Option<u64>,
+    #[schemars(description = "Resume output from this sequence number (default 0)")]
+    #[serde(default, deserialize_with = "deserialize_lenient_u64")]
+    pub from_seq: Option<u64>,
+    #[schemars(description = "Cap on output bytes returned (default 65536)")]
+    #[serde(default, deserialize_with = "deserialize_lenient_u64")]
+    pub max_bytes: Option<u64>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct RemoteExecSignalParams {
+    #[schemars(description = "Web Console connection_string of the remote client")]
+    pub connection_string: String,
+    #[schemars(description = "Job id to signal")]
+    pub job_id: String,
+    #[schemars(description = "'cancel' (stop, then terminate the tree), 'kill' (terminate the tree now), or 'detach' (leave it running, stop streaming)")]
+    pub signal: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct RemoteExecListParams {
+    #[schemars(description = "Web Console connection_string of the remote client")]
+    pub connection_string: String,
+}
+
+/// Sends one RemoteExec `Cmd` and waits for the client's reply.
+///
+/// Every RemoteExec handler on the client answers without awaiting job
+/// completion, so a short deadline is correct here — a slow reply means the
+/// channel is wedged, not that the work is long.
+async fn remote_exec_roundtrip(
+    connection_string: &str,
+    label: &str,
+    make_cmd: impl FnOnce(String) -> crate::Cmd,
+) -> Result<serde_json::Value, ErrorData> {
+    const DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+
+    let request_id = format!("rex-{}", uuid::Uuid::new_v4());
+    let cmd = make_cmd(request_id.clone());
+    let serialized = bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
+        .map_err(|e| to_internal(format!("bincode serialize: {e}")))?;
+
+    let rx = register_pending_request(request_id.clone());
+    let _guard = PendingRequestGuard { request_id: request_id.clone() };
+
+    super::remote_egui_control::hub()
+        .send_raw_binary(connection_string, serialized)
+        .map_err(to_internal)?;
+
+    let (success, result_json) = match tokio::time::timeout(DEADLINE, rx).await {
+        Ok(Ok(pair)) => pair,
+        Ok(Err(_)) => {
+            return Err(to_internal(format!(
+                "{label}: response channel closed for req={request_id} (client {connection_string} \
+                 disconnected mid-call)"
+            )));
+        }
+        Err(_) => {
+            return Err(to_internal(format!(
+                "{label}: no reply from {connection_string} within {}s. RemoteExec handlers answer \
+                 immediately, so this means the channel is wedged or the client build predates \
+                 RemoteExec — check remote_channel_health and remote_exec_capabilities.",
+                DEADLINE.as_secs()
+            )));
+        }
+    };
+
+    let value: serde_json::Value = serde_json::from_str(&result_json)
+        .unwrap_or_else(|_| serde_json::json!({ "raw": result_json }));
+
+    if !success {
+        let why = value
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("client refused the request");
+        return Err(to_internal(format!("{label}: {why}")));
+    }
+    Ok(value)
+}
+
+/// Turns the client's `JobSnapshot` JSON into something readable: base64 chunk
+/// payloads become text, and the caller gets the `next_seq` to resume from.
+///
+/// `requested_from_seq` is what this read asked for. `next_seq` is derived only
+/// from the chunks actually returned — the snapshot's `last_seq` is the ring's
+/// newest chunk, so seeding from it would skip everything a byte-capped read
+/// did not serve.
+fn render_job_snapshot(mut snap: serde_json::Value, requested_from_seq: u64) -> serde_json::Value {
+    let chunks = snap
+        .get_mut("chunks")
+        .map(serde_json::Value::take)
+        .unwrap_or(serde_json::Value::Null);
+
+    let mut next_seq = requested_from_seq;
+    let mut elided: u64 = 0;
+    let mut served = 0usize;
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let mut meta = String::new();
+
+    if let Some(list) = chunks.as_array() {
+        use base64::Engine;
+        served = list.len();
+        for c in list {
+            if let Some(seq) = c.get("seq").and_then(|v| v.as_u64()) {
+                next_seq = next_seq.max(seq + 1);
+            }
+            elided += c.get("elided_before").and_then(|v| v.as_u64()).unwrap_or(0);
+            let bytes = c
+                .get("data")
+                .and_then(|v| v.as_str())
+                .and_then(|s| base64::engine::general_purpose::STANDARD.decode(s).ok())
+                .unwrap_or_default();
+            // Console output is not guaranteed UTF-8; replace rather than drop.
+            let text = String::from_utf8_lossy(&bytes);
+            match c.get("stream").and_then(|v| v.as_str()) {
+                Some("Stderr") => stderr.push_str(&text),
+                Some("Meta") => meta.push_str(&text),
+                _ => stdout.push_str(&text),
+            }
+        }
+    }
+
+    let last_seq = snap.get("last_seq").and_then(|v| v.as_u64()).unwrap_or(0);
+    // last_seq names the newest chunk the ring holds, so anything from next_seq
+    // through it is output the byte cap did not serve. Gated on having served
+    // something: the client reports last_seq 0 both for "one chunk" and for "no
+    // output at all", and an empty read means there is nothing more to fetch.
+    let more_pending = served > 0 && next_seq <= last_seq;
+
+    if let Some(obj) = snap.as_object_mut() {
+        obj.insert("stdout".into(), serde_json::json!(stdout));
+        obj.insert("stderr".into(), serde_json::json!(stderr));
+        if !meta.is_empty() {
+            obj.insert("runtime_notes".into(), serde_json::json!(meta));
+        }
+        obj.insert("next_seq".into(), serde_json::json!(next_seq));
+        if more_pending {
+            obj.insert("more_output_pending".into(), serde_json::json!(true));
+            obj.insert(
+                "more_output_note".into(),
+                serde_json::json!(
+                    "This read hit its byte cap. Call remote_exec_tail again with from_seq=next_seq \
+                     — the output above is not the whole job."
+                ),
+            );
+        }
+        if elided > 0 {
+            obj.insert(
+                "elided_bytes".into(),
+                serde_json::json!(elided),
+            );
+            obj.insert(
+                "elided_note".into(),
+                serde_json::json!(
+                    "Output was dropped by the client's in-memory ring before this read. Poll more \
+                     often, or have the script tee to a file."
+                ),
+            );
+        }
+    }
+    snap
+}
+
+fn parse_shell(s: Option<&str>) -> Result<crate::remote_exec::ShellKind, ErrorData> {
+    match s.unwrap_or("powershell").trim().to_ascii_lowercase().as_str() {
+        "powershell" | "ps" | "ps1" => Ok(crate::remote_exec::ShellKind::PowerShell),
+        "pwsh" => Ok(crate::remote_exec::ShellKind::Pwsh),
+        "cmd" | "bat" | "batch" => Ok(crate::remote_exec::ShellKind::Cmd),
+        other => Err(to_internal(format!(
+            "unknown shell {other:?}; use 'powershell', 'pwsh' or 'cmd'"
+        ))),
+    }
+}
+
+fn parse_risk(s: Option<&str>) -> Result<crate::remote_exec::RiskTier, ErrorData> {
+    match s.unwrap_or("read").trim().to_ascii_lowercase().as_str() {
+        "read" => Ok(crate::remote_exec::RiskTier::Read),
+        "mutate" | "write" => Ok(crate::remote_exec::RiskTier::Mutate),
+        "destructive" => Ok(crate::remote_exec::RiskTier::Destructive),
+        other => Err(to_internal(format!(
+            "unknown risk {other:?}; use 'read', 'mutate' or 'destructive'"
+        ))),
+    }
+}
+
+fn parse_signal(s: &str) -> Result<crate::remote_exec::JobSignal, ErrorData> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "cancel" => Ok(crate::remote_exec::JobSignal::Cancel),
+        "kill" => Ok(crate::remote_exec::JobSignal::Kill),
+        "detach" => Ok(crate::remote_exec::JobSignal::Detach),
+        other => Err(to_internal(format!(
+            "unknown signal {other:?}; use 'cancel', 'kill' or 'detach'"
+        ))),
+    }
+}
+
+/// Pulls one job out of a `RemoteJobQuery` reply.
+fn take_job(value: serde_json::Value, job_id: &str) -> Result<serde_json::Value, ErrorData> {
+    let jobs = value
+        .get("jobs")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    jobs.into_iter()
+        .find(|j| j.get("job_id").and_then(|v| v.as_str()) == Some(job_id))
+        .ok_or_else(|| {
+            to_internal(format!(
+                "client is not retaining job {job_id}. Terminal jobs are dropped 10 minutes after \
+                 they finish, and a client restart marks everything Orphaned."
+            ))
+        })
+}
+
 // ─── Tool implementations ──────────────────────────────────────────────────────
 
 #[tool_router]
@@ -2186,6 +2487,336 @@ impl PluginToolProvider {
         Ok(CallToolResult::success(vec![plugin_value_to_content(
             result,
         )?]))
+    }
+
+    // ── RemoteExec (long-running privileged jobs on a connected client) ─────────
+
+    #[tool(
+        name = "remote_exec_capabilities",
+        description = "Probe what RemoteExec a connected client supports (job kinds, shells, protocol version, ring size, default timeout). \
+                       Call this first: a client build that predates RemoteExec will time out here, which is how you tell it apart from a wedged channel. \
+                       RemoteExec runs shell jobs the client owns — unlike `call_remote_plugin_tool`, which is capped by the PluginManager watchdog, \
+                       a RemoteExec job survives the admin disconnecting and reports a real exit code."
+    )]
+    async fn remote_exec_capabilities(
+        &self,
+        Parameters(p): Parameters<RemoteExecCapabilitiesParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let value = remote_exec_roundtrip(&p.connection_string, "remote_exec_capabilities", |request_id| {
+            crate::Cmd::RemoteExecCapabilities { request_id }
+        })
+        .await?;
+        Ok(CallToolResult::success(vec![
+            ContentBlock::json(value).map_err(to_internal)?
+        ]))
+    }
+
+    #[tool(
+        name = "remote_exec_arm",
+        description = "Open the consent gate on a client so RemoteExec jobs may run. Fails closed: until the client paints its consent banner \
+                       (which names you and your stated reason to whoever is at the machine), every remote_exec_start is refused. \
+                       If start keeps reporting 'consent banner not rendering', the client's UI is minimised, wedged, or on a build without the banner. \
+                       Arm once per diagnostic session, not per job, and call remote_exec_disarm when you are done."
+    )]
+    async fn remote_exec_arm(
+        &self,
+        Parameters(p): Parameters<RemoteExecArmParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        if p.reason.trim().is_empty() {
+            return Err(to_internal(
+                "reason is shown to the person at the machine and must not be empty",
+            ));
+        }
+        let ttl = p.ttl_secs.unwrap_or(3600);
+        let cs = p.connection_string.clone();
+        let session_id = cs.clone();
+        let value = remote_exec_roundtrip(&cs, "remote_exec_arm", move |request_id| {
+            crate::Cmd::RemoteControlArm {
+                request_id,
+                session_id,
+                tech: p.tech,
+                diagnostic_session_id: p.diagnostic_session_id,
+                reason: p.reason,
+                ttl_secs: ttl,
+            }
+        })
+        .await?;
+        Ok(CallToolResult::success(vec![
+            ContentBlock::json(value).map_err(to_internal)?
+        ]))
+    }
+
+    #[tool(
+        name = "remote_exec_disarm",
+        description = "Close the consent gate. New jobs stop being admitted immediately. Running jobs keep running unless kill_running is true \
+                       — a half-finished install is usually worse than a finished one, so killing is opt-in."
+    )]
+    async fn remote_exec_disarm(
+        &self,
+        Parameters(p): Parameters<RemoteExecDisarmParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let kill_running = p.kill_running.unwrap_or(false);
+        let value = remote_exec_roundtrip(&p.connection_string, "remote_exec_disarm", |request_id| {
+            crate::Cmd::RemoteControlDisarm { request_id, kill_running }
+        })
+        .await?;
+        Ok(CallToolResult::success(vec![
+            ContentBlock::json(value).map_err(to_internal)?
+        ]))
+    }
+
+    #[tool(
+        name = "remote_exec_start",
+        description = "Submit a shell job to a connected client and return immediately with its job_id. The client owns the process: it keeps running \
+                       if the admin disconnects, and its exit code is real (not a proxy's guess). Poll with remote_exec_tail or block with remote_exec_wait. \
+                       Requires remote_exec_arm first. Scripts run elevated — the client process is requireAdministrator — so state a real reason; \
+                       risk 'destructive' additionally requires a non-empty reason and is recorded in the client's on-disk journal."
+    )]
+    async fn remote_exec_start(
+        &self,
+        Parameters(p): Parameters<RemoteExecStartParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        if p.script.trim().is_empty() {
+            return Err(to_internal("script is empty"));
+        }
+        let shell = parse_shell(p.shell.as_deref())?;
+        let risk = parse_risk(p.risk.as_deref())?;
+
+        let env: Vec<(String, String)> = p
+            .env
+            .as_ref()
+            .and_then(|v| v.as_object())
+            .map(|m| {
+                m.iter()
+                    .map(|(k, v)| {
+                        let s = match v {
+                            serde_json::Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        };
+                        (k.clone(), s)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let spec = crate::remote_exec::RemoteJobSpec::Shell {
+            shell,
+            script: p.script,
+            cwd: p.cwd,
+            env,
+            timeout_secs: p.timeout_secs,
+            redact: p.redact.unwrap_or(false),
+        };
+
+        let job_id = format!("job-{}", uuid::Uuid::new_v4());
+        let value = remote_exec_roundtrip(&p.connection_string, "remote_exec_start", {
+            let job_id = job_id.clone();
+            move |request_id| crate::Cmd::RemoteJobStart {
+                request_id,
+                job_id,
+                tech: p.tech,
+                reason: p.reason,
+                risk,
+                spec,
+            }
+        })
+        .await?;
+
+        let mut body = render_job_snapshot(value, 0);
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("job_id".into(), serde_json::json!(job_id));
+        }
+        Ok(CallToolResult::success(vec![
+            ContentBlock::json(body).map_err(to_internal)?
+        ]))
+    }
+
+    #[tool(
+        name = "remote_exec_tail",
+        description = "Read a job's current state and buffered output. Pass the previous call's `next_seq` as `from_seq` to page forward without \
+                       re-reading what you already have. If the response carries `elided_bytes`, the client's in-memory ring overflowed and that \
+                       output is gone for good — poll more often or have the script tee to a file."
+    )]
+    async fn remote_exec_tail(
+        &self,
+        Parameters(p): Parameters<RemoteExecTailParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let max_bytes = p.max_bytes.unwrap_or(65_536).min(u32::MAX as u64) as u32;
+        let from_seq = p.from_seq.unwrap_or(0);
+        let value = remote_exec_roundtrip(&p.connection_string, "remote_exec_tail", {
+            let job_id = p.job_id.clone();
+            move |request_id| crate::Cmd::RemoteJobQuery {
+                request_id,
+                job_id: Some(job_id),
+                from_seq: Some(from_seq),
+                max_bytes: Some(max_bytes),
+            }
+        })
+        .await?;
+        let job = take_job(value, &p.job_id)?;
+        Ok(CallToolResult::success(vec![
+            ContentBlock::json(render_job_snapshot(job, from_seq)).map_err(to_internal)?
+        ]))
+    }
+
+    #[tool(
+        name = "remote_exec_wait",
+        description = "Poll a job until it reaches a terminal state, then return its output and exit code. The waiting happens here on the admin side; \
+                       the client is never blocked. Returning on timeout does NOT stop the job — `state` will still be Running, and you can keep \
+                       polling with remote_exec_tail from the returned `next_seq`."
+    )]
+    async fn remote_exec_wait(
+        &self,
+        Parameters(p): Parameters<RemoteExecWaitParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        /// Ceiling on output accumulated across polls, so a chatty job cannot
+        /// return a multi-megabyte tool result.
+        const WAIT_OUTPUT_CAP: usize = 512 * 1024;
+
+        let deadline_secs = p.timeout_secs.unwrap_or(300).min(900);
+        let interval = std::time::Duration::from_secs(p.poll_interval_secs.unwrap_or(3).max(1));
+        let max_bytes = p.max_bytes.unwrap_or(65_536).min(u32::MAX as u64) as u32;
+        let started = std::time::Instant::now();
+
+        let mut from_seq = p.from_seq.unwrap_or(0);
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut notes = String::new();
+        let mut elided: u64 = 0;
+        // Every exit from the loop below runs after this is assigned.
+        let mut last;
+
+        loop {
+            let value = remote_exec_roundtrip(&p.connection_string, "remote_exec_wait", {
+                let job_id = p.job_id.clone();
+                move |request_id| crate::Cmd::RemoteJobQuery {
+                    request_id,
+                    job_id: Some(job_id),
+                    from_seq: Some(from_seq),
+                    max_bytes: Some(max_bytes),
+                }
+            })
+            .await?;
+
+            let job = render_job_snapshot(take_job(value, &p.job_id)?, from_seq);
+            from_seq = job.get("next_seq").and_then(|v| v.as_u64()).unwrap_or(from_seq);
+            elided += job.get("elided_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
+            if let Some(s) = job.get("stdout").and_then(|v| v.as_str()) {
+                stdout.push_str(s);
+            }
+            if let Some(s) = job.get("stderr").and_then(|v| v.as_str()) {
+                stderr.push_str(s);
+            }
+            if let Some(s) = job.get("runtime_notes").and_then(|v| v.as_str()) {
+                notes.push_str(s);
+            }
+
+            let state = job
+                .get("state")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let more_pending = job
+                .get("more_output_pending")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            last = job;
+
+            let terminal = !matches!(state.as_str(), "Queued" | "Running");
+            let room_left = stdout.len() + stderr.len() < WAIT_OUTPUT_CAP;
+            // Keep paging without sleeping while the byte cap is holding output
+            // back; reporting a finished job with a truncated tail reads as if
+            // that were all it produced. Once the accumulated cap is reached
+            // there is nothing more to collect, so fall back to normal pacing.
+            if more_pending && room_left && started.elapsed().as_secs() < deadline_secs {
+                continue;
+            }
+            if terminal {
+                break;
+            }
+            if started.elapsed().as_secs() >= deadline_secs {
+                break;
+            }
+            tokio::time::sleep(interval).await;
+        }
+
+        let capped = stdout.len() + stderr.len() >= WAIT_OUTPUT_CAP;
+        if let Some(obj) = last.as_object_mut() {
+            obj.insert("stdout".into(), serde_json::json!(stdout));
+            obj.insert("stderr".into(), serde_json::json!(stderr));
+            obj.insert("next_seq".into(), serde_json::json!(from_seq));
+            obj.insert("waited_secs".into(), serde_json::json!(started.elapsed().as_secs()));
+            if notes.is_empty() {
+                obj.remove("runtime_notes");
+            } else {
+                obj.insert("runtime_notes".into(), serde_json::json!(notes));
+            }
+            if capped {
+                obj.insert(
+                    "output_cap_reached".into(),
+                    serde_json::json!(format!(
+                        "Stopped collecting at {WAIT_OUTPUT_CAP} bytes. Resume with \
+                         remote_exec_tail from_seq=next_seq."
+                    )),
+                );
+            } else {
+                obj.remove("more_output_pending");
+                obj.remove("more_output_note");
+            }
+            if elided > 0 {
+                obj.insert("elided_bytes".into(), serde_json::json!(elided));
+            } else {
+                obj.remove("elided_bytes");
+                obj.remove("elided_note");
+            }
+        }
+        Ok(CallToolResult::success(vec![
+            ContentBlock::json(last).map_err(to_internal)?
+        ]))
+    }
+
+    #[tool(
+        name = "remote_exec_signal",
+        description = "Cancel, kill or detach a running job. 'cancel' and 'kill' both terminate the whole process tree via the client's Win32 job \
+                       object, so child processes cannot outlive it. Idempotent on jobs that already finished."
+    )]
+    async fn remote_exec_signal(
+        &self,
+        Parameters(p): Parameters<RemoteExecSignalParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let signal = parse_signal(&p.signal)?;
+        let value = remote_exec_roundtrip(&p.connection_string, "remote_exec_signal", {
+            let job_id = p.job_id.clone();
+            move |request_id| crate::Cmd::RemoteJobSignal { request_id, job_id, signal }
+        })
+        .await?;
+        // The reply carries no output by design; use remote_exec_tail for that.
+        Ok(CallToolResult::success(vec![
+            ContentBlock::json(value).map_err(to_internal)?
+        ]))
+    }
+
+    #[tool(
+        name = "remote_exec_list",
+        description = "List every job the client is retaining, plus the current consent-gate state (armed, by whom, time left, running count). \
+                       Output is omitted here — use remote_exec_tail for a specific job. Terminal jobs are dropped 10 minutes after they finish."
+    )]
+    async fn remote_exec_list(
+        &self,
+        Parameters(p): Parameters<RemoteExecListParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let value = remote_exec_roundtrip(&p.connection_string, "remote_exec_list", |request_id| {
+            crate::Cmd::RemoteJobQuery {
+                request_id,
+                job_id: None,
+                from_seq: None,
+                max_bytes: Some(0),
+            }
+        })
+        .await?;
+        Ok(CallToolResult::success(vec![
+            ContentBlock::json(value).map_err(to_internal)?
+        ]))
     }
 
     // ── Pre-boot direct link (MCP → UEFI firmware over :9209) ───────────────────
@@ -7659,6 +8290,39 @@ baselines, and AI triage work. This is enforced automatically for the approved p
   WHERE computer = <computer_record> ORDER BY started_at DESC LIMIT 1;
   SELECT count() FROM stress_test_event WHERE run_ref = <run_id> GROUP ALL;
 
+=== RemoteExec (arbitrary elevated shell on a connected client) ===
+Last resort, for when no named script and no plugin tool can do the job. Prefer, in order:
+  1. scripts_run_remote — a named, reviewed script. Always try this first.
+  2. call_remote_plugin_tool — a plugin tool (hw-diag, repair, diagnostics).
+  3. remote_exec_* — a raw shell job. Nothing above it fits.
+Why it exists: call_remote_plugin_tool is capped by the PluginManager watchdog, so anything
+longer than that is unreachable through a plugin. A RemoteExec job is owned by the CLIENT — it
+keeps running if the admin disconnects, its whole process tree dies together (Win32 job object),
+and it reports a real exit code instead of a proxy's guess.
+
+Flow:
+  remote_exec_capabilities → remote_exec_arm → remote_exec_start → remote_exec_wait/_tail → remote_exec_disarm
+
+Consent gate — fails closed, by design:
+  Nothing runs until remote_exec_arm succeeds AND the client is painting its consent banner,
+  which names you and your stated `reason` to whoever is sitting at the machine. If start keeps
+  answering "consent banner not rendering", the client's window is minimised or its UI is wedged
+  — that is the interlock working, not a bug to route around. Arm once per diagnostic session,
+  pass the diagnostic_session_id, and disarm when finished. Every submitted and denied job is
+  written to a journal on the client's own disk.
+
+Paging — the part that silently loses output if you ignore it:
+  Reads are byte-capped. When a response carries `more_output_pending`, the output you got is
+  NOT the whole job — call remote_exec_tail again with from_seq=next_seq until the flag clears.
+  `elided_bytes` is different and worse: the client's 2 MiB ring already dropped that output and
+  it is unrecoverable, so for a chatty job have the script tee to a file and fetch the file.
+
+Timeouts: wall-clock defaults to 3600s. Separately, a job producing NO output for 600s is killed
+as wedged — a job still printing has not hung, however long it runs.
+
+Risk tier is recorded, not advisory: use 'destructive' for anything that removes data or touches
+boot/driver/security state, and give it a real reason (empty reasons are refused for that tier).
+
 === Local Scripts Execution (admin machine only — do NOT use for QC on a customer's computer) ===
 For the machine running this MCP server, prefer the dedicated script tools below
 over `remote_egui_*` clicking. They drive the local Scripts tab (egui mode) or
@@ -7861,7 +8525,7 @@ Other dock tabs (context menus / layouts, not all in View list): Part Order, QC,
 === Remote egui pitfalls ===
 Do not skip notifications/initialized. Prefer perform_steps with sleep_ms between opening View menu and clicking nav.tab.*. If click_anchor fails with unknown key, call list_widget_anchors again (stale frame)."#;
 
-#[tool_handler]
+#[tool_handler(router = self.tool_router)]
 impl ServerHandler for PluginToolProvider {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(
@@ -7916,7 +8580,7 @@ impl ServerHandler for PluginToolProvider {
         );
 
         let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
-        let result = Self::tool_router().call(tcc).await;
+        let result = self.tool_router.call(tcc).await;
 
         match &result {
             Ok(response) => {
@@ -8335,4 +8999,143 @@ pub async fn run_plugin_mcp_server_http(manager: Arc<RwLock<PluginManager>>) -> 
         })
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod remote_exec_tests {
+    use super::*;
+    use base64::Engine;
+
+    fn b64(s: &str) -> String {
+        base64::engine::general_purpose::STANDARD.encode(s.as_bytes())
+    }
+
+    /// A `JobSnapshot`-shaped value: `last_seq` is the ring's newest chunk,
+    /// which is independent of how many chunks this read served.
+    fn snap(state: &str, last_seq: u64, chunks: Vec<serde_json::Value>) -> serde_json::Value {
+        serde_json::json!({
+            "job_id": "job-1",
+            "state": state,
+            "spec_summary": "PowerShell: whoami",
+            "risk": "Read",
+            "reason": "test",
+            "tech": "t",
+            "started_at_ms": 0,
+            "last_seq": last_seq,
+            "pid": 42,
+            "exit": null,
+            "chunks": chunks,
+            "chunks_truncated": false,
+        })
+    }
+
+    fn chunk(seq: u64, stream: &str, text: &str, elided_before: u64) -> serde_json::Value {
+        serde_json::json!({
+            "job_id": "job-1",
+            "seq": seq,
+            "stream": stream,
+            "data": b64(text),
+            "elided_before": elided_before,
+        })
+    }
+
+    #[test]
+    fn next_seq_follows_served_chunks_not_the_rings_newest() {
+        // The ring holds 0..=99 but this read only served 0..=2. Seeding
+        // next_seq from last_seq would skip chunks 3..=99 forever.
+        let out = render_job_snapshot(
+            snap(
+                "Running",
+                99,
+                vec![
+                    chunk(0, "Stdout", "a", 0),
+                    chunk(1, "Stdout", "b", 0),
+                    chunk(2, "Stdout", "c", 0),
+                ],
+            ),
+            0,
+        );
+        assert_eq!(out["next_seq"], 3);
+        assert_eq!(out["more_output_pending"], true);
+        assert_eq!(out["stdout"], "abc");
+    }
+
+    #[test]
+    fn caught_up_read_reports_nothing_pending() {
+        let out = render_job_snapshot(
+            snap("Succeeded", 1, vec![chunk(0, "Stdout", "x", 0), chunk(1, "Stdout", "y", 0)]),
+            0,
+        );
+        assert_eq!(out["next_seq"], 2);
+        assert!(
+            out.get("more_output_pending").is_none(),
+            "a fully served read must not claim more output is pending"
+        );
+    }
+
+    #[test]
+    fn job_with_no_output_is_not_reported_as_pending() {
+        // last_seq is 0 both for "one chunk at seq 0" and for "no output"; an
+        // empty read must not be read as the former.
+        let out = render_job_snapshot(snap("Succeeded", 0, vec![]), 0);
+        assert_eq!(out["stdout"], "");
+        assert!(out.get("more_output_pending").is_none());
+        assert_eq!(out["next_seq"], 0, "an empty read must not advance the cursor");
+    }
+
+    #[test]
+    fn resuming_keeps_the_cursor_when_nothing_new_arrived() {
+        let out = render_job_snapshot(snap("Running", 6, vec![]), 7);
+        assert_eq!(out["next_seq"], 7, "an empty read must preserve from_seq");
+    }
+
+    #[test]
+    fn streams_are_separated_and_eviction_is_surfaced() {
+        let out = render_job_snapshot(
+            snap(
+                "Failed",
+                2,
+                vec![
+                    chunk(0, "Stdout", "out", 0),
+                    chunk(1, "Stderr", "err", 512),
+                    chunk(2, "Meta", "note", 0),
+                ],
+            ),
+            0,
+        );
+        assert_eq!(out["stdout"], "out");
+        assert_eq!(out["stderr"], "err");
+        assert_eq!(out["runtime_notes"], "note");
+        assert_eq!(out["elided_bytes"], 512);
+        assert!(out.get("elided_note").is_some());
+    }
+
+    #[test]
+    fn non_utf8_output_survives_as_replacement_chars() {
+        let raw = base64::engine::general_purpose::STANDARD.encode([0xff, 0xfe, b'h', b'i']);
+        let mut c = chunk(0, "Stdout", "", 0);
+        c["data"] = serde_json::json!(raw);
+        let out = render_job_snapshot(snap("Succeeded", 0, vec![c]), 0);
+        let s = out["stdout"].as_str().unwrap();
+        assert!(s.ends_with("hi"), "valid trailing bytes must survive: {s:?}");
+    }
+
+    #[test]
+    fn take_job_names_retention_when_the_job_is_gone() {
+        let err = take_job(serde_json::json!({ "jobs": [] }), "job-9").unwrap_err();
+        assert!(err.message.contains("job-9"));
+        assert!(err.message.contains("retaining"));
+    }
+
+    #[test]
+    fn shell_risk_and_signal_parsing_rejects_unknown_values() {
+        assert!(parse_shell(None).is_ok());
+        assert!(parse_shell(Some("PowerShell")).is_ok());
+        assert!(parse_shell(Some("bash")).is_err());
+        assert!(parse_risk(None).is_ok());
+        assert!(parse_risk(Some("DESTRUCTIVE")).is_ok());
+        assert!(parse_risk(Some("yolo")).is_err());
+        assert!(parse_signal("Kill").is_ok());
+        assert!(parse_signal("sigterm").is_err());
+    }
 }

@@ -230,13 +230,13 @@ impl<'a> HandleWidget <'a> for TasksTab<'a> {
 
     fn handle_key_event(&mut self, key_event: KeyEvent) -> bool {
         // Check modal state and handle key events - use separate borrow scopes
-        let (has_modal, should_close, handled) = {
+        let (has_modal, should_close) = {
             let mut modal_ref = self.open_task_modal.borrow_mut();
             if let Some(ref mut modal) = *modal_ref {
-                let handled = modal.handle_key_event(key_event);
-                (true, modal.should_close(), handled)
+                modal.handle_key_event(key_event);
+                (true, modal.should_close())
             } else {
-                (false, false, false)
+                (false, false)
             }
         };
         

@@ -54,7 +54,6 @@ pub enum ButtonState {
     #[default]
     Normal,
     Hovered,
-    Selected,
     Active,
     AltClicked,
     /// Used when user is dragging to select text in an InputField
@@ -93,14 +92,6 @@ pub(crate) fn truncate_to_width(s: &str, max_width: usize) -> String {
     }
     out.push_str("..");
     out
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Theme {
-    pub text: Color,
-    pub background: Color,
-    pub highlight: Color,
-    pub shadow: Color,
 }
 
 impl<'a> Button<'a> {
@@ -171,7 +162,7 @@ impl<'a> Button<'a> {
         let disabled = *self.disabled.borrow();
         let hovered = matches!(
             *self.state.borrow(),
-            ButtonState::Hovered | ButtonState::Selected | ButtonState::Active
+            ButtonState::Hovered | ButtonState::Active
         );
         let border = if disabled {
             Color::DarkGray
@@ -236,7 +227,7 @@ impl<'a> Button<'a> {
         let open = *self.menu_open.borrow() || self.is_selected();
         let hovered = matches!(
             *self.state.borrow(),
-            ButtonState::Hovered | ButtonState::Selected | ButtonState::Active
+            ButtonState::Hovered | ButtonState::Active
         );
         let active = open || hovered;
         let fg = if disabled {
@@ -343,7 +334,7 @@ impl<'a> Button<'a> {
         } else {
             // Standard buttons glow on hover, click, or when explicitly highlighted.
             *self.highlighted.borrow()
-                || matches!(*self.state.borrow(), ButtonState::Active | ButtonState::Hovered | ButtonState::Selected)
+                || matches!(*self.state.borrow(), ButtonState::Active | ButtonState::Hovered)
         }
     }
 
@@ -404,7 +395,6 @@ impl <'a> ButtonType<'a> for Button<'a> {
         let t = self.theme.resolve();
         match *self.state.borrow() {
             ButtonState::Normal => (t.background, t.text, t.shadow, t.highlight),
-            ButtonState::Selected => (t.background, t.text, Color::White, Color::White),
             ButtonState::Active => (t.background, t.text, t.highlight, t.shadow),
             ButtonState::Hovered => (t.background, t.text, t.highlight, t.shadow),
             ButtonState::AltClicked => (t.background, t.text, Color::White, Color::White),

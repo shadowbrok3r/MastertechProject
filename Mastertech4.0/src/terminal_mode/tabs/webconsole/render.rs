@@ -1,6 +1,6 @@
 use displays::remote_viewer::ratagui::TerminalEvent;
-use ratatui::{layout::{Constraint, Direction, Layout, Margin, Position, Rect}, prelude::Backend, style::Stylize, widgets::{Block, Paragraph, Widget, WidgetRef}, Frame};
-use crate::terminal_mode::{data::LocalTermEvent, styling::{CATPPUCCIN, THEME}, widgets::{ButtonType, ShrinkArea}};
+use ratatui::{layout::{Constraint, Direction, Layout, Margin, Position, Rect}, prelude::Backend, style::Stylize, widgets::{Block, Paragraph, Widget}, Frame};
+use crate::terminal_mode::{data::LocalTermEvent, styling::THEME, widgets::{ButtonType, ShrinkArea}};
 use ratatui::crossterm::event::{KeyEvent, MouseEvent};
 use super::{PageState, WebconsoleTab};
 

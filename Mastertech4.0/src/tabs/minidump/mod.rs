@@ -331,7 +331,7 @@ impl MiniDumpApp {
     pub fn update_ui(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         eframe::egui::Panel::top("tab bar")
             .resizable(false)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut self.tab, Tab::Settings, "settings");
                     if self.cur_status >= ProcessingStatus::RawProcessing {
@@ -348,7 +348,7 @@ impl MiniDumpApp {
                     }
                 });
             });
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             ScrollArea::vertical().show(ui, |ui| {
                 match self.tab {
                     Tab::Settings => self.ui_settings(ui, ctx),

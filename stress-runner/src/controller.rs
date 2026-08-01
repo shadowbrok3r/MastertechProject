@@ -392,6 +392,9 @@ fn worker(
         );
     }
 
+    // Otherwise a CPU-only run reports the adapter bound by a previous GPU run.
+    stress_kit::clear_selected_adapter();
+
     // Driver-stack integrity: a discrete controller WMI-active but invisible
     // to wgpu/NVML means GPU work lands on the iGPU; warn on every run.
     for fault in stress_kit::gpu_stack::check_gpu_stack().broken {
@@ -1953,6 +1956,8 @@ impl SummaryAccumulator {
     }
 
     fn into_summary(&self) -> RunSummary {
+        let adapter = stress_kit::last_selected_adapter();
+
         RunSummary {
             max_temp_c: self.max_temp_c,
             avg_temp_c: if self.temp_samples > 0 {
@@ -1997,6 +2002,9 @@ impl SummaryAccumulator {
             max_gpu_temp_c: self.max_gpu_temp_c,
             max_cpu_temp_c: self.max_cpu_temp_c,
             min_v12_v: self.min_v12_v,
+            gpu_adapter_name: adapter.as_ref().map(|a| a.name.clone()),
+            gpu_adapter_device_type: adapter.as_ref().map(|a| a.device_type.clone()),
+            gpu_adapter_integrated_fallback: adapter.as_ref().map(|a| a.integrated_fallback),
         }
     }
 
@@ -2182,6 +2190,18 @@ fn rules_failure_mode(
                     unproven.get_or_insert(FailureMode::AppError {
                         exit_code: None,
                         message: reason.clone(),
+                    });
+                }
+                // A configured limit that was never evaluable cannot certify the
+                // part; it is not evidence against the hardware either.
+                RuleViolation::GpuTelemetryMissing { rule, ticks } => {
+                    unproven.get_or_insert(FailureMode::AppError {
+                        exit_code: None,
+                        message: format!(
+                            "stage '{}': inconclusive - {rule} could not be evaluated, no GPU \
+                             telemetry in {ticks} tick(s); the GPU was not graded",
+                            verdict.label
+                        ),
                     });
                 }
             }

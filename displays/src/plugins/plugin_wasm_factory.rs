@@ -112,22 +112,22 @@ fn build_clock_data(plugin_id: &str, display_name: &str) -> ClockDataLayout {
 
 /// Produce WAT source for the clock plugin (Mastertech WASM ABI + `host_fill_clock_json`).
 pub fn clock_plugin_wat(plugin_id: &str, display_name: &str) -> String {
-    let L = build_clock_data(plugin_id, display_name);
-    let hex = wat_data_escape(&L.blob);
+    let layout = build_clock_data(plugin_id, display_name);
+    let hex = wat_data_escape(&layout.blob);
     let tpl = include_str!("clock_plugin_template.wat");
     tpl.replace("___DATA___", &hex)
-        .replace("__ID_OFF__", &L.id_off.to_string())
-        .replace("__ID_LEN__", &L.id_len.to_string())
-        .replace("__NAME_OFF__", &L.name_off.to_string())
-        .replace("__NAME_LEN__", &L.name_len.to_string())
-        .replace("__VER_OFF__", &L.ver_off.to_string())
-        .replace("__VER_LEN__", &L.ver_len.to_string())
-        .replace("__TOOLS_OFF__", &L.tools_off.to_string())
-        .replace("__TOOLS_LEN__", &L.tools_len.to_string())
-        .replace("__TOOL_CMP_OFF__", &L.tool_cmp_off.to_string())
-        .replace("__ERR_OFF__", &L.err_off.to_string())
-        .replace("__ERR_LEN__", &L.err_len.to_string())
-        .replace("__UI_OFF__", &L.ui_off.to_string())
+        .replace("__ID_OFF__", &layout.id_off.to_string())
+        .replace("__ID_LEN__", &layout.id_len.to_string())
+        .replace("__NAME_OFF__", &layout.name_off.to_string())
+        .replace("__NAME_LEN__", &layout.name_len.to_string())
+        .replace("__VER_OFF__", &layout.ver_off.to_string())
+        .replace("__VER_LEN__", &layout.ver_len.to_string())
+        .replace("__TOOLS_OFF__", &layout.tools_off.to_string())
+        .replace("__TOOLS_LEN__", &layout.tools_len.to_string())
+        .replace("__TOOL_CMP_OFF__", &layout.tool_cmp_off.to_string())
+        .replace("__ERR_OFF__", &layout.err_off.to_string())
+        .replace("__ERR_LEN__", &layout.err_len.to_string())
+        .replace("__UI_OFF__", &layout.ui_off.to_string())
 }
 
 /// WAT → wasm bytes, then validate with **wasmtime** (`Module::new`).

@@ -281,6 +281,101 @@ pub fn module_stem(module: &str) -> String {
     }
 }
 
+/// Triage keys whose values are kernel addresses.
+const ADDRESS_KEYS: [&str; 3] = ["base", "ret_addr", "stack_addr"];
+
+fn parse_hex_u64(s: &str) -> Option<u64> {
+    let t = s.trim();
+    let hex = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X"))?;
+    u64::from_str_radix(hex, 16).ok()
+}
+
+/// Recover an address stored as a whole-valued float by a lossy legacy write.
+fn f64_address_as_u64(n: &serde_json::Number) -> Option<u64> {
+    if !n.is_f64() {
+        return None;
+    }
+    let f = n.as_f64()?;
+    if !f.is_finite() || f < 0.0 || f.fract() != 0.0 || f >= 18_446_744_073_709_551_616.0 {
+        return None;
+    }
+    Some(f as u64)
+}
+
+/// Rewrite integers above `i64::MAX` as hex strings before storage.
+/// `surrealdb::types::Number` has no u64 variant, so `into_value` degrades
+/// them to `Number::Float` and loses the low bits client-side.
+pub fn encode_large_integers(value: &serde_json::Value) -> serde_json::Value {
+    encode_large_integers_at(value, "")
+}
+
+fn encode_large_integers_at(value: &serde_json::Value, key: &str) -> serde_json::Value {
+    use serde_json::Value;
+    match value {
+        Value::Number(n) => match n.as_u64() {
+            Some(v) if v > i64::MAX as u64 => {
+                if !ADDRESS_KEYS.contains(&key) {
+                    log::warn!("crash intel: wide integer under unexpected key {key:?}, hex-encoding");
+                }
+                Value::String(format!("{v:#x}"))
+            }
+            _ => value.clone(),
+        },
+        Value::Array(items) => {
+            Value::Array(items.iter().map(|v| encode_large_integers_at(v, key)).collect())
+        }
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), encode_large_integers_at(v, k)))
+                .collect(),
+        ),
+        _ => value.clone(),
+    }
+}
+
+/// Inverse of [`encode_large_integers`]; also recovers legacy lossy floats.
+pub fn decode_address_keys(value: &serde_json::Value) -> serde_json::Value {
+    decode_address_keys_at(value, "")
+}
+
+fn decode_address_keys_at(value: &serde_json::Value, key: &str) -> serde_json::Value {
+    use serde_json::Value;
+    let is_addr = ADDRESS_KEYS.contains(&key);
+    match value {
+        Value::String(s) if is_addr => match parse_hex_u64(s) {
+            Some(v) => Value::Number(v.into()),
+            None => value.clone(),
+        },
+        Value::Number(n) if is_addr => match f64_address_as_u64(n) {
+            Some(v) => Value::Number(v.into()),
+            None => value.clone(),
+        },
+        Value::Array(items) => {
+            Value::Array(items.iter().map(|v| decode_address_keys_at(v, key)).collect())
+        }
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), decode_address_keys_at(v, k)))
+                .collect(),
+        ),
+        _ => value.clone(),
+    }
+}
+
+/// Typed kernel triage from a stored sighting, addresses restored.
+/// Returns `None` for GPU blobs, which would otherwise deserialize into an
+/// all-default record because every field defaults.
+pub fn kernel_triage_from_sighting(
+    sighting: &CrashSighting,
+) -> Option<dump_triage::KernelDumpTriage> {
+    let blob = sighting.triage.as_ref()?;
+    let kind = blob.get("kind").and_then(|v| v.as_str());
+    if kind == Some(dump_triage::gpu::GPU_AFTERMATH_DUMP_KIND) {
+        return None;
+    }
+    serde_json::from_value(decode_address_keys(blob)).ok()
+}
+
 fn field_after_colon(line: &str) -> String {
     line.split_once(':')
         .map(|(_, v)| v.trim().to_string())
@@ -761,7 +856,7 @@ impl CrashSignature {
             caused_by: parsed.caused_by.clone(),
             raw_excerpt: parsed.raw_excerpt.chars().take(2000).collect(),
             loaded_modules: parsed.loaded_modules.clone(),
-            triage: parsed.triage.clone(),
+            triage: parsed.triage.as_ref().map(encode_large_integers),
             created_at: chrono::Utc::now().into(),
         };
         let created: Option<CrashSighting> = db()
@@ -1464,7 +1559,7 @@ Probably caused by : rtwlane.sys ( rtwlane+18e2b )\n";
         assert_eq!(c.dump_time.as_deref(), Some("06/18/2026 23:01 local"));
         let blob = c.triage.as_ref().expect("gpu blob");
         assert_eq!(blob.get("kind").and_then(|v| v.as_str()), Some(GPU_DUMP_KIND));
-        use super::RecordIdExt;
+        use crate::schema::RecordIdExt;
         assert!(crash_signature_record_id(&c.bugcheck_code, &c.module)
             .key_string()
             .contains("0x887a0007_nvlddmkm"));
@@ -1487,4 +1582,47 @@ Probably caused by : rtwlane.sys ( rtwlane+18e2b )\n";
         }))
         .is_empty());
     }
+
+    /// Canary: the SDK degrades a u64 above i64::MAX to a float, which is the
+    /// whole reason addresses are hex-encoded before storage. When this fails,
+    /// the SDK gained an exact path and the encoding can be deleted.
+    #[test]
+    fn surreal_value_still_loses_u64_precision() {
+        use surrealdb::types::{Number, SurrealValue, Value};
+        let raw = serde_json::json!(0xfffff803_1015_ab37u64);
+        assert!(matches!(raw.into_value(), Value::Number(Number::Float(_))));
+    }
+
+    #[test]
+    fn only_integers_above_i64_max_are_encoded() {
+        let blob = serde_json::json!({
+            "drivers": [{ "base": 0xfffff803_1000_0000u64, "size": 0x0100_0000u64 }],
+            "system_time_unix": 1_781_679_513i64,
+            "uptime_secs": 652i64,
+            "scanned_stack": [{ "offset": 256, "ret_addr": 0xfffff803_2000_0100u64 }],
+        });
+        let enc = encode_large_integers(&blob);
+        assert_eq!(enc["drivers"][0]["base"], serde_json::json!("0xfffff80310000000"));
+        assert_eq!(enc["drivers"][0]["size"], serde_json::json!(0x0100_0000u64));
+        assert_eq!(enc["system_time_unix"], serde_json::json!(1_781_679_513i64));
+        assert_eq!(enc["uptime_secs"], serde_json::json!(652i64));
+        assert_eq!(enc["scanned_stack"][0]["offset"], serde_json::json!(256));
+        assert!(enc["scanned_stack"][0]["ret_addr"].is_string());
+    }
+
+    #[test]
+    fn encoded_addresses_round_trip_exactly() {
+        let base = 0xfffff803_1000_0000u64;
+        let blob = serde_json::json!({ "drivers": [{ "base": base }] });
+        let dec = decode_address_keys(&encode_large_integers(&blob));
+        assert_eq!(dec["drivers"][0]["base"].as_u64(), Some(base));
+    }
+
+    #[test]
+    fn a_legacy_lossy_float_address_decodes_back() {
+        let stored = serde_json::json!({ "drivers": [{ "base": 18_446_735_288_255_086_592.0f64 }] });
+        let dec = decode_address_keys(&stored);
+        assert_eq!(dec["drivers"][0]["base"].as_u64(), Some(18_446_735_288_255_086_592u64));
+    }
+
 }

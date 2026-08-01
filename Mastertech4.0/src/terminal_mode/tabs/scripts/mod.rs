@@ -932,7 +932,6 @@ impl<'a> ScriptsTab<'a> {
                         }
                     })
                     .collect::<Vec<_>>(),
-                _ => Vec::new(),
             })
             .collect();
 

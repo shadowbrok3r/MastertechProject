@@ -37,6 +37,7 @@ pub mod mcp;
 pub mod plugins;
 
 pub mod remote_desktop;
+pub mod remote_exec;
 
 // Uses ratatui (a non-wasm dependency); the zstd buffer codecs inside are
 // further gated to the tokio live-viewer that calls them.
@@ -408,8 +409,8 @@ pub enum Cmd {
     DownloadRemoteFile(String),
     /// Zip and download a directory from the remote machine
     DownloadRemoteDirectory(String),
-    /// Zip and download all Windows crash dumps (MEMORY.DMP + Minidump\* +
-    /// LiveKernelReports\*) as one archive, streamed to disk.
+    /// Zip and download every crash artifact (MEMORY.DMP + Minidump\* +
+    /// LiveKernelReports\* + UE/GPU crash folders) as one archive, streamed to disk.
     DownloadCrashDumps,
     /// Walk a directory tree and return total size
     ScanDirectorySize(String),
@@ -820,6 +821,55 @@ pub enum Cmd {
     RequestTelemetrySnapshot {
         request_id: String,
         warmup_ms: Option<u64>,
+    },
+
+    /// Admin → client: report what RemoteExec this build supports. Doubles as
+    /// the capability probe — a client predating RemoteExec drops this into the
+    /// dispatch catch-all, so a timeout means "too old", not "hung".
+    /// Appended last so existing bincode variant indices stay stable.
+    RemoteExecCapabilities { request_id: String },
+
+    /// Admin → client: open the consent gate. No job runs until this succeeds.
+    RemoteControlArm {
+        request_id: String,
+        session_id: String,
+        tech: String,
+        diagnostic_session_id: String,
+        reason: String,
+        ttl_secs: u64,
+    },
+
+    /// Admin → client: close the gate, optionally terminating running jobs.
+    RemoteControlDisarm {
+        request_id: String,
+        kill_running: bool,
+    },
+
+    /// Admin → client: submit a job. The client replies as soon as it is
+    /// accepted and spawned; it never waits for completion.
+    RemoteJobStart {
+        request_id: String,
+        job_id: String,
+        tech: String,
+        reason: String,
+        risk: crate::remote_exec::RiskTier,
+        spec: crate::remote_exec::RemoteJobSpec,
+    },
+
+    /// Admin → client: cancel, kill or detach a job.
+    RemoteJobSignal {
+        request_id: String,
+        job_id: String,
+        signal: crate::remote_exec::JobSignal,
+    },
+
+    /// Admin → client: read job state and buffered output. `job_id` `None`
+    /// lists every job the client is retaining.
+    RemoteJobQuery {
+        request_id: String,
+        job_id: Option<String>,
+        from_seq: Option<u64>,
+        max_bytes: Option<u32>,
     },
 }
 

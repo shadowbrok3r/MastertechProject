@@ -1,6 +1,6 @@
-use database::schema::{COMPUTER_TABLE, ComputerData, CpuCoreLive, DriveData, Gpu, LocalSebData, NetworkInterface, Process as SysProcess, ProcessDiskUsage, SystemInformation, get_data::get_order_info_from_serial};
+use database::schema::{COMPUTER_TABLE, ComputerData, CpuCoreLive, DriveData, Gpu, LocalSebData, NetworkInterface, Process as SysProcess, ProcessDiskUsage, SystemInformation};
 use crate::{filesystem::get_machine_instance, tabs::tur_sheet::get_ticket::request_seb_info};
-use std::{collections::HashMap, env, str, sync::Arc, time::Duration};
+use std::{collections::HashMap, time::Duration};
 use sysinfo::{Components, Disks, Motherboard, Networks, Product, System};
 use num_format::{Locale, ToFormattedString};
 use crossbeam::channel::Sender;
@@ -10,7 +10,6 @@ use log::{error, info};
 use reqwest::Client;
 use anyhow::Context;
 use super::SYSINFO;
-use chrono::Utc;
 
 #[cfg(target_os = "windows")]
 use crate::terminal_mode::tabs::script_categories::check_windows_activation;
@@ -534,11 +533,18 @@ pub fn generate_client_id(hostname: String, cpu: String) -> String {
 
 pub async fn live_computer_stats(tx: Sender<SystemInformation>) -> anyhow::Result<(), anyhow::Error>{
     loop {
-        tx.send(get_sysinfo().await?)?;
+        // A failed sample is skipped, not fatal: propagating it here used to
+        // end the loop and stop live telemetry for the life of the process.
+        match get_sysinfo().await {
+            Ok(info) => {
+                if tx.send(info).is_err() {
+                    return Ok(());
+                }
+            }
+            Err(e) => log::warn!("live_computer_stats: sysinfo sample failed, retrying: {e}"),
+        }
         tokio::time::sleep(std::time::Duration::from_secs_f32(0.1)).await;
     }
-    #[allow(unreachable_code)]
-    Ok(())
 }
 
 /// Shared `stress-kit` telemetry agent for the Fleet Dashboard.
