@@ -861,7 +861,8 @@ impl StressPanel {
                 | StressorChoice::Psu
                 | StressorChoice::PsuTransient
                 | StressorChoice::Gpu
-                | StressorChoice::GpuMatmul => {}
+                | StressorChoice::GpuMatmul
+                | StressorChoice::GpuDisplay => {}
             }
 
             ui.horizontal(|ui| {

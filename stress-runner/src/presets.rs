@@ -182,13 +182,6 @@ fn resolve_vram_pct(pct: f32, gpu_vram_mb: Option<u64>) -> u64 {
     ((total as f64 * (pct as f64 / 100.0)) as u64).max(256)
 }
 
-fn is_gpu_stressor(s: Stressor) -> bool {
-    matches!(
-        s,
-        Stressor::Gpu | Stressor::GpuMatmul | Stressor::GpuVram | Stressor::GpuPcie
-    )
-}
-
 /// Build the runnable spec: resolves percent memory against the machine's
 /// pools and scales stage durations by `mult` (min 1 s, for smoke runs).
 pub fn cert_spec(
@@ -204,7 +197,7 @@ pub fn cert_spec(
         .map(|s| {
             let memory_cap_mb = match s.memory {
                 MemorySpec::Mb(mb) => mb,
-                MemorySpec::PctOfPool(pct) if is_gpu_stressor(s.stressor) => {
+                MemorySpec::PctOfPool(pct) if s.stressor.is_gpu() => {
                     resolve_vram_pct(pct, gpu_vram_mb)
                 }
                 MemorySpec::PctOfPool(pct) => resolve_ram_pct(pct, total_ram_mb),
@@ -291,36 +284,7 @@ mod tests {
 
     #[test]
     fn stressor_toml_names_round_trip() {
-        for s in [
-            Stressor::Cpu,
-            Stressor::Memory,
-            Stressor::Disk,
-            Stressor::Matrix,
-            Stressor::Memcpy,
-            Stressor::Bitops,
-            Stressor::Cache,
-            Stressor::Vm,
-            Stressor::Stream,
-            Stressor::Branch,
-            Stressor::Atomic,
-            Stressor::Mutex,
-            Stressor::Switch,
-            Stressor::Prime,
-            Stressor::Fp,
-            Stressor::Hash,
-            Stressor::Prefetch,
-            Stressor::Icache,
-            Stressor::Tsc,
-            Stressor::MemTest,
-            Stressor::CpuVerify,
-            Stressor::Linpack,
-            Stressor::Psu,
-            Stressor::PsuTransient,
-            Stressor::Gpu,
-            Stressor::GpuMatmul,
-            Stressor::GpuVram,
-            Stressor::GpuPcie,
-        ] {
+        for &s in Stressor::all() {
             let name = serde_json::to_value(s).unwrap();
             let raw = format!(
                 "label = \"x\"\nstressor = {}\nduration_secs = 1\n",

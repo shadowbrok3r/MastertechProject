@@ -1,4 +1,8 @@
 //! Manual smoke run for the GPU stressors: `cargo run -p stress-kit --example gpu_smoke`.
+//!
+//! Optional args pick the stressors and seconds instead of the default pair:
+//! `cargo run -p stress-kit --example gpu_smoke -- gpu_display 10`. `gpu_display`
+//! covers the screen while it runs and honours `STRESSKIT_DISPLAY_MODESET`.
 
 use std::time::{Duration, Instant};
 
@@ -63,6 +67,21 @@ fn main() {
     let _ = log::set_boxed_logger(Box::new(StdoutLog));
     log::set_max_level(log::LevelFilter::Info);
 
-    run(Stressor::GpuVram, 256, 8);
-    run(Stressor::GpuPcie, 64, 6);
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.is_empty() {
+        run(Stressor::GpuVram, 256, 8);
+        run(Stressor::GpuPcie, 64, 6);
+        return;
+    }
+
+    let secs = args
+        .last()
+        .and_then(|a| a.parse::<u64>().ok())
+        .unwrap_or(8);
+    for name in args.iter().filter(|a| a.parse::<u64>().is_err()) {
+        match Stressor::from_str(name) {
+            Some(s) => run(s, 256, secs),
+            None => println!("unknown stressor {name:?}; try one of: {}", Stressor::labels_csv()),
+        }
+    }
 }

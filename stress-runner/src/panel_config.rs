@@ -159,10 +159,11 @@ pub enum StressorChoice {
     GpuMatmul,
     GpuVram,
     GpuPcie,
+    GpuDisplay,
 }
 
 impl StressorChoice {
-    pub const ALL: [Self; 29] = [
+    pub const ALL: [Self; 30] = [
         Self::Cpu,
         Self::Memory,
         Self::Disk,
@@ -192,6 +193,7 @@ impl StressorChoice {
         Self::GpuMatmul,
         Self::GpuVram,
         Self::GpuPcie,
+        Self::GpuDisplay,
     ];
 
     pub fn label(self) -> &'static str {
@@ -229,6 +231,7 @@ impl StressorChoice {
             Self::GpuMatmul => Stressor::GpuMatmul,
             Self::GpuVram => Stressor::GpuVram,
             Self::GpuPcie => Stressor::GpuPcie,
+            Self::GpuDisplay => Stressor::GpuDisplay,
         }
     }
 
@@ -242,10 +245,7 @@ impl StressorChoice {
 
     /// `true` for GPU-backed stressors (gated behind stress-kit's `gpu` feature).
     pub fn is_gpu(self) -> bool {
-        matches!(
-            self,
-            Self::Gpu | Self::GpuMatmul | Self::GpuVram | Self::GpuPcie
-        )
+        self.to_stressor().is_gpu()
     }
 }
 

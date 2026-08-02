@@ -30,6 +30,10 @@ pub mod gpu_vram;
 #[cfg(feature = "gpu")]
 pub mod gpu_pcie;
 #[cfg(feature = "gpu")]
+pub mod gpu_display;
+#[cfg(all(feature = "gpu", target_os = "windows"))]
+pub(crate) mod display_win;
+#[cfg(feature = "gpu")]
 pub mod psu;
 #[cfg(feature = "gpu")]
 pub mod psu_transient;
@@ -123,6 +127,8 @@ pub(crate) fn run_core(
         Stressor::GpuVram => gpu_vram::run(thread_count, config.memory_cap_mb, cancel, tx, started_at),
         #[cfg(feature = "gpu")]
         Stressor::GpuPcie => gpu_pcie::run(thread_count, config.memory_cap_mb, cancel, tx, started_at),
+        #[cfg(feature = "gpu")]
+        Stressor::GpuDisplay => gpu_display::run(thread_count, cancel, tx, started_at),
 
         #[cfg(not(feature = "gpu"))]
         Stressor::Psu
@@ -131,7 +137,8 @@ pub(crate) fn run_core(
         | Stressor::Gpu
         | Stressor::GpuMatmul
         | Stressor::GpuVram
-        | Stressor::GpuPcie => {
+        | Stressor::GpuPcie
+        | Stressor::GpuDisplay => {
             log::error!("stress-kit: {NO_GPU_FEATURE}");
             let _ = (config, thread_count);
             emit_no_gpu_feature_fatal(tx, started_at);
