@@ -632,6 +632,7 @@ fn touches_gpu(stressor: Stressor) -> bool {
             | Stressor::GpuMatmul
             | Stressor::GpuVram
             | Stressor::GpuPcie
+            | Stressor::GpuDisplay
             | Stressor::Psu
             | Stressor::PsuTransient
             | Stressor::Combined

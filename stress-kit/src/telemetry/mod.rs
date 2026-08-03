@@ -20,6 +20,8 @@ mod whea_windows;
 #[cfg(target_os = "windows")]
 mod tdr_windows;
 #[cfg(target_os = "windows")]
+pub mod live_dumps_windows;
+#[cfg(target_os = "windows")]
 mod thermal_windows;
 #[cfg(feature = "lowlevel")]
 mod cpu_die;
