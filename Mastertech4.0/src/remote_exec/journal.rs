@@ -105,6 +105,19 @@ pub fn record_exit(
     }));
 }
 
+/// Screen capture and input injection. `count` is JPEG bytes for a capture and
+/// the event count for input.
+pub fn record_screen(kind: &str, count: u64) {
+    super::note_screen_activity();
+    append(json!({
+        "at_ms": now_ms(),
+        "event": "screen",
+        "kind": kind,
+        "count": count,
+        "tech": super::gate::banner_info().map(|b| b.tech),
+    }));
+}
+
 pub fn record_gate(event: &str, tech: &str, diagnostic_session_id: &str, ttl_secs: Option<u64>) {
     append(json!({
         "at_ms": now_ms(),

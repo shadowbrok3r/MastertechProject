@@ -1079,10 +1079,11 @@ impl EguiScriptsTab {
 
                         #[cfg(target_os = "windows")]
                         match install_webroot(key.webroot_key.clone(), client.clone(), install_progress_tx).await {
-                            Ok(rekeyed) => {
-                                reboot_recommended = rekeyed;
+                            Ok(outcome) => {
+                                reboot_recommended = outcome.reboot_recommended();
                                 let _ = log_tx.try_send(ScriptLogEntry::success(
-                                    category.clone(), &script_name, "Webroot installed successfully"
+                                    category.clone(), &script_name,
+                                    format!("Webroot licensed and active ({outcome})")
                                 ));
                             },
                             Err(e) => {

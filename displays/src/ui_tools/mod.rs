@@ -14,6 +14,8 @@ pub mod toasts;
 pub mod tokyo_dark;
 pub mod rerun_mtech;
 pub mod mtech_glass;
+pub mod neon_glass;
+pub mod glass_backdrop;
 pub mod theme_chrome;
 pub mod theme_config;
 pub mod tui_theme;
@@ -28,44 +30,103 @@ pub use mtech_ui::{dock_style, egui_logger, theme};
 
 const ZSTD_LEVEL: i32 = 9;
 
-/// egui `Style` layout is not stable across egui versions, so persist it as JSON (field-named,
-/// tolerant of added/removed fields) rather than positional bincode. zstd keeps it compact.
-pub fn encode_style(message: &Style) -> anyhow::Result<Vec<u8>> {
-    let json = serde_json::to_vec(message).context("serialize style to JSON")?;
-    let compressed = zstd::encode_all(std::io::Cursor::new(&json), ZSTD_LEVEL).context("zstd")?;
-    Ok(compressed)
+const STYLE_KEY: &str = "style";
+const GLASS_KEY: &str = "glass";
+
+/// A saved theme: the egui `Style` plus the parts of a theme that have no `Style` slot.
+///
+/// The account record (`user_settings.color_scheme`) holds one of these, so a theme follows the
+/// operator between machines whole — including its backdrop-blur material, which egui has nowhere
+/// to put.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SavedTheme {
+    pub style: Style,
+    /// `None` on a record written before the glass material existed, or on an imported bare
+    /// `egui::Style` file. Callers recover it from the style's matching preset instead of guessing.
+    #[serde(default)]
+    pub glass: Option<crate::ui_tools::glass_backdrop::GlassParams>,
 }
 
-pub fn decode_style(packet: &[u8]) -> anyhow::Result<Style> {
+impl SavedTheme {
+    /// The theme as currently applied to `ctx` — the live style plus the glass material sitting on
+    /// the context. This is what Save persists.
+    pub fn current(ctx: &eframe::egui::Context) -> Self {
+        Self {
+            style: (*ctx.global_style()).clone(),
+            glass: Some(glass_backdrop::params(ctx)),
+        }
+    }
+}
+
+/// egui `Style` layout is not stable across egui versions, so persist a theme as JSON
+/// (field-named, tolerant of added/removed fields) rather than positional bincode. zstd keeps it
+/// compact.
+pub fn encode_theme(theme: &SavedTheme) -> anyhow::Result<Vec<u8>> {
+    let json = theme_to_json(theme)?;
+    zstd::encode_all(std::io::Cursor::new(&json), ZSTD_LEVEL).context("zstd")
+}
+
+pub fn decode_theme(packet: &[u8]) -> anyhow::Result<SavedTheme> {
     let json = zstd::decode_all(packet).context("zstd")?;
-    style_from_json(&json)
+    theme_from_json(&json)
 }
 
-/// Deserialize an egui `Style` from JSON, migrating across egui versions. On a strict-decode
-/// failure (egui added/renamed a `Style`/`Visuals`/nested field — e.g. 0.35's
-/// `color_transfer_function`, where one missing field in a non-`#[serde(default)]` struct fails
-/// the whole parse), overlay the stored values onto the current `Style::default()`: new fields
-/// take their default, removed/renamed fields are dropped, and matching values (colors, spacing,
-/// text styles, …) are preserved. This keeps saved themes working across egui upgrades.
+/// Serialize a theme to the on-disk/on-record JSON shape, for exporting to a file.
+pub fn theme_to_json(theme: &SavedTheme) -> anyhow::Result<Vec<u8>> {
+    serde_json::to_vec(theme).context("serialize theme to JSON")
+}
+
+/// Read a theme from JSON in either shape: the wrapper this crate writes, or a bare `egui::Style`
+/// object — which is what every record written before the glass material, and every scheme exported
+/// or hand-authored against egui's own `Style` schema, looks like. `egui::Style` has no `style`
+/// field, so the presence of that key is what tells the two apart.
+pub fn theme_from_json(json: &[u8]) -> anyhow::Result<SavedTheme> {
+    let value: serde_json::Value =
+        serde_json::from_slice(json).context("theme is not valid JSON")?;
+    let (style, glass) = match value {
+        serde_json::Value::Object(mut map) if map.contains_key(STYLE_KEY) => {
+            let glass = map
+                .remove(GLASS_KEY)
+                .and_then(|g| serde_json::from_value(g).ok());
+            (map.remove(STYLE_KEY).unwrap_or(serde_json::Value::Null), glass)
+        }
+        bare => (bare, None),
+    };
+    Ok(SavedTheme {
+        style: style_from_value(style),
+        glass,
+    })
+}
+
+/// Deserialize an egui `Style` from JSON, migrating across egui versions.
 pub fn style_from_json(json: &[u8]) -> anyhow::Result<Style> {
-    match serde_json::from_slice::<Style>(json) {
-        Ok(style) => Ok(style),
+    let value: serde_json::Value =
+        serde_json::from_slice(json).context("theme is not valid JSON; cannot migrate")?;
+    Ok(style_from_value(value))
+}
+
+/// On a strict-decode failure (egui added/renamed a `Style`/`Visuals`/nested field — e.g. 0.35's
+/// `color_transfer_function`, where one missing field in a non-`#[serde(default)]` struct fails the
+/// whole parse), overlay the stored values onto the current `Style::default()`: new fields take
+/// their default, removed/renamed fields are dropped, and matching values (colors, spacing, text
+/// styles, …) are preserved. This keeps saved themes working across egui upgrades, and folds an
+/// unsalvageable style to the default rather than failing a login.
+fn style_from_value(value: serde_json::Value) -> Style {
+    match serde_json::from_value::<Style>(value.clone()) {
+        Ok(style) => style,
         Err(e) => {
             log::debug!(
                 "stored theme predates the current egui Style schema ({e}); migrating against egui Style defaults"
             );
-            let stored: serde_json::Value =
-                serde_json::from_slice(json).context("theme is not valid JSON; cannot migrate")?;
-            let default =
-                serde_json::to_value(Style::default()).context("serialize default Style")?;
-            match serde_json::from_value::<Style>(merge_over_default(default, stored)) {
+            let default = serde_json::to_value(Style::default()).unwrap_or_default();
+            match serde_json::from_value::<Style>(merge_over_default(default, value)) {
                 Ok(style) => {
                     log::info!("theme migrated to the current egui Style schema");
-                    Ok(style)
+                    style
                 }
                 Err(e2) => {
                     log::error!("theme migration failed ({e2}); using default Style");
-                    Ok(Style::default())
+                    Style::default()
                 }
             }
         }

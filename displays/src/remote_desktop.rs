@@ -36,7 +36,8 @@ pub struct DesktopFrameMessage {
 }
 
 /// Mouse button in a [`DesktopInputEvent`].
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Facet)]
+#[repr(u8)]
 pub enum DesktopMouseButton {
     Left,
     Right,
@@ -44,7 +45,7 @@ pub enum DesktopMouseButton {
 }
 
 /// Modifier-key state accompanying a [`DesktopInputEvent::Key`].
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq, Facet)]
 pub struct DesktopModifiers {
     pub ctrl: bool,
     pub shift: bool,
@@ -57,7 +58,8 @@ pub struct DesktopModifiers {
 /// Pointer coordinates are normalized `0.0..=1.0` within the streamed monitor,
 /// so the admin needs no knowledge of the client's resolution; the client maps
 /// them to absolute screen pixels using the active monitor geometry.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Facet)]
+#[repr(u8)]
 pub enum DesktopInputEvent {
     MouseMove { x: f32, y: f32 },
     MouseButton { x: f32, y: f32, button: DesktopMouseButton, pressed: bool },
@@ -65,6 +67,63 @@ pub enum DesktopInputEvent {
     /// `key_name` is an `egui::Key::name()` string, mapped to an enigo key on the client.
     Key { key_name: String, pressed: bool, modifiers: DesktopModifiers },
     Text(String),
+}
+
+/// One captured frame returned by a gated one-shot capture, plus the geometry a
+/// caller needs to turn screenshot pixels back into click coordinates.
+#[derive(Serialize, Deserialize, Debug, Clone, Facet)]
+pub struct DesktopShot {
+    pub monitor_id: u32,
+    /// Dimensions of the returned image, after `scale`.
+    pub width: u32,
+    pub height: u32,
+    /// Full monitor resolution before scaling.
+    pub monitor_width: u32,
+    pub monitor_height: u32,
+    pub encode_ms: u32,
+    /// Baseline JPEG bytes.
+    pub jpeg: Vec<u8>,
+}
+
+/// A top-level window on the client.
+///
+/// Geometry is in the same physical screen pixels a capture uses, so a rect can
+/// be compared against screenshot coordinates directly.
+#[derive(Serialize, Deserialize, Debug, Clone, Facet)]
+pub struct WindowInfo {
+    /// Opaque handle for [`crate::Cmd::DesktopActivateWindow`]. Not stable
+    /// across a reboot, and stale the moment the window closes.
+    pub hwnd: u64,
+    pub title: String,
+    pub class_name: String,
+    pub pid: u32,
+    pub process_name: String,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub is_foreground: bool,
+    pub is_minimized: bool,
+    pub is_maximized: bool,
+}
+
+/// What currently has keyboard focus — the answer to "where would my next
+/// keystroke actually go".
+#[derive(Serialize, Deserialize, Debug, Clone, Facet)]
+pub struct FocusInfo {
+    pub foreground: Option<WindowInfo>,
+    /// Window class of the focused child control, e.g. `Edit` or `RichEditD2DPT`.
+    /// `None` when the foreground thread does not expose one.
+    pub focused_control_class: Option<String>,
+    /// Text caret in physical screen pixels — literally where typed characters
+    /// will appear. `None` when nothing is accepting text.
+    pub caret: Option<(i32, i32, u32, u32)>,
+    /// True when the process could not read the foreground state, which on
+    /// Windows almost always means the secure desktop (a UAC prompt) is up.
+    /// Input injection cannot reach it.
+    pub secure_desktop_suspected: bool,
+    /// How the client resolved coordinates, for diagnosing DPI mismatches.
+    pub dpi_context: String,
 }
 
 /// A monitor available on the client, reported in response to

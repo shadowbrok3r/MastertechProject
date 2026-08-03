@@ -129,6 +129,28 @@ pub struct HardwareComponent {
     pub embedding: Vec<f32>,
 }
 
+/// Joins vendor and model, skipping the vendor when the model already
+/// leads with it. Not an input to `canonical_id`, so changing it never
+/// forks an existing component row.
+fn compose_display_name(vendor: &str, model: &str) -> String {
+    let vendor = vendor.trim();
+    let model = model.trim();
+    if vendor.is_empty() {
+        return model.to_string();
+    }
+    let leads_with_vendor = model.len() >= vendor.len()
+        && model[..vendor.len()].eq_ignore_ascii_case(vendor)
+        && model[vendor.len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| !c.is_alphanumeric());
+    if leads_with_vendor {
+        model.to_string()
+    } else {
+        format!("{vendor} {model}")
+    }
+}
+
 impl HardwareComponent {
     /// Stable canonical ID so identical parts collapse to one row
     /// regardless of where they were discovered. The hash inputs are
@@ -158,7 +180,7 @@ impl HardwareComponent {
     ) -> Self {
         let vendor = vendor.into();
         let model = model.into();
-        let display_name = format!("{vendor} {model}").trim().to_string();
+        let display_name = compose_display_name(&vendor, &model);
         let id = Self::canonical_id(kind, &vendor, &model);
         let now: Datetime = chrono::Utc::now().into();
         Self {
@@ -193,7 +215,11 @@ impl HardwareComponent {
     /// rather than a fake Ok the caller can't distinguish from a real one.
     pub async fn upsert_seen(component: &Self) -> anyhow::Result<RecordId> {
         super::utilities::spawn_embedding_backfill();
-        // NONE keeps an existing embedding via `?? embedding` in the MERGE.
+        // NONE keeps an existing embedding via `?? embedding` in the MERGE, and
+        // falls through to `[]` when the row is new — the field is a required
+        // array, so without that fallback a first-time component whose embed
+        // call failed (Ollama unreachable) is rejected outright. The backfill
+        // spawned above fills the vector in later.
         let embedding = match super::utilities::embed_text(&component.embed_source()).await {
             Ok(v) => Some(v),
             Err(e) => {
@@ -1224,7 +1250,7 @@ pub struct StressTestMetric {
     #[serde(default)]
     #[surreal(default)]
     pub power_w: Option<f32>,
-    /// SuperIO board rails at this tick (`winring0-thermal`, Windows only).
+    /// SuperIO board rails at this tick (Windows, requires a low-level sensor backend).
     /// Scaled with assumed nominal dividers, so these are uncalibrated and
     /// board-specific — read them as trend/droop, never as absolutes.
     #[serde(default)]
@@ -1527,5 +1553,43 @@ impl HardwareTestBaseline {
             .await?
             .take(0)?;
         Ok(rows.into_iter().next())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_name_skips_a_vendor_the_model_already_leads_with() {
+        assert_eq!(
+            compose_display_name("AMD", "AMD Radeon RX 7900 XTX"),
+            "AMD Radeon RX 7900 XTX"
+        );
+        assert_eq!(
+            compose_display_name("NVIDIA", "NVIDIA GeForce RTX 3080"),
+            "NVIDIA GeForce RTX 3080"
+        );
+        // Case-insensitive match.
+        assert_eq!(compose_display_name("Intel", "INTEL Core i7-14700K"), "INTEL Core i7-14700K");
+    }
+
+    #[test]
+    fn display_name_prepends_when_the_model_omits_the_vendor() {
+        assert_eq!(compose_display_name("AMD", "Ryzen 9 7950X3D"), "AMD Ryzen 9 7950X3D");
+        assert_eq!(compose_display_name("", "Radeon RX 6600"), "Radeon RX 6600");
+    }
+
+    #[test]
+    fn display_name_keeps_a_vendor_that_only_shares_a_word_prefix() {
+        // "AMDGPU" is not the vendor "AMD" followed by a model.
+        assert_eq!(compose_display_name("AMD", "AMDGPU Test Device"), "AMD AMDGPU Test Device");
+    }
+
+    #[test]
+    fn display_name_does_not_affect_canonical_id() {
+        let a = HardwareComponent::new(HardwareKind::Gpu, "AMD", "AMD Radeon RX 7900 XTX");
+        let b = HardwareComponent::canonical_id(HardwareKind::Gpu, "AMD", "AMD Radeon RX 7900 XTX");
+        assert_eq!(a.id, b);
     }
 }

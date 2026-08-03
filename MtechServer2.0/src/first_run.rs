@@ -5,9 +5,10 @@ use displays::{
         admin_console::client_interface::TransportKind,
     },
     ui_tools::{
-        encode_style,
+        encode_theme,
         theme_config::{apply_user_color_scheme, bootstrap_startup_theme},
         toasts::{Toast, ToastKind, ToastOptions, ToastStyle},
+        SavedTheme,
     },
 };
 use eframe::{egui::{Color32, Context, Margin, Stroke, Vec2, Window}, Frame};
@@ -445,7 +446,10 @@ impl MtechServer {
                 if r.0 {
                     // Mutates the stored user so reconnect re-applies the saved scheme, not stale bytes.
                     if let Some(user) = self.shared_ctx.current_user.as_mut() {
-                        user.set_color_scheme(encode_style(&r.1.clone()).unwrap_or_default());
+                        // Encode style + glass material, matching what Save wrote to the account.
+                        user.set_color_scheme(
+                            encode_theme(&SavedTheme::current(ctx)).unwrap_or_default(),
+                        );
                         ctx.set_global_style(r.1.clone());
                         if let Some(storage) = frame.storage_mut() {
                             storage.set_string("user_settings", serde_json::to_string(&user.get_user_settings()).unwrap_or_default());

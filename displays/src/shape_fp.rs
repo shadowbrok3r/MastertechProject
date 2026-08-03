@@ -134,7 +134,7 @@ mod tests {
     // bump deliberately when Cmd's wire shape changes; this is the drift review gate.
     #[test]
     fn cmd_shape_fp_pin() {
-        assert_eq!(*super::CMD_SHAPE_FP, 0x3dc4_fee3_d484_1045);
+        assert_eq!(*super::CMD_SHAPE_FP, 0xe8d8_00ed_ef13_2215);
     }
 
     /// `Cmd` variant order as shipped. Bincode encodes a variant by its
@@ -252,6 +252,11 @@ mod tests {
         "RemoteJobStart",
         "RemoteJobSignal",
         "RemoteJobQuery",
+        "DesktopMonitorsQuery",
+        "DesktopCaptureOnce",
+        "DesktopInputBatch",
+        "DesktopWindowsQuery",
+        "DesktopActivateWindow",
     ];
 
     /// `Err` when `live` is not `pinned` plus zero or more appended variants.

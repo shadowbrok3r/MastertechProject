@@ -1,0 +1,36 @@
+[package]
+name = "backdrop-blur-glow"
+version = "0.3.0"
+description = "glow (OpenGL 3.3 / GLES 3.0 / WebGL2) grab-pass backend for backdrop-blur: real frosted glass for eframe-on-glow — grab a region of the live framebuffer, blur it, composite the frosted surface back."
+readme = "README.md"
+edition = "2024"
+rust-version = "1.92"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/abdu-benayad/backdrop-blur"
+authors = ["Abdu Benayad <abdu.benayad@gmail.com>"]
+keywords = ["blur", "backdrop", "frosted-glass", "vibrancy", "gpu"]
+categories = ["graphics", "gui", "rendering", "wasm"]
+publish = false
+
+[dependencies]
+backdrop-blur-core = { path = "../backdrop-blur-core", version = "0.3.0" }
+# Pinned to the glow egui_glow 0.35 resolves, so there is one glow in the graph.
+glow = "0.17"
+# Uncatchable structured warning for the no-GL-in-Drop teardown contract (DESIGN §11): a backend
+# dropped without an explicit `destroy(&gl)` leaks GL objects, which we can only warn about.
+log = { workspace = true }
+
+[features]
+# ALL GPU tests live behind this. Plain `cargo test --workspace` therefore runs only this crate's
+# Tier-0 (pure, no-GL) tests, keeping the default tier GPU-free (IMPL §1.2). The native
+# EGL-surfaceless harness and every readback test are compiled only with this feature, and the
+# harness module itself ships under it (doc-hidden `pub mod gl_harness`) so the egui adapter's
+# gated tests can reuse the EGL bring-up instead of duplicating it.
+gl-snapshots = ["dep:khronos-egl", "dep:libloading"]
+
+# The EGL-surfaceless headless-GL harness cannot build on wasm (no EGL there). Split by target so
+# the wasm tier never sees it; optional, pulled in only by `gl-snapshots`, so a default build stays
+# byte-identical. (A wasm build with the feature on is inert, not an error.)
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+khronos-egl = { version = "6", features = ["dynamic"], optional = true }
+libloading = { version = "0.8", optional = true }

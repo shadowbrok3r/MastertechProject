@@ -91,7 +91,8 @@ pub fn ingest_driver_snapshot(
     }
 
     PlatformSpawner::spawn(async move {
-        let session_key = super::diagnostic_session_registry::get(&connection_string);
+        let session_key =
+            super::diagnostic_session_registry::resolve_open_session_key(&connection_string).await;
         let previous = DriverSnapshot::list_for_connection(&connection_string, 1)
             .await
             .ok()

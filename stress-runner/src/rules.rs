@@ -154,6 +154,10 @@ pub enum RuleViolation {
     /// A GPU rule was configured but no GPU telemetry was ever sampled, so the
     /// limit could not be evaluated. An ungradeable limit is not a pass.
     GpuTelemetryMissing { rule: String, ticks: u32 },
+    /// A CPU temperature rule was configured but no die reading was ever
+    /// sampled, so the limit could not be evaluated. An ungradeable limit is not
+    /// a pass.
+    CpuTelemetryMissing { rule: String, ticks: u32 },
 }
 
 impl RuleViolation {
@@ -177,6 +181,9 @@ impl RuleViolation {
             ),
             Self::GpuTelemetryMissing { rule, ticks } => format!(
                 "{rule} could not be evaluated: no GPU telemetry in {ticks} ticks"
+            ),
+            Self::CpuTelemetryMissing { rule, ticks } => format!(
+                "{rule} could not be evaluated: no CPU die temperature in {ticks} ticks"
             ),
             Self::ClockCollapse { below_pct, ticks } => format!(
                 "clock under {:.0}% of stage max for {ticks}s",
@@ -625,6 +632,7 @@ fn touches_gpu(stressor: Stressor) -> bool {
             | Stressor::GpuMatmul
             | Stressor::GpuVram
             | Stressor::GpuPcie
+            | Stressor::GpuDisplay
             | Stressor::Psu
             | Stressor::PsuTransient
             | Stressor::Combined
@@ -684,7 +692,15 @@ pub fn evaluate_stage(stats: &StageStats, rules: &VerdictRules) -> StageVerdict 
         violations.push(RuleViolation::StressorErrors { count: stats.errors });
     }
     if let Some(rule) = &rules.max_cpu_temp_c {
-        if stats.worst_cpu_temp_over >= rule.consecutive_ticks {
+        // No die reading means the limit was never tested; without this the rule
+        // silently records no violation and the stage certifies as thermally
+        // sound on a machine whose CPU temperature was never measured.
+        if stats.cpu_temp_samples == 0 && stats.ticks > 0 {
+            violations.push(RuleViolation::CpuTelemetryMissing {
+                rule: format!("max_cpu_temp_c {:.0}C", rule.limit_c),
+                ticks: stats.ticks,
+            });
+        } else if stats.worst_cpu_temp_over >= rule.consecutive_ticks {
             violations.push(RuleViolation::CpuTemp {
                 limit_c: rule.limit_c,
                 peak_c: stats.max_cpu_temp_c.unwrap_or(rule.limit_c),
@@ -858,6 +874,62 @@ mod tests {
             verdict.violations[0],
             RuleViolation::CpuTemp { .. }
         ));
+    }
+
+    /// A configured CPU temperature limit that was never measured must not
+    /// certify as a thermal pass — the same rule the GPU limit already follows.
+    #[test]
+    fn a_stage_with_no_die_reading_cannot_certify_its_temp_limit() {
+        let rules = VerdictRules::certification();
+        let mut stats = stats_for(&rules);
+        let mut blind = snapshot(70.0, 4000, 95.0);
+        blind.cores[0].temp_c = None;
+        blind.cpu_die = None;
+
+        for _ in 0..30 {
+            stats.absorb_tick(&metrics(100.0, 0), &blind, &rules);
+        }
+        stats.finish(&blind);
+
+        assert_eq!(stats.cpu_temp_samples, 0, "the fixture leaked a CPU temperature");
+        let verdict = evaluate_stage(&stats, &rules);
+        assert!(!verdict.pass, "an unmeasured thermal limit reported a pass");
+        assert!(
+            verdict
+                .violations
+                .iter()
+                .any(|v| matches!(v, RuleViolation::CpuTelemetryMissing { ticks: 30, .. })),
+            "violations: {:?}",
+            verdict.violations
+        );
+    }
+
+    /// The guard is silent when the sensor answers, and silent when no CPU
+    /// temperature limit was configured at all.
+    #[test]
+    fn a_measured_or_unconfigured_temp_limit_does_not_trip_the_guard() {
+        let cert = VerdictRules::certification();
+        let mut measured = stats_for(&cert);
+        for _ in 0..30 {
+            measured.absorb_tick(&metrics(100.0, 0), &snapshot(70.0, 4000, 95.0), &cert);
+        }
+        measured.finish(&snapshot(70.0, 4000, 95.0));
+        let verdict = evaluate_stage(&measured, &cert);
+        assert!(verdict.pass, "violations: {:?}", verdict.violations);
+
+        let lenient = VerdictRules::default();
+        let mut blind_stats = stats_for(&lenient);
+        let mut blind = snapshot(70.0, 4000, 95.0);
+        blind.cores[0].temp_c = None;
+        blind.cpu_die = None;
+        for _ in 0..30 {
+            blind_stats.absorb_tick(&metrics(100.0, 0), &blind, &lenient);
+        }
+        blind_stats.finish(&blind);
+        assert!(
+            evaluate_stage(&blind_stats, &lenient).pass,
+            "a policy with no CPU temp limit has nothing to leave unevaluated"
+        );
     }
 
     #[test]

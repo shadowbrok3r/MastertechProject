@@ -124,6 +124,32 @@ pub fn get_toast_receiver() -> Receiver<ToastMessage> {
     GLOBAL_TOAST_CHANNEL.1.clone()
 }
 
+// ── This process's own `connected_client` identity ───────────────────────────
+//
+// Set by the desktop client once `get_client_hash()` resolves, before it
+// upserts its own row. Admin-only builds (web console) never set it.
+static LOCAL_CONNECTION_STRING: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Records this process's own `connection_string`. First non-empty call wins.
+pub fn set_local_connection_string(connection_string: impl Into<String>) {
+    let connection_string = connection_string.into();
+    if connection_string.is_empty() {
+        return;
+    }
+    let _ = LOCAL_CONNECTION_STRING.set(connection_string);
+}
+
+/// This process's own `connection_string`, or `None` when it hosts no client.
+pub fn local_connection_string() -> Option<&'static str> {
+    LOCAL_CONNECTION_STRING.get().map(String::as_str)
+}
+
+/// True for a `Client Connected` notification naming this process's own client.
+pub fn is_self_connect_notification(notification_type: &str, description: &str) -> bool {
+    notification_type == "Client Connected"
+        && local_connection_string().is_some_and(|cs| description.contains(cs))
+}
+
 // ── Global graceful-shutdown signal ──────────────────────────────────────────
 //
 // All long-running tokio loops in the desktop client (the direct-TCP admin
@@ -870,6 +896,58 @@ pub enum Cmd {
         job_id: Option<String>,
         from_seq: Option<u64>,
         max_bytes: Option<u32>,
+    },
+
+    /// Admin → client: enumerate monitors, correlated by `request_id`.
+    ///
+    /// Distinct from [`Cmd::DesktopListMonitors`], whose reply carries no
+    /// request id and so cannot be awaited by a specific caller.
+    DesktopMonitorsQuery { request_id: String },
+
+    /// Admin → client: capture ONE frame and return it, instead of starting the
+    /// push stream. Gated by the RemoteExec consent lease.
+    DesktopCaptureOnce {
+        request_id: String,
+        monitor: u32,
+        /// Downscale factor applied before JPEG encoding, `0.1..=1.0`.
+        scale: f32,
+        quality: u8,
+    },
+
+    /// Admin → client: inject a batch of desktop input events, then settle.
+    /// Gated by the RemoteExec consent lease.
+    ///
+    /// The human Web Console viewer keeps using the ungated
+    /// [`DESKTOP_INPUT_TAG`] frame; this variant exists so automated control is
+    /// held to the consent banner without changing that workflow.
+    DesktopInputBatch {
+        request_id: String,
+        events: Vec<crate::remote_desktop::DesktopInputEvent>,
+        /// Pause after the last event so the UI can react before a screenshot.
+        settle_ms: u32,
+        /// Refuse the whole batch unless the foreground window's title contains
+        /// this, checked on the client immediately before injecting.
+        ///
+        /// A caller comparing titles itself is racing: the window can change
+        /// between its check and the injection. This closes that window.
+        expect_window_title: Option<String>,
+    },
+
+    /// Admin → client: what has keyboard focus, or every top-level window.
+    DesktopWindowsQuery {
+        request_id: String,
+        /// `true` returns only the foreground window plus focus detail.
+        foreground_only: bool,
+    },
+
+    /// Admin → client: raise and focus a window. Far more reliable than
+    /// clicking a title bar at coordinates that may already be stale.
+    DesktopActivateWindow {
+        request_id: String,
+        /// Handle from [`Cmd::DesktopWindowsQuery`]; `0` to match by title.
+        hwnd: u64,
+        /// Case-insensitive substring match, used when `hwnd` is `0`.
+        title_contains: Option<String>,
     },
 }
 

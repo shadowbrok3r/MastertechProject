@@ -29,6 +29,53 @@ use job::JobHandle;
 /// Default output budget returned to the admin so it can pace polling.
 const DEFAULT_TAIL_BYTES: u32 = 256 * 1024;
 
+/// egui context used to wake the UI when the gate is armed.
+///
+/// Without this the interlock deadlocks: no job runs until the consent banner
+/// paints, but the banner only keeps itself repainting once it is already
+/// painting — so arming an idle egui client would never wake it.
+static REPAINT: std::sync::OnceLock<eframe::egui::Context> = std::sync::OnceLock::new();
+
+/// Registered once by the egui app. Terminal mode does not need it: its render
+/// loop runs continuously.
+pub fn set_repaint_handle(ctx: eframe::egui::Context) {
+    let _ = REPAINT.set(ctx);
+}
+
+fn wake_ui() {
+    if let Some(ctx) = REPAINT.get() {
+        ctx.request_repaint();
+    }
+}
+
+/// Last gated screen capture or input injection, so the banner can say the
+/// screen is being watched rather than only that a session is open.
+static SCREEN_ACTIVITY: std::sync::Mutex<Option<std::time::Instant>> =
+    std::sync::Mutex::new(None);
+
+/// Activity within this window counts as "live" on the banner.
+///
+/// Generous on purpose: a screen-control loop pauses between actions while the
+/// operator decides what to do next, and an indicator that blinks out during
+/// those gaps tells someone glancing at the machine that nobody is watching.
+/// Over-reporting is the safe direction for a consent light.
+const SCREEN_ACTIVE_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
+
+pub fn note_screen_activity() {
+    if let Ok(mut g) = SCREEN_ACTIVITY.lock() {
+        *g = Some(std::time::Instant::now());
+    }
+    wake_ui();
+}
+
+pub fn screen_is_live() -> bool {
+    SCREEN_ACTIVITY
+        .lock()
+        .ok()
+        .and_then(|g| *g)
+        .is_some_and(|t| t.elapsed() <= SCREEN_ACTIVE_WINDOW)
+}
+
 /// What this build supports.
 pub fn capabilities() -> RemoteExecCapabilities {
     RemoteExecCapabilities {
@@ -50,7 +97,9 @@ pub fn arm(
     ttl_secs: u64,
 ) -> GateStatus {
     journal::record_gate("armed", &tech, &diagnostic_session_id, Some(ttl_secs));
-    gate::arm(session_id, tech, diagnostic_session_id, reason, ttl_secs)
+    let status = gate::arm(session_id, tech, diagnostic_session_id, reason, ttl_secs);
+    wake_ui();
+    status
 }
 
 pub fn disarm(kill_running: bool) -> GateStatus {
@@ -60,6 +109,7 @@ pub fn disarm(kill_running: bool) -> GateStatus {
         log::warn!("[remote_exec] disarm terminated {killed} running job(s)");
     }
     gate::disarm();
+    wake_ui();
     gate::status(registry::running_count())
 }
 

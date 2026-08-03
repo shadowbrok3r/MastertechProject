@@ -14,7 +14,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crossbeam::channel::{Receiver, Sender};
 use displays::remote_desktop::{
     DesktopFrameEncoding, DesktopFrameMessage, DesktopInputEvent, DesktopModifiers,
-    DesktopMonitorInfo, DesktopMouseButton,
+    DesktopMonitorInfo, DesktopMouseButton, DesktopShot,
 };
 use displays::DESKTOP_FRAME_TAG;
 use enigo::{Axis, Button, Direction, Enigo, Key, Keyboard, Mouse, Settings};
@@ -199,9 +199,11 @@ fn pick_monitor(monitors: &[xcap::Monitor], id: u32) -> Option<xcap::Monitor> {
     monitors.first().cloned()
 }
 
-fn capture_and_encode(cfg: &CaptureConfig, frame_count: u64) -> anyhow::Result<Option<Vec<u8>>> {
+/// Captures one monitor and JPEG-encodes it, recording the geometry the input
+/// thread needs to map normalized coordinates.
+fn grab(monitor_id: u32, scale: f32, quality: u8) -> anyhow::Result<Option<DesktopShot>> {
     let monitors = xcap::Monitor::all()?;
-    let Some(monitor) = pick_monitor(&monitors, cfg.monitor) else {
+    let Some(monitor) = pick_monitor(&monitors, monitor_id) else {
         return Ok(None);
     };
 
@@ -209,6 +211,7 @@ fn capture_and_encode(cfg: &CaptureConfig, frame_count: u64) -> anyhow::Result<O
     let mon_y = monitor.y().unwrap_or(0);
     let rgba = monitor.capture_image()?;
     let (w, h) = (rgba.width(), rgba.height());
+    // Input mapping reads this; a capture must happen before injection works.
     *ACTIVE_GEOM.lock().unwrap() = Some(MonitorGeom {
         x: mon_x,
         y: mon_y,
@@ -216,7 +219,7 @@ fn capture_and_encode(cfg: &CaptureConfig, frame_count: u64) -> anyhow::Result<O
         height: h,
     });
 
-    let scale = cfg.scale.clamp(0.1, 1.0);
+    let scale = scale.clamp(0.1, 1.0);
     let tw = ((w as f32 * scale) as u32).max(1);
     let th = ((h as f32 * scale) as u32).max(1);
     let scaled = if tw != w || th != h {
@@ -228,19 +231,40 @@ fn capture_and_encode(cfg: &CaptureConfig, frame_count: u64) -> anyhow::Result<O
     let encode_start = Instant::now();
     let rgb = image::DynamicImage::ImageRgba8(scaled).into_rgb8();
     let mut buf: Vec<u8> = Vec::new();
-    let mut enc = JpegEncoder::new_with_quality(&mut buf, cfg.quality.clamp(1, 100));
+    let mut enc = JpegEncoder::new_with_quality(&mut buf, quality.clamp(1, 100));
     enc.encode_image(&rgb)?;
-    let encode_ms = encode_start.elapsed().as_millis() as u32;
+
+    Ok(Some(DesktopShot {
+        monitor_id: monitor.id().unwrap_or(0),
+        width: tw,
+        height: th,
+        monitor_width: w,
+        monitor_height: h,
+        encode_ms: encode_start.elapsed().as_millis() as u32,
+        jpeg: buf,
+    }))
+}
+
+/// One-shot capture for the MCP path, bypassing the push stream entirely.
+pub fn capture_once(monitor: u32, scale: f32, quality: u8) -> anyhow::Result<DesktopShot> {
+    grab(monitor, scale, quality)?
+        .ok_or_else(|| anyhow::anyhow!("no monitors available to capture"))
+}
+
+fn capture_and_encode(cfg: &CaptureConfig, frame_count: u64) -> anyhow::Result<Option<Vec<u8>>> {
+    let Some(shot) = grab(cfg.monitor, cfg.scale, cfg.quality)? else {
+        return Ok(None);
+    };
 
     let msg = DesktopFrameMessage {
         frame_count,
         timestamp_ms: now_ms(),
-        monitor_id: monitor.id().unwrap_or(0),
-        width: tw,
-        height: th,
+        monitor_id: shot.monitor_id,
+        width: shot.width,
+        height: shot.height,
         encoding: DesktopFrameEncoding::Jpeg,
-        data: buf,
-        encode_ms,
+        data: shot.jpeg,
+        encode_ms: shot.encode_ms,
         cursor_x: -1,
         cursor_y: -1,
     };
@@ -250,6 +274,56 @@ fn capture_and_encode(cfg: &CaptureConfig, frame_count: u64) -> anyhow::Result<O
     tagged.push(DESKTOP_FRAME_TAG);
     tagged.extend_from_slice(&ser);
     Ok(Some(tagged))
+}
+
+/// Gap between injected characters.
+///
+/// A whole string handed to `Enigo::text` goes out as one rapid burst of
+/// synthetic key events, and a target whose input queue cannot keep up drops or
+/// repeats characters: `"Claude drove"` was observed arriving as
+/// `"vvvvvvvvvvve"` roughly one time in three. Pacing costs ~8 ms per character
+/// and makes it deterministic.
+const TYPE_CHAR_DELAY: Duration = Duration::from_millis(8);
+
+/// Types `text` one character at a time so the target can keep up.
+fn type_paced(enigo: &mut Enigo, text: &str) -> anyhow::Result<()> {
+    let mut buf = [0u8; 4];
+    for ch in text.chars() {
+        enigo
+            .text(ch.encode_utf8(&mut buf))
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        std::thread::sleep(TYPE_CHAR_DELAY);
+    }
+    Ok(())
+}
+
+/// Injects a batch of events on the input thread, then waits `settle_ms` so the
+/// UI can react before the caller screenshots.
+///
+/// Returns an error when nothing has been captured yet: pointer coordinates are
+/// normalized against the active monitor, so injecting before a capture would
+/// click somewhere arbitrary.
+pub fn inject_batch(events: Vec<DesktopInputEvent>, settle_ms: u32) -> anyhow::Result<usize> {
+    let needs_geom = events
+        .iter()
+        .any(|e| matches!(e, DesktopInputEvent::MouseMove { .. } | DesktopInputEvent::MouseButton { .. }));
+    if needs_geom && ACTIVE_GEOM.lock().map(|g| g.is_none()).unwrap_or(true) {
+        anyhow::bail!(
+            "no monitor geometry yet; take a screenshot before sending pointer input so \
+             coordinates map to the right screen"
+        );
+    }
+
+    let tx = desktop_input_sender();
+    let n = events.len();
+    for ev in events {
+        tx.send(ev)
+            .map_err(|e| anyhow::anyhow!("desktop input thread is gone: {e}"))?;
+    }
+    if settle_ms > 0 {
+        std::thread::sleep(Duration::from_millis(settle_ms.min(10_000) as u64));
+    }
+    Ok(n)
 }
 
 /// Enumerate the client's monitors for [`displays::Cmd::DesktopMonitorList`].
@@ -397,9 +471,7 @@ fn apply_input(
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
             }
         }
-        DesktopInputEvent::Text(text) => {
-            enigo.text(&text).map_err(|e| anyhow::anyhow!("{e}"))?;
-        }
+        DesktopInputEvent::Text(text) => type_paced(enigo, &text)?,
     }
     Ok(())
 }

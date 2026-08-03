@@ -1,5 +1,5 @@
 use super::{filesystem::system_info::generate_client_id, utilities::load_encrypted_user_data, app_state::MasterTechApp, tabs::github::get_github_releases};
-use displays::{app_state::AppState, pages::login_page::HASH, ui_tools::{encode_style, toasts::{Toast, ToastKind, ToastOptions}, theme_config::bootstrap_startup_theme}};
+use displays::{app_state::AppState, pages::login_page::HASH, ui_tools::{encode_theme, toasts::{Toast, ToastKind, ToastOptions}, theme_config::bootstrap_startup_theme, SavedTheme}};
 use database::{schema::{CustomerData, ExtendedSeb, LiveTaskPayload, LocalSebData, TicketData, CONNECTED_CLIENT_TABLE}, websocket_url_with_room, Database, WS_CLIENT_URL};
 use database::schema::GetKeysResponse;
 use eframe::egui::Context;
@@ -535,7 +535,10 @@ impl MasterTechApp {
                 if r.0 {
                     // Mutates the stored user so reconnect re-applies the saved scheme, not stale bytes.
                     if let Some(user) = self.context.shared_ctx.current_user.as_mut() {
-                        user.set_color_scheme(encode_style(&r.1).unwrap_or_default());
+                        // Encode style + glass material, matching what Save wrote to the account.
+                        user.set_color_scheme(
+                            encode_theme(&SavedTheme::current(ctx)).unwrap_or_default(),
+                        );
                         if let Some(storage) = frame.storage_mut() {
                             storage.set_string("user_settings", serde_json::to_string(&r.1).unwrap_or_default());
                         }

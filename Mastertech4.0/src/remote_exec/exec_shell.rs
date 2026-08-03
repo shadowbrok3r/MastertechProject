@@ -27,6 +27,48 @@ const IDLE_TIMEOUT_SECS: u64 = 600;
 /// Read granularity from each pipe.
 const READ_CHUNK: usize = 8192;
 
+/// Coalesced payload size that triggers a flush into the ring.
+const FLUSH_BYTES: usize = 8192;
+
+/// Longest a partial buffer waits before being flushed, so sparse output still
+/// reaches a poller promptly.
+const FLUSH_AFTER: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// Accumulates pipe reads into ring-sized chunks.
+///
+/// A line-buffered producer returns a few bytes per `read`, and one `JobChunk`
+/// per read makes the ring's chunk cap bind at a fraction of its byte budget —
+/// 6000 lines of PowerShell output produced 11104 chunks and evicted 64% of
+/// itself while nominally holding 2 MiB.
+#[derive(Default)]
+struct Coalescer {
+    buf: Vec<u8>,
+    first_at: Option<Instant>,
+}
+
+impl Coalescer {
+    fn push(&mut self, data: &[u8]) {
+        if self.buf.is_empty() {
+            self.first_at = Some(Instant::now());
+        }
+        self.buf.extend_from_slice(data);
+    }
+
+    fn ready(&self) -> bool {
+        !self.buf.is_empty()
+            && (self.buf.len() >= FLUSH_BYTES
+                || self.first_at.is_some_and(|t| t.elapsed() >= FLUSH_AFTER))
+    }
+
+    fn take(&mut self) -> Option<Vec<u8>> {
+        if self.buf.is_empty() {
+            return None;
+        }
+        self.first_at = None;
+        Some(std::mem::take(&mut self.buf))
+    }
+}
+
 fn script_extension(shell: ShellKind) -> &'static str {
     match shell {
         ShellKind::Cmd => "bat",
@@ -130,6 +172,11 @@ pub async fn run(handle: JobHandle, spec: RemoteJobSpec) {
     let mut stderr = child.stderr.take().map(BufReader::new);
     let mut out_buf = vec![0u8; READ_CHUNK];
     let mut err_buf = vec![0u8; READ_CHUNK];
+    let mut out_pending = Coalescer::default();
+    let mut err_pending = Coalescer::default();
+    // Counted on read, so a redacted job can still report how much it produced.
+    let mut redacted_out: u64 = 0;
+    let mut redacted_err: u64 = 0;
     let mut last_output = Instant::now();
 
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(timeout);
@@ -180,10 +227,9 @@ pub async fn run(handle: JobHandle, spec: RemoteJobSpec) {
                     Ok(0) => stdout = None,
                     Ok(n) => {
                         last_output = Instant::now();
+                        redacted_out += n as u64;
                         if !redact {
-                            handle.push_output(JobStream::Stdout, out_buf[..n].to_vec());
-                        } else {
-                            handle.push_output(JobStream::Stdout, Vec::new());
+                            out_pending.push(&out_buf[..n]);
                         }
                     }
                     Err(_) => stdout = None,
@@ -200,10 +246,9 @@ pub async fn run(handle: JobHandle, spec: RemoteJobSpec) {
                     Ok(0) => stderr = None,
                     Ok(n) => {
                         last_output = Instant::now();
+                        redacted_err += n as u64;
                         if !redact {
-                            handle.push_output(JobStream::Stderr, err_buf[..n].to_vec());
-                        } else {
-                            handle.push_output(JobStream::Stderr, Vec::new());
+                            err_pending.push(&err_buf[..n]);
                         }
                     }
                     Err(_) => stderr = None,
@@ -227,6 +272,24 @@ pub async fn run(handle: JobHandle, spec: RemoteJobSpec) {
 
             _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {}
         }
+
+        if out_pending.ready() {
+            if let Some(data) = out_pending.take() {
+                handle.push_output(JobStream::Stdout, data);
+            }
+        }
+        if err_pending.ready() {
+            if let Some(data) = err_pending.take() {
+                handle.push_output(JobStream::Stderr, data);
+            }
+        }
+    }
+
+    if let Some(data) = out_pending.take() {
+        handle.push_output(JobStream::Stdout, data);
+    }
+    if let Some(data) = err_pending.take() {
+        handle.push_output(JobStream::Stderr, data);
     }
 
     // Drain whatever the pipes still hold; the child has exited so this ends.
@@ -246,6 +309,17 @@ pub async fn run(handle: JobHandle, spec: RemoteJobSpec) {
     }
 
     let _ = std::fs::remove_file(&script_path);
+
+    if redact {
+        handle.push_output(
+            JobStream::Meta,
+            format!(
+                "[remote_exec] output suppressed by redact: {redacted_out} stdout and \
+                 {redacted_err} stderr bytes were produced and discarded\n"
+            )
+            .into_bytes(),
+        );
+    }
 
     let outcome = outcome.unwrap_or(JobOutcome::Exited);
     let state = match (&outcome, exit_code) {

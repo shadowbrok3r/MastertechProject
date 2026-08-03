@@ -60,6 +60,12 @@ pub fn render(f: &mut Frame, area: Rect) {
             Style::default().fg(accent),
         ));
     }
+    if super::screen_is_live() {
+        headline.push(Span::styled(
+            "  VIEWING YOUR SCREEN",
+            Style::default().fg(THEME.error).add_modifier(Modifier::BOLD),
+        ));
+    }
 
     let body = vec![
         Line::from(headline),

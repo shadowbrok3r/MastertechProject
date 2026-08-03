@@ -97,6 +97,26 @@ pub fn safe_relative_path(raw: &str) -> Result<PathBuf, String> {
     Ok(out)
 }
 
+/// Writes `.cargo/config.toml` allowing undefined symbols at link time.
+///
+/// `rust-lld` fails with `undefined symbol: host_log` / `host_run_command`
+/// without it; those are the host imports a plugin declares in its
+/// `extern "C"` block and resolves at instantiation. Job dirs are fresh
+/// per build, so this always writes.
+async fn write_cargo_config(build_dir: &Path, target: &str) -> Result<(), BuildFailure> {
+    let cfg_dir = build_dir.join(".cargo");
+    tokio::fs::create_dir_all(&cfg_dir)
+        .await
+        .with_context(|| format!("create {}", cfg_dir.display()))?;
+    tokio::fs::write(
+        cfg_dir.join("config.toml"),
+        format!("[target.{target}]\nrustflags = [\"-C\", \"link-arg=--allow-undefined\"]\n"),
+    )
+    .await
+    .context("write .cargo/config.toml")?;
+    Ok(())
+}
+
 /// The directory `cargo build` runs in: `job_dir/plugin` when extra
 /// files sit alongside it (so `path = "../_mtech_sdk_vendor"` resolves),
 /// else `job_dir` itself for the flat single-file layout.
@@ -166,6 +186,8 @@ pub async fn compile_one(
             .await
             .with_context(|| format!("write {}", dest.display()))?;
     }
+
+    write_cargo_config(&build_dir, target).await?;
 
     let mut cmd = tokio::process::Command::new("cargo");
     cmd.arg("build")

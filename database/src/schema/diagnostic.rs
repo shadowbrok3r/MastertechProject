@@ -128,15 +128,12 @@ pub struct DiagnosticSession {
     pub connection_string: String,
     pub hostname: String,
     pub customer_name: Option<String>,
-    /// Required: every diagnostic must belong to a known customer. The AI
-    /// must look this up via MCP tools (e.g. `find_customer_by_email`,
-    /// or via the `connected_client.computer.customer` graph) before
-    /// creating a session.
-    pub customer_id: RecordId,
-    /// Required: every diagnostic must reference the computer being
-    /// diagnosed. Resolve via `connected_client.computer` or
-    /// `get_computer_details`.
-    pub computer_id: RecordId,
+    /// Customer the diagnostic belongs to; `NONE` on rows written before
+    /// `create_diagnostic_session` required it.
+    pub customer_id: Option<RecordId>,
+    /// Computer being diagnosed; `NONE` on rows written before
+    /// `create_diagnostic_session` required it.
+    pub computer_id: Option<RecordId>,
     /// Optional link to the in-house task record this diagnostic
     /// corresponds to (set when the computer is checked in for service).
     pub task_ref: Option<RecordId>,
@@ -158,8 +155,8 @@ impl Default for DiagnosticSession {
             connection_string: String::new(),
             hostname: String::new(),
             customer_name: None,
-            customer_id: super::random_record_id(super::CUSTOMER_TABLE),
-            computer_id: super::random_record_id(super::COMPUTER_TABLE),
+            customer_id: None,
+            computer_id: None,
             task_ref: None,
             service_order: None,
             tech: None,
@@ -204,6 +201,28 @@ impl Default for DiagnosticEntry {
     }
 }
 
+/// Days open after which a session is reported stale by the link reaper and
+/// flagged in the diagnostics page.
+pub const STALE_SESSION_DAYS: i64 = 30;
+
+/// Open-session projection holding no record-id links, so a row with a
+/// malformed FK still lists. `age_secs` is the age at query time.
+#[derive(Serialize, Deserialize, Debug, Clone, SurrealValue)]
+pub struct OpenSessionRef {
+    pub id: RecordId,
+    pub connection_string: String,
+    pub hostname: String,
+    pub tech: Option<String>,
+    pub started_at: Datetime,
+    pub age_secs: i64,
+}
+
+impl OpenSessionRef {
+    pub fn age_days(&self) -> i64 {
+        self.age_secs / 86_400
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DiagnosticSessionFull {
     #[serde(flatten)]
@@ -212,6 +231,16 @@ pub struct DiagnosticSessionFull {
 }
 
 impl DiagnosticSession {
+    /// Days open, for a still-open session past [`STALE_SESSION_DAYS`].
+    pub fn stale_days(&self) -> Option<i64> {
+        if self.status != "open" {
+            return None;
+        }
+        let started = chrono::DateTime::<chrono::Utc>::from(self.started_at);
+        let days = (chrono::Utc::now() - started).num_days();
+        (days >= STALE_SESSION_DAYS).then_some(days)
+    }
+
     pub async fn create(session: &Self) -> anyhow::Result<RecordId> {
         let mut s = session.clone();
         s.id = super::random_record_id(super::DIAGNOSTIC_SESSION_TABLE);
@@ -352,17 +381,23 @@ impl DiagnosticSession {
         Ok(())
     }
 
-    /// Every open session, newest first. Used by the periodic link reaper.
-    pub async fn list_open(limit: u32) -> anyhow::Result<Vec<Self>> {
-        let sessions: Vec<Self> = db()
+    /// Every open session, newest first, as primitive-only projections.
+    /// Used by the fleet-wide link reaper: no record-id field means a row with
+    /// a malformed FK still lists, and only its own `get` can fail.
+    pub async fn list_open_refs(limit: u32) -> anyhow::Result<Vec<OpenSessionRef>> {
+        // started_at must stay in the projection — ORDER BY only accepts
+        // selected idioms.
+        let refs: Vec<OpenSessionRef> = db()
             .query(
-                "SELECT * FROM diagnostic_session WHERE status == 'open' \
+                "SELECT id, connection_string, hostname, tech, started_at, \
+                 duration::secs(time::now() - started_at) AS age_secs \
+                 FROM diagnostic_session WHERE status == 'open' \
                  ORDER BY started_at DESC LIMIT $limit",
             )
             .bind(("limit", limit as i64))
             .await?
             .take(0)?;
-        Ok(sessions)
+        Ok(refs)
     }
 
     /// Newest open session for a connected client: by `connection_string`,
@@ -411,14 +446,17 @@ impl DiagnosticSession {
                 .bind(("so", so))
                 .await?
                 .take(0)?,
-            None => db()
-                .query(
-                    "SELECT * FROM task WHERE service_ticket.computer == $c \
-                     ORDER BY completed ASC, created_at DESC LIMIT 1",
-                )
-                .bind(("c", self.computer_id.clone()))
-                .await?
-                .take(0)?,
+            None => {
+                let Some(computer) = self.computer_id.clone() else { return Ok(None) };
+                db()
+                    .query(
+                        "SELECT * FROM task WHERE service_ticket.computer == $c \
+                         ORDER BY completed ASC, created_at DESC LIMIT 1",
+                    )
+                    .bind(("c", computer))
+                    .await?
+                    .take(0)?
+            }
         };
         let Some(task) = tasks.into_iter().next() else { return Ok(None) };
         // Link the session's service_order when set, else the task's own ticket.

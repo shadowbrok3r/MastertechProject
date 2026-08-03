@@ -75,6 +75,9 @@ pub fn get_client_hash() -> ConnectedClient {
                 "get_client_hash: cached client identity (id={id}, hostname={hostname:?})"
             );
 
+            // Lets the notification pump recognise this machine's own rows.
+            displays::set_local_connection_string(id.clone());
+
             ConnectedClient {
                 id: client_id,
                 client_hash,

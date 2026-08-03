@@ -32,6 +32,75 @@ fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+/// ZeroClaw gateway target from env: `ZEROCLAW_GATEWAY_URL` + `ZEROCLAW_GATEWAY_TOKEN`.
+pub fn zeroclaw_gateway() -> Option<(String, String)> {
+    let url = std::env::var("ZEROCLAW_GATEWAY_URL").ok()?;
+    let token = std::env::var("ZEROCLAW_GATEWAY_TOKEN").ok()?;
+    let url = url.trim().trim_end_matches('/').to_string();
+    let token = token.trim().to_string();
+    (!url.is_empty() && !token.is_empty()).then_some((url, token))
+}
+
+/// One diagnose turn through the ZeroClaw dispatcher: POST /webhook?agent=<alias>,
+/// then emit the agent's final reply. `ZEROCLAW_AGENT` overrides the target alias.
+pub async fn zeroclaw_diagnose(prompt: String, thread_id: String, response_tx: Sender<ChatMessage>) {
+    let Some((url, token)) = zeroclaw_gateway() else {
+        send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Error(
+            "ZeroClaw gateway not configured — set ZEROCLAW_GATEWAY_URL and ZEROCLAW_GATEWAY_TOKEN.".into(),
+        ));
+        send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Done);
+        return;
+    };
+    let agent = std::env::var("ZEROCLAW_AGENT").unwrap_or_else(|_| "diagnostician".into());
+    send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Text(format!(
+        "{}dispatched to ZeroClaw agent `{agent}` — it gathers context, delegates deep analysis \
+         to Claude Code, and replies here when done…",
+        crate::ai::claude_code::TOOL_PREFIX
+    )));
+
+    let turn = async {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(900))
+            .build()?;
+        let resp = client
+            .post(format!("{url}/webhook"))
+            .query(&[("agent", agent.as_str())])
+            .bearer_auth(&token)
+            .header("X-Idempotency-Key", new_id())
+            .json(&serde_json::json!({ "message": prompt }))
+            .send()
+            .await?;
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        Ok::<_, reqwest::Error>((status, body))
+    };
+
+    match turn.await {
+        Ok((status, body)) if status.is_success() => {
+            let text = serde_json::from_str::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|v| v["response"].as_str().map(str::to_string))
+                .unwrap_or(body);
+            send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Text(text));
+        }
+        Ok((status, body)) => {
+            let snippet: String = body.chars().take(300).collect();
+            send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Error(format!(
+                "ZeroClaw gateway {status}: {snippet}"
+            )));
+        }
+        Err(e) => {
+            let msg = if e.is_timeout() {
+                "ZeroClaw turn exceeded 900s — check the daemon and gateway request timeout.".to_string()
+            } else {
+                format!("ZeroClaw gateway unreachable: {e}")
+            };
+            send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Error(msg));
+        }
+    }
+    send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Done);
+}
+
 /// Text of a `*.delta` event, which carries either a bare string or a content part.
 fn delta_text(event: &serde_json::Value) -> Option<&str> {
     event["delta"].as_str().or_else(|| event["delta"]["text"].as_str())

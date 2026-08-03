@@ -81,7 +81,7 @@ pub fn show_cores(
                     });
                     r.col(|ui| {
                         // sysinfo has no per-core temp on Windows; fall back to the
-                        // WinRing0 `CPU Core N` reading from the thermals list.
+                        // die reader's `CPU Core N` entry in the thermals list.
                         let temp = c.temp_c.or_else(|| {
                             let want = format!("CPU Core {}", c.index);
                             snapshot
@@ -430,9 +430,9 @@ pub fn show_thermals(ui: &mut egui::Ui, thermals: &[ThermalReading], filter: &st
     if visible.is_empty() {
         empty_state(
             ui,
-            "No temperature sensors in the latest snapshot. CPU/board temps need the WinRing0 \
-             driver loaded — run elevated and lower Memory Integrity + the vulnerable-driver \
-             blocklist; NVMe/SATA disk temps need no driver. See the Logs tab for the reason.",
+            "No temperature sensors in the latest snapshot. CPU/board temps need a kernel-mode \
+             sensor backend and an elevated run; NVMe/SATA disk temps need no driver. See the \
+             Logs tab for which backend was tried and why it declined.",
         );
         return;
     }

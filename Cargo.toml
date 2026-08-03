@@ -20,10 +20,18 @@ members = [
     "pxe-bench",
     "dump-triage",
     "mtech-plugin-sdk",
+    # Vendored fork of https://github.com/abdu-benayad/backdrop-blur, ported to egui 0.35.
+    "backdrop-blur/crates/backdrop-blur-core",
+    "backdrop-blur/crates/backdrop-blur-glow",
+    "backdrop-blur/crates/backdrop-blur-egui",
+    "backdrop-blur/crates/backdrop-blur-wgpu",
+    "backdrop-blur/examples/eframe-glow-panel",
 ]
 # Targets of bare `cargo build`/`check`/`test` and rust-analyzer. Excludes the
 # wasm-only MtechServer2.0 (cdylib) so native commands don't try to compile it;
 # build it with trunk or `cargo build -p mtechserver --target wasm32-unknown-unknown`.
+# Also excludes backdrop-blur-wgpu: nothing here uses the own-loop path, and building
+# it would pull the whole wgpu 29 + naga stack into every bare `cargo check`.
 default-members = [
     "database",
     "displays",
@@ -41,6 +49,9 @@ default-members = [
     "pxe-bench",
     "dump-triage",
     "mtech-plugin-sdk",
+    "backdrop-blur/crates/backdrop-blur-core",
+    "backdrop-blur/crates/backdrop-blur-glow",
+    "backdrop-blur/crates/backdrop-blur-egui",
 ]
 # Standalone crates with their own toolchain/target; never part of this resolve.
 # uefi has its own [workspace] and builds standalone. MastertechMobile still
@@ -54,6 +65,9 @@ exclude = [
 ]
 
 [workspace.dependencies]
+backdrop-blur-core = { path = "backdrop-blur/crates/backdrop-blur-core" }
+backdrop-blur-glow = { path = "backdrop-blur/crates/backdrop-blur-glow" }
+backdrop-blur-egui = { path = "backdrop-blur/crates/backdrop-blur-egui", default-features = false, features = ["grab-pass"] }
 dump-triage = { path = "dump-triage" }
 mtech-plugin-sdk = { path = "mtech-plugin-sdk" }
 facet = "=0.46.5"

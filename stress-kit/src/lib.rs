@@ -31,6 +31,7 @@
 mod stressors;
 pub mod bench;
 pub mod gpu_stack;
+pub mod lowlevel;
 pub mod scenario;
 pub mod telemetry;
 
@@ -176,6 +177,14 @@ pub enum Stressor {
     /// Appended last so existing bincode variant indices stay stable.
     #[facet(rename = "psu_transient")]
     PsuTransient,
+    /// Real swapchain per attached output, presented continuously with periodic
+    /// surface reconfiguration and desktop mode changes; reports aggregate
+    /// presented FPS. Present timeouts, lost surfaces, and watchdog live dumps
+    /// are counted in `errors`. The only stressor that exercises the display /
+    /// flip-queue path rather than raw compute.
+    /// Appended last so existing bincode variant indices stay stable.
+    #[facet(rename = "gpu_display")]
+    GpuDisplay,
 }
 
 impl Stressor {
@@ -210,6 +219,7 @@ impl Stressor {
             Self::GpuPcie => "GPU PCIe",
             Self::Combined => "Combined (CPU+RAM+GPU)",
             Self::PsuTransient => "PSU Transient",
+            Self::GpuDisplay => "GPU Display Path",
         }
     }
 
@@ -244,11 +254,24 @@ impl Stressor {
             Self::GpuPcie => "GB/s",
             Self::Combined => "GFLOPS",
             Self::PsuTransient => "GFLOPS",
+            Self::GpuDisplay => "FPS",
         }
     }
 
+    /// GPU-only stressors — no CPU worker threads to budget.
     pub fn is_gpu(self) -> bool {
-        matches!(self, Self::Gpu | Self::GpuMatmul | Self::GpuVram | Self::GpuPcie)
+        matches!(
+            self,
+            Self::Gpu | Self::GpuMatmul | Self::GpuVram | Self::GpuPcie | Self::GpuDisplay
+        )
+    }
+
+    /// Stressors that bind a GPU adapter, including the mixed CPU+GPU loads.
+    /// Every one of these records an [`AdapterIdentity`], so a run whose plan
+    /// contains one and whose summary has no adapter name did not put the load
+    /// it claims on the GPU.
+    pub fn has_gpu_leg(self) -> bool {
+        self.is_gpu() || matches!(self, Self::Psu | Self::PsuTransient | Self::Combined)
     }
 
     /// `true` when the stressor verifies results and counts mismatches in
@@ -256,7 +279,13 @@ impl Stressor {
     pub fn detects_errors(self) -> bool {
         matches!(
             self,
-            Self::MemTest | Self::CpuVerify | Self::Linpack | Self::Disk | Self::GpuVram | Self::GpuPcie
+            Self::MemTest
+                | Self::CpuVerify
+                | Self::Linpack
+                | Self::Disk
+                | Self::GpuVram
+                | Self::GpuPcie
+                | Self::GpuDisplay
         )
     }
 
@@ -291,6 +320,7 @@ impl Stressor {
             Self::GpuPcie,
             Self::Combined,
             Self::PsuTransient,
+            Self::GpuDisplay,
         ]
     }
 
@@ -536,6 +566,44 @@ mod tests {
     #[test]
     fn unknown_label_is_none() {
         assert_eq!(Stressor::from_str("nonsense"), None);
+    }
+
+    /// Mirrors the stressors whose `run` calls `GpuContext::acquire`, which is
+    /// what records the adapter a run certified.
+    #[test]
+    fn gpu_leg_covers_the_mixed_loads_too() {
+        let expected = [
+            Stressor::Gpu,
+            Stressor::GpuMatmul,
+            Stressor::GpuVram,
+            Stressor::GpuPcie,
+            Stressor::GpuDisplay,
+            Stressor::Psu,
+            Stressor::PsuTransient,
+            Stressor::Combined,
+        ];
+        let actual: Vec<Stressor> = Stressor::all()
+            .iter()
+            .copied()
+            .filter(|s| s.has_gpu_leg())
+            .collect();
+        for s in expected {
+            assert!(actual.contains(&s), "{s:?} binds a GPU but has_gpu_leg() is false");
+        }
+        assert_eq!(actual.len(), expected.len(), "unexpected GPU-leg set: {actual:?}");
+        assert!(!Stressor::Cpu.has_gpu_leg());
+        // is_gpu is the "no CPU workers to budget" question, a subset of the above.
+        assert!(Stressor::GpuDisplay.is_gpu());
+        assert!(!Stressor::PsuTransient.is_gpu());
+    }
+
+    #[test]
+    fn display_stressor_is_wired_into_the_vocabulary() {
+        assert_eq!(Stressor::GpuDisplay.as_str(), "gpu_display");
+        assert_eq!(Stressor::from_str("gpu_display"), Some(Stressor::GpuDisplay));
+        assert_eq!(Stressor::GpuDisplay.throughput_unit(), "FPS");
+        assert!(Stressor::GpuDisplay.detects_errors());
+        assert!(Stressor::labels_csv().contains("gpu_display"));
     }
 
     fn sample(throughput: f64, fatal: bool, last_error: Option<&str>) -> Metrics {

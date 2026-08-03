@@ -231,11 +231,15 @@ fn render_session(
 ) {
     let session = &view.session;
     let started = format_datetime(&session.started_at);
+    let stale_days = session.stale_days();
     let header = format!(
-        "{} • {} • {}",
+        "{} • {} • {}{}",
         started,
         session.tech.as_deref().unwrap_or("(unknown tech)"),
         session.hostname,
+        stale_days
+            .map(|d| format!("  {} STALE — open {d}d", icons::STATUS_WARN))
+            .unwrap_or_default(),
     );
 
     let status_color = match session.status.as_str() {
@@ -254,7 +258,13 @@ fn render_session(
                 .striped(false)
                 .show(ui, |ui| {
                     ui.label(RichText::new("Status").weak());
-                    ui.colored_label(status_color, &session.status);
+                    match stale_days {
+                        Some(d) => ui.colored_label(
+                            theme::warn(ui),
+                            format!("{} — open {d} days, never closed", session.status),
+                        ),
+                        None => ui.colored_label(status_color, &session.status),
+                    };
                     ui.end_row();
                     ui.label(RichText::new("Connection").weak());
                     ui.label(&session.connection_string);

@@ -88,5 +88,9 @@ pub fn qc_floor_for(stressor: Stressor) -> f64 {
         Stressor::GpuVram => 1000.0,
         Stressor::GpuPcie => 1.0,
         Stressor::Combined => 1.0,
+        // Presented frames per second: vsync holds a healthy machine near the
+        // refresh rate, so the floor only asks that frames are reaching the
+        // screen at all.
+        Stressor::GpuDisplay => 5.0,
     }
 }

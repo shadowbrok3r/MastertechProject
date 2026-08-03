@@ -55,6 +55,14 @@ pub fn show(ui: &mut egui::Ui) {
                         .color(accent),
                     );
                 }
+                if super::screen_is_live() {
+                    ui.separator();
+                    ui.label(
+                        RichText::new("VIEWING YOUR SCREEN")
+                            .color(Color32::from_rgb(255, 90, 90))
+                            .strong(),
+                    );
+                }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let end = ui

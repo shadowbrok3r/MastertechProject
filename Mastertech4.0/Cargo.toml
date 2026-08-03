@@ -88,7 +88,7 @@ raw-window-handle = { version = "0.6", optional = true }
 # nvme = "0.2.2"
 
 database = { workspace=true, features = ["desktop"] }
-stress-kit = { workspace = true, features = ["winring0-thermal"] }
+stress-kit = { workspace = true, features = ["hw-sensors"] }
 # Bugcheck-code table used by the ungated bsod_scan module; the crate itself is platform-neutral.
 dump-triage = { workspace = true }
 itertools.workspace = true
@@ -154,7 +154,8 @@ windows = {version = "0.62", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_System_Power",
-    "Win32_System_JobObjects"
+    "Win32_System_JobObjects",
+    "Win32_UI_HiDpi"
 ]}
 winapi = { version = "0.3", features = ["processthreadsapi"] }
 minidump-processor = { version = "0.26", features = ["http"] }

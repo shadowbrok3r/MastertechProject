@@ -1,0 +1,18 @@
+[package]
+name = "eframe-glow-panel"
+version = "0.0.0"
+publish = false
+edition = "2024"
+description = "Preview: a real eframe-on-glow app frosting a panel through backdrop-blur-egui's GrabPassRenderer — the grab-pass integration proof. Run it to see the frosted glass; needs a display."
+
+# A workspace member but not a default-member: `cargo run -p eframe-glow-panel` reuses the
+# workspace's cached eframe/glow build instead of resolving a second tree, while bare
+# `cargo build` leaves the windowed demo alone.
+[dependencies]
+# eframe with the GLOW backend (default is wgpu) + default_fonts. This is what makes
+# CreationContext.gl Some(Arc<glow::Context>). x11 + wayland give winit its Linux backends.
+eframe = { version = "0.35", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
+egui = "0.35"
+# `glow` is consumed through the adapter (`backdrop_blur_egui::glow`) rather than pinned here, so
+# this consumer cannot skew off the glow the adapter is typed against.
+backdrop-blur-egui = { path = "../../crates/backdrop-blur-egui", default-features = false, features = ["grab-pass"] }

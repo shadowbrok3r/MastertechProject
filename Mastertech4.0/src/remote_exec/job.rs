@@ -13,8 +13,10 @@ use displays::remote_exec::{
 /// evicted byte count is reported so a reader can tell output was lost.
 pub const RING_BYTES: u64 = 2 * 1024 * 1024;
 
-/// Chunks retained per job, independent of the byte budget.
-pub const RING_CHUNKS: usize = 4096;
+/// Chunks retained per job, independent of the byte budget. Sized so it cannot
+/// bind before [`RING_BYTES`] for any chunk at or above the executor's flush
+/// threshold; the executor coalesces pipe reads so that holds in practice.
+pub const RING_CHUNKS: usize = 16384;
 
 pub fn now_ms() -> u64 {
     SystemTime::now()
@@ -271,6 +273,29 @@ mod tests {
         ring.push("j", JobStream::Stdout, vec![b'x'; 4096]);
         let (chunks, _) = ring.read_from(0, 1);
         assert_eq!(chunks.len(), 1, "a starved budget must not stall the reader");
+    }
+
+    #[test]
+    fn a_full_byte_budget_of_flush_sized_chunks_fits_without_eviction() {
+        // Regression: with RING_CHUNKS at 4096, 70 KB of line-buffered output
+        // evicted 64% of itself because each pipe read became its own chunk.
+        // The executor now coalesces to 8 KiB, so a full 2 MiB of those must
+        // fit on the chunk budget alone.
+        const FLUSH: usize = 8192;
+        let mut ring = LogRing::default();
+        let n = (RING_BYTES as usize) / FLUSH;
+        for _ in 0..n {
+            ring.push("j", JobStream::Stdout, vec![b'x'; FLUSH]);
+        }
+        assert!(
+            n <= RING_CHUNKS,
+            "chunk cap {RING_CHUNKS} binds before the {RING_BYTES}-byte budget at {FLUSH}B chunks"
+        );
+        assert_eq!(
+            ring.evicted_bytes(),
+            0,
+            "a full byte budget of flush-sized chunks must not evict"
+        );
     }
 
     #[test]

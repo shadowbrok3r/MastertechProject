@@ -1,24 +1,20 @@
-//! SuperIO (LPC) board-voltage reader over WinRing0 IO ports (opt-in `winring0-thermal`).
+//! SuperIO (LPC) board-voltage reader.
 //!
-//! Probes the 0x2E/0x4E LPC index-data pairs once for a Nuvoton NCT67xx
+//! Probes the 0x2E/0x4E LPC index-data slots once for a Nuvoton NCT67xx
 //! hardware-monitor block, requires the 0x5CA3 vendor id to confirm the window
 //! before it is used, then samples the voltage bank on a throttle. Rail scaling
 //! uses the *conventional* Nuvoton resistor dividers — the real ratios are
-//! per-board (why LibreHardwareMonitor ships board tables), so every reading is
-//! published with `calibrated: false`. An out-of-nominal rail is reported, and so
-//! is a rail that falls below its reportable floor after having once read nominal,
-//! so both a sagging and a collapsed supply reach the verdict rules.
+//! per-board, so every reading is published with `calibrated: false`. An
+//! out-of-nominal rail is reported, and so is a rail that falls below its
+//! reportable floor after having once read nominal, so both a sagging and a
+//! collapsed supply reach the verdict rules.
 
-use std::ptr::null_mut;
 use std::time::{Duration, Instant};
 
-use winapi::um::{handleapi, synchapi, winnt};
+use crate::lowlevel::protocol::{HWM_ADDR_OFFSET, HWM_DATA_OFFSET, HWM_WINDOW_LEN};
+use crate::lowlevel::{protocol, BusLease, ConfigMode, HwmWindow, LowLevelAccess, LpcAccess, LpcSlot, SuperIoFamily};
 
 use super::VoltageReading;
-use super::cpu_thermal_windows::IoPorts;
-
-/// LPC index/data port pairs, probed in order.
-const LPC_PORTS: [(u16, u16); 2] = [(0x2E, 0x2F), (0x4E, 0x4F)];
 
 const CR_LOGICAL_DEVICE: u8 = 0x07;
 const CR_CHIP_ID_HIGH: u8 = 0x20;
@@ -26,49 +22,16 @@ const CR_CHIP_ID_LOW: u8 = 0x21;
 const CR_BASE_HIGH: u8 = 0x60;
 const CR_BASE_LOW: u8 = 0x61;
 
-const NUVOTON_ENTER: u8 = 0x87;
-const NUVOTON_EXIT: u8 = 0xAA;
 const NUVOTON_HWM_LDN: u8 = 0x0B;
-const ITE_EXIT_REG: u8 = 0x02;
-const ITE_EXIT_VALUE: u8 = 0x02;
 
-/// Hardware-monitor register window: index at `base+5`, data at `base+6`.
-const HWM_ADDR_OFFSET: u16 = 0x05;
-const HWM_DATA_OFFSET: u16 = 0x06;
-const HWM_WINDOW_LEN: u16 = 8;
 const HWM_BANK_SELECT: u8 = 0x4E;
 const HWM_VENDOR_REG: u8 = 0x4F;
 const NUVOTON_VENDOR_ID: u16 = 0x5CA3;
 
-/// Accepted hardware-monitor window: 8-byte aligned and inside this range. The
-/// floor stays above LHM's 0x0100, which spans the ATA command blocks.
-const HWM_BASE_MIN: u16 = 0x0200;
-const HWM_BASE_MAX: u16 = 0x0FF8;
-
-/// Fixed-function ISA IO ranges (inclusive) a monitor window must not overlap.
-const RESERVED_IO_RANGES: &[(u16, u16)] = &[
-    (0x0200, 0x0207), // game port
-    (0x0220, 0x022F), // legacy audio
-    (0x0278, 0x027F), // LPT2
-    (0x02E8, 0x02EF), // COM4
-    (0x02F8, 0x02FF), // COM2
-    (0x0300, 0x031F), // legacy NIC / MPU-401
-    (0x0330, 0x033F), // legacy SCSI / MIDI
-    (0x0370, 0x0377), // secondary FDC / secondary ATA control
-    (0x0378, 0x037F), // LPT1
-    (0x0388, 0x038F), // FM synth
-    (0x03B0, 0x03DF), // VGA / MDA / LPT3
-    (0x03E8, 0x03EF), // COM3
-    (0x03F0, 0x03F7), // primary FDC / primary ATA control
-    (0x03F8, 0x03FF), // COM1
-    (0x0678, 0x067F), // LPT2 ECP
-    (0x0778, 0x077F), // LPT1 ECP
-];
-
 /// Voltage channels live at bank 0x04, registers 0x80.. (LHM's 0x480..0x48E).
 const VOLTAGE_BANK: u8 = 0x04;
 const VOLTAGE_REG_BASE: u8 = 0x80;
-const VOLTAGE_CHANNELS: u8 = 15;
+const VOLTAGE_CHANNELS: usize = 15;
 /// Nuvoton HWM ADC step.
 const LSB_VOLTS: f32 = 0.008;
 
@@ -77,13 +40,6 @@ const POLL_INTERVAL: Duration = Duration::from_millis(1000);
 const STALE_AFTER: Duration = Duration::from_secs(3);
 /// Consecutive sub-floor reads before a proven rail publishes as collapsed.
 const COLLAPSE_CONFIRM_READS: u8 = 2;
-
-/// Both mutex names other sensor tools use for the SuperIO/ISA bus; taken
-/// together so either peer convention interlocks with us.
-const ISA_MUTEX_NAMES: [&str; 2] = [r"Global\Access_ISABUS.HTP.Method", r"Global\Access_ISABUS"];
-const ISA_MUTEX_WAIT_MS: u32 = 200;
-const WAIT_OBJECT_0: u32 = 0;
-const WAIT_ABANDONED: u32 = 0x80;
 
 /// Inclusive voltage band.
 struct Band {
@@ -112,6 +68,8 @@ const RAIL_COUNT: usize = super::RAIL_LABELS.len();
 
 /// Channel-to-rail map and nominal dividers for the NCT67xx 0x48x layout;
 /// index assignment and divider are both board-specific in reality.
+// 3.14 here is a 3.3V rail's lower bound, not an approximation of PI.
+#[allow(clippy::approx_constant)]
 const NUVOTON_RAILS: [Rail; RAIL_COUNT] = [
     Rail {
         label: super::RAIL_LABELS[0],
@@ -152,14 +110,20 @@ const NUVOTON_RAILS: [Rail; RAIL_COUNT] = [
 ];
 
 const _: () = {
-    assert!(GATE_INDEXES[0] < VOLTAGE_CHANNELS && GATE_INDEXES[1] < VOLTAGE_CHANNELS);
+    assert!(
+        (GATE_INDEXES[0] as usize) < VOLTAGE_CHANNELS
+            && (GATE_INDEXES[1] as usize) < VOLTAGE_CHANNELS
+    );
     assert!(
         STALE_AFTER.as_millis() >= POLL_INTERVAL.as_millis(),
         "cache would expire before the next read could refresh it"
     );
     let mut i = 0;
     while i < RAIL_COUNT {
-        assert!(NUVOTON_RAILS[i].index < VOLTAGE_CHANNELS, "rail channel out of bank range");
+        assert!(
+            (NUVOTON_RAILS[i].index as usize) < VOLTAGE_CHANNELS,
+            "rail channel out of bank range"
+        );
         assert!(
             NUVOTON_RAILS[i].reportable.min <= NUVOTON_RAILS[i].nominal.min,
             "nominal band must sit inside the reportable band"
@@ -219,12 +183,12 @@ impl RailState {
     }
 }
 
+/// One sampled voltage bank; `None` per channel means the read did not answer.
+type Bank = [Option<u8>; VOLTAGE_CHANNELS];
+
 pub struct SuperIoMonitor {
-    /// Valid only while the [`super::cpu_thermal_windows::CpuThermalMonitor`]
-    /// that produced it is alive.
-    ports: IoPorts,
+    access: LowLevelAccess,
     hwm_base: u16,
-    isa_mutexes: [winnt::HANDLE; 2],
     cached: Vec<VoltageReading>,
     last_polled: Instant,
     /// Timestamp of the last read that produced at least one rail.
@@ -237,38 +201,37 @@ pub struct SuperIoMonitor {
 }
 
 impl SuperIoMonitor {
-    /// Probes both LPC port pairs once. `None` when the ISA bus is unavailable,
-    /// no supported hardware monitor answers with a confirmed window, or the
-    /// confirmed window publishes no rail on the first read.
-    pub fn open(ports: IoPorts) -> Option<Self> {
-        let isa_mutexes = open_isa_mutexes();
-        let detected = match IsaGuard::acquire(&isa_mutexes) {
-            Some(_isa) => {
-                let hit = LPC_PORTS
-                    .iter()
-                    .find_map(|&(index, data)| probe_port(ports, index, data));
-                if hit.is_none() {
-                    log::info!("stress-kit/superio: no supported SuperIO hardware monitor found");
-                }
-                hit
-            }
-            None => {
-                log::info!(
-                    "stress-kit/superio: ISA-bus mutex unavailable; probe skipped and board \
-                     voltages disabled"
-                );
-                None
-            }
-        };
-        let Some((chip, hwm_base)) = detected else {
-            close_isa_mutexes(&isa_mutexes);
+    /// Probes both LPC slots once. `None` when the backend has no LPC access,
+    /// the bus is unavailable, no supported hardware monitor answers with a
+    /// confirmed window, or the confirmed window publishes no rail.
+    pub fn open(access: LowLevelAccess) -> Option<Self> {
+        if !access.capabilities().any_lpc() {
             return None;
+        }
+        let detected = {
+            let lpc = access.lpc()?;
+            match BusLease::acquire(lpc) {
+                Some(_bus) => {
+                    let hit = LpcSlot::ALL.iter().find_map(|&slot| probe_slot(lpc, slot));
+                    if hit.is_none() {
+                        log::info!("stress-kit/superio: no supported SuperIO hardware monitor found");
+                    }
+                    hit
+                }
+                None => {
+                    log::info!(
+                        "stress-kit/superio: ISA bus unavailable; probe skipped and board \
+                         voltages disabled"
+                    );
+                    None
+                }
+            }
         };
+        let (chip, hwm_base) = detected?;
 
         let mut me = Self {
-            ports,
+            access,
             hwm_base,
-            isa_mutexes,
             cached: Vec::new(),
             last_polled: Instant::now() - POLL_INTERVAL,
             last_good: Instant::now(),
@@ -325,44 +288,56 @@ impl SuperIoMonitor {
         self.cached.clear();
     }
 
-    /// Reads the voltage bank; yields nothing when the ISA bus is held by a peer
-    /// or the fixed AVCC/3VCC channels show the HWM block isn't answering. Either
-    /// skip restarts the consecutive-breach run, so only genuinely consecutive
-    /// reads can confirm a collapse.
+    /// Samples the bank then grades it. A skipped sample restarts every
+    /// consecutive-breach run, so only genuinely consecutive reads confirm a
+    /// collapse.
     fn read_voltages(&mut self) -> Vec<VoltageReading> {
-        let Some(_isa) = IsaGuard::acquire(&self.isa_mutexes) else {
-            self.rail_breaches = [0; RAIL_COUNT];
-            return Vec::new();
-        };
-        let (ports, base) = (self.ports, self.hwm_base);
+        match self.sample_bank() {
+            Some(bank) => self.grade(&bank),
+            None => {
+                self.rail_breaches = [0; RAIL_COUNT];
+                Vec::new()
+            }
+        }
+    }
+
+    /// Reads every voltage channel; `None` when the bus is held by a peer, the
+    /// window will not open, or the fixed AVCC/3VCC channels show the HWM block
+    /// isn't answering.
+    fn sample_bank(&self) -> Option<Bank> {
+        let lpc = self.access.lpc()?;
+        let _bus = BusLease::acquire(lpc)?;
+        let window = HwmWindow::open(lpc, self.hwm_base, HWM_WINDOW_LEN)?;
+
         // 0xFF is the floating-bus read and scales inside some rails' bands, so it
         // stays no-data; 0x00 is kept so a collapsed rail can still be graded.
-        let raw = |index: u8| {
-            hwm_read(ports, base, VOLTAGE_BANK, VOLTAGE_REG_BASE + index).filter(|&r| r != 0xFF)
-        };
+        let mut bank: Bank = [None; VOLTAGE_CHANNELS];
+        for (channel, slot) in bank.iter_mut().enumerate() {
+            *slot = hwm_read(&window, VOLTAGE_BANK, VOLTAGE_REG_BASE + channel as u8)
+                .filter(|&r| r != 0xFF);
+        }
 
         let live = GATE_INDEXES.iter().all(|&i| {
-            raw(i).is_some_and(|r| {
+            bank[i as usize].is_some_and(|r| {
                 let volts = r as f32 * LSB_VOLTS * GATE_FACTOR;
                 (GATE_MIN..=GATE_MAX).contains(&volts)
             })
         });
-        if !live {
-            self.rail_breaches = [0; RAIL_COUNT];
-            return Vec::new();
-        }
+        live.then_some(bank)
+    }
 
+    /// Scales each mapped channel and grades it, logging state transitions.
+    fn grade(&mut self, bank: &Bank) -> Vec<VoltageReading> {
         let mut out = Vec::with_capacity(RAIL_COUNT);
         for (slot, rail) in NUVOTON_RAILS.iter().enumerate() {
-            let volts = raw(rail.index).map(|r| r as f32 * LSB_VOLTS * rail.factor);
+            let volts = bank[rail.index as usize].map(|r| r as f32 * LSB_VOLTS * rail.factor);
             let breached = volts.is_some_and(|v| v < rail.reportable.min);
             self.rail_breaches[slot] = if breached {
                 self.rail_breaches[slot].saturating_add(1)
             } else {
                 0
             };
-            let state =
-                classify_rail(rail, volts, self.rail_proven[slot], self.rail_breaches[slot]);
+            let state = classify_rail(rail, volts, self.rail_proven[slot], self.rail_breaches[slot]);
             self.rail_proven[slot] |= state == RailState::Ok;
             if self.rail_states[slot] != state {
                 self.rail_states[slot] = state;
@@ -392,12 +367,6 @@ fn classify_rail(rail: &Rail, volts: Option<f32>, proven: bool, breaches: u8) ->
         _ if !proven => RailState::Unmapped,
         _ if breaches >= COLLAPSE_CONFIRM_READS => RailState::Collapsed,
         _ => RailState::CollapsePending,
-    }
-}
-
-impl Drop for SuperIoMonitor {
-    fn drop(&mut self) {
-        close_isa_mutexes(&self.isa_mutexes);
     }
 }
 
@@ -447,7 +416,7 @@ fn log_rail_state(rail: &Rail, state: RailState, volts: Option<f32>) {
     }
 }
 
-/// Outcome of one Nuvoton probe at an LPC port pair.
+/// Outcome of one Nuvoton probe at an LPC slot.
 enum NuvotonProbe {
     /// Supported NCT67xx whose HWM window answered with the Nuvoton vendor id.
     Found(&'static str, u16),
@@ -457,20 +426,20 @@ enum NuvotonProbe {
     Silent,
 }
 
-fn probe_port(ports: IoPorts, index: u16, data: u16) -> Option<(&'static str, u16)> {
-    match probe_nuvoton(ports, index, data) {
+fn probe_slot(lpc: &dyn LpcAccess, slot: LpcSlot) -> Option<(&'static str, u16)> {
+    match probe_nuvoton(lpc, slot) {
         NuvotonProbe::Found(chip, base) => Some((chip, base)),
         NuvotonProbe::Answered => None,
         NuvotonProbe::Silent => {
-            probe_ite(ports, index, data);
+            probe_ite(lpc, slot);
             None
         }
     }
 }
 
-fn probe_nuvoton(ports: IoPorts, index: u16, data: u16) -> NuvotonProbe {
+fn probe_nuvoton(lpc: &dyn LpcAccess, slot: LpcSlot) -> NuvotonProbe {
     let (chip, base) = {
-        let mode = ConfigMode::enter(ports, index, data, Family::Nuvoton);
+        let mode = ConfigMode::enter(lpc, slot, SuperIoFamily::Nuvoton);
         let (Some(id_high), Some(id_low)) =
             (mode.read_cr(CR_CHIP_ID_HIGH), mode.read_cr(CR_CHIP_ID_LOW))
         else {
@@ -483,8 +452,9 @@ fn probe_nuvoton(ports: IoPorts, index: u16, data: u16) -> NuvotonProbe {
             // Logged at info: the chip id is the one fact that turns "voltages
             // unavailable" into an actionable gap, and it is otherwise lost.
             log::info!(
-                "stress-kit/superio: port 0x{index:02X} chip id 0x{id_high:02X}{id_low:02X} \
-                 ({}) has no reader; board voltages unavailable",
+                "stress-kit/superio: slot 0x{:02X} chip id 0x{id_high:02X}{id_low:02X} ({}) has \
+                 no reader; board voltages unavailable",
+                slot.index_port(),
                 known_unsupported_chip(id_high, id_low).unwrap_or("unrecognized")
             );
             return NuvotonProbe::Answered;
@@ -493,7 +463,7 @@ fn probe_nuvoton(ports: IoPorts, index: u16, data: u16) -> NuvotonProbe {
             log::debug!("stress-kit/superio: {chip} logical-device select failed");
             return NuvotonProbe::Answered;
         }
-        let Some(base) = mode.read_hwm_base() else {
+        let Some(base) = read_hwm_base(&mode) else {
             log::info!(
                 "stress-kit/superio: {chip} hardware-monitor window unusable; board voltages \
                  disabled"
@@ -503,7 +473,7 @@ fn probe_nuvoton(ports: IoPorts, index: u16, data: u16) -> NuvotonProbe {
         (chip, base)
     };
 
-    match read_vendor_id(ports, base) {
+    match read_vendor_id(lpc, base) {
         Some(NUVOTON_VENDOR_ID) => NuvotonProbe::Found(chip, base),
         other => {
             log::warn!(
@@ -518,20 +488,21 @@ fn probe_nuvoton(ports: IoPorts, index: u16, data: u16) -> NuvotonProbe {
 /// Identifies an ITE IT87xx and logs it; no registers are decoded. The ITE exit
 /// write is armed only for an ITE-family id, since config register 0x02 is a
 /// software reset on Winbond/Nuvoton parts.
-fn probe_ite(ports: IoPorts, index: u16, data: u16) {
-    let mut mode = ConfigMode::enter(ports, index, data, Family::Ite);
+fn probe_ite(lpc: &dyn LpcAccess, slot: LpcSlot) {
+    let mut mode = ConfigMode::enter(lpc, slot, SuperIoFamily::Ite);
     let (Some(id_high), Some(id_low)) =
         (mode.read_cr(CR_CHIP_ID_HIGH), mode.read_cr(CR_CHIP_ID_LOW))
     else {
         return;
     };
-    if !matches!(id_high, 0x85 | 0x86 | 0x87) {
+    if !matches!(id_high, 0x85..=0x87) {
         return;
     }
-    mode.ite_confirmed = true;
+    mode.exit_armed = true;
     log::info!(
-        "stress-kit/superio: ITE IT{id_high:02X}{id_low:02X} at port 0x{index:02X}; voltage \
-         decode unsupported (no verified scaling), skipping"
+        "stress-kit/superio: ITE IT{id_high:02X}{id_low:02X} at slot 0x{:02X}; voltage decode \
+         unsupported (no verified scaling), skipping",
+        slot.index_port()
     );
 }
 
@@ -554,241 +525,79 @@ fn known_unsupported_chip(id_high: u8, id_low: u8) -> Option<&'static str> {
     }
 }
 
+/// Base address of the selected logical device, read twice; `None` unless both
+/// reads agree and the window is accepted by [`sane_hwm_base`], whose normalized
+/// value is returned.
+fn read_hwm_base(mode: &ConfigMode<'_>) -> Option<u16> {
+    let first = read_base_pair(mode)?;
+    std::thread::sleep(Duration::from_millis(1));
+    let second = read_base_pair(mode)?;
+    if first != second {
+        log::debug!("stress-kit/superio: HWM base unstable (0x{first:04X} then 0x{second:04X})");
+        return None;
+    }
+    let Some(base) = sane_hwm_base(first) else {
+        log::debug!(
+            "stress-kit/superio: HWM base 0x{first:04X} is misaligned, outside the accepted \
+             monitor range, or aliases a legacy ISA device"
+        );
+        return None;
+    };
+    if base != first {
+        log::debug!(
+            "stress-kit/superio: HWM base 0x{first:04X} reported with the +5 index offset; using \
+             window start 0x{base:04X}"
+        );
+    }
+    Some(base)
+}
+
+fn read_base_pair(mode: &ConfigMode<'_>) -> Option<u16> {
+    let high = mode.read_cr(CR_BASE_HIGH)?;
+    let low = mode.read_cr(CR_BASE_LOW)?;
+    Some(((high as u16) << 8) | low as u16)
+}
+
 /// Normalizes a reported base to its window start, then accepts it only if the
-/// window is 8-byte aligned, inside the accepted range, and overlaps no
-/// [`RESERVED_IO_RANGES`] entry. Boards that report the base already offset by
-/// the +5 index register (e.g. 0x295) are masked down like LHM does.
+/// window is admissible. Boards that report the base already offset by the +5
+/// index register (e.g. 0x295) are masked down like LHM does.
 fn sane_hwm_base(reported: u16) -> Option<u16> {
-    let base = if reported & 0x0007 == HWM_ADDR_OFFSET {
+    let base = if reported & 0x0007 == HWM_ADDR_OFFSET as u16 {
         reported & !0x0007
     } else {
         reported
     };
-    if base & 0x0007 != 0 || !(HWM_BASE_MIN..=HWM_BASE_MAX).contains(&base) {
-        return None;
-    }
-    let last = base + HWM_WINDOW_LEN - 1;
-    let clear = !RESERVED_IO_RANGES
-        .iter()
-        .any(|&(lo, hi)| base <= hi && lo <= last);
-    clear.then_some(base)
+    protocol::window_admissible(base, HWM_WINDOW_LEN).then_some(base)
 }
 
 /// One bank-selected hardware-monitor register read.
-fn hwm_read(ports: IoPorts, base: u16, bank: u8, reg: u8) -> Option<u8> {
-    ports.write_io_port_byte(base + HWM_ADDR_OFFSET, HWM_BANK_SELECT)?;
-    ports.write_io_port_byte(base + HWM_DATA_OFFSET, bank)?;
-    ports.write_io_port_byte(base + HWM_ADDR_OFFSET, reg)?;
-    ports.read_io_port_byte(base + HWM_DATA_OFFSET)
+fn hwm_read(window: &HwmWindow<'_>, bank: u8, reg: u8) -> Option<u8> {
+    window.write(HWM_ADDR_OFFSET, HWM_BANK_SELECT)?;
+    window.write(HWM_DATA_OFFSET, bank)?;
+    window.write(HWM_ADDR_OFFSET, reg)?;
+    window.read(HWM_DATA_OFFSET)
 }
 
 /// Nuvoton vendor id: high byte from bank 0x80, low byte from bank 0x00.
-fn read_vendor_id(ports: IoPorts, base: u16) -> Option<u16> {
-    let high = hwm_read(ports, base, 0x80, HWM_VENDOR_REG)?;
-    let low = hwm_read(ports, base, 0x00, HWM_VENDOR_REG)?;
+fn read_vendor_id(lpc: &dyn LpcAccess, base: u16) -> Option<u16> {
+    let window = HwmWindow::open(lpc, base, HWM_WINDOW_LEN)?;
+    let high = hwm_read(&window, 0x80, HWM_VENDOR_REG)?;
+    let low = hwm_read(&window, 0x00, HWM_VENDOR_REG)?;
     Some(((high as u16) << 8) | low as u16)
-}
-
-#[derive(Clone, Copy)]
-enum Family {
-    Nuvoton,
-    Ite,
-}
-
-/// Holds SuperIO config mode open; [`Drop`] writes the family's exit sequence on
-/// every path, including early returns and unwinds.
-struct ConfigMode {
-    ports: IoPorts,
-    index: u16,
-    data: u16,
-    family: Family,
-    /// Gates the ITE exit write; set once an ITE-family chip id answered.
-    ite_confirmed: bool,
-}
-
-impl ConfigMode {
-    /// Constructed before the unlock writes so a partial sequence still exits.
-    fn enter(ports: IoPorts, index: u16, data: u16, family: Family) -> Self {
-        let me = Self { ports, index, data, family, ite_confirmed: false };
-        match family {
-            Family::Nuvoton => {
-                let _ = ports.write_io_port_byte(index, NUVOTON_ENTER);
-                let _ = ports.write_io_port_byte(index, NUVOTON_ENTER);
-            }
-            Family::Ite => {
-                let last = if index == 0x4E { 0xAA } else { 0x55 };
-                for byte in [0x87, 0x01, 0x55, last] {
-                    let _ = ports.write_io_port_byte(index, byte);
-                }
-            }
-        }
-        me
-    }
-
-    fn read_cr(&self, reg: u8) -> Option<u8> {
-        self.ports.write_io_port_byte(self.index, reg)?;
-        self.ports.read_io_port_byte(self.data)
-    }
-
-    fn write_cr(&self, reg: u8, value: u8) -> Option<()> {
-        self.ports.write_io_port_byte(self.index, reg)?;
-        self.ports.write_io_port_byte(self.data, value)
-    }
-
-    /// Base address of the selected logical device, read twice; `None` unless both
-    /// reads agree and the window is accepted by [`sane_hwm_base`], whose
-    /// normalized value is returned.
-    fn read_hwm_base(&self) -> Option<u16> {
-        let first = self.read_base_pair()?;
-        std::thread::sleep(Duration::from_millis(1));
-        let second = self.read_base_pair()?;
-        if first != second {
-            log::debug!(
-                "stress-kit/superio: HWM base unstable (0x{first:04X} then 0x{second:04X})"
-            );
-            return None;
-        }
-        let Some(base) = sane_hwm_base(first) else {
-            log::debug!(
-                "stress-kit/superio: HWM base 0x{first:04X} is misaligned, outside the accepted \
-                 0x{HWM_BASE_MIN:04X}..=0x{HWM_BASE_MAX:04X} monitor range, or aliases a legacy \
-                 ISA device"
-            );
-            return None;
-        };
-        if base != first {
-            log::debug!(
-                "stress-kit/superio: HWM base 0x{first:04X} reported with the +5 index offset; \
-                 using window start 0x{base:04X}"
-            );
-        }
-        Some(base)
-    }
-
-    fn read_base_pair(&self) -> Option<u16> {
-        let high = self.read_cr(CR_BASE_HIGH)?;
-        let low = self.read_cr(CR_BASE_LOW)?;
-        Some(((high as u16) << 8) | low as u16)
-    }
-
-    /// Writes one exit byte, retrying once before warning.
-    fn exit_write(&self, port: u16, value: u8) {
-        if self.ports.write_io_port_byte(port, value).is_some() {
-            return;
-        }
-        if self.ports.write_io_port_byte(port, value).is_some() {
-            log::debug!(
-                "stress-kit/superio: config-mode exit write 0x{value:02X} to 0x{port:04X} needed \
-                 a retry"
-            );
-            return;
-        }
-        log::warn!(
-            "stress-kit/superio: config-mode exit write 0x{value:02X} to 0x{port:04X} failed \
-             twice; SuperIO may be left unlocked"
-        );
-    }
-}
-
-impl Drop for ConfigMode {
-    fn drop(&mut self) {
-        match self.family {
-            Family::Nuvoton => self.exit_write(self.index, NUVOTON_EXIT),
-            Family::Ite if self.ite_confirmed => {
-                self.exit_write(self.index, ITE_EXIT_REG);
-                self.exit_write(self.data, ITE_EXIT_VALUE);
-            }
-            Family::Ite => {}
-        }
-    }
-}
-
-fn open_isa_mutexes() -> [winnt::HANDLE; 2] {
-    let mut handles = [null_mut(); 2];
-    for (slot, name) in handles.iter_mut().zip(ISA_MUTEX_NAMES) {
-        *slot = unsafe { synchapi::CreateMutexW(null_mut(), 0, wide(name).as_ptr()) };
-        if (*slot).is_null() {
-            log::warn!(
-                "stress-kit/superio: cannot open ISA-bus mutex {name}; SuperIO port access stays \
-                 disabled"
-            );
-        }
-    }
-    handles
-}
-
-fn close_isa_mutexes(handles: &[winnt::HANDLE; 2]) {
-    for &h in handles {
-        if !h.is_null() {
-            unsafe { handleapi::CloseHandle(h) };
-        }
-    }
-}
-
-/// Holds every ISA-bus mutex for one probe or sample sequence.
-struct IsaGuard {
-    held: [winnt::HANDLE; 2],
-}
-
-impl IsaGuard {
-    /// All-or-nothing: `None`, holding nothing, when any mutex is missing,
-    /// contended past [`ISA_MUTEX_WAIT_MS`], or fails to wait.
-    fn acquire(handles: &[winnt::HANDLE; 2]) -> Option<Self> {
-        let mut held = [null_mut(); 2];
-        let mut abandoned = false;
-        for (slot, &handle) in held.iter_mut().zip(handles.iter()) {
-            if handle.is_null() {
-                break;
-            }
-            match unsafe { synchapi::WaitForSingleObject(handle, ISA_MUTEX_WAIT_MS) } {
-                WAIT_OBJECT_0 => *slot = handle,
-                WAIT_ABANDONED => {
-                    *slot = handle;
-                    abandoned = true;
-                }
-                _ => break,
-            }
-        }
-        let guard = Self { held };
-        if guard.held.iter().any(|&h| h.is_null()) {
-            log::debug!(
-                "stress-kit/superio: ISA-bus mutex not fully acquired; skipping port access"
-            );
-            return None;
-        }
-        if abandoned {
-            log::warn!(
-                "stress-kit/superio: ISA-bus mutex was abandoned; a peer may have left the \
-                 SuperIO in config mode"
-            );
-        }
-        Some(guard)
-    }
-}
-
-impl Drop for IsaGuard {
-    fn drop(&mut self) {
-        for &handle in self.held.iter().rev() {
-            if !handle.is_null() {
-                unsafe { synchapi::ReleaseMutex(handle) };
-            }
-        }
-    }
-}
-
-fn wide(s: &str) -> Vec<u16> {
-    use std::os::windows::ffi::OsStrExt;
-    std::ffi::OsStr::new(s)
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lowlevel::mock::{LpcOp, MockBackend};
 
     const V12: &Rail = &NUVOTON_RAILS[3];
+
+    const SLOT: LpcSlot = LpcSlot::Port2E;
+
+    fn exited(mock: &MockBackend, family: SuperIoFamily) -> bool {
+        mock.ops().contains(&LpcOp::ConfigExit(SLOT, family))
+    }
 
     #[test]
     fn v12_slot_matches_its_label() {
@@ -814,7 +623,7 @@ mod tests {
     fn masking_cannot_reach_a_reserved_or_out_of_range_window() {
         assert_eq!(sane_hwm_base(0x0205), None); // masks onto the game port
         assert_eq!(sane_hwm_base(0x03F5), None); // masks onto primary FDC/ATA
-        assert_eq!(sane_hwm_base(0x0005), None); // masks below HWM_BASE_MIN
+        assert_eq!(sane_hwm_base(0x0005), None); // masks below the accepted floor
         assert_eq!(sane_hwm_base(0x01F0), None); // ATA command block, under the floor
         assert_eq!(sane_hwm_base(0x0170), None); // secondary ATA, under the floor
         assert_eq!(sane_hwm_base(0x0000), None);
@@ -848,5 +657,91 @@ mod tests {
         assert!(matches!(classify_rail(V12, Some(12.0), false, 0), RailState::Ok));
         assert!(matches!(classify_rail(V12, Some(10.8), false, 0), RailState::OutOfNominal));
         assert!(classify_rail(V12, Some(10.8), false, 0).publishes());
+    }
+
+    /// A chip id that never answers must still close config mode; a SuperIO left
+    /// unlocked is a real field failure.
+    #[test]
+    fn an_unreadable_chip_id_still_exits_config_mode() {
+        let mock = MockBackend::full();
+        assert!(matches!(probe_nuvoton(&mock, SLOT), NuvotonProbe::Answered));
+        assert!(exited(&mock, SuperIoFamily::Nuvoton));
+    }
+
+    /// Same for an id that reads fine but has no reader here.
+    #[test]
+    fn an_unrecognised_chip_id_still_exits_config_mode() {
+        let mock = MockBackend::full()
+            .with_cr(SLOT, CR_CHIP_ID_HIGH, 0xAB)
+            .with_cr(SLOT, CR_CHIP_ID_LOW, 0xCD);
+        assert!(matches!(probe_nuvoton(&mock, SLOT), NuvotonProbe::Answered));
+        assert!(exited(&mock, SuperIoFamily::Nuvoton));
+    }
+
+    /// A supported chip whose base register is unusable exits too, after the
+    /// logical-device select has already written.
+    #[test]
+    fn an_unusable_window_still_exits_config_mode() {
+        let mock = MockBackend::full()
+            .with_cr(SLOT, CR_CHIP_ID_HIGH, 0xD4)
+            .with_cr(SLOT, CR_CHIP_ID_LOW, 0x28)
+            .with_cr(SLOT, CR_BASE_HIGH, 0x03)
+            .with_cr(SLOT, CR_BASE_LOW, 0xF0); // primary FDC/ATA, refused
+        assert!(matches!(probe_nuvoton(&mock, SLOT), NuvotonProbe::Answered));
+        assert!(exited(&mock, SuperIoFamily::Nuvoton));
+        assert!(
+            mock.ops()
+                .contains(&LpcOp::ConfigWrite(SLOT, CR_LOGICAL_DEVICE, NUVOTON_HWM_LDN)),
+            "logical-device select should have run before the base read"
+        );
+    }
+
+    /// Config register 0x02 is a software reset on Nuvoton parts, so the ITE exit
+    /// write must stay disarmed unless an ITE chip id actually answered.
+    #[test]
+    fn a_silent_slot_never_writes_the_ite_exit_register() {
+        let mock = MockBackend::full()
+            .with_cr(SLOT, CR_CHIP_ID_HIGH, 0x00)
+            .with_cr(SLOT, CR_CHIP_ID_LOW, 0x00);
+        assert!(matches!(probe_nuvoton(&mock, SLOT), NuvotonProbe::Silent));
+
+        probe_ite(&mock, SLOT);
+        assert!(
+            !exited(&mock, SuperIoFamily::Ite),
+            "ITE exit fired on a chip that never identified as ITE"
+        );
+    }
+
+    /// An ITE part is identified and closed with its own exit sequence.
+    #[test]
+    fn an_ite_chip_arms_its_own_exit() {
+        let mock = MockBackend::full()
+            .with_cr(SLOT, CR_CHIP_ID_HIGH, 0x87)
+            .with_cr(SLOT, CR_CHIP_ID_LOW, 0x28);
+        probe_ite(&mock, SLOT);
+        assert!(exited(&mock, SuperIoFamily::Ite));
+    }
+
+    /// A contended bus yields no sample, and the caller resets the breach run so
+    /// a skipped read cannot count toward confirming a collapse.
+    #[test]
+    fn a_contended_bus_resets_the_breach_run() {
+        let mock = MockBackend::full();
+        mock.bus_contended.store(true, std::sync::atomic::Ordering::Relaxed);
+        let access = crate::lowlevel::LowLevelAccess::new(Box::new(mock), "scripted", Vec::new());
+
+        let mut monitor = SuperIoMonitor {
+            access,
+            hwm_base: 0x0290,
+            cached: Vec::new(),
+            last_polled: Instant::now(),
+            last_good: Instant::now(),
+            rail_states: [RailState::Ok; RAIL_COUNT],
+            rail_proven: [true; RAIL_COUNT],
+            rail_breaches: [1; RAIL_COUNT],
+        };
+
+        assert!(monitor.read_voltages().is_empty());
+        assert_eq!(monitor.rail_breaches, [0; RAIL_COUNT]);
     }
 }
