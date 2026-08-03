@@ -20,11 +20,13 @@ mod whea_windows;
 #[cfg(target_os = "windows")]
 mod tdr_windows;
 #[cfg(target_os = "windows")]
+pub mod live_dumps_windows;
+#[cfg(target_os = "windows")]
 mod thermal_windows;
-#[cfg(all(target_os = "windows", feature = "winring0-thermal"))]
-mod cpu_thermal_windows;
-#[cfg(all(target_os = "windows", feature = "winring0-thermal"))]
-mod superio_windows;
+#[cfg(feature = "lowlevel")]
+mod cpu_die;
+#[cfg(feature = "lowlevel")]
+mod superio;
 #[cfg(target_os = "windows")]
 mod storage_thermal_windows;
 
@@ -35,6 +37,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use sysinfo::{Components, CpuRefreshKind, Disks, MemoryRefreshKind, Networks, RefreshKind, System};
+
+pub use crate::lowlevel::{AccessStatus, AccessTier, BackendId, RejectedBackend};
 
 pub use self::core::CoreSample;
 pub use self::core::{sample_cores, sample_cores_with_die};
@@ -93,18 +97,23 @@ pub struct TelemetrySnapshot {
     /// non-Windows or when the WMI query isn't available.
     #[serde(default)]
     pub thermals: Vec<ThermalReading>,
-    /// SuperIO board rails on Windows (`winring0-thermal`). Scaled with nominal
-    /// dividers, so `calibrated` is false unless a per-board factor is known. A
-    /// rail that drops below its plausible floor is published at its measured
-    /// value, so a collapse reaches the verdict rules as a very low reading.
+    /// SuperIO board rails. Scaled with nominal dividers, so `calibrated` is
+    /// false unless a per-board factor is known. A rail that drops below its
+    /// plausible floor is published at its measured value, so a collapse reaches
+    /// the verdict rules as a very low reading.
     #[serde(default)]
     pub voltages: Vec<VoltageReading>,
     /// The CPU's own die sensor (Intel DTS MSRs / AMD Zen Tctl), kept out of
     /// `thermals` so no ACPI zone can stand in for it. `None` when no die sensor
-    /// answered — including every run where WinRing0 could not load. Its values
-    /// are also copied into `thermals` under their labels for chart continuity.
+    /// answered, including every run with no low-level backend. Its values are
+    /// also copied into `thermals` under their labels for chart continuity.
     #[serde(default)]
     pub cpu_die: Option<CpuDieThermal>,
+    /// Which low-level backend carried `cpu_die` and `voltages`, what it could
+    /// reach, and why any other backend was skipped. Consult this before reading
+    /// an absent sensor as a healthy one.
+    #[serde(default)]
+    pub access: AccessStatus,
 }
 
 /// One ACPI thermal-zone reading. Mirrors the lightweight shape we
@@ -541,6 +550,9 @@ fn capture_snapshot_blocking() -> TelemetrySnapshot {
         thermals: Vec::new(),
         voltages: Vec::new(),
         cpu_die: None,
+        // No backend is opened on this path, so the tier is None rather than a
+        // claim that one was tried and failed.
+        access: AccessStatus::default(),
     }
 }
 
@@ -575,13 +587,14 @@ fn sampler_loop(
     #[cfg(not(target_os = "windows"))]
     let thermal: Option<()> = None;
 
-    #[cfg(all(target_os = "windows", feature = "winring0-thermal"))]
-    let mut cpu_thermal = cpu_thermal_windows::CpuThermalMonitor::open();
-    // Shares the WinRing0 handle above, so it must not outlive `cpu_thermal`.
-    #[cfg(all(target_os = "windows", feature = "winring0-thermal"))]
-    let mut superio = cpu_thermal
-        .as_ref()
-        .and_then(|c| superio_windows::SuperIoMonitor::open(c.io_ports()));
+    // Both readers hold their own clone of the backend handle, so neither
+    // depends on the other opening and drop order between them does not matter.
+    #[cfg(feature = "lowlevel")]
+    let access = crate::lowlevel::select::open();
+    #[cfg(feature = "lowlevel")]
+    let mut cpu_die_monitor = cpu_die::CpuDieMonitor::open(access.clone());
+    #[cfg(feature = "lowlevel")]
+    let mut superio_monitor = superio::SuperIoMonitor::open(access.clone());
 
     #[cfg(target_os = "windows")]
     let mut storage_thermal = storage_thermal_windows::StorageThermalMonitor::open();
@@ -608,9 +621,9 @@ fn sampler_loop(
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
 
-        #[cfg(all(target_os = "windows", feature = "winring0-thermal"))]
-        let die = cpu_thermal.as_mut().and_then(|c| c.poll());
-        #[cfg(not(all(target_os = "windows", feature = "winring0-thermal")))]
+        #[cfg(feature = "lowlevel")]
+        let die = cpu_die_monitor.as_mut().and_then(|c| c.poll());
+        #[cfg(not(feature = "lowlevel"))]
         let die: Option<CpuDieThermal> = None;
 
         #[cfg(target_os = "windows")]
@@ -657,11 +670,15 @@ fn sampler_loop(
                 None
             },
             thermals,
-            #[cfg(all(target_os = "windows", feature = "winring0-thermal"))]
-            voltages: superio.as_mut().map(|s| s.poll()).unwrap_or_default(),
-            #[cfg(not(all(target_os = "windows", feature = "winring0-thermal")))]
+            #[cfg(feature = "lowlevel")]
+            voltages: superio_monitor.as_mut().map(|s| s.poll()).unwrap_or_default(),
+            #[cfg(not(feature = "lowlevel"))]
             voltages: Vec::new(),
             cpu_die: die,
+            #[cfg(feature = "lowlevel")]
+            access: access.status(),
+            #[cfg(not(feature = "lowlevel"))]
+            access: AccessStatus::default(),
         };
 
         if let Ok(mut g) = snapshot.lock() {

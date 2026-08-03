@@ -213,6 +213,10 @@ pub struct ReconcileReport {
     pub sightings_task_linked: usize,
     pub snapshots_claimed: usize,
     pub sightings_enriched: usize,
+    /// `driver_snapshot` rows that gained the session's `task_ref`.
+    pub snapshots_task_linked: usize,
+    /// `stress_test_run` rows that gained the session's `task_ref`.
+    pub stress_runs_task_linked: usize,
 }
 
 impl ReconcileReport {
@@ -221,6 +225,8 @@ impl ReconcileReport {
             + self.sightings_task_linked
             + self.snapshots_claimed
             + self.sightings_enriched
+            + self.snapshots_task_linked
+            + self.stress_runs_task_linked
     }
 
     /// One-line account of what the sweep changed, covering every counter so
@@ -1171,6 +1177,35 @@ pub async fn reconcile_session_links(
         .await?
         .take(0)?;
     report.snapshots_claimed = snapshots.len();
+
+    // Task links for the record types the sighting pass above doesn't cover.
+    // Without these a `driver_snapshot` or `stress_test_run` created before the
+    // in-house task existed keeps `task_ref = NONE` forever, so it never
+    // renders on the service task and drops out of task-scoped telemetry even
+    // though its `session_ref` is correct.
+    if session.task_ref.is_some() {
+        let snaps_linked: Vec<serde_json::Value> = db()
+            .query(
+                "UPDATE driver_snapshot SET task_ref = $task \
+                 WHERE session_ref == $sid AND task_ref == NONE",
+            )
+            .bind(("task", session.task_ref.clone()))
+            .bind(("sid", session.id.clone()))
+            .await?
+            .take(0)?;
+        report.snapshots_task_linked = snaps_linked.len();
+
+        let runs_linked: Vec<serde_json::Value> = db()
+            .query(
+                "UPDATE stress_test_run SET task_ref = $task \
+                 WHERE session_ref == $sid AND task_ref == NONE",
+            )
+            .bind(("task", session.task_ref.clone()))
+            .bind(("sid", session.id.clone()))
+            .await?
+            .take(0)?;
+        report.stress_runs_task_linked = runs_linked.len();
+    }
 
     report.sightings_enriched = enrich_session_dump_siblings(&session.id).await.unwrap_or(0);
 

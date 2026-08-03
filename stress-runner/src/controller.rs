@@ -90,6 +90,35 @@ pub enum RunPlan {
     },
 }
 
+impl RunPlan {
+    /// Every stressor this plan will run, in plan order.
+    pub fn stressors(&self) -> Vec<Stressor> {
+        match self {
+            Self::Single { stressor, .. } => vec![*stressor],
+            Self::Scenario { stages, .. } | Self::Concurrent { lanes: stages, .. } => {
+                stages.iter().map(|s| s.stressor).collect()
+            }
+        }
+    }
+
+    /// `true` when at least one stage binds a GPU adapter, so the run is
+    /// expected to name the adapter it certified.
+    pub fn has_gpu_leg(&self) -> bool {
+        self.stressors().iter().any(|s| s.has_gpu_leg())
+    }
+
+    /// True when every stressor in the plan is a GPU stressor, so the run's
+    /// `target_component` should be the GPU rather than the CPU.
+    ///
+    /// Deliberately "all", not "any": `Psu`, `PsuTransient` and `Combined`
+    /// drive CPU and GPU together and `Stressor::is_gpu` already excludes
+    /// them, so a mixed plan keeps the CPU as its target.
+    pub fn is_gpu_only(&self) -> bool {
+        let stressors = self.stressors();
+        !stressors.is_empty() && stressors.iter().all(|s| s.is_gpu())
+    }
+}
+
 /// Declarative description of one stress run.  Identifying fields
 /// (`computer`, `tool`, `target_kind`) are required; everything else is
 /// optional and defaults to None / empty.
@@ -375,15 +404,22 @@ fn worker(
     // (compare_to_baseline, hardware_test_baseline view, the QC UI's
     // "history for this hardware" panel) have no way to interpret the
     // results. If the middleware can't link anything, refuse to start.
-    let (cpu_component, all_components, hw_notices) =
-        crate::hardware::ensure_components_for_run(&telemetry);
+    let resolved = crate::hardware::ensure_components_for_run(&telemetry);
     if spec.target_component.is_none() {
-        spec.target_component = cpu_component;
+        // A GPU-only plan must be attributed to the GPU, otherwise every GPU
+        // result files itself against the CPU component and the card's own
+        // history stays empty. Falls back to the CPU when no GPU component
+        // could be resolved, so a run still links something.
+        spec.target_component = if spec.plan.is_gpu_only() {
+            resolved.gpus.first().cloned().or_else(|| resolved.cpu.clone())
+        } else {
+            resolved.cpu.clone()
+        };
     }
     if spec.touched_components.is_empty() {
-        spec.touched_components = all_components;
+        spec.touched_components = resolved.all;
     }
-    for notice in hw_notices {
+    for notice in resolved.notices {
         send(
             &update_tx,
             RunUpdate::Warning {
@@ -449,6 +485,7 @@ fn worker(
 
     // ---- 2. Track state for the final summary ----
     let mut acc = SummaryAccumulator::default();
+    acc.gpu_leg_planned = spec.plan.has_gpu_leg();
     let mut outcomes: Vec<StageOutcome> = Vec::new();
     let rules = spec.rules.clone();
 
@@ -1770,6 +1807,12 @@ fn is_gpu_error_message(msg: &str) -> bool {
 /// Stand-in for an error a stressor reported without text; carries the marker.
 const UNNAMED_ERROR: &str = "inconclusive - stressor reported an error with no message";
 
+/// A GPU stage ran but bound no adapter, so the run has no evidence it loaded
+/// a GPU at all.
+const MISSING_ADAPTER_EVIDENCE: &str =
+    "inconclusive - this plan includes a GPU stage but the run recorded no GPU adapter, so \
+     afterwards it cannot be told apart from a CPU-only run; treat the GPU leg as unproven";
+
 #[derive(Default)]
 struct SummaryAccumulator {
     max_temp_c: Option<f32>,
@@ -1808,6 +1851,9 @@ struct SummaryAccumulator {
     last_disk_error: Option<String>,
     /// Message of the latest counted inconclusive error.
     last_inconclusive_error: Option<String>,
+    /// The plan contains a stage that binds a GPU adapter, so the run must end
+    /// with adapter evidence in the summary.
+    gpu_leg_planned: bool,
     scenario_finish: Option<DbFinishReason>,
 }
 
@@ -2009,7 +2055,7 @@ impl SummaryAccumulator {
     }
 
     fn into_verdict(
-        self,
+        mut self,
         run_id: &RecordId,
         cancel: &Arc<AtomicBool>,
         duration_secs: f64,
@@ -2017,6 +2063,12 @@ impl SummaryAccumulator {
         stage_outcomes: Vec<StageOutcome>,
     ) -> RunVerdict {
         let mut summary = self.into_summary();
+        // Every GPU-leg stressor records the adapter it bound. A planned GPU
+        // stage with no adapter in the summary means the load this run claims
+        // to have applied cannot be told apart afterwards from a CPU-only run.
+        if self.gpu_leg_planned && summary.gpu_adapter_name.is_none() {
+            self.classify_error(MISSING_ADAPTER_EVIDENCE);
+        }
         // Memtest mismatches also count as memory errors for the
         // HCI/TM5-shaped rubric fields.
         if matches!(
@@ -2204,6 +2256,17 @@ fn rules_failure_mode(
                         ),
                     });
                 }
+                RuleViolation::CpuTelemetryMissing { rule, ticks } => {
+                    unproven.get_or_insert(FailureMode::AppError {
+                        exit_code: None,
+                        message: format!(
+                            "stage '{}': inconclusive - {rule} could not be evaluated, no CPU die \
+                             temperature in {ticks} tick(s); check the sensor backend, the CPU was \
+                             not graded thermally",
+                            verdict.label
+                        ),
+                    });
+                }
             }
         }
     }
@@ -2282,6 +2345,76 @@ mod tests {
             summary: ScenarioStageSummary::default(),
             verdict: Some(verdict),
         }
+    }
+
+    #[test]
+    fn run_plan_reports_whether_it_binds_a_gpu() {
+        let single = |s| RunPlan::Single {
+            stressor: s,
+            threads: 0,
+            duration_secs: Some(60),
+            memory_cap_mb: 256,
+            disk_file_mb: 16,
+        };
+        // The mixed CPU+GPU loads count: they bind an adapter too.
+        for stressor in [
+            Stressor::Gpu,
+            Stressor::GpuVram,
+            Stressor::GpuDisplay,
+            Stressor::Psu,
+            Stressor::PsuTransient,
+            Stressor::Combined,
+        ] {
+            assert!(single(stressor).has_gpu_leg(), "{stressor:?} binds a GPU");
+        }
+        assert!(!single(Stressor::Cpu).has_gpu_leg());
+
+        let scenario = RunPlan::Scenario {
+            stages: vec![
+                stage_spec("cpu", Stressor::Cpu),
+                stage_spec("transient", Stressor::PsuTransient),
+            ],
+            total_wall_secs: None,
+            repeat_until_total: false,
+        };
+        assert!(scenario.has_gpu_leg(), "a GPU stage anywhere counts");
+
+        let concurrent = RunPlan::Concurrent {
+            lanes: vec![stage_spec("cpu", Stressor::Cpu), stage_spec("mem", Stressor::Memory)],
+            duration_secs: Some(60),
+        };
+        assert!(!concurrent.has_gpu_leg());
+    }
+
+    /// The gap that let a psu_transient pass read as a CPU-only run after the
+    /// fact: a GPU stage with no adapter recorded must not come back clean.
+    #[test]
+    fn gpu_leg_without_adapter_evidence_is_inconclusive() {
+        stress_kit::clear_selected_adapter();
+        let acc = SummaryAccumulator {
+            gpu_leg_planned: true,
+            ..Default::default()
+        };
+        let verdict = verdict_for(acc);
+
+        assert_eq!(verdict.result, RunResult::Fail, "a GPU leg with no adapter passed");
+        assert!(verdict.summary.gpu_adapter_name.is_none());
+        match verdict.failure_mode {
+            FailureMode::AppError { ref message, .. } => {
+                assert!(
+                    message.contains("no GPU adapter"),
+                    "unexpected message: {message}"
+                );
+            }
+            other => panic!("expected an inconclusive AppError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cpu_only_plan_is_not_asked_for_adapter_evidence() {
+        stress_kit::clear_selected_adapter();
+        let verdict = verdict_for(SummaryAccumulator::default());
+        assert_eq!(verdict.result, RunResult::Pass);
     }
 
     #[test]

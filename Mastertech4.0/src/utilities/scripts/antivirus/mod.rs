@@ -207,24 +207,242 @@ impl AntiVirusProduct {
 }
 
 
-/// Installs or re-activates Webroot. Returns `true` when an existing install was
-/// re-keyed via the /autouninstall identity-reset path, so a reboot is recommended.
+/// What `install_webroot` actually did. Exit status alone cannot tell these
+/// apart: a keyed installer run over a live agent of the same version exits 0
+/// in seconds without binding the key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WebrootInstallOutcome {
+    FreshInstall,
+    Upgraded,
+    /// Keycode bound to an existing install without the binaries changing.
+    ReKeyed,
+    /// Requested keycode was already the bound one; nothing was run.
+    NoOp,
+}
+
+impl WebrootInstallOutcome {
+    /// True when the agent changed on disk, so a reboot binds the new state.
+    pub fn reboot_recommended(self) -> bool {
+        matches!(self, Self::FreshInstall | Self::Upgraded)
+    }
+}
+
+impl std::fmt::Display for WebrootInstallOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::FreshInstall => write!(f, "fresh install"),
+            Self::Upgraded => write!(f, "upgraded"),
+            Self::ReKeyed => write!(f, "re-keyed in place"),
+            Self::NoOp => write!(f, "no-op"),
+        }
+    }
+}
+
+/// Strips formatting so `SAEA-TAOG-EA3E-4DE9-868C` and `saeataogea3e4de9868c`
+/// compare equal.
+fn normalize_keycode(raw: &str) -> String {
+    raw.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_uppercase())
+        .collect()
+}
+
+/// Licence state from `HKLM\SOFTWARE\WOW6432Node\WRData` and its `Status` subkey.
+#[derive(Debug, Clone, Default)]
+struct WebrootLicence {
+    is_expired: Option<u32>,
+    days_remaining: Option<u32>,
+    license_cat: Option<String>,
+    /// Bound keycode, from `WRData\PULV`. The `Status` subkey never exposes it.
+    keycode: Option<String>,
+}
+
+impl WebrootLicence {
+    /// Licensed means not expired AND a non-empty category. An activated
+    /// agent reports `IsExpired=0` with `license_cat=WSAV`; one that took an
+    /// installer run but never bound a keycode leaves the category empty.
+    fn is_licensed(&self) -> bool {
+        self.is_expired == Some(0)
+            && self.license_cat.as_deref().is_some_and(|c| !c.trim().is_empty())
+    }
+
+    /// True when the agent has `activation_key` bound right now.
+    fn holds_keycode(&self, activation_key: &str) -> bool {
+        let want = normalize_keycode(activation_key);
+        !want.is_empty()
+            && self
+                .keycode
+                .as_deref()
+                .is_some_and(|k| normalize_keycode(k) == want)
+    }
+
+    fn summary(&self) -> String {
+        format!(
+            "IsExpired={} DaysRemaining={} license_cat={:?} keycode={}",
+            self.is_expired.map_or_else(|| "?".into(), |v| v.to_string()),
+            self.days_remaining.map_or_else(|| "?".into(), |v| v.to_string()),
+            self.license_cat.as_deref().unwrap_or(""),
+            if self.keycode.as_deref().is_some_and(|k| !k.is_empty()) { "set" } else { "unset" }
+        )
+    }
+}
+
+/// Reads Webroot's licence state. PowerShell rather than the `winreg` crate
+/// to match `utilities::windows::antivirus`, which shells out for the same
+/// reason.
+async fn webroot_licence_state() -> WebrootLicence {
+    let ps_cmd = r#"
+$s = Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\WRData\Status' -ErrorAction SilentlyContinue
+$d = Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\WRData' -ErrorAction SilentlyContinue
+[PSCustomObject]@{
+  IsExpired     = $s.IsExpired
+  DaysRemaining = $s.DaysRemaining
+  LicenseCat    = $s.license_cat
+  Keycode       = ([string]$d.PULV).Trim([char]0)
+} | ConvertTo-Json -Compress
+"#;
+
+    let Ok(out) = Command::new("powershell")
+        .args(["-NoProfile", "-Command", ps_cmd])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .await
+    else {
+        return WebrootLicence::default();
+    };
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(stdout.trim()) else {
+        return WebrootLicence::default();
+    };
+
+    // These land as either a JSON number or a decimal string depending on the
+    // REG value type, so accept both.
+    let as_u32 = |field: &str| -> Option<u32> {
+        v.get(field).and_then(|x| {
+            x.as_u64()
+                .map(|n| n as u32)
+                .or_else(|| x.as_str().and_then(|s| s.trim().parse().ok()))
+        })
+    };
+
+    let as_string = |field: &str| -> Option<String> {
+        v.get(field).and_then(|x| x.as_str()).map(str::to_string)
+    };
+
+    WebrootLicence {
+        is_expired: as_u32("IsExpired"),
+        days_remaining: as_u32("DaysRemaining"),
+        license_cat: as_string("LicenseCat"),
+        keycode: as_string("Keycode"),
+    }
+}
+
+/// `WRSA.exe` file version, for telling a real upgrade from a same-version
+/// no-op.
+async fn wrsa_file_version() -> Option<String> {
+    let ps_cmd = r#"
+foreach ($p in 'C:\Program Files\Webroot\WRSA.exe','C:\Program Files (x86)\Webroot\WRSA.exe') {
+  if (Test-Path $p) { (Get-Item $p).VersionInfo.FileVersion; break }
+}
+"#;
+    let out = Command::new("powershell")
+        .args(["-NoProfile", "-Command", ps_cmd])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .await
+        .ok()?;
+    let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!v.is_empty()).then_some(v)
+}
+
+/// Path of the installed `WRSA.exe`, if Webroot is present.
+fn installed_wrsa_path() -> Option<PathBuf> {
+    [
+        r"C:\Program Files\Webroot\WRSA.exe",
+        r"C:\Program Files (x86)\Webroot\WRSA.exe",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .find(|p| p.exists())
+}
+
+/// The command that opens Webroot's own re-key flow with the keycode filled in.
+///
+/// `-kcswap=` is a real switch in WRSA.exe's command-line table, and it is the
+/// same path as the GUI's "Activate a new keycode" — but Webroot gates the swap
+/// behind a CAPTCHA, so it cannot complete unattended. Verified on WRSA
+/// 9.0.45.63 (2026-08-01): the switch is parsed and opens the dialog, and the
+/// agent's window tree exposes no UI Automation elements to drive it with.
+fn webroot_rekey_command(exe: &PathBuf, activation_key: &str) -> String {
+    format!("\"{}\" -kcswap={activation_key}", exe.display())
+}
+
+/// Runs the in-place swap and polls for the keycode to bind, giving up quickly.
+///
+/// Worth attempting on an agent holding no licence, where there is nothing to
+/// lose and the swap may go through unprompted. When Webroot does raise its
+/// CAPTCHA this just times out, leaving the prompt on screen for a technician.
+async fn webroot_try_kcswap(exe: &PathBuf, activation_key: &str) -> WebrootLicence {
+    const POLL_INTERVAL: Duration = Duration::from_secs(3);
+    const POLL_TIMEOUT: Duration = Duration::from_secs(45);
+
+    info!("Attempting in-place keycode swap: {} -kcswap=<key>", exe.display());
+    // Not awaited: WRSA is a GUI process that outlives the swap.
+    if let Err(e) = Command::new(exe)
+        .arg(format!("-kcswap={activation_key}"))
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+    {
+        info!("Could not launch WRSA.exe for the swap: {e}");
+        return webroot_licence_state().await;
+    }
+
+    let deadline = tokio::time::Instant::now() + POLL_TIMEOUT;
+    loop {
+        tokio::time::sleep(POLL_INTERVAL).await;
+        let licence = webroot_licence_state().await;
+        if (licence.is_licensed() && licence.holds_keycode(activation_key))
+            || tokio::time::Instant::now() >= deadline
+        {
+            return licence;
+        }
+    }
+}
+
+/// Installs and activates Webroot with `activation_key`.
+///
+/// Returns `Ok` only when the registry shows that keycode actually bound.
+/// A live agent already on the CDN build cannot be re-keyed unattended — see
+/// [`webroot_rekey_command`] — so that case returns `Err` naming the handoff
+/// rather than reporting a success the agent never had.
 pub async fn install_webroot(
     activation_key: String,
     client: Client,
     progress_tx: Sender<(u64, u64)>
-) -> anyhow::Result<bool, anyhow::Error> {
+) -> anyhow::Result<WebrootInstallOutcome, anyhow::Error> {
+    let activation_key = activation_key.trim().to_string();
     if activation_key.is_empty() {
         return Err(anyhow::anyhow!("Activation key is empty"));
     }
 
     info!("running install_webroot!");
 
-    // Run the installer regardless: fresh install when absent, in-place re-key when present.
-    let wrsa_path = PathBuf::from(r"C:\Program Files\Webroot\WRSA.exe");
-    let wrsa_x86 = PathBuf::from(r"C:\Program Files (x86)\Webroot\WRSA.exe");
-    let already_installed = wrsa_path.exists() || wrsa_x86.exists();
-    info!("install_webroot: already_installed={already_installed}");
+    let installed_exe = installed_wrsa_path();
+    let already_installed = installed_exe.is_some();
+    let version_before = if already_installed { wrsa_file_version().await } else { None };
+    let licence_before = webroot_licence_state().await;
+    info!(
+        "install_webroot: already_installed={already_installed} version_before={version_before:?} {}",
+        licence_before.summary()
+    );
+
+    // Nothing to do when the requested keycode is already the bound one. Saves
+    // an 85 MB download, and avoids poking an agent that is already correct.
+    if already_installed && licence_before.is_licensed() && licence_before.holds_keycode(&activation_key) {
+        info!("install_webroot outcome: {}", WebrootInstallOutcome::NoOp);
+        return Ok(WebrootInstallOutcome::NoOp);
+    }
 
     let temp_directory = std::env::temp_dir();
     let wrv_path = format!("{}\\wsasme.exe", temp_directory.display());
@@ -257,22 +475,6 @@ pub async fn install_webroot(
 
     #[cfg(target_os = "windows")]
     {
-        if already_installed {
-            // A keyed run over a live same-version agent is a no-op. /autouninstall is the
-            // only caller allowed to stop the PPL-protected service; it then re-runs the
-            // install path, which mints a fresh device identity the cloud accepts.
-            info!("Webroot present — running /autouninstall to reset device identity...");
-            let uninstall = Command::new("cmd")
-                .arg("/C")
-                .arg(&wrv_path)
-                .arg("/autouninstall")
-                .creation_flags(CREATE_NO_WINDOW)
-                .output()
-                .await?;
-            // Exit code 2 is expected: the uninstall is refused but the identity reset still runs.
-            info!("Webroot /autouninstall exit status: {:?}", uninstall.status);
-        }
-
         info!("Running Webroot installer (waiting for completion)...");
         let output = Command::new("cmd")
             .arg("/C")
@@ -308,7 +510,72 @@ pub async fn install_webroot(
             info!("Webroot retry exit status: {:?}", retry.status);
         }
     }
-    Ok(already_installed)
+
+    #[cfg(target_os = "windows")]
+    {
+        // Verify rather than trust the exit code. `wsasme.exe` returns 0 when
+        // it short-circuits against a live agent of the same version, so a
+        // successful process says nothing about whether the keycode bound.
+        let mut licence = webroot_licence_state().await;
+        let version_after = wrsa_file_version().await;
+        let version_changed = already_installed && version_before != version_after;
+        info!(
+            "install_webroot verify: version_after={version_after:?} version_changed={version_changed} {}",
+            licence.summary()
+        );
+
+        let mut bound = licence.is_licensed() && licence.holds_keycode(&activation_key);
+
+        // The installer only binds a keycode while replacing binaries, so it is
+        // a silent no-op against an agent already on the CDN build. Try the
+        // agent's own in-place swap before giving up.
+        if !bound {
+            if let Some(exe) = installed_exe.as_ref() {
+                licence = webroot_try_kcswap(exe, &activation_key).await;
+                bound = licence.is_licensed() && licence.holds_keycode(&activation_key);
+                info!("install_webroot: after -kcswap {}", licence.summary());
+            }
+        }
+
+        if !bound {
+            let handoff = installed_exe.as_ref().map_or_else(
+                || " Webroot is not installed and the installer did not put it there.".to_string(),
+                |exe| {
+                    format!(
+                        " The agent is still {}, so the installer had nothing to upgrade, and the \
+                         in-place swap did not complete on its own — Webroot can gate it behind a \
+                         CAPTCHA, and its prompt may now be waiting on the machine's screen. \
+                         Finish it there, in the UI (WRSA > My Account > 'Activate a new keycode') \
+                         or by running {}.",
+                        version_after.as_deref().unwrap_or("an unknown version"),
+                        webroot_rekey_command(exe, &activation_key)
+                    )
+                },
+            );
+            return Err(anyhow::anyhow!(
+                "Webroot is NOT activated with this keycode ({}).{}",
+                licence.summary(),
+                handoff
+            ));
+        }
+
+        let outcome = if !already_installed {
+            WebrootInstallOutcome::FreshInstall
+        } else if version_changed {
+            WebrootInstallOutcome::Upgraded
+        } else {
+            WebrootInstallOutcome::ReKeyed
+        };
+        info!("install_webroot outcome: {outcome}");
+        return Ok(outcome);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    Ok(if already_installed {
+        WebrootInstallOutcome::NoOp
+    } else {
+        WebrootInstallOutcome::FreshInstall
+    })
 }
 
 pub async fn install_sas(

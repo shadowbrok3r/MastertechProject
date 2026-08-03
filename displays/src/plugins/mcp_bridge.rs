@@ -553,6 +553,34 @@ panic = "abort"
     )
 }
 
+/// `.cargo/config.toml` for a WASM plugin crate.
+///
+/// `rust-lld` fails with `undefined symbol: host_log` / `host_run_command`
+/// without `--allow-undefined`; those are the host imports every plugin
+/// declares in its `extern "C"` block and resolves at instantiation.
+fn plugin_cargo_config(target: &str) -> String {
+    format!("[target.{target}]\nrustflags = [\"-C\", \"link-arg=--allow-undefined\"]\n")
+}
+
+/// Writes `.cargo/config.toml` into a plugin crate dir when absent.
+///
+/// Runs before every compile so pre-existing dirs are healed too. An
+/// existing file is left alone, so a hand-tuned config still wins.
+async fn ensure_plugin_cargo_config(dir: &std::path::Path, target: &str) {
+    let cfg_dir = dir.join(".cargo");
+    let cfg = cfg_dir.join("config.toml");
+    if tokio::fs::try_exists(&cfg).await.unwrap_or(false) {
+        return;
+    }
+    if let Err(e) = tokio::fs::create_dir_all(&cfg_dir).await {
+        log::warn!("ensure_plugin_cargo_config: create {}: {e}", cfg_dir.display());
+        return;
+    }
+    if let Err(e) = tokio::fs::write(&cfg, plugin_cargo_config(target)).await {
+        log::warn!("ensure_plugin_cargo_config: write {}: {e}", cfg.display());
+    }
+}
+
 // ─── PluginToolProvider ────────────────────────────────────────────────────────
 
 /// MCP server that exposes plugin management and plugin-provided tools.
@@ -2230,6 +2258,20 @@ pub struct RemoteExecListParams {
     pub connection_string: String,
 }
 
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct RemoteRebootClientParams {
+    #[schemars(description = "Web Console connection_string of the remote client to reboot")]
+    pub connection_string: String,
+    #[schemars(
+        description = "Relaunch MasterTech automatically once the client is logged back in (default true). Set false only when you intend to lose the remote session."
+    )]
+    pub persist_mastertech: Option<bool>,
+    #[schemars(
+        description = "Bring MasterTech back up in terminal mode instead of the normal UI (default false)."
+    )]
+    pub terminal_mode: Option<bool>,
+}
+
 /// Sends one RemoteExec `Cmd` and waits for the client's reply.
 ///
 /// Every RemoteExec handler on the client answers without awaiting job
@@ -2335,6 +2377,16 @@ fn render_job_snapshot(mut snap: serde_json::Value, requested_from_seq: u64) -> 
     // output at all", and an empty read means there is nothing more to fetch.
     let more_pending = served > 0 && next_seq <= last_seq;
 
+    let truncated_range = snap
+        .get("chunks_truncated")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let job_truncated = snap
+        .pointer("/exit/truncated_bytes")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let lost_output = truncated_range || elided > 0 || job_truncated > 0;
+
     if let Some(obj) = snap.as_object_mut() {
         obj.insert("stdout".into(), serde_json::json!(stdout));
         obj.insert("stderr".into(), serde_json::json!(stderr));
@@ -2352,16 +2404,27 @@ fn render_job_snapshot(mut snap: serde_json::Value, requested_from_seq: u64) -> 
                 ),
             );
         }
+        // `elided_before` under-reports: the ring folds evicted bytes into the
+        // NEXT chunk it pushes, so an eviction with no chunk after it is never
+        // attributed to anything. `chunks_truncated` and the exit record's
+        // total are the reliable signals that output was lost.
         if elided > 0 {
+            obj.insert("elided_bytes".into(), serde_json::json!(elided));
+        }
+        if job_truncated > 0 {
+            obj.insert("job_truncated_bytes".into(), serde_json::json!(job_truncated));
+        }
+        if lost_output {
             obj.insert(
-                "elided_bytes".into(),
-                serde_json::json!(elided),
+                "output_lost".into(),
+                serde_json::json!(true),
             );
             obj.insert(
-                "elided_note".into(),
+                "output_lost_note".into(),
                 serde_json::json!(
-                    "Output was dropped by the client's in-memory ring before this read. Poll more \
-                     often, or have the script tee to a file."
+                    "The client's in-memory ring dropped output before this read and it is NOT \
+                     recoverable — re-reading from any from_seq will not bring it back. Poll more \
+                     often, or have the script tee to a file and fetch the file."
                 ),
             );
         }
@@ -2417,6 +2480,172 @@ fn take_job(value: serde_json::Value, job_id: &str) -> Result<serde_json::Value,
                  they finish, and a client restart marks everything Orphaned."
             ))
         })
+}
+
+// ─── Desktop screen control param types ───────────────────────────────────────
+
+/// Geometry of the last screenshot per client, so pointer coordinates can be
+/// given in screenshot pixels instead of making the caller normalize by hand.
+static LAST_SHOT_GEOM: Lazy<std::sync::Mutex<HashMap<String, (u32, u32)>>> =
+    Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
+
+fn remember_shot(cs: &str, w: u32, h: u32) {
+    if let Ok(mut m) = LAST_SHOT_GEOM.lock() {
+        m.insert(cs.to_string(), (w, h));
+    }
+}
+
+fn last_shot(cs: &str) -> Option<(u32, u32)> {
+    LAST_SHOT_GEOM.lock().ok().and_then(|m| m.get(cs).copied())
+}
+
+/// Screenshot pixels → the normalized `0.0..=1.0` the client expects.
+fn to_normalized(cs: &str, x: f32, y: f32, normalized: bool) -> Result<(f32, f32), ErrorData> {
+    if normalized {
+        return Ok((x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)));
+    }
+    let (w, h) = last_shot(cs).ok_or_else(|| {
+        to_internal(
+            "no screenshot taken yet for this client, so pixel coordinates cannot be mapped. \
+             Call desktop_screenshot first, or pass normalized:true with 0.0-1.0 coordinates.",
+        )
+    })?;
+    Ok((
+        (x / w.max(1) as f32).clamp(0.0, 1.0),
+        (y / h.max(1) as f32).clamp(0.0, 1.0),
+    ))
+}
+
+fn parse_button(s: Option<&str>) -> Result<crate::remote_desktop::DesktopMouseButton, ErrorData> {
+    use crate::remote_desktop::DesktopMouseButton as B;
+    match s.unwrap_or("left").trim().to_ascii_lowercase().as_str() {
+        "left" => Ok(B::Left),
+        "right" => Ok(B::Right),
+        "middle" => Ok(B::Middle),
+        other => Err(to_internal(format!(
+            "unknown button {other:?}; use 'left', 'right' or 'middle'"
+        ))),
+    }
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct DesktopListMonitorsParams {
+    #[schemars(description = "Web Console connection_string of the remote client")]
+    pub connection_string: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct DesktopFocusParams {
+    #[schemars(description = "Web Console connection_string of the remote client")]
+    pub connection_string: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct DesktopListWindowsParams {
+    #[schemars(description = "Web Console connection_string of the remote client")]
+    pub connection_string: String,
+    #[schemars(description = "Only return windows whose title contains this (case-insensitive)")]
+    pub title_contains: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct DesktopActivateWindowParams {
+    #[schemars(description = "Web Console connection_string of the remote client")]
+    pub connection_string: String,
+    #[schemars(description = "Window handle from desktop_list_windows. Omit to match by title instead.")]
+    #[serde(default, deserialize_with = "deserialize_lenient_u64")]
+    pub hwnd: Option<u64>,
+    #[schemars(description = "Case-insensitive substring of the target window's title. Fails if it matches more than one window.")]
+    pub title_contains: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct DesktopScreenshotParams {
+    #[schemars(description = "Web Console connection_string of the remote client")]
+    pub connection_string: String,
+    #[schemars(description = "Monitor id from desktop_list_monitors. Omit for the primary monitor.")]
+    #[serde(default, deserialize_with = "deserialize_lenient_u64")]
+    pub monitor: Option<u64>,
+    #[schemars(description = "Downscale factor 0.1-1.0 before encoding (default 0.5). Lower is faster and cheaper; raise it when you need to read small text.")]
+    pub scale: Option<f32>,
+    #[schemars(description = "JPEG quality 1-100 (default 60)")]
+    #[serde(default, deserialize_with = "deserialize_lenient_u64")]
+    pub quality: Option<u64>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct DesktopClickParams {
+    #[schemars(description = "Web Console connection_string of the remote client")]
+    pub connection_string: String,
+    #[schemars(description = "X in pixels of the LAST screenshot you received (not the monitor's native resolution), unless normalized is true")]
+    pub x: f32,
+    #[schemars(description = "Y in pixels of the LAST screenshot you received, unless normalized is true")]
+    pub y: f32,
+    #[schemars(description = "'left' (default), 'right' or 'middle'")]
+    pub button: Option<String>,
+    #[schemars(description = "Number of clicks: 1 (default) or 2 for a double-click")]
+    #[serde(default, deserialize_with = "deserialize_lenient_u64")]
+    pub count: Option<u64>,
+    #[schemars(description = "Treat x/y as 0.0-1.0 fractions of the screen instead of screenshot pixels")]
+    pub normalized: Option<bool>,
+    #[schemars(description = "Milliseconds to wait after clicking so the UI can react (default 250)")]
+    #[serde(default, deserialize_with = "deserialize_lenient_u64")]
+    pub settle_ms: Option<u64>,
+    #[schemars(description = "Refuse unless the foreground window's title contains this. Checked ON THE CLIENT immediately before injecting, so the window cannot change underneath you. Strongly recommended: coordinates go stale the moment anything moves.")]
+    pub expect_window_title: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct DesktopTypeParams {
+    #[schemars(description = "Web Console connection_string of the remote client")]
+    pub connection_string: String,
+    #[schemars(description = "Text to type into whatever currently has focus. Click the field first.")]
+    pub text: String,
+    #[schemars(description = "Milliseconds to wait afterwards (default 250)")]
+    #[serde(default, deserialize_with = "deserialize_lenient_u64")]
+    pub settle_ms: Option<u64>,
+    #[schemars(description = "Refuse unless the foreground window's title contains this. Checked ON THE CLIENT immediately before injecting, so the window cannot change underneath you. Strongly recommended: coordinates go stale the moment anything moves.")]
+    pub expect_window_title: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct DesktopKeyParams {
+    #[schemars(description = "Web Console connection_string of the remote client")]
+    pub connection_string: String,
+    #[schemars(description = "Key name, e.g. 'Enter', 'Tab', 'Escape', 'Backspace', 'ArrowDown', 'F4', 'A'")]
+    pub key: String,
+    #[schemars(description = "Hold Ctrl")]
+    pub ctrl: Option<bool>,
+    #[schemars(description = "Hold Shift")]
+    pub shift: Option<bool>,
+    #[schemars(description = "Hold Alt")]
+    pub alt: Option<bool>,
+    #[schemars(description = "Hold Meta/Windows")]
+    pub meta: Option<bool>,
+    #[schemars(description = "Milliseconds to wait afterwards (default 250)")]
+    #[serde(default, deserialize_with = "deserialize_lenient_u64")]
+    pub settle_ms: Option<u64>,
+    #[schemars(description = "Refuse unless the foreground window's title contains this. Checked ON THE CLIENT immediately before injecting, so the window cannot change underneath you. Strongly recommended: coordinates go stale the moment anything moves.")]
+    pub expect_window_title: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct DesktopScrollParams {
+    #[schemars(description = "Web Console connection_string of the remote client")]
+    pub connection_string: String,
+    #[schemars(description = "Vertical scroll amount; negative scrolls down")]
+    pub delta_y: Option<f32>,
+    #[schemars(description = "Horizontal scroll amount")]
+    pub delta_x: Option<f32>,
+    #[schemars(description = "Move the pointer here (screenshot pixels) before scrolling")]
+    pub x: Option<f32>,
+    #[schemars(description = "Move the pointer here (screenshot pixels) before scrolling")]
+    pub y: Option<f32>,
+    #[schemars(description = "Milliseconds to wait afterwards (default 250)")]
+    #[serde(default, deserialize_with = "deserialize_lenient_u64")]
+    pub settle_ms: Option<u64>,
+    #[schemars(description = "Refuse unless the foreground window's title contains this. Checked ON THE CLIENT immediately before injecting, so the window cannot change underneath you. Strongly recommended: coordinates go stale the moment anything moves.")]
+    pub expect_window_title: Option<String>,
 }
 
 // ─── Tool implementations ──────────────────────────────────────────────────────
@@ -2768,11 +2997,13 @@ impl PluginToolProvider {
                 obj.remove("more_output_pending");
                 obj.remove("more_output_note");
             }
+            // Sum across polls; the final snapshot's own count covers only its
+            // last read. `output_lost` / `job_truncated_bytes` are left as the
+            // last render set them — both are whole-job facts.
             if elided > 0 {
                 obj.insert("elided_bytes".into(), serde_json::json!(elided));
             } else {
                 obj.remove("elided_bytes");
-                obj.remove("elided_note");
             }
         }
         Ok(CallToolResult::success(vec![
@@ -2821,6 +3052,282 @@ impl PluginToolProvider {
         .await?;
         Ok(CallToolResult::success(vec![
             ContentBlock::json(value).map_err(to_internal)?
+        ]))
+    }
+
+    // ── Desktop screen control (see + drive the client's Windows desktop) ───────
+
+    #[tool(
+        name = "desktop_list_monitors",
+        description = "List the client's monitors (id, name, position, resolution, primary flag, DPI scale). Use the id with desktop_screenshot when the machine has more than one screen. \
+                       Not gated — enumerating displays reveals nothing about their contents."
+    )]
+    async fn desktop_list_monitors(
+        &self,
+        Parameters(p): Parameters<DesktopListMonitorsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let value = remote_exec_roundtrip(&p.connection_string, "desktop_list_monitors", |request_id| {
+            crate::Cmd::DesktopMonitorsQuery { request_id }
+        })
+        .await?;
+        Ok(CallToolResult::success(vec![
+            ContentBlock::json(value).map_err(to_internal)?
+        ]))
+    }
+
+    #[tool(
+        name = "desktop_focus",
+        description = "What currently has keyboard focus on the client: the foreground window's title, class, process, position and size, the focused control's class, and the text caret position. \
+                       Cheap — use it instead of a screenshot whenever you only need to know WHERE input would land, and always before typing into something you did not just activate. \
+                       Reports when the UAC secure desktop owns input, which no injection can reach. Requires remote_exec_arm (window titles reveal what the user is doing)."
+    )]
+    async fn desktop_focus(
+        &self,
+        Parameters(p): Parameters<DesktopFocusParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let value = remote_exec_roundtrip(&p.connection_string, "desktop_focus", |request_id| {
+            crate::Cmd::DesktopWindowsQuery { request_id, foreground_only: true }
+        })
+        .await?;
+        Ok(CallToolResult::success(vec![
+            ContentBlock::json(value).map_err(to_internal)?
+        ]))
+    }
+
+    #[tool(
+        name = "desktop_list_windows",
+        description = "List the client's visible top-level windows with title, class, process, position and size, in physical screen pixels matching desktop_screenshot. \
+                       Use it to find an installer or dialog without hunting through a screenshot, then desktop_activate_window to bring it forward. Requires remote_exec_arm."
+    )]
+    async fn desktop_list_windows(
+        &self,
+        Parameters(p): Parameters<DesktopListWindowsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let value = remote_exec_roundtrip(&p.connection_string, "desktop_list_windows", |request_id| {
+            crate::Cmd::DesktopWindowsQuery { request_id, foreground_only: false }
+        })
+        .await?;
+        let mut windows = value
+            .get("windows")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        if let Some(needle) = p.title_contains.as_ref().map(|s| s.to_lowercase()) {
+            windows.retain(|w| {
+                w.get("title")
+                    .and_then(|t| t.as_str())
+                    .is_some_and(|t| t.to_lowercase().contains(&needle))
+            });
+        }
+        Ok(CallToolResult::success(vec![ContentBlock::json(
+            serde_json::json!({ "count": windows.len(), "windows": windows }),
+        )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "desktop_activate_window",
+        description = "Raise a window and give it keyboard focus, by handle or by title substring. Use this instead of clicking a title bar — a click depends on coordinates that may already be stale, this does not. \
+                       Fails loudly if the title matches several windows, or if Windows refuses the foreground change. Requires remote_exec_arm."
+    )]
+    async fn desktop_activate_window(
+        &self,
+        Parameters(p): Parameters<DesktopActivateWindowParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let hwnd = p.hwnd.unwrap_or(0);
+        if hwnd == 0 && p.title_contains.as_deref().unwrap_or("").trim().is_empty() {
+            return Err(to_internal("pass hwnd or a non-empty title_contains"));
+        }
+        let title_contains = p.title_contains.clone();
+        let value = remote_exec_roundtrip(&p.connection_string, "desktop_activate_window", move |request_id| {
+            crate::Cmd::DesktopActivateWindow { request_id, hwnd, title_contains }
+        })
+        .await?;
+        Ok(CallToolResult::success(vec![
+            ContentBlock::json(value).map_err(to_internal)?
+        ]))
+    }
+
+    #[tool(
+        name = "desktop_screenshot",
+        description = "Capture the client's Windows desktop and return it as an image. This is how you SEE the machine — use it before and after every interaction, the same way you would look at a screen. \
+                       Captures one frame on demand; it does not start the streaming viewer. \
+                       Requires remote_exec_arm (the consent banner names you while the screen is being viewed). \
+                       Coordinates in the returned image are what desktop_click and desktop_scroll expect, so screenshot first, then click what you see."
+    )]
+    async fn desktop_screenshot(
+        &self,
+        Parameters(p): Parameters<DesktopScreenshotParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let monitor = p.monitor.unwrap_or(0).min(u32::MAX as u64) as u32;
+        let scale = p.scale.unwrap_or(0.5).clamp(0.1, 1.0);
+        let quality = p.quality.unwrap_or(60).clamp(1, 100) as u8;
+
+        let value = remote_exec_roundtrip(&p.connection_string, "desktop_screenshot", move |request_id| {
+            crate::Cmd::DesktopCaptureOnce { request_id, monitor, scale, quality }
+        })
+        .await?;
+
+        let shot: crate::remote_desktop::DesktopShot = serde_json::from_value(value)
+            .map_err(|e| to_internal(format!("malformed screenshot from client: {e}")))?;
+        remember_shot(&p.connection_string, shot.width, shot.height);
+
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&shot.jpeg);
+        Ok(CallToolResult::success(vec![
+            ContentBlock::json(serde_json::json!({
+                "monitor_id": shot.monitor_id,
+                "image_width": shot.width,
+                "image_height": shot.height,
+                "monitor_width": shot.monitor_width,
+                "monitor_height": shot.monitor_height,
+                "jpeg_bytes": shot.jpeg.len(),
+                "note": "desktop_click / desktop_scroll take pixel coordinates in THIS image's space.",
+            }))
+            .map_err(to_internal)?,
+            ContentBlock::image(b64, "image/jpeg".to_string()),
+        ]))
+    }
+
+    #[tool(
+        name = "desktop_click",
+        description = "Click on the client's desktop at a point in the LAST screenshot's pixel space. Screenshot first so the coordinates mean something, then screenshot again afterwards to confirm what happened — a click that misses is silent. \
+                       Set count:2 for a double-click. Requires remote_exec_arm."
+    )]
+    async fn desktop_click(
+        &self,
+        Parameters(p): Parameters<DesktopClickParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let expect_window_title = p.expect_window_title.clone();
+        use crate::remote_desktop::DesktopInputEvent as E;
+        let (x, y) = to_normalized(&p.connection_string, p.x, p.y, p.normalized.unwrap_or(false))?;
+        let button = parse_button(p.button.as_deref())?;
+        let count = p.count.unwrap_or(1).clamp(1, 3);
+        let settle_ms = p.settle_ms.unwrap_or(250).min(10_000) as u32;
+
+        let mut events = vec![E::MouseMove { x, y }];
+        for _ in 0..count {
+            events.push(E::MouseButton { x, y, button, pressed: true });
+            events.push(E::MouseButton { x, y, button, pressed: false });
+        }
+        let value = remote_exec_roundtrip(&p.connection_string, "desktop_click", move |request_id| {
+            crate::Cmd::DesktopInputBatch { request_id, events, settle_ms, expect_window_title }
+        })
+        .await?;
+        Ok(CallToolResult::success(vec![
+            ContentBlock::json(serde_json::json!({
+                "clicked_normalized": [x, y],
+                "count": count,
+                "applied": value.get("events_applied"),
+                "next": "Call desktop_screenshot to see the result.",
+            }))
+            .map_err(to_internal)?,
+        ]))
+    }
+
+    #[tool(
+        name = "desktop_type",
+        description = "Type text into whatever has keyboard focus on the client's desktop. Click the target field first — this does not focus anything. \
+                       Do NOT use this for passwords or payment details. Requires remote_exec_arm."
+    )]
+    async fn desktop_type(
+        &self,
+        Parameters(p): Parameters<DesktopTypeParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let expect_window_title = p.expect_window_title.clone();
+        use crate::remote_desktop::DesktopInputEvent as E;
+        if p.text.is_empty() {
+            return Err(to_internal("text is empty"));
+        }
+        // The client paces keystrokes to avoid dropped characters, so a very
+        // long string would outrun the round-trip deadline.
+        const MAX_TYPE_CHARS: usize = 2000;
+        let chars = p.text.chars().count();
+        if chars > MAX_TYPE_CHARS {
+            return Err(to_internal(format!(
+                "text is {chars} characters; cap is {MAX_TYPE_CHARS} because the client types at a \
+                 paced rate. Split it, or write the content with remote_exec_start instead of \
+                 typing it."
+            )));
+        }
+        let settle_ms = p.settle_ms.unwrap_or(250).min(10_000) as u32;
+        let events = vec![E::Text(p.text.clone())];
+        let value = remote_exec_roundtrip(&p.connection_string, "desktop_type", move |request_id| {
+            crate::Cmd::DesktopInputBatch { request_id, events, settle_ms, expect_window_title }
+        })
+        .await?;
+        Ok(CallToolResult::success(vec![
+            ContentBlock::json(serde_json::json!({
+                "typed_chars": p.text.chars().count(),
+                "applied": value.get("events_applied"),
+            }))
+            .map_err(to_internal)?,
+        ]))
+    }
+
+    #[tool(
+        name = "desktop_key",
+        description = "Press one key on the client's desktop, optionally with modifiers — Enter to confirm a dialog, Tab to move focus, Escape to cancel, Alt+F4 to close a window. Requires remote_exec_arm."
+    )]
+    async fn desktop_key(
+        &self,
+        Parameters(p): Parameters<DesktopKeyParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let expect_window_title = p.expect_window_title.clone();
+        use crate::remote_desktop::{DesktopInputEvent as E, DesktopModifiers};
+        let modifiers = DesktopModifiers {
+            ctrl: p.ctrl.unwrap_or(false),
+            shift: p.shift.unwrap_or(false),
+            alt: p.alt.unwrap_or(false),
+            meta: p.meta.unwrap_or(false),
+        };
+        let settle_ms = p.settle_ms.unwrap_or(250).min(10_000) as u32;
+        let key_name = p.key.clone();
+        let events = vec![
+            E::Key { key_name: key_name.clone(), pressed: true, modifiers },
+            E::Key { key_name, pressed: false, modifiers },
+        ];
+        let value = remote_exec_roundtrip(&p.connection_string, "desktop_key", move |request_id| {
+            crate::Cmd::DesktopInputBatch { request_id, events, settle_ms, expect_window_title }
+        })
+        .await?;
+        Ok(CallToolResult::success(vec![
+            ContentBlock::json(serde_json::json!({
+                "key": p.key,
+                "modifiers": { "ctrl": modifiers.ctrl, "shift": modifiers.shift, "alt": modifiers.alt, "meta": modifiers.meta },
+                "applied": value.get("events_applied"),
+            }))
+            .map_err(to_internal)?,
+        ]))
+    }
+
+    #[tool(
+        name = "desktop_scroll",
+        description = "Scroll the client's desktop, optionally moving the pointer first so the right pane scrolls. Negative delta_y scrolls down. Requires remote_exec_arm."
+    )]
+    async fn desktop_scroll(
+        &self,
+        Parameters(p): Parameters<DesktopScrollParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let expect_window_title = p.expect_window_title.clone();
+        use crate::remote_desktop::DesktopInputEvent as E;
+        let settle_ms = p.settle_ms.unwrap_or(250).min(10_000) as u32;
+        let mut events = Vec::new();
+        if let (Some(px), Some(py)) = (p.x, p.y) {
+            let (x, y) = to_normalized(&p.connection_string, px, py, false)?;
+            events.push(E::MouseMove { x, y });
+        }
+        events.push(E::MouseScroll {
+            delta_x: p.delta_x.unwrap_or(0.0),
+            delta_y: p.delta_y.unwrap_or(0.0),
+        });
+        let value = remote_exec_roundtrip(&p.connection_string, "desktop_scroll", move |request_id| {
+            crate::Cmd::DesktopInputBatch { request_id, events, settle_ms, expect_window_title }
+        })
+        .await?;
+        Ok(CallToolResult::success(vec![
+            ContentBlock::json(serde_json::json!({ "applied": value.get("events_applied") }))
+                .map_err(to_internal)?,
         ]))
     }
 
@@ -3033,6 +3540,45 @@ impl PluginToolProvider {
         Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
             "targets": targets,
             "note": "Connect from Web Console first. Use remote_egui_list_widget_anchors + click_anchor when the remote app registers anchors; else perform_steps.",
+        }))
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "remote_reboot_client",
+        description = "Reboot a connected client the same way the admin console's Power > Reboot does, relaunching MasterTech once the machine is logged back in so the remote session survives the restart. Fire-and-forget: the client acts on the command and drops its WebSocket, so there is no reply to wait for — poll remote_channel_health until admin_ws_session returns to ok. Use this to finalize work that needs a reboot (a Webroot re-key, a driver bind) and to clear a wedged client execution path, where run_command and scripts_run_remote time out even though remote_channel_health still reports healthy because its round-trip probes are lightweight echoes that never execute anything."
+    )]
+    async fn remote_reboot_client(
+        &self,
+        Parameters(p): Parameters<RemoteRebootClientParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let cs = p.connection_string.trim().to_string();
+        if cs.is_empty() {
+            return Err(to_internal("connection_string is required".to_string()));
+        }
+        let persist_mastertech = p.persist_mastertech.unwrap_or(true);
+        let terminal_mode = p.terminal_mode.unwrap_or(false);
+
+        let hub = super::remote_egui_control::hub();
+        if !hub.list_targets().iter().any(|t| t == &cs) {
+            return Err(to_internal(format!(
+                "no admin Web Console session for '{cs}' — connect from Web Console first \
+                 (remote_egui_list_targets lists reachable clients)"
+            )));
+        }
+
+        let cmd = crate::Cmd::RebootSystem { persist_mastertech, terminal_mode };
+        bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
+            .map_err(|e| to_internal(format!("bincode serialize: {e}")))
+            .and_then(|bytes| hub.send_raw_binary(&cs, bytes).map_err(to_internal))?;
+
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
+            "connection_string": cs,
+            "command": "RebootSystem",
+            "persist_mastertech": persist_mastertech,
+            "terminal_mode": terminal_mode,
+            "dispatched": true,
+            "note": "Reboot command sent. The client drops its session immediately, so no result is returned. Poll remote_channel_health until admin_ws_session is ok; expect roughly a minute plus this machine's boot time. Plugins are NOT persisted across the restart — redeploy any you need via plugin_deploy_remote.",
         }))
         .map_err(to_internal)?]))
     }
@@ -3618,6 +4164,7 @@ impl PluginToolProvider {
         if let Err(e) = super::sdk_vendor::ensure_vendored_sdk() {
             log::warn!("ensure_vendored_sdk failed: {e}");
         }
+        ensure_plugin_cargo_config(&dir, "wasm32-wasip1").await;
 
         let output = tokio::process::Command::new("cargo")
             .args([
@@ -4798,7 +5345,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "create_ai_task",
-        description = "Hand off HANDS-ON work to the technician. Call when a diagnosis concludes physical/BIOS/bench work is required (e.g. 'disable XMP', 'reseat DIMMs', 're-run OCCT at stock'). Creates an AI Task — a checklist overlay on the service task — which pops a 'requires your attention' modal on the assigned tech's desktop and appears in their AI Tasks column. Steps also log to the diagnostic session as recommendation entries. The task to attach to auto-resolves (explicit task_id > the session's task_ref > the task on the connection's open service order, which then gets linked to the session) — you do NOT need to call link_diagnostic_to_task first. Assignee resolves: explicit assignee_email > service ticket technician > task assignee. Poll get_ai_task_status to see progress; the operator (not the AI) closes the task.\n\nEACH STEP IS A PHYSICAL TODO FOR A HUMAN — never anything else. RULES for the steps array:\n1. This list is NOT a log. Never add an item that records what happened, notes a mistake you made, states a finding, or explains context — that ALL belongs in log_diagnostic_entry, not here. An item with no concrete human action to perform does not belong on the list.\n2. Never add a step you can do yourself through the plugin system or an MCP tool (run a script, read events, snapshot drivers, analyze a dump, query the DB, toggle a setting reachable via com.mastertech.repair, etc.). Do it, then log it. The list is ONLY for actions that require physical access or a human decision you cannot perform remotely.\n3. Write each step short, imperative, and self-contained: one concrete action a tech can check off, with the specific target. 'Reseat both DIMMs in slots A2/B2' — not 'RAM'. 'Replace SATA data cable on the D: drive (WD20EZBX) and move to port 3' — not 'look at the disk'. Thorough but terse; no narration, no rationale paragraphs."
+        description = "Hand off ONLY the work you physically cannot do. Creates an AI Task - a checklist overlay on the service task - which pops a 'requires your attention' modal on the assigned tech's desktop and appears in their AI Tasks column. Steps also log to the diagnostic session as recommendation entries. The task to attach to auto-resolves (explicit task_id > the session's task_ref > the task on the connection's open service order, which then gets linked to the session) - you do NOT need to call link_diagnostic_to_task first. Assignee resolves: explicit assignee_email > service ticket technician > task assignee. Poll get_ai_task_status to see progress; the operator (not the AI) closes the task.\n\nTHE GATE, APPLIED PER STEP BEFORE YOU WRITE IT: 'Could I do this myself over RemoteExec, a script, or a plugin?' If yes - even if it is tedious, multi-step, or needs a reboot - DO IT and log_diagnostic_entry the result. Do not write it here. A checklist that lists work you were capable of doing is a defect: it silently reassigns your job to a human and the ticket stalls.\n\nYOU CAN DO ALL OF THIS YOURSELF - none of it belongs on the list:\n- Install / uninstall / update ANY driver. remote_exec_start runs elevated (the client is requireAdministrator): pnputil /add-driver /install, pnputil /delete-driver, or a vendor setup.exe with silent flags. Stage the package first with com.mastertech.driver-fetch (fetch_model_path for TechDB drivers, fetch_firmware_path for BiosLove payloads).\n- Uninstall applications: the registry uninstall strings, MsiExec /x /qn, or winget uninstall, via remote_exec_start.\n- Any Windows setting: powercfg (power plans, PCIe ASPM, sleep and display idle timeouts), registry writes, bcdedit, pagefile and crash-dump config via Win32_PageFileSetting and the CrashControl key, service start types, scheduled tasks, Fast Startup (HiberbootEnabled).\n- Delete files and reclaim disk: stale dumps, LiveKernelReports, temp trees.\n- Device Manager work: enumerate and remove problem, degraded or ghost devices with pnputil and the PnP cmdlets, then rescan.\n- Change display mode and refresh rate, and read every diagnostic (events, SMART, telemetry, dumps, driver snapshots, DB queries).\n- Reboot the client: remote_reboot_client, or a scheduled abortable restart. Needing a reboot does NOT make something a human task.\nSet risk correctly on remote_exec_start ('mutate' for reversible, 'destructive' for driver/boot/security/data changes, which also requires a non-empty reason) and say what you changed in the log.\n\nONLY THESE BELONG ON THE LIST:\n- Hands inside or on the machine: reseat, replace or reroute a part or cable, open the chassis, blow out heatsinks, repaste, swap a panel.\n- Plugging or unplugging something: attach an external monitor, move a drive to another port, connect a loopback or a known-good part.\n- Firmware flashing: BIOS, EC, or any UEFI-shell payload. You may stage it; a human runs it.\n- Anything only reachable from BIOS setup or a pre-boot menu, including merely READING a value there (EC firmware version, XMP state).\n- Eyes or ears on a symptom: confirming a visual artifact, an audible noise, a smell, a physical intermittent. Also any wake-from-sleep test - you can suspend a machine but you cannot wake it, and suspending it ends your own session.\n- A judgement call that is genuinely the customer's or the shop's: replace vs repair, spend money, accept data loss.\n\nRULES for the steps array:\n1. This list is NOT a log. Never add an item that records what happened, notes a mistake you made, states a finding, or explains context - that ALL belongs in log_diagnostic_entry. An item with no concrete human action to perform does not belong on the list.\n2. Apply the gate above to every item. If a step is only partly human, split it: do your half, and list only the human half. 'Stage BIOS 1.07.20 then flash it' becomes you staging it, plus one step 'Flash the staged BIOS 1.07.20 from C:/ProgramData/MTechFirmware on AC power'.\n3. Write each step short, imperative, and self-contained: one concrete action a tech can check off, with the specific target. 'Reseat both DIMMs in slots A2/B2' - not 'RAM'. 'Replace SATA data cable on the D: drive (WD20EZBX) and move to port 3' - not 'look at the disk'. Thorough but terse; no narration, no rationale paragraphs.\n4. Give the human what they need to act without re-deriving it: exact part, slot or port, the staged path, and the version or value to confirm. Put the reasoning in log_diagnostic_entry and reference it rather than restating it here."
     )]
     async fn create_ai_task(
         &self,
@@ -6538,6 +7085,8 @@ impl PluginToolProvider {
                         "sightings_task_linked": r.sightings_task_linked,
                         "snapshots_claimed": r.snapshots_claimed,
                         "sightings_enriched": r.sightings_enriched,
+                        "snapshots_task_linked": r.snapshots_task_linked,
+                        "stress_runs_task_linked": r.stress_runs_task_linked,
                     }));
                 }
                 Ok(_) => {}
@@ -6935,7 +7484,7 @@ ABSENT MEANS NOT MEASURED: a null field, a rail absent from `voltages[]`, and `w
 CPU TEMPERATURE HAS TWO POSSIBLE SOURCES: `sensor_availability.cpu_package_temp` (repeated as `cpu.package_temp_kind`) is `cpu_die_sensor` = a real CPU sensor answered (`CPU Package`, `CPU (Tctl)`, or `CPU Core N` — a core is one core, not the package); `acpi_zone_only` = NO CPU sensor answered and `cpu.package_temp_c` is a firmware-named CPU ACPI zone (`CPUZ_0`, `TCPU`) that runs far below the die, so it must NOT be quoted as a CPU temperature; `unavailable` = no CPU-side thermal at all — including every machine whose only zones are bare board zones (`TZ00_0`), which are never reported as a CPU temperature. `cpu.package_temp_source` names the exact sensor the value came from, and a die sensor is always preferred over a hotter zone. `thermals[]` carries every labelled zone (including bare board zones and `NVMe Disk N` drive temps) so you can read them individually. \
 VOLTAGE RAILS ARE GRADED PER RAIL: `sensor_availability.voltage_rails` is `ok` (every expected rail read), `partial` (some read, some not), or `unavailable` (no rail answered). `sensor_availability.rails` gives `Vcore`, `+5V`, `3VCC (chip)`, `+12V`, `VBAT` each as `read` / `missing` / `unavailable`, and `rails_missing[]` lists the gaps. A `missing` rail was suppressed — unmapped channel, implausible read, or a collapse awaiting confirmation — so it is neither 0 V nor healthy: '+12V missing' NEVER means the +12V rail is fine. \
 WHEA: `sensor_availability.whea` is `ok` (counters read), `unavailable` (the WHEA event source could not be opened, so no count was taken — absence of evidence, NOT a clean result; never clear a machine of hardware errors on it), or `not_sampled` (no sampler tick yet). \
-WHY READINGS GO MISSING: the CPU die sensor and every entry in `voltages[]` come from the WinRing0 kernel driver, which will NOT load while Memory Integrity (HVCI) or the Vulnerable Driver Blocklist is enabled. `sensor_availability.hvci_enabled` / `.vulnerable_driver_blocklist_enabled` / `.detail` report exactly which one is blocking; SetDriverProtections can turn them off (needs a reboot) if the customer consents. \
+WHY READINGS GO MISSING: the CPU die sensor and every entry in `voltages[]` need a kernel-mode access backend. `sensor_availability.backend` names the live one (`none` when nothing opened), `.backend_tier` says what it could reach (`full` / `die_only` / `rails_only` / `none`), `.backend_rejected[]` lists every backend that was tried and why it declined, and `.backend_lost` is set when a backend answered at first and then stopped — readings ended there rather than being replayed. `.detail` states all of this in one sentence; read it before concluding anything from an absent number. The two sensors reach the hardware independently, so one can read while the other does not. Memory Integrity (HVCI) and the Vulnerable Driver Blocklist only block the legacy `win_ring0` backend — `.hvci_enabled` / `.vulnerable_driver_blocklist_enabled` report them, and SetDriverProtections can turn them off (needs a reboot, and the customer's consent), but that will NOT help when the live backend is a signed one. \
 VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` means no per-board ratio is known), so read them as trend and droop under load, not as absolute volts. Never fail a board on an absolute number from this tool; compare idle vs loaded instead. `3VCC (chip)` is the sensor chip's OWN 3.3V supply, NOT the board's +3.3V PSU rail — there is no +3.3V PSU reading here."
     )]
     async fn telemetry_snapshot_remote(
@@ -8031,9 +8580,10 @@ Open the session BEFORE running analyzers so every record links to it (analyzers
   5. Escalate to com.mastertech.dump-decode (cdb) only when triage blame is ambiguous.
   6. log_diagnostic_entry as you go — findings, actions, observations, and anything informational live HERE.
   7. crash_verdict_record / known_bad_driver_add — pass session_id or connection_string so the verdict links to the task.
-  8. create_ai_task — ONLY for hands-on/physical steps a human must do (see that tool's rules). Not for anything you can do via MCP, and not for logging.
-  9. driver_snapshot_take {label:'post_service'} after the fix, then driver_snapshot_diff.
- 10. close_diagnostic_session — a flight check: it gates status + escalation-handoff, runs a final link sweep, and returns completeness warnings. Resolve warnings that matter first.
+  8. Do the remediation YOURSELF. Driver installs/removals, application uninstalls, any Windows/power/registry setting, file deletion, Device Manager cleanup and reboots are all reachable via remote_exec_start (elevated), scripts_run_remote, remote_reboot_client, or a plugin — do them and log_diagnostic_entry the result.
+  9. create_ai_task — ONLY for what you physically cannot do: hands on hardware, plugging/unplugging, firmware flashing, BIOS-setup-only values, eyes/ears on a symptom, or a customer decision (see that tool's rules). Never for work you could have done, and never for logging.
+ 10. driver_snapshot_take {label:'post_service'} after the fix, then driver_snapshot_diff.
+ 11. close_diagnostic_session — a flight check: it gates status + escalation-handoff, runs a final link sweep, and returns completeness warnings. Resolve warnings that matter first.
 Tool results may include a `warnings` array ({code, severity, message, fix}) — each names the exact follow-up call. Act on warn-severity items; info items are advisory. intel_links_reap backfills links fleet-wide if ingest ran out of order.
 
 === Session (HTTP :9004/mcp) ===
@@ -8421,6 +8971,44 @@ as wedged — a job still printing has not hung, however long it runs.
 Risk tier is recorded, not advisory: use 'destructive' for anything that removes data or touches
 boot/driver/security state, and give it a real reason (empty reasons are refused for that tier).
 
+=== Desktop Screen Control (see and drive the client's Windows desktop) ===
+For GUI-only work no script can reach: vendor installers, BIOS/firmware utilities, driver wizards,
+anything that only exists behind a window. Prefer a script when one exists — this is slower, and a
+misplaced click is silent.
+
+  remote_exec_arm → desktop_list_windows → desktop_activate_window → desktop_screenshot
+                  → desktop_click/type/key/scroll (with expect_window_title) → desktop_screenshot
+
+**Always screenshot before and after.** Coordinates are pixels in the LAST screenshot you received
+(the admin remembers its size per client), so a click without a preceding screenshot is refused
+rather than guessed. A click that lands on nothing produces no error — the only way to know it
+worked is to look again.
+
+**Pass `expect_window_title` on every click/type/key/scroll.** The client re-checks the foreground
+window immediately before injecting and refuses if it does not match, which is the only thing that
+actually protects you: coordinates from an earlier layout look perfectly valid and will happily
+type into whatever moved on top. Typing into a file-manager list is how you launch something you
+never intended.
+
+**Target windows by identity, not pixels.** `desktop_list_windows` gives titles, classes, processes
+and rects; `desktop_activate_window` raises one by handle or title. Prefer that over clicking a
+title bar. `desktop_focus` is a cheap "where would my keystroke land" check — it costs a few
+hundred bytes instead of a whole image, so use it liberally between actions.
+
+If `desktop_focus` reports `secure_desktop_suspected`, a UAC prompt owns input and NOTHING can be
+injected until a human dismisses it — do not retry, say so.
+
+Gated exactly like RemoteExec: `remote_exec_arm` first, and the client's consent banner shows
+"VIEWING YOUR SCREEN" in red while capture or input is live. Captures and injections are written to
+the client's on-disk journal. The human Web Console viewer is deliberately NOT gated — that path is
+unchanged.
+
+Cost control: `scale` defaults to 0.5 and `quality` to 60. Raise scale only when you need to read
+small text; a full-resolution screenshot is a large image every time you look.
+
+Never type passwords, card numbers or other credentials with `desktop_type` — hand those to the
+technician instead.
+
 === Local Scripts Execution (admin machine only — do NOT use for QC on a customer's computer) ===
 For the machine running this MCP server, prefer the dedicated script tools below
 over `remote_egui_*` clicking. They drive the local Scripts tab (egui mode) or
@@ -8481,8 +9069,9 @@ Tools:
   `sensor_availability` grades each sensor: `cpu_package_temp` = cpu_die_sensor / acpi_zone_only
   (a firmware CPU zone, not a die temp) / unavailable, `rails` = per-rail read / missing / unavailable
   with `rails_missing[]`, `whea` = ok / unavailable (event source unreadable, NOT 'no errors') /
-  not_sampled. CPU die temp and the rails need the WinRing0 driver, which cannot load while
-  Memory Integrity or the Vulnerable Driver Blocklist is on. Voltages are
+  not_sampled. CPU die temp and the rails need a kernel-mode backend; `backend`,
+  `backend_tier`, `backend_rejected[]` and `backend_lost` say which one is live and
+  why any sensor is unreachable. Voltages are
   UNCALIBRATED nominal-divider values — judge droop under load, not absolute volts.
   Pair with a stress run: read it before, during, and after to catch thermal throttling
   and rail droop that a pass/fail verdict alone hides.
@@ -8883,6 +9472,8 @@ async fn run_local_cargo_compile(
     plugin_id: &str,
     server: &PluginToolProvider,
 ) -> Result<(bool, String, String, usize), ErrorData> {
+    ensure_plugin_cargo_config(dir, "wasm32-wasip1").await;
+
     let output = tokio::process::Command::new("cargo")
         .args([
             "build",
@@ -9188,6 +9779,34 @@ mod remote_exec_tests {
     }
 
     #[test]
+    fn eviction_is_surfaced_even_when_no_chunk_carries_it() {
+        // The ring folds evicted bytes into the NEXT chunk it pushes, so a
+        // final eviction is attributed to nothing. chunks_truncated and the
+        // exit total must still surface the loss.
+        let mut s = snap("Succeeded", 400, vec![chunk(350, "Stdout", "tail", 0)]);
+        s["chunks_truncated"] = serde_json::json!(true);
+        s["exit"] = serde_json::json!({ "truncated_bytes": 934672 });
+        let out = render_job_snapshot(s, 0);
+        assert_eq!(out["output_lost"], true, "a truncated range must report loss");
+        assert_eq!(out["job_truncated_bytes"], 934672);
+        assert!(out.get("output_lost_note").is_some());
+        assert!(
+            out.get("elided_bytes").is_none(),
+            "no chunk carried an elided_before, so that key must stay absent"
+        );
+    }
+
+    #[test]
+    fn a_clean_read_reports_no_loss() {
+        let out = render_job_snapshot(
+            snap("Succeeded", 1, vec![chunk(0, "Stdout", "a", 0), chunk(1, "Stdout", "b", 0)]),
+            0,
+        );
+        assert!(out.get("output_lost").is_none());
+        assert!(out.get("job_truncated_bytes").is_none());
+    }
+
+    #[test]
     fn streams_are_separated_and_eviction_is_surfaced() {
         let out = render_job_snapshot(
             snap(
@@ -9205,7 +9824,8 @@ mod remote_exec_tests {
         assert_eq!(out["stderr"], "err");
         assert_eq!(out["runtime_notes"], "note");
         assert_eq!(out["elided_bytes"], 512);
-        assert!(out.get("elided_note").is_some());
+        assert_eq!(out["output_lost"], true);
+        assert!(out.get("output_lost_note").is_some());
     }
 
     #[test]
@@ -9235,5 +9855,61 @@ mod remote_exec_tests {
         assert!(parse_risk(Some("yolo")).is_err());
         assert!(parse_signal("Kill").is_ok());
         assert!(parse_signal("sigterm").is_err());
+    }
+}
+
+#[cfg(test)]
+mod desktop_control_tests {
+    use super::*;
+
+    #[test]
+    fn pixel_coords_need_a_prior_screenshot() {
+        let err = to_normalized("cs-never-shot", 100.0, 50.0, false).unwrap_err();
+        assert!(
+            err.message.contains("desktop_screenshot"),
+            "the error must name the fix: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn pixels_map_against_the_last_screenshot_size() {
+        remember_shot("cs-a", 800, 600);
+        let (x, y) = to_normalized("cs-a", 400.0, 300.0, false).unwrap();
+        assert!((x - 0.5).abs() < 1e-6 && (y - 0.5).abs() < 1e-6, "{x},{y}");
+        // A second screenshot at a different scale must re-base the mapping.
+        remember_shot("cs-a", 1600, 1200);
+        let (x2, y2) = to_normalized("cs-a", 400.0, 300.0, false).unwrap();
+        assert!((x2 - 0.25).abs() < 1e-6 && (y2 - 0.25).abs() < 1e-6, "{x2},{y2}");
+    }
+
+    #[test]
+    fn geometry_is_per_client() {
+        remember_shot("cs-b", 1000, 1000);
+        remember_shot("cs-c", 500, 500);
+        let (bx, _) = to_normalized("cs-b", 250.0, 0.0, false).unwrap();
+        let (cx, _) = to_normalized("cs-c", 250.0, 0.0, false).unwrap();
+        assert!((bx - 0.25).abs() < 1e-6, "{bx}");
+        assert!((cx - 0.50).abs() < 1e-6, "{cx}");
+    }
+
+    #[test]
+    fn out_of_range_pixels_clamp_instead_of_wrapping() {
+        remember_shot("cs-d", 100, 100);
+        let (x, y) = to_normalized("cs-d", 999.0, -50.0, false).unwrap();
+        assert_eq!((x, y), (1.0, 0.0), "a stray coordinate must clamp to the screen edge");
+    }
+
+    #[test]
+    fn normalized_mode_bypasses_the_cache_and_clamps() {
+        let (x, y) = to_normalized("cs-no-shot", 0.25, 2.0, true).unwrap();
+        assert_eq!((x, y), (0.25, 1.0));
+    }
+
+    #[test]
+    fn button_parsing_rejects_unknown_values() {
+        assert!(parse_button(None).is_ok());
+        assert!(parse_button(Some("Right")).is_ok());
+        assert!(parse_button(Some("scroll")).is_err());
     }
 }

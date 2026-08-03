@@ -166,6 +166,10 @@ impl GpuHealth {
 }
 
 pub(super) struct GpuContext {
+    /// Kept so surface-creating stressors bind their swapchains to the same
+    /// instance the adapter came from.
+    #[allow(dead_code)]
+    pub instance: Instance,
     #[allow(dead_code)]
     pub adapter: Adapter,
     pub device: Device,
@@ -359,6 +363,7 @@ impl GpuContext {
         });
 
         Ok(Self {
+            instance,
             adapter,
             device,
             queue,

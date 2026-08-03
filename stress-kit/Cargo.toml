@@ -11,10 +11,22 @@ default = ["gpu", "nvml"]
 gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
 # NVML-backed GPU telemetry (NVIDIA only; no-op on AMD/Intel).
 nvml = ["dep:nvml-wrapper"]
-# Embeds WinRing0 and reads CPU/board temps over MSR/PCI. Off by default: it
-# bundles a flagged kernel driver that only loads with Windows driver protections
-# lowered (see drivers/). Enable per-app where elevated QC temp reads are wanted.
-winring0-thermal = ["dep:raw-cpuid"]
+# Compiles the CPU die and board rail readers over the (always-present)
+# `lowlevel` access layer. Ships no driver on its own — a backend feature below
+# selects one, and with none selected the readers report AccessTier::None.
+lowlevel = ["dep:raw-cpuid"]
+# Backends. Selection among the compiled-in set happens at runtime.
+# DEPRECATED: embeds WinRing0 (CVE-2020-14979), which only loads with Windows
+# driver protections lowered and is quarantined by current Defender definitions.
+backend-winring0 = ["lowlevel"]
+# Mastertech's own signed driver with a fixed register allowlist.
+backend-mtdrv = ["lowlevel"]
+# Scripted backend so downstream crates can test the readers without hardware.
+mock-backend = ["lowlevel"]
+# What the apps enable.
+hw-sensors = ["backend-winring0"]
+# Deprecated alias kept so consumers keep building through the migration.
+winring0-thermal = ["backend-winring0"]
 # JsonSchema derive on wire types for MCP consumers (unifies with rmcp's schemars 1.x).
 schemars = ["dep:schemars"]
 
@@ -43,8 +55,11 @@ windows = { version = "0.62", features = [
     "Win32_System_Ioctl",
     "Win32_System_IO",
     "Win32_System_EventLog",
+    "Win32_System_LibraryLoader",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
 ]}
 wmi = "=0.18.3"
 evtx = "0.11"
-# WinRing0 loader (winring0-thermal feature); SCM + device IO via winapi.
-winapi = { version = "0.3", features = ["fileapi", "ioapiset", "winnt", "handleapi", "errhandlingapi", "winbase", "synchapi", "processthreadsapi", "minwindef", "winsvc", "std"] }
+# Kernel-driver backends: SCM, device IO, shared bus mutexes, thread affinity.
+winapi = { version = "0.3", features = ["fileapi", "ioapiset", "winnt", "handleapi", "errhandlingapi", "winbase", "synchapi", "processthreadsapi", "minwindef", "minwinbase", "winsvc", "sddl", "securitybaseapi", "std"] }

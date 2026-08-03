@@ -49,9 +49,11 @@ pub fn default_target_kind(s: Stressor) -> TargetKind {
         | Stressor::MemTest => TargetKind::Memory,
         Stressor::Psu | Stressor::PsuTransient => TargetKind::Psu,
         Stressor::Disk => TargetKind::Storage,
-        Stressor::Gpu | Stressor::GpuMatmul | Stressor::GpuVram | Stressor::GpuPcie => {
-            TargetKind::Gpu
-        }
+        Stressor::Gpu
+        | Stressor::GpuMatmul
+        | Stressor::GpuVram
+        | Stressor::GpuPcie
+        | Stressor::GpuDisplay => TargetKind::Gpu,
         Stressor::Combined => TargetKind::System,
     }
 }

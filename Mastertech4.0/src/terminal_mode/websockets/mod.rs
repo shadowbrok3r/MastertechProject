@@ -2940,9 +2940,9 @@ if (Test-Path $path) {{
                                     let key = keys.get(0).cloned().unwrap_or_default();
                                     send_log(&tx, format!("Webroot key: {}", key.webroot_key));
                                     match crate::utilities::scripts::antivirus::install_webroot(key.webroot_key, client, progress_tx).await {
-                                        Ok(rekeyed) => {
-                                            send_log(&tx, "Webroot installed successfully".into());
-                                            if rekeyed {
+                                        Ok(outcome) => {
+                                            send_log(&tx, format!("Webroot licensed and active ({outcome})"));
+                                            if outcome.reboot_recommended() {
                                                 batch_reboot_recommended.store(true, std::sync::atomic::Ordering::SeqCst);
                                             }
                                             send_result(&tx, &script.name, RemoteScriptStatus::Success);
@@ -4304,6 +4304,106 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                 }
             }
 
+            // Screen control. Gated by the same consent lease as RemoteExec;
+            // the human Web Console viewer's DESKTOP_INPUT_TAG path is not.
+            Cmd::DesktopMonitorsQuery { request_id } => {
+                let monitors = crate::remote_desktop::enumerate_monitors();
+                send_remote_exec_result(
+                    sender, request_id, "desktop_list_monitors", true,
+                    serde_json::json!({ "monitors": monitors }),
+                );
+            }
+
+            Cmd::DesktopCaptureOnce { request_id, monitor, scale, quality } => {
+                match crate::remote_exec::gate::check_admits_job() {
+                    Err(why) => send_remote_exec_result(
+                        sender, request_id, "desktop_screenshot", false,
+                        serde_json::json!({ "error": why }),
+                    ),
+                    Ok(()) => match crate::remote_desktop::capture_once(monitor, scale, quality) {
+                        Ok(shot) => {
+                            crate::remote_exec::journal::record_screen("capture", shot.jpeg.len() as u64);
+                            send_remote_exec_result(
+                                sender, request_id, "desktop_screenshot", true,
+                                serde_json::json!(shot),
+                            );
+                        }
+                        Err(e) => send_remote_exec_result(
+                            sender, request_id, "desktop_screenshot", false,
+                            serde_json::json!({ "error": e.to_string() }),
+                        ),
+                    },
+                }
+            }
+
+            Cmd::DesktopWindowsQuery { request_id, foreground_only } => {
+                match crate::remote_exec::gate::check_admits_job() {
+                    Err(why) => send_remote_exec_result(
+                        sender, request_id, "desktop_windows", false,
+                        serde_json::json!({ "error": why }),
+                    ),
+                    Ok(()) => {
+                        let payload = if foreground_only {
+                            serde_json::json!(crate::window_info::focus())
+                        } else {
+                            serde_json::json!({ "windows": crate::window_info::list() })
+                        };
+                        send_remote_exec_result(sender, request_id, "desktop_windows", true, payload);
+                    }
+                }
+            }
+
+            Cmd::DesktopActivateWindow { request_id, hwnd, title_contains } => {
+                match crate::remote_exec::gate::check_admits_job() {
+                    Err(why) => send_remote_exec_result(
+                        sender, request_id, "desktop_activate_window", false,
+                        serde_json::json!({ "error": why }),
+                    ),
+                    Ok(()) => match crate::window_info::activate(hwnd, title_contains.as_deref()) {
+                        Ok(info) => {
+                            crate::remote_exec::journal::record_screen("activate", info.hwnd);
+                            send_remote_exec_result(
+                                sender, request_id, "desktop_activate_window", true,
+                                serde_json::json!(info),
+                            );
+                        }
+                        Err(e) => send_remote_exec_result(
+                            sender, request_id, "desktop_activate_window", false,
+                            serde_json::json!({ "error": e }),
+                        ),
+                    },
+                }
+            }
+
+            Cmd::DesktopInputBatch { request_id, events, settle_ms, expect_window_title } => {
+                let precondition = expect_window_title
+                    .as_deref()
+                    .map(crate::window_info::assert_foreground_title)
+                    .unwrap_or(Ok(()));
+                match crate::remote_exec::gate::check_admits_job().and(precondition) {
+                    Err(why) => send_remote_exec_result(
+                        sender, request_id, "desktop_input", false,
+                        serde_json::json!({ "error": why }),
+                    ),
+                    Ok(()) => {
+                        let count = events.len() as u64;
+                        match crate::remote_desktop::inject_batch(events, settle_ms) {
+                            Ok(n) => {
+                                crate::remote_exec::journal::record_screen("input", count);
+                                send_remote_exec_result(
+                                    sender, request_id, "desktop_input", true,
+                                    serde_json::json!({ "events_applied": n }),
+                                );
+                            }
+                            Err(e) => send_remote_exec_result(
+                                sender, request_id, "desktop_input", false,
+                                serde_json::json!({ "error": e.to_string() }),
+                            ),
+                        }
+                    }
+                }
+            }
+
             Cmd::RemoteJobQuery { request_id, job_id, from_seq, max_bytes } => {
                 let snaps = crate::remote_exec::query(job_id.as_deref(), from_seq, max_bytes);
                 send_remote_exec_result(
@@ -4497,14 +4597,13 @@ fn rail_availability(
 }
 
 /// Names every degraded sensor, what its absence does and does not mean, and
-/// whichever driver protection blocks WinRing0.
+/// which low-level backend could or could not serve it.
 fn sensor_gap_detail(
     cpu_status: &str,
     missing_rails: &[String],
     rails_silent: bool,
     whea_status: &str,
-    hvci: Option<bool>,
-    blocklist: Option<bool>,
+    access: &stress_kit::telemetry::AccessStatus,
 ) -> String {
     let cpu_die = cpu_status == cpu_temp_token(stress_kit::telemetry::CpuTempSource::Die);
     let mut notes: Vec<String> = Vec::new();
@@ -4538,25 +4637,59 @@ fn sensor_gap_detail(
     if notes.is_empty() {
         return "CPU die sensor, every voltage rail and WHEA counters all read.".to_string();
     }
-    // Rails publish only through the CPU monitor's WinRing0 handle, so either sensor reading proves it loaded.
-    let gate = if !cpu_die && rails_silent {
-        match (hvci, blocklist) {
-            (Some(true), Some(true)) => {
-                "Memory Integrity (HVCI) and the Vulnerable Driver Blocklist are both ON, so WinRing0 cannot load."
-            }
-            (Some(true), _) => "Memory Integrity (HVCI) is ON, so WinRing0 cannot load.",
-            (_, Some(true)) => "The Vulnerable Driver Blocklist is ON, so WinRing0 cannot load.",
-            (Some(false), Some(false)) => {
-                "Both driver protections are OFF, so the cause is an unsupported SuperIO chip, a WinRing0 service that never started, or a non-elevated client."
-            }
-            _ => "Driver protection state unreadable; the usual cause is Memory Integrity or the Vulnerable Driver Blocklist blocking WinRing0.",
-        }
-    } else if !cpu_die || !missing_rails.is_empty() {
-        "WinRing0 did load (the other sensor read), so the remaining gap is an unsupported CPU family or an unwired SuperIO channel, not a driver block."
-    } else {
-        ""
-    };
+    let gate = backend_gate(cpu_die, rails_silent, missing_rails, access);
     format!("{} {gate}", notes.join(" ")).trim_end().to_string()
+}
+
+/// Explains a sensor gap in terms of the live backend rather than inferring it
+/// from the driver-protection flags — the die sensor and the board rails reach
+/// the hardware independently, so either can be absent while the other reads.
+fn backend_gate(
+    cpu_die: bool,
+    rails_silent: bool,
+    missing_rails: &[String],
+    access: &stress_kit::telemetry::AccessStatus,
+) -> String {
+    use stress_kit::telemetry::BackendId;
+
+    if let Some(lost) = access.lost.as_deref() {
+        return format!(
+            "{} answered when sampling started and then stopped, so readings ended there: {lost}",
+            access.backend_label
+        );
+    }
+    if !cpu_die && rails_silent {
+        if access.backend == BackendId::None {
+            return format!("{}{}", access.detail, rejected_summary(access));
+        }
+        return format!(
+            "{} is live but neither sensor answered, so this is an unsupported CPU family and an \
+             unsupported SuperIO chip, not a backend block.",
+            access.backend_label
+        );
+    }
+    if !cpu_die || !missing_rails.is_empty() {
+        return format!(
+            "{} is live (the other sensor read), so the remaining gap is an unsupported CPU family \
+             or an unwired SuperIO channel, not a backend block.",
+            access.backend_label
+        );
+    }
+    String::new()
+}
+
+/// `" Tried: <backend> — <reason>; …"`; empty when no backend was attempted.
+fn rejected_summary(access: &stress_kit::telemetry::AccessStatus) -> String {
+    if access.rejected.is_empty() {
+        return String::new();
+    }
+    let list = access
+        .rejected
+        .iter()
+        .map(|r| format!("{} — {}", r.backend.label(), r.reason))
+        .collect::<Vec<_>>()
+        .join("; ");
+    format!(" Tried: {list}.")
 }
 
 /// One-shot telemetry payload for `Cmd::RequestTelemetrySnapshot`. Waits up to
@@ -4595,8 +4728,7 @@ async fn remote_telemetry_json(warmup: Duration) -> serde_json::Value {
         &missing_rails,
         rails_silent,
         whea_status,
-        hvci,
-        blocklist,
+        &snap.access,
     );
 
     serde_json::json!({
@@ -4624,6 +4756,11 @@ async fn remote_telemetry_json(warmup: Duration) -> serde_json::Value {
             "whea": whea_status,
             "hvci_enabled": hvci,
             "vulnerable_driver_blocklist_enabled": blocklist,
+            "backend": snap.access.backend,
+            "backend_label": snap.access.backend_label,
+            "backend_tier": snap.access.tier,
+            "backend_rejected": snap.access.rejected,
+            "backend_lost": snap.access.lost,
             "detail": detail,
         },
         "voltage_caveat": "Nominal-divider scaling (calibrated=false): read as trend and droop under load, not absolute volts. '3VCC (chip)' is the sensor chip's own 3.3V supply, NOT the board's +3.3V PSU rail.",
@@ -5035,6 +5172,33 @@ mod telemetry_availability_tests {
         );
     }
 
+    use stress_kit::telemetry::{AccessStatus, AccessTier, BackendId, RejectedBackend};
+
+    fn live_access() -> AccessStatus {
+        AccessStatus {
+            backend: BackendId::WinRing0,
+            tier: AccessTier::Full,
+            backend_label: BackendId::WinRing0.label().to_string(),
+            detail: "WinRing0 (legacy) is live.".into(),
+            rejected: Vec::new(),
+            lost: None,
+        }
+    }
+
+    fn no_access() -> AccessStatus {
+        AccessStatus {
+            backend: BackendId::None,
+            tier: AccessTier::None,
+            backend_label: BackendId::None.label().to_string(),
+            detail: "No low-level sensor backend is available.".into(),
+            rejected: vec![RejectedBackend {
+                backend: BackendId::WinRing0,
+                reason: "blocked by policy (err 1275)".into(),
+            }],
+            lost: None,
+        }
+    }
+
     #[test]
     fn detail_says_a_missing_rail_is_not_zero_volts() {
         let detail = sensor_gap_detail(
@@ -5042,25 +5206,56 @@ mod telemetry_availability_tests {
             &["+12V".to_string()],
             false,
             "ok",
-            Some(false),
-            Some(false),
+            &live_access(),
         );
         assert!(detail.contains("+12V"));
         assert!(detail.contains("not 0 V"));
-        assert!(detail.contains("WinRing0 did load"));
+        // Names the backend from data; nothing here may hardcode a driver name.
+        assert!(detail.contains("WinRing0 (legacy) is live"));
     }
 
     #[test]
     fn detail_calls_out_an_unreadable_whea_source() {
-        let detail =
-            sensor_gap_detail("cpu_die_sensor", &[], false, "unavailable", Some(false), Some(false));
+        let detail = sensor_gap_detail("cpu_die_sensor", &[], false, "unavailable", &live_access());
         assert!(detail.contains("could not be opened"));
         assert!(detail.contains("not a clean WHEA result"));
     }
 
     #[test]
     fn all_sensors_read_reports_no_gap() {
-        let detail = sensor_gap_detail("cpu_die_sensor", &[], false, "ok", Some(false), Some(false));
+        let detail = sensor_gap_detail("cpu_die_sensor", &[], false, "ok", &live_access());
         assert_eq!(detail, "CPU die sensor, every voltage rail and WHEA counters all read.");
+    }
+
+    /// With nothing to read the hardware, the gap names why and what was tried,
+    /// instead of guessing from the driver-protection flags.
+    #[test]
+    fn detail_reports_every_rejected_backend_when_none_opened() {
+        let detail = sensor_gap_detail("unavailable", &[], true, "ok", &no_access());
+        assert!(detail.contains("No low-level sensor backend is available"));
+        assert!(detail.contains("Tried:"));
+        assert!(detail.contains("WinRing0 (legacy) — blocked by policy (err 1275)"));
+    }
+
+    /// A backend that dies mid-run is distinct from one that never opened.
+    #[test]
+    fn detail_distinguishes_a_lost_backend_from_one_that_never_opened() {
+        let lost = AccessStatus {
+            lost: Some("device stopped answering (err 1)".into()),
+            ..live_access()
+        };
+        let detail = sensor_gap_detail("unavailable", &[], true, "ok", &lost);
+        assert!(detail.contains("and then stopped"));
+        assert!(detail.contains("device stopped answering"));
+        assert!(!detail.contains("Tried:"), "a lost backend did open, so nothing was rejected");
+    }
+
+    /// A live backend serving one sensor but not the other is a hardware
+    /// coverage gap, not a driver block — the two paths are independent.
+    #[test]
+    fn detail_blames_coverage_not_the_backend_when_one_sensor_reads() {
+        let detail = sensor_gap_detail("unavailable", &[], false, "ok", &live_access());
+        assert!(detail.contains("the other sensor read"));
+        assert!(detail.contains("not a backend block"));
     }
 }

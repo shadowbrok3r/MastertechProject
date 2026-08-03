@@ -595,6 +595,28 @@ pub fn get_local_seb_data() -> anyhow::Result<LocalSebData, anyhow::Error> {
     }
 }
 
+/// Resolves an existing customer by the unique-indexed `cust_code`/`email`.
+async fn find_customer_by_identity(customer: &CustomerData) -> Option<RecordId> {
+    let query = r#"
+        SELECT VALUE id FROM customer WHERE
+            (cust_code == $cust_code AND cust_code != "") OR
+            (email == $email AND email != "")
+        LIMIT 1
+    "#;
+    match db()
+        .query(query)
+        .bind(("cust_code", customer.cust_code.clone()))
+        .bind(("email", customer.email.clone()))
+        .await
+    {
+        Ok(mut response) => response.take(0).unwrap_or_default(),
+        Err(e) => {
+            warn!("find_customer_by_identity failed: {e:?}");
+            None
+        }
+    }
+}
+
 pub async fn create_full_task_payload(
     mut ticket_data: TicketData,
     customer_data: CustomerData,
@@ -681,42 +703,52 @@ pub async fn create_full_task_payload(
     task_data.priority = Priority::Normal;
     task_data.assignee = assignee_id;
 
-    ticket_data.customer = Some(customer_id.clone());
-    ticket_data.computer = Some(computer_id.clone());
-
     info!("schema/utilities.rs -> cust_record: {customer_data:?}");
     let update_customer: std::result::Result<Option<Record>, surrealdb::Error> = db()
         .upsert(customer_id.clone())
         .content(customer_data.clone())
         .await;
     
-    match update_customer {
+    // A cust_code/email collision leaves the requested id absent, so link to the row that persisted.
+    let customer_id = match update_customer {
         Ok(record) => {
             log::info!("Updated Customer {record:?}");
-            // Always ensure computer has the customer linked
-            if let Some(record_id) = record {
-                computer_data.customer = Some(record_id.id);
-            } else {
-                computer_data.customer = Some(customer_id.clone());
+            record.map(|r| r.id).unwrap_or(customer_id)
+        }
+        Err(e) => match find_customer_by_identity(&customer_data).await {
+            Some(existing) => {
+                log::warn!("Customer upsert failed ({e:?}); reusing existing {existing:?}");
+                existing
+            }
+            None => {
+                return TaskCreationResult::Error {
+                    message: format!(
+                        "Failed to write customer record, and no existing row matches its cust_code/email: {e}"
+                    ),
+                }
             }
         },
-        Err(e) => {
-            log::warn!("Error updating Customer {e:?}");
-            // Even if customer update failed (e.g., duplicate email),
-            // we still need to link the computer to the customer
-            computer_data.customer = Some(customer_id.clone());
-        }
-    }
+    };
+
+    computer_data.customer = Some(customer_id.clone());
+    ticket_data.customer = Some(customer_id.clone());
 
     if send_specs {
         let create_computer_record: std::result::Result<Option<Record>, surrealdb::Error> = db()
-            .upsert(computer_id)
+            .upsert(computer_id.clone())
             .content(computer_data)
             .await;
         match create_computer_record {
             Ok(record) => info!("schema/utilities.rs -> create_computer_record: {record:?}"),
             Err(e) => return TaskCreationResult::Error { message: format!("Failed to create computer record: {e}") },
         }
+        ticket_data.computer = Some(computer_id);
+    } else {
+        // No computer row is written without specs; keep the link only if it already resolves.
+        ticket_data.computer = match ticket_data.computer.clone() {
+            Some(id) if matches!(record_exists(id.clone()).await, Ok(Some(true))) => Some(id),
+            _ => None,
+        };
     }
 
     info!("schema/utilities.rs -> ticket record: {ticket_data:?}");
@@ -841,20 +873,27 @@ pub async fn create_and_link_records(
         .upsert(customer_id.clone())
         .content(customer_data.clone())
         .await;
-    match update_customer {
+    // A cust_code/email collision leaves the requested id absent, so link to the row that persisted.
+    let customer_id = match update_customer {
         Ok(record) => {
             log::info!("Updated Customer {record:?}");
-            if let Some(record_id) = record {
-                computer_data.customer = Some(record_id.id);
-            } else {
-                computer_data.customer = Some(customer_id.clone());
+            record.map(|r| r.id).unwrap_or(customer_id)
+        }
+        Err(e) => match find_customer_by_identity(&customer_data).await {
+            Some(existing) => {
+                log::warn!("Customer upsert failed ({e:?}); reusing existing {existing:?}");
+                existing
             }
-        }
-        Err(e) => {
-            log::warn!("Error updating Customer {e:?}");
-            computer_data.customer = Some(customer_id.clone());
-        }
-    }
+            None => {
+                return TaskCreationResult::Error {
+                    message: format!(
+                        "Failed to write customer record, and no existing row matches its cust_code/email: {e}"
+                    ),
+                }
+            }
+        },
+    };
+    computer_data.customer = Some(customer_id.clone());
 
     if super::entity_link::computer_has_minimal_hardware(&computer_data) {
         let create_computer_record: std::result::Result<Option<Record>, surrealdb::Error> =
