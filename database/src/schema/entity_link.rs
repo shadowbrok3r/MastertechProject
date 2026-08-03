@@ -34,6 +34,17 @@ pub fn parse_record_id(s: &str, table: &'static str) -> RecordId {
     RecordId::new(table, key)
 }
 
+/// Lookup candidates for a key: string form first, then number form for canonical integers.
+fn record_id_candidates(table: &'static str, key: &str) -> Vec<RecordId> {
+    let mut ids = vec![RecordId::new(table, key)];
+    if let Ok(n) = key.parse::<i64>() {
+        if n.to_string() == key {
+            ids.push(RecordId::new(table, n));
+        }
+    }
+    ids
+}
+
 /// Canonical computer record key for a connected Mastertech client.
 pub fn canonical_computer_id(connection_string: &str) -> RecordId {
     RecordId::new(COMPUTER_TABLE, connection_string.trim())
@@ -50,25 +61,22 @@ pub async fn resolve_computer_id(
     input: &str,
     hint_connection_string: Option<&str>,
 ) -> Result<RecordId, String> {
-    let mut candidates = Vec::new();
-    let parsed = parse_record_id(input, COMPUTER_TABLE);
-    candidates.push(parsed.clone());
+    let mut candidates: Vec<RecordId> = Vec::new();
+    let parsed_key = parse_record_id(input, COMPUTER_TABLE).key_string();
+    if !parsed_key.is_empty() {
+        candidates.extend(record_id_candidates(COMPUTER_TABLE, &parsed_key));
+    }
 
-    if let Some(cs) = hint_connection_string.filter(|s| !s.is_empty()) {
+    // Also covers a bare hash input, whose canonical key is HOST:hash9.
+    if let Some(cs) = hint_connection_string.map(str::trim).filter(|s| !s.is_empty()) {
         let canonical = canonical_computer_id(cs);
         if !candidates.iter().any(|c| c.key_string() == canonical.key_string()) {
             candidates.push(canonical);
         }
-        // Bare hash suffix match: DESKTOP-X:abc from input "abc" or "computer:abc"
-        if !parsed.key_string().contains(':') {
-            if cs.ends_with(&format!(":{}", parsed.key_string())) {
-                // already have canonical
-            } else if let Some((_host, hash)) = cs.rsplit_once(':') {
-                if hash == parsed.key_string() {
-                    candidates.push(canonical_computer_id(cs));
-                }
-            }
-        }
+    }
+
+    if candidates.is_empty() {
+        return Err("no computer id supplied (pass computer_id or connection_string)".to_string());
     }
 
     for rid in &candidates {
@@ -78,20 +86,25 @@ pub async fn resolve_computer_id(
     }
 
     Err(format!(
-        "no computer row found for {input:?} (tried {:?})",
-        candidates
-            .iter()
-            .map(|c| c.key_string())
-            .collect::<Vec<_>>()
+        "no computer row exists for {input:?}; searched keys {:?}. Mint the canonical row with \
+         link_connected_client {{ connection_string, customer_id }}.",
+        candidates.iter().map(RecordIdExt::key_string).collect::<Vec<_>>()
     ))
 }
 
-pub async fn resolve_customer_id(input: &str) -> Result<RecordId, String> {
-    let rid = parse_record_id(input, CUSTOMER_TABLE);
-    match record_exists(rid.clone()).await {
-        Ok(Some(true)) => Ok(rid),
-        _ => Err(format!("no customer row found for {input:?}")),
+/// Resolve an id param to an existing row, trying the string key then the number key.
+pub async fn resolve_record_id(input: &str, table: &'static str) -> Result<RecordId, String> {
+    let key = parse_record_id(input, table).key_string();
+    for rid in record_id_candidates(table, &key) {
+        if matches!(record_exists(rid.clone()).await, Ok(Some(true))) {
+            return Ok(rid);
+        }
     }
+    Err(format!("no {table} row found for {input:?}"))
+}
+
+pub async fn resolve_customer_id(input: &str) -> Result<RecordId, String> {
+    resolve_record_id(input, CUSTOMER_TABLE).await
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -175,8 +188,10 @@ pub enum LinkValidationIssue {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinkBundle {
     pub connection_string: Option<String>,
-    pub customer_id: RecordId,
-    pub computer_id: RecordId,
+    /// None resolves from `connected_client.customer`, else `computer.customer`.
+    pub customer_id: Option<RecordId>,
+    /// None resolves to the canonical `computer:HOST:hash9`.
+    pub computer_id: Option<RecordId>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -192,38 +207,47 @@ pub async fn validate_link_bundle(bundle: &LinkBundle) -> LinkValidationResult {
     let mut resolved_customer_id = None;
     let mut resolved_computer_id = None;
 
-    match record_exists(bundle.customer_id.clone()).await {
-        Ok(Some(true)) => resolved_customer_id = Some(bundle.customer_id.clone()),
-        _ => issues.push(LinkValidationIssue::CustomerNotFound),
+    let cs = bundle
+        .connection_string
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let graph = match cs {
+        Some(cs) => load_connected_client_graph(cs).await.ok(),
+        None => None,
+    };
+
+    let requested_customer = bundle.customer_id.clone().or_else(|| {
+        let g = graph.as_ref()?;
+        g.client
+            .as_ref()
+            .and_then(|c| c.customer.clone())
+            .or_else(|| g.computer.as_ref().and_then(|c| c.customer.clone()))
+    });
+
+    match requested_customer {
+        Some(cust) => match resolve_customer_id(&cust.key_string()).await {
+            Ok(rid) => resolved_customer_id = Some(rid),
+            Err(_) => issues.push(LinkValidationIssue::CustomerNotFound),
+        },
+        None => issues.push(LinkValidationIssue::MissingCustomer),
     }
 
-    match resolve_computer_id(
-        &bundle.computer_id.key_string(),
-        bundle.connection_string.as_deref(),
-    )
-    .await
-    {
+    let computer_input = bundle
+        .computer_id
+        .as_ref()
+        .map(RecordIdExt::key_string)
+        .unwrap_or_default();
+    match resolve_computer_id(&computer_input, cs).await {
         Ok(rid) => {
             resolved_computer_id = Some(rid.clone());
-            if let Some(cs) = bundle.connection_string.as_deref() {
-                if !cs.is_empty() && rid.key_string() != cs.trim() {
-                    issues.push(LinkValidationIssue::ComputerKeyNotCanonical {
-                        expected_connection_string: cs.trim().to_string(),
-                        actual_key: rid.key_string(),
-                    });
-                }
-            }
-            if !is_canonical_computer_key(&rid.key_string()) {
-                if let Some(cs) = bundle.connection_string.as_deref().filter(|s| !s.is_empty()) {
+            if let Some(cs) = cs {
+                if rid.key_string() != cs || !is_canonical_computer_key(cs) {
                     issues.push(LinkValidationIssue::ComputerKeyNotCanonical {
                         expected_connection_string: cs.to_string(),
                         actual_key: rid.key_string(),
                     });
                 }
-            }
-            match record_exists(rid.clone()).await {
-                Ok(Some(true)) => {}
-                _ => issues.push(LinkValidationIssue::ComputerNotFound),
             }
         }
         Err(_) => issues.push(LinkValidationIssue::ComputerNotFound),
@@ -246,23 +270,19 @@ pub async fn validate_link_bundle(bundle: &LinkBundle) -> LinkValidationResult {
         }
     }
 
-    if let Some(cs) = bundle.connection_string.as_deref().filter(|s| !s.is_empty()) {
-        if let Ok(graph) = load_connected_client_graph(cs).await {
-            if let Some(client) = graph.client {
-                if let Some(ref client_comp) = client.computer {
-                    if let Some(ref resolved) = resolved_computer_id {
-                        if client_comp.key_string() != resolved.key_string() {
-                            issues.push(LinkValidationIssue::ConnectedClientComputerMismatch {
-                                connection_string: cs.to_string(),
-                                client_computer: client_comp.key_string(),
-                                requested_computer: resolved.key_string(),
-                            });
-                        }
-                    }
-                } else if resolved_computer_id.is_some() {
-                    issues.push(LinkValidationIssue::MissingComputer);
-                }
+    if let (Some(cs), Some(client)) = (cs, graph.as_ref().and_then(|g| g.client.as_ref())) {
+        match (&client.computer, &resolved_computer_id) {
+            (Some(client_comp), Some(resolved))
+                if client_comp.key_string() != resolved.key_string() =>
+            {
+                issues.push(LinkValidationIssue::ConnectedClientComputerMismatch {
+                    connection_string: cs.to_string(),
+                    client_computer: client_comp.key_string(),
+                    requested_computer: resolved.key_string(),
+                });
             }
+            (None, Some(_)) => issues.push(LinkValidationIssue::MissingComputer),
+            _ => {}
         }
     }
 
@@ -571,6 +591,7 @@ pub async fn link_connected_client_record(
 mod tests {
     use super::*;
     use crate::schema::{TASK_TABLE, TICKET_TABLE};
+    use surrealdb::types::RecordIdKey;
 
     #[test]
     fn strip_surreal_key_quotes_round_trip() {
@@ -595,6 +616,21 @@ mod tests {
         assert_eq!(
             parse_record_id("service_order:`52918345`", TICKET_TABLE).key_string(),
             "52918345"
+        );
+    }
+
+    #[test]
+    fn record_id_candidates_prefers_string_then_number() {
+        let numeric = record_id_candidates(CUSTOMER_TABLE, "51944");
+        assert_eq!(numeric.len(), 2);
+        assert!(matches!(numeric[0].key, RecordIdKey::String(_)));
+        assert!(matches!(numeric[1].key, RecordIdKey::Number(51944)));
+
+        // Leading zeros and non-integers have no number form to fall back to.
+        assert_eq!(record_id_candidates(CUSTOMER_TABLE, "0051944").len(), 1);
+        assert_eq!(
+            record_id_candidates(COMPUTER_TABLE, "DESKTOP-36JF8OV:e765bf42b").len(),
+            1
         );
     }
 

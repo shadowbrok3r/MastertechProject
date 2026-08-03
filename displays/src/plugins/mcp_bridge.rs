@@ -239,6 +239,12 @@ use database::schema::entity_link::{repair_connection_links, validate_link_bundl
 use database::schema::RecordIdExt;
 use std::time::Duration;
 
+/// Parse an id param, treating blank as "infer from connection_string".
+fn optional_record_id(input: &str, table: &'static str) -> Option<database::schema::RecordId> {
+    let trimmed = input.trim();
+    (!trimmed.is_empty()).then(|| parse_record_id(trimmed, table))
+}
+
 async fn resolve_entity_links_mcp(
     connection_string: Option<String>,
     customer_id_str: &str,
@@ -246,19 +252,17 @@ async fn resolve_entity_links_mcp(
 ) -> Result<(database::schema::RecordId, database::schema::RecordId), ErrorData> {
     let bundle = LinkBundle {
         connection_string: connection_string.clone(),
-        customer_id: parse_record_id(customer_id_str, database::schema::CUSTOMER_TABLE),
-        computer_id: parse_record_id(computer_id_str, database::schema::COMPUTER_TABLE),
+        customer_id: optional_record_id(customer_id_str, database::schema::CUSTOMER_TABLE),
+        computer_id: optional_record_id(computer_id_str, database::schema::COMPUTER_TABLE),
     };
     let validation = validate_link_bundle(&bundle).await;
     if validation.ok {
-        return Ok((
-            validation
-                .resolved_customer_id
-                .unwrap_or(bundle.customer_id),
-            validation
-                .resolved_computer_id
-                .unwrap_or(bundle.computer_id),
-        ));
+        if let (Some(cust), Some(comp)) = (
+            validation.resolved_customer_id.clone(),
+            validation.resolved_computer_id.clone(),
+        ) {
+            return Ok((cust, comp));
+        }
     }
 
     if entity_link_ui_active() {
@@ -316,14 +320,14 @@ async fn require_record(
     table: &'static str,
     param_name: &str,
 ) -> Result<database::schema::RecordId, ErrorData> {
-    let rid = parse_record_id(input, table);
-    match database::schema::utilities::record_exists(rid.clone()).await {
-        Ok(Some(true)) => Ok(rid),
-        _ => Err(ErrorData::invalid_params(
-            format!("{param_name} '{input}' does not match an existing {table} record"),
-            None,
-        )),
-    }
+    database::schema::entity_link::resolve_record_id(input, table)
+        .await
+        .map_err(|_| {
+            ErrorData::invalid_params(
+                format!("{param_name} '{input}' does not match an existing {table} record"),
+                None,
+            )
+        })
 }
 
 // ─── Local script run request routing ─────────────────────────────────────────
@@ -1134,9 +1138,9 @@ pub struct FetchPluginParams {
 pub struct ValidateConnectionLinksParams {
     #[schemars(description = "connected_client.connection_string (HOST:hash9)")]
     pub connection_string: String,
-    #[schemars(description = "Optional customer id to validate. Accepts `customer:key`, bare key, or SurrealQL `customer:`key`` (backticks when key contains `:`).")]
+    #[schemars(description = "Optional customer id to validate. Omit to use the customer the connected_client (or its computer) already points at. Accepts `customer:key`, bare key, or SurrealQL `customer:`key`` (backticks when key contains `:`).")]
     pub customer_id: Option<String>,
-    #[schemars(description = "Optional computer id to validate. Accepts `computer:key`, bare key, or SurrealQL `computer:`key`` (backticks when key contains `:`).")]
+    #[schemars(description = "Optional computer id to validate. Omit to use the canonical `computer:HOST:hash9` for connection_string. Accepts `computer:key`, bare key, or SurrealQL `computer:`key`` (backticks when key contains `:`).")]
     pub computer_id: Option<String>,
 }
 
@@ -4494,7 +4498,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "validate_connection_links",
-        description = "Validate customer/computer FK health for a connected client before create_diagnostic_session. Returns issues and resolved canonical ids when valid."
+        description = "Validate customer/computer FK health for a connected client before create_diagnostic_session. Returns issues and resolved canonical ids when valid. Call with connection_string alone to check the links the client already carries; pass customer_id/computer_id only to validate specific ids against it."
     )]
     async fn validate_connection_links(
         &self,
@@ -4502,14 +4506,14 @@ impl PluginToolProvider {
     ) -> Result<CallToolResult, ErrorData> {
         let bundle = LinkBundle {
             connection_string: Some(p.connection_string.clone()),
-            customer_id: parse_record_id(
-                &p.customer_id.unwrap_or_default(),
-                database::schema::CUSTOMER_TABLE,
-            ),
-            computer_id: parse_record_id(
-                &p.computer_id.unwrap_or_default(),
-                database::schema::COMPUTER_TABLE,
-            ),
+            customer_id: p
+                .customer_id
+                .as_deref()
+                .and_then(|s| optional_record_id(s, database::schema::CUSTOMER_TABLE)),
+            computer_id: p
+                .computer_id
+                .as_deref()
+                .and_then(|s| optional_record_id(s, database::schema::COMPUTER_TABLE)),
         };
         let validation = validate_link_bundle(&bundle).await;
         Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
