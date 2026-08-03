@@ -477,9 +477,8 @@ pub fn show_rail_meters(
     if snapshot.rails().is_empty() {
         caption(
             ui,
-            "No board rails in this snapshot. Locally they need the WinRing0 driver for the \
-             SuperIO chip (Memory Integrity blocks it); remote client telemetry does not carry \
-             rails yet.",
+            "No board rails in this snapshot. Locally they need a kernel-mode sensor backend to \
+             reach the SuperIO chip; remote client telemetry does not carry rails yet.",
         );
         return;
     }
@@ -780,8 +779,8 @@ pub fn show_voltages(ui: &mut egui::Ui, voltages: &[VoltageReading]) {
     if voltages.is_empty() {
         empty_state(
             ui,
-            "No board rails in this snapshot. Locally they need the WinRing0 driver for the SuperIO \
-             chip (Memory Integrity blocks it); remote client telemetry does not carry rails yet.",
+            "No board rails in this snapshot. Locally they need a kernel-mode sensor backend to \
+             reach the SuperIO chip; remote client telemetry does not carry rails yet.",
         );
         return;
     }

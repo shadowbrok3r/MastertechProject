@@ -178,7 +178,8 @@ CPU / memory / disk / GPU **stressor primitives** + Windows telemetry (thermal, 
 |------|---------|
 | `src/stressors/` | Individual stressors (cpu, memory, gpu_*, disk, …) |
 | `src/telemetry/` | Sensor collectors |
-| `drivers/` | Supporting driver assets (e.g. WinRing0-related) |
+| `src/lowlevel/` | Kernel-mode access traits + per-backend implementations |
+| `drivers/` | Driver assets embedded by a backend (legacy WinRing0 today) |
 | `examples/` | Standalone stress demos |
 
 #### `stress-runner/`

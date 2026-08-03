@@ -1231,10 +1231,12 @@ impl HomePage {
                         ),
                     )
                     .on_hover_text(
-                        "Turns OFF Memory Integrity (HVCI) and the Vulnerable Driver Blocklist so \
-                         the WinRing0 sensor driver can load and report CPU temperature and board \
-                         voltages.\nLowers this machine's security posture. Requires a reboot. \
-                         Revert it before the machine leaves the bench.",
+                        "Turns OFF Memory Integrity (HVCI) and the Vulnerable Driver Blocklist. \
+                         Only the legacy WinRing0 sensor backend needs this — a signed backend \
+                         reads CPU temperature and board voltages with protections ON, so check \
+                         the client's reported sensor backend first.\nLowers this machine's \
+                         security posture. Requires a reboot. Revert it before the machine leaves \
+                         the bench.",
                     )
                     .clicked()
                 {
@@ -1322,8 +1324,10 @@ impl HomePage {
                         .strong(),
                     );
                     ui.label(
-                        "It lowers this machine's security posture so the WinRing0 sensor driver \
-                         can load and report CPU temperature and board voltages.",
+                        "It lowers this machine's security posture so the legacy WinRing0 sensor \
+                         backend can load. This is a fallback: only do it when the client's \
+                         telemetry reports no signed backend available and you still need CPU \
+                         temperature or board voltages.",
                     );
                     ui.label(
                         "The change only takes effect after a reboot. Re-enable protections and \

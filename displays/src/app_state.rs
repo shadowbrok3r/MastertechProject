@@ -280,9 +280,9 @@ pub struct SharedContext {
     #[serde(skip)]
     pub ui_actions_rx: Receiver<TaskUiActions>,
     #[serde(skip)]
-    pub settings_sender: Sender<Style>,
+    pub settings_sender: Sender<crate::ui_tools::SavedTheme>,
     #[serde(skip)]
-    pub settings_receiver: Receiver<Style>,
+    pub settings_receiver: Receiver<crate::ui_tools::SavedTheme>,
 
     #[serde(skip)]
     pub toasts: Toasts,
@@ -591,6 +591,9 @@ pub struct SharedContext {
 impl SharedContext {
     pub fn new(cc: &CreationContext<'_>) -> Self {
         setup_custom_fonts(&cc.egui_ctx);
+        // Themes that ask for real backdrop blur need the grab-pass backend built against the
+        // host's GL context; without it their glass degrades to flat tinted panes.
+        crate::ui_tools::glass_backdrop::install(cc);
         let (ui_actions_tx, ui_actions_rx) = crossbeam::channel::unbounded::<TaskUiActions>();
         let (db_tx, db_rx) = channel::unbounded();
         let (initial_tasks_tx, initial_tasks_rx) = channel::bounded::<Vec<LiveTaskPayload>>(2);
@@ -625,7 +628,8 @@ impl SharedContext {
         let (notification_tx, notification_rx) = channel::unbounded::<Vec<Notification>>();
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let tur_channel = PrestashopPayload::create_unbounded_channel();
-        let (settings_sender, settings_receiver) = crossbeam::channel::bounded::<Style>(1);
+        let (settings_sender, settings_receiver) =
+            crossbeam::channel::bounded::<crate::ui_tools::SavedTheme>(1);
         let seb_channel = <Vec<CarboniteResponse>>::create_unbounded_channel();
         let specs_channel = <database::schema::prestashop::order::ExtractedOrderSpecs>::create_unbounded_channel();
         let (app_state_tx, app_state_rx) = channel::unbounded::<AppState>();

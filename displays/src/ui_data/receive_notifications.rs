@@ -41,6 +41,14 @@ impl SharedContext {
                 continue;
             }
 
+            // Drop connect notifications about this process's own client row.
+            if crate::is_self_connect_notification(
+                &notification.notification_type,
+                &notification.notification_description,
+            ) {
+                continue;
+            }
+
             // Test text
             let mut inputs = BTreeSet::new();
             for task in self.tasks.iter() {
@@ -128,7 +136,13 @@ impl SharedContext {
         if let Ok(notifications) = self.notification_rx.try_recv() {
             let notifications: Vec<_> = notifications
                 .into_iter()
-                .filter(|n| n.notification_type != "live_query_check")
+                .filter(|n| {
+                    n.notification_type != "live_query_check"
+                        && !crate::is_self_connect_notification(
+                            &n.notification_type,
+                            &n.notification_description,
+                        )
+                })
                 .collect();
             self.notification_center.set_notifications(notifications);
         }

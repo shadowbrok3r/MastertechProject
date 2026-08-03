@@ -22,12 +22,15 @@ pub mod relay_control;
 pub mod remote_desktop;
 pub mod remote_exec;
 pub mod remote_self_update;
+pub mod window_info;
 
 impl eframe::App for app_state::MasterTechApp {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         // One-time: register PluginManager bridge with egui
         if !self.context.plugin_manager_registered {
             self.context.plugin_manager_registered = true;
+            // Lets an arriving arm wake an idle UI so the consent banner can paint.
+            remote_exec::set_repaint_handle(ctx.clone());
 
             let (egui_frame_rx, egui_input_tx) = {
                 let mut mgr = self.context.plugin_manager.write().unwrap();
@@ -76,6 +79,10 @@ impl eframe::App for app_state::MasterTechApp {
             });
         }
 
+        // Read-and-clear the previous frame's frost result; skipping frames lets a stale
+        // Composited mask a later Failed.
+        displays::ui_tools::glass_backdrop::poll_outcome();
+
         self.receive_logic(ctx, frame);
 
         // Pump all admin client session transports in the logic phase.
@@ -105,6 +112,10 @@ impl eframe::App for app_state::MasterTechApp {
         ui.options_mut(|options| {
             options.max_passes = std::num::NonZeroUsize::new(2).unwrap();
         });
+
+        // Before any floating surface paints: one frosted backdrop per open window, so a glass
+        // theme's translucent window fill has a blurred pane under it instead of sharp content.
+        displays::ui_tools::glass_backdrop::frost_open_windows(ui.ctx());
 
         self.receive_ui(ui.ctx(), frame);
         // Before any tab content: painting this is what admits RemoteExec jobs.
@@ -156,8 +167,12 @@ impl eframe::App for app_state::MasterTechApp {
     /// :9101, MCP servers on :9001/:9003/:9004) breaks out of its `accept`
     /// before the runtime starts dropping. Without this the runtime drop can
     /// hang on Windows IOCP waits and keep the launching terminal alive.
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
         log::info!("MasterTechApp::on_exit -> signaling global shutdown to background tasks");
+        // Free the backdrop-blur GL objects while the context is still current.
+        if let Some(gl) = gl {
+            displays::ui_tools::glass_backdrop::shutdown(gl);
+        }
         displays::signal_shutdown();
     }
 

@@ -178,7 +178,7 @@ pub struct RunVerdictDto {
     pub throughput_unit: Option<String>,
     pub tdr_count: u32,
     pub max_gpu_temp_c: Option<f32>,
-    /// Lowest +12V rail reading of the run (Windows + `winring0-thermal` only).
+    /// Lowest +12V rail reading of the run (Windows + a low-level sensor backend only).
     /// UNCALIBRATED: the divider ratio and channel map are assumed, not measured.
     /// Use as a droop trend across runs on the same board, never as an absolute
     /// voltage or a pass/fail threshold.

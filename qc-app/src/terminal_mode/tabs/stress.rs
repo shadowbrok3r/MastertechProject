@@ -1531,7 +1531,7 @@ impl<'a> StressTab<'a> {
 
         if self.latest_thermals.is_empty() && self.latest_gpu_temps.is_empty() {
             f.render_widget(
-                Paragraph::new("No sensors yet. CPU/board temps need WinRing0 (run elevated).")
+                Paragraph::new("No sensors yet. CPU/board temps need a sensor backend (run elevated).")
                     .wrap(Wrap { trim: true })
                     .style(Style::default().fg(THEME.text_muted)),
                 inner,

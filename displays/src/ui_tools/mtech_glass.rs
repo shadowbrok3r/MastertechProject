@@ -11,6 +11,7 @@ use eframe::egui::style::{
 use eframe::egui::{Color32, CornerRadius, Margin, Shadow, Stroke, Vec2, Visuals};
 
 use super::carl_dark::Aesthetix;
+use super::glass_backdrop::GlassParams;
 
 pub struct MtechGlass;
 
@@ -34,18 +35,18 @@ const WIDGET_RADIUS: u8 = 6;
 const WINDOW_RADIUS: u8 = 8;
 
 /// Lifts a color toward white in gamma space.
-fn lift(color: Color32, t: f32) -> Color32 {
+pub(super) fn lift(color: Color32, t: f32) -> Color32 {
     let ch = |v: u8| (v as f32 + (255.0 - v as f32) * t).round().clamp(0.0, 255.0) as u8;
     Color32::from_rgb(ch(color.r()), ch(color.g()), ch(color.b()))
 }
 
 /// Translucent pane of the given tint.
-fn pane(tint: Color32, opacity: f32) -> Color32 {
+pub(super) fn pane(tint: Color32, opacity: f32) -> Color32 {
     tint.gamma_multiply(opacity)
 }
 
 /// Pane pre-composited opaque over the given base so it occludes what is under it.
-fn pane_over(tint: Color32, opacity: f32, base: Color32) -> Color32 {
+pub(super) fn pane_over(tint: Color32, opacity: f32, base: Color32) -> Color32 {
     let p = pane(tint, opacity);
     let inv = 1.0 - p.a() as f32 / 255.0;
     Color32::from_rgb(
@@ -143,8 +144,26 @@ pub fn glassify(style: &eframe::egui::Style) -> eframe::egui::Style {
     out
 }
 
+/// The backdrop-blur material that matches a glassified style: a wide blur under a film cut from
+/// the style's own window fill, thin enough that the blurred backdrop is what reads, rounded to
+/// the style's own menu corners.
+///
+/// This is what turns [`glassify`]'s color treatment into real glass — the fills it produces are
+/// translucent, and this is the blur they sit on.
+pub fn glass_params_for_style(style: &egui::Style) -> GlassParams {
+    let v = &style.visuals;
+    let [r, g, b, _] = v.window_fill.to_srgba_unmultiplied();
+    GlassParams {
+        enabled: true,
+        blur_radius: 24.0,
+        tint: Color32::from_rgba_unmultiplied(r, g, b, 72),
+        corner_radius: v.menu_corner_radius.nw as f32,
+        presence: 1.0,
+    }
+}
+
 /// Outline brighter and more opaque than the pane it wraps.
-fn edge(tint: Color32, opacity: f32) -> Color32 {
+pub(super) fn edge(tint: Color32, opacity: f32) -> Color32 {
     lift(tint, EDGE_LIFT).gamma_multiply(opacity)
 }
 
@@ -247,7 +266,7 @@ fn glass_visuals() -> Visuals {
     }
 }
 
-fn glass_text_styles() -> std::collections::BTreeMap<egui::TextStyle, egui::FontId> {
+pub(super) fn glass_text_styles() -> std::collections::BTreeMap<egui::TextStyle, egui::FontId> {
     use egui::FontFamily::{Monospace, Proportional};
     [
         (egui::TextStyle::Small, egui::FontId::new(9.0, Proportional)),
@@ -259,7 +278,7 @@ fn glass_text_styles() -> std::collections::BTreeMap<egui::TextStyle, egui::Font
     .into()
 }
 
-fn glass_spacing() -> Spacing {
+pub(super) fn glass_spacing() -> Spacing {
     Spacing {
         item_spacing: Vec2::splat(3.0),
         window_margin: Margin::same(6),
@@ -304,7 +323,7 @@ fn glass_scroll() -> ScrollStyle {
     }
 }
 
-fn glass_interaction() -> Interaction {
+pub(super) fn glass_interaction() -> Interaction {
     Interaction {
         interact_radius: 5.0,
         resize_grab_radius_side: 3.0,

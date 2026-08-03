@@ -12,7 +12,7 @@
 //!   * **WHEA**    — Windows machine-check counters (when readable).
 //!   * **Processes** — top-N by CPU% then RAM.
 //!   * **GPUs**    — vendor / name / temp; vendor-specific live usage TBD.
-//!   * **Temps**   — CPU (MSR/SMU via WinRing0) + NVMe/SATA disk temps.
+//!   * **Temps**   — CPU (MSR/SMU via the low-level backend) + NVMe/SATA disk temps.
 //!
 //! The widget is `Sync + Send`-free by design (egui ownership) but its
 //! internal history buffer is updated in place from [`HwMonitor::update`],

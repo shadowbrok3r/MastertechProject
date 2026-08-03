@@ -1,0 +1,19 @@
+[package]
+name = "backdrop-blur-core"
+version = "0.3.0"
+description = "Backend-agnostic seam, material/geometry vocabulary, and error model for backdrop blur (frosted glass). The one crate with no GPU dependency."
+readme = "README.md"
+edition = "2024"
+rust-version = "1.92"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/abdu-benayad/backdrop-blur"
+authors = ["Abdu Benayad <abdu.benayad@gmail.com>"]
+keywords = ["blur", "backdrop", "frosted-glass", "vibrancy", "gpu"]
+categories = ["graphics", "gui", "rendering", "wasm"]
+publish = false
+
+[dependencies]
+# Structured errors only. No GPU dependency lives here — core is pure, headless, and
+# `#![forbid(unsafe_code)]`, so it cannot name `wgpu::*`/`glow::*` error types; BlurError
+# carries a boxed `dyn Error + Send + Sync` source instead (DESIGN §4.5).
+thiserror = "2"

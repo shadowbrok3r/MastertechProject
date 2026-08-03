@@ -126,6 +126,22 @@ impl EnhancedAiPlayground {
                     .to_string(),
                 None => "Run an initial diagnostic of this machine using the Mastertech tools.".to_string(),
             };
+            // ZeroClaw route: env-configured gateway dispatches the diagnostician agent.
+            #[cfg(feature = "tokio")]
+            {
+                if crate::ai::mcp_chat::zeroclaw_gateway().is_some() {
+                    let full = match &connection_string {
+                        Some(cs) => format!("DIAGNOSE mode. Target client connection_string = {cs}. {prompt}"),
+                        None => format!("DIAGNOSE mode, local host. {prompt}"),
+                    };
+                    let tx = self.response_tx.clone();
+                    let tid = thread_id.clone();
+                    PlatformSpawner::spawn(async move {
+                        crate::ai::mcp_chat::zeroclaw_diagnose(full, tid, tx).await;
+                    });
+                    return;
+                }
+            }
             self.claude.reset();
             self.claude_thread = Some(thread_id.clone());
             self.claude.send(prompt, connection_string, thread_id, self.response_tx.clone());
