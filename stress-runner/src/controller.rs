@@ -90,6 +90,26 @@ pub enum RunPlan {
     },
 }
 
+impl RunPlan {
+    /// True when every stressor in the plan is a GPU stressor, so the run's
+    /// `target_component` should be the GPU rather than the CPU.
+    ///
+    /// Deliberately "all", not "any": `Psu`, `PsuTransient` and `Combined`
+    /// drive CPU and GPU together and `Stressor::is_gpu` already excludes
+    /// them, so a mixed plan keeps the CPU as its target.
+    pub fn is_gpu_only(&self) -> bool {
+        match self {
+            Self::Single { stressor, .. } => stressor.is_gpu(),
+            Self::Scenario { stages, .. } => {
+                !stages.is_empty() && stages.iter().all(|s| s.stressor.is_gpu())
+            }
+            Self::Concurrent { lanes, .. } => {
+                !lanes.is_empty() && lanes.iter().all(|l| l.stressor.is_gpu())
+            }
+        }
+    }
+}
+
 /// Declarative description of one stress run.  Identifying fields
 /// (`computer`, `tool`, `target_kind`) are required; everything else is
 /// optional and defaults to None / empty.
@@ -375,15 +395,22 @@ fn worker(
     // (compare_to_baseline, hardware_test_baseline view, the QC UI's
     // "history for this hardware" panel) have no way to interpret the
     // results. If the middleware can't link anything, refuse to start.
-    let (cpu_component, all_components, hw_notices) =
-        crate::hardware::ensure_components_for_run(&telemetry);
+    let resolved = crate::hardware::ensure_components_for_run(&telemetry);
     if spec.target_component.is_none() {
-        spec.target_component = cpu_component;
+        // A GPU-only plan must be attributed to the GPU, otherwise every GPU
+        // result files itself against the CPU component and the card's own
+        // history stays empty. Falls back to the CPU when no GPU component
+        // could be resolved, so a run still links something.
+        spec.target_component = if spec.plan.is_gpu_only() {
+            resolved.gpus.first().cloned().or_else(|| resolved.cpu.clone())
+        } else {
+            resolved.cpu.clone()
+        };
     }
     if spec.touched_components.is_empty() {
-        spec.touched_components = all_components;
+        spec.touched_components = resolved.all;
     }
-    for notice in hw_notices {
+    for notice in resolved.notices {
         send(
             &update_tx,
             RunUpdate::Warning {
@@ -2200,6 +2227,17 @@ fn rules_failure_mode(
                         message: format!(
                             "stage '{}': inconclusive - {rule} could not be evaluated, no GPU \
                              telemetry in {ticks} tick(s); the GPU was not graded",
+                            verdict.label
+                        ),
+                    });
+                }
+                RuleViolation::CpuTelemetryMissing { rule, ticks } => {
+                    unproven.get_or_insert(FailureMode::AppError {
+                        exit_code: None,
+                        message: format!(
+                            "stage '{}': inconclusive - {rule} could not be evaluated, no CPU die \
+                             temperature in {ticks} tick(s); check the sensor backend, the CPU was \
+                             not graded thermally",
                             verdict.label
                         ),
                     });

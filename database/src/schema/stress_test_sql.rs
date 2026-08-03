@@ -4,7 +4,7 @@
 pub const HW_COMPONENT_UPSERT: &str = "UPSERT $id MERGE { \
         kind: $kind, vendor: $vendor, model: $model, \
         sku: ($sku ?? sku), display_name: $display, specs: ($specs ?? specs), \
-        embedding: $embedding ?? embedding, \
+        embedding: $embedding ?? embedding ?? [], \
         first_seen: (first_seen ?? time::now()), last_seen: time::now(), \
         occurrence_count: (occurrence_count ?? 0) + 1 \
     } RETURN id";

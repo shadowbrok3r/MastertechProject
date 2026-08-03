@@ -101,11 +101,11 @@ impl <'a> ScriptsTab <'a> {
             let _ = log_tx.try_send(format!("Webroot key: {}", key.webroot_key));
 
             let success = match install_webroot(key.webroot_key, client, tx).await {
-                Ok(rekeyed) => {
-                    let _ = log_tx.try_send("Webroot installed successfully".into());
-                    if rekeyed {
+                Ok(outcome) => {
+                    let _ = log_tx.try_send(format!("Webroot licensed and active ({outcome})"));
+                    if outcome.reboot_recommended() {
                         let _ = log_tx.try_send(format!(
-                            "{} Webroot was re-keyed over an existing install — reboot to finalize activation",
+                            "{} Webroot changed on disk ({outcome}) — reboot to finalize activation",
                             displays::scripts::REBOOT_RECOMMENDED_MARKER
                         ));
                     }

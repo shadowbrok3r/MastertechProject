@@ -36,6 +36,40 @@ pub fn get(connection_string: &str) -> Option<String> {
         .cloned()
 }
 
+/// Lookup the open session for a connection_string, falling back to the
+/// newest open `diagnostic_session` row in the database on a registry miss.
+/// The map only holds sessions created since this process started, so
+/// without the fallback an admin restart silently drops `session_ref` and
+/// `task_ref` from every subsequent stress run.
+pub async fn get_or_lookup(connection_string: &str) -> Option<String> {
+    let cs = connection_string.trim();
+    if cs.is_empty() {
+        return None;
+    }
+    if let Some(hit) = get(cs) {
+        return Some(hit);
+    }
+    // Projects the key rather than deserializing DiagnosticSession, so the
+    // lookup still resolves on rows where an unrelated required field is NONE.
+    let rows: Vec<serde_json::Value> = database::db()
+        .query(
+            "SELECT record::id(id) AS session_key, started_at FROM diagnostic_session \
+             WHERE status == 'open' AND connection_string == $cs \
+             ORDER BY started_at DESC LIMIT 1",
+        )
+        .bind(("cs", cs.to_string()))
+        .await
+        .ok()?
+        .take(0)
+        .ok()?;
+    let sid = normalize_session_key(rows.first()?.get("session_key")?.as_str()?);
+    if sid.is_empty() {
+        return None;
+    }
+    register(cs, &sid);
+    Some(sid)
+}
+
 /// The sole active connection_string, when exactly one session is registered.
 /// Used to default the link target for a local dump analysis.
 pub fn single_active_connection() -> Option<String> {
