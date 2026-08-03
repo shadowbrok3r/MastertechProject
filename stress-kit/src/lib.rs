@@ -31,6 +31,7 @@
 mod stressors;
 pub mod bench;
 pub mod gpu_stack;
+pub mod lowlevel;
 pub mod scenario;
 pub mod telemetry;
 

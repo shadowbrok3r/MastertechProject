@@ -1528,9 +1528,8 @@ impl StressPanel {
                 ui.add_space(2.0);
                 ui.colored_label(
                     egui::Color32::GRAY,
-                    "No sensors yet. CPU/board temps need WinRing0 loaded (run elevated; \
-                     lower Memory Integrity + the vulnerable-driver blocklist). NVMe/SATA \
-                     need no driver. See the Logs tab.",
+                    "No sensors yet. CPU/board temps need a kernel-mode sensor backend and an \
+                     elevated run. NVMe/SATA need no driver. See the Logs tab.",
                 );
             } else {
                 for t in &self.latest_thermals {
