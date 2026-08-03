@@ -41,6 +41,16 @@ const RECONFIGURE_EVERY: Duration = Duration::from_secs(4);
 /// Gap between desktop mode changes on one output.
 #[cfg(target_os = "windows")]
 const MODE_SET_EVERY: Duration = Duration::from_secs(12);
+/// How long a configuring thread waits for its siblings to stop submitting.
+#[cfg(target_os = "windows")]
+const QUIESCE_TIMEOUT: Duration = Duration::from_secs(2);
+/// Upper bound on a parked thread's wait. Exceeds `QUIESCE_TIMEOUT` plus a
+/// configure so a sibling cannot resume submitting mid-reconfigure.
+#[cfg(target_os = "windows")]
+const QUIESCE_PARK_MAX: Duration = Duration::from_secs(8);
+/// Spin gap while waiting on the quiesce handshake.
+#[cfg(target_os = "windows")]
+const QUIESCE_POLL: Duration = Duration::from_micros(200);
 /// Window after a self-inflicted change during which `Outdated` is expected
 /// rather than evidence.
 #[cfg(target_os = "windows")]
@@ -195,6 +205,16 @@ mod windows_impl {
         /// Newest recoverable complaint from any output thread.
         warn: Mutex<Option<String>>,
         threads_live: AtomicU32,
+        /// Serializes `Surface::configure`, which waits for the whole shared
+        /// device to go idle — impossible while a sibling output thread is
+        /// still submitting frames to the same queue.
+        configure_turn: Mutex<()>,
+        /// Set while one thread configures; siblings park instead of submitting.
+        configure_pause: AtomicBool,
+        /// Threads currently parked for a sibling's configure.
+        parked: AtomicU32,
+        /// Reconfigures skipped because the siblings never went quiet.
+        quiesce_timeouts: AtomicU64,
     }
 
     impl Shared {
@@ -222,6 +242,59 @@ mod windows_impl {
 
         fn total(&self, pick: fn(&OutputStats) -> u64) -> u64 {
             self.outputs.iter().map(pick).sum()
+        }
+
+        /// Runs `configure` with every sibling output thread parked so the
+        /// shared device can reach idle. Returns false when the siblings did
+        /// not go quiet in time and the caller should retry on a later frame.
+        fn with_quiesce<R>(&self, stop: &AtomicBool, configure: impl FnOnce() -> R) -> Option<R> {
+            // A lone output needs no handshake: this thread is the only submitter.
+            if self.threads_live.load(Ordering::SeqCst) <= 1 {
+                return Some(configure());
+            }
+            let _turn = self.configure_turn.lock().ok()?;
+            self.configure_pause.store(true, Ordering::SeqCst);
+            let quiet = self.await_parked(stop);
+            let out = quiet.then(configure);
+            self.configure_pause.store(false, Ordering::SeqCst);
+            if out.is_none() {
+                self.quiesce_timeouts.fetch_add(1, Ordering::Relaxed);
+            }
+            out
+        }
+
+        /// Waits until every other live thread is parked. Bounded, and reads
+        /// `threads_live` each pass so a thread that exits cannot strand us.
+        fn await_parked(&self, stop: &AtomicBool) -> bool {
+            let deadline = Instant::now() + QUIESCE_TIMEOUT;
+            while Instant::now() < deadline {
+                if stop.load(Ordering::Relaxed) {
+                    return false;
+                }
+                let live = self.threads_live.load(Ordering::SeqCst);
+                if self.parked.load(Ordering::SeqCst) + 1 >= live {
+                    return true;
+                }
+                std::thread::sleep(QUIESCE_POLL);
+            }
+            false
+        }
+
+        /// Parks this thread while a sibling configures. Called once per frame,
+        /// before anything is submitted.
+        fn park_if_paused(&self, stop: &AtomicBool) {
+            if !self.configure_pause.load(Ordering::SeqCst) {
+                return;
+            }
+            self.parked.fetch_add(1, Ordering::SeqCst);
+            let deadline = Instant::now() + QUIESCE_PARK_MAX;
+            while self.configure_pause.load(Ordering::SeqCst)
+                && !stop.load(Ordering::Relaxed)
+                && Instant::now() < deadline
+            {
+                std::thread::sleep(QUIESCE_POLL);
+            }
+            self.parked.fetch_sub(1, Ordering::SeqCst);
         }
 
         /// Outputs that presented at least one frame.
@@ -324,10 +397,12 @@ mod windows_impl {
             let _ = handle.join();
         }
         log::info!(
-            "[stress-kit/gpu_display] drove {} of {} attached output(s), {} frames presented",
+            "[stress-kit/gpu_display] drove {} of {} attached output(s), {} frames presented, \
+             {} reconfigure(s) skipped for a busy sibling",
             shared.driven(),
             outputs.len(),
-            shared.total(|o| o.presented.load(Ordering::Relaxed))
+            shared.total(|o| o.presented.load(Ordering::Relaxed)),
+            shared.quiesce_timeouts.load(Ordering::Relaxed)
         );
         for (output, stats) in outputs.iter().zip(&shared.outputs) {
             log::info!(
@@ -596,6 +671,7 @@ mod windows_impl {
 
         while !stop.load(Ordering::Relaxed) {
             window.pump();
+            shared.park_if_paused(stop);
 
             let elapsed = started.elapsed().as_secs_f32();
             ctx.queue.write_buffer(
@@ -640,8 +716,13 @@ mod windows_impl {
                             output.device
                         ));
                     }
-                    surface.configure(&ctx.device, &config);
-                    expect_outdated_until = Instant::now() + SELF_INFLICTED_GRACE;
+                    // Left outdated when the siblings stay busy; retried next frame.
+                    if shared
+                        .with_quiesce(stop, || surface.configure(&ctx.device, &config))
+                        .is_some()
+                    {
+                        expect_outdated_until = Instant::now() + SELF_INFLICTED_GRACE;
+                    }
                 }
                 wgpu::CurrentSurfaceTexture::Lost => {
                     stats.lost.fetch_add(1, Ordering::Relaxed);
@@ -652,7 +733,9 @@ mod windows_impl {
                     match create_surface(ctx, raw_handle) {
                         Ok(fresh) => {
                             surface = fresh;
-                            surface.configure(&ctx.device, &config);
+                            // A fresh surface stays unconfigured until the siblings
+                            // go quiet; the next frame reports Outdated and retries.
+                            shared.with_quiesce(stop, || surface.configure(&ctx.device, &config));
                             expect_outdated_until = Instant::now() + SELF_INFLICTED_GRACE;
                             recreate_failures = 0;
                         }
@@ -713,7 +796,7 @@ mod windows_impl {
             if last_reconfigure.elapsed() >= RECONFIGURE_EVERY {
                 last_reconfigure = Instant::now();
                 present_mode_index = present_mode_index.wrapping_add(1);
-                reconfigure(
+                let applied = reconfigure(
                     &surface,
                     ctx,
                     &mut config,
@@ -721,9 +804,13 @@ mod windows_impl {
                     present_mode_index,
                     &output,
                     &window,
+                    shared,
+                    stop,
                 );
-                stats.reconfigures.fetch_add(1, Ordering::Relaxed);
-                expect_outdated_until = Instant::now() + SELF_INFLICTED_GRACE;
+                if applied {
+                    stats.reconfigures.fetch_add(1, Ordering::Relaxed);
+                    expect_outdated_until = Instant::now() + SELF_INFLICTED_GRACE;
+                }
             }
 
             if policy != ModeSetPolicy::Off && last_mode_set.elapsed() >= MODE_SET_EVERY {
@@ -740,7 +827,7 @@ mod windows_impl {
                             window.move_to(output.x, output.y, width, height);
                             config.width = width.max(1);
                             config.height = height.max(1);
-                            surface.configure(&ctx.device, &config);
+                            shared.with_quiesce(stop, || surface.configure(&ctx.device, &config));
                             expect_outdated_until = Instant::now() + SELF_INFLICTED_GRACE;
                         }
                         Err(e) => shared.set_warn(format!("gpu_display: {e}")),
@@ -814,6 +901,9 @@ mod windows_impl {
     /// Cycles present mode, frame latency, and the presented size. Rebuilding
     /// the swapchain is the reconfiguration path a mode change also takes.
     #[allow(clippy::too_many_arguments)]
+    /// Applies the next swapchain variation. Returns false when the siblings
+    /// never went quiet, leaving `config` updated for a later attempt.
+    #[allow(clippy::too_many_arguments)]
     fn reconfigure(
         surface: &wgpu::Surface<'static>,
         ctx: &Arc<GpuContext>,
@@ -822,7 +912,9 @@ mod windows_impl {
         step: usize,
         output: &Output,
         window: &OutputWindow,
-    ) {
+        shared: &Shared,
+        stop: &AtomicBool,
+    ) -> bool {
         if !present_modes.is_empty() {
             config.present_mode = present_modes[step % present_modes.len()];
         }
@@ -837,7 +929,9 @@ mod windows_impl {
         window.move_to(output.x, output.y, width, height);
         config.width = width;
         config.height = height;
-        surface.configure(&ctx.device, config);
+        shared
+            .with_quiesce(stop, || surface.configure(&ctx.device, config))
+            .is_some()
     }
 
     /// The modes one output rotates through, native mode first.
