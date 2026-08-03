@@ -13,8 +13,7 @@ use database::schema::{
         parse_dump_decode_payload, parse_gpu_crash_payload, parse_kernel_triage_payload,
         payload_status, CrashIngest, CrashSignature, ParsedCrash, SightingContext, GPU_DUMP_KIND,
     },
-    DiagnosticCategory, DiagnosticEntry, DiagnosticSession, PluginUsageRef, RecordId,
-    DIAGNOSTIC_SESSION_TABLE,
+    DiagnosticCategory, DiagnosticEntry, PluginUsageRef, RecordId,
 };
 use once_cell::sync::Lazy;
 
@@ -220,24 +219,8 @@ pub async fn resolve_sighting_links(
     connection_string: &str,
     computer: Option<RecordId>,
 ) -> SightingLinks {
-    let mut session: Option<DiagnosticSession> = None;
-    if let Some(key) = super::diagnostic_session_registry::get(connection_string) {
-        session = database::db()
-            .select(RecordId::new(DIAGNOSTIC_SESSION_TABLE, key))
-            .await
-            .ok()
-            .flatten();
-    }
-    if session.is_none() {
-        match DiagnosticSession::latest_open_for_connection(connection_string, computer.as_ref())
-            .await
-        {
-            Ok(found) => session = found,
-            Err(e) => {
-                log::warn!("crash_intel: open-session lookup failed for {connection_string}: {e}")
-            }
-        }
-    }
+    let session =
+        super::diagnostic_session_registry::resolve_open_session(connection_string).await;
     let Some(session) = session else {
         return SightingLinks { computer, ..Default::default() };
     };
@@ -254,7 +237,7 @@ pub async fn resolve_sighting_links(
     SightingLinks {
         session_ref: Some(session.id.clone()),
         task_ref,
-        computer: computer.or(Some(session.computer_id)),
+        computer: computer.or(session.computer_id),
     }
 }
 

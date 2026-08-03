@@ -1642,11 +1642,16 @@ async fn execute_one_remote_script(
 
     let service_number = p.service_number.clone().unwrap_or_default();
     let customer_email = p.customer_email.clone().unwrap_or_default();
-    let diagnostic_session_id = p
+    let diagnostic_session_id = match p
         .diagnostic_session_id
         .clone()
         .filter(|s| !s.trim().is_empty())
-        .or_else(|| super::diagnostic_session_registry::get(&p.connection_string));
+    {
+        Some(s) => Some(s),
+        None => {
+            super::diagnostic_session_registry::resolve_open_session_key(&p.connection_string).await
+        }
+    };
 
     if stress_runner::is_stress_script(&p.script_name) && service_number.trim().is_empty() {
         return Err(to_internal(format!(
@@ -4411,8 +4416,8 @@ impl PluginToolProvider {
             connection_string: p.connection_string,
             hostname: p.hostname,
             customer_name: p.customer_name,
-            customer_id,
-            computer_id,
+            customer_id: Some(customer_id),
+            computer_id: Some(computer_id),
             task_ref,
             service_order,
             tech: p.tech,
@@ -5775,33 +5780,10 @@ impl PluginToolProvider {
             // Fleet enrichment + completeness warnings (parity with LOCAL mode).
             use super::tool_warnings::{attach_warnings, ToolWarning};
             let mut warnings: Vec<ToolWarning> = Vec::new();
-            // Mirror the ingest hook's resolution: registry pin, then open
-            // session by connection string with the client's computer fallback.
-            let open_session = match super::diagnostic_session_registry::get(cs) {
-                Some(sid) => database::schema::DiagnosticSession::get(&sid)
-                    .await
-                    .unwrap_or(None),
-                None => {
-                    let computer: Option<database::schema::RecordId> = database::db()
-                        .query(
-                            "SELECT VALUE computer FROM connected_client \
-                             WHERE connection_string == $cs LIMIT 1",
-                        )
-                        .bind(("cs", cs.to_string()))
-                        .await
-                        .and_then(|mut r| {
-                            r.take::<Vec<Option<database::schema::RecordId>>>(0)
-                        })
-                        .map(|v| v.into_iter().flatten().next())
-                        .unwrap_or(None);
-                    database::schema::DiagnosticSession::latest_open_for_connection(
-                        cs,
-                        computer.as_ref(),
-                    )
-                    .await
-                    .unwrap_or(None)
-                }
-            };
+            // Same resolution the ingest hook uses: registry pin, then the open
+            // session for the connection or its client's computer.
+            let open_session =
+                super::diagnostic_session_registry::resolve_open_session(cs).await;
             if open_session.is_none() {
                 warnings.push(
                     ToolWarning::warn(
@@ -6131,16 +6113,9 @@ impl PluginToolProvider {
                         .await
                         .unwrap_or(None)
                 }
-                (None, Some(cs)) => match super::diagnostic_session_registry::get(cs) {
-                    Some(sid) => database::schema::DiagnosticSession::get(&sid)
-                        .await
-                        .unwrap_or(None),
-                    None => database::schema::DiagnosticSession::latest_open_for_connection(
-                        cs, None,
-                    )
-                    .await
-                    .unwrap_or(None),
-                },
+                (None, Some(cs)) => {
+                    super::diagnostic_session_registry::resolve_open_session(cs).await
+                }
                 (None, None) => None,
             };
             if let Some(session) = session {
@@ -6498,22 +6473,66 @@ impl PluginToolProvider {
 
     #[tool(
         name = "intel_links_reap",
-        description = "Sweep every open diagnostic session through the link reconciler: claim orphan crash sightings and driver snapshots into their session, propagate task links, and enrich same-dump sighting siblings. Reports per-session claims plus fleet-wide remaining-orphan counts. Safe to run anytime (idempotent, coalesce-only); use it to backfill links after out-of-order ingest."
+        description = "Sweep every open diagnostic session through the link reconciler: claim orphan crash sightings and driver snapshots into their session, propagate task links, and enrich same-dump sighting siblings. Reports per-session claims, sessions skipped (unreadable row / reconcile error), sessions open past the stale threshold, and fleet-wide remaining-orphan counts. One bad session never aborts the sweep. Safe to run anytime (idempotent, coalesce-only); use it to backfill links after out-of-order ingest."
     )]
     async fn intel_links_reap(&self) -> Result<CallToolResult, ErrorData> {
-        use database::schema::RecordIdExt;
+        use super::tool_warnings::{attach_warnings, ToolWarning};
+        use database::schema::{RecordIdExt, STALE_SESSION_DAYS};
 
-        let sessions = database::schema::DiagnosticSession::list_open(500)
+        let refs = database::schema::DiagnosticSession::list_open_refs(500)
             .await
             .map_err(to_internal)?;
         let mut swept: Vec<serde_json::Value> = Vec::new();
+        let mut skipped: Vec<serde_json::Value> = Vec::new();
+        let mut stale: Vec<serde_json::Value> = Vec::new();
+        let mut unlinked: Vec<serde_json::Value> = Vec::new();
         let mut total = 0usize;
-        for session in &sessions {
-            match database::schema::crash_intel::reconcile_session_links(session).await {
+        for sref in &refs {
+            let session_id = sref.id.key_string();
+            if sref.age_days() >= STALE_SESSION_DAYS {
+                stale.push(serde_json::json!({
+                    "session_id": session_id,
+                    "connection_string": sref.connection_string,
+                    "hostname": sref.hostname,
+                    "tech": sref.tech,
+                    "started_at": sref.started_at,
+                    "age_days": sref.age_days(),
+                }));
+            }
+            // Fetch per session so a malformed row skips itself, not the fleet.
+            let session = match database::schema::DiagnosticSession::get(&session_id).await {
+                Ok(Some(s)) => s,
+                Ok(None) => {
+                    skipped.push(serde_json::json!({
+                        "session_id": session_id,
+                        "connection_string": sref.connection_string,
+                        "reason": "row disappeared mid-sweep",
+                    }));
+                    continue;
+                }
+                Err(e) => {
+                    log::warn!("intel_links_reap: session {session_id} unreadable: {e}");
+                    skipped.push(serde_json::json!({
+                        "session_id": session_id,
+                        "connection_string": sref.connection_string,
+                        "reason": format!("row unreadable: {e}"),
+                    }));
+                    continue;
+                }
+            };
+            if session.customer_id.is_none() || session.computer_id.is_none() {
+                unlinked.push(serde_json::json!({
+                    "session_id": session_id,
+                    "connection_string": sref.connection_string,
+                    "customer_id": session.customer_id.as_ref().map(RecordIdExt::key_string),
+                    "computer_id": session.computer_id.as_ref().map(RecordIdExt::key_string),
+                }));
+            }
+            match database::schema::crash_intel::reconcile_session_links(&session).await {
                 Ok(r) if r.total() > 0 => {
                     total += r.total();
                     swept.push(serde_json::json!({
-                        "session_id": session.id.key_string(),
+                        "session_id": session_id,
                         "connection_string": session.connection_string,
                         "sightings_claimed": r.sightings_claimed,
                         "sightings_task_linked": r.sightings_task_linked,
@@ -6522,10 +6541,14 @@ impl PluginToolProvider {
                     }));
                 }
                 Ok(_) => {}
-                Err(e) => log::warn!(
-                    "intel_links_reap: reconcile failed for {}: {e}",
-                    session.id.key_string()
-                ),
+                Err(e) => {
+                    log::warn!("intel_links_reap: reconcile failed for {session_id}: {e}");
+                    skipped.push(serde_json::json!({
+                        "session_id": session_id,
+                        "connection_string": sref.connection_string,
+                        "reason": format!("reconcile failed: {e}"),
+                    }));
+                }
             }
         }
 
@@ -6534,17 +6557,74 @@ impl PluginToolProvider {
                 .await
                 .unwrap_or((0, 0));
 
-        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
-            "open_sessions_swept": sessions.len(),
-            "sessions_with_changes": swept.len(),
-            "total_rows_linked": total,
-            "changes": swept,
-            "remaining_orphans": {
-                "crash_sightings": orphan_sightings,
-                "driver_snapshots": orphan_snapshots,
-                "note": "orphans with no open session to claim them — expected for closed/pre-session engagements; link the session manually if one should own them",
-            },
-        }))
+        let mut warnings: Vec<ToolWarning> = Vec::new();
+        if !skipped.is_empty() {
+            warnings.push(
+                ToolWarning::warn(
+                    "sessions_skipped",
+                    format!(
+                        "{} open session(s) could not be reconciled and were skipped; the rest of \
+                         the sweep completed. See `skipped` for the per-session reason.",
+                        skipped.len()
+                    ),
+                )
+                .with_fix(
+                    "inspect each skipped session with get_diagnostic_session; repair its links \
+                     (repair_entity_links / link_diagnostic_to_task) or close it, then re-run",
+                ),
+            );
+        }
+        if !unlinked.is_empty() {
+            warnings.push(
+                ToolWarning::warn(
+                    "sessions_missing_fk",
+                    format!(
+                        "{} open session(s) carry no customer_id and/or computer_id — orphan rows \
+                         claimed into them inherit no computer link.",
+                        unlinked.len()
+                    ),
+                )
+                .with_fix(
+                    "resolve the customer/computer through the connection's connected_client \
+                     (validate_connection_links, then link_connected_client / repair_entity_links)",
+                ),
+            );
+        }
+        if !stale.is_empty() {
+            warnings.push(
+                ToolWarning::warn(
+                    "stale_open_sessions",
+                    format!(
+                        "{} session(s) have been open for {STALE_SESSION_DAYS}+ days — they stay in \
+                         every fleet-wide sweep until closed.",
+                        stale.len()
+                    ),
+                )
+                .with_fix(
+                    "close_diagnostic_session { session_id: \"<key>\", status: \"resolved\", summary: \"<outcome>\" } for each stale session",
+                ),
+            );
+        }
+
+        Ok(CallToolResult::success(vec![ContentBlock::json(attach_warnings(
+            serde_json::json!({
+                "open_sessions_swept": refs.len().saturating_sub(skipped.len()),
+                "open_sessions_listed": refs.len(),
+                "sessions_with_changes": swept.len(),
+                "total_rows_linked": total,
+                "changes": swept,
+                "skipped": skipped,
+                "sessions_missing_fk": unlinked,
+                "stale_sessions": stale,
+                "stale_threshold_days": STALE_SESSION_DAYS,
+                "remaining_orphans": {
+                    "crash_sightings": orphan_sightings,
+                    "driver_snapshots": orphan_snapshots,
+                    "note": "orphans with no open session to claim them — expected for closed/pre-session engagements; link the session manually if one should own them",
+                },
+            }),
+            warnings,
+        ))
         .map_err(to_internal)?]))
     }
 
@@ -7436,11 +7516,17 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
                 "service_number is required for remote stress scenarios (stress_test_run.service_order linkage).",
             ));
         }
-        let diagnostic_session_id = p
+        let diagnostic_session_id = match p
             .diagnostic_session_id
             .clone()
             .filter(|s| !s.trim().is_empty())
-            .or_else(|| super::diagnostic_session_registry::get(&p.connection_string));
+        {
+            Some(s) => Some(s),
+            None => {
+                super::diagnostic_session_registry::resolve_open_session_key(&p.connection_string)
+                    .await
+            }
+        };
 
         let cmd = crate::Cmd::RunRemoteScenario {
             stages,
@@ -7484,11 +7570,17 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
                 "service_number is required for remote concurrent stress runs (stress_test_run.service_order linkage).",
             ));
         }
-        let diagnostic_session_id = p
+        let diagnostic_session_id = match p
             .diagnostic_session_id
             .clone()
             .filter(|s| !s.trim().is_empty())
-            .or_else(|| super::diagnostic_session_registry::get(&p.connection_string));
+        {
+            Some(s) => Some(s),
+            None => {
+                super::diagnostic_session_registry::resolve_open_session_key(&p.connection_string)
+                    .await
+            }
+        };
 
         let cmd = crate::Cmd::RunRemoteConcurrent {
             lanes,
@@ -7533,11 +7625,17 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
             ));
         }
 
-        let diagnostic_session_id = p
+        let diagnostic_session_id = match p
             .diagnostic_session_id
             .clone()
             .filter(|s| !s.trim().is_empty())
-            .or_else(|| super::diagnostic_session_registry::get(&p.connection_string));
+        {
+            Some(s) => Some(s),
+            None => {
+                super::diagnostic_session_registry::resolve_open_session_key(&p.connection_string)
+                    .await
+            }
+        };
 
         let mut runs = Vec::with_capacity(scripts.len());
         let mut passed = 0u32;

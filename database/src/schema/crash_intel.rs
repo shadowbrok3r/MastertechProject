@@ -1301,7 +1301,7 @@ pub async fn sighting_context_for_connection(
                     .flatten()
                     .map(|(t, _)| t),
             };
-            (Some(s.computer_id.clone()), Some(s.id.clone()), task)
+            (s.computer_id.clone(), Some(s.id.clone()), task)
         }
         None => (None, None, None),
     };

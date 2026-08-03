@@ -110,8 +110,8 @@ async fn create_session(client: &ConnectedClient) -> Option<String> {
     let session = DiagnosticSession {
         connection_string: client.connection_string.clone(),
         hostname,
-        customer_id: customer,
-        computer_id: computer,
+        customer_id: Some(customer),
+        computer_id: Some(computer),
         tags: vec!["autopilot".to_string(), "intake".to_string()],
         ..Default::default()
     };
