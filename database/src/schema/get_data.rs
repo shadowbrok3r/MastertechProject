@@ -59,7 +59,7 @@ pub async fn get_services_by_status(
     api_call.display = "[id, date_add]";
 
     let orders: Vec<MissedCallOrder> = api_call
-        .request_resources_wasm("orders", query.clone())
+        .request_resources_checked("orders", query.clone())
         .await
         .context("Pulling orders list")?;
 
@@ -80,7 +80,7 @@ pub async fn get_services_by_status(
         query.insert("output_format", "JSON");
 
         let customer_threads: Vec<CustomerThread> = api_call
-            .request_resources_wasm("customer_threads", query.clone())
+            .request_resources_checked("customer_threads", query.clone())
             .await?;
 
         let mut customer_messages: Vec<CustomerMessage> = Vec::new();
@@ -139,7 +139,7 @@ pub async fn get_order_from_prestashop_payload(serial: &str) -> anyhow::Result<c
     let mut query: HashMap<&str, &str> = HashMap::new();
     query.insert("filter[serial_number]", serial);
     query.insert("output_format", "JSON");
-    let order_serials: Vec<crate::schema::prestashop::OrderSerialEntry> = api_call.request_resources_wasm("order_serial", query.clone()).await?;
+    let order_serials: Vec<crate::schema::prestashop::OrderSerialEntry> = api_call.request_resources_checked("order_serial", query.clone()).await?;
     let id_order = order_serials
         .get(0)
         .ok_or_else(|| anyhow::anyhow!("No id_order found"))?

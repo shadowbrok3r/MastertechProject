@@ -1534,6 +1534,8 @@ pub struct GetComputerDetailsParams {
 pub struct SearchPrestashopOrdersParams {
     #[schemars(description = "Customer email, customer name, or order reference to search for")]
     pub query: String,
+    #[schemars(description = "Max orders to return (default 25, max 100)")]
+    pub limit: Option<u32>,
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
@@ -7346,30 +7348,112 @@ impl PluginToolProvider {
 
     #[tool(
         name = "search_prestashop_orders",
-        description = "Search PrestaShop orders by customer email or order reference."
+        description = "Search PrestaShop orders by customer email, customer name, or order reference. \
+Email and name queries resolve the customer first, then that customer's orders newest-first \
+(/api/orders carries no email or name field). Returns count 0 with an empty list when nothing \
+matched, and an error when the lookup itself failed."
     )]
     async fn search_prestashop_orders(
         &self,
         Parameters(p): Parameters<SearchPrestashopOrdersParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let api = database::schema::prestashop::Prestashop::default();
-        let filter_val = format!("%[{}]%", p.query);
-        let mut query_params = std::collections::HashMap::new();
-        query_params.insert("filter[reference]", filter_val.as_str());
-        query_params.insert("output_format", "JSON");
+        use database::schema::prestashop::{Customer, Order, Prestashop};
 
-        let orders: Result<Vec<database::schema::prestashop::Order>, _> =
-            api.request_resources_wasm("orders", query_params).await;
-
-        match orders {
-            Ok(o) => Ok(CallToolResult::success(vec![ContentBlock::json(
-                serde_json::json!({ "count": o.len(), "orders": o }),
-            )
-            .map_err(to_internal)?])),
-            Err(e) => Ok(CallToolResult::success(vec![
-                ContentBlock::text(format!("PrestaShop search error: {e}"))
-            ])),
+        let query = p.query.trim();
+        if query.is_empty() {
+            return Err(ErrorData::invalid_params(
+                "query must not be empty".to_string(),
+                None,
+            ));
         }
+        let limit = p.limit.unwrap_or(25).clamp(1, 100);
+        let api = Prestashop::default();
+
+        let is_email = query.contains('@');
+        let is_reference = !is_email
+            && !query.contains(' ')
+            && query.chars().any(|c| c.is_ascii_digit())
+            && query
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+
+        let mut mode = "reference";
+        let mut customers: Vec<Customer> = vec![];
+        let mut orders: Vec<Order> = vec![];
+
+        // Each branch falls back to the other lookup so a misread query shape cannot report
+        // "no orders" for a customer who has them.
+        if is_email {
+            mode = "email";
+            customers = api
+                .find_customers_by_email(query)
+                .await
+                .map_err(to_internal)?;
+        } else if is_reference {
+            orders = api
+                .find_orders_by_reference(query, limit)
+                .await
+                .map_err(to_internal)?;
+            if orders.is_empty() {
+                customers = api
+                    .find_customers_by_name(query)
+                    .await
+                    .map_err(to_internal)?;
+                if !customers.is_empty() {
+                    mode = "name";
+                }
+            }
+        } else {
+            mode = "name";
+            customers = api
+                .find_customers_by_name(query)
+                .await
+                .map_err(to_internal)?;
+            if customers.is_empty() {
+                orders = api
+                    .find_orders_by_reference(query, limit)
+                    .await
+                    .map_err(to_internal)?;
+                if !orders.is_empty() {
+                    mode = "reference";
+                }
+            }
+        }
+
+        for customer in customers.iter() {
+            let remaining = limit as usize - orders.len();
+            if customer.id.is_empty() || remaining == 0 {
+                continue;
+            }
+            let mut found = api
+                .find_orders_by_customer(&customer.id, remaining as u32)
+                .await
+                .map_err(to_internal)?;
+            orders.append(&mut found);
+        }
+
+        let matched_customers: Vec<serde_json::Value> = customers
+            .iter()
+            .filter(|c| !c.id.is_empty())
+            .map(|c| {
+                serde_json::json!({
+                    "id_customer": c.id,
+                    "name": format!("{} {}", c.firstname, c.lastname).trim().to_string(),
+                    "email": c.email,
+                })
+            })
+            .collect();
+
+        Ok(CallToolResult::success(vec![
+            ContentBlock::json(serde_json::json!({
+                "query": query,
+                "mode": mode,
+                "matched_customers": matched_customers,
+                "count": orders.len(),
+                "orders": orders,
+            }))
+            .map_err(to_internal)?,
+        ]))
     }
 
     #[tool(
@@ -9168,7 +9252,7 @@ Use query_surrealdb for any ad-hoc read-only data needs (SELECT/RETURN only).
 - get_service_order — look up by service number (with computer + customer fetched).
 - search_service_orders — search by customer name, tech, service number.
 - get_computer_details — full hardware record (CPU, GPU, RAM, drives, serials, programs).
-- search_prestashop_orders — search PrestaShop orders by reference/email.
+- search_prestashop_orders — search PrestaShop orders by reference, customer email, or customer name (email/name resolve the customer first, then their orders). count 0 means no orders; a tool error means the lookup failed.
 - search_odoo_inventory — search Odoo product catalog by part number or name.
 - query_surrealdb — run arbitrary read-only SurrealQL (SELECT/RETURN only).
 

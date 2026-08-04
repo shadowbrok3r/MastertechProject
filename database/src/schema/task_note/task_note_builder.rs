@@ -121,7 +121,7 @@ impl TaskNoteBuilder {
         query.insert("output_format", "JSON");
 
         let threads: Vec<CustomerThread> = api
-            .request_resources_wasm("customer_threads", query)
+            .request_resources_checked("customer_threads", query)
             .await?;
 
         let thread_id = if threads.is_empty() || threads.iter().any(|t| t.id.is_empty()) {
@@ -351,7 +351,7 @@ impl TaskNote {
         query.insert("output_format", "JSON");
 
         let threads: Vec<CustomerThread> = api
-            .request_resources_wasm("customer_threads", query)
+            .request_resources_checked("customer_threads", query)
             .await?;
 
         let mut notes = vec![];
@@ -460,7 +460,7 @@ mod tests {
         #[async_trait]
         impl Prestashop for PrestashopApi {
             async fn request_subresources_by_id_wasm(&self, resource: &str, subresource: &str, id: &str) -> Result<Employee>;
-            async fn request_resources_wasm(&self, resource: &str, query: HashMap<&str, &str>) -> Result<Vec<CustomerThread>>;
+            async fn request_resources_checked(&self, resource: &str, query: HashMap<&str, &str>) -> Result<Vec<CustomerThread>>;
             async fn create_customer_thread(&self, service_number: &str, id_customer: &str) -> Result<PrestashopResponse>;
             async fn create_customer_message(&self, id_employee: &str, id_customer_thread: &str, message: &str) -> Result<PrestashopResponse>;
             async fn modify_customer_message(&self, id_customer_message: &str, id_employee: &str, id_customer_thread: &str, message: &str) -> Result<PrestashopResponse>;
@@ -548,7 +548,7 @@ mod tests {
         let message_id = "54321";
 
         mock_presta
-            .expect_request_resources_wasm()
+            .expect_request_resources_checked()
             .with(eq("customer_threads"), always())
             .times(1)
             .returning(|_, _| Ok(vec![CustomerThread { id: thread_id.to_string(), ..Default::default() }]));
@@ -620,7 +620,7 @@ mod tests {
         let message_id = "54321";
 
         mock_presta
-            .expect_request_resources_wasm()
+            .expect_request_resources_checked()
             .with(eq("customer_threads"), always())
             .times(1)
             .returning(|_, _| Ok(vec![CustomerThread { id: thread_id.to_string(), ..Default::default() }]));
