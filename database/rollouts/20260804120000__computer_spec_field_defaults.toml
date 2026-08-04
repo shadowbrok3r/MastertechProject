@@ -1,8 +1,8 @@
 id = "20260804120000__computer_spec_field_defaults"
 name = "computer_spec_field_defaults"
 state = "completed"
-source_schema_hash = "8791eb5a62837dff9e56fd3785c7a404488c311dd02e6f7d1442b1af74f700e5"
-target_schema_hash = "8791eb5a62837dff9e56fd3785c7a404488c311dd02e6f7d1442b1af74f700e5"
+source_schema_hash = "2326d4d2f4d8d15e230203da144c088688b28f0c0131c3f933fc92de2f047de5"
+target_schema_hash = "2326d4d2f4d8d15e230203da144c088688b28f0c0131c3f933fc92de2f047de5"
 compatibility = "phased"
 renames = []
 

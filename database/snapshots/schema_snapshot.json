@@ -31,7 +31,7 @@
   },
   {
    "path": "database/schema/computer.surql",
-   "hash": "42844f3e27dc48db96ca3c14db43f8db4169c145c33f32777d99b69015460e9c"
+   "hash": "a1a2804f30e81784c2782661dad10e1c516b473cd1a42faaff9e21678e412f73"
   },
   {
    "path": "database/schema/connected_client.surql",
@@ -58,12 +58,16 @@
    "hash": "4571b8b62d07accd59e4d0d7e4a40429ccb801a9b9e289f0028d7370dea00887"
   },
   {
+   "path": "database/schema/firmware_capsule.surql",
+   "hash": "d49083d620f43822318922838b58afdb312cf593069544558ac8e296c9328dd0"
+  },
+  {
    "path": "database/schema/fleet_agent.surql",
    "hash": "4633c47a566a2606a04030f454929a0340ba20d2e893493e210c21704fdc1088"
   },
   {
    "path": "database/schema/fleet_command.surql",
-   "hash": "5cb1c920c6ad10e9345b9d382a451ccc4610789024c812c958998c9efca77f59"
+   "hash": "97373be918693e1ef68aa5b1085001a3b19b12fc190ed029bbb56d85037e7e28"
   },
   {
    "path": "database/schema/fleet_event.surql",
@@ -96,6 +100,10 @@
   {
    "path": "database/schema/qc.surql",
    "hash": "0a08e2558c5aeb17b2e04857afc0df3cb53da6a94595fb095a6deb2132cf4948"
+  },
+  {
+   "path": "database/schema/qc_fingerprint.surql",
+   "hash": "6b643f167867704124d73da8257af08845cbc7f5aec33b47301fa4cdf326643e"
   },
   {
    "path": "database/schema/qc_report.surql",
