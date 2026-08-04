@@ -1,4 +1,4 @@
-use super::{filesystem::system_info::generate_client_id, utilities::load_encrypted_user_data, app_state::MasterTechApp, tabs::github::get_github_releases};
+use super::{utilities::load_encrypted_user_data, app_state::MasterTechApp, tabs::github::get_github_releases};
 use displays::{app_state::AppState, pages::login_page::HASH, ui_tools::{encode_theme, toasts::{Toast, ToastKind, ToastOptions}, theme_config::bootstrap_startup_theme, SavedTheme}};
 use database::{schema::{CustomerData, ExtendedSeb, LiveTaskPayload, LocalSebData, TicketData, CONNECTED_CLIENT_TABLE}, websocket_url_with_room, Database, WS_CLIENT_URL};
 use database::schema::GetKeysResponse;
@@ -256,7 +256,17 @@ impl MasterTechApp {
         }
 
         if let Ok(computer_data) = self.context.computer_data_rx.try_recv() {
+            // Spec-gather runs on a fresh `ComputerData::default()`, so what
+            // arrives carries a `random_record_id` and the live sysinfo hostname.
+            // Adopting the whole struct would replace the canonical id pinned in
+            // `app_state` and leak that UUID into `connected_client.computer` as a
+            // dangling link, so the identity fields are carried over.
+            let identity = crate::filesystem::get_client_hash();
+            let canonical_computer = self.context.computer_data.id.clone();
+            let identity_hostname = self.context.computer_data.hostname.clone();
             self.context.computer_data = computer_data.clone();
+            self.context.computer_data.id = canonical_computer;
+            self.context.computer_data.hostname = identity_hostname;
             for disk in &self.context.computer_data.drives {
                 self.context.disk_num += 1;
                 if let Some(disks_arr) = self.context.disks.as_array_mut() {
@@ -270,16 +280,10 @@ impl MasterTechApp {
                 log::info!("SEB: {seb_inf:#?}");
             }
 
-            let client_hash = generate_client_id(
-                self.context.computer_data.hostname.clone(), 
-                self.context.computer_data.cpu.trim().to_string()
-            );
-
-            let url_string = format!(
-                "{}:{}", 
-                self.context.computer_data.hostname.clone(), 
-                client_hash.split_at(9).0
-            );
+            // Taken from the cached identity rather than recomputed from the
+            // spec-gather hostname, which is the live one and under WinPE names
+            // the PE image instead of the installed Windows.
+            let url_string = identity.connection_string.clone();
 
             self.context.client_title = url_string.clone();
 
