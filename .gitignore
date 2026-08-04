@@ -45,3 +45,5 @@ dev-audit.json
 .cursor
 target-linux-compat
 .cache/cargo-linux-compat
+# surreal sql CLI REPL history, written to the cwd it runs in
+history.txt
