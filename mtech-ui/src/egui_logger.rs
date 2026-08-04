@@ -854,7 +854,7 @@ pub fn get_logs_for_issue() -> String {
 ///     // Initialize the logger.
 ///     // You have to open the ui later within your egui context logic.
 ///     // You should call this very early in the program.
-///     egui_logger::builder()
+///     mtech_ui::egui_logger::builder()
 ///         .max_level(LevelFilter::Info) // defaults to Debug
 ///         .init()
 ///         .unwrap();

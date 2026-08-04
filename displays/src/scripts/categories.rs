@@ -183,6 +183,11 @@ pub fn stress_tests_scripts() -> Vec<ScriptItem> {
             .with_pass_criteria("≥ 1 GB/s sustained; zero mismatches")
             .with_warning_criteria("PCIe replay deltas during the run")
             .with_error_criteria("Any round-trip data mismatch"),
+        ScriptItem::new("Stress: GPU Display", ScriptCategory::StressTests)
+            .with_description("Real swapchain per output with mode changes; run when a machine black-screens, drops a monitor, or hangs on a mode change")
+            .with_pass_criteria("Sustained present rate with no present timeouts, lost surfaces, or watchdog live dumps")
+            .with_warning_criteria("Only one output attached — the display path is barely exercised")
+            .with_error_criteria("Present timeout, lost surface, or a watchdog live dump"),
         // Whole-system combined load
         ScriptItem::new("Stress: Combined", ScriptCategory::StressTests)
             .with_description("Fused CPU + RAM + GPU stressor; run for whole-system load when bench time is short")

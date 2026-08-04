@@ -40,7 +40,7 @@ mime_guess.workspace = true
 crossbeam.workspace = true
 surrealdb.workspace = true
 egui_dock.workspace = true
-mtech-ui.workspace = true
+mtech-ui = { workspace = true, features = ["stress-ui"] }
 once_cell.workspace = true
 tcp_protocol = { workspace = true, features = ["fingerprint"] }
 facet = { workspace = true, features = ["std", "chrono", "reflect"] }

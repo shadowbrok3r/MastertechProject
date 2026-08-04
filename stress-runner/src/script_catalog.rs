@@ -54,6 +54,7 @@ pub const STRESS_SCRIPT_NAMES: &[&str] = &[
     "Stress: GPU Matmul",
     "Stress: GPU VRAM",
     "Stress: GPU PCIe",
+    "Stress: GPU Display",
     "Stress: Combined",
     "Concurrent: CPU+RAM+GPU",
 ];
@@ -166,6 +167,12 @@ pub fn build_stress_script_spec(
         "Stress: GPU Matmul" => Some(single(computer, Stressor::GpuMatmul, duration_secs, "gpu_matmul")),
         "Stress: GPU VRAM" => Some(single(computer, Stressor::GpuVram, duration_secs, "gpu_vram")),
         "Stress: GPU PCIe" => Some(single(computer, Stressor::GpuPcie, duration_secs, "gpu_pcie")),
+        "Stress: GPU Display" => Some(single(
+            computer,
+            Stressor::GpuDisplay,
+            duration_secs,
+            "gpu_display",
+        )),
         "Stress: Combined" => Some(single_with_mem(
             computer,
             Stressor::Combined,

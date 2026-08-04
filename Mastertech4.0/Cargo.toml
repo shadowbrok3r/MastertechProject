@@ -93,6 +93,7 @@ stress-kit = { workspace = true, features = ["hw-sensors"] }
 dump-triage = { workspace = true }
 itertools.workspace = true
 stress-runner.workspace = true
+mtech-ui = { workspace = true, features = ["stress-ui"] }
 tcp_protocol = { workspace = true, features = ["tunnel"] }
 surrealdb.workspace = true
 ratatui = { workspace = true }

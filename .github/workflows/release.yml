@@ -64,6 +64,10 @@ jobs:
             artifact: qc_app.exe
             runs_on: windows-latest
     env:
+      # .cargo/config.toml points the msvc linker at a local LLVM install; the
+      # runner image is not guaranteed to ship lld-link at that path, so keep CI
+      # on the MSVC linker. Inert for the linux matrix entry (target-scoped).
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: link.exe
       SCAFFOLD_USER: ${{ secrets.SCAFFOLD_USER }}
       SCAFFOLD_PASS: ${{ secrets.SCAFFOLD_PASS }}
       SCAFFOLD_URL: ${{ secrets.SCAFFOLD_URL }}
