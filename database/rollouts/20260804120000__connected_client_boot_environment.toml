@@ -8,10 +8,13 @@ name = "connected_client_boot_environment"
 state = "completed"
 # Source: computer_spec_field_defaults' target — it shares this manifest's
 # timestamp prefix but is already completed, so the ordering ambiguity between the
-# two is inert. Target: the on-disk hash after boot_environment lands on
-# connected_client.surql, per `surrealkit rollout lint`.
+# two is inert. Target: the hash after boot_environment lands on
+# connected_client.surql. Both were reported by `surrealkit rollout lint` run from
+# the REPO ROOT — schema hashes are file-byte hashes and core.autocrlf has no
+# .gitattributes to pin `.surql` line endings, so a hash generated inside a
+# .claude/worktrees checkout fails lint everywhere else.
 source_schema_hash = "2326d4d2f4d8d15e230203da144c088688b28f0c0131c3f933fc92de2f047de5"
-target_schema_hash = "f09681bf8f2f5e94d2a87b862a27582116ffa5d35cd183cf5fa22b5307b15eec"
+target_schema_hash = "f778649acb0e11a914d3ac2232fb0783c5116f70f6e7002755f115633cf62e37"
 # Purely additive with a DEFAULT, and connected_client is SCHEMALESS, so clients
 # writing `boot_environment` succeed with or without this DDL. Either ordering of
 # app deploy vs. migration is safe.
