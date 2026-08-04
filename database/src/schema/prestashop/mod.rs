@@ -1,4 +1,5 @@
 use super::{deserializer::deserialize_to_string, CustomerData, TaskNotePayload};
+use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
 use reqwest::{ header::{ACCEPT, CONTENT_TYPE}, Client};
 use serde_json::{from_value, Value};
 use serde::{Deserialize, Serialize};
@@ -18,6 +19,30 @@ pub use customer_messages::*;
 pub use customer_threads::*;
 pub use order::*;
 pub use koth::*;
+
+/// Characters escaped in a query-string value; covers the `%`, `[`, and `]` of the
+/// Prestashop `%[value]%` filter operators.
+const QUERY_VALUE: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'#')
+    .add(b'%')
+    .add(b'&')
+    .add(b'+')
+    .add(b'<')
+    .add(b'>')
+    .add(b'?')
+    .add(b'[')
+    .add(b']')
+    .add(b'^')
+    .add(b'`')
+    .add(b'{')
+    .add(b'|')
+    .add(b'}');
+
+fn encode_value(value: &str) -> String {
+    utf8_percent_encode(value, QUERY_VALUE).to_string()
+}
 
 #[derive(Clone)]
 pub struct Prestashop<'a> {
@@ -75,17 +100,17 @@ impl<'a> Prestashop<'a> {
 
         // Adding `display` parameter
         if !self.display.is_empty() {
-            query_params.push(format!("display={}", self.display));
+            query_params.push(format!("display={}", encode_value(self.display)));
         }
 
         // Adding `schema` parameter if present
-        if let Some(ref schema) = self.schema {
-            query_params.push(format!("schema={}", schema));
+        if let Some(schema) = self.schema {
+            query_params.push(format!("schema={}", encode_value(schema)));
         }
 
         // Adding `filter` parameter if present
-        if let Some(ref filter) = self.filter {
-            query_params.push(format!("filter[{}]={}", resource_name, filter));
+        if let Some(filter) = self.filter {
+            query_params.push(format!("filter[{}]={}", resource_name, encode_value(filter)));
         }
 
         // Adding `limit` parameter if present
@@ -95,7 +120,7 @@ impl<'a> Prestashop<'a> {
 
         // Adding other URL parameters
         for (key, value) in url_params {
-            query_params.push(format!("{}={}", key, value));
+            query_params.push(format!("{}={}", key, encode_value(value)));
         }
 
         // Constructing the final URL
@@ -115,17 +140,17 @@ impl<'a> Prestashop<'a> {
 
         // Adding `display` parameter
         if !self.display.is_empty() {
-            query_params.push(format!("display={}", self.display));
+            query_params.push(format!("display={}", encode_value(self.display)));
         }
 
         // Adding `schema` parameter if present
-        if let Some(ref schema) = self.schema {
-            query_params.push(format!("schema={}", schema));
+        if let Some(schema) = self.schema {
+            query_params.push(format!("schema={}", encode_value(schema)));
         }
 
         // Adding `filter` parameter if present
-        if let Some(ref filter) = self.filter {
-            query_params.push(format!("filter[{}]={}", resource_name, filter));
+        if let Some(filter) = self.filter {
+            query_params.push(format!("filter[{}]={}", resource_name, encode_value(filter)));
         }
 
         // Adding `limit` parameter if present
@@ -135,7 +160,7 @@ impl<'a> Prestashop<'a> {
 
         // Adding other URL parameters
         for (key, value) in url_params {
-            query_params.push(format!("{}={}", key, value));
+            query_params.push(format!("{}={}", key, encode_value(value)));
         }
 
         // Constructing the final URL
@@ -252,37 +277,143 @@ impl<'a> Prestashop<'a> {
     //     Ok(x)
     // }
 
-    pub async fn request_resources_wasm<T>(
+    /// Returns an empty vec when nothing matched and an error carrying the HTTP status plus
+    /// the start of the body when the request or decode fails.
+    pub async fn request_resources_checked<T>(
         &self,
         resource_name: &str,
         url_params: HashMap<&str, &str>,
     ) -> anyhow::Result<Vec<T>, anyhow::Error>
     where
-        T: for<'de> Deserialize<'de> + std::fmt::Debug + Send + Default,
+        T: for<'de> Deserialize<'de> + std::fmt::Debug + Send,
     {
-        log::info!(
-            "resource_name: {resource_name}, {url_params:#?}\nURL: {}",
-            self.query_args_wasm(resource_name, url_params.clone())
-        );
+        let url = self.query_args_wasm(resource_name, url_params);
+        log::info!("prestashop_schema -> GET {url}");
 
-        let response: Value = self
+        let response = self
             .client
-            .get(self.query_args_wasm(resource_name, url_params))
+            .get(&url)
+            .header(ACCEPT, "application/json")
             .send()
-            .await?
-            .json()
             .await?;
+        let status = response.status();
+        let body = response.text().await?;
 
-        log::info!(
-            "Raw response: {response:?}",
-        );
-        match from_value::<Vec<T>>(response[resource_name].clone()) {
-            Ok(t) => Ok(t),
-            Err(e) => {
-                log::error!("request_resources_wasm<T: {resource_name}> -> Error: {e:?}");
-                return Ok(vec![T::default()]);
+        // Prestashop answers a list query that matched nothing with 404 on some resources.
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(vec![]);
+        }
+        if !status.is_success() {
+            anyhow::bail!("GET {url} -> HTTP {status}: {}", truncate_body(&body));
+        }
+        if let Some(error) = xml::first_prestashop_error(&body) {
+            anyhow::bail!("GET {url} -> Prestashop error: {error}");
+        }
+        if body.trim().is_empty() {
+            return Ok(vec![]);
+        }
+
+        let value: Value = serde_json::from_str(&body).map_err(|e| {
+            anyhow::anyhow!(
+                "GET {url} -> HTTP {status}, body is not JSON ({e}): {}",
+                truncate_body(&body)
+            )
+        })?;
+
+        match value.get(resource_name) {
+            None | Some(Value::Null) => Ok(vec![]),
+            Some(Value::String(s)) if s.trim().is_empty() => Ok(vec![]),
+            Some(list) => from_value(list.clone()).map_err(|e| {
+                anyhow::anyhow!(
+                    "GET {url} -> unexpected `{resource_name}` shape ({e}): {}",
+                    truncate_body(&list.to_string())
+                )
+            }),
+        }
+    }
+
+    /// Resolves customers by exact email.
+    pub async fn find_customers_by_email(
+        &self,
+        email: &str,
+    ) -> anyhow::Result<Vec<Customer>, anyhow::Error> {
+        let mut query = HashMap::new();
+        query.insert("filter[email]", email);
+        query.insert("output_format", "JSON");
+
+        self.request_resources_checked("customers", query).await
+    }
+
+    /// Resolves customers by first and/or last name, deduplicated by id.
+    pub async fn find_customers_by_name(
+        &self,
+        name: &str,
+    ) -> anyhow::Result<Vec<Customer>, anyhow::Error> {
+        let tokens: Vec<&str> = name.split_whitespace().collect();
+        let mut found: Vec<Customer> = vec![];
+
+        if tokens.len() > 1 {
+            let first = format!("%[{}]%", tokens[0]);
+            let last = format!("%[{}]%", tokens[tokens.len() - 1]);
+            let mut query = HashMap::new();
+            query.insert("filter[firstname]", first.as_str());
+            query.insert("filter[lastname]", last.as_str());
+            query.insert("output_format", "JSON");
+
+            found = self.request_resources_checked("customers", query).await?;
+        }
+
+        if found.is_empty() {
+            let filter = format!("%[{name}]%");
+            for field in ["filter[firstname]", "filter[lastname]"] {
+                let mut query = HashMap::new();
+                query.insert(field, filter.as_str());
+                query.insert("output_format", "JSON");
+
+                let matches: Vec<Customer> =
+                    self.request_resources_checked("customers", query).await?;
+                for customer in matches {
+                    if !found.iter().any(|seen| seen.id == customer.id) {
+                        found.push(customer);
+                    }
+                }
             }
         }
+
+        Ok(found)
+    }
+
+    /// Orders belonging to one customer, newest first.
+    pub async fn find_orders_by_customer(
+        &self,
+        id_customer: &str,
+        limit: u32,
+    ) -> anyhow::Result<Vec<Order>, anyhow::Error> {
+        let pagination = format!("0,{limit}");
+        let mut query = HashMap::new();
+        query.insert("filter[id_customer]", id_customer);
+        query.insert("sort", "[id_DESC]");
+        query.insert("limit", pagination.as_str());
+        query.insert("output_format", "JSON");
+
+        self.request_resources_checked("orders", query).await
+    }
+
+    /// Orders whose reference contains `reference`, newest first.
+    pub async fn find_orders_by_reference(
+        &self,
+        reference: &str,
+        limit: u32,
+    ) -> anyhow::Result<Vec<Order>, anyhow::Error> {
+        let filter = format!("%[{reference}]%");
+        let pagination = format!("0,{limit}");
+        let mut query = HashMap::new();
+        query.insert("filter[reference]", filter.as_str());
+        query.insert("sort", "[id_DESC]");
+        query.insert("limit", pagination.as_str());
+        query.insert("output_format", "JSON");
+
+        self.request_resources_checked("orders", query).await
     }
 
     pub async fn find_resource_wasm<T>(
@@ -1016,4 +1147,60 @@ impl PrestashopOrderType {
         Self::InRepair,
         Self::DoneShelf,
     ];
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Returns the query string only, so a failure cannot print the credentialed base URL.
+    fn query_string(resource: &str, params: HashMap<&str, &str>) -> String {
+        let url = Prestashop::default().query_args_wasm(resource, params);
+        url.split_once('?')
+            .map(|(_, query)| query.to_string())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn like_filter_operators_are_percent_encoded() {
+        let mut params = HashMap::new();
+        params.insert("filter[reference]", "%[R2R00]%");
+
+        let query = query_string("orders", params);
+
+        assert!(
+            query.contains("filter[reference]=%25%5BR2R00%5D%25"),
+            "unencoded filter operators in {query}"
+        );
+    }
+
+    #[test]
+    fn email_and_sort_values_survive_encoding() {
+        let mut params = HashMap::new();
+        params.insert("filter[email]", "mike.msquared+tag@gmail.com");
+        params.insert("sort", "[id_DESC]");
+        params.insert("limit", "0,25");
+
+        let query = query_string("customers", params);
+
+        assert!(
+            query.contains("filter[email]=mike.msquared%2Btag@gmail.com"),
+            "`+` must not survive as a literal space in {query}"
+        );
+        assert!(query.contains("sort=%5Bid_DESC%5D"), "in {query}");
+        assert!(query.contains("limit=0,25"), "in {query}");
+    }
+
+    #[test]
+    fn plain_values_are_untouched() {
+        let mut params = HashMap::new();
+        params.insert("filter[id_customer]", "41633");
+        params.insert("output_format", "JSON");
+
+        let query = query_string("orders", params);
+
+        assert!(query.contains("filter[id_customer]=41633"), "in {query}");
+        assert!(query.contains("output_format=JSON"), "in {query}");
+        assert!(query.contains("display=full"), "in {query}");
+    }
 }

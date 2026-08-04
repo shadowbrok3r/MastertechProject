@@ -65,7 +65,7 @@ impl CustomerData {
         query.insert("output_format", "JSON");
 
         let addresses: Vec<Address> = api_call
-            .request_resources_wasm("addresses", query.clone())
+            .request_resources_checked("addresses", query.clone())
             .await?;
 
         if let Some(address) = addresses.get(0) {

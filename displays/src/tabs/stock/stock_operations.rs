@@ -671,7 +671,7 @@ pub async fn get_bulk_cost_breakdown(
             query.insert("output_format", "JSON");
 
             let page: Vec<PrestashopId> = id_api
-                .request_resources_wasm("orders", query)
+                .request_resources_checked("orders", query)
                 .await
                 .unwrap_or_default();
             let real: Vec<String> = page
@@ -911,7 +911,7 @@ pub async fn get_systems_in_store(
             query.insert("filter[current_state]", &order_state_id);
             let query_refs: HashMap<&str, &str> = query.iter().map(|(k, v)| (*k, *v)).collect();
 
-            match presta.request_resources_wasm::<Order>("orders", query_refs).await {
+            match presta.request_resources_checked::<Order>("orders", query_refs).await {
                 Ok(orders) => {
                     info!("Got {} orders for customer {} type {:?}", orders.len(), customer_id, order_type.to_id());
                     for order in orders.iter() {
@@ -969,7 +969,7 @@ pub async fn reconcile_systems_in_store(
             query.insert("filter[current_state]", &order_state_id);
             let query_refs: HashMap<&str, &str> = query.iter().map(|(k, v)| (*k, *v)).collect();
 
-            match list_api.request_resources_wasm::<Order>("orders", query_refs).await {
+            match list_api.request_resources_checked::<Order>("orders", query_refs).await {
                 Ok(orders) => {
                     for o in orders.iter() {
                         if !o.id.is_empty() && o.id != "0" {
