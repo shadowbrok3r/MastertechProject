@@ -1,0 +1,34 @@
+id = "20260804120000__computer_spec_field_defaults"
+name = "computer_spec_field_defaults"
+state = "completed"
+source_schema_hash = "2326d4d2f4d8d15e230203da144c088688b28f0c0131c3f933fc92de2f047de5"
+target_schema_hash = "2326d4d2f4d8d15e230203da144c088688b28f0c0131c3f933fc92de2f047de5"
+compatibility = "phased"
+renames = []
+
+# cpu/gpu/ram/drives were mandatory on INSERT, so any writer that creates a
+# computer row without full specs failed to coerce NONE. Matches the DEFAULT ''
+# hostname/operating_system already carry. Existing rows are untouched —
+# DEFAULT applies only on create.
+
+[[steps]]
+id = "default_computer_spec_fields"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE cpu    ON computer TYPE string        DEFAULT '' PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE gpu    ON computer TYPE string        DEFAULT '' PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE ram    ON computer TYPE string        DEFAULT '' PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE drives ON computer TYPE array<object> DEFAULT [] PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "undefault_computer_spec_fields"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE cpu    ON computer TYPE string        PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE gpu    ON computer TYPE string        PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE ram    ON computer TYPE string        PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE drives ON computer TYPE array<object> PERMISSIONS FULL;
+"""

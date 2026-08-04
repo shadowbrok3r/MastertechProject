@@ -159,14 +159,24 @@ pub struct ComputerData {
     /// be filled in by slice 2 of this refactor (auto info-checks on
     /// connect).
     #[serde(default, deserialize_with = "deserialize_security_products")]
+    #[surreal(default)]
     pub current_antivirus: Vec<InstalledSecurityProduct>,
+    // Schema-optional (`none | string`); absent on rows created without specs.
+    #[surreal(default)]
     pub motherboard_name: String,
+    #[surreal(default)]
     pub motherboard_serial: String,
+    #[surreal(default)]
     pub motherboard_asset_tag: String,
+    #[surreal(default)]
     pub motherboard_vendor: String,
+    #[surreal(default)]
     pub product_name: String,
+    #[surreal(default)]
     pub product_sku: String,
+    #[surreal(default)]
     pub product_serial: String,
+    #[surreal(default)]
     pub product_vendor: String,
     /// OA3/MSDM Windows key — the cross-OS identity shared with the pre-boot
     /// UEFI app (SoftwareLicensingService.OA3xOriginalProductKey on Windows,
@@ -275,6 +285,53 @@ pub struct DriveData {
     pub drive_type: String,
     pub total_size: String,
     pub space_left: String,
+}
+
+#[cfg(test)]
+mod deser_tests {
+    use super::*;
+    use crate::schema::{COMPUTER_TABLE, CUSTOMER_TABLE};
+    use surrealdb::types::Value;
+
+    /// The shape a spec-less `computer` row actually stores: only the fields
+    /// carrying a schema DEFAULT, plus id/customer. Everything else is absent.
+    fn spec_less_row() -> Value {
+        let mut v = ComputerData {
+            id: RecordId::new(COMPUTER_TABLE, "DESKTOP-TU0PGC9:2ad433d07"),
+            customer: Some(RecordId::new(CUSTOMER_TABLE, "2")),
+            hostname: "DESKTOP-TU0PGC9".to_string(),
+            ..Default::default()
+        }
+        .into_value();
+        let keep = [
+            "id",
+            "customer",
+            "hostname",
+            "operating_system",
+            "cpu",
+            "gpu",
+            "ram",
+            "drives",
+        ];
+        match &mut v {
+            Value::Object(obj) => obj.retain(|k, _| keep.contains(&k.as_str())),
+            other => panic!("ComputerData should serialize to an object, got {other:?}"),
+        }
+        v
+    }
+
+    #[test]
+    fn spec_less_row_deserializes() {
+        let parsed = ComputerData::from_value(spec_less_row())
+            .expect("a computer row created without specs must deserialize");
+        assert_eq!(parsed.hostname, "DESKTOP-TU0PGC9");
+        assert_eq!(parsed.cpu, "");
+        assert!(parsed.drives.is_empty());
+        assert!(parsed.current_antivirus.is_empty());
+        assert_eq!(parsed.motherboard_name, "");
+        assert_eq!(parsed.product_serial, "");
+        assert!(parsed.customer.is_some());
+    }
 }
 
 
