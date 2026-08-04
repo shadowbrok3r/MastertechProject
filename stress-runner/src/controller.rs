@@ -117,6 +117,25 @@ impl RunPlan {
         let stressors = self.stressors();
         !stressors.is_empty() && stressors.iter().all(|s| s.is_gpu())
     }
+
+    /// Wall seconds this plan is expected to take. `total_wall_secs` is a cap,
+    /// not a target: a stage list that does not repeat ends at its own sum even
+    /// when the cap is longer. `None` runs until the operator stops it.
+    pub fn expected_duration_secs(&self) -> Option<u64> {
+        match self {
+            Self::Single { duration_secs, .. } | Self::Concurrent { duration_secs, .. } => {
+                *duration_secs
+            }
+            Self::Scenario { stages, total_wall_secs, repeat_until_total } => {
+                let staged: u64 = stages.iter().map(|s| s.duration_secs).sum();
+                match total_wall_secs {
+                    Some(cap) if *repeat_until_total => Some(*cap),
+                    Some(cap) => Some(staged.min(*cap)),
+                    None => Some(staged),
+                }
+            }
+        }
+    }
 }
 
 /// Declarative description of one stress run.  Identifying fields
@@ -461,6 +480,7 @@ fn worker(
     // `StressTestRun::create` already does a read-back via `Self::exists`,
     // so an Ok here proves the row landed in SurrealDB.
     let run = build_run(&spec);
+    let planned_secs = run.duration_planned_secs;
     let run_id_clone = run.id.clone();
     let run_for_create = run.clone();
     match runtime::block_on(async move { StressTestRun::create(&run_for_create).await }) {
@@ -638,7 +658,14 @@ fn worker(
     let duration_secs = started_at.elapsed().as_secs_f64();
     let stages: Vec<ScenarioStageSummary> =
         outcomes.iter().map(|o| o.summary.clone()).collect();
-    let verdict = acc.into_verdict(&run_id_clone, &cancel, duration_secs, &spec.tool, outcomes);
+    let verdict = acc.into_verdict(
+        &run_id_clone,
+        &cancel,
+        duration_secs,
+        planned_secs,
+        &spec.tool,
+        outcomes,
+    );
 
     // Same `'static` requirement as the create call — clone everything into
     // an owned async block.
@@ -690,17 +717,7 @@ fn build_run(spec: &RunSpec) -> StressTestRun {
     run.preset_label = spec.preset_label.clone();
     run.tags = spec.tags.clone();
 
-    if let RunPlan::Single { duration_secs, .. } = &spec.plan {
-        run.duration_planned_secs = *duration_secs;
-    }
-    if let RunPlan::Scenario { stages, total_wall_secs, .. } = &spec.plan {
-        let total: u64 = total_wall_secs
-            .unwrap_or_else(|| stages.iter().map(|s| s.duration_secs).sum());
-        run.duration_planned_secs = Some(total);
-    }
-    if let RunPlan::Concurrent { duration_secs, .. } = &spec.plan {
-        run.duration_planned_secs = *duration_secs;
-    }
+    run.duration_planned_secs = spec.plan.expected_duration_secs();
     run
 }
 
@@ -2072,6 +2089,7 @@ impl SummaryAccumulator {
         run_id: &RecordId,
         cancel: &Arc<AtomicBool>,
         duration_secs: f64,
+        planned_secs: Option<u64>,
         tool: &TestTool,
         stage_outcomes: Vec<StageOutcome>,
     ) -> RunVerdict {
@@ -2094,6 +2112,13 @@ impl SummaryAccumulator {
         // Not gated on `rules`: stages without a policy still carry a verdict
         // when the stressor aborted.
         let rules_failure = rules_failure_mode(&stage_outcomes, &mut summary);
+
+        // Short of plan, or with no finished stage and no throughput: a run
+        // that collected no data logs no violation to fail on.
+        let ended_short = ended_short_of_plan(planned_secs, duration_secs);
+        let uncertifiable = ended_short
+            .clone()
+            .or_else(|| missing_work_evidence(&stage_outcomes, &summary));
 
         let cancelled = cancel.load(Ordering::Relaxed);
         let had_failure = rules_failure.is_some()
@@ -2147,6 +2172,22 @@ impl SummaryAccumulator {
                 DbFinishReason::Cancelled,
                 FailureMode::None,
             )
+        } else if let Some(message) = uncertifiable {
+            // Ranked below a cancel and the hardware evidence above, which name
+            // the run's end more precisely.
+            let reason = if ended_short.is_some() {
+                DbFinishReason::EndedEarly
+            } else {
+                self.scenario_finish.unwrap_or(DbFinishReason::Completed)
+            };
+            (
+                RunResult::Inconclusive,
+                reason,
+                FailureMode::AppError {
+                    exit_code: None,
+                    message,
+                },
+            )
         } else {
             (
                 RunResult::Pass,
@@ -2165,6 +2206,52 @@ impl SummaryAccumulator {
             stage_outcomes,
         }
     }
+}
+
+/// Share of the planned duration a run may miss and still certify.
+const SHORT_RUN_TOLERANCE_PCT: f64 = 0.03;
+
+/// Floor under `SHORT_RUN_TOLERANCE_PCT`, so second-scale plans are not tripped
+/// by tick rounding.
+const SHORT_RUN_TOLERANCE_SECS: f64 = 5.0;
+
+/// Message for a run that ended materially short of its planned duration.
+/// `None` when the plan set no duration or the run reached it within tolerance.
+fn ended_short_of_plan(planned_secs: Option<u64>, actual_secs: f64) -> Option<String> {
+    let planned = planned_secs.filter(|p| *p > 0)? as f64;
+    let tolerance = (planned * SHORT_RUN_TOLERANCE_PCT).max(SHORT_RUN_TOLERANCE_SECS);
+    if actual_secs >= planned - tolerance {
+        return None;
+    }
+    Some(format!(
+        "inconclusive - the run ended after {actual_secs:.0}s of a planned {planned:.0}s \
+         ({pct:.0}% of plan); the remaining time was never tested, so this run certifies \
+         nothing",
+        pct = (actual_secs / planned * 100.0).clamp(0.0, 100.0),
+    ))
+}
+
+/// Message for a run carrying no positive evidence that a load ran: no stage
+/// reached its end, or no tick ever measured throughput.
+fn missing_work_evidence(
+    stage_outcomes: &[StageOutcome],
+    summary: &RunSummary,
+) -> Option<String> {
+    if stage_outcomes.is_empty() {
+        return Some(
+            "inconclusive - no stage reached its end, so no stage was graded and the run \
+             has no record of work completed"
+                .to_string(),
+        );
+    }
+    if summary.peak_throughput.is_none() {
+        return Some(
+            "inconclusive - no tick measured throughput, so the run has no evidence that \
+             any load ran"
+                .to_string(),
+        );
+    }
+    None
 }
 
 /// Dominant `FailureMode` across failed stage verdicts, by severity:
@@ -2338,18 +2425,35 @@ mod tests {
         }
     }
 
-    fn verdict_for(acc: SummaryAccumulator) -> RunVerdict {
-        verdict_with(acc, Vec::new())
+    /// Verdict for `acc` on a run that met its plan and recorded work, so only
+    /// what the test set up decides the result.
+    fn verdict_for(mut acc: SummaryAccumulator) -> RunVerdict {
+        acc.absorb(
+            &work_tick(100.0, None),
+            &TelemetrySnapshot::default(),
+            "GFLOPS",
+        );
+        verdict_with(acc, vec![finished_stage()])
     }
 
     /// Run verdict for an accumulator plus already-judged stages.
     fn verdict_with(acc: SummaryAccumulator, outcomes: Vec<StageOutcome>) -> RunVerdict {
+        verdict_at(acc, outcomes, 60.0, Some(60))
+    }
+
+    /// Run verdict at an explicit actual/planned duration pair.
+    fn verdict_at(
+        acc: SummaryAccumulator,
+        outcomes: Vec<StageOutcome>,
+        duration_secs: f64,
+        planned_secs: Option<u64>,
+    ) -> RunVerdict {
         let run_id = RecordId::new("stress_test_run", "verdict-test");
         let cancel = Arc::new(AtomicBool::new(false));
         let tool = TestTool::StressKit {
             stressor: "gpu_matmul".to_string(),
         };
-        acc.into_verdict(&run_id, &cancel, 60.0, &tool, outcomes)
+        acc.into_verdict(&run_id, &cancel, duration_secs, planned_secs, &tool, outcomes)
     }
 
     /// One finished stage carrying only the supplied verdict.
@@ -2358,6 +2462,25 @@ mod tests {
             summary: ScenarioStageSummary::default(),
             verdict: Some(verdict),
         }
+    }
+
+    /// A stage that reached its end with no verdict of its own.
+    fn finished_stage() -> StageOutcome {
+        StageOutcome {
+            summary: ScenarioStageSummary::default(),
+            verdict: None,
+        }
+    }
+
+    /// Accumulator holding one tick of measured work.
+    fn acc_with_work() -> SummaryAccumulator {
+        let mut acc = SummaryAccumulator::default();
+        acc.absorb(
+            &work_tick(100.0, None),
+            &TelemetrySnapshot::default(),
+            "GFLOPS",
+        );
+        acc
     }
 
     #[test]
@@ -3006,5 +3129,136 @@ mod tests {
         let verdict = verdict_for(acc);
         assert_eq!(verdict.result, RunResult::Pass);
         assert_eq!(verdict.failure_mode, FailureMode::None);
+    }
+
+    /// The reported symptom: a 12-hour cert that died after ~2 minutes logged no
+    /// violations — it collected no data to violate one — and was signed off as
+    /// a passing Platinum certification.
+    #[test]
+    fn run_far_short_of_its_plan_is_not_a_pass() {
+        let verdict = verdict_at(acc_with_work(), vec![finished_stage()], 113.0, Some(43_200));
+
+        assert_ne!(verdict.result, RunResult::Pass, "113s of a 12-hour cert passed");
+        assert_eq!(verdict.result, RunResult::Inconclusive);
+        assert_eq!(verdict.finish_reason, DbFinishReason::EndedEarly);
+        match verdict.failure_mode {
+            FailureMode::AppError { ref message, .. } => {
+                assert!(message.contains("43200s"), "unexpected message: {message}");
+            }
+            other => panic!("expected an inconclusive AppError, got {other:?}"),
+        }
+    }
+
+    /// The overshoot healthy certs already record must still certify.
+    #[test]
+    fn full_duration_clean_run_still_passes() {
+        let verdict = verdict_at(acc_with_work(), vec![finished_stage()], 43_206.0, Some(43_200));
+
+        assert_eq!(verdict.result, RunResult::Pass);
+        assert_eq!(verdict.finish_reason, DbFinishReason::Completed);
+        assert_eq!(verdict.failure_mode, FailureMode::None);
+    }
+
+    /// `total_wall_secs` caps a scenario, it does not extend one: a stage list
+    /// that does not repeat ends at its own sum, and the run is not short for it.
+    #[test]
+    fn wall_cap_longer_than_the_stages_is_not_the_expected_duration() {
+        let stages = vec![
+            stage_spec("cpu", Stressor::Cpu),
+            stage_spec("gpu", Stressor::Gpu),
+        ];
+        let scenario = |total_wall_secs, repeat_until_total| RunPlan::Scenario {
+            stages: stages.clone(),
+            total_wall_secs,
+            repeat_until_total,
+        };
+        // 2 x 60s of stages under a 4200s cap.
+        assert_eq!(scenario(Some(4_200), false).expected_duration_secs(), Some(120));
+        // Repeating fills the cap.
+        assert_eq!(scenario(Some(4_200), true).expected_duration_secs(), Some(4_200));
+        // A cap shorter than the stages truncates them.
+        assert_eq!(scenario(Some(90), false).expected_duration_secs(), Some(90));
+        assert_eq!(scenario(None, false).expected_duration_secs(), Some(120));
+
+        assert_eq!(
+            RunPlan::Concurrent { lanes: stages, duration_secs: None }.expected_duration_secs(),
+            None
+        );
+    }
+
+    /// Undershoot inside a few percent certifies; past that it does not. Plans
+    /// with no duration are ungraded on time.
+    #[test]
+    fn short_run_tolerance_allows_only_a_few_percent() {
+        assert!(ended_short_of_plan(None, 1.0).is_none());
+        assert!(ended_short_of_plan(Some(0), 0.0).is_none());
+        assert!(ended_short_of_plan(Some(43_200), 43_206.0).is_none());
+        assert!(ended_short_of_plan(Some(43_200), 42_000.0).is_none());
+        assert!(ended_short_of_plan(Some(43_200), 41_000.0).is_some());
+        // Second-scale plans lean on the floor, not the percentage.
+        assert!(ended_short_of_plan(Some(60), 57.0).is_none());
+        assert!(ended_short_of_plan(Some(60), 50.0).is_some());
+        // Every cert row the live DB flagged.
+        for actual in [113.0, 147.0, 231.0, 1_749.0, 6_654.0, 9_738.0, 17_984.0] {
+            assert!(
+                ended_short_of_plan(Some(43_200), actual).is_some(),
+                "{actual}s of a 43200s plan certified"
+            );
+        }
+        assert!(ended_short_of_plan(Some(12_600), 7_906.0).is_some());
+    }
+
+    /// A run whose stages never finished graded nothing, however long it ran.
+    #[test]
+    fn run_with_no_finished_stage_is_not_a_pass() {
+        let verdict = verdict_at(acc_with_work(), Vec::new(), 43_206.0, Some(43_200));
+
+        assert_eq!(verdict.result, RunResult::Inconclusive);
+        assert_eq!(verdict.failure_mode.kind(), "app_error");
+    }
+
+    /// Full duration with a finished stage but no throughput anywhere: no load
+    /// ran, so the duration arithmetic alone must not certify it.
+    #[test]
+    fn run_without_measured_throughput_is_not_a_pass() {
+        let verdict = verdict_at(
+            SummaryAccumulator::default(),
+            vec![finished_stage()],
+            43_206.0,
+            Some(43_200),
+        );
+
+        assert_eq!(verdict.result, RunResult::Inconclusive);
+        assert_eq!(verdict.finish_reason, DbFinishReason::Completed);
+        assert_eq!(verdict.failure_mode.kind(), "app_error");
+    }
+
+    /// Hardware evidence and an operator cancel both outrank the short-run gate:
+    /// they name the run's end more precisely.
+    #[test]
+    fn failure_and_cancel_outrank_the_short_run_gate() {
+        let mut acc = acc_with_work();
+        acc.absorb(
+            &tick(Some("disk thread 0: Access is denied. (os error 5)"), 0),
+            &TelemetrySnapshot::default(),
+            "MiB/s",
+        );
+        let verdict = verdict_at(acc, vec![finished_stage()], 113.0, Some(43_200));
+        assert_eq!(verdict.result, RunResult::Fail);
+        assert_eq!(verdict.failure_mode.kind(), "disk_io_error");
+
+        let run_id = RecordId::new("stress_test_run", "verdict-test");
+        let cancel = Arc::new(AtomicBool::new(true));
+        let tool = TestTool::StressKit { stressor: "cpu".to_string() };
+        let verdict = acc_with_work().into_verdict(
+            &run_id,
+            &cancel,
+            113.0,
+            Some(43_200),
+            &tool,
+            vec![finished_stage()],
+        );
+        assert_eq!(verdict.result, RunResult::Aborted);
+        assert_eq!(verdict.finish_reason, DbFinishReason::Cancelled);
     }
 }

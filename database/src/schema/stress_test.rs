@@ -651,6 +651,10 @@ pub enum FinishReason {
     /// thread panicked).
     #[surreal(value = "crashed")]
     Crashed,
+    /// Run stopped materially short of `duration_planned_secs` without an
+    /// operator cancel, so the plan's remaining time was never tested.
+    #[surreal(value = "ended_early")]
+    EndedEarly,
 }
 
 // ============================================================
