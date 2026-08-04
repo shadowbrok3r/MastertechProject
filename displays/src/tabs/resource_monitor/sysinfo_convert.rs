@@ -112,8 +112,14 @@ pub fn sysinfo_to_telemetry(info: &SystemInformation) -> TelemetrySnapshot {
             name: card.name.clone(),
             // Zero is a missing sensor, not a reading.
             temp_c: (card.temperature > 0).then(|| card.temperature as f32),
-            usage_pct: usage.map(|u| u.gpu as f32),
-            memory_used_mb: usage.map(|u| u.memory_used / (1024 * 1024)),
+            // A live adapter always has VRAM committed, so an all-zero usage row is
+            // a card the client enumerated without a utilisation counter behind it.
+            usage_pct: usage
+                .filter(|u| u.gpu > 0 || u.memory_used > 0)
+                .map(|u| u.gpu as f32),
+            memory_used_mb: usage
+                .filter(|u| u.memory_used > 0)
+                .map(|u| u.memory_used / (1024 * 1024)),
             memory_total_mb: (card.memory > 0).then(|| card.memory / (1024 * 1024)),
             ..Default::default()
         });
@@ -206,6 +212,75 @@ pub fn sysinfo_to_machine_info(info: &SystemInformation) -> crate::tabs::resourc
         ram_gb,
         gpu: gpu_label,
         drives,
+    }
+}
+
+#[cfg(all(test, feature = "native-telemetry"))]
+mod tests {
+    use super::*;
+    use database::schema::{GraphicsCard, GraphicsUsage};
+
+    fn info_with_gpu(card: GraphicsCard, usage: Vec<GraphicsUsage>) -> SystemInformation {
+        let mut info = SystemInformation::default();
+        info.gpu_info.card = vec![card];
+        info.gpu_info.usage = usage;
+        info
+    }
+
+    #[test]
+    fn gpu_load_and_vram_come_from_the_usage_row() {
+        let card = GraphicsCard {
+            name: "NVIDIA GeForce RTX 4060 Laptop GPU".into(),
+            memory: 8 * 1024 * 1024 * 1024,
+            temperature: 71,
+            ..Default::default()
+        };
+        let usage = GraphicsUsage {
+            gpu: 97,
+            memory_used: 3 * 1024 * 1024 * 1024,
+            temperature: 71,
+            ..Default::default()
+        };
+        let snap = sysinfo_to_telemetry(&info_with_gpu(card, vec![usage]));
+        let g = &snap.gpus[0];
+        assert_eq!(g.temp_c, Some(71.0));
+        assert_eq!(g.usage_pct, Some(97.0));
+        assert_eq!(g.memory_used_mb, Some(3072));
+        assert_eq!(g.memory_total_mb, Some(8192));
+    }
+
+    #[test]
+    fn a_card_with_no_usage_row_reports_absent_load_and_vram() {
+        let card = GraphicsCard {
+            name: "NVIDIA GeForce RTX 4060 Laptop GPU".into(),
+            memory: 8 * 1024 * 1024 * 1024,
+            temperature: 71,
+            ..Default::default()
+        };
+        let snap = sysinfo_to_telemetry(&info_with_gpu(card, Vec::new()));
+        let g = &snap.gpus[0];
+        assert_eq!(g.temp_c, Some(71.0));
+        assert_eq!(g.usage_pct, None);
+        assert_eq!(g.memory_used_mb, None);
+    }
+
+    #[test]
+    fn an_all_zero_usage_row_is_no_counter_not_an_idle_gpu() {
+        let card = GraphicsCard { temperature: 44, ..Default::default() };
+        let snap = sysinfo_to_telemetry(&info_with_gpu(card, vec![GraphicsUsage::default()]));
+        let g = &snap.gpus[0];
+        assert_eq!(g.usage_pct, None);
+        assert_eq!(g.memory_used_mb, None);
+    }
+
+    #[test]
+    fn an_idle_gpu_with_vram_committed_still_reports_zero_load() {
+        let card = GraphicsCard { temperature: 44, ..Default::default() };
+        let usage = GraphicsUsage { gpu: 0, memory_used: 512 * 1024 * 1024, ..Default::default() };
+        let snap = sysinfo_to_telemetry(&info_with_gpu(card, vec![usage]));
+        let g = &snap.gpus[0];
+        assert_eq!(g.usage_pct, Some(0.0));
+        assert_eq!(g.memory_used_mb, Some(512));
     }
 }
 

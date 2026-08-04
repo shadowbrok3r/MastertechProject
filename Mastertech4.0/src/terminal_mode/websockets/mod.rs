@@ -4831,7 +4831,7 @@ pub async fn live_computer_stats(tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>
                         let snapshot = crate::filesystem::system_info::current_telemetry_snapshot();
 
                         if systeminfo.gpu_info.card.is_empty() && !snapshot.gpus.is_empty() {
-                            use database::schema::GraphicsCard;
+                            use database::schema::{GraphicsCard, GraphicsUsage, NvidiaInfo};
                             systeminfo.gpu_info.card = snapshot
                                 .gpus
                                 .iter()
@@ -4841,6 +4841,29 @@ pub async fn live_computer_stats(tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>
                                     name: g.name.clone(),
                                     brand: g.vendor.clone(),
                                     memory: g.memory_total_mb.unwrap_or(0).saturating_mul(1024 * 1024),
+                                    temperature: g.temp_c.unwrap_or(0.0) as u32,
+                                    nvidia_info: NvidiaInfo {
+                                        driver_version: g
+                                            .driver_version
+                                            .clone()
+                                            .unwrap_or_default(),
+                                        ..Default::default()
+                                    },
+                                })
+                                .collect();
+                            // Index-aligned with `card`: the admin reads GPU load and
+                            // VRAM-used from here, `card` only carries temp and VRAM total.
+                            systeminfo.gpu_info.usage = snapshot
+                                .gpus
+                                .iter()
+                                .enumerate()
+                                .map(|(i, g)| GraphicsUsage {
+                                    id: i.to_string(),
+                                    gpu: g.usage_pct.unwrap_or(0.0).round() as u32,
+                                    memory_used: g
+                                        .memory_used_mb
+                                        .unwrap_or(0)
+                                        .saturating_mul(1024 * 1024),
                                     temperature: g.temp_c.unwrap_or(0.0) as u32,
                                     ..Default::default()
                                 })
