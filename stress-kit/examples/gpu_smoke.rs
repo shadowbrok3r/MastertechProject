@@ -30,6 +30,7 @@ fn run(stressor: Stressor, memory_cap_mb: u64, secs: u64) {
         timeout: Some(Duration::from_secs(secs)),
         memory_cap_mb,
         disk_file_mb: 1,
+        display: Default::default(),
     });
     let deadline = Instant::now() + Duration::from_secs(secs + 5);
     let mut last = None;

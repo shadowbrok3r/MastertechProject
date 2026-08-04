@@ -242,7 +242,7 @@ impl TaskNotePayload {
                 query.insert("filter[id_order]", service_number.as_str());
                 query.insert("output_format", "JSON");
                 let threads: Vec<CustomerThread> = api
-                    .request_resources_wasm("customer_threads", query)
+                    .request_resources_checked("customer_threads", query)
                     .await
                     .unwrap_or_default();
                 match threads.into_iter().find(|t| !t.id.is_empty()) {
@@ -663,7 +663,7 @@ impl TaskNotePayload {
                 query.insert("output_format", "JSON");
 
                 let customer_threads_result: Result<Vec<CustomerThread>, anyhow::Error> = api_call
-                    .request_resources_wasm("customer_threads", query.clone())
+                    .request_resources_checked("customer_threads", query.clone())
                     .await;
                 
                 log::info!("task_note/mod.rs -> get_thread_id_from_order -> Got customer threads: {customer_threads_result:?}");
@@ -730,7 +730,7 @@ impl TaskNotePayload {
         query.insert("output_format", "JSON");
 
         let customer_threads_result: Result<Vec<CustomerThread>, anyhow::Error> = api_call
-            .request_resources_wasm("customer_threads", query.clone())
+            .request_resources_checked("customer_threads", query.clone())
             .await;
 
         match customer_threads_result {
@@ -842,7 +842,7 @@ impl TaskNotePayload {
         query.insert("output_format", "JSON");
 
         let customer_threads_result: Result<Vec<CustomerThread>, anyhow::Error> = api_call
-            .request_resources_wasm("customer_threads", query.clone())
+            .request_resources_checked("customer_threads", query.clone())
             .await;
 
         match customer_threads_result {

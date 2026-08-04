@@ -54,6 +54,7 @@ dependencies = [
  "minidump-common",
  "minidump-processor",
  "minidump-unwind",
+ "mtech-ui",
  "multi_log",
  "num-format",
  "num-traits",
@@ -2832,6 +2833,7 @@ dependencies = [
  "hex",
  "log",
  "once_cell",
+ "percent-encoding",
  "regex",
  "reqwest 0.13.4",
  "rfd",
@@ -6806,11 +6808,13 @@ dependencies = [
  "anyhow",
  "chrono",
  "eframe",
+ "egui-phosphor",
  "egui_dock",
  "log",
  "regex",
  "reqwest 0.13.4",
  "serde_json",
+ "stress-runner",
 ]
 
 [[package]]

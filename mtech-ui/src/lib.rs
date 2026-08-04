@@ -4,4 +4,7 @@
 pub mod dock_style;
 pub mod egui_logger;
 pub mod github;
+pub mod icons;
+#[cfg(feature = "stress-ui")]
+pub mod stress_dashboard;
 pub mod theme;

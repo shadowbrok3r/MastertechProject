@@ -90,7 +90,7 @@ pub async fn generate_orders_report(pay_period: PayPeriod, state: &str, id_emplo
                 url_params.insert("filter[delivery_date]", &date);
 
                 // Make the API request
-                filtered_orders.append(&mut prestashop.request_resources_wasm::<Order>("orders", url_params).await?);
+                filtered_orders.append(&mut prestashop.request_resources_checked::<Order>("orders", url_params).await?);
 
                 let mut url_params2 = HashMap::new();
                 // Construct query parameters
@@ -99,7 +99,7 @@ pub async fn generate_orders_report(pay_period: PayPeriod, state: &str, id_emplo
                 url_params2.insert("filter[current_state]", state);
                 url_params2.insert("filter[delivery_date]", &date);
 
-                filtered_orders.append(&mut prestashop.request_resources_wasm::<Order>("orders", url_params2).await?);
+                filtered_orders.append(&mut prestashop.request_resources_checked::<Order>("orders", url_params2).await?);
 
                 // Move to the next date
                 current_date = current_date + Duration::days(1);
@@ -118,7 +118,7 @@ pub async fn generate_orders_report(pay_period: PayPeriod, state: &str, id_emplo
                 let limit_str = format!("{},{}", start, limit);
                 url_params.insert("limit", &limit_str);
                 
-                let mut orders = prestashop.request_resources_wasm::<Order>("orders", url_params).await?;
+                let mut orders = prestashop.request_resources_checked::<Order>("orders", url_params).await?;
 
                 let mut url_params2 = HashMap::new();
                 url_params2.insert("output_format", "JSON");
@@ -128,7 +128,7 @@ pub async fn generate_orders_report(pay_period: PayPeriod, state: &str, id_emplo
                 let limit_str = format!("{},{}", start, limit);
                 url_params2.insert("limit", &limit_str);
 
-                orders.append(&mut prestashop.request_resources_wasm::<Order>("orders", url_params2).await?);
+                orders.append(&mut prestashop.request_resources_checked::<Order>("orders", url_params2).await?);
 
                 if orders.is_empty() {
                     break; // No more orders to fetch
@@ -201,7 +201,7 @@ pub async fn get_order_payments(id_order: &str) -> anyhow::Result<Vec<OrderPayme
     url_params.insert("output_format", "JSON");
     url_params.insert("filter[id_order]", id_order);
 
-    let payments: Vec<OrderPayment> = api.request_resources_wasm("order_payments", url_params).await?;
+    let payments: Vec<OrderPayment> = api.request_resources_checked("order_payments", url_params).await?;
     
     Ok(payments)
 }

@@ -1179,7 +1179,7 @@ impl Customer {
         query.insert("output_format", "JSON");
 
         let customers: Vec<Customer> = api_call
-            .request_resources_wasm("customers",  query)
+            .request_resources_checked("customers",  query)
             .await?;
 
         if let Some(customer) = customers.get(0) {
@@ -1222,7 +1222,7 @@ impl Customer {
         query.insert("output_format", "JSON");
 
         let possible_customers: Vec<Customer> = api_call
-            .request_resources_wasm("customers", query.clone())
+            .request_resources_checked("customers", query.clone())
             .await?;
 
         for cust in possible_customers.iter() {
@@ -1232,7 +1232,7 @@ impl Customer {
                 query.insert("output_format", "JSON");
 
                 let addresses: Vec<Address> = api_call
-                    .request_resources_wasm("addresses", query.clone())
+                    .request_resources_checked("addresses", query.clone())
                     .await?;
 
                 for addr in addresses.iter() {
@@ -1257,7 +1257,7 @@ impl Customer {
             query.insert("output_format", "JSON");
         
             let customer_addresses: Vec<Address> = api_call
-                .request_resources_wasm("addresses", query.clone())
+                .request_resources_checked("addresses", query.clone())
                 .await?;
 
             log::info!("Addresses: {customer_addresses:#?}");
@@ -1313,7 +1313,7 @@ pub async fn get_prestashop_payload_from_phone(phone: &str) -> anyhow::Result<Pr
         query.insert("output_format", "JSON");
     
         let customer_addresses: Vec<Address> = api_call
-            .request_resources_wasm("addresses", query.clone())
+            .request_resources_checked("addresses", query.clone())
             .await?;
 
         log::info!("Addresses: {customer_addresses:#?}");
@@ -1336,7 +1336,7 @@ pub async fn get_prestashop_payload_from_phone(phone: &str) -> anyhow::Result<Pr
     query.insert("output_format", "JSON");
 
     let orders: Vec<Order> = api_call
-        .request_resources_wasm("orders", query.clone())
+        .request_resources_checked("orders", query.clone())
         .await?;
 
     if let Some(order) = orders.get(0) {
@@ -1355,7 +1355,7 @@ pub async fn get_prestashop_payload_from_phone(phone: &str) -> anyhow::Result<Pr
     query.insert("output_format", "JSON");
 
     let customer_threads: Vec<CustomerThread> = api_call
-        .request_resources_wasm("customer_threads", query.clone())
+        .request_resources_checked("customer_threads", query.clone())
         .await?;
 
     let mut customer_messages: Vec<CustomerMessage> = Vec::new();
@@ -1457,7 +1457,7 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
     query.insert("output_format", "JSON");
 
     let customer_threads: Vec<CustomerThread> = api_call
-        .request_resources_wasm("customer_threads", query.clone())
+        .request_resources_checked("customer_threads", query.clone())
         .await?;
 
     log::info!("CUSTOMER THREADS LEN: {}", customer_threads.len());
@@ -1549,7 +1549,7 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
     query.insert("output_format", "JSON");
 
     let addresses: Vec<Address> = api_call
-        .request_resources_wasm("addresses", query.clone())
+        .request_resources_checked("addresses", query.clone())
         .await?;
 
     for address in addresses.iter() {

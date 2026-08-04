@@ -55,7 +55,7 @@ impl PrestashopBackend {
         params.insert("filter[serial_number]", filter.as_str());
         params.insert("output_format", "JSON");
         let serials: Vec<OrderSerial> = api
-            .request_resources_wasm("order_serials", params)
+            .request_resources_checked("order_serial", params)
             .await
             .unwrap_or_default();
         let id_order = serials
@@ -148,7 +148,7 @@ impl PrestashopBackend {
         let mut params = HashMap::new();
         params.insert("output_format", "JSON");
         let employees: Vec<Employee> = api
-            .request_resources_wasm("employees", params)
+            .request_resources_checked("employees", params)
             .await
             .unwrap_or_default();
         employees
@@ -380,7 +380,7 @@ impl OrderBackend for PrestashopBackend {
         params.insert("filter[email]", filter.as_str());
         params.insert("output_format", "JSON");
         let employees: Vec<Employee> = api
-            .request_resources_wasm("employees", params)
+            .request_resources_checked("employees", params)
             .await
             .unwrap_or_default();
         let employee = employees
@@ -402,7 +402,7 @@ impl OrderBackend for PrestashopBackend {
         params.insert("filter[id_order]", order.id.as_str());
         params.insert("output_format", "JSON");
         let threads: Vec<CustomerThread> = api
-            .request_resources_wasm("customer_threads", params)
+            .request_resources_checked("customer_threads", params)
             .await
             .unwrap_or_default();
 
@@ -454,7 +454,7 @@ impl OrderBackend for PrestashopBackend {
         params.insert("filter[id_order]", order.id.as_str());
         params.insert("output_format", "JSON");
         let threads: Vec<CustomerThread> = api
-            .request_resources_wasm("customer_threads", params)
+            .request_resources_checked("customer_threads", params)
             .await
             .unwrap_or_default();
 

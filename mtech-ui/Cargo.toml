@@ -4,11 +4,20 @@ version = "0.1.0"
 edition = "2024"
 description = "Shared egui UI helpers (theme, dock chrome, in-app logger) for Mastertech apps"
 
+[[example]]
+name = "stress_dashboard"
+required-features = ["stress-ui"]
+
 [features]
 puffin = []
+# Shared stress-test dashboard. Off by default so mobile builds don't pull
+# stress-runner and its database/tokio stack.
+stress-ui = ["dep:stress-runner"]
 
 [dependencies]
 egui_dock.workspace = true
+egui-phosphor = { version = "0.12.0", default-features = false, features = ["regular"] }
+stress-runner = { workspace = true, optional = true }
 regex.workspace = true
 # egui_logger uses chrono::Local, which the workspace default-features=false pin omits.
 chrono = { workspace = true, features = ["clock"] }

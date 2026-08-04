@@ -541,3 +541,26 @@ pub fn build_run_spec(
 pub fn target_kind_for(choice: StressorChoice) -> TargetKind {
     crate::default_target_kind(choice.to_stressor())
 }
+
+/// Wall-clock seconds a plan intends to run, or `None` when it is open-ended.
+///
+/// Lets a UI compare a finished run against its plan and say so when it stopped
+/// short, rather than presenting a partial run as a clean result.
+pub fn planned_duration_secs(plan: &RunPlan) -> Option<u64> {
+    match plan {
+        RunPlan::Single { duration_secs, .. } => *duration_secs,
+        RunPlan::Concurrent { duration_secs, .. } => *duration_secs,
+        RunPlan::Scenario {
+            stages,
+            total_wall_secs,
+            repeat_until_total,
+        } => match (total_wall_secs, repeat_until_total) {
+            (Some(total), true) => Some(*total),
+            (Some(total), false) => Some((*total).min(stages.iter().map(|s| s.duration_secs).sum())),
+            (None, _) => {
+                let sum: u64 = stages.iter().map(|s| s.duration_secs).sum();
+                (sum > 0).then_some(sum)
+            }
+        },
+    }
+}

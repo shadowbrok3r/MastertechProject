@@ -153,7 +153,7 @@ impl EmployeeHelper for Employee {
         query.insert("output_format", "JSON");
 
         let order_details: Vec<prestashop_schema::OrderDetails> = api_call
-            .request_resources_wasm("order_details", query.clone())
+            .request_resources_checked("order_details", query.clone())
             .await?;
 
         let mut orders_vec = Vec::new();
@@ -190,7 +190,7 @@ impl EmployeeHelper for Employee {
         query.insert("output_format", "JSON");
 
         let order_details: Vec<prestashop_schema::OrderDetails> = api_call
-            .request_resources_wasm("order_details", query.clone())
+            .request_resources_checked("order_details", query.clone())
             .await?;
 
         let mut orders_vec = Vec::new();
@@ -231,7 +231,7 @@ impl EmployeeHelper for Employee {
         api_call.display = "[id]";
 
         let orders: Vec<PrestashopId> = api_call
-            .request_resources_wasm("orders", query.clone())
+            .request_resources_checked("orders", query.clone())
             .await?;
 
         if orders.is_empty() {
@@ -256,7 +256,7 @@ impl EmployeeHelper for Employee {
         api_call.display = "[id]";
 
         let orders: Vec<PrestashopId> = api_call
-            .request_resources_wasm("orders", query.clone())
+            .request_resources_checked("orders", query.clone())
             .await?;
         
         if orders.is_empty() {
@@ -280,7 +280,7 @@ impl EmployeeHelper for Employee {
         api_call.display = "[id]";
 
         let orders: Vec<PrestashopId> = api_call
-            .request_resources_wasm("orders", query.clone())
+            .request_resources_checked("orders", query.clone())
             .await?;
         Ok(orders)
     }
@@ -297,7 +297,7 @@ impl EmployeeHelper for Employee {
         api_call.display = "[id]";
 
         let orders: Vec<PrestashopId> = api_call
-            .request_resources_wasm("orders", query.clone())
+            .request_resources_checked("orders", query.clone())
             .await?;
         Ok(orders)
     }
@@ -318,7 +318,7 @@ impl EmployeeHelper for Employee {
         api_call.display = "[id]";
 
         let orders: Vec<PrestashopId> = api_call
-            .request_resources_wasm("orders", query.clone())
+            .request_resources_checked("orders", query.clone())
             .await.context("Pulling orders list")?;
 
         if orders.is_empty() {
@@ -346,7 +346,7 @@ impl EmployeeHelper for Employee {
         api_call.display = "[id]";
 
         let orders: Vec<PrestashopId> = api_call
-            .request_resources_wasm("orders", query.clone())
+            .request_resources_checked("orders", query.clone())
             .await
             .context("Pulling orders list")?;
 
@@ -364,7 +364,7 @@ impl EmployeeHelper for Employee {
         // api_call.display = "[id,id_address_invoice,id_customer,current_state,date_add,id_employee_sales_rep,id_employee_split_rep,id_store,associations]";
     
         let customer_threads: Vec<prestashop_schema::CustomerThread> = api_call
-            .request_resources_wasm("customer_threads", query.clone())
+            .request_resources_checked("customer_threads", query.clone())
             .await?;
     
         let mut customer_messages: Vec<prestashop_schema::CustomerMessage> = Vec::new();
@@ -499,7 +499,7 @@ impl EmployeeHelper for Employee {
         query.insert("filter[active]", "1");
 
         let employees: Vec<PrestashopId> = api_call
-            .request_resources_wasm("employees", query.clone())
+            .request_resources_checked("employees", query.clone())
             .await?;
 
         let mut employees_vec = Vec::new();
@@ -604,7 +604,7 @@ impl <'a>PrestashopPayloadHelper<'a> for PrestashopPayload {
             query.insert("filter[id_order]", service_number);
             query.insert("output_format", "JSON");
             self.customer_threads = prestashop_api
-                .request_resources_wasm("customer_threads", query.clone())
+                .request_resources_checked("customer_threads", query.clone())
                 .await?;
         }
         Ok(())

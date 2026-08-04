@@ -35,7 +35,7 @@ hex = "0.4"
 egui_plot.workspace = true
 web-time.workspace = true
 stress-runner.workspace = true
-mtech-ui.workspace = true
+mtech-ui = { workspace = true, features = ["stress-ui"] }
 mtech-tui.workspace = true
 ratatui.workspace = true
 database.workspace = true

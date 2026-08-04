@@ -1,2 +1,7 @@
 [target.x86_64-pc-windows-msvc]
+# MSVC link.exe 14.50 aborts intermittently while writing the PDB for the
+# MasterTech link. CI overrides this back to link.exe via
+# CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER, since the runner image is not
+# guaranteed to ship LLVM at this path.
+linker = "C:/Program Files/LLVM/bin/lld-link.exe"
 rustflags = ["-C", "target-feature=+crt-static"]
