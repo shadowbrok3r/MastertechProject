@@ -187,7 +187,9 @@ impl MasterTechApp {
         let (friendly_name_tx, friendly_name_rx) = crossbeam::channel::bounded::<String>(1);
 
         let sys = sysinfo::System::new_all();
-        let hostname = sysinfo::System::host_name().unwrap_or_default();
+        // Same resolution `get_client_hash` uses, so the relay room and the
+        // client's row key cannot disagree under WinPE.
+        let hostname = stress_runner::identity_hostname();
         let cpu_brand = sys.cpus().first().map(|c| c.brand().trim().to_string()).unwrap_or_default();
         let client_hash = crate::filesystem::system_info::generate_client_id(hostname.clone(), cpu_brand.clone());
         let url_string = format!("{}:{}", hostname, client_hash.split_at(9).0);

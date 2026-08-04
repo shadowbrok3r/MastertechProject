@@ -31,6 +31,7 @@ mod controller;
 mod drive;
 mod gpu_probe;
 mod hardware;
+mod host_identity;
 mod mapping;
 mod panel_config;
 mod presets;
@@ -117,6 +118,10 @@ pub use qc_benchmark::{qc_benchmark_stages, qc_floor_for, QC_BENCHMARK_PRESET};
 pub use script_catalog::{
     benchmark_kind_for_script, build_stress_script_spec, is_benchmark_script, is_stress_script,
     BENCHMARK_SCRIPT_NAMES, STRESS_SCRIPT_NAMES,
+};
+pub use host_identity::{
+    boot_environment, identity_hostname, is_winpe, live_hostname, offline_machine_id,
+    offline_windows, OfflineWindows,
 };
 pub use mapping::{
     compute_machine_id, computer_record_key, default_target_kind, generate_client_hash,

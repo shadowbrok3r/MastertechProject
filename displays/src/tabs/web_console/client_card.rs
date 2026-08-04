@@ -127,11 +127,25 @@ impl ClientCard {
                 ui.add_space(4.0);
 
                 // Connection string (smaller, muted)
-                ui.label(
-                    RichText::new(&client.connection_string)
-                        .size(10.0)
-                        .color(theme::weak_text(ui)),
-                );
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(&client.connection_string)
+                            .size(10.0)
+                            .color(theme::weak_text(ui)),
+                    );
+                    if client.boot_environment.is_preboot() {
+                        ui.label(
+                            RichText::new(format!("{} WinPE", icons::POWER))
+                                .size(10.0)
+                                .strong()
+                                .color(theme::accent(ui)),
+                        )
+                        .on_hover_text(
+                            "Checked in from WinPE. The key above is the offline \
+                             Windows install's, so live readings are the PE session's.",
+                        );
+                    }
+                });
 
                 ui.add_space(8.0);
 

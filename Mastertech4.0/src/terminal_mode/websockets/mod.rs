@@ -5056,6 +5056,7 @@ pub async fn create_client(mut client: ConnectedClient) -> anyhow::Result<Connec
         "connected = $connected",
         "last_update = time::now()",
         "customer_locked = $customer_locked",
+        "boot_environment = $boot_environment",
     ];
     let has_assigned = client.assigned_user.is_some();
     if has_assigned {
@@ -5089,7 +5090,8 @@ pub async fn create_client(mut client: ConnectedClient) -> anyhow::Result<Connec
         .bind(("client_hash", client.client_hash.clone()))
         .bind(("connection_string", client.connection_string.clone()))
         .bind(("connected", client.connected))
-        .bind(("customer_locked", client.customer_locked));
+        .bind(("customer_locked", client.customer_locked))
+        .bind(("boot_environment", client.boot_environment.as_str()));
     if has_assigned {
         q = q.bind(("assigned_user", client.assigned_user.clone().unwrap()));
     }

@@ -1,0 +1,40 @@
+id = "20260804120000__connected_client_boot_environment"
+name = "connected_client_boot_environment"
+# Applied to surrealdb-dev (Mastertech/MastertechDB) 2026-08-04; server __rollout
+# shows completed. NOTE: `rollout start`/`complete` both reported
+# `add_boot_environment [start:run_sql] completed` while INFO FOR TABLE showed no
+# such field — the DDL below was posted directly to /sql to actually land it.
+# Verify with INFO FOR TABLE, never the step status.
+state = "completed"
+# Source and target match, per the client_kind_uefi precedent: one additive field
+# on an already-managed SCHEMALESS table. Value from `surrealkit rollout lint`.
+source_schema_hash = "c26aec3abd1e9ddf16e582f11612716686bfdda43d1e625a2721142faea00704"
+target_schema_hash = "c26aec3abd1e9ddf16e582f11612716686bfdda43d1e625a2721142faea00704"
+# Purely additive with a DEFAULT, and connected_client is SCHEMALESS, so clients
+# writing `boot_environment` succeed with or without this DDL. Either ordering of
+# app deploy vs. migration is safe.
+compatibility = "phased"
+renames = []
+
+# WinPE check-ins (HBCD_PE) used to key their own row —
+# `connected_client:HBCD_PE:81ac48bac` — because the client read the PE image's
+# hostname. The client now resolves the offline install's ComputerName out of its
+# SYSTEM hive, so a PE session lands on the machine's real row and auto-links.
+# This field is what still says the session came from pre-boot media rather than
+# the installed OS.
+
+[[steps]]
+id = "add_boot_environment"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE boot_environment ON connected_client TYPE string DEFAULT 'installed' ASSERT $value IN ['installed', 'winpe'] PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "remove_boot_environment"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE FIELD IF EXISTS boot_environment ON connected_client;
+"""

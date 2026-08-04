@@ -183,7 +183,11 @@ pub fn generate_client_id(hostname: String, cpu: String) -> String {
 }
 
 pub fn host_name_and_cpu_brand() -> (String, String) {
-    let hostname = System::host_name().unwrap_or_else(|| "unknown-host".to_string());
+    // The offline install's hostname under WinPE, so the record-key prefix stays
+    // consistent with the hash `generate_client_hash` derives.
+    let hostname = Some(stress_runner::identity_hostname())
+        .filter(|h| !h.is_empty())
+        .unwrap_or_else(|| "unknown-host".to_string());
     let mut sys = System::new_with_specifics(
         RefreshKind::nothing().with_cpu(CpuRefreshKind::everything()),
     );

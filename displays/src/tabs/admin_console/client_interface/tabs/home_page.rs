@@ -532,7 +532,12 @@ impl WebSocketClient {
             .unwrap_or_else(|| self.client.connection_string.clone());
 
         // ── Top: status header + hardware inventory + active runs ──
-        render_status_header(ui, &computer_label, &self.client.connection_string);
+        render_status_header(
+            ui,
+            &computer_label,
+            &self.client.connection_string,
+            self.client.boot_environment,
+        );
         let actions = self.home_page.render_inventory(ui);
         ui.separator();
 
@@ -706,8 +711,14 @@ impl WebSocketClient {
         }
     }
 
-    /// Live sysinfo hostname, else the client's friendly name.
+    /// Live sysinfo hostname, else the client's friendly name. A WinPE session's
+    /// live hostname is the PE image's, so the record key's is used instead.
     pub fn client_hostname(&self) -> Option<String> {
+        if self.client.boot_environment.is_preboot() {
+            if let Some(host) = identity_hostname(&self.client.connection_string) {
+                return Some(host);
+            }
+        }
         self.resource_monitor
             .latest_sysinfo
             .as_ref()
@@ -717,7 +728,22 @@ impl WebSocketClient {
     }
 }
 
-fn render_status_header(ui: &mut Ui, computer_label: &str, connection_string: &str) {
+/// Hostname half of a `HOSTNAME:hash9` connection string.
+fn identity_hostname(connection_string: &str) -> Option<String> {
+    let host = connection_string
+        .split_once(':')
+        .map(|(host, _)| host)
+        .unwrap_or(connection_string)
+        .trim();
+    (!host.is_empty()).then(|| host.to_string())
+}
+
+fn render_status_header(
+    ui: &mut Ui,
+    computer_label: &str,
+    connection_string: &str,
+    boot_environment: database::schema::BootEnvironment,
+) {
     ui.horizontal(|ui| {
         ui.label(
             RichText::new(format!("{} Home", icons::HOME))
@@ -730,6 +756,19 @@ fn render_status_header(ui: &mut Ui, computer_label: &str, connection_string: &s
                 .strong()
                 .color(theme::strong_text(ui)),
         );
+        if boot_environment.is_preboot() {
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new(format!("{} WinPE session", icons::POWER))
+                    .small()
+                    .strong()
+                    .color(theme::accent(ui)),
+            )
+            .on_hover_text(
+                "This client booted into WinPE. Its key is the offline Windows \
+                 install's; live readings come from the PE session.",
+            );
+        }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.label(
                 RichText::new(format!("conn: {connection_string}"))

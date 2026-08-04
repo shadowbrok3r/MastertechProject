@@ -224,7 +224,7 @@ pub fn generate_client_hash(_hostname: &str, _cpu_brand: &str) -> String {
 }
 
 /// Persisted machine-id file path (`machine_id.txt`).
-fn machine_id_path() -> Option<std::path::PathBuf> {
+pub(crate) fn machine_id_path() -> Option<std::path::PathBuf> {
     directories::ProjectDirs::from("com", "Mastertech", "MastertechQC")
         .map(|p| p.data_local_dir().join("machine_id.txt"))
 }
@@ -232,7 +232,7 @@ fn machine_id_path() -> Option<std::path::PathBuf> {
 /// Live hardware hash for this host.
 fn hardware_hash_local() -> String {
     use sysinfo::{CpuRefreshKind, RefreshKind, System};
-    let hostname = System::host_name().unwrap_or_default();
+    let hostname = crate::host_identity::identity_hostname();
     let mut sys =
         System::new_with_specifics(RefreshKind::nothing().with_cpu(CpuRefreshKind::everything()));
     sys.refresh_cpu_list(CpuRefreshKind::everything());
@@ -251,16 +251,27 @@ pub fn stable_machine_hash() -> String {
     CACHED
         .get_or_init(|| {
             let path = machine_id_path();
-            if let Some(p) = &path {
-                if let Ok(existing) = std::fs::read_to_string(p) {
-                    let trimmed = existing.trim();
-                    if trimmed.len() >= 32 && trimmed.bytes().all(|b| b.is_ascii_hexdigit()) {
-                        log::info!("stable_machine_hash: loaded {} = {trimmed}", p.display());
-                        return trimmed.to_string();
-                    }
-                }
+            if let Some(p) = &path
+                && let Some(existing) = crate::host_identity::read_machine_id(p)
+            {
+                log::info!("stable_machine_hash: loaded {} = {existing}", p.display());
+                return existing;
+            }
+            // WinPE runs off a RAM disk, so there is never a persisted id here.
+            // Adopting the offline install's keeps the hash equal to what that
+            // Windows reports on a normal check-in.
+            if let Some(id) = crate::host_identity::offline_machine_id() {
+                log::info!("stable_machine_hash: adopted offline machine id = {id}");
+                return id;
             }
             let seed = hardware_hash_local();
+            if crate::host_identity::is_winpe() {
+                log::warn!(
+                    "stable_machine_hash: WinPE with no offline machine id; derived \
+                     {seed} from hardware (nothing persisted to the RAM disk)"
+                );
+                return seed;
+            }
             if let Some(p) = &path {
                 if let Some(parent) = p.parent() {
                     let _ = std::fs::create_dir_all(parent);
@@ -293,7 +304,7 @@ pub fn local_computer_record() -> RecordId {
     static CACHED: OnceLock<RecordId> = OnceLock::new();
     CACHED
         .get_or_init(|| {
-            let hostname = System::host_name().unwrap_or_default();
+            let hostname = crate::host_identity::identity_hostname();
             let mut sys = System::new_with_specifics(
                 RefreshKind::nothing().with_cpu(CpuRefreshKind::everything()),
             );

@@ -91,6 +91,43 @@ impl Default for ClientKind {
     }
 }
 
+/// Which OS the client checked in from. A WinPE session derives its record key
+/// from the *offline* install's hostname so it lands on the same row as that
+/// machine's normal Windows check-in, which makes this the only field that
+/// still says the live data came from a pre-boot environment. `Installed` is
+/// the default so pre-existing rows deserialize without a backfill.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Difference, SurrealValue)]
+#[serde(rename_all = "snake_case")]
+#[surreal(untagged)]
+pub enum BootEnvironment {
+    #[surreal(value = "installed")]
+    Installed,
+    /// Windows PE (Hiren's Boot CD PE, the Mastertech PXE image).
+    #[serde(rename = "winpe")]
+    #[surreal(value = "winpe")]
+    WinPe,
+}
+
+impl Default for BootEnvironment {
+    fn default() -> Self {
+        Self::Installed
+    }
+}
+
+impl BootEnvironment {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Installed => "installed",
+            Self::WinPe => "winpe",
+        }
+    }
+
+    /// `true` when the session is running from pre-boot media, not the install.
+    pub fn is_preboot(&self) -> bool {
+        matches!(self, Self::WinPe)
+    }
+}
+
 impl ClientKind {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -155,6 +192,11 @@ pub struct ConnectedClient {
     #[serde(default)]
     #[surreal(default)]
     pub capabilities: Vec<String>,
+    /// OS the current session checked in from. `Installed` for a normal
+    /// Windows check-in, `WinPe` when the tech booted the machine into PE.
+    #[serde(default)]
+    #[surreal(default)]
+    pub boot_environment: BootEnvironment,
 }
 
 impl Default for ConnectedClient {
@@ -176,6 +218,7 @@ impl Default for ConnectedClient {
             customer_locked: false,
             client_kind: ClientKind::Machine,
             capabilities: Vec::new(),
+            boot_environment: BootEnvironment::Installed,
         }
     }
 }
@@ -362,6 +405,7 @@ mod deser_tests {
                 "connected",
                 "customer_locked",
                 "client_kind",
+                "boot_environment",
             ] {
                 obj.remove(f);
             }
@@ -373,6 +417,19 @@ mod deser_tests {
         assert!(!parsed.connected);
         assert!(!parsed.customer_locked);
         assert_eq!(parsed.client_kind, ClientKind::Machine);
+        assert_eq!(parsed.boot_environment, BootEnvironment::Installed);
+    }
+
+    #[test]
+    fn winpe_boot_environment_round_trips() {
+        let original = ConnectedClient {
+            boot_environment: BootEnvironment::WinPe,
+            ..sample()
+        };
+        let parsed = ConnectedClient::from_value(original.into_value())
+            .expect("a winpe row round-trips");
+        assert_eq!(parsed.boot_environment, BootEnvironment::WinPe);
+        assert!(parsed.boot_environment.is_preboot());
     }
 
     #[test]

@@ -827,6 +827,7 @@ pub async fn upsert_self_identity(connected: bool) {
             "UPSERT $id SET client_hash = $client_hash, \
              connection_string = $cs, computer = $computer, \
              connected = $connected, assigned_user = $auth.id, \
+             boot_environment = $boot_environment, \
              last_update = time::now()",
         )
         .bind(("id", identity.id.clone()))
@@ -834,6 +835,7 @@ pub async fn upsert_self_identity(connected: bool) {
         .bind(("cs", identity.connection_string.clone()))
         .bind(("computer", computer))
         .bind(("connected", connected))
+        .bind(("boot_environment", identity.boot_environment.as_str()))
         .await;
     if let Err(e) = res {
         log::warn!("upsert_self_identity -> upsert failed: {e:?}");
@@ -955,6 +957,7 @@ pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) 
     let connection_string = identity.connection_string;
     let client_hash = identity.client_hash;
     let computer = identity.computer;
+    let boot_environment = identity.boot_environment;
     tokio::spawn(async move {
         let ip_string = local_ip.to_string();
         for attempt in 0..5u32 {
@@ -964,7 +967,7 @@ pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) 
                 .query(
                     "UPSERT $client SET local_ip = $ip, tcp_port = $port, \
                      connection_string = $cs, client_hash = $client_hash, \
-                     computer = $computer, \
+                     computer = $computer, boot_environment = $boot_environment, \
                      connected = true, assigned_user = $auth.id, \
                      last_update = time::now()",
                 )
@@ -974,6 +977,7 @@ pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) 
                 .bind(("cs", connection_string.clone()))
                 .bind(("client_hash", client_hash.clone()))
                 .bind(("computer", computer.clone()))
+                .bind(("boot_environment", boot_environment.as_str()))
                 .await;
             match res {
                 Ok(_) => {

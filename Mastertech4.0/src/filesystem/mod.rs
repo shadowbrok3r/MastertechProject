@@ -57,7 +57,10 @@ pub fn get_client_hash() -> ConnectedClient {
                 .first()
                 .map(|c| c.brand().trim().to_string())
                 .unwrap_or_default();
-            let hostname = System::host_name().unwrap_or_default();
+            // Under WinPE this is the offline install's hostname, not `HBCD_PE`,
+            // so the key matches that machine's normal Windows check-in.
+            let hostname = stress_runner::identity_hostname();
+            let boot_environment = stress_runner::boot_environment();
 
             let client_hash = generate_client_id(hostname.clone(), cpu.trim().to_string());
             let id = format!("{}:{}", hostname.clone(), client_hash.split_at(9).0);
@@ -72,7 +75,9 @@ pub fn get_client_hash() -> ConnectedClient {
             );
 
             log::info!(
-                "get_client_hash: cached client identity (id={id}, hostname={hostname:?})"
+                "get_client_hash: cached client identity (id={id}, hostname={hostname:?}, \
+                 boot_environment={})",
+                boot_environment.as_str()
             );
 
             // Lets the notification pump recognise this machine's own rows.
@@ -84,6 +89,7 @@ pub fn get_client_hash() -> ConnectedClient {
                 connected: false,
                 connection_string: id,
                 computer: Some(computer_id),
+                boot_environment,
                 ..Default::default()
             }
         })

@@ -48,3 +48,8 @@ DEFINE FIELD tcp_port         ON connected_client TYPE none | number DEFAULT 910
 -- filters on this; the Web Console default view hides workers.
 -- Rows without this field are treated as `machine` for back-compat.
 DEFINE FIELD client_kind      ON connected_client TYPE string DEFAULT 'machine' ASSERT $value IN ['machine', 'build_worker', 'qc_agent', 'uefi'] PERMISSIONS FULL;
+-- Which OS the current session checked in from. A WinPE session derives its
+-- record key from the offline install's hostname so it lands on the same row as
+-- that machine's normal Windows check-in; this field is what still marks the
+-- session as pre-boot. Rows without it are treated as `installed`.
+DEFINE FIELD boot_environment ON connected_client TYPE string DEFAULT 'installed' ASSERT $value IN ['installed', 'winpe'] PERMISSIONS FULL;

@@ -83,6 +83,55 @@ pub enum RightPanel {
     Chat,
 }
 
+/// Orders the client list for display. Clients in `live` are pinned above the
+/// rest and ordered by mine-first then `created_at` — keys that don't move as the
+/// fleet changes, so a heartbeat or a new arrival can't reshuffle the pinned
+/// block. Rows below the pin keep the caller's order, with the signed-in user's
+/// clients floated to the top of them.
+fn pin_live_clients_to_top(
+    clients: &mut [ConnectedClient],
+    live: &std::collections::HashSet<String>,
+    my_key: Option<&str>,
+) {
+    let is_mine = |client: &ConnectedClient| {
+        my_key.is_some_and(|mine| {
+            client
+                .assigned_user
+                .as_ref()
+                .is_some_and(|u| u.key_string() == mine)
+        })
+    };
+    if my_key.is_some() {
+        // Stable, so equal elements keep the primary sort's order.
+        clients.sort_by(|a, b| is_mine(b).cmp(&is_mine(a)));
+    }
+    clients.sort_by(|a, b| {
+        let a_live = live.contains(&a.connection_string);
+        let b_live = live.contains(&b.connection_string);
+        if a_live && b_live {
+            is_mine(b)
+                .cmp(&is_mine(a))
+                .then_with(|| a.created_at.cmp(&b.created_at))
+        } else {
+            b_live.cmp(&a_live)
+        }
+    });
+}
+
+/// Whether an admin session for this client is live. TCP and relay-tunnel
+/// sessions prove liveness in-band (ping/pong), not via ewebsock pongs.
+fn is_admin_session_live(session: Option<&WebSocketClient>) -> bool {
+    session
+        .map(|wsc| {
+            if wsc.transport.kind() != TransportKind::WebSocket {
+                wsc.is_connected
+            } else {
+                wsc.is_connected && wsc.last_pong_time.is_some()
+            }
+        })
+        .unwrap_or(false)
+}
+
 /// Renders one client row. Takes each field separately so callers can pass
 /// disjoint borrows of `AdminConsole` while its `clients` vec is borrowed.
 #[allow(clippy::too_many_arguments)]
@@ -100,16 +149,7 @@ fn render_client_row(
 ) {
     ui.add_space(4.);
     let session = ws_clients.get(&client.connection_string);
-    // TCP and relay-tunnel sessions prove liveness in-band, not via WS pongs.
-    let is_ws_connected = session
-        .map(|wsc| {
-            if wsc.transport.kind() != TransportKind::WebSocket {
-                wsc.is_connected
-            } else {
-                wsc.is_connected && wsc.last_pong_time.is_some()
-            }
-        })
-        .unwrap_or(false);
+    let is_ws_connected = is_admin_session_live(session);
     let transport = session.map(|w| (w.transport.kind(), w.is_connected));
     let inventory = security_inventory
         .get(&client.connection_string)
@@ -987,6 +1027,23 @@ impl SharedContext {
                     HashMap::new()
                 };
 
+                // Snapshotted before the mut borrow below so the pin pass can read
+                // it. A client counts as live when its machine reports connected
+                // or an admin session is up — which excludes the recently-offline
+                // rows the list also carries.
+                let live_clients: std::collections::HashSet<String> = self
+                    .web_console_layout
+                    .clients
+                    .iter()
+                    .filter(|c| {
+                        c.connected
+                            || is_admin_session_live(
+                                self.web_console_layout.ws_clients.get(&c.connection_string),
+                            )
+                    })
+                    .map(|c| c.connection_string.clone())
+                    .collect();
+
                 let ws_client = &mut self.web_console_layout;
                 let clients = &mut ws_client.clients;
                 let sort_by = ws_client.sort_by.entry("Connected".to_string()).or_default();
@@ -996,36 +1053,17 @@ impl SharedContext {
                     SortField::Date => clients.sort_by_date(direction.clone()),
                     SortField::Name => clients.sort_by_name(direction.clone()),
                 };
-                // Stable secondary sort: clients assigned to the logged-in user float
-                // to the top regardless of the primary sort direction.
-                if let Some(me) = crate::get_current_user_from_auth() {
-                    let my_id = me.get_id();
-                    clients.sort_by(|a, b| {
-                        let a_mine = a.assigned_user.as_ref()
-                            .is_some_and(|u| u.key_string() == my_id.key_string());
-                        let b_mine = b.assigned_user.as_ref()
-                            .is_some_and(|u| u.key_string() == my_id.key_string());
-                        b_mine.cmp(&a_mine) // mine first; equal elements keep prior order (stable)
-                    });
-                }
-                
+                let my_key = crate::get_current_user_from_auth().map(|me| me.get_id().key_string());
+                pin_live_clients_to_top(clients, &live_clients, my_key.as_deref());
+
+
                 let visible_indices: Vec<usize> = clients
                     .iter()
                     .enumerate()
                     .filter_map(|(i, client)| {
-                        let is_ws_connected = ws_client
-                            .ws_clients
-                            .get(&client.connection_string)
-                            .map(|wsc| {
-                                // TCP and relay-tunnel sessions prove liveness
-                                // in-band (ping/pong), not via ewebsock pongs.
-                                if wsc.transport.kind() != TransportKind::WebSocket {
-                                    wsc.is_connected
-                                } else {
-                                    wsc.is_connected && wsc.last_pong_time.is_some()
-                                }
-                            })
-                            .unwrap_or(false);
+                        let is_ws_connected = is_admin_session_live(
+                            ws_client.ws_clients.get(&client.connection_string),
+                        );
                         should_show_connected_client_in_summaries(client, is_ws_connected)
                             .then_some(i)
                     })
@@ -1433,6 +1471,108 @@ impl SharedContext {
                 Err(e) => log::warn!("web_console/mod.rs -> get_connected_clients error: {e:?}"),
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod pin_tests {
+    use super::pin_live_clients_to_top;
+    use database::schema::{ConnectedClient, RecordId, RecordIdExt, CONNECTED_CLIENT_TABLE};
+    use std::collections::HashSet;
+
+    fn client(name: &str, created_secs: i64) -> ConnectedClient {
+        ConnectedClient {
+            id: RecordId::new(CONNECTED_CLIENT_TABLE, name),
+            connection_string: name.to_string(),
+            created_at: chrono::DateTime::from_timestamp(created_secs, 0).map(Into::into),
+            ..Default::default()
+        }
+    }
+
+    fn order(clients: &[ConnectedClient]) -> Vec<&str> {
+        clients.iter().map(|c| c.connection_string.as_str()).collect()
+    }
+
+    fn live(names: &[&str]) -> HashSet<String> {
+        names.iter().map(|n| n.to_string()).collect()
+    }
+
+    #[test]
+    fn live_clients_sit_above_offline_ones() {
+        let mut clients = vec![
+            client("offline-a", 100),
+            client("live-b", 300),
+            client("offline-c", 200),
+            client("live-a", 400),
+        ];
+        pin_live_clients_to_top(&mut clients, &live(&["live-a", "live-b"]), None);
+        assert_eq!(order(&clients), ["live-b", "live-a", "offline-a", "offline-c"]);
+    }
+
+    #[test]
+    fn offline_rows_keep_the_primary_sort_order() {
+        let mut clients = vec![client("z-offline", 100), client("a-offline", 200)];
+        pin_live_clients_to_top(&mut clients, &live(&[]), None);
+        assert_eq!(
+            order(&clients),
+            ["z-offline", "a-offline"],
+            "with nothing pinned the caller's order must survive"
+        );
+    }
+
+    /// The reason the pin exists: a new machine connecting must not push the
+    /// clients a tech is already working on to different rows.
+    #[test]
+    fn a_new_connection_does_not_move_the_pinned_block() {
+        let pinned = ["live-a", "live-b", "live-c"];
+        let mut clients = vec![
+            client("live-c", 300),
+            client("live-a", 100),
+            client("live-b", 200),
+        ];
+        pin_live_clients_to_top(&mut clients, &live(&pinned), None);
+        let before = order(&clients);
+        assert_eq!(before, pinned, "ordered by created_at, not list position");
+
+        // A brand-new machine dials in: newest created_at, so it appends.
+        clients.push(client("live-new", 999));
+        pin_live_clients_to_top(&mut clients, &live(&["live-a", "live-b", "live-c", "live-new"]), None);
+        assert_eq!(order(&clients), ["live-a", "live-b", "live-c", "live-new"]);
+    }
+
+    /// `last_update` churns on every heartbeat; the pinned order must ignore it.
+    #[test]
+    fn heartbeats_do_not_reshuffle_the_pinned_block() {
+        let mut clients = vec![client("live-a", 100), client("live-b", 200)];
+        let names = live(&["live-a", "live-b"]);
+        pin_live_clients_to_top(&mut clients, &names, None);
+        let before = order(&clients).join(",");
+
+        clients[0].last_update = chrono::DateTime::from_timestamp(50_000, 0).map(Into::into);
+        clients[1].last_update = chrono::DateTime::from_timestamp(60_000, 0).map(Into::into);
+        pin_live_clients_to_top(&mut clients, &names, None);
+        assert_eq!(order(&clients).join(","), before);
+    }
+
+    #[test]
+    fn my_clients_lead_the_pinned_block() {
+        let mine = RecordId::new("user", "me");
+        let mut theirs = client("live-theirs", 100);
+        theirs.assigned_user = Some(RecordId::new("user", "someone-else"));
+        let mut ours = client("live-mine", 500);
+        ours.assigned_user = Some(mine.clone());
+
+        let mut clients = vec![theirs, ours, client("offline", 50)];
+        pin_live_clients_to_top(
+            &mut clients,
+            &live(&["live-mine", "live-theirs"]),
+            Some(mine.key_string().as_str()),
+        );
+        assert_eq!(
+            order(&clients),
+            ["live-mine", "live-theirs", "offline"],
+            "mine leads despite a later created_at"
+        );
     }
 }
 
