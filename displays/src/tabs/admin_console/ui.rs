@@ -33,8 +33,16 @@ const ROW_ITEM_GAP: f32 = 8.0;
 /// Fixed inner width for one client row in the side panel (fits 400px panel margins).
 pub const CLIENT_ROW_CONTENT_W: f32 = 368.0;
 
+/// Slot for the transport badge, wide enough for the longest tag (`RELAY`).
+/// Always allocated, so opening a session cannot widen the row.
+const ROW_BADGE_W: f32 = 38.0;
+
+/// Everything in the header row except the name button: the chevron, focus and
+/// connect buttons, the status dot, the badge slot, and the five gaps between the
+/// six items. Any widget added to that row belongs here too, or the row overflows
+/// `CLIENT_ROW_CONTENT_W` and renders wider than its neighbours.
 const ROW_HEADER_CHROME_W: f32 =
-    ROW_BTN_W * 3.0 + ROW_STATUS_W + ROW_ITEM_GAP * 4.0;
+    ROW_BTN_W * 3.0 + ROW_STATUS_W + ROW_BADGE_W + ROW_ITEM_GAP * 5.0;
 pub const CLIENT_NAME_BTN_W: f32 = CLIENT_ROW_CONTENT_W - ROW_HEADER_CHROME_W;
 const CLIENT_DETAILS_VALUE_W: f32 = CLIENT_ROW_CONTENT_W - 90.0;
 
@@ -246,30 +254,43 @@ impl AdminConsole {
                                 ),
                             );
 
-                            // Transport badge for the open session's live path.
-                            if let Some((kind, session_up)) = transport {
-                                use super::client_interface::TransportKind;
-                                let (badge, tip) = match kind {
-                                    TransportKind::Tcp => ("TCP", "Direct TCP (same network)"),
-                                    TransportKind::Relay => ("RELAY", "Relay tunnel via websocket server"),
-                                    TransportKind::WebSocket => ("WS", "Legacy WebSocket relay room"),
-                                };
-                                let color = if session_up {
-                                    match kind {
-                                        TransportKind::Tcp => Color32::from_rgb(100, 200, 100),
-                                        TransportKind::Relay => Color32::from_rgb(235, 170, 80),
-                                        TransportKind::WebSocket => Color32::from_rgb(120, 160, 230),
-                                    }
-                                } else {
-                                    Color32::GRAY
-                                };
-                                let tip = if session_up {
-                                    tip.to_string()
-                                } else {
-                                    format!("{tip} — reconnecting")
-                                };
-                                ui.label(RichText::new(badge).small().strong().color(color))
-                                    .on_hover_text(tip);
+                            // Transport badge for the open session's live path,
+                            // in a fixed slot that is allocated either way so
+                            // every row is the same width.
+                            let (badge, badge_color, badge_tip) = match transport {
+                                Some((kind, session_up)) => {
+                                    use super::client_interface::TransportKind;
+                                    let (badge, tip) = match kind {
+                                        TransportKind::Tcp => ("TCP", "Direct TCP (same network)"),
+                                        TransportKind::Relay => ("RELAY", "Relay tunnel via websocket server"),
+                                        TransportKind::WebSocket => ("WS", "Legacy WebSocket relay room"),
+                                    };
+                                    let color = if session_up {
+                                        match kind {
+                                            TransportKind::Tcp => Color32::from_rgb(100, 200, 100),
+                                            TransportKind::Relay => Color32::from_rgb(235, 170, 80),
+                                            TransportKind::WebSocket => Color32::from_rgb(120, 160, 230),
+                                        }
+                                    } else {
+                                        Color32::GRAY
+                                    };
+                                    let tip = if session_up {
+                                        tip.to_string()
+                                    } else {
+                                        format!("{tip} — reconnecting")
+                                    };
+                                    (badge, color, Some(tip))
+                                }
+                                None => ("", Color32::TRANSPARENT, None),
+                            };
+                            let badge_slot = ui.add_sized(
+                                Vec2::new(ROW_BADGE_W, ROW_BTN_H),
+                                eframe::egui::Label::new(
+                                    RichText::new(badge).small().strong().color(badge_color),
+                                ),
+                            );
+                            if let Some(tip) = badge_tip {
+                                badge_slot.on_hover_text(tip);
                             }
 
                             let name_btn = ui

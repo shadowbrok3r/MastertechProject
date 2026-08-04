@@ -83,14 +83,14 @@ pub enum RightPanel {
     Chat,
 }
 
-/// Orders the client list for display. Clients in `live` are pinned above the
-/// rest and ordered by mine-first then `created_at` — keys that don't move as the
-/// fleet changes, so a heartbeat or a new arrival can't reshuffle the pinned
-/// block. Rows below the pin keep the caller's order, with the signed-in user's
-/// clients floated to the top of them.
+/// Orders the client list for display. Clients in `open` — the ones this admin
+/// has a session open to — are pinned above the rest and ordered by mine-first
+/// then `created_at`, keys that don't move as the fleet changes, so a heartbeat
+/// or a new arrival can't reshuffle the pinned block. Rows below the pin keep the
+/// caller's order, with the signed-in user's clients floated to the top of them.
 fn pin_live_clients_to_top(
     clients: &mut [ConnectedClient],
-    live: &std::collections::HashSet<String>,
+    open: &std::collections::HashSet<String>,
     my_key: Option<&str>,
 ) {
     let is_mine = |client: &ConnectedClient| {
@@ -106,8 +106,8 @@ fn pin_live_clients_to_top(
         clients.sort_by(|a, b| is_mine(b).cmp(&is_mine(a)));
     }
     clients.sort_by(|a, b| {
-        let a_live = live.contains(&a.connection_string);
-        let b_live = live.contains(&b.connection_string);
+        let a_live = open.contains(&a.connection_string);
+        let b_live = open.contains(&b.connection_string);
         if a_live && b_live {
             is_mine(b)
                 .cmp(&is_mine(a))
@@ -1028,18 +1028,20 @@ impl SharedContext {
                 };
 
                 // Snapshotted before the mut borrow below so the pin pass can read
-                // it. A client counts as live when its machine reports connected
-                // or an admin session is up — which excludes the recently-offline
-                // rows the list also carries.
+                // it. Pinned = this admin has a session open to the machine.
+                // `connected` is the wrong key: the list is already filtered to
+                // `connected == true`, so it matched nearly every row and pinned
+                // nothing. Session entries are only dropped on an explicit
+                // disconnect, so a row holds its place through a reconnect blip
+                // instead of falling out of the pinned block and jumping.
                 let live_clients: std::collections::HashSet<String> = self
                     .web_console_layout
                     .clients
                     .iter()
                     .filter(|c| {
-                        c.connected
-                            || is_admin_session_live(
-                                self.web_console_layout.ws_clients.get(&c.connection_string),
-                            )
+                        self.web_console_layout
+                            .ws_clients
+                            .contains_key(&c.connection_string)
                     })
                     .map(|c| c.connection_string.clone())
                     .collect();
