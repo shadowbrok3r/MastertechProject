@@ -239,6 +239,7 @@ pub fn cert_spec(
             repeat_until_total: false,
         },
         rules: Some(preset.rules.clone()),
+        display: stress_kit::DisplayOptions::default(),
     }
 }
 

@@ -59,5 +59,6 @@ pub fn gpu_probe_spec(computer: RecordId, mult: f32) -> RunSpec {
             repeat_until_total: false,
         },
         rules: None,
+        display: stress_kit::DisplayOptions::default(),
     }
 }

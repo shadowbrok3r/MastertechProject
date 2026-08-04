@@ -165,6 +165,23 @@ fn remote_stage_to_run_stage(
 
 /// Drive a custom scenario/concurrent stress plan on this client and stream
 /// RemoteScriptLog/RemoteScriptResult/RemoteScriptsComplete back to the admin.
+/// Maps the wire spellings to `gpu_display` knobs. The admin normalizes and
+/// validates before sending, so an unrecognized value here just defers to the
+/// client's own environment rather than failing the run.
+fn wire_display_options(
+    modeset: Option<&str>,
+    max_outputs: Option<u32>,
+) -> stress_kit::DisplayOptions {
+    stress_kit::DisplayOptions {
+        modeset: modeset
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .and_then(stress_kit::DisplayModeSet::parse),
+        max_outputs: max_outputs.filter(|c| *c > 0).map(|c| c as usize),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn run_remote_stress_plan(
     tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     request: RemoteStressPlanRequest,
@@ -172,6 +189,7 @@ fn run_remote_stress_plan(
     diagnostic_session_id: Option<String>,
     preset_label: Option<String>,
     notes: Option<String>,
+    display: stress_kit::DisplayOptions,
 ) {
     use stress_runner::{RunPlan, RunResult, RunSpec, RunUpdate, TargetKind, TestTool};
 
@@ -308,6 +326,7 @@ fn run_remote_stress_plan(
             );
             spec.plan = plan;
             spec.target_kind = target_kind;
+            spec.display = display;
             spec.tool = TestTool::StressKitScenario { name: Some(preset.clone()) };
             spec.tech = Some("mcp".to_string());
             spec.notes = notes;
@@ -3829,6 +3848,8 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                 diagnostic_session_id,
                 preset_label,
                 notes,
+                display_modeset,
+                display_max_outputs,
             } => {
                 // Blank from the console: recover it from the customer linkage.
                 let service_number = match service_number {
@@ -3846,6 +3867,7 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                     diagnostic_session_id,
                     preset_label,
                     notes,
+                    wire_display_options(display_modeset.as_deref(), display_max_outputs),
                 );
             }
 
@@ -3856,6 +3878,8 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                 diagnostic_session_id,
                 preset_label,
                 notes,
+                display_modeset,
+                display_max_outputs,
             } => {
                 // Blank from the console: recover it from the customer linkage.
                 let service_number = match service_number {
@@ -3872,6 +3896,7 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                     diagnostic_session_id,
                     preset_label,
                     notes,
+                    wire_display_options(display_modeset.as_deref(), display_max_outputs),
                 );
             }
 

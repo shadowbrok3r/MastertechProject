@@ -259,6 +259,7 @@ fn qc_benchmark_spec(computer: RecordId) -> RunSpec {
             repeat_until_total: false,
         },
         rules: None,
+        display: stress_kit::DisplayOptions::default(),
     }
 }
 

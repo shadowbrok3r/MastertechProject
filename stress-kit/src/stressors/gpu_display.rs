@@ -117,14 +117,16 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 "#;
 
 pub(crate) fn run(
-    _thread_count: usize,
+    options: crate::DisplayOptions,
     cancel: &Arc<AtomicBool>,
     tx: &mpsc::Sender<Metrics>,
     started_at: Instant,
 ) {
     #[cfg(target_os = "windows")]
-    windows_impl::run(cancel, tx, started_at);
+    windows_impl::run(options, cancel, tx, started_at);
 
+    #[cfg(not(target_os = "windows"))]
+    let _ = options;
     #[cfg(not(target_os = "windows"))]
     run_unsupported(
         "gpu_display",
@@ -170,6 +172,16 @@ mod windows_impl {
                 "off" | "0" | "none" => Self::Off,
                 "full" | "resolution" => Self::Full,
                 _ => Self::Refresh,
+            }
+        }
+
+        /// An explicit per-run policy wins; otherwise the environment decides.
+        fn resolve(requested: Option<crate::DisplayModeSet>) -> Self {
+            match requested {
+                Some(crate::DisplayModeSet::Off) => Self::Off,
+                Some(crate::DisplayModeSet::Refresh) => Self::Refresh,
+                Some(crate::DisplayModeSet::Full) => Self::Full,
+                None => Self::from_env(),
             }
         }
     }
@@ -307,11 +319,21 @@ mod windows_impl {
     }
 
     pub(super) fn run(
+        options: crate::DisplayOptions,
         cancel: &Arc<AtomicBool>,
         tx: &mpsc::Sender<Metrics>,
         started_at: Instant,
     ) {
-        let outputs = enumerate_outputs();
+        let mut outputs = enumerate_outputs();
+        // True attached count, kept before any cap so the coverage note stays
+        // honest about what was left untested.
+        let attached = outputs.len();
+        if let Some(cap) = options.max_outputs.filter(|c| *c > 0 && *c < attached) {
+            outputs.truncate(cap);
+            log::info!(
+                "[stress-kit/gpu_display] capped to {cap} of {attached} attached output(s) by request"
+            );
+        }
         if outputs.is_empty() {
             return run_unsupported(
                 "gpu_display",
@@ -336,7 +358,7 @@ mod windows_impl {
                 )
             }
         };
-        let policy = ModeSetPolicy::from_env();
+        let policy = ModeSetPolicy::resolve(options.modeset);
         log::info!(
             "[stress-kit/gpu_display] {} output(s) on {} ({} backend), mode-set policy {:?}",
             outputs.len(),
@@ -389,7 +411,7 @@ mod windows_impl {
             &ctx,
             &mut dumps,
             dumps_available,
-            outputs.len(),
+            attached,
         );
 
         stop.store(true, Ordering::SeqCst);
@@ -400,7 +422,7 @@ mod windows_impl {
             "[stress-kit/gpu_display] drove {} of {} attached output(s), {} frames presented, \
              {} reconfigure(s) skipped for a busy sibling",
             shared.driven(),
-            outputs.len(),
+            attached,
             shared.total(|o| o.presented.load(Ordering::Relaxed)),
             shared.quiesce_timeouts.load(Ordering::Relaxed)
         );
@@ -505,13 +527,15 @@ mod windows_impl {
             return Some(warn);
         }
         // Held until the count settles; a starting run drives no output yet.
+        // Any shortfall counts, not just a single output: driving 2 of 3 leaves
+        // the third untested, so it cannot clear a multi-monitor fault either.
         let driven = shared.driven();
-        if elapsed >= COVERAGE_WARMUP && driven <= 1 {
+        if elapsed >= COVERAGE_WARMUP && driven < attached {
             return Some(format!(
                 "gpu_display: inconclusive - only {driven} of {attached} attached output(s) were \
-                 driven; the multi-display present path was not exercised, so a pass here does \
-                 not clear a multi-monitor flip-queue fault. Attach the machine's full display \
-                 topology and re-run. Coverage limit, not a hardware fault."
+                 driven; the full multi-display present path was not exercised, so a pass here \
+                 does not clear a multi-monitor flip-queue fault. Drive every attached output and \
+                 re-run. Coverage limit, not a hardware fault."
             ));
         }
         if !dumps_available {

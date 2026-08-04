@@ -773,6 +773,13 @@ pub enum Cmd {
         diagnostic_session_id: Option<String>,
         preset_label: Option<String>,
         notes: Option<String>,
+        /// gpu_display only: "off" | "refresh" | "full". None defers to the
+        /// client's STRESSKIT_DISPLAY_MODESET.
+        #[serde(default)]
+        display_modeset: Option<String>,
+        /// gpu_display only: drive at most this many attached outputs.
+        #[serde(default)]
+        display_max_outputs: Option<u32>,
     },
 
     /// Run multiple stressors concurrently on the remote client via stress-runner.
@@ -784,6 +791,13 @@ pub enum Cmd {
         diagnostic_session_id: Option<String>,
         preset_label: Option<String>,
         notes: Option<String>,
+        /// gpu_display only: "off" | "refresh" | "full". None defers to the
+        /// client's STRESSKIT_DISPLAY_MODESET.
+        #[serde(default)]
+        display_modeset: Option<String>,
+        /// gpu_display only: drive at most this many attached outputs.
+        #[serde(default)]
+        display_max_outputs: Option<u32>,
     },
 
     /// Admin → client: begin streaming the desktop of `monitor` at the given

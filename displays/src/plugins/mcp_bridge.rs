@@ -890,6 +890,10 @@ pub struct StressScenarioRunParams {
     pub preset_label: Option<String>,
     #[schemars(description = "Free-form notes recorded on the run.")]
     pub notes: Option<String>,
+    #[schemars(description = "gpu_display only: desktop mode-change policy — 'off' leaves the desktop mode alone, 'refresh' cycles refresh rates at the native resolution, 'full' also cycles resolutions. Omit to use STRESSKIT_DISPLAY_MODESET, which itself defaults to refresh.")]
+    pub display_modeset: Option<String>,
+    #[schemars(description = "gpu_display only: drive at most this many attached outputs, so display COUNT can be varied without unplugging a cable. Omit to drive every attached output. A cap below the attached count keeps the run inconclusive, because partial coverage cannot clear a multi-monitor fault.")]
+    pub display_max_outputs: Option<u32>,
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
@@ -906,6 +910,10 @@ pub struct StressConcurrentRunParams {
     pub preset_label: Option<String>,
     #[schemars(description = "Free-form notes recorded on the run.")]
     pub notes: Option<String>,
+    #[schemars(description = "gpu_display only: desktop mode-change policy — 'off' leaves the desktop mode alone, 'refresh' cycles refresh rates at the native resolution, 'full' also cycles resolutions. Omit to use STRESSKIT_DISPLAY_MODESET, which itself defaults to refresh.")]
+    pub display_modeset: Option<String>,
+    #[schemars(description = "gpu_display only: drive at most this many attached outputs, so display COUNT can be varied without unplugging a cable. Omit to drive every attached output. A cap below the attached count keeps the run inconclusive, because partial coverage cannot clear a multi-monitor fault.")]
+    pub display_max_outputs: Option<u32>,
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
@@ -927,6 +935,10 @@ pub struct StressScenarioRunRemoteParams {
     pub preset_label: Option<String>,
     #[schemars(description = "Free-form notes recorded on the run.")]
     pub notes: Option<String>,
+    #[schemars(description = "gpu_display only: desktop mode-change policy — 'off' leaves the desktop mode alone, 'refresh' cycles refresh rates at the native resolution, 'full' also cycles resolutions. Omit to use the client's STRESSKIT_DISPLAY_MODESET, which itself defaults to refresh.")]
+    pub display_modeset: Option<String>,
+    #[schemars(description = "gpu_display only: drive at most this many attached outputs, so display COUNT can be varied without unplugging a cable. Omit to drive every attached output. A cap below the attached count keeps the run inconclusive, because partial coverage cannot clear a multi-monitor fault.")]
+    pub display_max_outputs: Option<u32>,
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
@@ -945,6 +957,10 @@ pub struct StressConcurrentRunRemoteParams {
     pub preset_label: Option<String>,
     #[schemars(description = "Free-form notes recorded on the run.")]
     pub notes: Option<String>,
+    #[schemars(description = "gpu_display only: desktop mode-change policy — 'off' leaves the desktop mode alone, 'refresh' cycles refresh rates at the native resolution, 'full' also cycles resolutions. Omit to use the client's STRESSKIT_DISPLAY_MODESET, which itself defaults to refresh.")]
+    pub display_modeset: Option<String>,
+    #[schemars(description = "gpu_display only: drive at most this many attached outputs, so display COUNT can be varied without unplugging a cable. Omit to drive every attached output. A cap below the attached count keeps the run inconclusive, because partial coverage cannot clear a multi-monitor fault.")]
+    pub display_max_outputs: Option<u32>,
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
@@ -1833,6 +1849,27 @@ async fn execute_one_remote_script(
 }
 
 /// Validate scenario/concurrent stages identically to the local tools and map them to wire stages.
+/// Builds the `gpu_display` knobs from tool params. An unrecognized mode-set
+/// spelling is rejected here rather than falling back silently on the client,
+/// so a typo cannot quietly turn into a different test than the caller asked for.
+fn display_options(
+    modeset: Option<&str>,
+    max_outputs: Option<u32>,
+) -> Result<stress_kit::DisplayOptions, ErrorData> {
+    let modeset = match modeset.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(raw) => Some(stress_kit::DisplayModeSet::parse(raw).ok_or_else(|| {
+            to_internal(format!(
+                "display_modeset '{raw}' is not recognized; use off, refresh, or full"
+            ))
+        })?),
+        None => None,
+    };
+    Ok(stress_kit::DisplayOptions {
+        modeset,
+        max_outputs: max_outputs.filter(|c| *c > 0).map(|c| c as usize),
+    })
+}
+
 fn validate_remote_stress_stages(
     stages: &[ScenarioStageParam],
     concurrent: bool,
@@ -7652,6 +7689,7 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
                 repeat_until_total: p.repeat_until_total,
             },
             rules: None,
+            display: display_options(p.display_modeset.as_deref(), p.display_max_outputs)?,
         };
 
         let telemetry = TELEMETRY_AGENT.clone();
@@ -7796,6 +7834,7 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
                 duration_secs: Some(p.duration_secs),
             },
             rules: None,
+            display: display_options(p.display_modeset.as_deref(), p.display_max_outputs)?,
         };
 
         let budget_secs = p.duration_secs.min(7200).max(1);
@@ -8081,6 +8120,7 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
             }
         };
 
+        let display = display_options(p.display_modeset.as_deref(), p.display_max_outputs)?;
         let cmd = crate::Cmd::RunRemoteScenario {
             stages,
             total_wall_secs: p.total_wall_secs,
@@ -8089,6 +8129,9 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
             diagnostic_session_id: diagnostic_session_id.clone(),
             preset_label: p.preset_label.clone(),
             notes: p.notes.clone(),
+            // Normalized on the way out so the client never re-parses a synonym.
+            display_modeset: display.modeset.map(|m| m.as_str().to_string()),
+            display_max_outputs: display.max_outputs.map(|c| c as u32),
         };
 
         let payload = execute_remote_stress_plan(
@@ -8135,6 +8178,7 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
             }
         };
 
+        let display = display_options(p.display_modeset.as_deref(), p.display_max_outputs)?;
         let cmd = crate::Cmd::RunRemoteConcurrent {
             lanes,
             duration_secs: p.duration_secs,
@@ -8142,6 +8186,8 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
             diagnostic_session_id: diagnostic_session_id.clone(),
             preset_label: p.preset_label.clone(),
             notes: p.notes.clone(),
+            display_modeset: display.modeset.map(|m| m.as_str().to_string()),
+            display_max_outputs: display.max_outputs.map(|c| c as u32),
         };
 
         let payload = execute_remote_stress_plan(

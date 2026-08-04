@@ -143,6 +143,9 @@ pub struct RunSpec {
     pub plan: RunPlan,
     /// Per-stage pass/fail policy; `None` keeps the legacy whole-run verdict.
     pub rules: Option<VerdictRules>,
+    /// `Stressor::GpuDisplay` knobs. Run-level: the mode-set policy and the
+    /// output cap apply to the desktop, not to one stage.
+    pub display: stress_kit::DisplayOptions,
 }
 
 impl RunSpec {
@@ -183,6 +186,7 @@ impl RunSpec {
                 disk_file_mb: 16,
             },
             rules: None,
+            display: stress_kit::DisplayOptions::default(),
         }
     }
 }
@@ -488,6 +492,7 @@ fn worker(
     acc.gpu_leg_planned = spec.plan.has_gpu_leg();
     let mut outcomes: Vec<StageOutcome> = Vec::new();
     let rules = spec.rules.clone();
+    let display = spec.display;
 
     // ---- 3. Branch on plan ----
     match spec.plan.clone() {
@@ -521,6 +526,7 @@ fn worker(
                 timeout: duration_secs.map(Duration::from_secs),
                 memory_cap_mb,
                 disk_file_mb,
+                display,
             };
             let session = StressSession::start(config);
             let throughput_unit = stressor.throughput_unit();
@@ -568,6 +574,7 @@ fn worker(
                 &mut acc,
                 &rules,
                 &mut outcomes,
+                display,
             );
         }
 
@@ -597,6 +604,7 @@ fn worker(
                         timeout: duration_secs.map(Duration::from_secs),
                         memory_cap_mb: l.memory_cap_mb,
                         disk_file_mb: l.disk_file_mb,
+                        display,
                     })
                 })
                 .collect();
@@ -1175,6 +1183,7 @@ fn scenario_def(
     stages: &[RunStage],
     total_wall_secs: Option<u64>,
     repeat_until_total: bool,
+    display: stress_kit::DisplayOptions,
 ) -> ScenarioDefinition {
     ScenarioDefinition {
         stages: stages
@@ -1187,6 +1196,7 @@ fn scenario_def(
                     timeout: None,
                     memory_cap_mb: s.memory_cap_mb,
                     disk_file_mb: s.disk_file_mb,
+                    display,
                 },
                 duration_secs: s.duration_secs,
             })
@@ -1243,12 +1253,14 @@ fn drive_scenario(
     acc: &mut SummaryAccumulator,
     rules: &Option<VerdictRules>,
     outcomes: &mut Vec<StageOutcome>,
+    display: stress_kit::DisplayOptions,
 ) {
     let scenario_started = Instant::now();
     let mut runner = ScenarioRunner::start(scenario_def(
         stage_specs,
         total_wall_secs,
         repeat_until_total,
+        display,
     ));
     // Absolute index of the running segment's first stage.
     let mut stage_offset = 0usize;
@@ -1440,6 +1452,7 @@ fn drive_scenario(
                                             scenario_started.elapsed(),
                                         ),
                                         false,
+                                        display,
                                     ));
                                 }
                                 None => finished = true,
@@ -2973,7 +2986,7 @@ mod tests {
             stage_spec("disk", Stressor::Disk),
         ];
         let next = next_segment_start(1, specs.len(), false).expect("disk stage remains");
-        let def = scenario_def(&specs[next..], Some(30), false);
+        let def = scenario_def(&specs[next..], Some(30), false, Default::default());
         assert_eq!(def.stages.len(), 1);
         assert_eq!(def.stages[0].label, "disk");
         assert_eq!(def.stages[0].config.stressor, Stressor::Disk);

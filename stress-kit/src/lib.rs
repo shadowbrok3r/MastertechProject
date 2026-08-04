@@ -371,6 +371,51 @@ fn variant_renames(shape: &'static facet::Shape) -> impl Iterator<Item = &'stati
     variants.iter().map(|v| v.rename.unwrap_or(v.name))
 }
 
+/// How aggressively [`Stressor::GpuDisplay`] changes the desktop mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DisplayModeSet {
+    /// Leave the desktop mode alone.
+    Off,
+    /// Cycle refresh rates at the native resolution.
+    Refresh,
+    /// Cycle resolutions as well as refresh rates.
+    Full,
+}
+
+impl DisplayModeSet {
+    /// Parses a wire/env spelling. Returns `None` for anything unrecognized so
+    /// the caller can decide between a default and an error.
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "off" | "0" | "none" => Some(Self::Off),
+            "refresh" => Some(Self::Refresh),
+            "full" | "resolution" => Some(Self::Full),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Refresh => "refresh",
+            Self::Full => "full",
+        }
+    }
+}
+
+/// [`Stressor::GpuDisplay`] knobs. Defaults defer to the environment and to
+/// every attached output, so a caller that does not care sets nothing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DisplayOptions {
+    /// `None` falls back to `STRESSKIT_DISPLAY_MODESET`.
+    pub modeset: Option<DisplayModeSet>,
+    /// Drive at most this many attached outputs. `None` drives all of them.
+    /// A cap below the attached count keeps the run inconclusive: partial
+    /// coverage cannot clear a multi-monitor fault.
+    pub max_outputs: Option<usize>,
+}
+
 /// Single-run settings. In [`scenario::ScenarioStage`], `timeout` is ignored; stage length is `duration_secs`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StressConfig {
@@ -382,6 +427,9 @@ pub struct StressConfig {
     pub memory_cap_mb: u64,
     /// Disk stressor only: MiB per write/read file.
     pub disk_file_mb: u64,
+    /// GPU display stressor only.
+    #[serde(default)]
+    pub display: DisplayOptions,
 }
 
 impl Default for StressConfig {
@@ -392,6 +440,7 @@ impl Default for StressConfig {
             timeout: None,
             memory_cap_mb: 256,
             disk_file_mb: 16,
+            display: DisplayOptions::default(),
         }
     }
 }
@@ -657,6 +706,39 @@ mod tests {
         assert!(session.try_recv().is_none(), "latch must not synthesize ticks");
     }
 
+    #[test]
+    fn display_modeset_parses_every_accepted_spelling() {
+        for raw in ["off", "OFF", " 0 ", "none"] {
+            assert_eq!(DisplayModeSet::parse(raw), Some(DisplayModeSet::Off), "{raw}");
+        }
+        assert_eq!(DisplayModeSet::parse("refresh"), Some(DisplayModeSet::Refresh));
+        for raw in ["full", "resolution"] {
+            assert_eq!(DisplayModeSet::parse(raw), Some(DisplayModeSet::Full), "{raw}");
+        }
+    }
+
+    #[test]
+    fn display_modeset_rejects_an_unknown_spelling() {
+        // Callers turn None into an error or an env fallback; it must not
+        // silently become a different policy than was asked for.
+        assert_eq!(DisplayModeSet::parse("refesh"), None);
+        assert_eq!(DisplayModeSet::parse(""), None);
+    }
+
+    #[test]
+    fn display_modeset_as_str_round_trips() {
+        for policy in [DisplayModeSet::Off, DisplayModeSet::Refresh, DisplayModeSet::Full] {
+            assert_eq!(DisplayModeSet::parse(policy.as_str()), Some(policy));
+        }
+    }
+
+    #[test]
+    fn display_options_default_defers_everything() {
+        let d = DisplayOptions::default();
+        assert!(d.modeset.is_none(), "no policy means the environment decides");
+        assert!(d.max_outputs.is_none(), "no cap means drive every attached output");
+    }
+
     /// Run a stressor briefly and return the last metrics sample seen.
     fn run_briefly(stressor: Stressor, memory_cap_mb: u64, secs: u64) -> Metrics {
         let session = StressSession::start(StressConfig {
@@ -665,6 +747,7 @@ mod tests {
             timeout: Some(Duration::from_secs(secs)),
             memory_cap_mb,
             disk_file_mb: 1,
+            display: DisplayOptions::default(),
         });
         let deadline = Instant::now() + Duration::from_secs(secs + 8);
         let mut last: Option<Metrics> = None;

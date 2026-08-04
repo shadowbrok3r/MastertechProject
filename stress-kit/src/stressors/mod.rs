@@ -128,7 +128,7 @@ pub(crate) fn run_core(
         #[cfg(feature = "gpu")]
         Stressor::GpuPcie => gpu_pcie::run(thread_count, config.memory_cap_mb, cancel, tx, started_at),
         #[cfg(feature = "gpu")]
-        Stressor::GpuDisplay => gpu_display::run(thread_count, cancel, tx, started_at),
+        Stressor::GpuDisplay => gpu_display::run(config.display, cancel, tx, started_at),
 
         #[cfg(not(feature = "gpu"))]
         Stressor::Psu
