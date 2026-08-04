@@ -1102,7 +1102,10 @@ mod windows_impl {
             let ctx = Arc::new(TestCtx { device, queue });
             let mut presented = 0u32;
             let mut skipped = 0u32;
-            for i in 0..120 {
+            let until = Instant::now() + smoke_duration();
+            let mut i = 0u32;
+            while Instant::now() < until {
+                i += 1;
                 window.pump();
                 ctx.queue.write_buffer(
                     &frame_buf,
@@ -1128,8 +1131,24 @@ mod windows_impl {
                     }
                 }
             }
-            eprintln!("presented {presented} frame(s), skipped {skipped}");
+            let secs = smoke_duration().as_secs_f64();
+            eprintln!(
+                "{}: presented {presented} frame(s), skipped {skipped}, {:.1} FPS over {secs:.0}s",
+                output.describe(),
+                presented as f64 / secs
+            );
             assert!(presented > 0, "no frame reached the screen");
+        }
+
+        /// How long the visual smoke test presents; `STRESSKIT_DISPLAY_SMOKE_SECS`
+        /// overrides the default.
+        fn smoke_duration() -> Duration {
+            let secs = std::env::var("STRESSKIT_DISPLAY_SMOKE_SECS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(2)
+                .clamp(1, 600);
+            Duration::from_secs(secs)
         }
 
         /// Stand-in for [`GpuContext`] so the draw path under test does not
