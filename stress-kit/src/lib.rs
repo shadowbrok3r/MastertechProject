@@ -371,6 +371,21 @@ fn variant_renames(shape: &'static facet::Shape) -> impl Iterator<Item = &'stati
     variants.iter().map(|v| v.rename.unwrap_or(v.name))
 }
 
+/// Runs the display-path load on the calling thread, sending ticks to `tx`.
+///
+/// This is the entry point the out-of-process host (`stresskit-display`) uses.
+/// In-process callers go through [`Stressor::GpuDisplay`], which prefers the
+/// child process so a miniport reset cannot take the caller's renderer with it.
+#[cfg(feature = "gpu")]
+pub fn run_gpu_display_load(
+    options: DisplayOptions,
+    cancel: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    tx: &std::sync::mpsc::Sender<Metrics>,
+    started_at: std::time::Instant,
+) {
+    stressors::gpu_display::run(options, cancel, tx, started_at);
+}
+
 /// How aggressively [`Stressor::GpuDisplay`] changes the desktop mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
