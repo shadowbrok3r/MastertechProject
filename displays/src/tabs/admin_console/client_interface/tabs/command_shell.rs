@@ -1,5 +1,5 @@
 use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, RichText, ScrollArea, TextEdit, Ui, Vec2, Widget};
-use crate::remote_viewer::ratagui::{terminal_font, TERMINAL_FONT_SIZE};
+use crate::ui_tools::terminal_font::{terminal_font, TERMINAL_FONT_SIZE};
 use crate::tabs::admin_console::WebSocketClient;
 use crate::ui_tools::icons::{self};
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};

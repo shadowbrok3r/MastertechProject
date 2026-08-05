@@ -18,6 +18,9 @@ pub mod neon_glass;
 pub mod glass_backdrop;
 pub mod theme_chrome;
 pub mod theme_config;
+pub mod terminal_font;
+// ratatui is a non-wasm dependency.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod tui_theme;
 pub mod notification_center;
 pub mod dump_text;

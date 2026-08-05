@@ -40,7 +40,8 @@ mime_guess.workspace = true
 crossbeam.workspace = true
 surrealdb.workspace = true
 egui_dock.workspace = true
-mtech-ui = { workspace = true, features = ["stress-ui"] }
+# No `stress-ui`: it pulls stress-runner's tokio/full (mio) into wasm and mobile.
+mtech-ui = { workspace = true }
 once_cell.workspace = true
 tcp_protocol = { workspace = true, features = ["fingerprint"] }
 facet = { workspace = true, features = ["std", "chrono", "reflect"] }
