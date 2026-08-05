@@ -11,8 +11,8 @@ description = "Preview: a real eframe-on-glow app frosting a panel through backd
 [dependencies]
 # eframe with the GLOW backend (default is wgpu) + default_fonts. This is what makes
 # CreationContext.gl Some(Arc<glow::Context>). x11 + wayland give winit its Linux backends.
-eframe = { version = "0.35", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
-egui = "0.35"
+eframe = { version = "0.36", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
+egui = "0.36"
 # `glow` is consumed through the adapter (`backdrop_blur_egui::glow`) rather than pinned here, so
 # this consumer cannot skew off the glow the adapter is typed against.
 backdrop-blur-egui = { path = "../../crates/backdrop-blur-egui", default-features = false, features = ["grab-pass"] }

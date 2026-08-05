@@ -30,7 +30,7 @@ inline = []
 skia-render = ["dep:egui_skia", "dep:skia-safe", "dep:softbuffer", "dep:winit", "dep:raw-window-handle"]
 
 [dependencies]
-eframe = { version="0.35", features=["persistence", "serde",  "default_fonts", "glow", "x11", "accesskit"], default-features=false }
+eframe = { version="0.36", features=["persistence", "serde",  "default_fonts", "glow", "x11", "accesskit"], default-features=false }
 displays = { path="../displays", features = ["tokio", "wasm-plugins", "native-telemetry"] }
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "stream", "cookies", "brotli", "native-tls-vendored", "form", "charset", "http2", "system-proxy"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
@@ -117,10 +117,10 @@ once_cell.workspace = true
 base64.workspace = true
 fuzzy-matcher.workspace = true
 uuid.workspace = true
-egui_inspection = { version = "0.35", features = ["plugin"] }
+egui_inspection = { version = "0.36", features = ["plugin"] }
 
 [dependencies.egui]
-version = "0.35"
+version = "0.36"
 default-features = false
 features = ["rayon", "bytemuck"]
 

@@ -31,4 +31,4 @@ reqwest = { version = "0.13", default-features = false, features = ["json"] }
 eframe = { workspace = true }
 
 [target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
-eframe = { version = "0.35", features = ["serde", "default_fonts"], default-features = false }
+eframe = { version = "0.36", features = ["serde", "default_fonts"], default-features = false }

@@ -255,7 +255,7 @@ fn read_back(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture
         .expect("map callback fired")
         .expect("buffer map succeeded");
 
-    let mapped = slice.get_mapped_range();
+    let mapped = slice.get_mapped_range().expect("mapped range");
     let mut tight = vec![0u8; (unpadded * DIM) as usize];
     for y in 0..DIM as usize {
         let src = y * padded as usize;

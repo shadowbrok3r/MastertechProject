@@ -258,9 +258,11 @@ impl OwnLoopRenderer {
         frame: FrameInput<'_>,
         surfaces: &[Surface],
     ) -> Result<(), BlurError> {
-        // 1. Texture deltas first.
-        for (id, delta) in &frame.textures_delta.set {
-            self.renderer.update_texture(device, queue, *id, delta);
+        // 1. Texture deltas first; a texture can carry several, applied in order.
+        for (id, deltas) in &frame.textures_delta.set {
+            for delta in deltas {
+                self.renderer.update_texture(device, queue, *id, delta);
+            }
         }
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

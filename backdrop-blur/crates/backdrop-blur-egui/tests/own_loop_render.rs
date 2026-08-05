@@ -24,6 +24,7 @@ fn software_device() -> (wgpu::Device, wgpu::Queue) {
         power_preference: wgpu::PowerPreference::LowPower,
         force_fallback_adapter: false,
         compatible_surface: None,
+        ..Default::default()
     }))
     .expect("a Vulkan adapter (lavapipe via VK_ICD_FILENAMES) is required for the gated GPU tier");
     let limits = adapter.limits();
@@ -112,7 +113,7 @@ fn read_back(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture
         .poll(wgpu::PollType::wait_indefinitely())
         .expect("device poll");
     rx.recv().expect("map callback").expect("buffer map");
-    let mapped = slice.get_mapped_range();
+    let mapped = slice.get_mapped_range().expect("mapped range");
     let mut tight = vec![0u8; (unpadded * DIM) as usize];
     for y in 0..DIM as usize {
         let src = y * padded as usize;
@@ -130,7 +131,7 @@ fn pixel(data: &[u8], x: u32, y: u32) -> [u8; 4] {
 #[test]
 fn own_loop_frosts_a_panel_over_a_real_egui_frame() {
     let (device, queue) = software_device();
-    let (ctx, jobs, textures_delta) = egui_red_blue_frame();
+    let (ctx, jobs, mut textures_delta) = egui_red_blue_frame();
 
     let target = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("target"),
@@ -183,6 +184,9 @@ fn own_loop_frosts_a_panel_over_a_real_egui_frame() {
             &[surface],
         )
         .expect("render_frame succeeds");
+
+    // TexturesDelta debug_asserts it was drained when dropped.
+    textures_delta.clear();
 
     let out = read_back(&device, &queue, &target);
 

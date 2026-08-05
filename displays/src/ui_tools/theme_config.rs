@@ -1263,7 +1263,6 @@ pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
                 popup_shadow: Shadow::default(),
                 resize_corner_size: 10.0,
                 text_cursor: TextCursorStyle::default(),
-                clip_rect_margin: 5.0,
                 button_frame: true,
                 collapsing_header_frame: true,
                 indent_has_left_vline: true,

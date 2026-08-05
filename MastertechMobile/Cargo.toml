@@ -58,7 +58,7 @@ anyhow = "1"
 log = "0.4"
 
 # `displays` depends on `egui-phosphor = "0.12"` which only compiles against
-# egui 0.35 via this fork. Mirrors the root workspace's patch so the shared
+# egui 0.36 via this fork. Mirrors the root workspace's patch so the shared
 # `displays` code resolves identically from this workspace.
 [patch.crates-io]
-egui-phosphor = { git = "https://github.com/shadowbrok3r/egui-phosphor", branch = "egui-035" }
+egui-phosphor = { git = "https://github.com/shadowbrok3r/egui-phosphor", branch = "egui-036" }

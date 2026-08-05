@@ -163,7 +163,6 @@ pub fn rerun_flat_style(theme: &dyn Aesthetix) -> egui::Style {
                 ..Default::default()
             },
             resize_corner_size: 10.0,
-            clip_rect_margin: 4.0,
             button_frame: false,
             collapsing_header_frame: false,
             indent_has_left_vline: false,

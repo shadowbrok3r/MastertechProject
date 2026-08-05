@@ -12,7 +12,7 @@ wasm-plugins = ["dep:wasmtime", "dep:wasmtime-wasi", "dep:wat"]
 puffin = []
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))'.dependencies]
-eframe = { version = "0.35", features = ["x11", "wayland"], default-features = false }
+eframe = { version = "0.36", features = ["x11", "wayland"], default-features = false }
 
 # Desktop-only: the admin console's remote-desktop clipboard mirroring reads the
 # operator's clipboard, which egui only exposes on paste. No iOS/Android/wasm
@@ -74,7 +74,7 @@ rfd = { workspace = true }
 database = { workspace = true, features = ["desktop"] }
 
 [target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
-eframe = { version = "0.35", features = ["serde", "default_fonts"], default-features = false }
+eframe = { version = "0.36", features = ["serde", "default_fonts"], default-features = false }
 database = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies.image]
@@ -102,8 +102,8 @@ wat = { workspace = true, optional = true }
 # pulls tokio + tungstenite which don't fit a wasm bundle, so it's
 # scoped to non-wasm targets.
 plugin_builder = { path = "../plugin_builder" }
-# Client for egui 0.35's native inspection protocol (the `protocol` module needs no feature).
-egui_inspection = "0.35"
+# Client for egui 0.36's native inspection protocol (the `protocol` module needs no feature).
+egui_inspection = "0.36"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 dump-triage = { path = "../dump-triage", default-features = false }

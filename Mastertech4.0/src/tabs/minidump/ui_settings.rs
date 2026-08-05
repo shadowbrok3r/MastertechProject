@@ -152,10 +152,8 @@ impl MiniDumpApp {
         // Collect dropped files:
         let mut pushed_path = false;
         for file in &ctx.input_mut(|i| i.raw.take().dropped_files) {
-            if let Some(path) = &file.path {
-                pushed_path = true;
-                self.settings.available_paths.push(path.clone());
-            }
+            pushed_path = true;
+            self.settings.available_paths.push(file.path().to_path_buf());
         }
         if pushed_path {
             self.set_path(self.settings.available_paths.len() - 1);

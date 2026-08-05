@@ -318,21 +318,24 @@ pub fn wire_to_clipped_primitive(wire: &WireClippedMesh) -> egui::ClippedPrimiti
 
 fn textures_delta_to_wire(delta: &egui::TexturesDelta) -> WireTexturesDelta {
     WireTexturesDelta {
+        // Flattens the per-texture delta lists; order within one texture is significant.
         set: delta
             .set
             .iter()
-            .map(|(id, img_delta)| {
-                let rgba = image_data_to_rgba(&img_delta.image);
-                let [w, h] = img_delta.image.size();
-                (
-                    (*id).into(),
-                    WireImageDelta {
-                        pixels_rgba: rgba,
-                        width: w,
-                        height: h,
-                        pos: img_delta.pos,
-                    },
-                )
+            .flat_map(|(id, img_deltas)| {
+                img_deltas.iter().map(move |img_delta| {
+                    let rgba = image_data_to_rgba(&img_delta.image);
+                    let [w, h] = img_delta.image.size();
+                    (
+                        (*id).into(),
+                        WireImageDelta {
+                            pixels_rgba: rgba,
+                            width: w,
+                            height: h,
+                            pos: img_delta.pos,
+                        },
+                    )
+                })
             })
             .collect(),
         free: delta.free.iter().map(|id| (*id).into()).collect(),

@@ -210,7 +210,6 @@ fn neon_visuals(p: &NeonPalette) -> Visuals {
             inactive_underline_stroke: Stroke::new(2.0, pane(lift(p.primary, 0.5), 0.5)),
             ..Default::default()
         },
-        clip_rect_margin: 3.0,
         button_frame: true,
         collapsing_header_frame: true,
         indent_has_left_vline: true,

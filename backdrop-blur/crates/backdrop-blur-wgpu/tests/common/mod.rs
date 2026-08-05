@@ -14,6 +14,7 @@ pub fn software_device() -> (wgpu::Device, wgpu::Queue) {
         power_preference: wgpu::PowerPreference::LowPower,
         force_fallback_adapter: false,
         compatible_surface: None,
+        ..Default::default()
     }))
     .expect("a Vulkan adapter (lavapipe via VK_ICD_FILENAMES) is required for the gated GPU tier");
 

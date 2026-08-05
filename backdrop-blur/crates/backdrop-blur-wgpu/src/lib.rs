@@ -1210,6 +1210,10 @@ fn uniform_buffer<T: bytemuck::Pod>(
     })?;
     buffer
         .get_mapped_range_mut(..)
+        .map_err(|e| BlurError::ResourceCreation {
+            stage: BlurStage::UniformBuffer,
+            source: Box::new(e),
+        })?
         .slice(..unpadded_size as usize)
         .copy_from_slice(contents);
     buffer.unmap();

@@ -1,0 +1,14 @@
+[package]
+name = "bioslove-index"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# "std" pulls in the formatting used by to_rfc3339_opts; the workspace dep is
+# default-features = false with only "now".
+chrono = { workspace = true, features = ["std"] }
+clap = { version = "4", features = ["derive"] }
+sha2 = "0.10"

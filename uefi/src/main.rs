@@ -21,6 +21,7 @@ use uefi::proto::network::snp::SimpleNetwork;
 use uefi::proto::pci::root_bridge::PciRootBridgeIo;
 use uefi::table::cfg::ConfigTableEntry;
 
+mod bioslove;
 mod bootdiag;
 mod capsule;
 mod charts;
@@ -60,7 +61,7 @@ mod palette {
 /// workspace `.env`) at build time; defaults to the LAN pre-boot relay.
 const DEFAULT_URL: &str = env!("UEFI_TARGET_URL");
 
-const TABS: [&str; 14] = [
+const TABS: [&str; 15] = [
     "Overview",
     "System",
     "Memory",
@@ -75,6 +76,7 @@ const TABS: [&str; 14] = [
     "Boot",
     "Plugins",
     "Log",
+    "Flash",
 ];
 
 const TAB_FIRMWARE: usize = 3;
@@ -84,6 +86,8 @@ const TAB_STRESS: usize = 7;
 const TAB_ORDER: usize = 8;
 const TAB_BOOT: usize = 11;
 const TAB_PLUGINS: usize = 12;
+const TAB_LOG: usize = 13;
+const TAB_FLASH: usize = 14;
 
 /// Milliseconds between command polls while agent mode is on.
 const AGENT_POLL_MS: u64 = 5_000;
@@ -4137,6 +4141,20 @@ fn fit(s: &str, w: usize) -> String {
     }
 }
 
+/// Placeholder for an empty field inside a composed value.
+fn or_dash(s: &str) -> &str {
+    if s.is_empty() { "-" } else { s }
+}
+
+/// First 12 hex chars of a digest, enough to read off a screen and compare.
+fn sha_prefix(s: &str) -> String {
+    if s.is_empty() {
+        "no digest".to_string()
+    } else {
+        format!("sha256:{}", &s[..s.len().min(12)])
+    }
+}
+
 fn para(lines: Vec<Line<'static>>, title: &str) -> Paragraph<'static> {
     Paragraph::new(lines)
         .style(base_style())
@@ -4697,6 +4715,316 @@ fn page_boot(frame: &mut Frame, area: Rect, app: &App) {
         ]));
     }
     frame.render_widget(para(elines, "Entries"), rows[1]);
+}
+
+/// This machine's side of the laptop/desktop split, from SMBIOS chassis type.
+fn machine_side(app: &App) -> bioslove::Side {
+    if app.info.dmi.is_portable() {
+        bioslove::Side::Laptop
+    } else {
+        bioslove::Side::Desktop
+    }
+}
+
+/// Rows the Flash tab lists: auto-detected matches while the search box is
+/// empty, search hits across both sides once anything is typed.
+fn flash_rows(app: &App) -> Vec<(usize, Option<bioslove::Confidence>)> {
+    let Some(index) = &app.flash_index else {
+        return Vec::new();
+    };
+    let needle = app.flash_filter.trim();
+    if needle.is_empty() {
+        if !app.flash_matches.is_empty() {
+            return app
+                .flash_matches
+                .iter()
+                .map(|m| (m.entry, Some(m.confidence)))
+                .collect();
+        }
+        return bioslove::search(index, Some(machine_side(app)), "")
+            .into_iter()
+            .map(|i| (i, None))
+            .collect();
+    }
+    bioslove::search(index, None, needle)
+        .into_iter()
+        .map(|i| (i, None))
+        .collect()
+}
+
+/// Re-run the SMBIOS match against the loaded index.
+fn redetect_bioslove(app: &mut App) {
+    let Some(index) = &app.flash_index else {
+        return;
+    };
+    app.flash_matches = bioslove::match_machine(index, &app.info.dmi);
+    app.flash_sel = 0;
+    app.dirty = true;
+}
+
+/// Read the BIOSLove index off an attached volume and auto-detect this machine.
+fn load_bioslove_index(app: &mut App) {
+    match bioslove::load_from_volume() {
+        Ok(index) => {
+            logln(format!(
+                "bioslove: index {} entries ({} laptop, {} desktop) generated {}",
+                index.entries.len(),
+                index.laptop_count(),
+                index.desktop_count(),
+                index.generated_at
+            ));
+            app.flash_err.clear();
+            app.flash_index = Some(index);
+            redetect_bioslove(app);
+            let n = app.flash_matches.len();
+            app.status = match app.flash_matches.first() {
+                Some(m) => {
+                    let e = &app.flash_index.as_ref().unwrap().entries[m.entry];
+                    format!("detected {} ({}) - {n} candidate(s)", e.folder, m.confidence.label())
+                }
+                None => "index loaded - no SMBIOS match, press 'e' to search".to_string(),
+            };
+        }
+        Err(e) => {
+            logln(format!("bioslove: {e}"));
+            app.flash_err = e;
+            app.flash_index = None;
+            app.flash_matches.clear();
+            app.status = "no BIOSLove index found - see the Flash tab".into();
+        }
+    }
+}
+
+/// BIOSLove model index: what this machine is, and what firmware is on hand.
+fn page_flash(frame: &mut Frame, area: Rect, app: &App) {
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(44), Constraint::Min(0)])
+        .split(area);
+
+    let d = &app.info.dmi;
+    let mut left = vec![
+        header("This machine"),
+        kv("Baseboard", d.board_product.clone()),
+        kv("System", d.sys_product.clone()),
+        kv("Family", d.sys_family.clone()),
+        kv("Chassis", format!("{} ({})", d.chassis_type, machine_side(app).label())),
+        kv("BIOS", format!("{} {}", d.bios_version, d.bios_date)),
+        Line::from(""),
+        header("Index"),
+    ];
+    match &app.flash_index {
+        Some(index) => {
+            left.push(kv(
+                "Entries",
+                format!("{} laptop / {} desktop", index.laptop_count(), index.desktop_count()),
+            ));
+            left.push(kv("Built", index.generated_at.clone()));
+            left.push(kv("Source", index.source.clone()));
+        }
+        None => {
+            left.push(Line::from(Span::styled(
+                if app.flash_err.is_empty() {
+                    "not loaded - press 'f'".to_string()
+                } else {
+                    app.flash_err.clone()
+                },
+                Style::default().fg(if app.flash_err.is_empty() {
+                    palette::MUTED
+                } else {
+                    palette::ERR
+                }),
+            )));
+        }
+    }
+    left.push(Line::from(""));
+    left.push(header("Search"));
+    left.push(kv(
+        "Model",
+        format!(
+            "{}{}",
+            app.flash_filter,
+            if app.editing == EditField::Flash { "_" } else { "" }
+        ),
+    ));
+    left.push(Line::from(Span::styled(
+        if app.flash_filter.trim().is_empty() {
+            "showing auto-detected matches"
+        } else {
+            "showing search hits (both sides)"
+        },
+        Style::default().fg(palette::MUTED),
+    )));
+    frame.render_widget(para(left, "Flash"), cols[0]);
+
+    let rows = flash_rows(app);
+    let split = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(50), Constraint::Min(0)])
+        .split(cols[1]);
+
+    let mut list = Vec::new();
+    if app.flash_index.is_none() {
+        list.push(Line::from(Span::styled(
+            format!("press 'f' to read {}", bioslove::INDEX_PATH),
+            Style::default().fg(palette::MUTED),
+        )));
+    } else if rows.is_empty() {
+        list.push(Line::from(Span::styled(
+            "no match - press 'e' and type a model or chassis code",
+            Style::default().fg(palette::WARN),
+        )));
+    }
+    let index = app.flash_index.as_ref();
+    // Keep the highlighted row on screen without a scrollbar widget.
+    let height = split[0].height.saturating_sub(2) as usize;
+    let first = app.flash_sel.saturating_sub(height.saturating_sub(1));
+    for (n, (ei, conf)) in rows.iter().enumerate().skip(first).take(height) {
+        let Some(e) = index.and_then(|i| i.entries.get(*ei)) else {
+            continue;
+        };
+        let sel = n == app.flash_sel;
+        let mark = if sel { ">" } else { " " };
+        let badge = match conf {
+            Some(c) => format!("[{}]", c.label()),
+            None => String::new(),
+        };
+        let ver = if e.versions.bios.is_empty() {
+            String::new()
+        } else {
+            format!("BIOS {}", e.versions.bios)
+        };
+        let style = if sel {
+            Style::default().fg(palette::ACCENT).add_modifier(Modifier::BOLD)
+        } else if !e.reachable {
+            Style::default().fg(palette::BAD)
+        } else {
+            Style::default().fg(palette::TEXT)
+        };
+        list.push(Line::from(vec![
+            Span::styled(format!("{mark} {:<16}", e.folder), style),
+            Span::styled(
+                format!("{:<9}", e.side.label()),
+                Style::default().fg(palette::MUTED),
+            ),
+            Span::styled(
+                format!("{:<14}", e.lane.label()),
+                Style::default().fg(if e.lane.launchable() {
+                    palette::GOOD
+                } else {
+                    palette::MUTED
+                }),
+            ),
+            Span::styled(format!("{ver:<16}"), Style::default().fg(palette::TEXT)),
+            Span::styled(badge, Style::default().fg(palette::ACCENT)),
+        ]));
+    }
+    let title = format!("Models ({} shown)", rows.len());
+    frame.render_widget(para(list, &title), split[0]);
+
+    let mut detail = Vec::new();
+    match rows.get(app.flash_sel).and_then(|(ei, _)| index.map(|i| (&i.entries[*ei], *ei))) {
+        None => detail.push(Line::from(Span::styled(
+            "no entry selected",
+            Style::default().fg(palette::MUTED),
+        ))),
+        Some((e, ei)) => {
+            detail.push(header(&format!("{} ({})", e.folder, e.side.label())));
+            if let Some(m) = app.flash_matches.iter().find(|m| m.entry == ei) {
+                detail.push(kv("Matched", m.evidence()));
+            }
+            if !e.modelstring.is_empty() {
+                detail.push(kv("Covers", e.modelstring.clone()));
+            }
+            if !e.aliases.is_empty() {
+                detail.push(kv("Chassis", e.aliases.join(", ")));
+            }
+            detail.push(kv(
+                "Versions",
+                format!(
+                    "BIOS {} / EC {} / ME {}",
+                    or_dash(&e.versions.bios),
+                    or_dash(&e.versions.ec),
+                    or_dash(&e.versions.me)
+                ),
+            ));
+            detail.push(Line::from(vec![
+                Span::styled(format!("{:<14}", "Delivery"), Style::default().fg(palette::LABEL)),
+                Span::styled(
+                    e.lane.label().to_string(),
+                    Style::default().fg(if e.lane.launchable() {
+                        palette::GOOD
+                    } else {
+                        palette::WARN
+                    }),
+                ),
+            ]));
+            detail.push(Line::from(vec![
+                Span::styled(format!("{:<14}", "Payloads"), Style::default().fg(palette::LABEL)),
+                if e.reachable {
+                    Span::styled("all resolved", Style::default().fg(palette::GOOD))
+                } else {
+                    Span::styled(
+                        format!("{} of {} steps resolved", e.resolved_steps(), e.steps.len()),
+                        Style::default().fg(palette::ERR),
+                    )
+                },
+            ]));
+            if !e.steps.is_empty() {
+                detail.push(Line::from(""));
+                detail.push(header("Sequence"));
+            }
+            for s in &e.steps {
+                let c = if s.resolved { palette::TEXT } else { palette::ERR };
+                detail.push(Line::from(Span::styled(
+                    format!(
+                        "  {}. {:<5} {} {}  [{}]",
+                        s.index,
+                        s.kind.label(),
+                        s.exec,
+                        s.args,
+                        s.after.label()
+                    ),
+                    Style::default().fg(c),
+                )));
+                if !s.exec_sha256.is_empty() {
+                    detail.push(Line::from(Span::styled(
+                        format!("     tool  {}", sha_prefix(&s.exec_sha256)),
+                        Style::default().fg(palette::MUTED),
+                    )));
+                }
+                for f in &s.files {
+                    detail.push(Line::from(Span::styled(
+                        format!(
+                            "     {:<24} {:>9} B  {}",
+                            f.name,
+                            f.size,
+                            sha_prefix(&f.sha256)
+                        ),
+                        Style::default().fg(if s.resolved { palette::MUTED } else { palette::ERR }),
+                    )));
+                }
+                if !s.note.is_empty() {
+                    detail.push(Line::from(Span::styled(
+                        format!("     {}", s.note),
+                        Style::default().fg(palette::WARN),
+                    )));
+                }
+            }
+            for w in &e.warnings {
+                detail.push(Line::from(Span::styled(
+                    format!("  ! {w}"),
+                    Style::default().fg(palette::WARN),
+                )));
+            }
+            detail.push(Line::from(""));
+            detail.push(Line::from(Span::styled(
+                "read-only: this build identifies and verifies, it does not flash",
+                Style::default().fg(palette::MUTED),
+            )));
+        }
+    }
+    frame.render_widget(para(detail, "Selected"), split[1]);
 }
 
 /// WASM diagnostic plugins run in-firmware via the wasmi interpreter.
@@ -6841,6 +7169,7 @@ fn render(frame: &mut Frame, app: &App) {
         10 => page_diag(frame, root[1], &app.info),
         TAB_BOOT => page_boot(frame, root[1], app),
         TAB_PLUGINS => page_plugins(frame, root[1], app),
+        TAB_FLASH => page_flash(frame, root[1], app),
         _ => page_log(frame, root[1]),
     }
 
@@ -6880,6 +7209,14 @@ fn render(frame: &mut Frame, app: &App) {
             ("Up/Dn", "select entry"),
             ("B B", "boot selected"),
             ("r", "rescan"),
+            ("Tab", "next"),
+            ("q", "quit"),
+        ],
+        TAB_FLASH => &[
+            ("e", "search model"),
+            ("f", "reload index"),
+            ("Up/Dn", "select"),
+            ("r", "rescan + detect"),
             ("Tab", "next"),
             ("q", "quit"),
         ],
@@ -6933,6 +7270,8 @@ enum EditField {
     Serial,
     Plugin,
     Capsule,
+    /// Flash tab model search box.
+    Flash,
 }
 
 /// Where the current relay target came from. Ordered weakest to strongest: a
@@ -7050,6 +7389,16 @@ struct App {
     boot_sel: usize,
     /// Two-press guard for booting the highlighted entry.
     boot_armed: bool,
+    /// BIOSLove payload catalogue; None until an index is found on a volume.
+    flash_index: Option<bioslove::Index>,
+    /// Why the last index load failed; empty once one loads.
+    flash_err: String,
+    /// SMBIOS auto-detect result, strongest first.
+    flash_matches: Vec<bioslove::Match>,
+    /// Model search box; empty falls back to the auto-detect list.
+    flash_filter: String,
+    /// Highlighted row on the Flash tab.
+    flash_sel: usize,
 }
 
 impl App {
@@ -7307,6 +7656,11 @@ fn run() -> Result<()> {
         direct_tx_ms: 0,
         boot_sel: 0,
         boot_armed: false,
+        flash_index: None,
+        flash_err: String::new(),
+        flash_matches: Vec::new(),
+        flash_filter: String::new(),
+        flash_sel: 0,
     };
 
     terminal.clear()?;
@@ -7459,6 +7813,7 @@ fn run() -> Result<()> {
                 EditField::Serial => &mut app.order.serial,
                 EditField::Plugin => &mut app.plugin_id_in,
                 EditField::Capsule => &mut app.capsule_src,
+                EditField::Flash => &mut app.flash_filter,
                 _ => &mut app.target,
             };
             match key.code {
@@ -7473,6 +7828,11 @@ fn run() -> Result<()> {
                 }
                 terminput::KeyCode::Char(c) if !c.is_control() => field.push(c),
                 _ => {}
+            }
+            // A changed search term re-slices the row set under the cursor.
+            if app.editing == EditField::Flash || key.code == terminput::KeyCode::Enter {
+                app.flash_sel = 0;
+                app.dirty = true;
             }
             // A hand-edited target outranks discovery and is never overwritten.
             if before.is_some_and(|b| b != app.target) {
@@ -7506,6 +7866,7 @@ fn run() -> Result<()> {
                 app.status = RESCAN_NOTICE.into();
                 terminal.draw(|frame| render(frame, &app))?;
                 app.set_info(SysInfo::collect());
+                redetect_bioslove(&mut app);
                 app.status = "rescanned".into();
             }
             terminput::KeyCode::Char('c') => {
@@ -7568,6 +7929,8 @@ fn run() -> Result<()> {
                     EditField::Plugin
                 } else if app.tab == TAB_FIRMWARE {
                     EditField::Capsule
+                } else if app.tab == TAB_FLASH {
+                    EditField::Flash
                 } else {
                     EditField::Target
                 };
@@ -7702,6 +8065,21 @@ fn run() -> Result<()> {
             terminput::KeyCode::Char('f') if app.tab == TAB_FIRMWARE => {
                 load_and_inspect_capsule(&mut app, &mut terminal)?;
             }
+            // Flash tab: (re)load the BIOSLove index off a volume and re-detect.
+            terminput::KeyCode::Char('f') if app.tab == TAB_FLASH => {
+                app.status = format!("reading {}...", bioslove::INDEX_PATH);
+                terminal.draw(|frame| render(frame, &app))?;
+                load_bioslove_index(&mut app);
+            }
+            terminput::KeyCode::Up if app.tab == TAB_FLASH => {
+                app.flash_sel = app.flash_sel.saturating_sub(1);
+                app.dirty = true;
+            }
+            terminput::KeyCode::Down if app.tab == TAB_FLASH => {
+                let last = flash_rows(&app).len().saturating_sub(1);
+                app.flash_sel = (app.flash_sel + 1).min(last);
+                app.dirty = true;
+            }
             terminput::KeyCode::Char('F') if app.tab == TAB_FIRMWARE => {
                 if app.capsule_bytes.is_empty() {
                     app.status = "load a capsule first ('e' path, 'f' load)".into();
@@ -7799,7 +8177,7 @@ fn run() -> Result<()> {
             terminput::KeyCode::Char(c @ '1'..='9') => {
                 app.tab = (c as usize - '1' as usize).min(TABS.len() - 1);
             }
-            terminput::KeyCode::Char('0') => app.tab = TABS.len() - 1,
+            terminput::KeyCode::Char('0') => app.tab = TAB_LOG,
             _ => {}
         }
     }

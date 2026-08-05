@@ -404,9 +404,7 @@ impl MastertechContext {
             // }
             let dropped_files = ui.input_mut(|i| i.raw.take().dropped_files);
             for dropped_file in dropped_files{
-                if let Some(dropped_files) = dropped_file.path{
-                    self.opened_file = Some(dropped_files);
-                }
+                self.opened_file = Some(dropped_file.path().to_path_buf());
             }
             
             if let Some(file) = &self.opened_file{

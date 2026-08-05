@@ -4,7 +4,7 @@ version = "0.3.0"
 description = "wgpu backend for backdrop-blur: a safe, WGSL implementation of the frosted-glass seam (separable Gaussian now; dual-Kawase to follow)."
 readme = "README.md"
 edition = "2024"
-rust-version = "1.92"
+rust-version = "1.95"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/abdu-benayad/backdrop-blur"
 authors = ["Abdu Benayad <abdu.benayad@gmail.com>"]
@@ -14,8 +14,8 @@ publish = false
 
 [dependencies]
 backdrop-blur-core = { path = "../backdrop-blur-core", version = "0.3.0" }
-# Pinned to the wgpu egui-wgpu 0.35 resolves, so there is one wgpu in the own-loop graph.
-wgpu = "29"
+# Pinned to the wgpu egui-wgpu 0.36 resolves, so there is one wgpu in the own-loop graph.
+wgpu = "30"
 # Derives only — `#[derive(Pod, Zeroable)]`, never `unsafe impl` — so the crate keeps
 # `#![forbid(unsafe_code)]`. The GPU-uniform structs live here (not core), per DESIGN S2.
 bytemuck = { version = "1", features = ["derive"] }

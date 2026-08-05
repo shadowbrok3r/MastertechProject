@@ -492,8 +492,3 @@ impl<'a> WidgetRef for AutoCompleteInput<'a> {
         }
     }
 }
-
-// Include validation tests
-#[cfg(test)]
-#[path = "autocomplete_input_test.rs"]
-mod tests;

@@ -4,7 +4,7 @@ version = "0.3.0"
 description = "glow (OpenGL 3.3 / GLES 3.0 / WebGL2) grab-pass backend for backdrop-blur: real frosted glass for eframe-on-glow — grab a region of the live framebuffer, blur it, composite the frosted surface back."
 readme = "README.md"
 edition = "2024"
-rust-version = "1.92"
+rust-version = "1.95"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/abdu-benayad/backdrop-blur"
 authors = ["Abdu Benayad <abdu.benayad@gmail.com>"]
@@ -14,7 +14,7 @@ publish = false
 
 [dependencies]
 backdrop-blur-core = { path = "../backdrop-blur-core", version = "0.3.0" }
-# Pinned to the glow egui_glow 0.35 resolves, so there is one glow in the graph.
+# Pinned to the glow egui_glow 0.36 resolves, so there is one glow in the graph.
 glow = "0.17"
 # Uncatchable structured warning for the no-GL-in-Drop teardown contract (DESIGN §11): a backend
 # dropped without an explicit `destroy(&gl)` leaks GL objects, which we can only warn about.

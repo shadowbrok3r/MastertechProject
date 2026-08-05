@@ -408,14 +408,14 @@ pub fn match_machine(index: &Index, d: &crate::Smbios) -> Vec<Match> {
 }
 
 /// Entry positions whose folder, aliases or modelstring contain `needle`.
-/// An empty needle returns everything on `side`, folder-sorted.
-pub fn search(index: &Index, side: Side, needle: &str) -> Vec<usize> {
+/// `side` of `None` searches both. An empty needle returns everything.
+pub fn search(index: &Index, side: Option<Side>, needle: &str) -> Vec<usize> {
     let n = normalize(needle);
     let mut hits: Vec<usize> = index
         .entries
         .iter()
         .enumerate()
-        .filter(|(_, e)| e.side == side)
+        .filter(|(_, e)| side.is_none_or(|s| e.side == s))
         .filter(|(_, e)| {
             n.is_empty()
                 || e.names().any(|name| normalize(name).contains(&n))
@@ -501,20 +501,6 @@ pub fn read_file_any_volume(path: &str) -> Result<Vec<u8>, String> {
     Err(last)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn normalize_strips_vendor_punctuation() {
-        assert_eq!(normalize("MS-16H5"), "MS16H5");
-        assert_eq!(normalize(" nh58dcq "), "NH58DCQ");
-    }
-
-    #[test]
-    fn patterns_match_family_tokens() {
-        assert!(pattern_matches("GM?IX7?", "GM6IX7N"));
-        assert!(!pattern_matches("GM?IX7?", "GM6IX9N"));
-        assert!(!pattern_matches("GM?IX7?", "GM6IX7NX"));
-    }
-}
+// Tests for `normalize` and `pattern_matches` live in the host-side
+// `bioslove-index` crate: this crate only builds for x86_64-unknown-uefi, whose
+// test binary cannot execute on a host.

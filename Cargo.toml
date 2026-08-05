@@ -20,6 +20,7 @@ members = [
     "pxe-bench",
     "dump-triage",
     "mtech-plugin-sdk",
+    "bioslove-index",
     # Vendored fork of https://github.com/abdu-benayad/backdrop-blur, ported to egui 0.35.
     "backdrop-blur/crates/backdrop-blur-core",
     "backdrop-blur/crates/backdrop-blur-glow",
@@ -49,6 +50,7 @@ default-members = [
     "pxe-bench",
     "dump-triage",
     "mtech-plugin-sdk",
+    "bioslove-index",
     "backdrop-blur/crates/backdrop-blur-core",
     "backdrop-blur/crates/backdrop-blur-glow",
     "backdrop-blur/crates/backdrop-blur-egui",
@@ -77,13 +79,14 @@ mtech-ui = { path = "mtech-ui" }
 mtech-tui = { path = "mtech-tui" }
 database = { path = "database" }
 tcp_protocol = { path = "tcp_protocol" }
-eframe = { version="0.35", features=["serde",  "default_fonts", "glow"], default-features=false } 
+eframe = { version="0.36", features=["serde",  "default_fonts", "glow"], default-features=false }
 ratatui = { version = "0.30", default-features = true, features = [ "crossterm", "unstable", "serde", "layout-cache" ]}
 surrealdb = { version = "3.2.4", features = ["protocol-ws"] }
 surrealdb-types = { version = "3.2.4" }
-egui_extras = { version = "0.35", features = ["datepicker", "syntect", "serde", "image", "all_loaders" ]}
+egui_extras = { version = "0.36", features = ["datepicker", "syntect", "serde", "image", "all_loaders" ]}
 egui-data-table = { git = "https://github.com/shadowbrok3r/egui-data-table", features = ["persistency"]}
-egui_json_tree = { version = "0.16", features = ["serde_json"] }
+# Fork: crates.io 0.16.0 is the newest release and it only compiles against egui 0.35.
+egui_json_tree = { git = "https://github.com/shadowbrok3r/egui_json_tree", features = ["serde_json"] }
 egui_dock = { git = "https://github.com/shadowbrok3r/egui_dock",  features = [ "serde" ] }
 rmcp = { version = "3.1.1", features = ["server", "client", "transport-async-rw", "transport-streamable-http-server"] }
 axum = { version = "0.8", default-features = true, features = ["tokio"] }
@@ -97,14 +100,14 @@ serde = { version = "1", features = ["derive"] }
 uuid = { version = "1", features = ["v4"] }
 
 wasm-bindgen-futures = "0.4.75"
-# Exact pin: trunk selects wasm-bindgen-cli from the locked version; a caret
-# would float to 0.2.126+ whose CLI release artifact 404s until it's published.
-wasm-bindgen = "=0.2.125"
+# Exact pin: trunk selects wasm-bindgen-cli from the locked version, so this must
+# name a version with a published CLI release artifact. eframe 0.36 requires >=0.2.126.
+wasm-bindgen = "=0.2.126"
 # 0.4 requires js-sys ^0.3.91; surrealdb 3.1.0-beta.2 pins wasm-bindgen-futures 0.4.58 → js-sys 0.3.85.
 gloo-console = "0.3"
 wasm-cookies = "0.2"
 web-time = "1"
-egui_plot = "0.36.0"
+egui_plot = "0.37.0"
 lazy_static = "1"
 log="0.4"
 serde_json = "1"
@@ -159,4 +162,4 @@ incremental = true     # cache unchanged crates between rebuilds
 # strip = false  # Disable strip just for this profile
 
 [patch.crates-io]
-egui-phosphor = { git = "https://github.com/shadowbrok3r/egui-phosphor", branch = "egui-035" }
+egui-phosphor = { git = "https://github.com/shadowbrok3r/egui-phosphor", branch = "egui-036" }
