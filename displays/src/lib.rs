@@ -963,6 +963,38 @@ pub enum Cmd {
         /// Case-insensitive substring match, used when `hwnd` is `0`.
         title_contains: Option<String>,
     },
+
+    // --- MasterTech's own log ring ---
+    //
+    // Distinct from `ReadEventLog`, which reads Windows' event logs. This
+    // reads the client's in-process capture ring, which is populated in both
+    // GUI and terminal mode regardless of whether `--log-to-file` was passed.
+    /// Admin → client: return the tail of the client's own log ring.
+    /// `max_lines` of `None` returns the whole ring.
+    ReadClientLog { max_lines: Option<u32> },
+
+    /// Client → admin: the requested log slice, oldest line first.
+    /// `total_lines` is the ring's full depth so the admin can show how much
+    /// of it `text` covers.
+    ClientLogResponse {
+        text: String,
+        lines: u32,
+        total_lines: u32,
+    },
+
+    // --- Remote-desktop clipboard mirroring ---
+    /// Client → admin: clipboard text the client's watcher just observed. The
+    /// admin applies it and records the value so its own watcher does not echo
+    /// it back. The other direction travels as
+    /// [`remote_desktop::DesktopInputEvent::ClipboardSet`], which stays ordered
+    /// against the keystrokes it accompanies.
+    ClipboardSync {
+        #[facet(sensitive)]
+        text: String,
+    },
+
+    /// Admin → client: start or stop the client's clipboard watcher.
+    ClipboardSyncEnable { enabled: bool },
 }
 
 /// `RemotePluginToolResult.plugin_id` the client answers `RequestTelemetrySnapshot` with.

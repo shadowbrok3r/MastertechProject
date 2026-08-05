@@ -6,6 +6,8 @@ use crossbeam::channel::{Receiver, Sender};
 use bincode::{config::standard, serde::*};
 use remote_explorer::RemoteExplorer;
 use event_log_viewer::EventLogViewer;
+use client_log_viewer::ClientLogViewer;
+use clipboard_bridge::ClipboardBridge;
 use services_viewer::ServicesViewer;
 use task_scheduler_viewer::TaskSchedulerViewer;
 use installed_programs_viewer::InstalledProgramsViewer;
@@ -38,6 +40,8 @@ pub mod ui;
 pub mod filesystem_helper;
 pub mod remote_explorer;
 pub mod event_log_viewer;
+pub mod client_log_viewer;
+pub mod clipboard_bridge;
 pub mod services_viewer;
 pub mod task_scheduler_viewer;
 pub mod installed_programs_viewer;
@@ -115,6 +119,9 @@ pub struct WebSocketClient {
     pub desktop_fps: u32,
     pub desktop_quality: u8,
     pub desktop_scale: f32,
+    /// Mirror the clipboard both ways while remote desktop is streaming.
+    pub clipboard_sync: bool,
+    pub clipboard_bridge: ClipboardBridge,
     #[cfg(not(target_arch="wasm32"))]
     pub beta_terminal: BetaTerminal,
     pub use_beta_terminal: bool,
@@ -175,6 +182,8 @@ pub struct WebSocketClient {
     /// Buffer for accumulating file chunks during download
     pub download_buffer: Vec<u8>,
     pub event_log_viewer: EventLogViewer,
+    /// The client's own MasterTech log ring (not Windows' event logs).
+    pub client_log_viewer: ClientLogViewer,
     pub services_viewer: ServicesViewer,
     pub task_scheduler_viewer: TaskSchedulerViewer,
     /// Slice 3: Installed Programs view + uninstall round-trip.
@@ -286,6 +295,8 @@ Get-WmiObject")
             desktop_fps: 10,
             desktop_quality: 60,
             desktop_scale: 1.0,
+            clipboard_sync: true,
+            clipboard_bridge: ClipboardBridge::new(),
             #[cfg(not(target_arch="wasm32"))]
             beta_terminal: BetaTerminal::new(),
             use_beta_terminal: false,
@@ -366,6 +377,7 @@ Get-WmiObject")
             pending_download_filename: None,
             download_buffer: Vec::new(),
             event_log_viewer: EventLogViewer::new(),
+            client_log_viewer: ClientLogViewer::new(),
             services_viewer: ServicesViewer::new(),
             task_scheduler_viewer: TaskSchedulerViewer::new(),
             installed_programs_viewer: InstalledProgramsViewer::new(),

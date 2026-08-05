@@ -63,6 +63,7 @@ pub fn start_desktop_stream(monitor: u32, fps: u32, quality: u8, scale: f32) {
         scale: scale.clamp(0.1, 1.0),
     };
     *CONFIG.lock().unwrap() = Some(cfg);
+    set_clipboard_sync(true);
 
     if CAPTURE_RUNNING
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -81,9 +82,15 @@ pub fn start_desktop_stream(monitor: u32, fps: u32, quality: u8, scale: f32) {
     }
 }
 
+/// True while the capture thread is alive.
+pub fn is_streaming() -> bool {
+    CAPTURE_RUNNING.load(Ordering::SeqCst)
+}
+
 /// Stop desktop streaming. The capture thread exits after its current frame.
 pub fn stop_desktop_stream() {
     STOP_FLAG.store(true, Ordering::SeqCst);
+    set_clipboard_sync(false);
 }
 
 /// Blocks or restores system sleep/hibernation and display timeout for the
@@ -179,6 +186,7 @@ fn capture_loop() {
         }
     }
     set_keep_awake(false);
+    set_clipboard_sync(false);
     CAPTURE_RUNNING.store(false, Ordering::SeqCst);
     log::info!("remote desktop: capture stopped");
 }
@@ -346,6 +354,159 @@ pub fn enumerate_monitors() -> Vec<DesktopMonitorInfo> {
         .collect()
 }
 
+// ── Clipboard mirroring ───────────────────────────────────────────────────────
+//
+// A single thread owns the `arboard::Clipboard` for the process lifetime: on
+// X11 the clipboard contents are served by the owning process, so a handle
+// dropped after `set_text` loses the copied data. The same thread both polls
+// for local changes and applies inbound text, so `last` covers both directions
+// and neither side echoes what it just received.
+
+/// How often the client re-reads its own clipboard while mirroring is on.
+const CLIPBOARD_POLL: Duration = Duration::from_millis(300);
+
+/// Clipboard payloads above this are dropped rather than mirrored.
+const CLIPBOARD_MAX_BYTES: usize = 1024 * 1024;
+
+/// How long an inbound apply waits for the clipboard thread to finish writing.
+const CLIPBOARD_APPLY_TIMEOUT: Duration = Duration::from_millis(500);
+
+static CLIPBOARD_ENABLED: AtomicBool = AtomicBool::new(false);
+static CLIPBOARD_TX: OnceLock<Sender<ClipboardMsg>> = OnceLock::new();
+
+enum ClipboardMsg {
+    /// Text from the admin to place on this machine's clipboard, plus an ack
+    /// the caller waits on.
+    Apply(String, Sender<()>),
+    /// Mirroring was turned on; re-seed `last` from the current contents.
+    Reseed,
+}
+
+fn clipboard_sender() -> &'static Sender<ClipboardMsg> {
+    CLIPBOARD_TX.get_or_init(|| {
+        let (tx, rx) = crossbeam::channel::unbounded::<ClipboardMsg>();
+        if let Err(e) = std::thread::Builder::new()
+            .name("remote-desktop-clipboard".into())
+            .spawn(move || clipboard_loop(rx))
+        {
+            log::error!("remote desktop: failed to spawn clipboard thread: {e}");
+        }
+        tx
+    })
+}
+
+/// Turn clipboard mirroring on or off. Called on desktop stream start/stop and
+/// by [`displays::Cmd::ClipboardSyncEnable`].
+pub fn set_clipboard_sync(enabled: bool) {
+    let was = CLIPBOARD_ENABLED.swap(enabled, Ordering::SeqCst);
+    if was == enabled {
+        return;
+    }
+    // Wake the thread so a disabled->enabled flip reseeds instead of pushing
+    // whatever was copied while mirroring was off.
+    let _ = clipboard_sender().send(ClipboardMsg::Reseed);
+    log::info!(
+        "remote desktop: clipboard mirroring {}",
+        if enabled { "enabled" } else { "disabled" }
+    );
+}
+
+/// Place admin-side clipboard text onto this machine's clipboard, blocking
+/// until the write lands so a paste chord right behind it sees the new value.
+pub fn apply_clipboard(text: String) {
+    if !CLIPBOARD_ENABLED.load(Ordering::SeqCst) {
+        return;
+    }
+    if text.len() > CLIPBOARD_MAX_BYTES {
+        log::warn!(
+            "remote desktop: dropping {} byte inbound clipboard (cap {CLIPBOARD_MAX_BYTES})",
+            text.len()
+        );
+        return;
+    }
+    let (ack_tx, ack_rx) = crossbeam::channel::bounded(1);
+    if clipboard_sender()
+        .send(ClipboardMsg::Apply(text, ack_tx))
+        .is_err()
+    {
+        return;
+    }
+    if ack_rx.recv_timeout(CLIPBOARD_APPLY_TIMEOUT).is_err() {
+        log::warn!("remote desktop: clipboard apply did not ack within {CLIPBOARD_APPLY_TIMEOUT:?}");
+    }
+}
+
+fn clipboard_loop(rx: Receiver<ClipboardMsg>) {
+    let mut clipboard = match arboard::Clipboard::new() {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("remote desktop: clipboard init failed: {e}");
+            return;
+        }
+    };
+    let mut last = clipboard.get_text().unwrap_or_default();
+
+    loop {
+        // Parked entirely while mirroring is off, so a connected-but-idle
+        // client costs nothing.
+        let msg = if CLIPBOARD_ENABLED.load(Ordering::SeqCst) {
+            match rx.recv_timeout(CLIPBOARD_POLL) {
+                Ok(m) => Some(m),
+                Err(crossbeam::channel::RecvTimeoutError::Timeout) => None,
+                Err(crossbeam::channel::RecvTimeoutError::Disconnected) => return,
+            }
+        } else {
+            match rx.recv() {
+                Ok(m) => Some(m),
+                Err(_) => return,
+            }
+        };
+
+        match msg {
+            Some(ClipboardMsg::Apply(text, ack)) => {
+                if text != last {
+                    match clipboard.set_text(text.clone()) {
+                        Ok(()) => last = text,
+                        Err(e) => log::warn!("remote desktop: clipboard set failed: {e}"),
+                    }
+                }
+                let _ = ack.try_send(());
+            }
+            Some(ClipboardMsg::Reseed) => {
+                last = clipboard.get_text().unwrap_or_default();
+            }
+            None => {}
+        }
+
+        if !CLIPBOARD_ENABLED.load(Ordering::SeqCst) {
+            continue;
+        }
+        // A non-text clipboard (image, file drop) reads as an error; leaving
+        // `last` alone means the next text copy still registers as a change.
+        let Ok(text) = clipboard.get_text() else {
+            continue;
+        };
+        if text == last {
+            continue;
+        }
+        last = text.clone();
+        if text.len() > CLIPBOARD_MAX_BYTES {
+            log::warn!(
+                "remote desktop: not mirroring {} byte clipboard (cap {CLIPBOARD_MAX_BYTES})",
+                text.len()
+            );
+            continue;
+        }
+        match bincode::serde::encode_to_vec(
+            &displays::Cmd::ClipboardSync { text },
+            bincode::config::standard(),
+        ) {
+            Ok(payload) => crate::tcp_listener::broadcast_desktop_cmd(payload),
+            Err(e) => log::warn!("remote desktop: clipboard encode failed: {e}"),
+        }
+    }
+}
+
 // ── Input injection ───────────────────────────────────────────────────────────
 
 static INPUT_TX: OnceLock<Sender<DesktopInputEvent>> = OnceLock::new();
@@ -472,6 +633,7 @@ fn apply_input(
             }
         }
         DesktopInputEvent::Text(text) => type_paced(enigo, &text)?,
+        DesktopInputEvent::ClipboardSet(text) => apply_clipboard(text),
     }
     Ok(())
 }

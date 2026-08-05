@@ -132,13 +132,13 @@ mod tests {
     use tcp_protocol::shape_fp::shape_fingerprint;
 
     // bump deliberately when Cmd's wire shape changes; this is the drift review gate.
-    // Bumped 2026-08-04: RunRemoteScenario and RunRemoteConcurrent gained
-    // display_modeset and display_max_outputs. Fields appended to a variant are
-    // positional in bincode, so admin and client must ship together — which is
-    // what the handshake compares this value for.
+    // Bumped 2026-08-05: appended ReadClientLog, ClientLogResponse, ClipboardSync
+    // and ClipboardSyncEnable. Appended variants leave existing indices alone, but
+    // a client older than the admin still cannot answer them — which is what the
+    // handshake compares this value for.
     #[test]
     fn cmd_shape_fp_pin() {
-        assert_eq!(*super::CMD_SHAPE_FP, 0xa4fe_1be0_5f82_e96d);
+        assert_eq!(*super::CMD_SHAPE_FP, 0x2061_9800_7fb2_052b);
     }
 
     /// `Cmd` variant order as shipped. Bincode encodes a variant by its

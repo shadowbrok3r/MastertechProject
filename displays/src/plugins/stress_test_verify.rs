@@ -185,6 +185,22 @@ pub async fn verify_stress_test_persistence(
     })
 }
 
+/// `Some(result)` when the run row exists and has finished (`ended_at` set).
+pub async fn run_terminal_result(run_id_hint: &str) -> Option<String> {
+    let rid = parse_record_id(run_id_hint, STRESS_TEST_RUN_TABLE);
+    let mut response = database::db()
+        .query("SELECT result, ended_at FROM $id")
+        .bind(("id", rid))
+        .await
+        .ok()?;
+    let rows: Vec<serde_json::Value> = response.take(0).ok()?;
+    let row = rows.into_iter().next()?;
+    if !row.get("ended_at").map(|v| !v.is_null()).unwrap_or(false) {
+        return None;
+    }
+    row.get("result").and_then(|v| v.as_str()).map(String::from)
+}
+
 async fn query_run_by_id(id: &RecordId) -> Option<serde_json::Value> {
     let mut response = database::db()
         .query("SELECT id, result, failure_kind, target_component, session_ref, tool_label, started_at FROM $id")

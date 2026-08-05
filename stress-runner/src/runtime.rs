@@ -56,26 +56,46 @@ where
     }
 }
 
-/// Block-on a future, returning its result.  Used sparingly — only for the
-/// initial `StressTestRun::create` which must complete before we surface a
-/// `run_id` to the UI.
-pub(crate) fn block_on<F, T>(fut: F) -> T
+/// Ceiling on any single blocking DB call; a wedged socket surfaces as an
+/// `Err` instead of parking the worker thread forever.
+pub(crate) const DB_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Block-on a fallible DB future, bounded by [`DB_CALL_TIMEOUT`].  Returns the
+/// future's own result, or an `Err` when it doesn't resolve in time (lost
+/// websocket response, zombie socket) or the host runtime drops the task.
+pub(crate) fn block_on<F, T>(fut: F) -> anyhow::Result<T>
 where
-    F: std::future::Future<Output = T> + Send + 'static,
+    F: std::future::Future<Output = anyhow::Result<T>> + Send + 'static,
     T: Send + 'static,
 {
     if let Some(handle) = HOST_HANDLE.get() {
         // `Handle::block_on` panics if called from inside the runtime's own
-        // thread, so we spawn a task and wait on it via a oneshot channel
-        // instead.  Safe to call from any thread that isn't a tokio worker.
+        // thread, so we spawn a task and wait on it via a channel instead.
+        // Safe to call from any thread that isn't a tokio worker.
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         handle.spawn(async move {
             let result = fut.await;
             let _ = tx.send(result);
         });
-        rx.recv()
-            .expect("stress-runner: host runtime dropped the block_on task")
+        match rx.recv_timeout(DB_CALL_TIMEOUT) {
+            Ok(result) => result,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(anyhow::anyhow!(
+                "DB call did not complete within {}s (websocket response lost or socket wedged)",
+                DB_CALL_TIMEOUT.as_secs()
+            )),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(anyhow::anyhow!(
+                "host runtime dropped the DB call task (runtime shutting down)"
+            )),
+        }
     } else {
-        FALLBACK_RT.block_on(fut)
+        FALLBACK_RT.block_on(async {
+            match tokio::time::timeout(DB_CALL_TIMEOUT, fut).await {
+                Ok(result) => result,
+                Err(_) => Err(anyhow::anyhow!(
+                    "DB call did not complete within {}s",
+                    DB_CALL_TIMEOUT.as_secs()
+                )),
+            }
+        })
     }
 }

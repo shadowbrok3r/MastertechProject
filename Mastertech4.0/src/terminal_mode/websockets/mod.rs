@@ -194,21 +194,30 @@ fn run_remote_stress_plan(
     use stress_runner::{RunPlan, RunResult, RunSpec, RunUpdate, TargetKind, TestTool};
 
     let send_log = |tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>, msg: String| {
-        if let Ok(payload) = encode_to_vec(&Cmd::RemoteScriptLog(msg), standard()) {
-            let _ = tx.send(payload);
+        if let Ok(payload) = encode_to_vec(&Cmd::RemoteScriptLog(msg.clone()), standard()) {
+            if tx.send(payload).is_err() {
+                log::warn!("remote stress plan: admin session gone; dropped log frame: {msg}");
+            }
         }
     };
     let send_result =
         |tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>, name: &str, status: RemoteScriptStatus| {
+            let status_label = format!("{status:?}");
             if let Ok(payload) =
                 encode_to_vec(&Cmd::RemoteScriptResult { name: name.to_string(), status }, standard())
             {
-                let _ = tx.send(payload);
+                if tx.send(payload).is_err() {
+                    log::warn!(
+                        "remote stress plan: admin session gone; dropped result frame '{name}' ({status_label}) — verdict remains in stress_test_run"
+                    );
+                }
             }
         };
     let send_complete = |tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>| {
         if let Ok(payload) = encode_to_vec(&Cmd::RemoteScriptsComplete, standard()) {
-            let _ = tx.send(payload);
+            if tx.send(payload).is_err() {
+                log::warn!("remote stress plan: admin session gone; dropped RemoteScriptsComplete");
+            }
         }
     };
 
@@ -410,13 +419,25 @@ fn run_remote_stress_plan(
 
         let mut final_success: Option<bool> = None;
         while final_success.is_none() {
-            while let Ok(msg) = plan_rx.try_recv() {
-                match msg {
-                    PlanMsg::Log(line) => send_log(&tx, line),
-                    PlanMsg::Done(ok) => final_success = Some(ok),
+            loop {
+                match plan_rx.try_recv() {
+                    Ok(PlanMsg::Log(line)) => send_log(&tx, line),
+                    Ok(PlanMsg::Done(ok)) => final_success = Some(ok),
+                    Err(crossbeam::channel::TryRecvError::Empty) => break,
+                    Err(crossbeam::channel::TryRecvError::Disconnected) => {
+                        // Disconnected before Done: runner thread died; report Failed.
+                        if final_success.is_none() {
+                            log::error!("{name_owned}: stress-runner thread exited without sending completion; reporting Failed");
+                            send_log(&tx, format!("{name_owned}: stress-runner thread exited without sending completion — reporting Failed"));
+                            final_success = Some(false);
+                        }
+                        break;
+                    }
                 }
             }
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            if final_success.is_none() {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
         }
         send_result(
             &tx,
@@ -2261,6 +2282,35 @@ impl TerminalWebsocketClient {
                 }
             }
 
+            // --- MasterTech's own log ring ---
+            Cmd::ReadClientLog { max_lines } => {
+                let (text, total) = crate::terminal_mode::data::log_capture::tail_captured_logs(
+                    max_lines.map(|n| n as usize),
+                );
+                let lines = if text.is_empty() { 0 } else { text.lines().count() };
+                log::info!(
+                    "websockets -> ReadClientLog: returning {lines} of {total} captured lines"
+                );
+                let response = Cmd::ClientLogResponse {
+                    text,
+                    lines: lines as u32,
+                    total_lines: total as u32,
+                };
+                if let Ok(payload) = encode_to_vec(&response, standard()) {
+                    sender.send(WsMessage::Binary(payload));
+                }
+            }
+
+            // --- Remote-desktop clipboard mirroring ---
+            Cmd::ClipboardSyncEnable { enabled } => {
+                // Mirroring is scoped to a live desktop session; enabling it
+                // outside one would leave the client watching its clipboard
+                // with nobody viewing.
+                if !enabled || crate::remote_desktop::is_streaming() {
+                    crate::remote_desktop::set_clipboard_sync(enabled);
+                }
+            }
+
             // --- Windows Services ---
             Cmd::ListServices => {
                 log::info!("websockets -> Listing services");
@@ -2904,7 +2954,9 @@ if (Test-Path $path) {{
                     };
                     let cmd = Cmd::RemoteScriptResult { name: name.to_string(), status };
                     if let Ok(payload) = encode_to_vec(&cmd, standard()) {
-                        let _ = tx.send(payload);
+                        if tx.send(payload).is_err() {
+                            log::warn!("remote scripts batch: admin session gone; dropped result frame '{name}'");
+                        }
                     }
                     // `<name> PASSED/FAILED in <secs>s` marker clears the admin home-page active-run card.
                     if let Some(verdict) = verdict {
@@ -3565,13 +3617,25 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
 
                             let mut final_success: Option<bool> = None;
                             while final_success.is_none() {
-                                while let Ok(msg) = bench_rx.try_recv() {
-                                    match msg {
-                                        BenchMsg::Log(line) => send_log(&tx, line),
-                                        BenchMsg::Done(ok) => final_success = Some(ok),
+                                loop {
+                                    match bench_rx.try_recv() {
+                                        Ok(BenchMsg::Log(line)) => send_log(&tx, line),
+                                        Ok(BenchMsg::Done(ok)) => final_success = Some(ok),
+                                        Err(crossbeam::channel::TryRecvError::Empty) => break,
+                                        Err(crossbeam::channel::TryRecvError::Disconnected) => {
+                                            // Disconnected before Done: benchmark thread died; report Failed.
+                                            if final_success.is_none() {
+                                                log::error!("{}: benchmark thread exited without sending completion; reporting Failed", script.name);
+                                                send_log(&tx, format!("{}: benchmark thread exited without sending completion — reporting Failed", script.name));
+                                                final_success = Some(false);
+                                            }
+                                            break;
+                                        }
                                     }
                                 }
-                                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                                if final_success.is_none() {
+                                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                                }
                             }
                             send_result(
                                 &tx,
@@ -3714,13 +3778,25 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
 
                             let mut final_success: Option<bool> = None;
                             while final_success.is_none() {
-                                while let Ok(msg) = probe_rx.try_recv() {
-                                    match msg {
-                                        ProbeMsg::Log(line) => send_log(&tx, line),
-                                        ProbeMsg::Done(ok) => final_success = Some(ok),
+                                loop {
+                                    match probe_rx.try_recv() {
+                                        Ok(ProbeMsg::Log(line)) => send_log(&tx, line),
+                                        Ok(ProbeMsg::Done(ok)) => final_success = Some(ok),
+                                        Err(crossbeam::channel::TryRecvError::Empty) => break,
+                                        Err(crossbeam::channel::TryRecvError::Disconnected) => {
+                                            // Disconnected before Done: runner thread died; report Failed.
+                                            if final_success.is_none() {
+                                                log::error!("{}: stress-runner thread exited without sending completion; reporting Failed", script.name);
+                                                send_log(&tx, format!("{}: stress-runner thread exited without sending completion — reporting Failed", script.name));
+                                                final_success = Some(false);
+                                            }
+                                            break;
+                                        }
                                     }
                                 }
-                                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                                if final_success.is_none() {
+                                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                                }
                             }
                             send_result(
                                 &tx,
@@ -3834,7 +3910,9 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
 
                 let complete = Cmd::RemoteScriptsComplete;
                 if let Ok(payload) = encode_to_vec(&complete, standard()) {
-                    let _ = tx.send(payload);
+                    if tx.send(payload).is_err() {
+                        log::warn!("remote scripts batch: admin session gone; dropped RemoteScriptsComplete");
+                    }
                 }
                 }); // end tokio::spawn — returns immediately so the TCP session loop
                     // can continue processing Ping/AppPing while scripts run.

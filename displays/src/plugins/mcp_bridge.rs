@@ -1685,6 +1685,74 @@ fn default_stress_script_timeout_secs(script_name: &str, override_secs: Option<u
     }
 }
 
+/// Outcome of awaiting a remote script/stress completion frame.
+enum RemoteScriptWait {
+    Session(super::remote_script_notify::RemoteScriptSession),
+    ChannelClosed,
+    /// The run's `stress_test_run` row finished but no completion frame arrived.
+    DbTerminal { run_id: String, result: String },
+    TimedOut,
+}
+
+/// Cadence of the `stress_test_run` terminal-state probe while awaiting completion.
+const REMOTE_WAIT_PROBE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(20);
+/// How long a run row must stay terminal with no frame before it counts as lost.
+const REMOTE_WAIT_TERMINAL_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// `stress_test_run` id parsed from the client's accumulated log lines, if it arrived.
+fn accum_stress_run_id(connection_string: &str) -> Option<String> {
+    super::remote_script_notify::REMOTE_SCRIPT_ACCUM.lock().ok().and_then(|a| {
+        a.get(connection_string)
+            .and_then(|s| super::stress_test_verify::extract_stress_run_id_from_logs(&s.logs))
+    })
+}
+
+/// Await the completion oneshot up to `timeout`. With `probe_db`, also poll the
+/// run's `stress_test_run` row (id parsed from the accumulated logs): a row that
+/// stays terminal for [`REMOTE_WAIT_TERMINAL_GRACE`] with no frame means the
+/// client's completion frames were lost (e.g. the admin session redialed
+/// mid-run), so the caller recovers the verdict from the database.
+async fn await_remote_script_completion(
+    connection_string: &str,
+    mut rx: tokio::sync::oneshot::Receiver<super::remote_script_notify::RemoteScriptSession>,
+    timeout: std::time::Duration,
+    probe_db: bool,
+) -> RemoteScriptWait {
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut known_run_id: Option<String> = None;
+    let mut terminal_since: Option<tokio::time::Instant> = None;
+    loop {
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return RemoteScriptWait::TimedOut;
+        }
+        let slice = REMOTE_WAIT_PROBE_INTERVAL.min(deadline - now);
+        match tokio::time::timeout(slice, &mut rx).await {
+            Ok(Ok(session)) => return RemoteScriptWait::Session(session),
+            Ok(Err(_)) => return RemoteScriptWait::ChannelClosed,
+            Err(_) => {}
+        }
+        if !probe_db {
+            continue;
+        }
+        if known_run_id.is_none() {
+            known_run_id = accum_stress_run_id(connection_string);
+        }
+        let Some(run_id) = known_run_id.as_deref() else {
+            continue;
+        };
+        match super::stress_test_verify::run_terminal_result(run_id).await {
+            Some(result) => {
+                let since = *terminal_since.get_or_insert_with(tokio::time::Instant::now);
+                if since.elapsed() >= REMOTE_WAIT_TERMINAL_GRACE {
+                    return RemoteScriptWait::DbTerminal { run_id: run_id.to_string(), result };
+                }
+            }
+            None => terminal_since = None,
+        }
+    }
+}
+
 async fn execute_one_remote_script(
     p: ScriptsRunRemoteParams,
 ) -> Result<serde_json::Value, ErrorData> {
@@ -1755,13 +1823,51 @@ async fn execute_one_remote_script(
     let timeout = std::time::Duration::from_secs(p.timeout_secs.unwrap_or_else(|| {
         crate::scripts::default_remote_script_timeout_secs(&p.script_name)
     }));
-    let session = match tokio::time::timeout(timeout, rx).await {
-        Ok(Ok(s)) => s,
-        Ok(Err(_)) => {
+    let probe_db = super::stress_test_verify::is_persisted_stress_script(&p.script_name);
+    let session = match await_remote_script_completion(&p.connection_string, rx, timeout, probe_db).await {
+        RemoteScriptWait::Session(s) => s,
+        RemoteScriptWait::ChannelClosed => {
             let _ = super::remote_script_notify::REMOTE_SCRIPT_PENDING.lock().map(|mut g| g.remove(&p.connection_string));
             return Err(to_internal("Remote script channel closed unexpectedly"));
         }
-        Err(_) => {
+        RemoteScriptWait::DbTerminal { run_id, result } => {
+            let _ = super::remote_script_notify::REMOTE_SCRIPT_PENDING.lock().map(|mut g| g.remove(&p.connection_string));
+            let partial_logs = super::remote_script_notify::REMOTE_SCRIPT_ACCUM
+                .lock()
+                .ok()
+                .and_then(|mut a| a.remove(&p.connection_string).map(|s| s.logs))
+                .unwrap_or_default();
+            log::warn!(
+                "scripts_run_remote '{}' on {}: {run_id} is terminal ({result}) but no completion frame arrived — returning the persisted verdict",
+                p.script_name,
+                p.connection_string
+            );
+            let computer_id = super::stress_test_verify::computer_id_for_connection(
+                &p.connection_string,
+            )
+            .await;
+            let persistence = super::stress_test_verify::verify_stress_test_persistence(
+                computer_id.as_deref(),
+                Some(&run_id),
+                diagnostic_session_id.as_deref(),
+            )
+            .await;
+            return Ok(serde_json::json!({
+                "script": p.script_name,
+                "connection_string": p.connection_string,
+                "success": result == "pass",
+                "run_result": result,
+                "completion_recovered_from_db": true,
+                "message": format!(
+                    "{run_id} finished ('{result}') and persisted, but the client's completion frames never arrived (admin session likely redialed during the run); verdict recovered from the database."
+                ),
+                "logs": partial_logs,
+                "computer_id": computer_id,
+                "diagnostic_session_id": diagnostic_session_id,
+                "stress_test_persistence": persistence,
+            }));
+        }
+        RemoteScriptWait::TimedOut => {
             let _ = super::remote_script_notify::REMOTE_SCRIPT_PENDING.lock().map(|mut g| g.remove(&p.connection_string));
             if super::stress_test_verify::is_persisted_stress_script(&p.script_name) {
                 let partial_logs = super::remote_script_notify::REMOTE_SCRIPT_ACCUM
@@ -1962,15 +2068,51 @@ async fn execute_remote_stress_plan(
         .map_err(to_internal)?;
 
     let timeout = std::time::Duration::from_secs(budget_secs + 300);
-    let session = match tokio::time::timeout(timeout, rx).await {
-        Ok(Ok(s)) => s,
-        Ok(Err(_)) => {
+    let session = match await_remote_script_completion(&connection_string, rx, timeout, true).await
+    {
+        RemoteScriptWait::Session(s) => s,
+        RemoteScriptWait::ChannelClosed => {
             let _ = super::remote_script_notify::REMOTE_SCRIPT_PENDING
                 .lock()
                 .map(|mut g| g.remove(&connection_string));
             return Err(to_internal("Remote stress channel closed unexpectedly"));
         }
-        Err(_) => {
+        RemoteScriptWait::DbTerminal { run_id, result } => {
+            let _ = super::remote_script_notify::REMOTE_SCRIPT_PENDING
+                .lock()
+                .map(|mut g| g.remove(&connection_string));
+            let partial_logs = super::remote_script_notify::REMOTE_SCRIPT_ACCUM
+                .lock()
+                .ok()
+                .and_then(|mut a| a.remove(&connection_string).map(|s| s.logs))
+                .unwrap_or_default();
+            log::warn!(
+                "{result_name} on {connection_string}: {run_id} is terminal ({result}) but no completion frame arrived — returning the persisted verdict"
+            );
+            let computer_id =
+                super::stress_test_verify::computer_id_for_connection(&connection_string).await;
+            let persistence = super::stress_test_verify::verify_stress_test_persistence(
+                computer_id.as_deref(),
+                Some(&run_id),
+                diagnostic_session_id.as_deref(),
+            )
+            .await;
+            return Ok(serde_json::json!({
+                "op": result_name,
+                "connection_string": connection_string,
+                "success": result == "pass",
+                "run_result": result,
+                "completion_recovered_from_db": true,
+                "message": format!(
+                    "{run_id} finished ('{result}') and persisted, but the client's completion frames never arrived (admin session likely redialed during the run); verdict recovered from the database."
+                ),
+                "logs": partial_logs,
+                "computer_id": computer_id,
+                "diagnostic_session_id": diagnostic_session_id,
+                "stress_test_persistence": persistence,
+            }));
+        }
+        RemoteScriptWait::TimedOut => {
             let _ = super::remote_script_notify::REMOTE_SCRIPT_PENDING
                 .lock()
                 .map(|mut g| g.remove(&connection_string));

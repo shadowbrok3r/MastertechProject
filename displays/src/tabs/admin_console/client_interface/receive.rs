@@ -23,6 +23,18 @@ impl WebSocketClient {
             }
         }
 
+        // Reconciled here rather than at each start/stop site so every path
+        // that ends a stream (toolbar, tab switch, client-side auto-stop) also
+        // stops the console reading the operator's clipboard.
+        let mirroring = self.clipboard_sync && self.desktop_streaming;
+        self.clipboard_bridge.set_enabled(mirroring);
+        if mirroring
+            && let Some(text) = self.clipboard_bridge.take_outbound()
+        {
+            log::debug!(target: "remote_desktop", "clipboard out to client ({} bytes)", text.len());
+            self.send_desktop_input(crate::remote_desktop::DesktopInputEvent::ClipboardSet(text));
+        }
+
         // Application-layer heartbeat: fire an `AppPing` every 15 s
         // while the transport is open and log a warn if no `AppPong`
         // has been received for 60+ s.  Detects plugin-host wedges
@@ -707,6 +719,17 @@ impl WebSocketClient {
                     } else if let Cmd::EventLogResponse(entries) = cmd {
                         log::info!("Received {} event log entries", entries.len());
                         self.event_log_viewer.set_entries(entries);
+                    } else if let Cmd::ClientLogResponse { text, lines, total_lines } = cmd {
+                        log::info!("Received client log: {lines} of {total_lines} lines");
+                        self.client_log_viewer.set_response(text, lines, total_lines);
+                    } else if let Cmd::ClipboardSync { text } = cmd {
+                        // Same gate as the outbound side: a client that keeps
+                        // watching after a stream ends cannot push into the
+                        // operator's clipboard.
+                        if self.clipboard_sync && self.desktop_streaming {
+                            log::debug!(target: "remote_desktop", "clipboard in from client ({} bytes)", text.len());
+                            self.clipboard_bridge.apply(ctx, text);
+                        }
                     } else if let Cmd::ServiceListResponse(services) = cmd {
                         log::info!("Received {} services", services.len());
                         self.services_viewer.set_entries(services);

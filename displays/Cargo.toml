@@ -14,6 +14,12 @@ puffin = []
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))'.dependencies]
 eframe = { version = "0.35", features = ["x11", "wayland"], default-features = false }
 
+# Desktop-only: the admin console's remote-desktop clipboard mirroring reads the
+# operator's clipboard, which egui only exposes on paste. No iOS/Android/wasm
+# backend exists, so those targets fall back to the paste-event path.
+[target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))'.dependencies]
+arboard = "3"
+
 [dependencies]
 structdiff = { version = "0.7", features = ["rustc_hash"] }
 reqwest = { version = "0.13", default-features = false, features = ["stream", "json"] }

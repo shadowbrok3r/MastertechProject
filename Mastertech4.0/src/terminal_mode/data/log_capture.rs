@@ -40,6 +40,21 @@ pub fn all_captured_logs() -> String {
         .unwrap_or_default()
 }
 
+/// The last `max_lines` captured lines (all of them when `None`), oldest
+/// first, alongside the ring's full depth.
+pub fn tail_captured_logs(max_lines: Option<usize>) -> (String, usize) {
+    let Ok(buf) = CAPTURED.lock() else {
+        return (String::new(), 0);
+    };
+    let total = buf.len();
+    let skip = match max_lines {
+        Some(n) => total.saturating_sub(n),
+        None => 0,
+    };
+    let text = buf.iter().skip(skip).cloned().collect::<Vec<_>>().join("\n");
+    (text, total)
+}
+
 /// Copy the entire captured backlog to the system clipboard.
 /// Returns the number of lines copied.
 pub fn copy_all_to_clipboard() -> anyhow::Result<usize> {

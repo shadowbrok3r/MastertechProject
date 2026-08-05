@@ -6,7 +6,7 @@ use bincode::config::standard;
 use ewebsock::WsMessage;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::plugins::remote::EguiInputEvent;
-use super::{TransportKind, WebSocketClient};
+use super::{AdminTransport, TransportKind, WebSocketClient};
 
 
 pub enum WsDisplayState {
@@ -20,6 +20,8 @@ pub enum WsDisplayState {
     ToolBox,
     Terminal,
     EventLog,
+    /// The client's own MasterTech log ring, tail or full.
+    ClientLog,
     Services,
     TaskScheduler,
     Registry,
@@ -44,7 +46,38 @@ pub enum WsDisplayState {
     CrashDumps,
 }
 
+/// Sends one remote-desktop input event on the tagged binary path.
+/// Ordering is the point: everything here reaches the client's injection thread
+/// in the order it was queued.
+///
+/// Free function so the desktop viewer's callback can borrow `transport` out of
+/// a destructured `WebSocketClient`.
+pub fn send_desktop_input_on(
+    transport: &mut AdminTransport,
+    ev: crate::remote_desktop::DesktopInputEvent,
+) {
+    match bincode::serde::encode_to_vec(&ev, standard()) {
+        Ok(ser) => {
+            let mut v = vec![crate::DESKTOP_INPUT_TAG];
+            v.extend(ser);
+            transport.send(WsMessage::Binary(v));
+        }
+        Err(e) => log::warn!(target: "remote_desktop", "encode input failed: {e}"),
+    }
+}
+
 impl WebSocketClient {
+    pub fn send_desktop_input(&mut self, ev: crate::remote_desktop::DesktopInputEvent) {
+        send_desktop_input_on(&mut self.transport, ev);
+    }
+
+    /// Turns clipboard mirroring on or off on both ends. The admin-side poller
+    /// follows in `receive`, which reconciles it against the stream state.
+    pub fn set_clipboard_sync(&mut self, enabled: bool) {
+        self.clipboard_sync = enabled;
+        let _ = self.send_cmd_tx.try_send(Cmd::ClipboardSyncEnable { enabled });
+    }
+
     pub fn show(&mut self, ui: &mut Ui) {
         self.receive(ui.ctx());
         ui.set_min_height(600.);
@@ -224,6 +257,9 @@ impl WebSocketClient {
                             quality: self.desktop_quality,
                             scale: self.desktop_scale,
                         });
+                        // The client mirrors by default on stream start; correct
+                        // it if the operator had turned mirroring off.
+                        self.set_clipboard_sync(self.clipboard_sync);
                         let _ = self.display_state_channel.0.try_send(WsDisplayState::RemoteDesktop);
                         ui.close();
                     }
@@ -268,6 +304,16 @@ impl WebSocketClient {
                                     level_filter: None,
                                 });
                                 self.event_log_viewer.loading = true;
+                            }
+                            ui.close();
+                        }
+                        if ui.button("Client Log").clicked() {
+                            let _ = self.display_state_channel.0.try_send(WsDisplayState::ClientLog);
+                            if self.client_log_viewer.text.is_empty() {
+                                let cmd = self.client_log_viewer.fetch_cmd();
+                                if self.send_cmd_tx.try_send(cmd).is_ok() {
+                                    self.client_log_viewer.loading = true;
+                                }
                             }
                             ui.close();
                         }
@@ -440,6 +486,7 @@ impl WebSocketClient {
                     WsDisplayState::ToolBox       => "My Tools",
                     WsDisplayState::Terminal      => "Remote Viewer",
                     WsDisplayState::EventLog      => "Event Log",
+                    WsDisplayState::ClientLog     => "Client Log",
                     WsDisplayState::Services      => "Services",
                     WsDisplayState::TaskScheduler => "Task Scheduler",
                     WsDisplayState::Registry      => "Registry",
@@ -639,6 +686,10 @@ impl WebSocketClient {
                 let cmd_tx = self.send_cmd_tx.clone();
                 self.event_log_viewer.display(ui, &cmd_tx);
             },
+            WsDisplayState::ClientLog => {
+                let cmd_tx = self.send_cmd_tx.clone();
+                self.client_log_viewer.display(ui, &cmd_tx);
+            },
             WsDisplayState::Services => {
                 let cmd_tx = self.send_cmd_tx.clone();
                 self.services_viewer.display(ui, &cmd_tx);
@@ -705,6 +756,8 @@ impl WebSocketClient {
                     let mut scale = self.desktop_scale;
                     let mut streaming = self.desktop_streaming;
                     let mut popout = self.desktop_popout;
+                    let mut clipboard_sync = self.clipboard_sync;
+                    let mut clipboard_changed = false;
                     let mut restart = false;
                     let mut stop = false;
                     let frames = self.desktop_viewer.frames_shown;
@@ -772,6 +825,16 @@ impl WebSocketClient {
                         if ui.button(format!("{} Pop out", icons::POPOUT)).clicked() {
                             popout = true;
                         }
+                        if ui
+                            .checkbox(&mut clipboard_sync, format!("{} Clipboard", icons::CLIPBOARD))
+                            .on_hover_text(
+                                "Mirror the clipboard both ways while streaming. Copy here and \
+                                 paste there, or the reverse.",
+                            )
+                            .changed()
+                        {
+                            clipboard_changed = true;
+                        }
                         ui.separator();
                         ui.label(
                             RichText::new(format!(
@@ -789,6 +852,9 @@ impl WebSocketClient {
                     self.desktop_scale = scale;
                     self.desktop_streaming = streaming;
                     self.desktop_popout = popout;
+                    if clipboard_changed {
+                        self.set_clipboard_sync(clipboard_sync);
+                    }
                     if stop {
                         let _ = self.send_cmd_tx.try_send(Cmd::DesktopStreamStop);
                     }
@@ -799,6 +865,7 @@ impl WebSocketClient {
                             quality,
                             scale,
                         });
+                        self.set_clipboard_sync(self.clipboard_sync);
                     }
 
                     ui.separator();
@@ -815,18 +882,10 @@ impl WebSocketClient {
                             }
                         });
                     } else {
+                        self.desktop_viewer.clipboard_sync = self.clipboard_sync;
                         let Self { desktop_viewer, transport, .. } = self;
                         desktop_viewer.ui(ui, |ev| {
-                            match bincode::serde::encode_to_vec(&ev, standard()) {
-                                Ok(ser) => {
-                                    let mut v = vec![crate::DESKTOP_INPUT_TAG];
-                                    v.extend(ser);
-                                    transport.send(WsMessage::Binary(v));
-                                }
-                                Err(e) => {
-                                    log::warn!(target: "remote_desktop", "encode input failed: {e}");
-                                }
-                            }
+                            send_desktop_input_on(transport, ev);
                         });
                     }
                 }
@@ -874,18 +933,10 @@ impl WebSocketClient {
         }
 
         ui.separator();
+        self.desktop_viewer.clipboard_sync = self.clipboard_sync;
         let Self { desktop_viewer, transport, .. } = self;
         desktop_viewer.ui(ui, |ev| {
-            match bincode::serde::encode_to_vec(&ev, standard()) {
-                Ok(ser) => {
-                    let mut v = vec![crate::DESKTOP_INPUT_TAG];
-                    v.extend(ser);
-                    transport.send(WsMessage::Binary(v));
-                }
-                Err(e) => {
-                    log::warn!(target: "remote_desktop", "encode input failed: {e}");
-                }
-            }
+            send_desktop_input_on(transport, ev);
         });
     }
 

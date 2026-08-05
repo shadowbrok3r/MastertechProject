@@ -3183,6 +3183,7 @@ name = "displays"
 version = "4.8.0"
 dependencies = [
  "anyhow",
+ "arboard",
  "async-openai",
  "async-trait",
  "axum",

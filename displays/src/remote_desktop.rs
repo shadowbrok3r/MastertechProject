@@ -67,6 +67,12 @@ pub enum DesktopInputEvent {
     /// `key_name` is an `egui::Key::name()` string, mapped to an enigo key on the client.
     Key { key_name: String, pressed: bool, modifiers: DesktopModifiers },
     Text(String),
+    /// Place the admin's clipboard text on the client's clipboard.
+    ///
+    /// Rides the input stream rather than a `Cmd` so it stays ordered against
+    /// the keystrokes around it — a paste chord forwarded in the same frame
+    /// must land after the text it is meant to paste.
+    ClipboardSet(String),
 }
 
 /// One captured frame returned by a gated one-shot capture, plus the geometry a

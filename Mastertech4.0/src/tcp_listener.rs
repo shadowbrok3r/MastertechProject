@@ -112,6 +112,14 @@ pub fn broadcast_desktop_frame(tagged_bytes: Vec<u8>) {
     let _ = desktop_frame_broadcast().send(tagged_bytes);
 }
 
+/// Pushes an untagged `Cmd` payload to every admin session on the desktop
+/// fan-out. Used by the clipboard watcher, which has no session handle of its
+/// own and wants the same recipients the frames go to. The admin side routes
+/// by leading byte, so a payload without `DESKTOP_FRAME_TAG` decodes as a `Cmd`.
+pub fn broadcast_desktop_cmd(payload: Vec<u8>) {
+    let _ = desktop_frame_broadcast().send(payload);
+}
+
 /// Number of connected admin TCP sessions subscribed to desktop frames.
 /// The capture thread uses this to auto-stop after all admins disconnect.
 pub fn desktop_frame_subscriber_count() -> usize {

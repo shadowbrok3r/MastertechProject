@@ -126,6 +126,30 @@ impl EventLogViewer {
         self.loading = false;
     }
 
+    /// Loaded events matching the current filter, one tab-separated row each.
+    fn clipboard_text(&self) -> String {
+        let needle = self.viewer.filter.trim().to_lowercase();
+        let mut out = String::from("Level\tTime\tSource\tEvent ID\tMessage\n");
+        for e in &self.entries {
+            if !needle.is_empty()
+                && !(e.source.to_lowercase().contains(&needle)
+                    || e.message.to_lowercase().contains(&needle)
+                    || e.event_id.to_string().contains(&needle))
+            {
+                continue;
+            }
+            out.push_str(&format!(
+                "{}\t{}\t{}\t{}\t{}\n",
+                e.level,
+                e.time,
+                e.source,
+                e.event_id,
+                e.message.replace(['\n', '\t'], " ")
+            ));
+        }
+        out
+    }
+
     pub fn display(&mut self, ui: &mut Ui, cmd_tx: &Sender<Cmd>) {
         while let Ok(action) = self.action_rx.try_recv() {
             match action {
@@ -197,6 +221,17 @@ impl EventLogViewer {
                 .hint_text("Search events...")
                 .desired_width(150.)
                 .show(ui);
+
+            if ui
+                .add_enabled(
+                    !self.entries.is_empty(),
+                    egui::Button::new(format!("{} Copy", icons::COPY)),
+                )
+                .on_hover_text("Copy the matching events as tab-separated text")
+                .clicked()
+            {
+                ui.ctx().copy_text(self.clipboard_text());
+            }
         });
 
         ui.add_space(4.);

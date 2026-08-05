@@ -2,6 +2,7 @@ use crate::remote_desktop::{
     DesktopFrameEncoding, DesktopFrameMessage, DesktopInputEvent, DesktopModifiers,
     DesktopMouseButton,
 };
+use crate::tabs::admin_console::client_interface::clipboard_bridge::CLIPBOARD_MAX_BYTES;
 use crossbeam::channel::{Receiver, Sender};
 use eframe::egui::{
     self, Color32, ColorImage, Event, PointerButton, Rect, RichText, TextureHandle, TextureOptions,
@@ -26,6 +27,9 @@ pub struct DesktopViewer {
     pub last_encode_ms: u32,
     pub last_decode_ms: u128,
     pub last_frame_bytes: usize,
+    /// Forward the admin's clipboard on a paste chord. Mirrors the caller's
+    /// clipboard-sync toggle.
+    pub clipboard_sync: bool,
 }
 
 /// Whether an unmodified press of `key` emits a companion `Event::Text`.
@@ -79,6 +83,7 @@ impl DesktopViewer {
             last_encode_ms: 0,
             last_decode_ms: 0,
             last_frame_bytes: 0,
+            clipboard_sync: true,
         }
     }
 
@@ -194,6 +199,20 @@ impl DesktopViewer {
         let hovered = response.hovered();
         self.canvas_hovered = hovered;
         let inp = ui.ctx().input(|i| i.clone());
+
+        // Emitted ahead of the event walk below so the clipboard reaches the
+        // client before the paste chord that consumes it, whichever order egui
+        // listed them in.
+        if self.kb_focus && self.clipboard_sync {
+            if let Some(text) = inp.events.iter().find_map(|e| match e {
+                Event::Paste(t) if !t.is_empty() && t.len() <= CLIPBOARD_MAX_BYTES => {
+                    Some(t.clone())
+                }
+                _ => None,
+            }) {
+                send_input(DesktopInputEvent::ClipboardSet(text));
+            }
+        }
 
         if hovered {
             if let Some(pos) = inp.pointer.hover_pos() {
