@@ -79,13 +79,13 @@ database = { path = "database" }
 tcp_protocol = { path = "tcp_protocol" }
 eframe = { version="0.35", features=["serde",  "default_fonts", "glow"], default-features=false } 
 ratatui = { version = "0.30", default-features = true, features = [ "crossterm", "unstable", "serde", "layout-cache" ]}
-surrealdb = { version = "3.2.3", features = ["protocol-ws"] }
-surrealdb-types = { version = "3.2.3" }
+surrealdb = { version = "3.2.4", features = ["protocol-ws"] }
+surrealdb-types = { version = "3.2.4" }
 egui_extras = { version = "0.35", features = ["datepicker", "syntect", "serde", "image", "all_loaders" ]}
 egui-data-table = { git = "https://github.com/shadowbrok3r/egui-data-table", features = ["persistency"]}
 egui_json_tree = { version = "0.16", features = ["serde_json"] }
 egui_dock = { git = "https://github.com/shadowbrok3r/egui_dock",  features = [ "serde" ] }
-rmcp = { version = "3.1.0", features = ["server", "client", "transport-async-rw", "transport-streamable-http-server"] }
+rmcp = { version = "3.1.1", features = ["server", "client", "transport-async-rw", "transport-streamable-http-server"] }
 axum = { version = "0.8", default-features = true, features = ["tokio"] }
 chrono = { version = "0.4", default-features = false, features = ["now"] } 
 tokio = { version = "1", features = ["full", "tracing"] }
