@@ -5,14 +5,17 @@ use crate::modals::tabs::computer_page::display_computer_page;
 use crate::open_service_suggestions::OpenServiceSuggestion;
 use crate::{PlatformSpawner, Spawner};
 use crossbeam::channel::{unbounded, Receiver, Sender};
+use database::schema::customer_resolution::{
+    lookup_order_customer, resolve_customer, CustomerCandidate, CustomerResolution, CustomerSource,
+    OrderCustomerLookup,
+};
 use database::schema::entity_link::{
     canonical_computer_id, cascade_repoint_computer, delete_computer_if_unreferenced,
     parse_record_id, LinkValidationIssue,
 };
 use database::schema::service_match::{PrestaSpecsSnapshot, PrestashopCustomerMatch};
 use database::schema::{
-    utilities::get_prestashop_payload, ComputerData, CustomerData, RecordId, RecordIdExt,
-    TicketData, COMPUTER_TABLE, CUSTOMER_TABLE,
+    ComputerData, CustomerData, RecordId, RecordIdExt, TicketData, COMPUTER_TABLE, CUSTOMER_TABLE,
 };
 use database::db;
 use eframe::egui::{Color32, Context, RichText, ScrollArea, TextEdit, Ui, Vec2, Window};
@@ -34,14 +37,23 @@ pub struct EntityLinkResolutionModal {
     step: Step,
     service_number: String,
     computer: ComputerData,
-    /// Built up from the cached PrestaShop suggestion + operator edits
-    /// when the request carries a `MissingCustomer` / `CustomerNotFound`
-    /// issue. Empty on pure computer-linking flows.
+    /// Editable customer form. Its identity fields track
+    /// [`Self::chosen_candidate`]; email / phone are operator-owned.
     customer: CustomerData,
-    /// `id_order` from the cached `PrestashopCustomerMatch`, used to
-    /// compose the `connected_client.friendly_name` field on commit so
-    /// re-link decisions survive the next auto-detect run.
-    customer_match_order: String,
+    /// Customer the OA3 / motherboard-serial lookup resolved to. On a
+    /// resold machine this is the previous owner.
+    serial_candidate: Option<CustomerCandidate>,
+    /// Customer the typed service order resolves to — the authority.
+    order_candidate: Option<CustomerCandidate>,
+    /// Order number the last lookup ran for, so an edit to the field after
+    /// the fact is caught.
+    looked_up_order: Option<String>,
+    /// Set when the operator picks the serial-derived customer over the
+    /// order-derived one on a conflict.
+    prefer_serial: bool,
+    /// Candidate the form fields were last populated from, so a re-poll
+    /// doesn't clobber operator edits.
+    applied_candidate: Option<CustomerCandidate>,
     ticket: TicketData,
     customer_id: RecordId,
     old_computer_id: Option<RecordId>,
@@ -56,11 +68,10 @@ pub struct EntityLinkResolutionModal {
     /// the form, but a stale cached snapshot can't keep re-clobbering
     /// the same fields every frame.
     last_merged_at: Option<web_time::Instant>,
-    /// Receiver for an async PrestaShop customer fetch — we kick this
-    /// off when the operator clicks "Fetch customer from order" so the
-    /// customer's email/phone (which aren't in the cached
-    /// `PrestashopCustomerMatch`) flow in once the API call returns.
-    customer_fetch_rx: Option<Receiver<Result<CustomerData, String>>>,
+    /// Receiver for the typed-order lookup — resolves the authoritative
+    /// customer and backfills the email / phone the cached
+    /// `PrestashopCustomerMatch` doesn't carry.
+    customer_fetch_rx: Option<Receiver<Result<OrderCustomerLookup, String>>>,
     /// The customer row already present in SurrealDB at the canonical
     /// `customer:<id_customer>` key (if any). Stored as a flexible
     /// snapshot rather than a strict `CustomerData` because legacy
@@ -154,8 +165,8 @@ impl EntityLinkResolutionModal {
 
         let mut service_number = String::new();
         let mut computer = ComputerData::default();
-        let mut customer = CustomerData::default();
-        let mut customer_match_order = String::new();
+        let customer = CustomerData::default();
+        let mut serial_candidate = None;
         let mut last_merged_at: Option<web_time::Instant> = None;
         if !connection_string.is_empty() {
             computer.id = canonical_computer_id(&connection_string);
@@ -167,10 +178,7 @@ impl EntityLinkResolutionModal {
                     service_number = c.service_number.clone();
                 }
                 merge_specs_into_computer(&mut computer, &suggestion);
-                if let Some(m) = suggestion.match_.as_ref() {
-                    merge_customer_match_into_customer(&mut customer, m);
-                    customer_match_order = m.id_order.clone();
-                }
+                serial_candidate = suggestion.match_.as_ref().map(candidate_from_match);
                 last_merged_at = Some(suggestion.received_at);
             }
             // Fire a fresh fetch so the hardware fields populate from
@@ -191,7 +199,11 @@ impl EntityLinkResolutionModal {
             service_number,
             computer,
             customer,
-            customer_match_order,
+            serial_candidate,
+            order_candidate: None,
+            looked_up_order: None,
+            prefer_serial: false,
+            applied_candidate: None,
             ticket: TicketData::default(),
             customer_id,
             old_computer_id: Some(old_computer_id),
@@ -208,8 +220,84 @@ impl EntityLinkResolutionModal {
         // If the cached PrestaShop match already gave us a canonical
         // customer id, eagerly fetch the existing DB row so the Verify
         // step can show a current-vs-ticket comparison.
+        me.apply_chosen_candidate_to_form();
         me.fire_existing_customer_fetch_if_needed();
         me
+    }
+
+    /// Compare the two lookup paths. The typed order wins; a disagreement
+    /// is reported so the operator settles it.
+    fn resolution(&self) -> CustomerResolution {
+        resolve_customer(self.order_candidate.clone(), self.serial_candidate.clone())
+    }
+
+    /// The customer a commit will write: the order-derived one unless the
+    /// operator explicitly picked the serial-derived one on a conflict.
+    fn chosen_candidate(&self) -> Option<CustomerCandidate> {
+        match self.resolution() {
+            CustomerResolution::Conflict {
+                from_order,
+                from_serial,
+            } => Some(if self.prefer_serial {
+                from_serial
+            } else {
+                from_order
+            }),
+            CustomerResolution::Agreed(c) => Some(c),
+            CustomerResolution::None => None,
+        }
+    }
+
+    /// The typed order number when it hasn't been resolved to a customer —
+    /// the case where a commit would fall back to the serial's owner.
+    fn typed_order_not_looked_up(&self) -> Option<String> {
+        let typed = self.service_number.trim();
+        if typed.is_empty() || self.customer_fetch_rx.is_some() {
+            return None;
+        }
+        let looked_up = self.looked_up_order.as_deref().unwrap_or_default();
+        if self.order_candidate.is_some() && looked_up == typed {
+            return None;
+        }
+        Some(typed.to_string())
+    }
+
+    /// `friendly_name` for the chosen customer, pairing the form's name with
+    /// that customer's order number.
+    fn commit_friendly_name(&self) -> String {
+        let Some(chosen) = self.chosen_candidate() else {
+            return String::new();
+        };
+        let name = if self.customer.name.trim().is_empty() {
+            chosen.name.clone()
+        } else {
+            self.customer.name.trim().to_string()
+        };
+        CustomerCandidate::new(
+            chosen.customer_key.as_str(),
+            name,
+            chosen.order_number.as_str(),
+            chosen.source,
+        )
+        .friendly_name()
+    }
+
+    /// Point the form's identity fields at the chosen candidate. Runs only
+    /// when the choice changed, so operator edits survive later polls.
+    fn apply_chosen_candidate_to_form(&mut self) {
+        let Some(chosen) = self.chosen_candidate() else {
+            return;
+        };
+        if self.applied_candidate.as_ref() == Some(&chosen) {
+            return;
+        }
+        // Name included even when empty — a name left over from the other
+        // candidate would pair the wrong person with this customer id.
+        self.customer.id = chosen.record_id();
+        self.customer.cust_code = chosen.customer_key.clone();
+        self.customer.name = chosen.name.clone();
+        self.applied_candidate = Some(chosen);
+        self.fire_existing_customer_fetch_if_needed();
     }
 
     /// Kick off the async fetch for the existing `customer:<id>` row
@@ -316,14 +404,11 @@ impl EntityLinkResolutionModal {
         }
         merge_specs_into_computer(&mut self.computer, &suggestion);
         if let Some(m) = suggestion.match_.as_ref() {
-            merge_customer_match_into_customer(&mut self.customer, m);
-            if self.customer_match_order.is_empty() {
-                self.customer_match_order = m.id_order.clone();
-            }
-            // The match supplied a canonical customer id; refresh the
-            // existing-DB-row fetch so the comparison panel can show
-            // both sides on the Verify step.
-            self.fire_existing_customer_fetch_if_needed();
+            // Serial-derived only — it never overwrites a customer the
+            // typed order resolved, it only becomes the other side of a
+            // conflict the operator settles.
+            self.serial_candidate = Some(candidate_from_match(m));
+            self.apply_chosen_candidate_to_form();
         }
         if self.service_number.is_empty() {
             if let Some(c) = suggestion.candidates.first() {
@@ -333,10 +418,9 @@ impl EntityLinkResolutionModal {
         self.last_merged_at = Some(suggestion.received_at);
     }
 
-    /// Drain the customer-fetch channel — if the async PrestaShop
-    /// lookup completed, copy its richer email / phone fields into the
-    /// form using "fill only empty" semantics so the operator's edits
-    /// are never clobbered.
+    /// Drain the typed-order lookup channel. The resolved candidate takes
+    /// over the form's identity fields; contact details fill only empty
+    /// fields so operator edits are never clobbered.
     fn poll_customer_fetch(&mut self) {
         let Some(rx) = self.customer_fetch_rx.as_ref() else {
             return;
@@ -346,33 +430,48 @@ impl EntityLinkResolutionModal {
         };
         self.customer_fetch_rx = None;
         match result {
-            Ok(fetched) => {
-                // Adopt the fetched canonical (cust_code-keyed) customer id,
-                // replacing the random CustomerData::default() id.
-                if !fetched.id.key_string().is_empty()
-                    && self.customer.id.key_string() != fetched.id.key_string()
+            Ok(lookup) => {
+                self.order_candidate = lookup.candidate.clone();
+                // A `service_order` row can name a customer whose local row
+                // has no name; the order's PrestaShop customer supplies it.
+                if let (Some(candidate), Some(contact)) =
+                    (self.order_candidate.as_mut(), lookup.contact.as_ref())
                 {
-                    self.customer.id = fetched.id;
+                    if candidate.name.is_empty()
+                        && candidate.customer_key == contact.id.key_string()
+                    {
+                        candidate.name = contact.name.trim().to_string();
+                    }
                 }
-                if !fetched.cust_code.is_empty() && self.customer.cust_code.is_empty() {
-                    self.customer.cust_code = fetched.cust_code;
+                // A fresh order lookup resets the pick — the operator
+                // re-decides against the new pair, defaulting to the order.
+                self.prefer_serial = false;
+                self.apply_chosen_candidate_to_form();
+                if let Some(fetched) = lookup.contact {
+                    if !fetched.email.is_empty() && self.customer.email.is_empty() {
+                        self.customer.email = fetched.email;
+                    }
+                    if !fetched.phone_number.is_empty() && self.customer.phone_number.is_empty() {
+                        self.customer.phone_number = fetched.phone_number;
+                    }
+                    if !fetched.phone_number_2.is_empty() && self.customer.phone_number_2.is_empty()
+                    {
+                        self.customer.phone_number_2 = fetched.phone_number_2;
+                    }
                 }
-                if !fetched.name.is_empty() && self.customer.name.is_empty() {
-                    self.customer.name = fetched.name;
-                }
-                if !fetched.email.is_empty() && self.customer.email.is_empty() {
-                    self.customer.email = fetched.email;
-                }
-                if !fetched.phone_number.is_empty() && self.customer.phone_number.is_empty() {
-                    self.customer.phone_number = fetched.phone_number;
-                }
-                if !fetched.phone_number_2.is_empty() && self.customer.phone_number_2.is_empty() {
-                    self.customer.phone_number_2 = fetched.phone_number_2;
-                }
-                self.status = "Customer details fetched from PrestaShop.".into();
+                self.status = match (&self.order_candidate, &lookup.prestashop_error) {
+                    (Some(c), _) => format!(
+                        "Order {} resolves to {} (via {}).",
+                        c.order_number,
+                        c.describe(),
+                        c.source.label()
+                    ),
+                    (None, Some(e)) => e.clone(),
+                    (None, None) => "Order carried no customer.".to_string(),
+                };
             }
             Err(e) => {
-                self.error = format!("Customer fetch failed: {e}");
+                self.error = format!("Order lookup failed: {e}");
             }
         }
     }
@@ -504,41 +603,32 @@ impl EntityLinkResolutionModal {
                 }
             }
             Step::Lookup => {
-                ui.label("Service order # (PrestaShop):");
+                ui.label("Service order #:");
                 ui.add(TextEdit::singleline(&mut self.service_number).desired_width(200.0));
-                if ui.button("Fetch PrestaShop order").clicked()
-                    && !self.service_number.is_empty()
-                {
-                    let sn = self.service_number.clone();
-                    let need_customer = needs_customer;
-                    let (customer_tx, customer_rx) = unbounded::<Result<CustomerData, String>>();
-                    self.customer_fetch_rx = if need_customer { Some(customer_rx) } else { None };
+                if let Some(serial) = self.serial_candidate.clone() {
+                    ui.label(
+                        RichText::new(format!(
+                            "This machine's serial maps to {}. Typing an order number \
+                             overrides it.",
+                            serial.describe()
+                        ))
+                        .small()
+                        .color(Color32::from_rgb(180, 180, 90)),
+                    );
+                }
+                if ui.button("Look up order").clicked() && !self.service_number.is_empty() {
+                    let sn = self.service_number.trim().to_string();
+                    let (customer_tx, customer_rx) =
+                        unbounded::<Result<OrderCustomerLookup, String>>();
+                    self.customer_fetch_rx = Some(customer_rx);
+                    self.looked_up_order = Some(sn.clone());
                     PlatformSpawner::spawn(async move {
-                        // `PrestashopPayload` already carries the
-                        // resolved customer object, so a single fetch
-                        // gives us both the customer (name, email,
-                        // phone) AND the order metadata. No second
-                        // round-trip to `customers/{id}` needed.
-                        match get_prestashop_payload(&sn).await {
-                            Ok(payload) => {
-                                if need_customer {
-                                    let _ = customer_tx.try_send(Ok(payload.customer));
-                                }
-                            }
-                            Err(e) => {
-                                if need_customer {
-                                    let _ = customer_tx.try_send(Err(format!(
-                                        "PrestaShop order fetch failed: {e:?}"
-                                    )));
-                                }
-                            }
-                        }
+                        let _ = customer_tx.try_send(lookup_order_customer(&sn).await);
                     });
-                    self.status =
-                        "PrestaShop fetch started — review on the verify step.".into();
+                    self.status = "Order lookup started — review on the verify step.".into();
                     self.step = Step::Verify;
                 }
-                if ui.button("Skip Presta — use cached data only").clicked() {
+                if ui.button("Skip lookup — use cached data only").clicked() {
                     self.step = Step::Verify;
                 }
                 if ui.button("Back").clicked() {
@@ -554,10 +644,38 @@ impl EntityLinkResolutionModal {
                 if !self.error.is_empty() {
                     ui.label(RichText::new(&self.error).color(Color32::LIGHT_RED));
                 }
+                let mut pick_serial = self.prefer_serial;
+                let resolution = self.resolution();
+                let stale_typed_order = self.typed_order_not_looked_up();
                 ScrollArea::vertical()
                     .max_height(400.0)
                     .show(ui, |ui| {
                         if needs_customer {
+                            if let CustomerResolution::Conflict {
+                                from_order,
+                                from_serial,
+                            } = &resolution
+                            {
+                                display_customer_conflict(
+                                    ui,
+                                    from_order,
+                                    from_serial,
+                                    &mut pick_serial,
+                                );
+                                ui.add_space(4.0);
+                            }
+                            if let Some(order) = &stale_typed_order {
+                                ui.colored_label(
+                                    Color32::LIGHT_RED,
+                                    format!(
+                                        "{} Order {order} was typed but never looked up — go Back \
+                                         and run the lookup, or the serial's customer is what gets \
+                                         written.",
+                                        crate::ui_tools::icons::STATUS_WARN
+                                    ),
+                                );
+                                ui.add_space(4.0);
+                            }
                             display_customer_compare(
                                 ui,
                                 self.existing_customer.as_ref(),
@@ -576,6 +694,25 @@ impl EntityLinkResolutionModal {
                             );
                         }
                     });
+                if pick_serial != self.prefer_serial {
+                    self.prefer_serial = pick_serial;
+                    self.apply_chosen_candidate_to_form();
+                }
+                if needs_customer {
+                    if let Some(chosen) = self.chosen_candidate() {
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new(format!("Will link: {}", chosen.describe()))
+                                .strong()
+                                .color(Color32::LIGHT_GREEN),
+                        );
+                        ui.label(
+                            RichText::new(format!("friendly_name: {}", self.commit_friendly_name()))
+                                .small()
+                                .color(Color32::GRAY),
+                        );
+                    }
+                }
                 ui.horizontal(|ui| {
                     if needs_customer {
                         // Two-button commit: "Link only" patches the
@@ -637,11 +774,25 @@ impl EntityLinkResolutionModal {
 
         let needs_customer = self.needs_customer();
         let needs_computer = self.needs_computer();
+        let chosen = self.chosen_candidate();
+        if needs_customer && chosen.is_none() {
+            self.error = "No customer resolved — look up the service order first".into();
+            return;
+        }
         let mut computer = self.computer.clone();
         let mut customer = self.customer.clone();
+        // The chosen customer owns the record id, so the FK and the
+        // friendly_name written below can't come from different customers.
+        if let Some(c) = &chosen {
+            customer.id = c.record_id();
+            customer.cust_code = c.customer_key.clone();
+        }
+        let friendly_name = if needs_customer {
+            self.commit_friendly_name()
+        } else {
+            String::new()
+        };
         let existing_customer = self.existing_customer.clone();
-        let order_for_friendly = self.customer_match_order.clone();
-        let service_number = self.service_number.clone();
         let prior_customer_id = self.customer_id.clone();
         let old_computer_id = self.old_computer_id.clone();
         let commit_tx = self.commit_tx.clone();
@@ -780,24 +931,10 @@ impl EntityLinkResolutionModal {
             // changed. `customer_locked = true` matches relink_popup so
             // the auto-derived friendly_name from OA3 doesn't clobber
             // this assignment on the next reconnect.
-            // Always "Name - Service#"; fall back to the typed service_number
-            // when the cached match carried no order. Empty when no number is
-            // available, which preserves the existing friendly_name instead of
-            // downgrading it to a bare name.
-            let order_suffix = if !order_for_friendly.trim().is_empty() {
-                order_for_friendly.trim().to_string()
-            } else {
-                service_number.trim().to_string()
-            };
-            let friendly_name = if needs_customer
-                && !customer.name.trim().is_empty()
-                && !order_suffix.is_empty()
-            {
-                format!("{} - {}", customer.name.trim(), order_suffix)
-            } else {
-                String::new()
-            };
-            let write_friendly = !friendly_name.is_empty();
+            // `customer` and `friendly_name` are written together, from the
+            // one chosen customer, and the write is unconditional so a stale
+            // name from a previous owner can't survive a re-link.
+            let write_friendly = needs_customer && !friendly_name.is_empty();
 
             let cc_sql = match (needs_computer, needs_customer, write_friendly) {
                 (true, true, true) => {
@@ -871,35 +1008,65 @@ fn overlay_computer_specs(dst: &mut ComputerData, src: &ComputerData) {
     }
 }
 
-/// Copy the cached `PrestashopCustomerMatch` into a fresh
-/// `CustomerData`. Only fills empty fields (matches the spec-merge
-/// pattern) so a re-merge after the operator edits the form doesn't
-/// clobber their changes.
-fn merge_customer_match_into_customer(
-    customer: &mut CustomerData,
-    m: &PrestashopCustomerMatch,
+/// Build the serial-derived candidate from the cached OA3 lookup.
+fn candidate_from_match(m: &PrestashopCustomerMatch) -> CustomerCandidate {
+    let combined = format!("{} {}", m.first_name.trim(), m.last_name.trim())
+        .trim()
+        .to_string();
+    let name = if combined.is_empty() {
+        m.friendly_name.clone()
+    } else {
+        combined
+    };
+    CustomerCandidate::new(
+        m.id_customer.as_str(),
+        name,
+        m.id_order.as_str(),
+        CustomerSource::Serial,
+    )
+}
+
+/// Two-way picker shown when the typed order and the machine's serial name
+/// different customers — the normal case for a resold machine.
+fn display_customer_conflict(
+    ui: &mut Ui,
+    from_order: &CustomerCandidate,
+    from_serial: &CustomerCandidate,
+    prefer_serial: &mut bool,
 ) {
-    if !m.id_customer.is_empty() {
-        let new_id = RecordId::new(CUSTOMER_TABLE, m.id_customer.as_str());
-        // Replace the random default id with the canonical PrestaShop
-        // customer key so a re-open of the same client doesn't fork.
-        if customer.id.key_string() != m.id_customer {
-            customer.id = new_id;
-        }
+    ui.colored_label(
+        Color32::from_rgb(230, 180, 60),
+        format!(
+            "{} This machine's serial and the order you typed name different customers. \
+             Pick the right owner.",
+            crate::ui_tools::icons::STATUS_WARN
+        ),
+    );
+    let order_label = format!(
+        "From order {} ({}) — {}",
+        from_order.order_number,
+        from_order.source.label(),
+        from_order.describe()
+    );
+    let serial_label = format!(
+        "From machine serial (order {}) — {}",
+        from_serial.order_number,
+        from_serial.describe()
+    );
+    if ui.radio(!*prefer_serial, order_label).clicked() {
+        *prefer_serial = false;
     }
-    if customer.cust_code.is_empty() {
-        customer.cust_code = m.id_customer.clone();
+    if ui.radio(*prefer_serial, serial_label).clicked() {
+        *prefer_serial = true;
     }
-    if customer.name.is_empty() {
-        let combined = format!("{} {}", m.first_name.trim(), m.last_name.trim())
-            .trim()
-            .to_string();
-        if !combined.is_empty() {
-            customer.name = combined;
-        } else if !m.friendly_name.is_empty() {
-            customer.name = m.friendly_name.clone();
-        }
-    }
+    ui.label(
+        RichText::new(
+            "A used machine that changed hands is normal — the serial keeps pointing at \
+             whoever first bought it.",
+        )
+        .small()
+        .color(Color32::GRAY),
+    );
 }
 
 /// Side-by-side panel that contrasts the existing `customer:<id>` row

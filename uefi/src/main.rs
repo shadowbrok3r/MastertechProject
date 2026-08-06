@@ -4947,7 +4947,19 @@ fn prepare_flash_step(app: &mut App) {
                     if !blocked {
                         let cmd = format!("{} {}", base_name(&step.exec), step.args);
                         note.push(format!("ready to run: {}", cmd.trim()));
-                        note.push(format!("expect: {}", step.after.label()));
+                        note.push(match step.after {
+                            bioslove::After::Returns => {
+                                "expect: tool returns here when it finishes".to_string()
+                            }
+                            bioslove::After::Reboot | bioslove::After::Shutdown => format!(
+                                "expect: machine {} - boot back here and pick step {}",
+                                step.after.label(),
+                                step.index + 1
+                            ),
+                            bioslove::After::Unknown => {
+                                "expect: unknown - the script does not say".to_string()
+                            }
+                        });
                         ready = Some(PreparedStep {
                             entry: ei,
                             step: app.flash_step,
