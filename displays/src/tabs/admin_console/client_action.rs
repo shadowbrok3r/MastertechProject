@@ -274,20 +274,56 @@ impl AdminConsole {
             }
         }
 
+        // Autopilot hosts get a session whether or not an operator opened them:
+        // remote MCP tools reject a client with no live admin session, so an
+        // unattended sweep can never reach one otherwise.
+        let auto = autopilot_hosts();
         let want: Vec<ConnectedClient> = self
             .clients
             .iter()
             .filter(|c| {
                 c.connected
-                    && self.session_layout.contains_key(&c.connection_string)
                     && !self.ws_clients.contains_key(&c.connection_string)
+                    && (self.session_layout.contains_key(&c.connection_string)
+                        || is_autopilot_host(&c.connection_string, &auto))
             })
             .cloned()
             .collect();
         for client in want {
+            if !self.session_layout.contains_key(&client.connection_string) {
+                log::info!(
+                    "ensure_sessions -> holding autopilot session for {}",
+                    client.connection_string
+                );
+            }
             self.open_session(client);
         }
     }
+}
+
+/// Hostnames the autopilot needs standing sessions to; empty without `tokio`.
+#[cfg(not(target_arch = "wasm32"))]
+fn autopilot_hosts() -> Vec<String> {
+    #[cfg(feature = "tokio")]
+    {
+        crate::ai::mcp_chat::autopilot_hosts()
+    }
+    #[cfg(not(feature = "tokio"))]
+    Vec::new()
+}
+
+/// Matches the hostname half of `hostname:hash9` against the allowlist.
+#[cfg(not(target_arch = "wasm32"))]
+fn is_autopilot_host(connection_string: &str, hosts: &[String]) -> bool {
+    if hosts.is_empty() {
+        return false;
+    }
+    let host = connection_string
+        .split(':')
+        .next()
+        .unwrap_or(connection_string)
+        .to_ascii_lowercase();
+    hosts.iter().any(|h| *h == host)
 }
 
 /// Fetch one `connected_client` by exact `connection_string` or `client_hash`,

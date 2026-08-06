@@ -282,14 +282,20 @@ impl EntityLinkResolutionModal {
         .friendly_name()
     }
 
-    /// Point the form's identity fields at the chosen candidate. Runs only
-    /// when the choice changed, so operator edits survive later polls.
     fn apply_chosen_candidate_to_form(&mut self) {
+        if self.sync_form_to_chosen_candidate() {
+            self.fire_existing_customer_fetch_if_needed();
+        }
+    }
+
+    /// Point the form's identity fields at the chosen candidate, returning
+    /// true when the choice changed. Operator edits survive later polls.
+    fn sync_form_to_chosen_candidate(&mut self) -> bool {
         let Some(chosen) = self.chosen_candidate() else {
-            return;
+            return false;
         };
         if self.applied_candidate.as_ref() == Some(&chosen) {
-            return;
+            return false;
         }
         // Name included even when empty — a name left over from the other
         // candidate would pair the wrong person with this customer id.
@@ -297,7 +303,7 @@ impl EntityLinkResolutionModal {
         self.customer.cust_code = chosen.customer_key.clone();
         self.customer.name = chosen.name.clone();
         self.applied_candidate = Some(chosen);
-        self.fire_existing_customer_fetch_if_needed();
+        true
     }
 
     /// Kick off the async fetch for the existing `customer:<id>` row
@@ -460,12 +466,9 @@ impl EntityLinkResolutionModal {
                     }
                 }
                 self.status = match (&self.order_candidate, &lookup.prestashop_error) {
-                    (Some(c), _) => format!(
-                        "Order {} resolves to {} (via {}).",
-                        c.order_number,
-                        c.describe(),
-                        c.source.label()
-                    ),
+                    (Some(c), _) => {
+                        format!("Resolved from {}: {}", c.source.label(), c.describe())
+                    }
                     (None, Some(e)) => e.clone(),
                     (None, None) => "Order carried no customer.".to_string(),
                 };
@@ -1476,4 +1479,102 @@ fn is_placeholder_dmi(s: &str) -> bool {
             | "00000000"
             | "unknown"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Modal with no I/O in flight — the fields the customer decision reads.
+    fn modal(
+        service_number: &str,
+        order_candidate: Option<CustomerCandidate>,
+        serial_candidate: Option<CustomerCandidate>,
+    ) -> EntityLinkResolutionModal {
+        let (commit_tx, commit_rx) = unbounded();
+        EntityLinkResolutionModal {
+            request: EntityLinkRequest {
+                request_id: "test".into(),
+                connection_string: Some("DESKTOP-RR7RRMS:6911eca38".into()),
+                customer_id: String::new(),
+                computer_id: String::new(),
+                issues: vec![LinkValidationIssue::MissingCustomer],
+            },
+            is_open: true,
+            step: Step::Verify,
+            service_number: service_number.to_string(),
+            computer: ComputerData::default(),
+            customer: CustomerData::default(),
+            serial_candidate,
+            order_candidate: order_candidate.clone(),
+            looked_up_order: order_candidate.map(|c| c.order_number),
+            prefer_serial: false,
+            applied_candidate: None,
+            ticket: TicketData::default(),
+            customer_id: RecordId::new(CUSTOMER_TABLE, ""),
+            old_computer_id: None,
+            status: String::new(),
+            error: String::new(),
+            commit_rx,
+            commit_tx,
+            last_merged_at: None,
+            customer_fetch_rx: None,
+            existing_customer: None,
+            existing_customer_fetch_error: None,
+            existing_customer_fetch_rx: None,
+        }
+    }
+
+    fn typed_order() -> CustomerCandidate {
+        CustomerCandidate::new("201989", "Seth Grover", "2152279", CustomerSource::ServiceOrder)
+    }
+
+    fn prior_owner() -> CustomerCandidate {
+        CustomerCandidate::new("2095832", "ron zuiderweg", "2095832", CustomerSource::Serial)
+    }
+
+    #[test]
+    fn typed_order_beats_serial_match() {
+        let m = modal("2152279", Some(typed_order()), Some(prior_owner()));
+
+        assert!(m.resolution().is_conflict());
+        let chosen = m.chosen_candidate().expect("a customer is chosen");
+        assert_eq!(chosen.customer_key, "201989");
+        assert_eq!(chosen.order_number, "2152279");
+        assert!(m.typed_order_not_looked_up().is_none());
+    }
+
+    #[test]
+    fn friendly_name_and_customer_come_from_one_choice() {
+        let mut m = modal("2152279", Some(typed_order()), Some(prior_owner()));
+        m.sync_form_to_chosen_candidate();
+
+        assert_eq!(m.customer.id.key_string(), "201989");
+        assert_eq!(m.customer.name, "Seth Grover");
+        assert_eq!(m.commit_friendly_name(), "Seth Grover - 2152279");
+
+        // Picking the other side moves both together, never just one.
+        m.prefer_serial = true;
+        m.sync_form_to_chosen_candidate();
+        assert_eq!(m.customer.id.key_string(), "2095832");
+        assert_eq!(m.commit_friendly_name(), "ron zuiderweg - 2095832");
+    }
+
+    #[test]
+    fn serial_match_alone_still_resolves() {
+        let m = modal("", None, Some(prior_owner()));
+        assert!(!m.resolution().is_conflict());
+        assert_eq!(m.chosen_candidate().unwrap().customer_key, "2095832");
+    }
+
+    #[test]
+    fn typed_order_without_a_lookup_is_flagged() {
+        let m = modal("2152279", None, Some(prior_owner()));
+        assert_eq!(m.typed_order_not_looked_up().as_deref(), Some("2152279"));
+
+        // Editing the field after a lookup re-flags it.
+        let mut edited = modal("2152279", Some(typed_order()), Some(prior_owner()));
+        edited.service_number = "2152280".into();
+        assert_eq!(edited.typed_order_not_looked_up().as_deref(), Some("2152280"));
+    }
 }

@@ -31,6 +31,15 @@ pub fn json_visuals(ui: &Ui) -> JsonTreeVisuals {
     }
 }
 
+/// Fully-expanded tree for payloads a reader wants to scan at a glance (chat
+/// tool arguments and results), with no dump-specific hex rewriting.
+pub fn json_tree(ui: &mut Ui, id_salt: &str, value: &Value) {
+    JsonTree::new(id_salt, value)
+        .style(JsonTreeStyle::new().visuals(json_visuals(ui)))
+        .default_expand(DefaultExpand::All)
+        .show(ui);
+}
+
 /// Render `value` as a tree. Wide integers show as hex, flagged when a legacy
 /// float write lost their low bits; strings carrying `<?n>` markers are tinted.
 pub fn dump_json_tree(ui: &mut Ui, id_salt: &str, value: &Value) {

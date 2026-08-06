@@ -576,6 +576,8 @@ pub struct SharedContext {
     /// rate-limits that.
     #[serde(skip)]
     pub last_client_list_refresh: Option<web_time::Instant>,
+    /// One-shot guard for the ZeroClaw event-stream consumer.
+    pub zeroclaw_events_started: bool,
     /// In-memory snapshot of the connected-client list shared with the
     /// reachability prober. The prober was previously running its own
     /// `SELECT * FROM connected_client WHERE connected == true LIMIT 200`
@@ -807,6 +809,7 @@ impl SharedContext {
             canary_sent_at: None,
             last_canary_at: None,
             last_client_list_refresh: None,
+            zeroclaw_events_started: false,
             clients_for_prober: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
@@ -1052,6 +1055,14 @@ impl SharedContext {
                 if modal.show(ctx).is_some() {
                     self.entity_link_resolution_modal = None;
                 }
+            }
+        }
+
+        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        if !self.zeroclaw_events_started {
+            if let Some(user) = self.current_user.as_ref() {
+                crate::ai::zeroclaw_events::spawn(user.id.clone());
+                self.zeroclaw_events_started = true;
             }
         }
 

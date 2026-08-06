@@ -3,7 +3,6 @@ use eframe::egui::{
     Margin, Modifiers, Popup, PopupCloseBehavior, RichText, ScrollArea, TextEdit, Ui,
 };
 use crate::{
-    markdown_editor::viewer,
     tabs::ai_playground::{ChatMessage, ChatMessageType, ChatThread, SentFrom},
     ui_tools::icons,
     PlatformSpawner, Spawner,
@@ -51,6 +50,9 @@ pub struct EnhancedAiPlayground {
     #[cfg(not(target_arch = "wasm32"))]
     #[serde(skip)]
     claude_thread: Option<String>,
+    /// Per-thread label of the engine that answered it, shown in the top bar.
+    #[serde(skip)]
+    thread_engine: HashMap<String, String>,
     /// Set when the panel's close button is clicked; the host reads + clears it.
     #[serde(skip)]
     close_requested: bool,
@@ -84,6 +86,7 @@ impl Default for EnhancedAiPlayground {
             claude: crate::ai::claude_code::ClaudeCodeSession::new(),
             #[cfg(not(target_arch = "wasm32"))]
             claude_thread: None,
+            thread_engine: HashMap::new(),
             close_requested: false,
             loaded: false,
             load_tx,
@@ -129,7 +132,10 @@ impl EnhancedAiPlayground {
             // ZeroClaw route: env-configured gateway dispatches the diagnostician agent.
             #[cfg(feature = "tokio")]
             {
-                if crate::ai::mcp_chat::zeroclaw_gateway().is_some() {
+                if let Some((url, _)) = crate::ai::mcp_chat::zeroclaw_gateway() {
+                    let agent = crate::ai::mcp_chat::zeroclaw_agent();
+                    self.thread_engine
+                        .insert(thread_id.clone(), format!("ZeroClaw \u{00B7} {agent} @ {url}"));
                     let full = match &connection_string {
                         Some(cs) => format!("DIAGNOSE mode. Target client connection_string = {cs}. {prompt}"),
                         None => format!("DIAGNOSE mode, local host. {prompt}"),
@@ -142,6 +148,9 @@ impl EnhancedAiPlayground {
                     return;
                 }
             }
+            let model = std::env::var("CC_MODEL").unwrap_or_else(|_| "default model".into());
+            self.thread_engine
+                .insert(thread_id.clone(), format!("Claude Code (local) \u{00B7} {model}"));
             self.claude.reset();
             self.claude_thread = Some(thread_id.clone());
             self.claude.send(prompt, connection_string, thread_id, self.response_tx.clone());
@@ -288,8 +297,11 @@ impl EnhancedAiPlayground {
                         self.start_claude_diagnosis(cs);
                     }
                 }
-                let model = crate::ai::effective_model(crate::ai::gpts::MODEL);
-                ui.label(RichText::new(model).weak().small());
+                let engine = self.thread_engine.get(&self.selected_thread).cloned().unwrap_or_else(|| {
+                    format!("OpenRouter \u{00B7} {}", crate::ai::effective_model(crate::ai::gpts::MODEL))
+                });
+                ui.label(RichText::new(engine).weak().small())
+                    .on_hover_text("Which engine answers this thread. Claude Code runs locally; ZeroClaw runs on the agent host.");
             });
         });
     }
@@ -357,9 +369,99 @@ impl EnhancedAiPlayground {
             .auto_shrink([false, false])
             .stick_to_bottom(true)
             .show(ui, |ui| {
-                for message in &messages {
-                    self.render_chat_message(ui, message);
+                // Consecutive tool lines collapse into one block instead of one card each.
+                let mut i = 0;
+                while i < messages.len() {
+                    if Self::is_tool_line(&messages[i]) {
+                        let start = i;
+                        while i < messages.len() && Self::is_tool_line(&messages[i]) {
+                            i += 1;
+                        }
+                        self.render_tool_group(ui, &messages[start..i]);
+                    } else {
+                        self.render_chat_message(ui, &messages[i]);
+                        i += 1;
+                    }
                     ui.add_space(6.);
+                }
+            });
+    }
+
+    /// True for assistant tool-activity lines emitted with `TOOL_PREFIX`.
+    fn is_tool_line(message: &ChatMessage) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let ChatMessageType::Text(t) = &message.content {
+            return matches!(message.from, SentFrom::Gpt)
+                && t.starts_with(crate::ai::claude_code::TOOL_PREFIX);
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = message;
+        false
+    }
+
+    fn render_tool_group(&self, ui: &mut Ui, group: &[ChatMessage]) {
+        Frame::group(ui.style()).fill(ui.visuals().extreme_bg_color).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(
+                RichText::new(format!("{}  {} tool call(s)", icons::WRENCH, group.len()))
+                    .small()
+                    .weak(),
+            );
+            for m in group {
+                if let ChatMessageType::Text(t) = &m.content {
+                    self.render_tool_line(ui, &m.id, t);
+                }
+            }
+        });
+    }
+
+    /// Splits `» name ({json}) status` plus an optional result after the first
+    /// newline, rendering both JSON payloads as collapsible trees.
+    fn render_tool_line(&self, ui: &mut Ui, id: &str, text: &str) {
+        let (text, result) = match text.split_once('\n') {
+            Some((head, tail)) => (head, tail.trim()),
+            None => (text, ""),
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let body = text.trim_start_matches(crate::ai::claude_code::TOOL_PREFIX).trim_start();
+        #[cfg(target_arch = "wasm32")]
+        let body = text.trim_start();
+
+        let (name, rest) = match body.find(" (") {
+            Some(i) => (&body[..i], &body[i + 1..]),
+            None => (body, ""),
+        };
+        let (args, status) = match rest.rfind(')') {
+            Some(i) => (rest[1..i].trim(), rest[i + 1..].trim()),
+            None => ("", rest.trim()),
+        };
+
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(name).monospace().small().strong());
+            if !status.is_empty() {
+                ui.label(RichText::new(status).small().color(Color32::LIGHT_GREEN));
+            }
+        });
+        if !args.is_empty() {
+            Self::render_payload(ui, &format!("tool-args-{id}"), "arguments", args);
+        }
+        if !result.is_empty() {
+            Self::render_payload(ui, &format!("tool-res-{id}"), "result", result);
+        }
+    }
+
+    /// JSON payloads get a tree; anything else falls back to monospace text.
+    fn render_payload(ui: &mut Ui, salt: &str, label: &str, raw: &str) {
+        CollapsingHeader::new(RichText::new(label).small().weak())
+            .id_salt(salt)
+            .default_open(false)
+            .show(ui, |ui| match serde_json::from_str::<serde_json::Value>(raw) {
+                Ok(value) => crate::ui_tools::hex_json::json_tree(ui, salt, &value),
+                Err(_) => {
+                    ui.add(
+                        eframe::egui::Label::new(RichText::new(raw).monospace().small())
+                            .wrap_mode(eframe::egui::TextWrapMode::Extend),
+                    );
                 }
             });
     }
@@ -375,7 +477,7 @@ impl EnhancedAiPlayground {
                     .default_open(false)
                     .show(ui, |ui| {
                         ui.style_mut().visuals.override_text_color = Some(ui.visuals().weak_text_color());
-                        viewer::easy_mark(ui, reasoning);
+                        crate::markdown_editor::chat_markdown::render(ui, reasoning);
                     });
             }
             ChatMessageType::Text(text)
@@ -402,7 +504,7 @@ impl EnhancedAiPlayground {
                     if matches!(message.content, ChatMessageType::Error(_)) {
                         ui.colored_label(ui.visuals().error_fg_color, text);
                     } else {
-                        viewer::easy_mark(ui, text);
+                        crate::markdown_editor::chat_markdown::render(ui, text);
                     }
                 });
             }

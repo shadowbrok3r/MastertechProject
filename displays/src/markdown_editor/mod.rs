@@ -2,6 +2,7 @@
 use core::f32;
 use eframe::egui::{text::CCursorRange, *};
 use std::collections::BTreeSet;
+pub mod chat_markdown;
 pub mod highlighter;
 pub mod parser;
 pub mod viewer;

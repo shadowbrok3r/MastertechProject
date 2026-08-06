@@ -32,13 +32,88 @@ fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
-/// ZeroClaw gateway target from env: `ZEROCLAW_GATEWAY_URL` + `ZEROCLAW_GATEWAY_TOKEN`.
-pub fn zeroclaw_gateway() -> Option<(String, String)> {
-    let url = std::env::var("ZEROCLAW_GATEWAY_URL").ok()?;
-    let token = std::env::var("ZEROCLAW_GATEWAY_TOKEN").ok()?;
-    let url = url.trim().trim_end_matches('/').to_string();
-    let token = token.trim().to_string();
+/// Config file read when the env vars are absent, so a launch that didn't
+/// inherit the environment still finds the gateway.
+pub fn zeroclaw_config_path() -> std::path::PathBuf {
+    let base = std::env::var("APPDATA")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_else(|_| ".".into());
+    std::path::Path::new(&base).join("MasterTech").join("zeroclaw.json")
+}
+
+fn zeroclaw_from_file() -> Option<(String, String)> {
+    let raw = std::fs::read_to_string(zeroclaw_config_path()).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let url = v["url"].as_str()?.trim().trim_end_matches('/').to_string();
+    let token = v["token"].as_str()?.trim().to_string();
     (!url.is_empty() && !token.is_empty()).then_some((url, token))
+}
+
+/// ZeroClaw gateway target: `ZEROCLAW_GATEWAY_URL`/`ZEROCLAW_GATEWAY_TOKEN`,
+/// else `<APPDATA|HOME>/MasterTech/zeroclaw.json`.
+pub fn zeroclaw_gateway() -> Option<(String, String)> {
+    let env_pair = || {
+        let url = std::env::var("ZEROCLAW_GATEWAY_URL").ok()?;
+        let token = std::env::var("ZEROCLAW_GATEWAY_TOKEN").ok()?;
+        let url = url.trim().trim_end_matches('/').to_string();
+        let token = token.trim().to_string();
+        (!url.is_empty() && !token.is_empty()).then_some((url, token))
+    };
+    env_pair().or_else(zeroclaw_from_file)
+}
+
+/// Hostnames the BSOD autopilot needs a standing admin session to, from
+/// `autopilot_hosts` in the gateway config file. Remote MCP tools fail without
+/// a live session, so the console must hold one open for each.
+pub fn autopilot_hosts() -> Vec<String> {
+    // ensure_sessions runs every frame; re-read at most every 30s.
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<(std::time::Instant, Vec<String>)>> =
+        std::sync::OnceLock::new();
+    let cell = CACHE.get_or_init(|| {
+        std::sync::Mutex::new((
+            std::time::Instant::now() - std::time::Duration::from_secs(3600),
+            Vec::new(),
+        ))
+    });
+    if let Ok(mut guard) = cell.lock() {
+        if guard.0.elapsed() < std::time::Duration::from_secs(30) {
+            return guard.1.clone();
+        }
+        let fresh = read_autopilot_hosts();
+        *guard = (std::time::Instant::now(), fresh.clone());
+        return fresh;
+    }
+    read_autopilot_hosts()
+}
+
+fn read_autopilot_hosts() -> Vec<String> {
+    std::fs::read_to_string(zeroclaw_config_path())
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|v| v["autopilot_hosts"].as_array().cloned())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str())
+                .map(|s| s.trim().to_ascii_lowercase())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Agent alias for dispatched turns: env, then config file, then default.
+pub fn zeroclaw_agent() -> String {
+    if let Ok(a) = std::env::var("ZEROCLAW_AGENT") {
+        if !a.trim().is_empty() {
+            return a.trim().to_string();
+        }
+    }
+    std::fs::read_to_string(zeroclaw_config_path())
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|v| v["agent"].as_str().map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "diagnostician".to_string())
 }
 
 /// One diagnose turn through the ZeroClaw dispatcher: POST /webhook?agent=<alias>,
@@ -51,7 +126,7 @@ pub async fn zeroclaw_diagnose(prompt: String, thread_id: String, response_tx: S
         send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Done);
         return;
     };
-    let agent = std::env::var("ZEROCLAW_AGENT").unwrap_or_else(|_| "diagnostician".into());
+    let agent = zeroclaw_agent();
     send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Text(format!(
         "{}dispatched to ZeroClaw agent `{agent}` — it gathers context, delegates deep analysis \
          to Claude Code, and replies here when done…",
@@ -147,15 +222,6 @@ async fn call_tool(
     }
 }
 
-fn summarize(args_json: &str) -> String {
-    let trimmed = args_json.trim();
-    if trimmed.len() <= 80 {
-        trimmed.to_string()
-    } else {
-        format!("{}…", &trimmed[..80])
-    }
-}
-
 /// Builds OpenAI-format `{role, content}` message objects from prior thread
 /// messages (Me -> user, Gpt text -> assistant). Reasoning, tool-activity, and
 /// non-text messages are skipped. The new user input is appended by `stream_chat`.
@@ -208,7 +274,7 @@ pub async fn stream_chat(
             new_id(),
             SentFrom::Gpt,
             ChatMessageType::Error(
-                "No API key configured. Add one in Account Settings → MCP / AI Endpoint and save.".to_string(),
+                "No API key configured. Add one in Account Settings -> MCP / AI Endpoint and save.".to_string(),
             ),
         );
         send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Done);
@@ -405,17 +471,31 @@ pub async fn stream_chat(
         }
 
         for (_, (call_id, name, args)) in calls {
+            // Same shape claude_code.rs emits so one renderer handles both paths.
+            let line_id = new_id();
             send(
                 &response_tx,
                 &thread_id,
-                new_id(),
+                line_id.clone(),
                 SentFrom::Gpt,
-                ChatMessageType::Text(format!("{}  {}({})", icons::WRENCH, name, summarize(&args))),
+                ChatMessageType::Text(format!(
+                    "{}{}  ({})",
+                    crate::ai::claude_code::TOOL_PREFIX,
+                    name,
+                    args.trim()
+                )),
             );
             let result_text = match &mcp_client {
                 Some(client) => call_tool(client, &name, &args).await,
                 None => "Mastertech tools are not connected.".to_string(),
             };
+            let body = result_text.trim();
+            let tail = if body.is_empty() {
+                " ok".to_string()
+            } else {
+                format!(" ok\n{}", body.chars().take(16_384).collect::<String>())
+            };
+            send(&response_tx, &thread_id, line_id, SentFrom::Gpt, ChatMessageType::Text(tail));
             items.push(serde_json::json!({
                 "type": "function_call_output",
                 "call_id": call_id,

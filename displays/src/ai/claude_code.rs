@@ -31,7 +31,12 @@ mcp__mastertech__egui_inspect_status,mcp__mastertech__egui_inspect_tree,\
 mcp__mastertech__egui_inspect_screenshot,mcp__mastertech__crash_intel_search,\
 mcp__mastertech__crash_intel_signature,mcp__mastertech__crash_verdict_record,\
 mcp__mastertech__known_bad_driver_list,mcp__mastertech__driver_snapshots_list,\
-mcp__mastertech__driver_snapshot_diff";
+mcp__mastertech__driver_snapshot_diff,mcp__mastertech__remote_channel_health,\
+mcp__mastertech__minidump_analyze,mcp__mastertech__crash_dumps_fetch,\
+mcp__mastertech__driver_snapshot_take,mcp__mastertech__telemetry_snapshot_remote,\
+mcp__mastertech__link_diagnostic_to_task,mcp__mastertech__close_diagnostic_session,\
+mcp__mastertech__create_ai_task,mcp__mastertech__add_ai_task_steps,\
+mcp__mastertech__get_ai_task_status,mcp__mastertech__get_service_order";
 
 const SYSTEM_PROMPT: &str = "You are the Mastertech diagnostic assistant. A PC Laptops technician is \
 chatting with you from inside the Mastertech app. Use the mastertech MCP tools for live data instead \
@@ -202,6 +207,12 @@ fn run_turn(
         "--permission-mode".into(), perm_mode,
         "--append-system-prompt".into(), SYSTEM_PROMPT.into(),
     ];
+    if let Ok(model) = std::env::var("CC_MODEL") {
+        if !model.trim().is_empty() {
+            args.push("--model".into());
+            args.push(model);
+        }
+    }
     if let Some(sid) = &resume_id {
         args.push("--resume".into());
         args.push(sid.clone());
@@ -397,7 +408,14 @@ fn handle_event(
                     if is_err {
                         emit(tx, thread_id, ChatMessageType::Error(format!("{name} failed: {snippet}")));
                     } else if let Some(id) = tool_id {
-                        emit_id(tx, thread_id, id, ChatMessageType::Text(" \u{2192} ok".to_string()));
+                        // Result follows the status on its own line; the UI splits there.
+                        let body = result_body(b);
+                        let text = if body.is_empty() {
+                            " ok".to_string()
+                        } else {
+                            format!(" ok\n{body}")
+                        };
+                        emit_id(tx, thread_id, id, ChatMessageType::Text(text));
                     }
                 }
             }
@@ -435,10 +453,24 @@ fn summarize_args(args_json: &str) -> String {
     if trimmed.is_empty() || trimmed == "{}" {
         return String::new();
     }
-    if trimmed.chars().count() <= 80 {
-        format!("({trimmed})")
+    format!("({trimmed})")
+}
+
+/// Full tool-result text, capped so a large payload can't bloat chat history.
+fn result_body(block: &serde_json::Value) -> String {
+    const MAX: usize = 16_384;
+    let raw = if let Some(s) = block["content"].as_str() {
+        s.to_string()
+    } else if let Some(arr) = block["content"].as_array() {
+        arr.iter().filter_map(|x| x["text"].as_str()).collect::<Vec<_>>().join("\n")
     } else {
-        format!("({}\u{2026})", trimmed.chars().take(80).collect::<String>())
+        String::new()
+    };
+    let raw = raw.trim();
+    if raw.chars().count() > MAX {
+        raw.chars().take(MAX).collect::<String>() + "\n[truncated]"
+    } else {
+        raw.to_string()
     }
 }
 
