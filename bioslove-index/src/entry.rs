@@ -71,8 +71,7 @@ pub fn build(side: Side, path: &Path, folder: &str, launchers: &[Launcher]) -> R
     if steps.is_empty() {
         warnings.push("no flash recipe and no payload found".to_string());
     }
-    // A lane the firmware launches must actually write a BIOS image; a probe or
-    // an EC-only chain that reports ready would flash nothing.
+    // A launchable lane whose recipe writes no BIOS image would flash nothing.
     if reachable && lane.launchable() && !steps.iter().any(|s| s.kind == StepKind::Bios) {
         warnings.push(
             "this recipe writes no BIOS image; it probes or flashes EC only, so the real flasher \
@@ -256,8 +255,7 @@ fn identity(
     // note filenames; the folder name is only the shop's nickname for it.
     let (boards, note) = msi_identity(dir);
     if boards.len() > 1 {
-        // Two boards' images in one folder: neither number identifies it, and
-        // claiming both makes the folder exact-match the wrong machine.
+        // Two boards' images in one folder: neither number identifies it.
         warnings.push(format!(
             "payloads name {} MSI boards ({}); no board alias was emitted, and one of these \
              images does not belong in this folder",
@@ -348,34 +346,34 @@ fn any_exec_resolves(dir: &DirIndex, invocations: &[Invocation]) -> bool {
         .any(|i| dir.resolve_exec_in(&i.cwd, &i.exec, !i.from_bat).is_some())
 }
 
-/// Run the recipes in priority order and keep the first one that is complete:
-/// every tool and every payload it names is still in the folder. A branding
-/// variant whose ROM was never copied in must not bury the sibling recipe that
-/// is intact, so an incomplete candidate is only a fallback.
+/// Run the recipe tiers in priority order and keep the first that launches a
+/// tool the folder still has. Within one tier the alternatives are branding
+/// variants of the same recipe, so the complete one wins: a variant whose ROM
+/// was never copied in must not bury the sibling that is intact.
 fn choose_recipe(
     dir: &DirIndex,
     folder: &str,
     launchers: &[Launcher],
     warnings: &mut Vec<String>,
 ) -> Vec<Invocation> {
-    let mut partial: Vec<Invocation> = Vec::new();
     let mut fallback: Vec<Invocation> = Vec::new();
-    for set in candidate_recipes(dir, folder, launchers) {
-        let invocations = run(dir, &set);
-        if invocations.is_empty() {
-            continue;
+    for tier in candidate_recipes(dir, folder, launchers) {
+        let runs: Vec<Vec<Invocation>> = tier
+            .iter()
+            .map(|set| run(dir, set))
+            .filter(|inv| !inv.is_empty())
+            .collect();
+        if let Some(clean) = runs.iter().find(|inv| fully_resolved(dir, inv)) {
+            return clean.clone();
         }
-        if fully_resolved(dir, &invocations) {
-            return invocations;
+        if let Some(partial) = runs.iter().find(|inv| any_exec_resolves(dir, inv)) {
+            return partial.clone();
         }
-        if partial.is_empty() && any_exec_resolves(dir, &invocations) {
-            partial = invocations;
-        } else if fallback.is_empty() {
-            fallback = invocations;
+        if fallback.is_empty() {
+            if let Some(first) = runs.into_iter().next() {
+                fallback = first;
+            }
         }
-    }
-    if !partial.is_empty() {
-        return partial;
     }
     if !fallback.is_empty() {
         return fallback;
@@ -383,25 +381,29 @@ fn choose_recipe(
     menu_recipe(dir, folder, launchers, warnings)
 }
 
-/// Recipe entry points, best first: numbered steps, then what the root launcher
-/// calls, then the conventional script names, one candidate per branding
-/// variant. Every UEFI candidate is tried before any DOS one.
-fn candidate_recipes(dir: &DirIndex, folder: &str, launchers: &[Launcher]) -> Vec<Vec<String>> {
-    let mut sets: Vec<Vec<String>> = Vec::new();
+/// Recipe entry points as tiers, best tier first: numbered steps, then what the
+/// root launcher calls, then the conventional script names, then the folder's
+/// own launcher. Every UEFI tier is tried before any DOS one. The alternatives
+/// inside a tier are equals; the tiers are not.
+fn candidate_recipes(
+    dir: &DirIndex,
+    folder: &str,
+    launchers: &[Launcher],
+) -> Vec<Vec<Vec<String>>> {
+    let mut tiers: Vec<Vec<Vec<String>>> = Vec::new();
     for ext in ["nsh", "bat"] {
-        sets.push(
-            (1..=9)
-                .map(|n| format!("step{n}.{ext}"))
-                .filter(|s| dir.get(s).is_some())
-                .collect(),
-        );
+        tiers.push(vec![(1..=9)
+            .map(|n| format!("step{n}.{ext}"))
+            .filter(|s| dir.get(s).is_some())
+            .collect()]);
+
         let called: Vec<String> = launchers
             .iter()
             .flat_map(|l| l.calls.iter())
             .filter(|c| c.ends_with(ext) && dir.get(c).is_some())
             .cloned()
             .collect();
-        sets.push(unique(called));
+        tiers.push(vec![unique(called)]);
 
         let ec: Vec<String> = FALLBACK_EC
             .iter()
@@ -413,20 +415,27 @@ fn candidate_recipes(dir: &DirIndex, folder: &str, launchers: &[Launcher]) -> Ve
             .map(|s| format!("{s}.{ext}"))
             .filter(|s| dir.get(s).is_some())
             .collect();
-        for one in &bios {
-            let mut set = vec![one.clone()];
-            set.extend(ec.iter().cloned());
-            sets.push(set);
-        }
-        if bios.is_empty() {
-            sets.push(ec);
-        }
+        let variants: Vec<Vec<String>> = if bios.is_empty() {
+            vec![ec]
+        } else {
+            bios.iter()
+                .map(|one| {
+                    let mut set = vec![one.clone()];
+                    set.extend(ec.iter().cloned());
+                    set
+                })
+                .collect()
+        };
+        tiers.push(variants);
 
         let own = format!("{folder}.{ext}");
-        sets.push(dir.get(&own).map(|_| own).into_iter().collect());
+        tiers.push(vec![dir.get(&own).map(|_| own).into_iter().collect()]);
     }
-    sets.retain(|s| !s.is_empty());
-    sets
+    for tier in &mut tiers {
+        tier.retain(|set| !set.is_empty());
+    }
+    tiers.retain(|tier| !tier.is_empty());
+    tiers
 }
 
 /// Every script the ordinary candidates start from, deduplicated.
@@ -434,6 +443,7 @@ fn entry_scripts(dir: &DirIndex, folder: &str, launchers: &[Launcher]) -> Vec<St
     unique(
         candidate_recipes(dir, folder, launchers)
             .into_iter()
+            .flatten()
             .flatten()
             .collect(),
     )
@@ -592,12 +602,17 @@ fn lane_of(dir: &DirIndex, invocations: &[Invocation]) -> Lane {
     }
 }
 
+/// Subdirectory paths go out the way a shell on the payload volume spells them.
+fn shell_path(name: &str) -> String {
+    name.replace('/', "\\")
+}
+
 fn real_steps(dir: &DirIndex, invocations: &[Invocation], warnings: &mut Vec<String>) -> Vec<Step> {
     let mut steps = Vec::with_capacity(invocations.len());
     for (i, inv) in invocations.iter().enumerate() {
         let prefer_efi = !inv.from_bat;
         let resolved_exec = dir.resolve_exec_in(&inv.cwd, &inv.exec, prefer_efi);
-        let exec_name = resolved_exec.map_or_else(|| inv.exec.clone(), |m| m.name.clone());
+        let exec_name = resolved_exec.map_or_else(|| inv.exec.clone(), |m| shell_path(&m.name));
         let exec_sha = match resolved_exec {
             Some(m) => dir.sha256(&m.name).unwrap_or_default(),
             None => {
@@ -611,7 +626,7 @@ fn real_steps(dir: &DirIndex, invocations: &[Invocation], warnings: &mut Vec<Str
         for name in &inv.files {
             match dir.get_in(&inv.cwd, name) {
                 Some(m) => files.push(PayloadFile {
-                    name: m.name.clone(),
+                    name: shell_path(&m.name),
                     sha256: dir.sha256(&m.name).unwrap_or_default(),
                     size: m.size,
                 }),
@@ -636,8 +651,7 @@ fn real_steps(dir: &DirIndex, invocations: &[Invocation], warnings: &mut Vec<Str
                 inv.origin
             ));
         }
-        // A `%NAME%` that survived expansion leaves the real target unnamed, so
-        // the command cannot be replayed as written.
+        // A `%NAME%` that survived expansion leaves the real target unnamed.
         if note.is_empty() && (exec_name.contains('%') || inv.args.contains('%')) {
             resolved = false;
             note = "a variable in this command was never expanded".to_string();
@@ -649,9 +663,10 @@ fn real_steps(dir: &DirIndex, invocations: &[Invocation], warnings: &mut Vec<Str
         }
 
         let size = resolved_exec.map_or(0, |m| m.size);
+        let payload = files.iter().map(|f| f.size).max().unwrap_or(0);
         steps.push(Step {
             index: i as u32 + 1,
-            kind: classify_kind(&exec_name, &inv.args, size, resolved_exec.is_some()),
+            kind: classify_kind(&exec_name, &inv.args, size, payload, resolved_exec.is_some()),
             exec: exec_name,
             exec_sha256: exec_sha,
             args: inv.args.clone(),
@@ -708,8 +723,9 @@ fn bare_steps(dir: &DirIndex, lane: Lane, warnings: &mut Vec<String>) -> Vec<Ste
         .collect()
 }
 
-fn classify_kind(exec: &str, args: &str, size: u64, resolved: bool) -> StepKind {
-    let e = exec.rsplit('/').next().unwrap_or(exec).to_ascii_lowercase();
+/// `size` is the launched tool's, `payload` the largest file it was handed.
+fn classify_kind(exec: &str, args: &str, size: u64, payload: u64, resolved: bool) -> StepKind {
+    let e = exec.rsplit(['/', '\\']).next().unwrap_or(exec).to_ascii_lowercase();
     let a = args.to_ascii_lowercase();
     if e.contains("kbdetectck") || e.contains("ckmever") {
         return StepKind::Gate;
@@ -725,11 +741,19 @@ fn classify_kind(exec: &str, args: &str, size: u64, resolved: bool) -> StepKind 
     if e.starts_with("fpt") {
         return if a.contains("closemnf") {
             StepKind::Gate
+        } else if a.contains("-bios") {
+            StepKind::Bios
         } else {
             StepKind::Me
         };
     }
-    if e.contains("afu") || e.contains("efiflash") {
+    // Phoenix and MSI DOS flashers name neither the vendor nor the image.
+    if e.contains("afu")
+        || e.contains("efiflash")
+        || e.contains("phlash")
+        || e.contains("ph16")
+        || e.contains("miflash")
+    {
         return StepKind::Bios;
     }
     if e.contains("amide")
@@ -742,8 +766,7 @@ fn classify_kind(exec: &str, args: &str, size: u64, resolved: bool) -> StepKind 
     {
         return StepKind::Other;
     }
-    // Anything else a recipe launches is the vendor's own BIOS image, but a word
-    // that names no file is a typo in the script, not a flasher.
+    // A word that names no file is a typo in the script, not a flasher.
     if !resolved {
         return if e.contains('.') {
             StepKind::Bios
@@ -751,7 +774,8 @@ fn classify_kind(exec: &str, args: &str, size: u64, resolved: bool) -> StepKind 
             StepKind::Other
         };
     }
-    if size >= 1024 * 1024 {
+    // Either the launched image is the firmware, or a small tool was handed it.
+    if size >= 1024 * 1024 || payload >= 1024 * 1024 {
         StepKind::Bios
     } else {
         StepKind::Other

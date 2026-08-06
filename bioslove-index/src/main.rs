@@ -1,6 +1,7 @@
 //! Walks the BIOSLove firmware share and emits the model index the UEFI app
 //! reads. See `uefi/src/bioslove.rs` for the consuming side of the schema.
 
+mod ambiguity;
 mod diff;
 mod dirindex;
 mod entry;
@@ -18,7 +19,7 @@ use chrono::{SecondsFormat, Utc};
 use clap::Parser;
 
 use crate::identity::{read_launchers, Launcher};
-use crate::model::{Index, Lane, Side, SCHEMA_VERSION};
+use crate::model::{Index, Lane, Side, DEFAULT_PAYLOAD_ROOT, SCHEMA_VERSION};
 
 const DEFAULT_SHARE: &str = r"\\opk-riv\winbits\Drivers\Thumb\multiboot\BiosLove";
 
@@ -39,6 +40,10 @@ struct Cli {
     /// Previous index.json to compare the fresh walk against.
     #[arg(long)]
     diff: Option<PathBuf>,
+
+    /// Volume-relative directory the firmware resolves payloads against.
+    #[arg(long, default_value = DEFAULT_PAYLOAD_ROOT)]
+    payload_root: String,
 }
 
 fn main() -> Result<()> {
@@ -47,7 +52,7 @@ fn main() -> Result<()> {
         bail!("share {} is not reachable", cli.share.display());
     }
 
-    let index = walk(&cli.share)?;
+    let index = walk(&cli.share, &cli.payload_root)?;
     let json = serde_json::to_string_pretty(&index)?;
     if let Some(parent) = cli.out.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent)?;
@@ -66,7 +71,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn walk(share: &Path) -> Result<Index> {
+fn walk(share: &Path, payload_root: &str) -> Result<Index> {
     let mut entries = Vec::new();
     for side in Side::ALL {
         let Some(side_dir) = resolve_side_dir(share, side.dir_name())? else {
@@ -104,6 +109,7 @@ fn walk(share: &Path) -> Result<Index> {
         schema_version: SCHEMA_VERSION,
         generated_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
         source: share.display().to_string(),
+        payload_root: payload_root.trim_end_matches('\\').to_string(),
         entries,
     })
 }
@@ -179,4 +185,48 @@ fn summary(index: &Index, out: &Path) {
         err,
         "total {reachable} reachable, {refs} dangling references, {warned} entries with warnings"
     );
+
+    report_ambiguity(index, &mut err);
+}
+
+/// Tokens the firmware would not be able to resolve to one entry.
+fn report_ambiguity(index: &Index, err: &mut impl Write) {
+    let all = ambiguity::collisions(index);
+    let (swallow, shared): (Vec<_>, Vec<_>) = all
+        .iter()
+        .partition(|c| c.kind == ambiguity::Kind::PatternSwallowsExact);
+
+    let settled = shared.iter().filter(|c| c.settled_by_name()).count();
+    let _ = writeln!(
+        err,
+        "match safety: {} ambiguous exact token(s) ({settled} settled by the folder-name tiebreak, \
+         {} need an operator), {} pattern(s) covering another model",
+        shared.len(),
+        shared.len() - settled,
+        swallow.len()
+    );
+    // A family pattern over another folder's exact name is a wrong-flash risk.
+    for c in &swallow {
+        let _ = writeln!(
+            err,
+            "  WARN {} pattern {} also matches {}",
+            c.side.label(),
+            c.token,
+            c.folders.join(", ")
+        );
+    }
+    let open: Vec<_> = shared.iter().filter(|c| !c.settled_by_name()).collect();
+    for c in open.iter().take(10) {
+        let _ = writeln!(
+            err,
+            "  {} token {} claimed by {} folders: {}",
+            c.side.label(),
+            c.token,
+            c.folders.len(),
+            c.folders.join(", ")
+        );
+    }
+    if open.len() > 10 {
+        let _ = writeln!(err, "  ... and {} more", open.len() - 10);
+    }
 }

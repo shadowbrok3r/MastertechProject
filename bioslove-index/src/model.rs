@@ -158,10 +158,21 @@ impl Entry {
     }
 }
 
+/// Where the side trees sit on the payload volume the firmware reads.
+pub const DEFAULT_PAYLOAD_ROOT: &str = r"\multiboot\BiosLove";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Index {
     pub schema_version: u32,
     pub generated_at: String,
+    /// Share path this was built from; provenance only.
     pub source: String,
+    /// Volume-relative directory the firmware resolves payloads against.
+    #[serde(default = "default_payload_root")]
+    pub payload_root: String,
     pub entries: Vec<Entry>,
+}
+
+fn default_payload_root() -> String {
+    DEFAULT_PAYLOAD_ROOT.to_string()
 }

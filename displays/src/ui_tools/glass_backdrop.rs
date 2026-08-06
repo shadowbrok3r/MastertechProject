@@ -107,7 +107,7 @@ pub fn install(cc: &eframe::CreationContext<'_>) -> bool {
 
 /// Free the backend's GL objects. Call from `eframe::App::on_exit`, where the context is still
 /// current. Idempotent.
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
+#[cfg(not(any(target_os = "ios", target_os = "android", target_arch = "wasm32")))]
 pub fn shutdown(gl: &backdrop_blur_egui::glow::Context) {
     backend::shutdown(gl);
 }
@@ -322,7 +322,7 @@ pub enum FrostReport {
     Composited,
 }
 
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
+#[cfg(not(any(target_os = "ios", target_os = "android", target_arch = "wasm32")))]
 mod backend {
     use super::{FrostReport, GlassParams};
     use backdrop_blur_egui::{
@@ -431,7 +431,13 @@ mod backend {
 
 /// iOS/Android build eframe without a renderer, so there is no GL context to grab from and the
 /// backend is not a dependency. Glass degrades to the fills surfaces already paint.
-#[cfg(any(target_os = "ios", target_os = "android"))]
+///
+/// wasm32 is excluded for a different reason: glow's WebGL backend resolves object-valued
+/// bindings by reverse lookup in its own resource slab and panics when the value is absent,
+/// including when the binding is null. The grab-pass captures `DRAW_FRAMEBUFFER_BINDING` to
+/// restore it, and eframe renders into the canvas default framebuffer, so that read is null and
+/// aborts the module on the first frost.
+#[cfg(any(target_os = "ios", target_os = "android", target_arch = "wasm32"))]
 mod backend {
     use super::{FrostReport, GlassParams};
     use eframe::egui::{Rect, Ui};

@@ -95,8 +95,6 @@ impl<'a> Expander<'a> {
             return;
         };
         let from_bat = name.to_ascii_lowercase().ends_with(".bat");
-        // `%0` is the running script's own name; V560TU re-invokes itself with it.
-        let outer_zero = self.vars.insert("0".to_string(), meta.base().to_string());
         let depth = self.blocks.len();
         let outer_floor = std::mem::replace(&mut self.goto_floor, depth);
         let outer_goto = self.pending_goto.take();
@@ -105,15 +103,17 @@ impl<'a> Expander<'a> {
         }
         self.pending_goto = outer_goto;
         self.goto_floor = outer_floor;
-        match outer_zero {
-            Some(v) => self.vars.insert("0".to_string(), v),
-            None => self.vars.remove("0"),
-        };
         self.blocks.truncate(depth);
     }
 
     fn line(&mut self, origin: &str, raw: &str, from_bat: bool) {
         let line = clean_line(raw);
+        // The UEFI shell writes the running script's own name as a bare `%0`.
+        let line = if line.contains("%0") {
+            line.replace("%0", origin.rsplit('/').next().unwrap_or(origin))
+        } else {
+            line
+        };
         let line = line.as_str();
         if line.is_empty() {
             return;
@@ -149,8 +149,7 @@ impl<'a> Expander<'a> {
             self.set_var(rest);
             return;
         }
-        // The UEFI shell dispatches between alternative recipes with `goto`; DOS
-        // batch uses it for error unwinding, which straight-line reading breaks.
+        // Only the UEFI shell uses `goto` to dispatch between recipes.
         if !from_bat {
             if let Some(target) = strip_ci(line, "goto ") {
                 self.goto(target);
@@ -227,8 +226,7 @@ impl<'a> Expander<'a> {
         let open = match strip_ci(cond, "exist ") {
             Some(name) => {
                 let name = name.trim().trim_matches('"');
-                // A file an earlier step writes is absent from the listing by
-                // design, so the guard around it is open.
+                // A file an earlier step writes is absent from the listing by design.
                 if is_runtime_file(name) {
                     !negated
                 } else {

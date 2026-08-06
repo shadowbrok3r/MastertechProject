@@ -25,6 +25,7 @@ mod bioslove;
 mod bootdiag;
 mod capsule;
 mod charts;
+mod launch;
 mod hii;
 mod netraw;
 mod order;
@@ -4795,6 +4796,244 @@ fn load_bioslove_index(app: &mut App) {
     }
 }
 
+/// Drop a prepared step; the selection or the index moved under it.
+fn clear_flash_prep(app: &mut App) {
+    app.flash_ready = None;
+    app.flash_note.clear();
+    app.flash_blocked = false;
+    app.flash_armed = false;
+}
+
+/// Trailing path component of a backslash-separated volume path.
+fn base_name(path: &str) -> &str {
+    path.rsplit('\\').next().unwrap_or(path)
+}
+
+/// Read the step under the cursor, verify every byte it will touch against the
+/// index, and run the pre-flight gates. Loads no image and starts nothing.
+fn prepare_flash_step(app: &mut App) {
+    clear_flash_prep(app);
+    let rows = flash_rows(app);
+    let Some((ei, _)) = rows.get(app.flash_sel).copied() else {
+        app.status = "no model selected".into();
+        return;
+    };
+
+    let mut note: Vec<String> = Vec::new();
+    let mut blocked = false;
+    let mut ready = None;
+
+    {
+        let Some(index) = app.flash_index.as_ref() else {
+            return;
+        };
+        let entry = &index.entries[ei];
+
+        if !entry.lane.launchable() {
+            note.push(format!("BLOCKED {} is {}", entry.folder, entry.lane.label()));
+            note.push(match entry.lane {
+                bioslove::Lane::InBiosOnly => {
+                    "  flash from the board's own updater (EZ Flash / M-Flash / Instant Flash)".into()
+                }
+                bioslove::Lane::DosOnly => "  real-mode DOS flasher; needs the legacy BIOSLove boot".into(),
+                bioslove::Lane::WindowsOnly => "  vendor tool runs under Windows, not firmware".into(),
+                _ => "  no firmware-launchable tool in this folder".into(),
+            });
+            app.flash_note = note;
+            app.flash_blocked = true;
+            app.dirty = true;
+            return;
+        }
+
+        let Some(step) = entry.steps.get(app.flash_step) else {
+            note.push("BLOCKED no such step in this recipe".to_string());
+            app.flash_note = note;
+            app.flash_blocked = true;
+            app.dirty = true;
+            return;
+        };
+
+        note.push(format!(
+            "step {} of {} - {} via {}",
+            step.index,
+            entry.steps.len(),
+            step.kind.label(),
+            base_name(&step.exec)
+        ));
+
+        if !step.resolved {
+            note.push("BLOCKED index says this step's payloads are missing".to_string());
+            blocked = true;
+        }
+
+        match capsule::power_verdict(&app.info.power) {
+            Ok(m) => note.push(format!("ok  power: {m}")),
+            Err(e) => {
+                note.push(format!("BLOCKED power: {e}"));
+                blocked = true;
+            }
+        }
+
+        // Auto-detect confirms the board; an operator-picked row does not.
+        match app.flash_matches.iter().find(|m| m.entry == ei) {
+            Some(m) if m.confidence == bioslove::Confidence::Exact => {
+                note.push(format!("ok  board: {}", m.evidence()))
+            }
+            Some(m) => note.push(format!("WARN board: {} - confirm by hand", m.evidence())),
+            None => note.push("WARN board: operator-selected, SMBIOS did not match".to_string()),
+        }
+
+        if !blocked {
+            let exec_path = index.file_path(entry, &step.exec);
+            match bioslove::read_file_any_volume(&exec_path, bioslove::PAYLOAD_MAX_BYTES) {
+                Err(e) => {
+                    note.push(format!("BLOCKED tool: {e}"));
+                    blocked = true;
+                }
+                Ok((bytes, volume)) => {
+                    let dry = launch::dry_run(&bytes);
+                    if !step.exec_sha256.is_empty() && dry.sha256 != step.exec_sha256 {
+                        note.push(format!(
+                            "BLOCKED tool digest {} does not match the index",
+                            sha_prefix(&dry.sha256)
+                        ));
+                        blocked = true;
+                    } else if step.exec_sha256.is_empty() {
+                        note.push("WARN tool has no digest in the index".to_string());
+                    } else {
+                        note.push(format!("ok  tool digest {}", sha_prefix(&dry.sha256)));
+                    }
+                    if dry.ok {
+                        note.push(format!("ok  tool is a valid EFI application ({} B)", dry.bytes));
+                    } else {
+                        note.push(format!("BLOCKED tool {}: {}", dry.verdict, dry.detail));
+                        blocked = true;
+                    }
+
+                    for f in &step.files {
+                        let path = index.file_path(entry, &f.name);
+                        match bioslove::read_file_on_volume(
+                            volume,
+                            &path,
+                            bioslove::PAYLOAD_MAX_BYTES,
+                        ) {
+                            Err(e) => {
+                                note.push(format!("BLOCKED payload {}: {e}", f.name));
+                                blocked = true;
+                            }
+                            Ok(p) => {
+                                let got = capsule::sha256_hex(&p);
+                                if f.sha256.is_empty() {
+                                    note.push(format!("WARN payload {} has no digest", f.name));
+                                } else if got != f.sha256 {
+                                    note.push(format!(
+                                        "BLOCKED payload {} digest {} does not match the index",
+                                        f.name,
+                                        sha_prefix(&got)
+                                    ));
+                                    blocked = true;
+                                } else {
+                                    note.push(format!(
+                                        "ok  payload {} {} B {}",
+                                        f.name,
+                                        p.len(),
+                                        sha_prefix(&got)
+                                    ));
+                                }
+                            }
+                        }
+                    }
+
+                    if !blocked {
+                        let cmd = format!("{} {}", base_name(&step.exec), step.args);
+                        note.push(format!("ready to run: {}", cmd.trim()));
+                        note.push(format!("expect: {}", step.after.label()));
+                        ready = Some(PreparedStep {
+                            entry: ei,
+                            step: app.flash_step,
+                            volume,
+                            exec_path,
+                            command_line: cmd.trim().to_string(),
+                            bytes,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    app.status = if blocked {
+        "pre-flight refused this step; see the Flash tab".into()
+    } else {
+        "verified - press F twice to run".into()
+    };
+    app.flash_note = note;
+    app.flash_blocked = blocked;
+    app.flash_ready = ready;
+    app.dirty = true;
+}
+
+/// Hand the console to the prepared vendor tool and start it.
+fn do_flash_step(
+    app: &mut App,
+    terminal: &mut Terminal<ratatui_uefi::UefiOutputBackend>,
+) -> Result<()> {
+    let Some(p) = app.flash_ready.take() else {
+        app.status = "nothing prepared - press ENTER first".into();
+        return Ok(());
+    };
+    // The row set can move under a prepared step (a changed search term), so the
+    // selection must still be the entry that was verified.
+    let selected = flash_rows(app).get(app.flash_sel).map(|(ei, _)| *ei);
+    if selected != Some(p.entry) {
+        clear_flash_prep(app);
+        app.status = "selection moved since verification - press ENTER again".into();
+        return Ok(());
+    }
+
+    app.status = format!("RUNNING {} - DO NOT POWER OFF", p.command_line);
+    terminal.draw(|frame| render(frame, app))?;
+    logln(format!(
+        "bioslove: starting {} from {}",
+        p.command_line, p.exec_path
+    ));
+
+    let guard = launch::save_console();
+    let mut dp_buf: Vec<u8> = Vec::new();
+    let cpath = uefi::CString16::try_from(p.exec_path.as_str()).ok();
+    let dp = cpath
+        .as_ref()
+        .and_then(|c| launch::file_device_path(p.volume, c, &mut dp_buf).ok());
+    if dp.is_none() {
+        logln("bioslove: no device path for the child; it may not find its payload".to_string());
+    }
+    let outcome = launch::run(&p.bytes, &p.command_line, dp);
+    guard.restore();
+    terminal.clear()?;
+    app.dirty = true;
+
+    match outcome {
+        Err(e) => {
+            logln(format!("bioslove: launch failed: {e}"));
+            app.flash_note.push(format!("FAILED {e}"));
+            app.status = format!("launch failed: {e}");
+        }
+        Ok(ran) => {
+            logln(format!("bioslove: {} returned {:?}", p.command_line, ran.status));
+            app.flash_note
+                .push(format!("returned {:?} from {}", ran.status, p.command_line));
+            if ran.status == uefi::Status::SUCCESS {
+                // The recipe advances only on a clean return.
+                app.flash_step = p.step.saturating_add(1);
+                app.status = format!("step {} done - {:?}", p.step + 1, ran.status);
+            } else {
+                app.status = format!("step {} returned {:?}", p.step + 1, ran.status);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// BIOSLove model index: what this machine is, and what firmware is on hand.
 fn page_flash(frame: &mut Frame, area: Rect, app: &App) {
     let cols = Layout::default()
@@ -4974,11 +5213,19 @@ fn page_flash(frame: &mut Frame, area: Rect, app: &App) {
                 detail.push(Line::from(""));
                 detail.push(header("Sequence"));
             }
-            for s in &e.steps {
-                let c = if s.resolved { palette::TEXT } else { palette::ERR };
+            for (n, s) in e.steps.iter().enumerate() {
+                let at = n == app.flash_step;
+                let c = if !s.resolved {
+                    palette::ERR
+                } else if at {
+                    palette::ACCENT
+                } else {
+                    palette::TEXT
+                };
                 detail.push(Line::from(Span::styled(
                     format!(
-                        "  {}. {:<5} {} {}  [{}]",
+                        "{} {}. {:<5} {} {}  [{}]",
+                        if at { ">" } else { " " },
                         s.index,
                         s.kind.label(),
                         s.exec,
@@ -5018,10 +5265,39 @@ fn page_flash(frame: &mut Frame, area: Rect, app: &App) {
                 )));
             }
             detail.push(Line::from(""));
-            detail.push(Line::from(Span::styled(
-                "read-only: this build identifies and verifies, it does not flash",
-                Style::default().fg(palette::MUTED),
-            )));
+            detail.push(header("Pre-flight"));
+            if app.flash_note.is_empty() {
+                detail.push(Line::from(Span::styled(
+                    "  ENTER verifies the selected step ([ ] move the cursor)",
+                    Style::default().fg(palette::MUTED),
+                )));
+            }
+            for n in &app.flash_note {
+                let c = if n.starts_with("BLOCKED") || n.starts_with("FAILED") {
+                    palette::ERR
+                } else if n.starts_with("WARN") {
+                    palette::WARN
+                } else if n.starts_with("ok") || n.starts_with("ready") {
+                    palette::GOOD
+                } else {
+                    palette::TEXT
+                };
+                detail.push(Line::from(Span::styled(
+                    format!("  {n}"),
+                    Style::default().fg(c),
+                )));
+            }
+            if app.flash_armed {
+                detail.push(Line::from(Span::styled(
+                    "  ARMED - press F again to run the vendor tool. It writes firmware.",
+                    Style::default().fg(palette::ERR),
+                )));
+            } else if app.flash_ready.is_some() {
+                detail.push(Line::from(Span::styled(
+                    "  verified - press F to arm",
+                    Style::default().fg(palette::ACCENT),
+                )));
+            }
         }
     }
     frame.render_widget(para(detail, "Selected"), split[1]);
@@ -7214,10 +7490,11 @@ fn render(frame: &mut Frame, app: &App) {
         ],
         TAB_FLASH => &[
             ("e", "search model"),
-            ("f", "reload index"),
             ("Up/Dn", "select"),
-            ("r", "rescan + detect"),
-            ("Tab", "next"),
+            ("[ ]", "step"),
+            ("ENTER", "verify"),
+            ("F F", "RUN step"),
+            ("f", "reload index"),
             ("q", "quit"),
         ],
         _ => &[
@@ -7399,6 +7676,29 @@ struct App {
     flash_filter: String,
     /// Highlighted row on the Flash tab.
     flash_sel: usize,
+    /// Step cursor within the highlighted entry's recipe.
+    flash_step: usize,
+    /// Pre-flight report for the step under the cursor.
+    flash_note: Vec<String>,
+    /// A pre-flight gate refused this step; blocks arming.
+    flash_blocked: bool,
+    /// Verified tool bytes and command line awaiting a launch.
+    flash_ready: Option<PreparedStep>,
+    /// Second 'F' launches the prepared step. Cleared by any other key.
+    flash_armed: bool,
+}
+
+/// A recipe step that passed every gate and is ready to run.
+struct PreparedStep {
+    entry: usize,
+    step: usize,
+    /// Volume the tool and its payloads were read from.
+    volume: uefi::Handle,
+    /// Volume path of the tool, for the child's device path.
+    exec_path: String,
+    /// Full command line, argv[0] included.
+    command_line: String,
+    bytes: Vec<u8>,
 }
 
 impl App {
@@ -7661,6 +7961,11 @@ fn run() -> Result<()> {
         flash_matches: Vec::new(),
         flash_filter: String::new(),
         flash_sel: 0,
+        flash_step: 0,
+        flash_note: Vec::new(),
+        flash_blocked: false,
+        flash_ready: None,
+        flash_armed: false,
     };
 
     terminal.clear()?;
@@ -7832,6 +8137,8 @@ fn run() -> Result<()> {
             // A changed search term re-slices the row set under the cursor.
             if app.editing == EditField::Flash || key.code == terminput::KeyCode::Enter {
                 app.flash_sel = 0;
+                app.flash_step = 0;
+                clear_flash_prep(&mut app);
                 app.dirty = true;
             }
             // A hand-edited target outranks discovery and is never overwritten.
@@ -7852,6 +8159,10 @@ fn run() -> Result<()> {
         }
         if app.fw_armed && key.code != terminput::KeyCode::Char('F') {
             app.fw_armed = false;
+            app.status = "flash disarmed".into();
+        }
+        if app.flash_armed && key.code != terminput::KeyCode::Char('F') {
+            app.flash_armed = false;
             app.status = "flash disarmed".into();
         }
 
@@ -8073,12 +8384,52 @@ fn run() -> Result<()> {
             }
             terminput::KeyCode::Up if app.tab == TAB_FLASH => {
                 app.flash_sel = app.flash_sel.saturating_sub(1);
+                app.flash_step = 0;
+                clear_flash_prep(&mut app);
                 app.dirty = true;
             }
             terminput::KeyCode::Down if app.tab == TAB_FLASH => {
                 let last = flash_rows(&app).len().saturating_sub(1);
                 app.flash_sel = (app.flash_sel + 1).min(last);
+                app.flash_step = 0;
+                clear_flash_prep(&mut app);
                 app.dirty = true;
+            }
+            // Step cursor within the selected recipe.
+            terminput::KeyCode::Char('[') if app.tab == TAB_FLASH => {
+                app.flash_step = app.flash_step.saturating_sub(1);
+                clear_flash_prep(&mut app);
+                app.dirty = true;
+            }
+            terminput::KeyCode::Char(']') if app.tab == TAB_FLASH => {
+                let rows = flash_rows(&app);
+                let last = rows
+                    .get(app.flash_sel)
+                    .and_then(|(ei, _)| app.flash_index.as_ref().map(|i| i.entries[*ei].steps.len()))
+                    .unwrap_or(0)
+                    .saturating_sub(1);
+                app.flash_step = (app.flash_step + 1).min(last);
+                clear_flash_prep(&mut app);
+                app.dirty = true;
+            }
+            // Verify the step under the cursor without loading or starting it.
+            terminput::KeyCode::Enter if app.tab == TAB_FLASH => {
+                app.status = "verifying...".into();
+                terminal.draw(|frame| render(frame, &app))?;
+                prepare_flash_step(&mut app);
+            }
+            terminput::KeyCode::Char('F') if app.tab == TAB_FLASH => {
+                if app.flash_ready.is_none() {
+                    app.status = "prepare a step first (ENTER)".into();
+                } else if app.flash_blocked {
+                    app.status = "pre-flight refused this step".into();
+                } else if !app.flash_armed {
+                    app.flash_armed = true;
+                    app.status = "ARMED - press F again to run the vendor tool".into();
+                } else {
+                    app.flash_armed = false;
+                    do_flash_step(&mut app, &mut terminal)?;
+                }
             }
             terminput::KeyCode::Char('F') if app.tab == TAB_FIRMWARE => {
                 if app.capsule_bytes.is_empty() {

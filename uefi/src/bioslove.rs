@@ -34,6 +34,14 @@ impl Side {
             Side::Desktop => "desktop",
         }
     }
+
+    /// Directory under the payload root, as the share spells it.
+    pub fn dir_name(self) -> &'static str {
+        match self {
+            Side::Laptop => "laptop",
+            Side::Desktop => "Desktop",
+        }
+    }
 }
 
 /// How a payload is delivered. Only `Uefi` is launchable from firmware.
@@ -196,17 +204,38 @@ impl Entry {
     }
 }
 
+/// Where the side trees sit on the payload volume when the index does not say.
+fn default_payload_root() -> String {
+    "\\multiboot\\BiosLove".to_string()
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Index {
     pub schema_version: u32,
     #[serde(default)]
     pub generated_at: String,
+    /// Share path the index was built from; provenance only.
     #[serde(default)]
     pub source: String,
+    /// Volume-relative directory holding the `laptop` and `Desktop` trees.
+    #[serde(default = "default_payload_root")]
+    pub payload_root: String,
     pub entries: Vec<Entry>,
 }
 
 impl Index {
+    /// Volume path of a file inside an entry's folder. `name` may carry a
+    /// backslash-separated subdirectory, as the generator emits it.
+    pub fn file_path(&self, entry: &Entry, name: &str) -> String {
+        format!(
+            "{}\\{}\\{}\\{}",
+            self.payload_root.trim_end_matches('\\'),
+            entry.side.dir_name(),
+            entry.folder,
+            name
+        )
+    }
+
     pub fn laptop_count(&self) -> usize {
         self.entries.iter().filter(|e| e.side == Side::Laptop).count()
     }
@@ -267,6 +296,8 @@ pub struct Match {
     pub key: String,
     /// Index-side token it matched.
     pub token: String,
+    /// The token was the folder's own name, not one of its aliases.
+    pub own_name: bool,
 }
 
 impl Match {
@@ -373,16 +404,19 @@ pub fn match_machine(index: &Index, d: &crate::Smbios) -> Vec<Match> {
             }
 
             if let Some((confidence, token)) = hit {
+                let own_name = normalize(&token) == normalize(&e.folder);
                 let cand = Match {
                     entry: i,
                     confidence,
                     source: *src,
                     key: raw.trim().to_string(),
                     token,
+                    own_name,
                 };
-                let better = best
-                    .as_ref()
-                    .is_none_or(|b| (cand.confidence, cand.source) > (b.confidence, b.source));
+                let better = best.as_ref().is_none_or(|b| {
+                    (cand.confidence, cand.source, cand.own_name)
+                        > (b.confidence, b.source, b.own_name)
+                });
                 if better {
                     best = Some(cand);
                 }
@@ -393,10 +427,11 @@ pub fn match_machine(index: &Index, d: &crate::Smbios) -> Vec<Match> {
         }
     }
 
-    // Strongest confidence, then strongest SMBIOS field, then reachable first.
+    // Strongest confidence, then strongest SMBIOS field, then the folder named
+    // for the token over one that only lists it as an alias, then reachable.
     out.sort_by(|a, b| {
-        (b.confidence, b.source)
-            .cmp(&(a.confidence, a.source))
+        (b.confidence, b.source, b.own_name)
+            .cmp(&(a.confidence, a.source, a.own_name))
             .then_with(|| {
                 index.entries[b.entry]
                     .reachable
@@ -429,7 +464,7 @@ pub fn search(index: &Index, side: Option<Side>, needle: &str) -> Vec<usize> {
 
 /// Read `INDEX_PATH` off the first attached volume that has it.
 pub fn load_from_volume() -> Result<Index, String> {
-    let bytes = read_file_any_volume(INDEX_PATH)?;
+    let (bytes, _) = read_file_any_volume(INDEX_PATH, INDEX_MAX_BYTES)?;
     parse(&bytes)
 }
 
@@ -446,59 +481,79 @@ pub fn parse(bytes: &[u8]) -> Result<Index, String> {
     Ok(index)
 }
 
-/// Read a backslash-separated volume-relative path off any attached filesystem.
-pub fn read_file_any_volume(path: &str) -> Result<Vec<u8>, String> {
-    use uefi::proto::media::file::{File, FileAttribute, FileInfo, FileMode, FileType};
+/// Largest firmware payload that will be read for verification.
+pub const PAYLOAD_MAX_BYTES: usize = 64 * 1024 * 1024;
 
-    let cpath = uefi::CString16::try_from(path.replace('/', "\\").as_str())
-        .map_err(|_| format!("path is not valid UCS-2: {path}"))?;
+/// Read a volume-relative path off any attached filesystem, returning the bytes
+/// and the volume handle they came from.
+pub fn read_file_any_volume(path: &str, max: usize) -> Result<(Vec<u8>, uefi::Handle), String> {
     let handles =
         boot::find_handles::<SimpleFileSystem>().map_err(|e| format!("no filesystems ({e:?})"))?;
 
     let mut last = format!("{path} not found on any volume");
     for h in handles {
-        let mut sfs = match unsafe {
-            boot::open_protocol::<SimpleFileSystem>(
-                OpenProtocolParams {
-                    handle: h,
-                    agent: boot::image_handle(),
-                    controller: None,
-                },
-                OpenProtocolAttributes::GetProtocol,
-            )
-        } {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-        let Ok(mut root) = sfs.open_volume() else {
-            continue;
-        };
-        let Ok(handle) = root.open(&cpath, FileMode::Read, FileAttribute::empty()) else {
-            continue;
-        };
-        let Ok(FileType::Regular(mut f)) = handle.into_type() else {
-            last = format!("{path} is a directory");
-            continue;
-        };
-        let size = match f.get_boxed_info::<FileInfo>() {
-            Ok(i) => i.file_size() as usize,
+        match read_file_on_volume(h, path, max) {
+            Ok(bytes) => return Ok((bytes, h)),
             Err(e) => {
-                last = format!("stat {path}: {e:?}");
-                continue;
+                // Keep the most specific failure, not "not on this volume".
+                if !e.ends_with("not on this volume") {
+                    last = e;
+                }
             }
-        };
-        if size == 0 || size > INDEX_MAX_BYTES {
-            last = format!("{path} is {size} bytes (max {INDEX_MAX_BYTES})");
-            continue;
-        }
-        let mut buf = vec![0u8; size];
-        match f.read(&mut buf) {
-            Ok(n) if n == size => return Ok(buf),
-            Ok(n) => last = format!("short read: {n} of {size} bytes"),
-            Err(e) => last = format!("read {path}: {e:?}"),
         }
     }
     Err(last)
+}
+
+/// Read a volume-relative path off one known filesystem.
+pub fn read_file_on_volume(
+    volume: uefi::Handle,
+    path: &str,
+    max: usize,
+) -> Result<Vec<u8>, String> {
+    use uefi::proto::media::file::{File, FileAttribute, FileInfo, FileMode, FileType};
+
+    let cpath = uefi::CString16::try_from(path.replace('/', "\\").as_str())
+        .map_err(|_| format!("path is not valid UCS-2: {path}"))?;
+    let mut sfs = unsafe {
+        boot::open_protocol::<SimpleFileSystem>(
+            OpenProtocolParams {
+                handle: volume,
+                agent: boot::image_handle(),
+                controller: None,
+            },
+            OpenProtocolAttributes::GetProtocol,
+        )
+    }
+    .map_err(|_| "not on this volume".to_string())?;
+    let mut root = sfs
+        .open_volume()
+        .map_err(|_| "not on this volume".to_string())?;
+    let handle = root
+        .open(&cpath, FileMode::Read, FileAttribute::empty())
+        .map_err(|_| "not on this volume".to_string())?;
+    let FileType::Regular(mut f) = handle
+        .into_type()
+        .map_err(|e| format!("open {path}: {e:?}"))?
+    else {
+        return Err(format!("{path} is a directory"));
+    };
+    let size = f
+        .get_boxed_info::<FileInfo>()
+        .map(|i| i.file_size() as usize)
+        .map_err(|e| format!("stat {path}: {e:?}"))?;
+    if size == 0 {
+        return Err(format!("{path} is empty"));
+    }
+    if size > max {
+        return Err(format!("{path} is {size} bytes (max {max})"));
+    }
+    let mut buf = vec![0u8; size];
+    match f.read(&mut buf) {
+        Ok(n) if n == size => Ok(buf),
+        Ok(n) => Err(format!("short read: {n} of {size} bytes")),
+        Err(e) => Err(format!("read {path}: {e:?}")),
+    }
 }
 
 // Tests for `normalize` and `pattern_matches` live in the host-side
