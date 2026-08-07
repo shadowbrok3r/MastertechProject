@@ -706,6 +706,13 @@ fn is_placeholder_serial(s: &str) -> bool {
         // TongFang/Clevo barebone factory default.
         "1558",
         "...",
+        // Whitebox/OEM chassis default: 185 of 2688 computer rows carry it, so a
+        // machine keyed on it links to an arbitrary unrelated computer.
+        "standard",
+        "default",
+        "oem",
+        "system serial",
+        "chassis serial",
     ];
     let l = t.to_ascii_lowercase();
     PLACEHOLDERS.iter().any(|p| l == *p)
