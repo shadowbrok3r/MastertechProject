@@ -767,6 +767,7 @@ fn drive_single(
     let mut last_tick = Instant::now();
     let mut latest_metrics = Metrics::default();
     let mut metric_batch: Vec<StressTestMetric> = Vec::with_capacity(METRIC_BATCH_SIZE);
+    let mut drops = MetricDrops::default();
     let label = stressor.label().to_string();
     let effective_rules = rules.clone().unwrap_or_default();
     let mut stage_stats = StageStats::begin(0, &label, stressor, &telemetry.snapshot());
@@ -843,27 +844,18 @@ fn drive_single(
                     Ok(metric) => {
                         metric_batch.push(metric);
                         if metric_batch.len() >= METRIC_BATCH_SIZE {
-                            if let Err(err) = flush_metrics(&mut metric_batch) {
-                                send(
-                                    update_tx,
-                                    RunUpdate::Error {
-                                        message: format!("stress_test_metric persist failed: {err}"),
-                                    },
-                                );
-                                session.stop();
-                                break;
+                            if let Some(w) = flush_metrics(&mut metric_batch, &mut drops) {
+                                send(update_tx, RunUpdate::Warning { message: w });
                             }
                         }
                     }
                     Err(err) => {
                         send(
                             update_tx,
-                            RunUpdate::Error {
-                                message: format!("invalid telemetry for stress_test_metric: {err}"),
+                            RunUpdate::Warning {
+                                message: drops.record(1, format!("invalid telemetry: {err}")),
                             },
                         );
-                        session.stop();
-                        break;
                     }
                 }
             }
@@ -883,13 +875,11 @@ fn drive_single(
         thread::sleep(Duration::from_millis(50));
     }
 
-    if let Err(err) = flush_metrics(&mut metric_batch) {
-        send(
-            update_tx,
-            RunUpdate::Error {
-                message: format!("stress_test_metric persist failed: {err}"),
-            },
-        );
+    if let Some(w) = flush_metrics(&mut metric_batch, &mut drops) {
+        send(update_tx, RunUpdate::Warning { message: w });
+    }
+    if let Some(w) = drops.summary() {
+        send(update_tx, RunUpdate::Warning { message: w });
     }
 
     // Final drain: any sample emitted after the last periodic absorb — the
@@ -1013,9 +1003,9 @@ fn drive_concurrent(
 
     let mut last_tick = Instant::now();
     let mut metric_batch: Vec<StressTestMetric> = Vec::with_capacity(METRIC_BATCH_SIZE);
+    let mut drops = MetricDrops::default();
     let deadline = duration_secs.map(|d| started_at + Duration::from_secs(d));
     let stop_all = |sessions: &[StressSession]| sessions.iter().for_each(|s| s.stop());
-    let mut aborted = false;
 
     loop {
         if cancel.load(Ordering::Relaxed) {
@@ -1098,23 +1088,15 @@ fn drive_concurrent(
                         Ok(metric) => {
                             metric_batch.push(metric);
                             if metric_batch.len() >= METRIC_BATCH_SIZE {
-                                if let Err(err) = flush_metrics(&mut metric_batch) {
-                                    send(update_tx, RunUpdate::Error {
-                                        message: format!("stress_test_metric persist failed: {err}"),
-                                    });
-                                    stop_all(sessions);
-                                    aborted = true;
-                                    break;
+                                if let Some(w) = flush_metrics(&mut metric_batch, &mut drops) {
+                                    send(update_tx, RunUpdate::Warning { message: w });
                                 }
                             }
                         }
                         Err(err) => {
-                            send(update_tx, RunUpdate::Error {
-                                message: format!("invalid telemetry for stress_test_metric: {err}"),
+                            send(update_tx, RunUpdate::Warning {
+                                message: drops.record(1, format!("invalid telemetry: {err}")),
                             });
-                            stop_all(sessions);
-                            aborted = true;
-                            break;
                         }
                     }
                 }
@@ -1129,19 +1111,16 @@ fn drive_concurrent(
                     throughput_unit: lane.stressor.throughput_unit(),
                 });
             }
-
-            if aborted {
-                break;
-            }
         }
 
         thread::sleep(Duration::from_millis(50));
     }
 
-    if let Err(err) = flush_metrics(&mut metric_batch) {
-        send(update_tx, RunUpdate::Error {
-            message: format!("stress_test_metric persist failed: {err}"),
-        });
+    if let Some(w) = flush_metrics(&mut metric_batch, &mut drops) {
+        send(update_tx, RunUpdate::Warning { message: w });
+    }
+    if let Some(w) = drops.summary() {
+        send(update_tx, RunUpdate::Warning { message: w });
     }
 
     let final_snapshot = telemetry.snapshot();
@@ -1299,6 +1278,7 @@ fn drive_scenario(
     let effective_rules = rules.clone().unwrap_or_default();
     let mut latest_metrics = Metrics::default();
     let mut metric_batch: Vec<StressTestMetric> = Vec::with_capacity(METRIC_BATCH_SIZE);
+    let mut drops = MetricDrops::default();
     let mut finished = false;
 
     while !finished {
@@ -1538,31 +1518,18 @@ fn drive_scenario(
                     Ok(metric) => {
                         metric_batch.push(metric);
                         if metric_batch.len() >= METRIC_BATCH_SIZE {
-                            if let Err(err) = flush_metrics(&mut metric_batch) {
-                                send(
-                                    update_tx,
-                                    RunUpdate::Error {
-                                        message: format!(
-                                            "stress_test_metric persist failed: {err}"
-                                        ),
-                                    },
-                                );
-                                runner.stop();
-                                finished = true;
+                            if let Some(w) = flush_metrics(&mut metric_batch, &mut drops) {
+                                send(update_tx, RunUpdate::Warning { message: w });
                             }
                         }
                     }
                     Err(err) => {
                         send(
                             update_tx,
-                            RunUpdate::Error {
-                                message: format!(
-                                    "invalid telemetry for stress_test_metric: {err}"
-                                ),
+                            RunUpdate::Warning {
+                                message: drops.record(1, format!("invalid telemetry: {err}")),
                             },
                         );
-                        runner.stop();
-                        finished = true;
                     }
                 }
             }
@@ -1582,13 +1549,11 @@ fn drive_scenario(
         thread::sleep(Duration::from_millis(50));
     }
 
-    if let Err(err) = flush_metrics(&mut metric_batch) {
-        send(
-            update_tx,
-            RunUpdate::Error {
-                message: format!("stress_test_metric persist failed: {err}"),
-            },
-        );
+    if let Some(w) = flush_metrics(&mut metric_batch, &mut drops) {
+        send(update_tx, RunUpdate::Warning { message: w });
+    }
+    if let Some(w) = drops.summary() {
+        send(update_tx, RunUpdate::Warning { message: w });
     }
 }
 
@@ -1788,17 +1753,58 @@ fn persist_stage_verdict_event(run_id: &RecordId, verdict: &StageVerdict) {
     });
 }
 
-fn flush_metrics(batch: &mut Vec<StressTestMetric>) -> anyhow::Result<()> {
+/// Running tally of telemetry samples that never reached the DB. Nothing here
+/// stops a stressor.
+#[derive(Debug, Default)]
+struct MetricDrops {
+    samples: u64,
+    last_error: Option<String>,
+}
+
+impl MetricDrops {
+    /// Records `count` lost samples and returns the operator-facing warning.
+    fn record(&mut self, count: usize, reason: impl std::fmt::Display) -> String {
+        let reason = reason.to_string();
+        self.samples = self.samples.saturating_add(count as u64);
+        let message = format!(
+            "stress_test_metric persist failed, dropped {count} telemetry sample(s) \
+             ({} total this run); the test continues: {reason}",
+            self.samples
+        );
+        log::warn!("[stress-runner] {message}");
+        self.last_error = Some(reason);
+        message
+    }
+
+    /// Closing warning for a stage that lost samples, if any.
+    fn summary(&self) -> Option<String> {
+        let reason = self.last_error.as_deref()?;
+        Some(format!(
+            "{} telemetry sample(s) were not persisted during this run; the stressor ran to \
+             completion and the verdict stands on the samples that did land. Last error: {reason}",
+            self.samples
+        ))
+    }
+}
+
+/// Write the batch out, draining it either way so a failing DB can't grow it
+/// without bound. Returns a warning when rows were lost.
+#[must_use]
+fn flush_metrics(batch: &mut Vec<StressTestMetric>, drops: &mut MetricDrops) -> Option<String> {
     if batch.is_empty() {
-        return Ok(());
+        return None;
     }
     let take = std::mem::take(batch);
-    runtime::block_on(async move {
-        for m in &take {
-            StressTestMetric::create(m).await?;
-        }
-        Ok::<(), anyhow::Error>(())
-    })
+    let count = take.len();
+    match runtime::block_on(async move { StressTestMetric::create_many(&take).await }) {
+        Ok(report) if report.dropped == 0 => None,
+        Ok(report) => Some(drops.record(
+            report.dropped,
+            report.last_error.as_deref().unwrap_or("unknown row error"),
+        )),
+        // The batch was rejected before any row landed.
+        Err(err) => Some(drops.record(count, err)),
+    }
 }
 
 fn send(tx: &Sender<RunUpdate>, update: RunUpdate) {
@@ -2382,6 +2388,58 @@ fn rules_failure_mode(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dropped_metrics_are_counted_and_never_abort() {
+        let mut drops = MetricDrops::default();
+        let first = drops.record(16, "run_ref does not exist");
+        assert_eq!(drops.samples, 16);
+        assert!(first.contains("the test continues"), "{first}");
+
+        drops.record(16, "socket wedged");
+        assert_eq!(drops.samples, 32);
+
+        let summary = drops.summary().expect("summary after drops");
+        assert!(summary.contains("32 telemetry sample(s)"), "{summary}");
+        assert!(summary.contains("socket wedged"), "{summary}");
+    }
+
+    #[test]
+    fn a_clean_run_emits_no_drop_summary() {
+        assert!(MetricDrops::default().summary().is_none());
+    }
+
+    /// The reported symptom: a metric persist failure ended the stage 40s into
+    /// a 20-minute gate and the run filed itself as inconclusive/app_error.
+    /// A lost telemetry sample is a warning, never a run-ending error.
+    #[test]
+    fn metric_persist_failure_is_a_warning_not_an_error() {
+        let (tx, rx) = bounded(8);
+        let mut drops = MetricDrops::default();
+        send(
+            &tx,
+            RunUpdate::Warning {
+                message: drops.record(16, "stress_test_metric run_ref ... does not exist"),
+            },
+        );
+        drop(tx);
+
+        let updates: Vec<RunUpdate> = rx.into_iter().collect();
+        assert_eq!(updates.len(), 1);
+        assert!(
+            matches!(updates[0], RunUpdate::Warning { .. }),
+            "metric loss must not raise RunUpdate::Error: {:?}",
+            updates[0]
+        );
+    }
+
+    #[test]
+    fn flushing_an_empty_batch_is_a_no_op() {
+        let mut batch: Vec<StressTestMetric> = Vec::new();
+        let mut drops = MetricDrops::default();
+        assert!(flush_metrics(&mut batch, &mut drops).is_none());
+        assert_eq!(drops.samples, 0);
+    }
 
     fn tick(last_error: Option<&str>, errors: u64) -> Metrics {
         Metrics {

@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{
-    random_record_id, utilities::record_exists, Datetime, RecordId, SurrealValue,
+    random_record_id, Datetime, RecordId, SurrealValue,
     HARDWARE_COMPONENT_TABLE, STRESS_TEST_EVENT_TABLE, STRESS_TEST_METRIC_TABLE,
     STRESS_TEST_RUN_TABLE,
 };
@@ -48,6 +48,73 @@ fn surreal_create_content<T: Clone + SurrealValue>(
         }
     }
     value
+}
+
+/// Outcome of a `record::exists` probe.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RecordProbe {
+    Present,
+    /// The DB answered and the row is not there.
+    Missing,
+    /// The probe itself failed; says nothing about the row.
+    Unknown(String),
+}
+
+/// Map a `record_exists` result to a [`RecordProbe`]. Only a definitive `false`
+/// is `Missing`; a failed query or an empty response is `Unknown`.
+pub(crate) fn classify_record_probe(probe: Result<Option<bool>, String>) -> RecordProbe {
+    match probe {
+        Ok(Some(true)) => RecordProbe::Present,
+        Ok(Some(false)) => RecordProbe::Missing,
+        Ok(None) => RecordProbe::Unknown("record::exists returned no result row".to_string()),
+        Err(reason) => RecordProbe::Unknown(reason),
+    }
+}
+
+/// Read-back attempts allowed when confirming a freshly created run row.
+const RUN_CONFIRM_ATTEMPTS: u32 = 3;
+const RUN_CONFIRM_BACKOFF: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Runs `record::exists` directly rather than through
+/// [`super::utilities::record_exists`], which folds an empty response into an
+/// `Err` and so cannot distinguish "absent" from "probe failed".
+pub(crate) async fn probe_record(id: &RecordId) -> RecordProbe {
+    let probe = async {
+        let mut response = db()
+            .query(stress_test_sql::RECORD_EXISTS)
+            .bind(("id", id.clone()))
+            .await?;
+        let present: Option<bool> = response.take(0)?;
+        Ok::<Option<bool>, anyhow::Error>(present)
+    }
+    .await;
+    classify_record_probe(probe.map_err(|e| e.to_string()))
+}
+
+/// Per-row outcome of [`StressTestMetric::create_many`].
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct MetricWriteReport {
+    pub written: usize,
+    pub dropped: usize,
+    /// Last row error, when any row failed.
+    pub last_error: Option<String>,
+}
+
+/// Guard a child row's `run_ref` before insert. Rejects a parent the DB says is
+/// absent; lets the write through when the probe could not answer, because the
+/// run row is already read-back confirmed at creation and an unreachable DB
+/// will fail the insert on its own.
+pub(crate) async fn check_run_link(run_ref: &RecordId) -> anyhow::Result<()> {
+    match probe_record(run_ref).await {
+        RecordProbe::Present => Ok(()),
+        RecordProbe::Missing => {
+            anyhow::bail!("run_ref {run_ref:?} does not exist")
+        }
+        RecordProbe::Unknown(reason) => {
+            log::warn!("could not verify run_ref {run_ref:?} before insert: {reason}");
+            Ok(())
+        }
+    }
 }
 
 // ============================================================
@@ -257,9 +324,16 @@ impl HardwareComponent {
         Ok(component.id.clone())
     }
 
-    /// True when the hardware_component row is present in SurrealDB.
+    /// True when the hardware_component row is present in SurrealDB. A failed
+    /// probe is an `Err`, never a `false`.
     pub async fn exists(id: &RecordId) -> anyhow::Result<bool> {
-        Ok(matches!(record_exists(id.clone()).await, Ok(Some(true))))
+        match probe_record(id).await {
+            RecordProbe::Present => Ok(true),
+            RecordProbe::Missing => Ok(false),
+            RecordProbe::Unknown(reason) => Err(anyhow::anyhow!(
+                "could not determine whether {id:?} exists: {reason}"
+            )),
+        }
     }
 
     pub async fn list_by_kind(kind: HardwareKind) -> anyhow::Result<Vec<Self>> {
@@ -1046,19 +1120,49 @@ impl StressTestRun {
             );
         }
 
-        if !Self::exists(&run.id).await? {
-            anyhow::bail!(
-                "stress_test_run row {:?} not readable after CREATE",
-                run.id
-            );
-        }
+        Self::confirm_created(&run.id).await?;
 
         Ok(run.id.clone())
     }
 
-    /// True when the run row is present in SurrealDB.
+    /// True when the run row is present in SurrealDB. A probe that fails is an
+    /// `Err`, never a `false` — callers must not read a dropped websocket as a
+    /// missing run.
     pub async fn exists(id: &RecordId) -> anyhow::Result<bool> {
-        Ok(matches!(record_exists(id.clone()).await, Ok(Some(true))))
+        match probe_record(id).await {
+            RecordProbe::Present => Ok(true),
+            RecordProbe::Missing => Ok(false),
+            RecordProbe::Unknown(reason) => Err(anyhow::anyhow!(
+                "could not determine whether {id:?} exists: {reason}"
+            )),
+        }
+    }
+
+    /// Read-back probe with a bounded retry, so one transient websocket error
+    /// between CREATE and confirmation does not sink a run that did land.
+    async fn confirm_created(id: &RecordId) -> anyhow::Result<()> {
+        let mut last_unknown = None;
+        for attempt in 0..RUN_CONFIRM_ATTEMPTS {
+            match probe_record(id).await {
+                RecordProbe::Present => return Ok(()),
+                RecordProbe::Missing => {
+                    anyhow::bail!("stress_test_run row {id:?} not readable after CREATE")
+                }
+                RecordProbe::Unknown(reason) => {
+                    log::warn!(
+                        "stress_test_run {id:?} create read-back attempt {} could not reach the DB: {reason}",
+                        attempt + 1
+                    );
+                    last_unknown = Some(reason);
+                    tokio::time::sleep(RUN_CONFIRM_BACKOFF).await;
+                }
+            }
+        }
+        anyhow::bail!(
+            "stress_test_run row {id:?} could not be confirmed after CREATE ({} attempts): {}",
+            RUN_CONFIRM_ATTEMPTS,
+            last_unknown.unwrap_or_else(|| "unknown".to_string())
+        )
     }
 
     /// Insert a completed run and linked events (backfill / hung-run recovery).
@@ -1307,16 +1411,59 @@ impl StressTestMetric {
     }
 
     pub async fn create(metric: &Self) -> anyhow::Result<RecordId> {
-        metric.validate_for_insert().await?;
-        let value = surreal_create_content(metric, false);
-        let created: Option<Self> = db()
-            .create(metric.id.clone())
-            .content(value)
-            .await?;
-        Ok(created.map(|c| c.id).unwrap_or_else(|| metric.id.clone()))
+        metric.validate_shape()?;
+        check_run_link(&metric.run_ref).await?;
+        metric.insert().await
     }
 
-    /// Reject default-shaped rows and orphan run_ref links before insert.
+    /// Insert a batch of samples, checking the shared `run_ref` **once** rather
+    /// than per row.
+    ///
+    /// A per-row parent probe turns every metric write into an extra round trip
+    /// whose transient failures are indistinguishable from a missing parent —
+    /// which is how a live run gets told its own run row does not exist.
+    ///
+    /// `Err` means the batch was rejected outright (bad shape, or a parent the
+    /// DB confirmed is absent). Row-level failures come back in the report so
+    /// one unwritable sample does not discard the rest of the batch.
+    pub async fn create_many(metrics: &[Self]) -> anyhow::Result<MetricWriteReport> {
+        let mut report = MetricWriteReport::default();
+        if metrics.is_empty() {
+            return Ok(report);
+        }
+        for metric in metrics {
+            metric.validate_shape()?;
+        }
+
+        let mut checked: Vec<&RecordId> = Vec::new();
+        for metric in metrics {
+            if checked.contains(&&metric.run_ref) {
+                continue;
+            }
+            check_run_link(&metric.run_ref).await?;
+            checked.push(&metric.run_ref);
+        }
+
+        for metric in metrics {
+            match metric.insert().await {
+                Ok(_) => report.written += 1,
+                Err(err) => {
+                    report.dropped += 1;
+                    report.last_error = Some(err.to_string());
+                }
+            }
+        }
+        Ok(report)
+    }
+
+    async fn insert(&self) -> anyhow::Result<RecordId> {
+        let value = surreal_create_content(self, false);
+        let created: Option<Self> = db().create(self.id.clone()).content(value).await?;
+        Ok(created.map(|c| c.id).unwrap_or_else(|| self.id.clone()))
+    }
+
+    /// Reject default-shaped rows before insert. The `run_ref` link is checked
+    /// separately by [`check_run_link`].
     pub fn validate_shape(&self) -> anyhow::Result<()> {
         if self.cores.is_empty() {
             anyhow::bail!("stress_test_metric has empty cores (default telemetry snapshot)");
@@ -1332,17 +1479,6 @@ impl StressTestMetric {
         {
             anyhow::bail!(
                 "stress_test_metric has zero memory_used_mb and memory_used_pct (default snapshot)"
-            );
-        }
-        Ok(())
-    }
-
-    async fn validate_for_insert(&self) -> anyhow::Result<()> {
-        self.validate_shape()?;
-        if !StressTestRun::exists(&self.run_ref).await? {
-            anyhow::bail!(
-                "stress_test_metric run_ref {:?} does not exist",
-                self.run_ref
             );
         }
         Ok(())
@@ -1469,12 +1605,7 @@ impl StressTestEvent {
     }
 
     pub async fn create(event: &Self) -> anyhow::Result<RecordId> {
-        if !StressTestRun::exists(&event.run_ref).await? {
-            anyhow::bail!(
-                "stress_test_event run_ref {:?} does not exist",
-                event.run_ref
-            );
-        }
+        check_run_link(&event.run_ref).await?;
         let value = surreal_create_content(event, false);
         let created: Option<Self> = db()
             .create(event.id.clone())
@@ -1595,5 +1726,33 @@ mod tests {
         let a = HardwareComponent::new(HardwareKind::Gpu, "AMD", "AMD Radeon RX 7900 XTX");
         let b = HardwareComponent::canonical_id(HardwareKind::Gpu, "AMD", "AMD Radeon RX 7900 XTX");
         assert_eq!(a.id, b);
+    }
+
+    #[test]
+    fn probe_reports_present_and_missing_only_when_the_db_answered() {
+        assert_eq!(classify_record_probe(Ok(Some(true))), RecordProbe::Present);
+        assert_eq!(classify_record_probe(Ok(Some(false))), RecordProbe::Missing);
+    }
+
+    /// The regression: a dropped websocket during a metric write folded into
+    /// `false` and surfaced as "run_ref does not exist", aborting a live run
+    /// whose run row was present the whole time.
+    #[test]
+    fn a_failed_probe_is_unknown_not_missing() {
+        let dropped = classify_record_probe(Err("There was an error processing a remote WS request".into()));
+        assert!(matches!(dropped, RecordProbe::Unknown(_)));
+        assert_ne!(dropped, RecordProbe::Missing);
+
+        let empty = classify_record_probe(Ok(None));
+        assert!(matches!(empty, RecordProbe::Unknown(_)));
+        assert_ne!(empty, RecordProbe::Missing);
+    }
+
+    #[test]
+    fn unknown_carries_the_underlying_reason() {
+        let RecordProbe::Unknown(reason) = classify_record_probe(Err("socket wedged".into())) else {
+            panic!("expected Unknown");
+        };
+        assert_eq!(reason, "socket wedged");
     }
 }

@@ -20,4 +20,9 @@ DEFINE FIELD result ON stress_test_run TYPE string;
 DEFINE FIELD summary ON stress_test_run TYPE object;
 DEFINE FIELD embedding ON stress_test_run TYPE none | array<float>;
 
+DEFINE TABLE stress_test_metric TYPE ANY SCHEMALESS;
+DEFINE FIELD run_ref ON stress_test_metric TYPE record<stress_test_run>;
+DEFINE FIELD captured_at ON stress_test_metric TYPE datetime;
+DEFINE INDEX idx_metric_run_time ON stress_test_metric FIELDS run_ref, captured_at;
+
 DEFINE TABLE benchmark_result TYPE ANY SCHEMALESS;
