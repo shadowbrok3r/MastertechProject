@@ -53,6 +53,8 @@ pub mod conv;
 pub mod mcp_chat;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub mod zeroclaw_events;
+#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+pub mod zeroclaw_sessions;
 pub mod gpts;
 pub mod model;
 pub mod oa_client;

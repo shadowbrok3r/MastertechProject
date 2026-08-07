@@ -13,7 +13,7 @@ use super::widgets::{
 };
 use super::sysinfo_convert::fmt_bytes;
 use super::{ABSENT, TelemetrySource};
-use crate::ui_tools::{icons, theme};
+use crate::ui_tools::{glass_card, icons, theme};
 
 const ROW_HEIGHT: f32 = 18.0;
 
@@ -79,25 +79,12 @@ pub fn page_file_measured(m: &MemorySample) -> bool {
 
 // ── Layout helpers ──────────────────────────────────────────────────────────
 
-/// Titled dashboard panel.
+/// Titled dashboard panel: a themed glass card that frosts its own backdrop.
 pub fn panel<R>(ui: &mut Ui, glyph: &str, title: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
-    let accent = theme::accent(ui);
-    egui::Frame::new()
-        .fill(theme::bg_faint(ui))
-        .stroke(egui::Stroke::new(1.0, theme::border(ui)))
-        .corner_radius(6.0)
-        .inner_margin(egui::Margin::same(8))
-        .outer_margin(egui::Margin::symmetric(0, 3))
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.label(icons::icon_colored(glyph, accent).small());
-                ui.label(RichText::new(title).strong().small());
-            });
-            ui.add_space(4.0);
-            add(ui)
-        })
-        .inner
+    glass_card::titled_card(ui, glyph, title, None, |ui| {
+        ui.add_space(2.0);
+        add(ui)
+    })
 }
 
 /// Small muted line under a widget group.

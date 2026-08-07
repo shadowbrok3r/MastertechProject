@@ -8,7 +8,7 @@ use eframe::egui::{
     TextFormat, TextStyle, TextWrapMode, Ui, Vec2, WidgetText,
 };
 
-use crate::ui_tools::{icons, theme};
+use crate::ui_tools::{glass_card, icons, theme};
 
 const DATE_FMT: &str = "%m/%d/%Y";
 const DATE_TIME_FMT: &str = "%m/%d/%Y %H:%M";
@@ -33,17 +33,7 @@ pub fn section_card(
     subtitle: Option<&str>,
     body: impl FnOnce(&mut Ui),
 ) {
-    ui.group(|ui| {
-        ui.horizontal(|ui| {
-            ui.colored_label(theme::accent(ui), icon);
-            ui.label(RichText::new(title).strong().color(theme::strong_text(ui)));
-            if let Some(subtitle) = subtitle {
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(RichText::new(subtitle).small().color(theme::weak_text(ui)));
-                });
-            }
-        });
-        ui.separator();
+    glass_card::titled_card(ui, icon, title, subtitle, |ui| {
         body(ui);
         ui.allocate_space(Vec2::new(ui.available_width(), 0.0));
     });

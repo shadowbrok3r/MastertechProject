@@ -1,10 +1,11 @@
 use crossbeam::channel::{Receiver, Sender};
 use eframe::egui::{
-    self, Align, Color32, Label, Layout, RichText, ScrollArea, TextEdit,
+    self, Align, Label, Layout, RichText, ScrollArea, TextEdit,
     Ui,
 };
 
 use crate::{Cmd, PlatformSpawner, RemoteScriptItem, RemoteScriptStatus, Spawner};
+use crate::ui_tools::theme;
 
 /// Log lines retained in the viewer; the oldest are dropped past this.
 const MAX_LOG_LINES: usize = 5_000;
@@ -269,7 +270,7 @@ impl RemoteScriptsViewer {
                         RichText::new(
                             "Webroot was re-keyed — a client reboot finalizes the new device identity.",
                         )
-                        .color(Color32::from_rgb(249, 226, 175)),
+                        .color(theme::warn(ui)),
                     );
                     if ui.button("Reboot client & relaunch MasterTech").clicked() {
                         let _ = cmd_tx.try_send(Cmd::RebootSystem {
@@ -326,9 +327,9 @@ impl RemoteScriptsViewer {
                 scroll.show(ui, |ui| {
                     for msg in &self.log_messages {
                         let color = if msg.starts_with("Error") || msg.contains("error") || msg.contains("Failed") {
-                            Color32::from_rgb(255, 100, 100)
+                            theme::error(ui)
                         } else if msg.starts_with("Starting:") || msg.starts_with("---") {
-                            Color32::from_rgb(140, 180, 255)
+                            theme::info(ui)
                         } else {
                             ui.visuals().text_color()
                         };
@@ -351,10 +352,10 @@ impl RemoteScriptsViewer {
                                     None
                                 }
                                 Some(RemoteScriptStatus::Success) => {
-                                    Some(RichText::new("✓").color(Color32::from_rgb(80, 200, 80)).strong())
+                                    Some(RichText::new("✓").color(theme::success(ui)).strong())
                                 }
                                 Some(RemoteScriptStatus::Failed) => {
-                                    Some(RichText::new("✗").color(Color32::from_rgb(255, 80, 80)).strong())
+                                    Some(RichText::new("✗").color(theme::error(ui)).strong())
                                 }
                                 None => None,
                             };

@@ -197,6 +197,11 @@ pub struct ConnectedClient {
     #[serde(default)]
     #[surreal(default)]
     pub boot_environment: BootEnvironment,
+    /// Excludes this client from unattended agent sweeps. Absent on rows
+    /// written before the field existed, so sweeps must treat NONE as false.
+    #[serde(default)]
+    #[surreal(default)]
+    pub autopilot_opt_out: bool,
 }
 
 impl Default for ConnectedClient {
@@ -219,6 +224,7 @@ impl Default for ConnectedClient {
             client_kind: ClientKind::Machine,
             capabilities: Vec::new(),
             boot_environment: BootEnvironment::Installed,
+            autopilot_opt_out: false,
         }
     }
 }

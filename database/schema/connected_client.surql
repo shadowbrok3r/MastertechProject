@@ -53,3 +53,7 @@ DEFINE FIELD client_kind      ON connected_client TYPE string DEFAULT 'machine' 
 -- that machine's normal Windows check-in; this field is what still marks the
 -- session as pre-boot. Rows without it are treated as `installed`.
 DEFINE FIELD boot_environment ON connected_client TYPE string DEFAULT 'installed' ASSERT $value IN ['installed', 'winpe'] PERMISSIONS FULL;
+-- Excludes a machine from unattended agent sweeps. Sweeps are opt-out, so the
+-- absence of this field means eligible; DEFAULT does not backfill existing rows,
+-- so readers must coalesce NONE to false.
+DEFINE FIELD autopilot_opt_out ON connected_client TYPE bool DEFAULT false PERMISSIONS FULL;

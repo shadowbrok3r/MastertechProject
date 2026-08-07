@@ -9,6 +9,7 @@ use eframe::egui::{
     Ui,
 };
 use web_time::{Instant, SystemTime};
+use crate::ui_tools::theme;
 
 /// Inline raster viewer for full remote-desktop control. Decodes JPEG frames
 /// into an egui texture and forwards pointer/keyboard input as normalized
@@ -157,13 +158,13 @@ impl DesktopViewer {
                 ui.add_space(40.0);
                 ui.label(
                     RichText::new("Waiting for desktop frames...")
-                        .color(Color32::GRAY)
+                        .color(theme::weak_text(ui))
                         .size(14.0),
                 );
                 ui.add_space(8.0);
                 ui.label(
                     RichText::new("Start Remote Desktop from the menu to begin streaming.")
-                        .color(Color32::from_rgb(120, 120, 140))
+                        .color(theme::faint_text(ui))
                         .small(),
                 );
                 ui.spinner();

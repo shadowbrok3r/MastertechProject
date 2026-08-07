@@ -25,7 +25,7 @@ When the user refers to \"this computer\"/\"this PC\" without naming a client, t
 machine this app is running on — inspect it with the local system and diagnostic tools.";
 
 fn send(tx: &Sender<ChatMessage>, thread_id: &str, id: String, from: SentFrom, content: ChatMessageType) {
-    let _ = tx.try_send(ChatMessage { id, thread_id: thread_id.to_string(), ts: 0, from, content });
+    let _ = tx.try_send(ChatMessage { id, thread_id: thread_id.to_string(), ts: crate::tabs::ai_playground::now_ts(), from, content });
 }
 
 fn new_id() -> String {
@@ -120,14 +120,14 @@ pub fn zeroclaw_agent() -> String {
 /// then emit the agent's final reply. `ZEROCLAW_AGENT` overrides the target alias.
 pub async fn zeroclaw_diagnose(prompt: String, thread_id: String, response_tx: Sender<ChatMessage>) {
     let Some((url, token)) = zeroclaw_gateway() else {
-        send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Error(
+        send(&response_tx, &thread_id, new_id(), SentFrom::Assistant, ChatMessageType::Error(
             "ZeroClaw gateway not configured — set ZEROCLAW_GATEWAY_URL and ZEROCLAW_GATEWAY_TOKEN.".into(),
         ));
-        send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Done);
+        send(&response_tx, &thread_id, new_id(), SentFrom::Assistant, ChatMessageType::Done);
         return;
     };
     let agent = zeroclaw_agent();
-    send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Text(format!(
+    send(&response_tx, &thread_id, new_id(), SentFrom::Assistant, ChatMessageType::Text(format!(
         "{}dispatched to ZeroClaw agent `{agent}` — it gathers context, delegates deep analysis \
          to Claude Code, and replies here when done…",
         crate::ai::claude_code::TOOL_PREFIX
@@ -156,11 +156,11 @@ pub async fn zeroclaw_diagnose(prompt: String, thread_id: String, response_tx: S
                 .ok()
                 .and_then(|v| v["response"].as_str().map(str::to_string))
                 .unwrap_or(body);
-            send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Text(text));
+            send(&response_tx, &thread_id, new_id(), SentFrom::Assistant, ChatMessageType::Text(text));
         }
         Ok((status, body)) => {
             let snippet: String = body.chars().take(300).collect();
-            send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Error(format!(
+            send(&response_tx, &thread_id, new_id(), SentFrom::Assistant, ChatMessageType::Error(format!(
                 "ZeroClaw gateway {status}: {snippet}"
             )));
         }
@@ -170,10 +170,10 @@ pub async fn zeroclaw_diagnose(prompt: String, thread_id: String, response_tx: S
             } else {
                 format!("ZeroClaw gateway unreachable: {e}")
             };
-            send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Error(msg));
+            send(&response_tx, &thread_id, new_id(), SentFrom::Assistant, ChatMessageType::Error(msg));
         }
     }
-    send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Done);
+    send(&response_tx, &thread_id, new_id(), SentFrom::Assistant, ChatMessageType::Done);
 }
 
 /// Text of a `*.delta` event, which carries either a bare string or a content part.
@@ -240,7 +240,7 @@ pub fn history_json_from_messages(msgs: &[ChatMessage]) -> Vec<serde_json::Value
         }
         let role = match m.from {
             SentFrom::Me => "user",
-            SentFrom::Gpt => "assistant",
+            SentFrom::Assistant => "assistant",
         };
         out.push(serde_json::json!({ "role": role, "content": text }));
     }
@@ -272,12 +272,12 @@ pub async fn stream_chat(
             &response_tx,
             &thread_id,
             new_id(),
-            SentFrom::Gpt,
+            SentFrom::Assistant,
             ChatMessageType::Error(
                 "No API key configured. Add one in Account Settings -> MCP / AI Endpoint and save.".to_string(),
             ),
         );
-        send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Done);
+        send(&response_tx, &thread_id, new_id(), SentFrom::Assistant, ChatMessageType::Done);
         return Ok(());
     }
 
@@ -303,7 +303,7 @@ pub async fn stream_chat(
                     &response_tx,
                     &thread_id,
                     new_id(),
-                    SentFrom::Gpt,
+                    SentFrom::Assistant,
                     ChatMessageType::Error(format!("Mastertech tools unavailable: {e}")),
                 );
                 (None, Vec::new())
@@ -344,16 +344,16 @@ pub async fn stream_chat(
         let resp = match resp {
             Ok(r) => r,
             Err(e) => {
-                send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Error(format!("Request failed: {e}")));
-                send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Done);
+                send(&response_tx, &thread_id, new_id(), SentFrom::Assistant, ChatMessageType::Error(format!("Request failed: {e}")));
+                send(&response_tx, &thread_id, new_id(), SentFrom::Assistant, ChatMessageType::Done);
                 break;
             }
         };
         if !resp.status().is_success() {
             let status = resp.status();
             let detail = resp.text().await.unwrap_or_default();
-            send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Error(format!("HTTP {status}: {detail}")));
-            send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Done);
+            send(&response_tx, &thread_id, new_id(), SentFrom::Assistant, ChatMessageType::Error(format!("HTTP {status}: {detail}")));
+            send(&response_tx, &thread_id, new_id(), SentFrom::Assistant, ChatMessageType::Done);
             break;
         }
 
@@ -395,7 +395,7 @@ pub async fn stream_chat(
                     "response.output_text.delta" | "response.content_part.delta" => {
                         if let Some(text) = delta_text(&json) {
                             if !text.is_empty() {
-                                send(&response_tx, &thread_id, assistant_id.clone(), SentFrom::Gpt, ChatMessageType::Text(text.to_string()));
+                                send(&response_tx, &thread_id, assistant_id.clone(), SentFrom::Assistant, ChatMessageType::Text(text.to_string()));
                             }
                         }
                     }
@@ -404,7 +404,7 @@ pub async fn stream_chat(
                     | "response.reasoning_summary_text.delta" => {
                         if let Some(text) = delta_text(&json) {
                             if !text.is_empty() {
-                                send(&response_tx, &thread_id, think_id.clone(), SentFrom::Gpt, ChatMessageType::Reasoning(text.to_string()));
+                                send(&response_tx, &thread_id, think_id.clone(), SentFrom::Assistant, ChatMessageType::Reasoning(text.to_string()));
                             }
                         }
                     }
@@ -445,7 +445,7 @@ pub async fn stream_chat(
                             .as_str()
                             .or_else(|| json["message"].as_str())
                             .unwrap_or("the model reported a failed response");
-                        send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Error(detail.to_string()));
+                        send(&response_tx, &thread_id, new_id(), SentFrom::Assistant, ChatMessageType::Error(detail.to_string()));
                     }
                     _ => {}
                 }
@@ -453,7 +453,7 @@ pub async fn stream_chat(
         }
 
         if tool_acc.is_empty() {
-            send(&response_tx, &thread_id, new_id(), SentFrom::Gpt, ChatMessageType::Done);
+            send(&response_tx, &thread_id, new_id(), SentFrom::Assistant, ChatMessageType::Done);
             break;
         }
 
@@ -477,7 +477,7 @@ pub async fn stream_chat(
                 &response_tx,
                 &thread_id,
                 line_id.clone(),
-                SentFrom::Gpt,
+                SentFrom::Assistant,
                 ChatMessageType::Text(format!(
                     "{}{}  ({})",
                     crate::ai::claude_code::TOOL_PREFIX,
@@ -495,7 +495,7 @@ pub async fn stream_chat(
             } else {
                 format!(" ok\n{}", body.chars().take(16_384).collect::<String>())
             };
-            send(&response_tx, &thread_id, line_id, SentFrom::Gpt, ChatMessageType::Text(tail));
+            send(&response_tx, &thread_id, line_id, SentFrom::Assistant, ChatMessageType::Text(tail));
             items.push(serde_json::json!({
                 "type": "function_call_output",
                 "call_id": call_id,

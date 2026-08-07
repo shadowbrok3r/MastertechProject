@@ -30,8 +30,9 @@ use database::{
     db,
 };
 use eframe::egui::{
-    self, Align, Button, Color32, Layout, RichText, ScrollArea, TextEdit, Ui, Window,
+    self, Align, Button, Layout, RichText, ScrollArea, TextEdit, Ui, Window,
 };
+use crate::ui_tools::theme;
 
 /// Which lookup the admin is performing. Only one input is active at a
 /// time so we don't have to disambiguate when multiple are filled.
@@ -250,7 +251,7 @@ impl RelinkClientPopup {
                  set so the OA-key auto-detection no longer overwrites it.",
             )
             .small()
-            .color(Color32::GRAY),
+            .color(theme::weak_text(ui)),
         );
         ui.add_space(6.);
 
@@ -304,11 +305,11 @@ impl RelinkClientPopup {
             ui.add_space(4.);
             ui.colored_label(
                 if self.status.contains("failed") || self.status.contains("Could not") {
-                    Color32::LIGHT_RED
+                    theme::error(ui)
                 } else if self.done {
-                    Color32::LIGHT_GREEN
+                    theme::success(ui)
                 } else {
-                    Color32::LIGHT_YELLOW
+                    theme::warn(ui)
                 },
                 &self.status,
             );
@@ -341,7 +342,7 @@ impl RelinkClientPopup {
             if ui
                 .add_enabled(
                     can_apply,
-                    Button::new(RichText::new("Apply").color(Color32::LIGHT_GREEN)),
+                    Button::new(RichText::new("Apply").color(theme::success(ui))),
                 )
                 .clicked()
             {

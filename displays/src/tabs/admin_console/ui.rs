@@ -10,7 +10,7 @@ use chrono::{DateTime, Local, Utc};
 use super::ClientUiAction;
 use super::SessionLayout;
 use crate::get_database_users;
-use crate::ui_tools::{icons, theme};
+use crate::ui_tools::{glass_card, icons, theme};
 use crate::Spawner;
 use log::info;
 
@@ -60,68 +60,54 @@ fn recently_active(client: &ConnectedClient) -> bool {
 /// Returns `(color, symbol)` for the connection status dot.
 ///
 /// Priority:
-/// 1. Active admin session open → green `*`
-/// 2. DB-connected + recent heartbeat + no admin session → yellow `!`
-/// 3. Everything else (disconnected or stale) → gray `-`
-fn connection_indicator(is_ws_connected: bool, client: &ConnectedClient) -> (Color32, &'static str) {
+/// 1. Active admin session open → success
+/// 2. DB-connected + recent heartbeat + no admin session → warn
+/// 3. Everything else (disconnected or stale) → muted
+fn connection_indicator(
+    ui: &Ui,
+    is_ws_connected: bool,
+    client: &ConnectedClient,
+) -> (Color32, &'static str) {
     if is_ws_connected {
-        (Color32::from_rgb(50, 205, 50), icons::STATUS_ON)
+        (theme::success(ui), icons::STATUS_ON)
     } else if client.connected && recently_active(client) {
-        (Color32::from_rgb(255, 200, 0), icons::STATUS_WARN)
+        (theme::warn(ui), icons::STATUS_WARN)
     } else {
-        (Color32::from_rgb(110, 110, 118), icons::STATUS_OFF)
+        (theme::weak_text(ui), icons::STATUS_OFF)
+    }
+}
+
+/// Badge color for a live session's transport path, graded by how direct it is: local TCP reads
+/// as good, a relay hop as a caveat, the legacy websocket room as merely informational.
+pub(crate) fn transport_color(ui: &Ui, kind: super::client_interface::TransportKind) -> Color32 {
+    use super::client_interface::TransportKind;
+    match kind {
+        TransportKind::Tcp => theme::success(ui),
+        TransportKind::Relay => theme::warn(ui),
+        TransportKind::WebSocket => theme::info(ui),
     }
 }
 
 /// Compose the friendly-name / connection-string text for a client into a
-/// styled `WidgetText`. Mirrors the original two-tone behaviour: friendly
-/// name in mint green, or `hostname:hash` with the hostname in mint and
-/// the hash in muted lavender.
-fn client_name_text(client: &ConnectedClient) -> WidgetText {
+/// styled `WidgetText`: the identifying part in the theme's success accent,
+/// the opaque hash suffix in plain body text.
+fn client_name_text(ui: &Ui, client: &ConnectedClient) -> WidgetText {
+    let name_font = FontId::new(13., FontFamily::Proportional);
+    let format = |color: Color32| TextFormat {
+        font_id: name_font.clone(),
+        color,
+        valign: Align::Center,
+        ..Default::default()
+    };
+    let identity = theme::success(ui);
     let mut job = LayoutJob::default();
     if let Some(ref friendly_name) = client.friendly_name {
-        job.append(
-            friendly_name,
-            0.0,
-            TextFormat {
-                font_id: FontId::new(13., FontFamily::Proportional),
-                color: Color32::from_rgb(51, 255, 189),
-                valign: Align::Center,
-                ..Default::default()
-            },
-        );
+        job.append(friendly_name, 0.0, format(identity));
     } else if let Some((host, hash)) = client.connection_string.split_once(':') {
-        job.append(
-            &format!("{host}:"),
-            0.0,
-            TextFormat {
-                font_id: FontId::new(13., FontFamily::Proportional),
-                color: Color32::from_rgb(51, 255, 189),
-                valign: Align::Center,
-                ..Default::default()
-            },
-        );
-        job.append(
-            hash,
-            0.0,
-            TextFormat {
-                font_id: FontId::new(13., FontFamily::Proportional),
-                color: Color32::from_rgb(199, 202, 245),
-                valign: Align::Center,
-                ..Default::default()
-            },
-        );
+        job.append(&format!("{host}:"), 0.0, format(identity));
+        job.append(hash, 0.0, format(theme::text(ui)));
     } else {
-        job.append(
-            &client.connection_string,
-            0.0,
-            TextFormat {
-                font_id: FontId::new(13., FontFamily::Proportional),
-                color: Color32::from_rgb(51, 255, 189),
-                valign: Align::Center,
-                ..Default::default()
-            },
-        );
+        job.append(&client.connection_string, 0.0, format(identity));
     }
     WidgetText::from(job)
 }
@@ -165,7 +151,6 @@ impl AdminConsole {
         // or `None` when no session entry exists for this client.
         transport: Option<(super::client_interface::TransportKind, bool)>,
     ) {
-        let style = ui.style().clone();
         let row_id = ui.make_persistent_id((
             "admin_client_row",
             client.connection_string.as_str(),
@@ -203,24 +188,28 @@ impl AdminConsole {
             Vec2::new(CLIENT_ROW_CONTENT_W, 0.0),
             Layout::top_down(Align::Min),
             |ui| {
+                // Card tone rather than a frost: the list can run to dozens of rows, and one
+                // grab-pass each would cost more than a row-sized blur is worth.
                 Frame::default()
-                .fill(theme::bg_surface(ui))
+                .fill(glass_card::card_fill(ui))
                 .inner_margin(Margin::same(4))
                 .outer_margin(Margin::ZERO)
-                .corner_radius(eframe::egui::CornerRadius::same(5))
+                .corner_radius(eframe::egui::CornerRadius::same(
+                    ui.visuals().window_corner_radius.nw.max(4),
+                ))
                 .shadow(Shadow::NONE)
-                .stroke(style.visuals.window_stroke)
+                .stroke(glass_card::card_stroke(ui))
                 .show(ui, |ui| {
                     ui.set_width(CLIENT_ROW_CONTENT_W);
                     ui.set_max_width(CLIENT_ROW_CONTENT_W);
                     let is_focused = focused_client == Some(client.connection_string.as_str());
                     let focus_color = if is_focused {
-                        Color32::from_rgb(51, 255, 189)
+                        theme::success(ui)
                     } else {
-                        Color32::GRAY
+                        theme::weak_text(ui)
                     };
                     let (indicator_color, indicator_text) =
-                        connection_indicator(is_ws_connected, client);
+                        connection_indicator(ui, is_ws_connected, client);
                     let arrow = if collapse.is_open() {
                         icons::CHEV_OPEN
                     } else {
@@ -266,13 +255,9 @@ impl AdminConsole {
                                         TransportKind::WebSocket => ("WS", "Legacy WebSocket relay room"),
                                     };
                                     let color = if session_up {
-                                        match kind {
-                                            TransportKind::Tcp => Color32::from_rgb(100, 200, 100),
-                                            TransportKind::Relay => Color32::from_rgb(235, 170, 80),
-                                            TransportKind::WebSocket => Color32::from_rgb(120, 160, 230),
-                                        }
+                                        transport_color(ui, kind)
                                     } else {
-                                        Color32::GRAY
+                                        theme::weak_text(ui)
                                     };
                                     let tip = if session_up {
                                         tip.to_string()
@@ -296,7 +281,7 @@ impl AdminConsole {
                             let name_btn = ui
                                 .add_sized(
                                     Vec2::new(CLIENT_NAME_BTN_W, ROW_BTN_H),
-                                    Button::new(client_name_text(client))
+                                    Button::new(client_name_text(ui, client))
                                         .fill(ui.style().visuals.window_fill),
                                 )
                                 .on_hover_text(
@@ -366,7 +351,7 @@ impl AdminConsole {
                                 ui.label(
                                     RichText::new("Security inventory")
                                         .small()
-                                        .color(Color32::GRAY),
+                                        .color(theme::weak_text(ui)),
                                 );
                                 ui.add_space(2.);
                                 render_security_inventory(ui, products);
@@ -378,9 +363,7 @@ impl AdminConsole {
                         ui.add_space(4.);
 
                         ui.label(
-                            RichText::new("Actions")
-                                .small()
-                                .color(Color32::GRAY),
+                            RichText::new("Actions").small().color(theme::weak_text(ui)),
                         );
                         ui.add_space(2.);
 
@@ -400,6 +383,19 @@ impl AdminConsole {
                             theme::info(ui)
                         } else {
                             theme::weak_text(ui)
+                        };
+                        let (auto_label, auto_color, auto_tip) = if client.autopilot_opt_out {
+                            (
+                                "Autopilot off",
+                                theme::weak_text(ui),
+                                "Excluded from unattended agent sweeps.\nClick to allow sweeps again.",
+                            )
+                        } else {
+                            (
+                                "Autopilot on",
+                                theme::info(ui),
+                                "Eligible for unattended agent sweeps.\nClick to exclude this client.",
+                            )
                         };
                         let (relink_label, relink_tip) = if client.customer_locked {
                             (
@@ -480,6 +476,19 @@ impl AdminConsole {
                                     let _ =
                                         tx.try_send(ClientUiAction::RepairAssociations(client.clone()));
                                 }
+
+                                let autopilot = Button::new(
+                                    RichText::new(auto_label).strong().color(auto_color),
+                                )
+                                .fill(ui.style().visuals.window_fill)
+                                .min_size(Vec2::new(120., ROW_BTN_H))
+                                .ui(ui)
+                                .on_hover_text(auto_tip);
+                                if autopilot.clicked() {
+                                    let _ = tx.try_send(ClientUiAction::ToggleAutopilotOptOut(
+                                        client.clone(),
+                                    ));
+                                }
                             });
                         });
                     }
@@ -504,7 +513,6 @@ impl AdminConsole {
         kind: &str,
         direct: bool,
     ) -> bool {
-        let style = ui.style().clone();
         let row_id = ui.make_persistent_id(("admin_preboot_card", serial));
         let mut collapse = CollapsingState::load_with_default_open(ui.ctx(), row_id, false);
 
@@ -521,11 +529,6 @@ impl AdminConsole {
             format!("{model} · {key_tail}")
         };
         let live = age_secs < 90;
-        let (dot_color, dot_text) = if live {
-            (Color32::from_rgb(50, 205, 50), icons::STATUS_ON)
-        } else {
-            (Color32::from_rgb(110, 110, 118), icons::STATUS_OFF)
-        };
         let arrow = if collapse.is_open() { icons::CHEV_OPEN } else { icons::CHEV_CLOSED };
         let mut view_clicked = false;
 
@@ -533,13 +536,20 @@ impl AdminConsole {
             Vec2::new(CLIENT_ROW_CONTENT_W, 0.0),
             Layout::top_down(Align::Min),
             |ui| {
+                let (dot_color, dot_text) = if live {
+                    (theme::success(ui), icons::STATUS_ON)
+                } else {
+                    (theme::weak_text(ui), icons::STATUS_OFF)
+                };
                 Frame::default()
-                    .fill(theme::bg_surface(ui))
+                    .fill(glass_card::card_fill(ui))
                     .inner_margin(Margin::same(4))
                     .outer_margin(Margin::ZERO)
-                    .corner_radius(eframe::egui::CornerRadius::same(5))
+                    .corner_radius(eframe::egui::CornerRadius::same(
+                        ui.visuals().window_corner_radius.nw.max(4),
+                    ))
                     .shadow(Shadow::NONE)
-                    .stroke(style.visuals.window_stroke)
+                    .stroke(glass_card::card_stroke(ui))
                     .show(ui, |ui| {
                         ui.set_width(CLIENT_ROW_CONTENT_W);
                         ui.set_max_width(CLIENT_ROW_CONTENT_W);
@@ -568,11 +578,8 @@ impl AdminConsole {
                                 let name_btn = ui
                                     .add_sized(
                                         Vec2::new(name_w, ROW_BTN_H),
-                                        Button::new(
-                                            RichText::new(title)
-                                                .color(Color32::from_rgb(51, 255, 189)),
-                                        )
-                                        .fill(ui.style().visuals.window_fill),
+                                        Button::new(RichText::new(title).color(theme::success(ui)))
+                                            .fill(ui.style().visuals.window_fill),
                                     )
                                     .on_hover_text(serial);
                                 if name_btn.clicked() {
@@ -604,9 +611,9 @@ impl AdminConsole {
                                 .spacing(Vec2::new(8.0, 3.0))
                                 .show(ui, |ui| {
                                     let mut row = |k: &str, v: &str, mono: bool| {
-                                        ui.label(RichText::new(k).small().color(Color32::GRAY));
-                                        let mut t = RichText::new(v)
-                                            .color(Color32::from_rgb(199, 202, 245));
+                                        let (key, value) = (theme::weak_text(ui), theme::text(ui));
+                                        ui.label(RichText::new(k).small().color(key));
+                                        let mut t = RichText::new(v).color(value);
                                         if mono {
                                             t = t.monospace();
                                         }
@@ -695,9 +702,7 @@ fn client_details_grid(
     if let Some(fname) = client.friendly_name.as_deref() {
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new(fname)
-                    .strong()
-                    .color(Color32::from_rgb(51, 255, 189)),
+                RichText::new(fname).strong().color(theme::success(ui)),
             );
             if client.customer_locked {
                 ui.label(
@@ -774,7 +779,7 @@ fn client_details_grid(
                 .as_ref()
                 .map(|c| c.key_string().to_string())
                 .unwrap_or_else(|| "(none)".into());
-            ui.label(RichText::new("Customer").small().color(Color32::GRAY));
+            ui.label(RichText::new("Customer").small().color(theme::weak_text(ui)));
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new(&cust_label)
@@ -794,7 +799,7 @@ fn client_details_grid(
                 .as_ref()
                 .map(|c| c.key_string().to_string())
                 .unwrap_or_else(|| "(none)".into());
-            ui.label(RichText::new("Computer").small().color(Color32::GRAY));
+            ui.label(RichText::new("Computer").small().color(theme::weak_text(ui)));
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new(&comp_label)
@@ -816,7 +821,7 @@ fn client_details_grid(
 }
 
 fn row(ui: &mut Ui, key: &str, val: &str, value_max_w: f32) {
-    ui.label(RichText::new(key).small().color(Color32::GRAY));
+    ui.label(RichText::new(key).small().color(theme::weak_text(ui)));
     ui.scope(|ui| {
         ui.set_max_width(value_max_w);
         ui.label(RichText::new(val).small());
@@ -892,9 +897,9 @@ fn render_security_inventory(
 
                 // Column 2: status badge.
                 let (color, text) = match product.active {
-                    Some(true) => (Color32::from_rgb(100, 200, 100), "* Active"),
-                    Some(false) => (Color32::from_rgb(255, 150, 80), "o Disabled"),
-                    None => (Color32::GRAY, "—"),
+                    Some(true) => (theme::success(ui), "* Active"),
+                    Some(false) => (theme::warn(ui), "o Disabled"),
+                    None => (theme::weak_text(ui), "—"),
                 };
                 ui.label(RichText::new(text).small().color(color));
 
@@ -903,13 +908,13 @@ fn render_security_inventory(
                 // without reading the full word.
                 let (src_color, src_text) = match product.source {
                     SecurityProductSource::SecurityCenter => {
-                        (Color32::from_rgb(120, 200, 255), "SecurityCenter")
+                        (theme::info(ui), "SecurityCenter")
                     }
                     SecurityProductSource::Registry => {
-                        (Color32::from_rgb(199, 202, 245), "Registry")
+                        (theme::text(ui), "Registry")
                     }
                     SecurityProductSource::Heuristic => {
-                        (Color32::from_rgb(180, 180, 180), "Heuristic")
+                        (theme::weak_text(ui), "Heuristic")
                     }
                 };
                 ui.label(RichText::new(src_text).small().color(src_color));

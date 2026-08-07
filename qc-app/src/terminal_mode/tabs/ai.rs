@@ -138,7 +138,7 @@ impl<'a> AiTab<'a> {
                     }
                     lines.push(Line::from(""));
                 }
-                (SentFrom::Gpt, ChatMessageType::Reasoning(t)) => {
+                (SentFrom::Assistant, ChatMessageType::Reasoning(t)) => {
                     lines.push(Line::from(Span::styled(
                         "\u{00B7} thinking",
                         Style::default().fg(THEME.text_muted).add_modifier(Modifier::ITALIC),
@@ -148,12 +148,12 @@ impl<'a> AiTab<'a> {
                     }
                     lines.push(Line::from(""));
                 }
-                (SentFrom::Gpt, ChatMessageType::Text(t)) if t.starts_with(TOOL_PREFIX) => {
+                (SentFrom::Assistant, ChatMessageType::Text(t)) if t.starts_with(TOOL_PREFIX) => {
                     for w in wrap(t, width) {
                         lines.push(Line::from(w).style(Style::default().fg(THEME.tertiary)));
                     }
                 }
-                (SentFrom::Gpt, ChatMessageType::Text(t)) => {
+                (SentFrom::Assistant, ChatMessageType::Text(t)) => {
                     lines.push(Line::from(Span::styled(
                         "\u{258C} Assistant",
                         Style::default().fg(THEME.success).add_modifier(bold),

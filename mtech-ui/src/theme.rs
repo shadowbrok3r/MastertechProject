@@ -63,8 +63,37 @@ pub fn strong_text(ui: &Ui) -> Color32 {
     ui.visuals().strong_text_color()
 }
 
+/// Body text in the current widget state; brightens on hover and press on themes that leave
+/// `override_text_color` unset.
+pub fn text(ui: &Ui) -> Color32 {
+    ui.visuals().text_color()
+}
+
 pub fn weak_text(ui: &Ui) -> Color32 {
     ui.visuals().weak_text_color()
+}
+
+/// Dimmer than [`weak_text`], for placeholders and inert separators.
+pub fn faint_text(ui: &Ui) -> Color32 {
+    weak_text(ui).gamma_multiply(0.65)
+}
+
+/// Number of distinct tag accents [`tag_color`] cycles through.
+pub const TAG_LEN: usize = 5;
+
+/// Theme-following accent for a categorical tag whose only job is to differ from its neighbours —
+/// a registry value type, a hive, a transport kind. Wraps at [`TAG_LEN`].
+///
+/// Not [`series_color`]: that palette is CVD-validated and deliberately fixed, because a chart's
+/// colors have to stay stable across themes and screenshots. Tags have no such contract.
+pub fn tag_color(ui: &Ui, index: usize) -> Color32 {
+    match index % TAG_LEN {
+        0 => info(ui),
+        1 => success(ui),
+        2 => warn(ui),
+        3 => accent_secondary(ui),
+        _ => strong_text(ui),
+    }
 }
 
 pub fn border(ui: &Ui) -> Color32 {

@@ -1,6 +1,7 @@
-use eframe::egui::{Align, Color32, Id, Layout, RichText, Ui};
+use eframe::egui::{Align, Id, Layout, RichText, Ui};
 use crate::Cmd;
 use crate::ui_tools::icons::{self, menu_label};
+use crate::ui_tools::theme;
 use crate::EGUI_INPUT_TAG;
 use bincode::config::standard;
 use ewebsock::WsMessage;
@@ -109,8 +110,10 @@ impl WebSocketClient {
             ui.add_space(4.);
             ui.horizontal(|ui| {
                 let btn_color = ui.style().visuals.error_fg_color;
-                let sys_color = Color32::from_rgb(160, 200, 180);
-                let os_btn_color = Color32::from_rgb(180, 180, 200);
+                // Read-only surfaces take the calm accent; OS-level actions plain text, since the
+                // destructive ones in that menu already carry the error color.
+                let sys_color = theme::success(ui);
+                let os_btn_color = theme::text(ui);
 
                 // Standalone Home shortcut, left of the View menu.
                 if ui
@@ -278,7 +281,7 @@ impl WebSocketClient {
                         "MCP Tool Log".to_string()
                     };
                     let text = if pending > 0 {
-                        RichText::new(label).color(Color32::from_rgb(255, 200, 80))
+                        RichText::new(label).color(theme::warn(ui))
                     } else {
                         RichText::new(label)
                     };
@@ -373,7 +376,7 @@ impl WebSocketClient {
                     // Disabled while a transfer is in flight; a second one would truncate it.
                     let transfer_busy = self.file_transfer_progress.is_some();
                     let transfer_color = if self.cmd_protocol_mismatch {
-                        Color32::from_rgb(255, 200, 80)
+                        theme::warn(ui)
                     } else {
                         sys_color
                     };
@@ -404,7 +407,7 @@ impl WebSocketClient {
                                 if ui
                                     .button(
                                         RichText::new("Deploy MasterTech Update…")
-                                            .color(Color32::from_rgb(80, 200, 255)),
+                                            .color(theme::info(ui)),
                                     )
                                     .on_hover_text(
                                         "Push a new MasterTech.exe to this remote client.\nIt will replace itself and relaunch automatically.",
@@ -463,7 +466,7 @@ impl WebSocketClient {
                             ui.close();
                         }
                         ui.separator();
-                        if ui.button(RichText::new("Shutdown").color(Color32::LIGHT_RED)).clicked() {
+                        if ui.button(RichText::new("Shutdown").color(theme::error(ui))).clicked() {
                             let _ = self.send_cmd_tx.try_send(Cmd::ShutdownSystem);
                             ui.close();
                         }
@@ -500,34 +503,32 @@ impl WebSocketClient {
                     WsDisplayState::CrashDumps    => "Crash Dumps",
                 };
                 ui.label(
-                    RichText::new(current_view)
-                        .color(Color32::from_rgb(200, 200, 220))
-                        .small(),
+                    RichText::new(current_view).color(theme::text(ui)).small(),
                 );
 
                 if self.persistent_shell_mode {
                     ui.separator();
-                    ui.colored_label(Color32::YELLOW, "Persistent Shell");
+                    ui.colored_label(theme::warn(ui), "Persistent Shell");
                 }
 
                 // ── Right-aligned status indicator ───────────────────
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let (status_color, status_text, status_tooltip) = if !self.client.connected {
-                        (Color32::RED, icons::STATUS_ERR, "Disconnected")
+                        (theme::error(ui), icons::STATUS_ERR, "Disconnected")
                     } else if let Some(last_activity) = &self.client.last_update {
                         let now = chrono::Utc::now();
                         let activity_time = last_activity.to_utc();
                         let elapsed_secs = (now - activity_time).num_seconds();
                         if elapsed_secs < 30 {
-                            (Color32::GREEN, icons::STATUS_ON, "Active")
+                            (theme::success(ui), icons::STATUS_ON, "Active")
                         } else if elapsed_secs < 120 {
-                            (Color32::YELLOW, icons::STATUS_WARN, "Stale")
+                            (theme::warn(ui), icons::STATUS_WARN, "Stale")
                         } else {
-                            (Color32::LIGHT_RED, icons::STATUS_WAIT, "Inactive")
+                            (theme::error(ui), icons::STATUS_WAIT, "Inactive")
                         }
                     } else if self.is_connected {
                         (
-                            Color32::from_rgb(100, 200, 100),
+                            theme::success(ui),
                             icons::STATUS_IDLE,
                             "Connected (awaiting activity)",
                         )
@@ -546,13 +547,9 @@ impl WebSocketClient {
                         TransportKind::WebSocket => ("WS", "Legacy WebSocket relay room"),
                     };
                     let badge_color = if !self.is_connected {
-                        Color32::GRAY
+                        theme::weak_text(ui)
                     } else {
-                        match kind {
-                            TransportKind::Tcp => Color32::from_rgb(100, 200, 100),
-                            TransportKind::Relay => Color32::from_rgb(235, 170, 80),
-                            TransportKind::WebSocket => Color32::from_rgb(120, 160, 230),
-                        }
+                        crate::tabs::admin_console::ui::transport_color(ui, kind)
                     };
                     let badge_hover = if self.is_connected {
                         badge_tip.to_string()
@@ -565,7 +562,7 @@ impl WebSocketClient {
                     if let Some((ref name, sent, total)) = self.file_transfer_progress {
                         let short = name.rsplit(['/', '\\']).next().unwrap_or(name);
                         ui.colored_label(
-                            Color32::YELLOW,
+                            theme::warn(ui),
                             RichText::new(format!("{short}  {sent}/{total}")).small(),
                         )
                         .on_hover_text(format!("Sending {name} — chunk {sent} of {total}"));
@@ -654,7 +651,7 @@ impl WebSocketClient {
                                     RichText::new(
                                         "Remote UI is in a separate window. Close that window or uncheck above to embed here.",
                                     )
-                                    .color(Color32::GRAY)
+                                    .color(theme::weak_text(ui))
                                     .small(),
                                 );
                             }
@@ -668,13 +665,13 @@ impl WebSocketClient {
                             ui.add_space(40.0);
                             ui.label(
                                 RichText::new("Connecting to remote viewer...")
-                                    .color(Color32::GRAY)
+                                    .color(theme::weak_text(ui))
                                     .size(14.0),
                             );
                             ui.add_space(8.0);
                             ui.label(
                                 RichText::new("Waiting for terminal or egui frame data from the remote instance.")
-                                    .color(Color32::from_rgb(120, 120, 140))
+                                    .color(theme::faint_text(ui))
                                     .small(),
                             );
                             ui.spinner();
@@ -842,7 +839,7 @@ impl WebSocketClient {
                                 bytes / 1024
                             ))
                             .small()
-                            .color(Color32::from_rgb(140, 180, 140)),
+                            .color(theme::success(ui)),
                         );
                     });
 
@@ -874,7 +871,7 @@ impl WebSocketClient {
                             ui.add_space(30.0);
                             ui.label(
                                 RichText::new("Remote desktop is popped out to its own window.")
-                                    .color(Color32::GRAY),
+                                    .color(theme::weak_text(ui)),
                             );
                             ui.add_space(8.0);
                             if ui.button("Return to tab").clicked() {
@@ -920,7 +917,7 @@ impl WebSocketClient {
             ui.label(
                 RichText::new(format!("{frames} frames | {latency} ms"))
                     .small()
-                    .color(Color32::from_rgb(140, 180, 140)),
+                    .color(theme::success(ui)),
             );
         });
 

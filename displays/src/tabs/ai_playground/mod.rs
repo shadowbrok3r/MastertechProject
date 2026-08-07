@@ -13,11 +13,20 @@ pub struct ChatThread {
     pub input: String,
 }
 
+/// Unix seconds for a chat message.
+pub fn now_ts() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ChatMessage {
     pub id: String,
     pub thread_id: String,
-    pub ts: i32,
+    /// Unix seconds. i64 so it survives 2038.
+    pub ts: i64,
     pub from: SentFrom,
     pub content: ChatMessageType,
 }
@@ -26,7 +35,9 @@ pub struct ChatMessage {
 pub enum SentFrom {
     #[default]
     Me,
-    Gpt,
+    /// Any assistant engine. `Gpt` is the pre-Claude name kept for stored rows.
+    #[serde(alias = "Gpt")]
+    Assistant,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

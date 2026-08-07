@@ -25,6 +25,7 @@ mod bioslove;
 mod bootdiag;
 mod capsule;
 mod charts;
+mod flashstate;
 mod launch;
 mod hii;
 mod netraw;
@@ -4763,6 +4764,71 @@ fn redetect_bioslove(app: &mut App) {
     app.dirty = true;
 }
 
+/// Digest of a recipe, so an index rebuild invalidates a stale resume.
+fn recipe_digest(entry: &bioslove::Entry) -> String {
+    let mut s = String::from(&entry.folder);
+    for step in &entry.steps {
+        s.push('|');
+        s.push_str(&step.exec);
+        s.push(' ');
+        s.push_str(&step.args);
+    }
+    capsule::sha256_hex(s.as_bytes())
+}
+
+/// Adopt a saved recipe position when it belongs to this machine and the index
+/// still describes the same recipe.
+fn adopt_flash_resume(app: &mut App) {
+    let Some(state) = flashstate::load() else {
+        return;
+    };
+    let serial = effective_serial(&app.info);
+    if state.serial != serial {
+        logln(format!(
+            "flashstate: saved state is for {} , this machine is {serial}",
+            state.serial
+        ));
+        return;
+    }
+    if state.complete() {
+        let _ = flashstate::clear();
+        return;
+    }
+    let Some(index) = app.flash_index.as_ref() else {
+        app.flash_resume = Some(state);
+        return;
+    };
+    let Some(pos) = index.entries.iter().position(|e| e.folder == state.folder) else {
+        logln(format!("flashstate: {} is not in this index", state.folder));
+        return;
+    };
+    if recipe_digest(&index.entries[pos]) != state.recipe_sha256 {
+        app.status = format!(
+            "{} changed since the flash started - resume refused",
+            state.folder
+        );
+        logln("flashstate: recipe digest changed; refusing to resume".to_string());
+        let _ = flashstate::clear();
+        return;
+    }
+    // Put the cursor on the saved entry and step.
+    app.flash_filter = state.folder.clone();
+    app.flash_sel = flash_rows(app)
+        .iter()
+        .position(|(ei, _)| *ei == pos)
+        .unwrap_or(0);
+    app.flash_step = state.next_step;
+    app.tab = TAB_FLASH;
+    app.status = format!(
+        "resumed {} at step {} of {}",
+        state.folder,
+        state.next_step + 1,
+        state.total_steps
+    );
+    app.flash_resume = Some(state);
+    app.dirty = true;
+}
+
 /// Read the BIOSLove index off an attached volume and auto-detect this machine.
 fn load_bioslove_index(app: &mut App) {
     match bioslove::load_from_volume() {
@@ -4777,6 +4843,10 @@ fn load_bioslove_index(app: &mut App) {
             app.flash_err.clear();
             app.flash_index = Some(index);
             redetect_bioslove(app);
+            adopt_flash_resume(app);
+            if app.flash_resume.is_some() {
+                return;
+            }
             let n = app.flash_matches.len();
             app.status = match app.flash_matches.first() {
                 Some(m) => {
@@ -5003,6 +5073,51 @@ fn do_flash_step(
         return Ok(());
     }
 
+    // Snapshot what the log and the resume state need before borrowing ends.
+    let (folder, total, digest, kind, exec, args, exec_sha) = {
+        let index = app.flash_index.as_ref().expect("index loaded");
+        let e = &index.entries[p.entry];
+        let s = &e.steps[p.step];
+        (
+            e.folder.clone(),
+            e.steps.len(),
+            recipe_digest(e),
+            s.kind.label(),
+            s.exec.clone(),
+            s.args.clone(),
+            s.exec_sha256.clone(),
+        )
+    };
+    let serial = effective_serial(&app.info);
+
+    // Persisted before the tool starts: 36 steps power the machine off and 8
+    // reboot, so a position written afterwards would never be written at all.
+    let state = flashstate::FlashState {
+        folder: folder.clone(),
+        serial: serial.clone(),
+        next_step: p.step.saturating_add(1),
+        total_steps: total,
+        recipe_sha256: digest,
+        last_status: String::new(),
+    };
+    if let Err(e) = flashstate::save(&state) {
+        logln(format!("bioslove: {e}"));
+        app.flash_note.push(format!("WARN {e}"));
+    }
+    flashstate::append_log(
+        p.volume,
+        &flashstate::LogEntry {
+            serial: &serial,
+            folder: &folder,
+            step: p.step + 1,
+            kind,
+            exec: &exec,
+            args: &args,
+            exec_sha256: &exec_sha,
+            outcome: "started",
+        },
+    );
+
     app.status = format!("RUNNING {} - DO NOT POWER OFF", p.command_line);
     terminal.draw(|frame| render(frame, app))?;
     logln(format!(
@@ -5024,11 +5139,16 @@ fn do_flash_step(
     terminal.clear()?;
     app.dirty = true;
 
-    match outcome {
+    let result = match outcome {
         Err(e) => {
             logln(format!("bioslove: launch failed: {e}"));
             app.flash_note.push(format!("FAILED {e}"));
             app.status = format!("launch failed: {e}");
+            // Nothing ran, so the saved position must go back to this step.
+            let mut back = state.clone();
+            back.next_step = p.step;
+            let _ = flashstate::save(&back);
+            format!("launch-failed: {e}")
         }
         Ok(ran) => {
             logln(format!("bioslove: {} returned {:?}", p.command_line, ran.status));
@@ -5041,8 +5161,32 @@ fn do_flash_step(
             } else {
                 app.status = format!("step {} returned {:?}", p.step + 1, ran.status);
             }
+            let mut done = state.clone();
+            done.last_status = format!("{:?}", ran.status);
+            if done.complete() {
+                let _ = flashstate::clear();
+                app.flash_resume = None;
+                app.flash_note
+                    .push(format!("recipe complete for {folder} - state cleared"));
+            } else {
+                let _ = flashstate::save(&done);
+            }
+            format!("returned {:?}", ran.status)
         }
-    }
+    };
+    flashstate::append_log(
+        p.volume,
+        &flashstate::LogEntry {
+            serial: &serial,
+            folder: &folder,
+            step: p.step + 1,
+            kind,
+            exec: &exec,
+            args: &args,
+            exec_sha256: &exec_sha,
+            outcome: &result,
+        },
+    );
     Ok(())
 }
 
@@ -5087,6 +5231,21 @@ fn page_flash(frame: &mut Frame, area: Rect, app: &App) {
                 }),
             )));
         }
+    }
+    if let Some(r) = &app.flash_resume {
+        left.push(Line::from(""));
+        left.push(header("Resumed"));
+        left.push(Line::from(Span::styled(
+            format!("{} step {} of {}", r.folder, r.next_step + 1, r.total_steps),
+            Style::default().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
+        )));
+        if !r.last_status.is_empty() {
+            left.push(kv("Last step", r.last_status.clone()));
+        }
+        left.push(Line::from(Span::styled(
+            "carried across the reboot",
+            Style::default().fg(palette::MUTED),
+        )));
     }
     left.push(Line::from(""));
     left.push(header("Search"));
@@ -7698,6 +7857,8 @@ struct App {
     flash_ready: Option<PreparedStep>,
     /// Second 'F' launches the prepared step. Cleared by any other key.
     flash_armed: bool,
+    /// Recipe position carried across a reboot, when it matches this machine.
+    flash_resume: Option<flashstate::FlashState>,
 }
 
 /// A recipe step that passed every gate and is ready to run.
@@ -7978,6 +8139,7 @@ fn run() -> Result<()> {
         flash_blocked: false,
         flash_ready: None,
         flash_armed: false,
+        flash_resume: None,
     };
 
     terminal.clear()?;

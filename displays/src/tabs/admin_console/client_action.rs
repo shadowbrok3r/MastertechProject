@@ -28,6 +28,9 @@ pub enum ClientUiAction {
     LinkCustomer(ConnectedClient),
     /// Run automated repair for this connection_string.
     RepairAssociations(ConnectedClient),
+    /// Flip `autopilot_opt_out`, excluding or restoring this client for
+    /// unattended agent sweeps.
+    ToggleAutopilotOptOut(ConnectedClient),
     /// Root-only: look up a client by `connection_string` or `client_hash` and
     /// open a session to it, bypassing the live query's user/store scope.
     ConnectByIdentifier(String),
@@ -141,6 +144,25 @@ impl AdminConsole {
                     match database::schema::entity_link::repair_connection_links(&cs).await {
                         Ok(report) => log::info!("repair_connection_links({cs}): {report}"),
                         Err(e) => log::error!("repair_connection_links({cs}): {e}"),
+                    }
+                });
+            }
+            ClientUiAction::ToggleAutopilotOptOut(client) => {
+                let cs = client.connection_string.clone();
+                let next = !client.autopilot_opt_out;
+                crate::PlatformSpawner::spawn(async move {
+                    let result = database::db()
+                        .query(
+                            "UPDATE connected_client SET autopilot_opt_out = $v, \
+                                                         last_update = time::now() \
+                             WHERE connection_string == $cs",
+                        )
+                        .bind(("v", next))
+                        .bind(("cs", cs.clone()))
+                        .await;
+                    match result {
+                        Ok(_) => log::info!("autopilot_opt_out({cs}) -> {next}"),
+                        Err(e) => log::error!("autopilot_opt_out({cs}): {e}"),
                     }
                 });
             }

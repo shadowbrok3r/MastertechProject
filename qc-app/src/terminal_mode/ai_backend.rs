@@ -31,7 +31,8 @@ Keep answers concise.";
 #[derive(Clone, Debug, PartialEq)]
 pub enum SentFrom {
     Me,
-    Gpt,
+    /// Any assistant engine; `Gpt` was the pre-Claude name.
+    Assistant,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -97,7 +98,7 @@ pub fn history_json_from_messages(msgs: &[ChatMessage]) -> Vec<serde_json::Value
         }
         let role = match m.from {
             SentFrom::Me => "user",
-            SentFrom::Gpt => "assistant",
+            SentFrom::Assistant => "assistant",
         };
         out.push(serde_json::json!({ "role": role, "content": text }));
     }
@@ -176,13 +177,13 @@ pub async fn stream_chat(
         send(
             &tx,
             next_id(),
-            SentFrom::Gpt,
+            SentFrom::Assistant,
             ChatMessageType::Error(
                 "No API key configured. Set MASTERTECH_AI_API_KEY (and optionally MASTERTECH_AI_BASE / MASTERTECH_AI_MODEL) and relaunch."
                     .to_string(),
             ),
         );
-        send(&tx, next_id(), SentFrom::Gpt, ChatMessageType::Done);
+        send(&tx, next_id(), SentFrom::Assistant, ChatMessageType::Done);
         return Ok(());
     }
 
@@ -207,7 +208,7 @@ pub async fn stream_chat(
                 send(
                     &tx,
                     next_id(),
-                    SentFrom::Gpt,
+                    SentFrom::Assistant,
                     ChatMessageType::Error(format!("QC tools unavailable: {e}")),
                 );
                 (None, Vec::new())
@@ -248,16 +249,16 @@ pub async fn stream_chat(
         let resp = match resp {
             Ok(r) => r,
             Err(e) => {
-                send(&tx, next_id(), SentFrom::Gpt, ChatMessageType::Error(format!("Request failed: {e}")));
-                send(&tx, next_id(), SentFrom::Gpt, ChatMessageType::Done);
+                send(&tx, next_id(), SentFrom::Assistant, ChatMessageType::Error(format!("Request failed: {e}")));
+                send(&tx, next_id(), SentFrom::Assistant, ChatMessageType::Done);
                 break;
             }
         };
         if !resp.status().is_success() {
             let status = resp.status();
             let detail = resp.text().await.unwrap_or_default();
-            send(&tx, next_id(), SentFrom::Gpt, ChatMessageType::Error(format!("HTTP {status}: {detail}")));
-            send(&tx, next_id(), SentFrom::Gpt, ChatMessageType::Done);
+            send(&tx, next_id(), SentFrom::Assistant, ChatMessageType::Error(format!("HTTP {status}: {detail}")));
+            send(&tx, next_id(), SentFrom::Assistant, ChatMessageType::Done);
             break;
         }
 
@@ -299,7 +300,7 @@ pub async fn stream_chat(
                     "response.output_text.delta" | "response.content_part.delta" => {
                         if let Some(text) = delta_text(&json) {
                             if !text.is_empty() {
-                                send(&tx, assistant_id.clone(), SentFrom::Gpt, ChatMessageType::Text(text.to_string()));
+                                send(&tx, assistant_id.clone(), SentFrom::Assistant, ChatMessageType::Text(text.to_string()));
                             }
                         }
                     }
@@ -308,7 +309,7 @@ pub async fn stream_chat(
                     | "response.reasoning_summary_text.delta" => {
                         if let Some(text) = delta_text(&json) {
                             if !text.is_empty() {
-                                send(&tx, think_id.clone(), SentFrom::Gpt, ChatMessageType::Reasoning(text.to_string()));
+                                send(&tx, think_id.clone(), SentFrom::Assistant, ChatMessageType::Reasoning(text.to_string()));
                             }
                         }
                     }
@@ -349,7 +350,7 @@ pub async fn stream_chat(
                             .as_str()
                             .or_else(|| json["message"].as_str())
                             .unwrap_or("the model reported a failed response");
-                        send(&tx, next_id(), SentFrom::Gpt, ChatMessageType::Error(detail.to_string()));
+                        send(&tx, next_id(), SentFrom::Assistant, ChatMessageType::Error(detail.to_string()));
                     }
                     _ => {}
                 }
@@ -357,7 +358,7 @@ pub async fn stream_chat(
         }
 
         if tool_acc.is_empty() {
-            send(&tx, next_id(), SentFrom::Gpt, ChatMessageType::Done);
+            send(&tx, next_id(), SentFrom::Assistant, ChatMessageType::Done);
             break;
         }
 
@@ -378,7 +379,7 @@ pub async fn stream_chat(
             send(
                 &tx,
                 next_id(),
-                SentFrom::Gpt,
+                SentFrom::Assistant,
                 ChatMessageType::Text(format!("{TOOL_PREFIX}{name}({})", summarize(&args))),
             );
             let result_text = match &mcp_client {

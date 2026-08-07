@@ -9,6 +9,7 @@ use std::sync::Arc;
 use super::carl_dark::{paint_aesthetix_colors, Aesthetix, CarlDark};
 use super::mtech_glass::{glass_params_for_style, glassify, MtechGlass};
 use super::neon_glass::{self, NeonPalette};
+use super::soft_glass::{self, SoftPalette};
 use super::decode_theme;
 
 /// Applies shipped [`crate::STYLE`] before login or when no saved scheme exists.
@@ -73,7 +74,7 @@ fn styles_visually_equal(a: &Style, b: &Style) -> bool {
 
 /// Recovers the preset a saved style was built from, so its semantic colors survive restart.
 fn preset_matching_style(style: &Style) -> Option<PresetStyles> {
-    const PRESETS: [PresetStyles; 21] = [
+    const PRESETS: [PresetStyles; 25] = [
         PresetStyles::ShippedClassic,
         PresetStyles::LegacyClassic,
         PresetStyles::DefaultEgui,
@@ -83,6 +84,10 @@ fn preset_matching_style(style: &Style) -> Option<PresetStyles> {
         PresetStyles::AuroraGlass,
         PresetStyles::SupernovaGlass,
         PresetStyles::EventHorizonGlass,
+        PresetStyles::ObsidianGlass,
+        PresetStyles::VelvetGlass,
+        PresetStyles::TwilightGlass,
+        PresetStyles::QuartzGlass,
         PresetStyles::CarlDarkColors,
         PresetStyles::CarlDarkFull,
         PresetStyles::TokyoNightStormColors,
@@ -243,6 +248,10 @@ pub fn style_for_preset(preset: PresetStyles) -> Style {
         | PresetStyles::AuroraGlass
         | PresetStyles::SupernovaGlass
         | PresetStyles::EventHorizonGlass => neon_glass::neon_style(neon_palette_for_preset(preset)),
+        PresetStyles::ObsidianGlass
+        | PresetStyles::VelvetGlass
+        | PresetStyles::TwilightGlass
+        | PresetStyles::QuartzGlass => soft_glass::soft_style(soft_palette_for_preset(preset)),
         PresetStyles::CarlDarkColors => colors_only(&CarlDark),
         PresetStyles::CarlDarkFull => CarlDark.custom_style(),
         PresetStyles::TokyoNightStormColors => colors_only(&TokyoNightStorm),
@@ -281,6 +290,12 @@ pub fn semantic_colors_for_preset(preset: PresetStyles) -> (Color32, Color32) {
         | PresetStyles::SupernovaGlass
         | PresetStyles::EventHorizonGlass => {
             neon_glass::neon_semantic_colors(neon_palette_for_preset(preset))
+        }
+        PresetStyles::ObsidianGlass
+        | PresetStyles::VelvetGlass
+        | PresetStyles::TwilightGlass
+        | PresetStyles::QuartzGlass => {
+            soft_glass::soft_semantic_colors(soft_palette_for_preset(preset))
         }
         PresetStyles::CarlDarkColors | PresetStyles::CarlDarkFull => {
             (CarlDark.fg_success_text_color_visuals(), CarlDark.secondary_accent_color_visuals())
@@ -321,6 +336,18 @@ fn neon_palette_for_preset(preset: PresetStyles) -> &'static NeonPalette {
     }
 }
 
+/// The palette behind each soft glass preset. Panics only for presets outside that family, which
+/// the callers below never pass.
+fn soft_palette_for_preset(preset: PresetStyles) -> &'static SoftPalette {
+    match preset {
+        PresetStyles::ObsidianGlass => &soft_glass::OBSIDIAN,
+        PresetStyles::VelvetGlass => &soft_glass::VELVET,
+        PresetStyles::TwilightGlass => &soft_glass::TWILIGHT,
+        PresetStyles::QuartzGlass => &soft_glass::QUARTZ,
+        other => unreachable!("{other:?} is not a soft glass preset"),
+    }
+}
+
 /// The backdrop-blur material a preset draws its glass against. Presets that paint opaque chrome
 /// return [`GlassParams::OFF`], so switching away from a glass theme turns real frosting off.
 pub fn glass_params_for_preset(preset: PresetStyles) -> GlassParams {
@@ -331,6 +358,12 @@ pub fn glass_params_for_preset(preset: PresetStyles) -> GlassParams {
         | PresetStyles::SupernovaGlass
         | PresetStyles::EventHorizonGlass => {
             neon_glass::neon_glass_params(neon_palette_for_preset(preset))
+        }
+        PresetStyles::ObsidianGlass
+        | PresetStyles::VelvetGlass
+        | PresetStyles::TwilightGlass
+        | PresetStyles::QuartzGlass => {
+            soft_glass::soft_glass_params(soft_palette_for_preset(preset))
         }
         _ => GlassParams::OFF,
     }
@@ -478,6 +511,12 @@ impl ThemeConfig {
                     ui.selectable_value(&mut self.preset_style, PresetStyles::AuroraGlass, neon_glass::AURORA.name);
                     ui.selectable_value(&mut self.preset_style, PresetStyles::SupernovaGlass, neon_glass::SUPERNOVA.name);
                     ui.selectable_value(&mut self.preset_style, PresetStyles::EventHorizonGlass, neon_glass::EVENT_HORIZON.name);
+                    ui.separator();
+                    ui.label("Soft glass · low chroma");
+                    ui.selectable_value(&mut self.preset_style, PresetStyles::ObsidianGlass, soft_glass::OBSIDIAN.name);
+                    ui.selectable_value(&mut self.preset_style, PresetStyles::VelvetGlass, soft_glass::VELVET.name);
+                    ui.selectable_value(&mut self.preset_style, PresetStyles::TwilightGlass, soft_glass::TWILIGHT.name);
+                    ui.selectable_value(&mut self.preset_style, PresetStyles::QuartzGlass, soft_glass::QUARTZ.name);
                     ui.separator();
                     ui.label("Colors only · legacy widgets");
                     ui.selectable_value(&mut self.preset_style, PresetStyles::CarlDarkColors, "Carl Dark · Colors");
@@ -1096,6 +1135,10 @@ pub enum PresetStyles {
     AuroraGlass,
     SupernovaGlass,
     EventHorizonGlass,
+    ObsidianGlass,
+    VelvetGlass,
+    TwilightGlass,
+    QuartzGlass,
     CarlDarkColors,
     CarlDarkFull,
     TokyoNightStormColors,
@@ -1129,6 +1172,10 @@ impl PresetStyles {
             PresetStyles::AuroraGlass => neon_glass::AURORA.name,
             PresetStyles::SupernovaGlass => neon_glass::SUPERNOVA.name,
             PresetStyles::EventHorizonGlass => neon_glass::EVENT_HORIZON.name,
+            PresetStyles::ObsidianGlass => soft_glass::OBSIDIAN.name,
+            PresetStyles::VelvetGlass => soft_glass::VELVET.name,
+            PresetStyles::TwilightGlass => soft_glass::TWILIGHT.name,
+            PresetStyles::QuartzGlass => soft_glass::QUARTZ.name,
             PresetStyles::CarlDarkColors => "Carl Dark · Colors",
             PresetStyles::CarlDarkFull => "Carl Dark · Full",
             PresetStyles::TokyoNightStormColors => "TokyoNight Storm · Colors",
@@ -1156,6 +1203,10 @@ impl PresetStyles {
             "Aurora Glass" => Self::AuroraGlass,
             "Supernova Glass" => Self::SupernovaGlass,
             "Event Horizon Glass" => Self::EventHorizonGlass,
+            "Obsidian Glass" => Self::ObsidianGlass,
+            "Velvet Glass" => Self::VelvetGlass,
+            "Twilight Glass" => Self::TwilightGlass,
+            "Quartz Glass" => Self::QuartzGlass,
             "Carl Dark · Colors" | "Carl Dark" => Self::CarlDarkColors,
             "Carl Dark · Full" => Self::CarlDarkFull,
             "TokyoNight Storm · Colors" | "TokyoNight Storm" => Self::TokyoNightStormColors,
@@ -1407,6 +1458,68 @@ mod tests {
         PresetStyles::SupernovaGlass,
         PresetStyles::EventHorizonGlass,
     ];
+
+    const SOFT_PRESETS: [PresetStyles; 4] = [
+        PresetStyles::ObsidianGlass,
+        PresetStyles::VelvetGlass,
+        PresetStyles::TwilightGlass,
+        PresetStyles::QuartzGlass,
+    ];
+
+    // Every generated glass preset, across both families. They share helpers and geometry, so a
+    // collision between families is as likely as one within a family.
+    fn generated_glass_presets() -> [PresetStyles; 8] {
+        let mut all = [PresetStyles::Custom; 8];
+        all[..4].copy_from_slice(&NEON_PRESETS);
+        all[4..].copy_from_slice(&SOFT_PRESETS);
+        all
+    }
+
+    // Each soft theme has to survive the account round trip as itself, and none may collapse onto
+    // a neon theme — eight presets out of two generators is where a style collision would show.
+    #[test]
+    fn every_soft_preset_round_trips_and_stays_distinct() {
+        for preset in SOFT_PRESETS {
+            let bytes = encode_theme(&saved(preset)).unwrap();
+            let decoded = decode_theme(&bytes).unwrap();
+            assert_eq!(
+                preset_matching_style(&decoded.style),
+                Some(preset),
+                "{} did not round trip",
+                preset.as_str(),
+            );
+            assert_eq!(decoded.glass, Some(glass_params_for_preset(preset)));
+        }
+
+        let all = generated_glass_presets();
+        for (i, a) in all.iter().enumerate() {
+            for b in &all[i + 1..] {
+                assert!(
+                    !styles_visually_equal(&style_for_preset(*a), &style_for_preset(*b)),
+                    "{} and {} produce the same style",
+                    a.as_str(),
+                    b.as_str(),
+                );
+            }
+        }
+    }
+
+    // Every soft preset must arrive with blur on, and with a resting control frame the operator
+    // can actually see — the thing that separates this family from the neon one.
+    #[test]
+    fn every_soft_preset_applies_glass_and_a_visible_control_frame() {
+        let ctx = Context::default();
+        for preset in SOFT_PRESETS {
+            apply_preset(&ctx, preset);
+            let params = glass_backdrop::params(&ctx);
+            assert!(params.is_visible(), "{} has no glass", preset.as_str());
+
+            let style = ctx.global_style();
+            assert!(style.visuals.window_fill.a() < 255, "{} is opaque", preset.as_str());
+            let frame = style.visuals.widgets.inactive.bg_stroke;
+            assert!(frame.width >= 1.0 && frame.color.a() >= 150, "{} has no resting frame", preset.as_str());
+        }
+    }
 
     // Each neon theme has to survive the account round trip as itself: four themes built from one
     // generator are the most likely presets to collide and restore as each other.

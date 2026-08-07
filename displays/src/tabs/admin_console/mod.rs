@@ -1,5 +1,5 @@
 use crate::{Cmd, PlatformSpawner, Spawner, channel_manager::ChannelManager, tabs::{ai_playground::enhanced::EnhancedAiPlayground, tasks::task_layout::{SortField, SortOptions}}, ui_tools::toasts::{Toast, ToastOptions, ToastStyle}, virtual_filesystem::FileSystem};
-use eframe::egui::{self, Align, CentralPanel, Color32, Context, Frame, Layout, Margin, RichText, ScrollArea, Stroke, Ui, Vec2};
+use eframe::egui::{self, Align, CentralPanel, Context, Frame, Layout, Margin, RichText, ScrollArea, Ui, Vec2};
 use database::schema::{utilities::get_connected_clients, ConnectedClient, RecordIdExt, Sortable};
 use crossbeam::channel::{Receiver, Sender};
 use std::collections::{BTreeMap, HashMap};
@@ -7,6 +7,7 @@ use client_interface::WebSocketClient;
 use crate::app_state::SharedContext;
 use crate::tabs::tasks::client_cards::should_show_connected_client_in_summaries;
 use crate::ui_tools::icons::{self, menu_label};
+use crate::ui_tools::{glass_card, theme};
 use client_action::ClientUiAction;
 use client_interface::TransportKind;
 use serde::Serialize;
@@ -189,6 +190,8 @@ pub struct AdminConsole {
     pub ui_actions_channel: (Sender<ClientUiAction>, Receiver<ClientUiAction>),
     /// Open right-side panel (Script Editor / Chat), or `None` when closed.
     right_panel: Option<RightPanel>,
+    /// Chat fills the whole tab instead of the right panel.
+    chat_fullscreen: bool,
     pub sort_by: HashMap<String, SortOptions>,
     pub last_sort_field: Option<SortField>,
     pub loading: bool,
@@ -320,6 +323,7 @@ impl AdminConsole {
             ui_actions_channel,
             error: Default::default(),
             right_panel: None,
+            chat_fullscreen: false,
             script_editor: ScriptEditor::new(),
             ai_playground: EnhancedAiPlayground::default(),
             relink_popup: None,
@@ -712,15 +716,14 @@ impl SharedContext {
 
         let inner_margin = Margin::same(1);
         let outer_margin = Margin::same(1);
-        let stroke = Stroke::new(0.7_f32, Color32::from_additive_luminance(150));
-        let radius = eframe::egui::CornerRadius::same(2);
+        let stroke = glass_card::card_stroke(ui);
+        let radius = eframe::egui::CornerRadius::same(ui.visuals().window_corner_radius.nw.max(2));
 
         
 
         eframe::egui::Panel::top("Client_Top_panel")
             .frame(
                 Frame::default()
-                    // .fill(Color32::from_rgb(17,17,19))
                     .inner_margin(inner_margin)
                     .outer_margin(outer_margin)
                     .stroke(stroke)
@@ -766,9 +769,9 @@ impl SharedContext {
                     ui.menu_button(
                         RichText::new(batch_label)
                             .color(if open_count > 0 {
-                                Color32::from_rgb(255, 200, 50)
+                                theme::warn(ui)
                             } else {
-                                Color32::DARK_GRAY
+                                theme::faint_text(ui)
                             })
                             .strong(),
                         |ui| {
@@ -780,7 +783,7 @@ impl SharedContext {
                             ui.label(
                                 RichText::new(format!("Acts on {open_count} open client(s):"))
                                     .small()
-                                    .color(Color32::GRAY),
+                                    .color(theme::weak_text(ui)),
                             );
                             let names: Vec<String> = self
                                 .web_console_layout
@@ -809,14 +812,9 @@ impl SharedContext {
                                 BatchAction::RunWindowsUpdate,
                             ] {
                                 let color = match action {
-                                    BatchAction::Shutdown => Color32::LIGHT_RED,
-                                    BatchAction::Reboot | BatchAction::SwitchToTerminalMode => {
-                                        Color32::from_rgb(180, 180, 200)
-                                    }
-                                    BatchAction::RunWindowsUpdate => {
-                                        Color32::from_rgb(80, 200, 255)
-                                    }
-                                    _ => Color32::from_rgb(180, 180, 200),
+                                    BatchAction::Shutdown => theme::error(ui),
+                                    BatchAction::RunWindowsUpdate => theme::info(ui),
+                                    _ => theme::text(ui),
                                 };
                                 if ui.button(RichText::new(action.label()).color(color)).clicked() {
                                     self.web_console_layout.pending_batch_action = Some(action);
@@ -945,44 +943,36 @@ impl SharedContext {
                         // Render right-to-left, so push them in reverse
                         // visual order: connection_string first → name →
                         // label.
-                        ui.label(
-                            egui::RichText::new(conn)
-                                .small()
-                                .color(Color32::from_rgb(160, 160, 180)),
-                        );
-                        ui.label(
-                            egui::RichText::new(" · ")
-                                .small()
-                                .color(Color32::DARK_GRAY),
-                        );
+                        ui.label(egui::RichText::new(conn).small().color(theme::weak_text(ui)));
+                        ui.label(egui::RichText::new(" · ").small().color(theme::faint_text(ui)));
                         ui.label(
                             egui::RichText::new(name)
                                 .small()
                                 .strong()
-                                .color(Color32::from_rgb(51, 255, 189)),
+                                .color(theme::success(ui)),
                         );
-                        ui.label(
-                            egui::RichText::new("Active:")
-                                .small()
-                                .color(Color32::GRAY),
-                        );
+                        ui.label(egui::RichText::new("Active:").small().color(theme::weak_text(ui)));
                     } else {
                         ui.label(
                             egui::RichText::new("No active client")
                                 .small()
                                 .italics()
-                                .color(Color32::DARK_GRAY),
+                                .color(theme::faint_text(ui)),
                         );
                     }
                 });
             });
         });
 
-        let mut left_open = self.web_console_layout.open_menu;
+        // Fullscreen chat collapses the client list and widens the right panel
+        // over the central area.
+        let chat_full = self.web_console_layout.chat_fullscreen
+            && matches!(self.web_console_layout.right_panel, Some(RightPanel::Chat));
+        let mut left_open = self.web_console_layout.open_menu && !chat_full;
         eframe::egui::Panel::left("Client_Side_panel")
             .frame(
                 Frame::default()
-                    .fill(ui.global_style().visuals.extreme_bg_color)
+                    .fill(glass_card::recessed_fill(ui))
                     .inner_margin(inner_margin)
                     .outer_margin(outer_margin)
                     .stroke(stroke)
@@ -1276,23 +1266,35 @@ impl SharedContext {
         eframe::egui::Panel::right("Client_Right_panel")
             .frame(
                 Frame::default()
-                    .fill(ui.global_style().visuals.extreme_bg_color)
+                    .fill(glass_card::recessed_fill(ui))
                     .inner_margin(inner_margin)
                     .outer_margin(outer_margin)
                     .stroke(stroke)
                     .corner_radius(radius)
             )
             .show_separator_line(false)
-            .min_size(440.)
-            .max_size(900.)
+            .min_size(if chat_full { ui.available_width() } else { 440. })
+            .max_size(if chat_full { ui.available_width() } else { 900. })
             .show_collapsible(ui, &mut right_open, |ui| {
                 match self.web_console_layout.right_panel {
-                    // Chat owns its own compact top bar (threads + close), so no
-                    // extra header here. Its ✕ raises a close request we drain.
+                    // Chat owns its own compact top bar (threads + close), so the
+                    // only extra control here is the fullscreen flip. Its ✕ raises
+                    // a close request we drain.
                     Some(RightPanel::Chat) => {
+                        ui.horizontal(|ui| {
+                            let (label, tip) = if chat_full {
+                                ("Exit fullscreen", "Return chat to the right panel")
+                            } else {
+                                ("Fullscreen", "Expand chat over the whole tab")
+                            };
+                            if ui.small_button(label).on_hover_text(tip).clicked() {
+                                self.web_console_layout.chat_fullscreen = !chat_full;
+                            }
+                        });
                         self.web_console_layout.ai_playground.enhanced_ai_playground(ui);
                         if self.web_console_layout.ai_playground.take_close_request() {
                             self.web_console_layout.right_panel = None;
+                            self.web_console_layout.chat_fullscreen = false;
                         }
                     }
                     Some(RightPanel::ScriptEditor) => {
@@ -1382,7 +1384,7 @@ impl SharedContext {
                                 ui.label(
                                     RichText::new(format!("• {name}"))
                                         .small()
-                                        .color(Color32::from_rgb(199, 202, 245)),
+                                        .color(theme::text(ui)),
                                 );
                             }
                         });
@@ -1420,10 +1422,7 @@ impl SharedContext {
                     };
                     if let Some(text) = warning {
                         ui.label(
-                            RichText::new(text)
-                                .small()
-                                .italics()
-                                .color(Color32::from_rgb(255, 200, 120)),
+                            RichText::new(text).small().italics().color(theme::warn(ui)),
                         );
                         ui.add_space(8.0);
                     }
@@ -1432,8 +1431,7 @@ impl SharedContext {
                         let confirm_label = format!("{} all", action.label());
                         if ui
                             .button(
-                                RichText::new(confirm_label)
-                                    .color(Color32::from_rgb(255, 150, 80)),
+                                RichText::new(confirm_label).color(theme::warn(ui)),
                             )
                             .clicked()
                         {

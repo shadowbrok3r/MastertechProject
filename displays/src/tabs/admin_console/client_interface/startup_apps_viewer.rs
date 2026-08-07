@@ -1,5 +1,5 @@
 use eframe::egui::{
-    self, Color32, KeyboardShortcut, RichText, ScrollArea, TextEdit, Ui,
+    self, KeyboardShortcut, RichText, ScrollArea, TextEdit, Ui,
     Widget, scroll_area,
 };
 use crossbeam::channel::{Sender, Receiver};
@@ -11,6 +11,7 @@ use egui_extras::Column as TableColumnConfig;
 use serde::Serialize;
 use crate::{Cmd, StartupApp};
 use crate::ui_tools::icons;
+use crate::ui_tools::theme;
 
 const NUM_COLUMNS: usize = 5;
 
@@ -182,7 +183,7 @@ impl StartupAppsViewer {
             ui.selectable_value(&mut self.viewer.show_mode, ShowMode::DisabledOnly, "Disabled");
 
             if let Some((msg, success)) = &self.status_message {
-                let color = if *success { Color32::GREEN } else { Color32::RED };
+                let color = if *success { theme::success(ui) } else { theme::error(ui) };
                 ui.colored_label(color, msg);
             }
         });
@@ -198,7 +199,7 @@ impl StartupAppsViewer {
         }
 
         if self.entries.is_empty() {
-            ui.label(RichText::new("No startup apps loaded. Click Refresh to fetch.").italics().color(Color32::GRAY));
+            ui.label(RichText::new("No startup apps loaded. Click Refresh to fetch.").italics().color(theme::weak_text(ui)));
             return;
         }
 
@@ -266,28 +267,28 @@ impl RowViewer<StartupApp> for StartupAppRowViewer {
         match column {
             0 => {
                 let (icon, color) = match row.state.as_str() {
-                    "Enabled" => ("●", Color32::GREEN),
-                    "Disabled" | "DisabledByUser" => ("○", Color32::from_rgb(180, 80, 80)),
-                    _ => ("?", Color32::GRAY),
+                    "Enabled" => (icons::STATUS_DOT, theme::success(ui)),
+                    "Disabled" | "DisabledByUser" => (icons::STATUS_OFF, theme::error(ui)),
+                    _ => (icons::STATUS_IDLE, theme::weak_text(ui)),
                 };
                 ui.label(RichText::new(format!("{icon} {}", row.state)).color(color));
             }
             1 => {
-                ui.label(RichText::new(&row.name).color(Color32::from_rgb(200, 210, 230)));
+                ui.label(RichText::new(&row.name).color(theme::text(ui)));
             }
             2 => {
-                ui.label(RichText::new(&row.command).color(Color32::from_rgb(180, 180, 180)));
+                ui.label(RichText::new(&row.command).color(theme::weak_text(ui)));
             }
             3 => {
                 let color = if row.source.contains("HKLM") {
-                    Color32::from_rgb(200, 170, 120)
+                    theme::warn(ui)
                 } else {
-                    Color32::from_rgb(120, 170, 200)
+                    theme::info(ui)
                 };
                 ui.label(RichText::new(&row.source).color(color));
             }
             4 => {
-                ui.label(RichText::new(&row.registry_path).color(Color32::GRAY));
+                ui.label(RichText::new(&row.registry_path).color(theme::weak_text(ui)));
             }
             _ => {}
         }

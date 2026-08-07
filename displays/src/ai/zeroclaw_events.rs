@@ -4,19 +4,18 @@
 //!
 //! Polls `/api/events/history` rather than subscribing to `/api/events`: the
 //! SSE stream accepts the connection and then only emits keepalive comments,
-//! while the history ring buffer carries the real frames.
+//! while the history ring buffer carries the real frames. The endpoint honours
+//! no window parameter and replays its whole buffer on every poll.
 
-use std::collections::VecDeque;
+use std::collections::HashSet;
 
 use database::schema::notification::Notification;
 use database::schema::RecordId;
+use jiff::Timestamp;
 
 use crate::{PlatformSpawner, Spawner};
 
 const POLL_SECS: u64 = 10;
-/// Ring buffer upstream holds ~20 entries; remember more than that so a slow
-/// poll cycle can't replay something already notified.
-const SEEN_CAP: usize = 256;
 
 /// Tools whose invocation is worth a notification; everything else is noise.
 fn notable(tool: &str) -> Option<&'static str> {
@@ -32,15 +31,51 @@ fn notable(tool: &str) -> Option<&'static str> {
     }
 }
 
-/// Stable identity for an event so repeated polls don't re-notify.
+/// Distinguishes events sharing one instant.
 fn key_of(v: &serde_json::Value) -> String {
     format!(
-        "{}|{}|{}|{}",
-        v["timestamp"].as_str().unwrap_or_default(),
+        "{}|{}|{}",
         v["type"].as_str().unwrap_or_default(),
         v["turn_id"].as_str().unwrap_or_default(),
         v["tool"].as_str().unwrap_or_default()
     )
+}
+
+/// Event instant; unparseable timestamps cannot be ordered and are skipped.
+fn event_ts(v: &serde_json::Value) -> Option<Timestamp> {
+    v["timestamp"].as_str()?.parse().ok()
+}
+
+/// Newest handled event instant plus the keys sharing it.
+#[derive(Default)]
+struct Watermark {
+    at: Option<Timestamp>,
+    keys_at: HashSet<String>,
+}
+
+impl Watermark {
+    /// Records the event and reports whether it was not already handled.
+    fn admit(&mut self, ts: Timestamp, key: String) -> bool {
+        match self.at {
+            Some(at) if ts < at => false,
+            Some(at) if ts == at => self.keys_at.insert(key),
+            _ => {
+                self.at = Some(ts);
+                self.keys_at.clear();
+                self.keys_at.insert(key);
+                true
+            }
+        }
+    }
+
+    /// Marks every event as handled without notifying.
+    fn prime(&mut self, events: &[serde_json::Value]) {
+        for ev in events {
+            if let Some(ts) = event_ts(ev) {
+                self.admit(ts, key_of(ev));
+            }
+        }
+    }
 }
 
 /// One event -> an optional (notification type, description).
@@ -79,7 +114,7 @@ async fn poll_once(
     url: &str,
     token: &str,
     user: &RecordId,
-    seen: &mut VecDeque<String>,
+    mark: &mut Watermark,
 ) -> anyhow::Result<()> {
     let body: serde_json::Value = client
         .get(format!("{url}/api/events/history"))
@@ -92,13 +127,9 @@ async fn poll_once(
 
     let Some(events) = body["events"].as_array() else { return Ok(()) };
     for ev in events {
-        let key = key_of(ev);
-        if seen.contains(&key) {
+        let Some(ts) = event_ts(ev) else { continue };
+        if !mark.admit(ts, key_of(ev)) {
             continue;
-        }
-        seen.push_back(key);
-        while seen.len() > SEEN_CAP {
-            seen.pop_front();
         }
         let Some((kind, description)) = to_notification(ev) else { continue };
         let mut n = Notification { user: user.clone(), ..Default::default() };
@@ -145,8 +176,8 @@ pub fn spawn(user: RecordId) {
                 return;
             }
         };
-        // Prime the seen-set so startup doesn't replay the whole buffer as new.
-        let mut seen: VecDeque<String> = VecDeque::new();
+        // Startup must not replay the buffer as new.
+        let mut mark = Watermark::default();
         if let Ok(body) = client
             .get(format!("{url}/api/events/history"))
             .bearer_auth(&token)
@@ -156,22 +187,83 @@ pub fn spawn(user: RecordId) {
         {
             if let Ok(v) = body.json::<serde_json::Value>().await {
                 if let Some(events) = v["events"].as_array() {
-                    seen.extend(events.iter().map(key_of));
+                    mark.prime(events);
                 }
             }
         }
         log::info!("zeroclaw_events: polling {url}/api/events/history every {POLL_SECS}s");
+        let caught_up = mark.at.map(|t| t.to_string()).unwrap_or_else(|| "nothing".into());
         announce(
             &user,
             "ZeroClaw Activity",
-            format!("Watcher started - polling {url} every {POLL_SECS}s ({} events primed)", seen.len()),
+            format!("Watcher started - polling {url} every {POLL_SECS}s, caught up to {caught_up}"),
         )
         .await;
         loop {
-            if let Err(e) = poll_once(&client, &url, &token, &user, &mut seen).await {
+            if let Err(e) = poll_once(&client, &url, &token, &user, &mut mark).await {
                 log::warn!("zeroclaw_events: poll failed: {e}");
             }
             tokio::time::sleep(std::time::Duration::from_secs(POLL_SECS)).await;
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn ev(ts: &str, tool: &str) -> serde_json::Value {
+        json!({"timestamp": ts, "type": "tool_call", "turn_id": "t1", "tool": tool})
+    }
+
+    /// Number of events the watermark treats as new.
+    fn admit_all(mark: &mut Watermark, buf: &[serde_json::Value]) -> usize {
+        buf.iter().filter(|e| mark.admit(event_ts(e).unwrap(), key_of(e))).count()
+    }
+
+    #[test]
+    fn replayed_buffer_admits_each_event_once() {
+        let buf = vec![ev("2026-08-07T16:00:00Z", "claude_code"), ev("2026-08-07T16:01:00Z", "claude_code")];
+        let mut mark = Watermark::default();
+        assert_eq!(admit_all(&mut mark, &buf), 2);
+        assert_eq!(admit_all(&mut mark, &buf), 0);
+        assert_eq!(admit_all(&mut mark, &buf), 0);
+    }
+
+    #[test]
+    fn buffer_larger_than_any_cap_still_dedups() {
+        let buf: Vec<_> = (0..500)
+            .map(|i| ev(&format!("2026-08-07T16:{:02}:{:02}Z", i / 60, i % 60), "claude_code"))
+            .collect();
+        let mut mark = Watermark::default();
+        assert_eq!(admit_all(&mut mark, &buf), 500);
+        assert_eq!(admit_all(&mut mark, &buf), 0);
+    }
+
+    #[test]
+    fn siblings_at_one_instant_are_both_admitted() {
+        let buf = vec![ev("2026-08-07T16:00:00Z", "claude_code"), ev("2026-08-07T16:00:00Z", "minidump_analyze")];
+        let mut mark = Watermark::default();
+        assert_eq!(admit_all(&mut mark, &buf), 2);
+        assert_eq!(admit_all(&mut mark, &buf), 0);
+    }
+
+    #[test]
+    fn events_after_the_watermark_are_admitted() {
+        let mut mark = Watermark::default();
+        let buf = vec![ev("2026-08-07T16:00:00Z", "claude_code")];
+        assert_eq!(admit_all(&mut mark, &buf), 1);
+        let grown = vec![buf[0].clone(), ev("2026-08-07T16:05:00Z", "claude_code")];
+        assert_eq!(admit_all(&mut mark, &grown), 1);
+        assert_eq!(admit_all(&mut mark, &grown), 0);
+    }
+
+    #[test]
+    fn prime_suppresses_the_existing_buffer() {
+        let buf = vec![ev("2026-08-07T16:00:00Z", "claude_code"), ev("2026-08-07T16:01:00Z", "claude_code")];
+        let mut mark = Watermark::default();
+        mark.prime(&buf);
+        assert_eq!(admit_all(&mut mark, &buf), 0);
+    }
 }

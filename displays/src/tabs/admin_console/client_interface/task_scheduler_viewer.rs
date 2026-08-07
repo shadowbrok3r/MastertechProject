@@ -11,6 +11,7 @@ use egui_extras::Column as TableColumnConfig;
 use serde::Serialize;
 use crate::{Cmd, ScheduledTask};
 use crate::ui_tools::icons;
+use crate::ui_tools::theme;
 
 const NUM_COLUMNS: usize = 7;
 
@@ -180,7 +181,7 @@ impl TaskSchedulerViewer {
                 .show(ui);
 
             if let Some((msg, success)) = &self.status_message {
-                let color = if *success { Color32::GREEN } else { Color32::RED };
+                let color = if *success { theme::success(ui) } else { theme::error(ui) };
                 ui.colored_label(color, msg);
             }
         });
@@ -196,7 +197,7 @@ impl TaskSchedulerViewer {
         }
 
         if self.entries.is_empty() {
-            ui.label(RichText::new("No tasks loaded. Click Refresh to fetch.").italics().color(Color32::GRAY));
+            ui.label(RichText::new("No tasks loaded. Click Refresh to fetch.").italics().color(theme::weak_text(ui)));
             return;
         }
 
@@ -217,7 +218,7 @@ impl TaskSchedulerViewer {
                         ui.end_row();
 
                         ui.label(RichText::new("State:").strong());
-                        let color = state_color(&task.state);
+                        let color = state_color(ui, &task.state);
                         ui.colored_label(color, &task.state);
                         ui.end_row();
 
@@ -303,7 +304,7 @@ impl RowViewer<ScheduledTask> for TaskSchedulerRowViewer {
         style.interaction.selectable_labels = false;
         match column {
             0 => {
-                let color = state_color(&row.state);
+                let color = state_color(ui, &row.state);
                 let icon = match row.state.as_str() {
                     "Ready" => icons::STATUS_READY,
                     "Disabled" => icons::STATUS_DISABLED,
@@ -314,18 +315,18 @@ impl RowViewer<ScheduledTask> for TaskSchedulerRowViewer {
                 ui.label(RichText::new(format!("{} {}", icon, row.state)).color(color));
             }
             1 => {
-                ui.label(RichText::new(&row.name).color(Color32::from_rgb(220, 220, 230)));
+                ui.label(RichText::new(&row.name).color(theme::text(ui)));
             }
             2 => {
-                ui.label(RichText::new(&row.path).color(Color32::GRAY).small());
+                ui.label(RichText::new(&row.path).color(theme::weak_text(ui)).small());
             }
             3 => {
                 let text = row.last_run.as_deref().unwrap_or("Never");
-                ui.label(RichText::new(text).color(Color32::GRAY).small());
+                ui.label(RichText::new(text).color(theme::weak_text(ui)).small());
             }
             4 => {
                 let text = row.next_run.as_deref().unwrap_or("N/A");
-                ui.label(RichText::new(text).color(Color32::GRAY).small());
+                ui.label(RichText::new(text).color(theme::weak_text(ui)).small());
             }
             5 => {
                 let summary: String = row.triggers.iter().take(2).cloned().collect::<Vec<_>>().join("; ");
@@ -334,7 +335,7 @@ impl RowViewer<ScheduledTask> for TaskSchedulerRowViewer {
                 } else {
                     summary
                 };
-                ui.label(RichText::new(display).color(Color32::from_rgb(180, 180, 200)).small());
+                ui.label(RichText::new(display).color(theme::text(ui)).small());
             }
             6 => {
                 let summary: String = row.actions.iter().take(2).cloned().collect::<Vec<_>>().join("; ");
@@ -343,7 +344,7 @@ impl RowViewer<ScheduledTask> for TaskSchedulerRowViewer {
                 } else {
                     summary
                 };
-                ui.label(RichText::new(display).color(Color32::from_rgb(180, 180, 200)).small());
+                ui.label(RichText::new(display).color(theme::text(ui)).small());
             }
             _ => {}
         }
@@ -485,12 +486,12 @@ impl RowViewer<ScheduledTask> for TaskSchedulerRowViewer {
     }
 }
 
-fn state_color(state: &str) -> Color32 {
+fn state_color(ui: &egui::Ui, state: &str) -> Color32 {
     match state {
-        "Ready" => Color32::GREEN,
-        "Running" => Color32::from_rgb(100, 180, 255),
-        "Disabled" => Color32::from_rgb(180, 80, 80),
-        "Queued" => Color32::YELLOW,
-        _ => Color32::GRAY,
+        "Ready" => theme::success(ui),
+        "Running" => theme::info(ui),
+        "Disabled" => theme::error(ui),
+        "Queued" => theme::warn(ui),
+        _ => theme::weak_text(ui),
     }
 }

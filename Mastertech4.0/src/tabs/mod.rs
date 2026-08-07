@@ -135,6 +135,8 @@ impl TabViewer for MastertechContext {
                 .show(ui),
             TabId::AdminConsole => self.shared_ctx.admin_console(ui),
             TabId::ServerConsole => self.shared_ctx.server_console.ui(ui),
+            TabId::AgentSessions => self.shared_ctx.agent_sessions.ui(ui),
+            TabId::AgentAudit => self.shared_ctx.agent_audit.ui(ui),
             TabId::FleetDashboard => self.shared_ctx.fleet_dashboard(ui),
             TabId::StressLab => self.shared_ctx.stress_lab.ui(ui),
             TabId::StressTest => self.show_stress_test(ui),

@@ -11,6 +11,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+use crate::ui_tools::theme;
 
 /// State for one RecordID tab in the breadcrumb. The id is the
 /// canonical `table:key` string the user clicked; `short_label` is a
@@ -79,7 +80,7 @@ impl McpToolLogViewer {
             ui.label(format!("{} total", entries.len()));
             if pending > 0 {
                 ui.colored_label(
-                    Color32::from_rgb(255, 200, 80),
+                    theme::warn(ui),
                     format!("{} {pending} in flight", icons::STATUS_WAIT),
                 );
             }
@@ -204,14 +205,14 @@ impl McpToolLogViewer {
             ui.vertical_centered(|ui| {
                 ui.label(
                     RichText::new("No MCP tool calls to show.")
-                        .color(Color32::GRAY)
+                        .color(theme::weak_text(ui))
                         .small(),
                 );
                 ui.label(
                     RichText::new(
                         "Calls proxied through this client's Web Console session will appear here.",
                     )
-                    .color(Color32::from_rgb(120, 120, 140))
+                    .color(theme::faint_text(ui))
                     .small(),
                 );
             });
@@ -247,14 +248,14 @@ impl McpToolLogViewer {
 
         let view = {
             let Ok(g) = self.record_cache.lock() else {
-                ui.colored_label(Color32::LIGHT_RED, "record cache poisoned");
+                ui.colored_label(theme::error(ui), "record cache poisoned");
                 return;
             };
             g.get(id).cloned()
         };
 
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Record:").color(Color32::from_rgb(180, 200, 230)));
+            ui.label(RichText::new("Record:").color(theme::text(ui)));
             ui.label(RichText::new(id).monospace());
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if ui
@@ -279,7 +280,7 @@ impl McpToolLogViewer {
                     ui.horizontal(|ui| {
                         ui.spinner();
                         ui.colored_label(
-                            Color32::from_rgb(255, 200, 80),
+                            theme::warn(ui),
                             "Loading record from SurrealDB…",
                         );
                     });
@@ -288,7 +289,7 @@ impl McpToolLogViewer {
                     json_tree(ui, &format!("record-{id}"), &value, &mut clicks_to_open);
                 }
                 Some(RecordView::Error(e)) => {
-                    ui.colored_label(Color32::LIGHT_RED, format!("Fetch failed: {e}"));
+                    ui.colored_label(theme::error(ui), format!("Fetch failed: {e}"));
                 }
             });
         for next_id in clicks_to_open {
@@ -298,7 +299,7 @@ impl McpToolLogViewer {
 
     fn row(&mut self, ui: &mut Ui, entry: &McpToolCallLog, clicks: &mut Vec<String>) {
         let is_expanded = self.expanded.contains(&entry.request_id);
-        let (icon, color) = status_glyph(&entry.status);
+        let (icon, color) = status_glyph(ui, &entry.status);
         let record_ids = extract_record_ids_from_entry(entry);
 
         ui.group(|ui| {
@@ -341,12 +342,12 @@ impl McpToolLogViewer {
                     let elapsed = format_elapsed(entry.elapsed_ms());
                     ui.label(
                         RichText::new(elapsed)
-                            .color(Color32::from_rgb(160, 160, 170))
+                            .color(theme::weak_text(ui))
                             .small(),
                     );
                     ui.label(
                         RichText::new(format!("req={}", short_id(&entry.request_id)))
-                            .color(Color32::from_rgb(120, 120, 140))
+                            .color(theme::faint_text(ui))
                             .small()
                             .monospace(),
                     );
@@ -358,7 +359,7 @@ impl McpToolLogViewer {
                 if !preview.is_empty() {
                     ui.label(
                         RichText::new(preview)
-                            .color(Color32::from_rgb(180, 180, 200))
+                            .color(theme::text(ui))
                             .small()
                             .monospace(),
                     );
@@ -372,7 +373,7 @@ impl McpToolLogViewer {
             ui.separator();
             ui.label(
                 RichText::new("Arguments")
-                    .color(Color32::from_rgb(180, 200, 230))
+                    .color(theme::text(ui))
                     .small(),
             );
             if let Some(args) = parse_json(&entry.args_json) {
@@ -384,7 +385,7 @@ impl McpToolLogViewer {
             ui.add_space(4.0);
             ui.label(
                 RichText::new("Result")
-                    .color(Color32::from_rgb(180, 200, 230))
+                    .color(theme::text(ui))
                     .small(),
             );
             match (&entry.status, entry.result_json.as_deref()) {
@@ -392,7 +393,7 @@ impl McpToolLogViewer {
                     ui.horizontal(|ui| {
                         ui.spinner();
                         ui.colored_label(
-                            Color32::from_rgb(255, 200, 80),
+                            theme::warn(ui),
                             "Awaiting response from remote client…",
                         );
                     });
@@ -405,7 +406,7 @@ impl McpToolLogViewer {
                     }
                 }
                 (_, None) => {
-                    ui.colored_label(Color32::GRAY, "(no result body)");
+                    ui.colored_label(theme::weak_text(ui), "(no result body)");
                 }
             }
         });
@@ -706,11 +707,11 @@ fn parse_json(s: &str) -> Option<JsonValue> {
     serde_json::from_str(s).ok()
 }
 
-fn status_glyph(status: &McpToolCallStatus) -> (&'static str, Color32) {
+fn status_glyph(ui: &Ui, status: &McpToolCallStatus) -> (&'static str, Color32) {
     match status {
-        McpToolCallStatus::Pending => (icons::STATUS_WAIT, Color32::from_rgb(255, 200, 80)),
-        McpToolCallStatus::Success => (icons::STATUS_ON, Color32::from_rgb(120, 220, 140)),
-        McpToolCallStatus::Error => (icons::STATUS_ERR, Color32::from_rgb(230, 120, 120)),
+        McpToolCallStatus::Pending => (icons::STATUS_WAIT, theme::warn(ui)),
+        McpToolCallStatus::Success => (icons::STATUS_ON, theme::success(ui)),
+        McpToolCallStatus::Error => (icons::STATUS_ERR, theme::error(ui)),
     }
 }
 

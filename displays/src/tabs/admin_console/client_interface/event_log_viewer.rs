@@ -1,5 +1,5 @@
 use eframe::egui::{
-    self, Color32, ComboBox, KeyboardShortcut, RichText, ScrollArea, Sense,
+    self, ComboBox, KeyboardShortcut, RichText, ScrollArea, Sense,
     TextEdit, Ui, Widget, scroll_area,
 };
 use crossbeam::channel::{Sender, Receiver};
@@ -11,6 +11,7 @@ use egui_extras::Column as TableColumnConfig;
 use serde::Serialize;
 use crate::{Cmd, EventLogEntry};
 use crate::ui_tools::icons;
+use crate::ui_tools::theme;
 
 const NUM_COLUMNS: usize = 5;
 
@@ -245,7 +246,7 @@ impl EventLogViewer {
         }
 
         if self.entries.is_empty() {
-            ui.label(RichText::new("No events loaded. Click Refresh to fetch events.").italics().color(Color32::GRAY));
+            ui.label(RichText::new("No events loaded. Click Refresh to fetch events.").italics().color(theme::weak_text(ui)));
             return;
         }
 
@@ -316,24 +317,24 @@ impl RowViewer<EventLogEntry> for EventLogRowViewer {
         match column {
             0 => {
                 let (icon, color) = match row.level.as_str() {
-                    "Critical" => (icons::CRITICAL, Color32::from_rgb(255, 60,  60)),
-                    "Error" => (icons::STATUS_ERR, Color32::from_rgb(255, 100, 100)),
-                    "Warning" => (icons::STATUS_WARN, Color32::YELLOW),
-                    "Information" => (icons::INFO, Color32::from_rgb(100, 180, 255)),
-                    "Verbose" => (icons::CLIPBOARD, Color32::GRAY),
-                    _ => (icons::STATUS_DOT, Color32::GRAY),
+                    "Critical" => (icons::CRITICAL, theme::status_style(ui, theme::Status::Critical).color),
+                    "Error" => (icons::STATUS_ERR, theme::error(ui)),
+                    "Warning" => (icons::STATUS_WARN, theme::warn(ui)),
+                    "Information" => (icons::INFO, theme::info(ui)),
+                    "Verbose" => (icons::CLIPBOARD, theme::weak_text(ui)),
+                    _ => (icons::STATUS_DOT, theme::weak_text(ui)),
                 };
                 ui.label(RichText::new(format!("{} {}", icon, row.level)).color(color));
             }
             1 => {
                 let display = format_event_time(&row.time);
-                ui.label(RichText::new(display).color(Color32::GRAY).small());
+                ui.label(RichText::new(display).color(theme::weak_text(ui)).small());
             }
             2 => {
-                ui.label(RichText::new(&row.source).color(Color32::from_rgb(200, 200, 220)));
+                ui.label(RichText::new(&row.source).color(theme::text(ui)));
             }
             3 => {
-                ui.label(RichText::new(row.event_id.to_string()).color(Color32::from_rgb(180, 180, 200)));
+                ui.label(RichText::new(row.event_id.to_string()).color(theme::text(ui)));
             }
             4 => {
                 let truncated: String = row.message.chars().take(120).collect();
@@ -342,7 +343,7 @@ impl RowViewer<EventLogEntry> for EventLogRowViewer {
                 } else {
                     truncated
                 };
-                egui::Label::new(RichText::new(label).color(Color32::from_rgb(200, 200, 200)).small())
+                egui::Label::new(RichText::new(label).color(theme::text(ui)).small())
                     .sense(Sense::click())
                     .ui(ui);
             }

@@ -7,10 +7,10 @@
 //! the strict `hardware_component` / `stress_test_run` / `stress_test_metric` /
 //! `stress_test_event` persistence happen inside the controller's worker thread.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use displays::tabs::resource_monitor::chart_board::ChartBoard;
-use eframe::egui::{self, Ui};
+use eframe::egui::Ui;
 use mtech_ui::stress_dashboard::{
     DashboardAction, LaneView, StageProgress, StageVerdictView, StressDashboard, StressLive,
     VerdictView,
@@ -27,6 +27,9 @@ use crate::filesystem::system_info::{current_telemetry_snapshot, shared_telemetr
 /// Throughput samples retained for the dashboard sparkline.
 const HISTORY_LEN: usize = 120;
 
+/// Chart sampling and redraw period, independent of input-driven frames.
+const FRAME_PERIOD: Duration = Duration::from_millis(33);
+
 pub struct StressRunner {
     cfg: StressPanelConfig,
     run: Option<RunController>,
@@ -37,6 +40,9 @@ pub struct StressRunner {
     planned_secs: Option<u64>,
     start_error: Option<String>,
     charts: ChartBoard,
+    /// Last chart sample; gates sampling to `FRAME_PERIOD` so the retained
+    /// window does not depend on how fast input drives repaints.
+    last_sample: Option<Instant>,
     /// Set when the operator clicks "History"; drained by the host to open the
     /// read-only Stress Lab tab.
     open_history_requested: bool,
@@ -53,6 +59,7 @@ impl Default for StressRunner {
             planned_secs: None,
             start_error: None,
             charts: ChartBoard::default(),
+            last_sample: None,
             open_history_requested: false,
         }
     }
@@ -69,9 +76,12 @@ impl StressRunner {
     }
 
     pub fn ui(&mut self, ui: &mut Ui) {
-        let snapshot = current_telemetry_snapshot();
-        self.charts.push(&snapshot);
-        self.tick(ui.ctx());
+        if self.last_sample.is_none_or(|t| t.elapsed() >= FRAME_PERIOD) {
+            self.last_sample = Some(Instant::now());
+            self.charts.push(&current_telemetry_snapshot());
+        }
+        self.tick();
+        ui.ctx().request_repaint_after(FRAME_PERIOD);
 
         let running = self.is_running();
         let charts = &mut self.charts;
@@ -94,7 +104,7 @@ impl StressRunner {
 
     // -- lifecycle ----------------------------------------------------------
 
-    fn tick(&mut self, ctx: &egui::Context) {
+    fn tick(&mut self) {
         let Some(controller) = self.run.as_ref() else {
             return;
         };
@@ -104,8 +114,6 @@ impl StressRunner {
         }
         if !running {
             self.run = None;
-        } else {
-            ctx.request_repaint_after(Duration::from_millis(100));
         }
     }
 

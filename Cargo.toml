@@ -21,6 +21,7 @@ members = [
     "dump-triage",
     "mtech-plugin-sdk",
     "bioslove-index",
+    "esp-image",
     # Vendored fork of https://github.com/abdu-benayad/backdrop-blur, ported to egui 0.35.
     "backdrop-blur/crates/backdrop-blur-core",
     "backdrop-blur/crates/backdrop-blur-glow",
@@ -51,6 +52,7 @@ default-members = [
     "dump-triage",
     "mtech-plugin-sdk",
     "bioslove-index",
+    "esp-image",
     "backdrop-blur/crates/backdrop-blur-core",
     "backdrop-blur/crates/backdrop-blur-glow",
     "backdrop-blur/crates/backdrop-blur-egui",

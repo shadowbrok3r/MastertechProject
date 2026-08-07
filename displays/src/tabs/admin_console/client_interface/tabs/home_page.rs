@@ -38,6 +38,7 @@ use std::time::{Duration, Instant};
 use super::command_shell::History;
 use super::super::ui::WsDisplayState;
 use super::super::WebSocketClient;
+use crate::ui_tools::glass_card;
 
 const ACTIVE_RUN_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const INVENTORY_POLL_INTERVAL: Duration = Duration::from_secs(5);
@@ -1511,7 +1512,7 @@ fn render_component_card(
         "cooler" => icons::WRENCH,
         _ => icons::PACKAGE,
     };
-    ui.group(|ui| {
+    glass_card::group(ui, |ui| {
         ui.horizontal(|ui| {
             ui.colored_label(theme::accent(ui), kind_glyph);
             ui.label(
@@ -1686,7 +1687,7 @@ fn render_active_run_card(ui: &mut Ui, run: &ActiveRun, actions: &mut HomeAction
         _ => (None, "unbounded".to_string(), theme::info(ui)),
     };
 
-    ui.group(|ui| {
+    glass_card::group(ui, |ui| {
         ui.horizontal(|ui| {
             ui.colored_label(accent, icons::STATUS_WAIT);
             ui.label(

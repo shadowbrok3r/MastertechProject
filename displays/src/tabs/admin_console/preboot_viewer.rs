@@ -9,11 +9,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crossbeam::channel::{Receiver, Sender, unbounded};
-use eframe::egui::{Color32, RichText, Ui};
+use eframe::egui::{RichText, Ui};
 
 use crate::remote_viewer::preboot::{from_preboot, terminal_event_to_preboot};
 use crate::remote_viewer::ratagui::{RataguiBackend, TerminalEvent};
 use crate::{PlatformSpawner, Spawner};
+use crate::ui_tools::theme;
 
 /// One connected pre-boot box as reported by the relay's session list.
 pub struct PreBootAgent {
@@ -85,7 +86,7 @@ impl PreBootRoster {
         for a in &self.agents {
             ui.horizontal(|ui| {
                 let live = a.idle_secs < 60;
-                let color = if live { Color32::from_rgb(120, 220, 130) } else { Color32::GRAY };
+                let color = if live { theme::success(ui) } else { theme::weak_text(ui) };
                 ui.colored_label(color, &a.serial);
                 ui.label(if a.streaming { "streaming" } else { "connected" });
                 ui.weak(format!("{}s", a.idle_secs));
@@ -263,13 +264,13 @@ impl PreBootViewer {
                     ui.label(RichText::new(format!(
                         "relay unreachable at {} — check the Relay URL / network",
                         self.base_url
-                    )).color(Color32::from_rgb(240, 140, 130)));
+                    )).color(theme::error(ui)));
                 } else if self.session_missing.load(Ordering::Acquire) {
                     ui.label(RichText::new(format!(
                         "'{}' is not connected to the relay — on the box check the target \
                          ('e', http://<axum-LAN-IP>:8082) and its Log tab",
                         self.serial
-                    )).color(Color32::from_rgb(240, 140, 130)));
+                    )).color(theme::error(ui)));
                 } else {
                     ui.label(RichText::new(format!(
                         "waiting for first frame from '{}' — the box auto-starts streaming \
@@ -284,12 +285,12 @@ impl PreBootViewer {
         }
         if self.poll_err.load(Ordering::Acquire) {
             ui.colored_label(
-                Color32::from_rgb(240, 140, 130),
+                theme::error(ui),
                 "relay unreachable — showing the last received frame",
             );
         } else if self.session_missing.load(Ordering::Acquire) {
             ui.colored_label(
-                Color32::from_rgb(240, 140, 130),
+                theme::error(ui),
                 format!("'{}' dropped off the relay — showing its last frame", self.serial),
             );
         }

@@ -11,7 +11,7 @@
 //! re-fetches the program list so the row disappears.
 
 use eframe::egui::{
-    self, Color32, KeyboardShortcut, RichText, ScrollArea, TextEdit, Ui,
+    self, KeyboardShortcut, RichText, ScrollArea, TextEdit, Ui,
     Widget, scroll_area,
 };
 use crossbeam::channel::{Sender, Receiver};
@@ -24,6 +24,7 @@ use serde::Serialize;
 
 use crate::{Cmd, InstalledProgram};
 use crate::ui_tools::icons;
+use crate::ui_tools::theme;
 
 const NUM_COLUMNS: usize = 6;
 
@@ -277,7 +278,7 @@ impl InstalledProgramsViewer {
             ui.checkbox(&mut self.viewer.uninstallable_only, "Uninstallable only");
 
             if let Some((msg, success)) = &self.status_message {
-                let color = if *success { Color32::LIGHT_GREEN } else { ui.style().visuals.error_fg_color };
+                let color = if *success { theme::success(ui) } else { theme::error(ui) };
                 ui.colored_label(color, msg);
             }
         });
@@ -296,7 +297,7 @@ impl InstalledProgramsViewer {
             ui.label(
                 RichText::new("No programs loaded. Click Refresh to fetch.")
                     .italics()
-                    .color(Color32::GRAY),
+                    .color(theme::weak_text(ui)),
             );
             return;
         }
@@ -381,20 +382,20 @@ impl RowViewer<InstalledProgram> for InstalledProgramRowViewer {
                 // on it.
                 if row.is_wow6432 {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("32").small().color(Color32::from_rgb(180, 140, 200)));
-                        ui.label(RichText::new(&row.name).color(Color32::from_rgb(220, 220, 230)));
+                        ui.label(RichText::new("32").small().color(theme::accent_secondary(ui)));
+                        ui.label(RichText::new(&row.name).color(theme::text(ui)));
                     });
                 } else {
-                    ui.label(RichText::new(&row.name).color(Color32::from_rgb(220, 220, 230)));
+                    ui.label(RichText::new(&row.name).color(theme::text(ui)));
                 }
             }
             1 => {
                 let text = row.version.as_deref().unwrap_or("");
-                ui.label(RichText::new(text).color(Color32::from_rgb(180, 200, 220)));
+                ui.label(RichText::new(text).color(theme::text(ui)));
             }
             2 => {
                 let text = row.publisher.as_deref().unwrap_or("");
-                ui.label(RichText::new(text).color(Color32::GRAY));
+                ui.label(RichText::new(text).color(theme::weak_text(ui)));
             }
             3 => {
                 // InstallDate format is YYYYMMDD per convention.
@@ -405,7 +406,7 @@ impl RowViewer<InstalledProgram> for InstalledProgramRowViewer {
                     .as_deref()
                     .map(format_install_date)
                     .unwrap_or_default();
-                ui.label(RichText::new(text).color(Color32::GRAY));
+                ui.label(RichText::new(text).color(theme::weak_text(ui)));
             }
             4 => {
                 // EstimatedSize is in KiB. Convert to MiB rounded
@@ -414,14 +415,14 @@ impl RowViewer<InstalledProgram> for InstalledProgramRowViewer {
                     .estimated_size_kb
                     .map(|kb| format!("{:.1}", (kb as f64) / 1024.0))
                     .unwrap_or_default();
-                ui.label(RichText::new(text).color(Color32::GRAY));
+                ui.label(RichText::new(text).color(theme::weak_text(ui)));
             }
             5 => {
                 let (color, label) = match row.registry_hive.as_str() {
-                    "HKLM" => (Color32::from_rgb(120, 200, 255), "HKLM"),
-                    "HKLM-Wow6432" => (Color32::from_rgb(199, 202, 245), "HKLM (32)"),
-                    "HKCU" => (Color32::from_rgb(255, 200, 120), "HKCU"),
-                    other => (Color32::GRAY, other),
+                    "HKLM" => (theme::tag_color(ui, 0), "HKLM"),
+                    "HKLM-Wow6432" => (theme::tag_color(ui, 3), "HKLM (32)"),
+                    "HKCU" => (theme::tag_color(ui, 2), "HKCU"),
+                    other => (theme::weak_text(ui), other),
                 };
                 ui.label(RichText::new(label).small().color(color));
             }

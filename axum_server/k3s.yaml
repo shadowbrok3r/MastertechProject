@@ -40,6 +40,14 @@ spec:
           value: "8082"
         - name: RUST_LOG
           value: "mtech_srv=info,axum_server=info"
+        # Shared secret for /api/v1/audit/zeroclaw. Absent -> that route returns
+        # 503 and rejects every POST; the rest of the server is unaffected.
+        - name: ZEROCLAW_AUDIT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: zeroclaw-audit
+              key: token
+              optional: true
         ports:
         - containerPort: 8082
       imagePullSecrets:

@@ -27,6 +27,7 @@ use crate::ui_tools::info_card::{
 };
 use crate::ui_tools::{dump_text, hex_json, icons, theme};
 use crate::{PlatformSpawner, Spawner};
+use crate::ui_tools::glass_card;
 
 const KIND_FILTERS: [&str; 4] = ["all", "minidump", "livekernel", GPU_DUMP_KIND];
 /// Stack the columns below this width; two columns below the next.
@@ -222,7 +223,7 @@ impl CrashDumpViewer {
         if self.history.sightings.is_empty() {
             return;
         }
-        ui.group(|ui| {
+        glass_card::group(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label(
                     RichText::new(format!("{} crash record(s)", self.history.sightings.len()))

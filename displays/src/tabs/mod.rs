@@ -23,8 +23,11 @@ pub mod checkin_form;
 pub mod sales_tracker;
 pub mod web_console;
 pub mod fleet_dashboard;
+pub mod agent_audit;
 pub mod server_console;
 pub mod stress_lab;
+#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+pub mod agent_sessions;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod plugins_tab;
 
@@ -116,6 +119,13 @@ impl egui_dock::TabViewer for SharedContext {
                 .show(ui),
             TabId::AdminConsole => self.admin_console(ui),
             TabId::ServerConsole => self.server_console.ui(ui),
+            TabId::AgentAudit => self.agent_audit.ui(ui),
+            #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+            TabId::AgentSessions => self.agent_sessions.ui(ui),
+            #[cfg(not(all(not(target_arch = "wasm32"), feature = "tokio")))]
+            TabId::AgentSessions => {
+                ui.label("Agent Sessions is available in the native build.");
+            }
             TabId::WebConsole => self.web_console.ui(ui),
             #[cfg(not(target_arch = "wasm32"))]
             TabId::Ai => {

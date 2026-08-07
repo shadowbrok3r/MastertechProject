@@ -77,7 +77,7 @@ impl<'a> AssistantTab<'a> {
             self.messages.push(ChatMessage {
                 id: id.to_string(),
                 thread_id: THREAD_ID.to_string(),
-                ts: 0,
+                ts: displays::tabs::ai_playground::now_ts(),
                 from,
                 content,
             });
@@ -95,7 +95,7 @@ impl<'a> AssistantTab<'a> {
         self.messages.push(ChatMessage {
             id: format!("u{}", self.user_seq),
             thread_id: THREAD_ID.to_string(),
-            ts: 0,
+            ts: displays::tabs::ai_playground::now_ts(),
             from: SentFrom::Me,
             content: ChatMessageType::Text(input.clone()),
         });
@@ -122,7 +122,7 @@ impl<'a> AssistantTab<'a> {
                     }
                     lines.push(Line::from(""));
                 }
-                (SentFrom::Gpt, ChatMessageType::Reasoning(t)) => {
+                (SentFrom::Assistant, ChatMessageType::Reasoning(t)) => {
                     lines.push(Line::from(Span::styled(
                         "\u{00B7} thinking",
                         Style::default().fg(THEME.text_muted).add_modifier(Modifier::ITALIC),
@@ -132,12 +132,26 @@ impl<'a> AssistantTab<'a> {
                     }
                     lines.push(Line::from(""));
                 }
-                (SentFrom::Gpt, ChatMessageType::Text(t)) if t.starts_with(TOOL_PREFIX) => {
-                    for w in wrap(t, width) {
+                (SentFrom::Assistant, ChatMessageType::Text(t)) if t.starts_with(TOOL_PREFIX) => {
+                    // Result rides after the first newline; a TUI pane cannot
+                    // collapse it, so show the call and a one-line preview.
+                    let (head, body) = t.split_once('\n').unwrap_or((t.as_str(), ""));
+                    for w in wrap(head, width) {
                         lines.push(Line::from(w).style(Style::default().fg(THEME.tertiary)));
                     }
+                    let body = body.trim();
+                    if !body.is_empty() {
+                        let preview: String =
+                            body.chars().take(160).collect::<String>().replace('\n', " ");
+                        for w in wrap(&preview, width.saturating_sub(2)) {
+                            lines.push(
+                                Line::from(format!("  {w}"))
+                                    .style(Style::default().fg(THEME.text_muted)),
+                            );
+                        }
+                    }
                 }
-                (SentFrom::Gpt, ChatMessageType::Text(t)) => {
+                (SentFrom::Assistant, ChatMessageType::Text(t)) => {
                     lines.push(Line::from(Span::styled(
                         "\u{258C} Claude",
                         Style::default().fg(THEME.success).add_modifier(bold),

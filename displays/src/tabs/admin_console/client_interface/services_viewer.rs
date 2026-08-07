@@ -1,5 +1,5 @@
 use eframe::egui::{
-    self, Color32, KeyboardShortcut, RichText, ScrollArea, TextEdit, Ui,
+    self, KeyboardShortcut, RichText, ScrollArea, TextEdit, Ui,
     Widget, scroll_area,
 };
 use crossbeam::channel::{Sender, Receiver};
@@ -11,6 +11,7 @@ use egui_extras::Column as TableColumnConfig;
 use serde::Serialize;
 use crate::{Cmd, ServiceActionType, WindowsService};
 use crate::ui_tools::icons;
+use crate::ui_tools::theme;
 
 const NUM_COLUMNS: usize = 5;
 
@@ -222,7 +223,7 @@ impl ServicesViewer {
             ui.checkbox(&mut self.viewer.running_only, "Running only");
 
             if let Some((msg, success)) = &self.status_message {
-                let color = if *success { Color32::GREEN } else { Color32::RED };
+                let color = if *success { theme::success(ui) } else { theme::error(ui) };
                 ui.colored_label(color, msg);
             }
         });
@@ -238,7 +239,7 @@ impl ServicesViewer {
         }
 
         if self.entries.is_empty() {
-            ui.label(RichText::new("No services loaded. Click Refresh to fetch.").italics().color(Color32::GRAY));
+            ui.label(RichText::new("No services loaded. Click Refresh to fetch.").italics().color(theme::weak_text(ui)));
             return;
         }
 
@@ -295,33 +296,33 @@ impl RowViewer<WindowsService> for ServiceRowViewer {
         match column {
             0 => {
                 let (icon, color) = match row.status.as_str() {
-                    "Running" => (icons::PLAY, Color32::GREEN),
-                    "Stopped" => (icons::STOP, Color32::from_rgb(180, 80, 80)),
-                    "Paused" => ("⏸", Color32::YELLOW),
-                    "StartPending" => ("⏳", Color32::YELLOW),
-                    "StopPending" => ("⏳", Color32::from_rgb(255, 150, 50)),
-                    _ => ("●", Color32::GRAY),
+                    "Running" => (icons::PLAY, theme::success(ui)),
+                    "Stopped" => (icons::STOP, theme::error(ui)),
+                    "Paused" => (icons::PAUSE, theme::warn(ui)),
+                    "StartPending" => (icons::STATUS_WAIT, theme::warn(ui)),
+                    "StopPending" => (icons::STATUS_WAIT, theme::warn(ui)),
+                    _ => (icons::STATUS_DOT, theme::weak_text(ui)),
                 };
                 ui.label(RichText::new(format!("{} {}", icon, row.status)).color(color));
             }
             1 => {
-                ui.label(RichText::new(&row.name).color(Color32::from_rgb(180, 200, 220)));
+                ui.label(RichText::new(&row.name).color(theme::text(ui)));
             }
             2 => {
-                ui.label(RichText::new(&row.display_name).color(Color32::from_rgb(220, 220, 220)));
+                ui.label(RichText::new(&row.display_name).color(theme::strong_text(ui)));
             }
             3 => {
                 let color = match row.start_type.as_str() {
-                    "Automatic" | "Auto" => Color32::GREEN,
-                    "Manual" => Color32::YELLOW,
-                    "Disabled" => Color32::from_rgb(180, 80, 80),
-                    _ => Color32::GRAY,
+                    "Automatic" | "Auto" => theme::success(ui),
+                    "Manual" => theme::warn(ui),
+                    "Disabled" => theme::error(ui),
+                    _ => theme::weak_text(ui),
                 };
                 ui.label(RichText::new(&row.start_type).color(color));
             }
             4 => {
                 let text = row.pid.map(|p| p.to_string()).unwrap_or_default();
-                ui.label(RichText::new(text).color(Color32::GRAY));
+                ui.label(RichText::new(text).color(theme::weak_text(ui)));
             }
             _ => {}
         }

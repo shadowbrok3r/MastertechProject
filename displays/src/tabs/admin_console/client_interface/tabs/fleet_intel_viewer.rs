@@ -25,6 +25,7 @@ use crate::ui_tools::info_card::{
 };
 use crate::ui_tools::{icons, theme};
 use crate::{Cmd, PlatformSpawner, Spawner};
+use crate::ui_tools::glass_card;
 
 const DUMP_DECODE: &str = "com.mastertech.dump-decode";
 const DRIVERSTORE: &str = "com.mastertech.driverstore";
@@ -223,7 +224,7 @@ impl FleetIntelViewer {
     }
 
     fn page_header(&mut self, ui: &mut Ui, client: &ConnectedClient, cmd_tx: &Sender<Cmd>) {
-        ui.group(|ui| {
+        glass_card::group(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new(format!("{} Fleet Intel", icons::DIAGNOSTICS))
@@ -411,7 +412,7 @@ impl FleetIntelViewer {
         let count = self.signatures.len();
         let Some(idx) = self.selected_signature.filter(|i| *i < count) else {
             let weak = theme::weak_text(ui);
-            ui.group(|ui| {
+            glass_card::group(ui, |ui| {
                 ui.colored_label(
                     weak,
                     "Select a signature to inspect its sightings and verdicts.",
@@ -422,7 +423,7 @@ impl FleetIntelViewer {
         };
         let signature = self.signatures[idx].0.id.clone();
         let mut save = false;
-        ui.group(|ui| {
+        glass_card::group(ui, |ui| {
             let (sig, verdicts) = &self.signatures[idx];
             signature_overview(ui, sig);
             ui.add_space(6.0);
@@ -453,7 +454,7 @@ impl FleetIntelViewer {
         } else {
             (icons::STATUS_ON, theme::success(ui))
         };
-        ui.group(|ui| {
+        glass_card::group(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.colored_label(tint, glyph);
                 ui.label(
@@ -716,7 +717,7 @@ impl FleetIntelViewer {
 fn crash_stat_tile(ui: &mut Ui, glyph: &str, label: &str, value: &str) {
     let weak = theme::weak_text(ui);
     let strong = theme::strong_text(ui);
-    ui.group(|ui| {
+    glass_card::group(ui, |ui| {
         ui.horizontal(|ui| {
             ui.colored_label(theme::accent(ui), glyph);
             ui.label(RichText::new(label).small().color(weak));
@@ -745,7 +746,7 @@ fn signature_row(
     };
     let malformed = verdicts.iter().any(verdict_is_malformed);
     let mut clicked = false;
-    ui.group(|ui| {
+    glass_card::group(ui, |ui| {
         ui.horizontal(|ui| {
             clicked = ui
                 .selectable_label(
@@ -852,7 +853,7 @@ fn sightings_block(ui: &mut Ui, sightings: &[CrashSighting]) {
             .color(strong),
     );
     for s in sightings {
-        ui.group(|ui| {
+        glass_card::group(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.colored_label(theme::accent(ui), icons::FILE_TEXT);
                 ui.label(
@@ -906,7 +907,7 @@ fn verdict_block(ui: &mut Ui, verdicts: &[CrashVerdict]) {
     for v in verdicts {
         let malformed = verdict_is_malformed(v);
         let key = v.id.key_string();
-        ui.group(|ui| {
+        glass_card::group(ui, |ui| {
             ui.horizontal(|ui| {
                 let (glyph, tint) = if malformed {
                     (icons::STATUS_WARN, warn)
@@ -1213,7 +1214,7 @@ fn render_known_bad_hit(ui: &mut Ui, hit: &KnownBadHit) {
     let good = theme::success(ui);
     let bad = theme::error(ui);
     let salt = format!("kbh_{}_{}", hit.entry.id.key_string(), hit.driver.key());
-    ui.group(|ui| {
+    glass_card::group(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.colored_label(sev_color, glyph);
             ui.label(RichText::new(hit.driver.key()).strong().monospace().color(strong));
@@ -1253,7 +1254,7 @@ fn render_blocklist_card(ui: &mut Ui, entry: &KnownBadDriver) {
         fmt_date(&entry.created_at),
         fmt_date(&entry.updated_at)
     );
-    ui.group(|ui| {
+    glass_card::group(ui, |ui| {
         ui.horizontal(|ui| {
             ui.colored_label(sev_color, glyph);
             ui.label(RichText::new(&entry.module).strong().monospace().color(strong));

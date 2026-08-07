@@ -1,4 +1,4 @@
-use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, RichText, ScrollArea, TextEdit, Ui, Vec2, Widget};
+use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, RichText, ScrollArea, TextEdit, Ui, Vec2, Widget};
 use crate::ui_tools::terminal_font::{terminal_font, TERMINAL_FONT_SIZE};
 use crate::tabs::admin_console::WebSocketClient;
 use crate::ui_tools::icons::{self};
@@ -12,6 +12,8 @@ use database::SurrealValue;
 use ewebsock::WsMessage;
 use core::f32;
 use crate::Cmd;
+use crate::ui_tools::theme;
+use crate::ui_tools::glass_card;
 
 #[derive(Default, Clone, serde::Serialize, serde::Deserialize, Debug, SurrealValue)]
 pub struct History {
@@ -71,9 +73,9 @@ impl WebSocketClient {
         #[cfg(not(target_arch="wasm32"))]
         {
             let beta_toggle_color = if self.use_beta_terminal {
-                Color32::from_rgb(255, 121, 178)
+                theme::accent_secondary(ui)
             } else {
-                Color32::from_rgb(166, 173, 200)
+                theme::text(ui)
             };
             ui.horizontal(|ui| {
                 ui.add_space(4.);
@@ -99,7 +101,7 @@ impl WebSocketClient {
                 ui.label(
                     RichText::new("ratatui shell rendering (preview)")
                         .small()
-                        .color(Color32::DARK_GRAY),
+                        .color(theme::faint_text(ui)),
                 );
             });
 
@@ -183,10 +185,10 @@ impl WebSocketClient {
             .default_size(ui.available_height()/1.2) // .resizable(false)
             .show(ui, |ui| 
         {
-            ui.visuals_mut().extreme_bg_color= Color32::BLACK;
-            ui.visuals_mut().code_bg_color = Color32::BLACK;
-            ui.style_mut().visuals.widgets.inactive.bg_fill = Color32::BLACK;
-            
+            let well = theme::bg_extreme(ui);
+            ui.visuals_mut().code_bg_color = well;
+            ui.style_mut().visuals.widgets.inactive.bg_fill = well;
+
             let style = ui.style_mut();
             let default_rounding = eframe::egui::CornerRadius::same(2);
             style.visuals.widgets.inactive.corner_radius = default_rounding;
@@ -303,7 +305,7 @@ impl WebSocketClient {
                 ui.add_space(5.);
                 ui.group(|ui| {
                     ui.vertical(|ui| {
-                        ui.label(RichText::new(format!("{} AI Command Suggestions:", icons::ROBOT)).strong().color(Color32::LIGHT_BLUE));
+                        ui.label(RichText::new(format!("{} AI Command Suggestions:", icons::ROBOT)).strong().color(theme::info(ui)));
                         
                         ScrollArea::vertical().max_width(150.).show(ui, |ui| {
                             let len = self.command_suggestions.len();
@@ -316,7 +318,7 @@ impl WebSocketClient {
                                         selected,
                                         RichText::new(&suggestion.completion)
                                             .monospace()
-                                            .color(if selected { Color32::CYAN } else { Color32::WHITE })
+                                            .color(if selected { theme::accent_secondary(ui) } else { theme::strong_text(ui) })
                                     );
                                     
                                     if response.clicked() {
@@ -563,7 +565,7 @@ impl WebSocketClient {
 
                         let (fill, stroke, shadow) = if self.hovered.contains(&item.timestamp) {
                             (
-                                style.visuals.widgets.inactive.bg_fill + Color32::from_rgb(1, 1, 4),
+                                style.visuals.widgets.hovered.bg_fill,
                                 style.visuals.widgets.hovered.fg_stroke,
                                 style.visuals.window_shadow
                             )
@@ -600,7 +602,7 @@ impl WebSocketClient {
                                         ui.add_space(5.);
 
                                         ui.with_layout(Layout::right_to_left(Align::Center), |ui|{
-                                            Button::new(from).fill(Color32::from_rgb(7, 7, 9)).min_size(Vec2::new(30., 35.)).ui(ui);
+                                            Button::new(from).fill(theme::bg_surface(ui)).min_size(Vec2::new(30., 35.)).ui(ui);
                                             ui.add_space(5.);
                                             ui.label(RichText::new(item.timestamp.clone()).weak()); // .format("%m/%d @ %I:%M%p").to_string()
                                         });
@@ -608,7 +610,7 @@ impl WebSocketClient {
 
                                 } else {
                                     ui.horizontal(|ui| {
-                                        let btn = Button::new(from).fill(Color32::from_rgb(7, 7, 9)).min_size(Vec2::new(30., 35.)).ui(ui);
+                                        let btn = Button::new(from).fill(theme::bg_surface(ui)).min_size(Vec2::new(30., 35.)).ui(ui);
 
                                         if btn.has_focus() {
                                             btn.surrender_focus();
@@ -628,7 +630,7 @@ impl WebSocketClient {
                                 }
                             
                                 Frame::new() // Frame for the actual note text itself // or for modifying the note
-                                    .fill(Color32::from_rgb(10,10,12))
+                                    .fill(glass_card::card_fill(ui))
                                     .stroke(style.visuals.widgets.inactive.bg_stroke)
                                     .outer_margin(Margin { top: 1, ..Default::default() })
                                     .inner_margin(Margin::symmetric(6, 10))

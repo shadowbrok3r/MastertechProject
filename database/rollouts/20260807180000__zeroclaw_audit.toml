@@ -1,0 +1,34 @@
+id = "20260807180000__zeroclaw_audit"
+name = "zeroclaw_audit"
+# Applied to surrealdb-dev (Mastertech/MastertechDB) 2026-08-07; verified with
+# INFO FOR TABLE — created_at + tool fields and both indexes present.
+state = "completed"
+source_schema_hash = "ca92ef77f57ab304b192f9660822dbc9b4d97105b6b0f6cf00307dff75564dc0"
+target_schema_hash = "ca92ef77f57ab304b192f9660822dbc9b4d97105b6b0f6cf00307dff75564dc0"
+compatibility = "phased"
+renames = []
+
+# New table only — nothing reads or writes it until the axum /api/v1/audit route
+# and the Agent Audit tab ship, so either ordering of deploy vs. migration is safe.
+# create is FULL because axum signs in with guest_credentials(); update/delete are
+# NONE so the trail is append-only.
+
+[[steps]]
+id = "create_zeroclaw_audit"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE zeroclaw_audit TYPE ANY SCHEMALESS CHANGEFEED 30d PERMISSIONS FOR select, create FULL, FOR update, delete NONE;
+DEFINE FIELD OVERWRITE created_at ON zeroclaw_audit TYPE datetime DEFAULT time::now() PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE tool ON zeroclaw_audit TYPE option<string> PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE zca_created_at ON zeroclaw_audit FIELDS created_at;
+DEFINE INDEX OVERWRITE zca_tool ON zeroclaw_audit FIELDS tool;
+"""
+
+[[steps]]
+id = "drop_zeroclaw_audit"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE TABLE IF EXISTS zeroclaw_audit;
+"""

@@ -53,10 +53,15 @@ fn code_block(ui: &mut Ui, lang: &str, code: &str) {
                     }
                 });
             });
-            ui.add(
-                Label::new(RichText::new(code.trim_end()).monospace())
-                    .wrap_mode(TextWrapMode::Extend),
+            let theme = egui_extras::syntax_highlighting::CodeTheme::from_style(ui.style());
+            let job = egui_extras::syntax_highlighting::highlight(
+                ui.ctx(),
+                ui.style(),
+                &theme,
+                code.trim_end(),
+                lang,
             );
+            ui.add(Label::new(job).wrap_mode(TextWrapMode::Extend));
         });
 }
 

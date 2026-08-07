@@ -1,6 +1,6 @@
 use eframe::egui::{
-    self, Align, Color32, Frame, KeyboardShortcut, Layout, Margin, RichText, ScrollArea,
-    Stroke, TextEdit, Ui, Widget, scroll_area, CornerRadius,
+    self, Align, Frame, KeyboardShortcut, Layout, Margin, RichText, ScrollArea,
+    TextEdit, Ui, Widget, scroll_area, CornerRadius,
 };
 use crossbeam::channel::{Sender, Receiver};
 use egui_data_table::{
@@ -12,6 +12,7 @@ use crate::ui_tools::icons;
 use serde::Serialize;
 use crate::{Cmd, RegistryEdit, RegistryKeyInfo, RegistryValueEntry, ui_tools::theme};
 use std::collections::{BTreeMap, BTreeSet};
+use crate::ui_tools::glass_card;
 
 const NUM_VALUE_COLUMNS: usize = 3;
 
@@ -388,7 +389,7 @@ impl RegistryEditor {
                                             ui.label(original);
                                         });
                                         ui.horizontal(|ui| {
-                                            ui.label(RichText::new("After:").color(Color32::LIGHT_GREEN));
+                                            ui.label(RichText::new("After:").color(theme::success(ui)));
                                             ui.label(data);
                                         });
                                     }
@@ -401,7 +402,7 @@ impl RegistryEditor {
                                         ui.label(format!("Value: {}", original));
                                     }
                                     RegistryEdit::CreateKey { path } => {
-                                        ui.label(RichText::new(format!("#{} CREATE KEY {}", i + 1, path)).strong().color(Color32::LIGHT_GREEN));
+                                        ui.label(RichText::new(format!("#{} CREATE KEY {}", i + 1, path)).strong().color(theme::success(ui)));
                                     }
                                     RegistryEdit::DeleteKey { path } => {
                                         ui.label(RichText::new(format!("#{} DELETE KEY {}", i + 1, path)).strong().color(ui.style().visuals.error_fg_color));
@@ -414,7 +415,7 @@ impl RegistryEditor {
 
                     ui.add_space(8.);
                     ui.horizontal(|ui| {
-                        if ui.button(RichText::new("Confirm & Apply").color(Color32::LIGHT_GREEN)).clicked() {
+                        if ui.button(RichText::new("Confirm & Apply").color(theme::success(ui))).clicked() {
                             self.show_diff_modal = false;
                             self.backup_pending = true;
                             let _ = cmd_tx.try_send(Cmd::BackupRegistryKey(self.selected_key.clone()));
@@ -436,11 +437,11 @@ impl RegistryEditor {
         // Top toolbar
         ui.horizontal(|ui| {
             ui.label(RichText::new("Registry:").strong());
-            ui.label(RichText::new(if self.selected_key.is_empty() { "Select a key" } else { &self.selected_key }).color(Color32::from_rgb(180, 200, 220)));
+            ui.label(RichText::new(if self.selected_key.is_empty() { "Select a key" } else { &self.selected_key }).color(theme::text(ui)));
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if let Some((msg, success)) = &self.status_message {
-                    let color = if *success { Color32::LIGHT_GREEN } else { ui.style().visuals.error_fg_color };
+                    let color = if *success { theme::success(ui) } else { theme::error(ui) };
                     ui.colored_label(color, msg);
                 }
 
@@ -450,7 +451,7 @@ impl RegistryEditor {
                 }
 
                 let submit_btn = ui.add_enabled(has_edits, egui::Button::new(
-                    RichText::new("Submit Changes").color(if has_edits { Color32::LIGHT_GREEN } else { theme::weak_text(ui) })
+                    RichText::new("Submit Changes").color(if has_edits { theme::success(ui) } else { theme::weak_text(ui) })
                 ));
                 if submit_btn.clicked() {
                     self.show_diff_modal = true;
@@ -464,12 +465,12 @@ impl RegistryEditor {
 
         ui.add_space(4.);
 
-        let stroke = Stroke::new(1.0_f32, Color32::from_rgb(40, 40, 48));
+        let stroke = glass_card::card_stroke(ui);
         let radius = CornerRadius::same(4);
 
         // Left: tree, Right: values
         let sidebar_frame = Frame::default()
-            .fill(Color32::from_rgb(20, 20, 24))
+            .fill(glass_card::card_fill(ui))
             .inner_margin(Margin::same(8))
             .corner_radius(radius)
             .stroke(stroke);
@@ -481,7 +482,7 @@ impl RegistryEditor {
             .min_size(200.)
             .max_size(500.)
             .show(ui, |ui| {
-                ui.label(RichText::new("Registry Keys").strong().color(Color32::LIGHT_GRAY));
+                ui.label(RichText::new("Registry Keys").strong().color(theme::strong_text(ui)));
                 ui.separator();
 
                 let mut navigate_to: Option<String> = None;
@@ -519,7 +520,7 @@ impl RegistryEditor {
         egui::CentralPanel::default().show(ui, |ui| {
             if self.selected_key.is_empty() {
                 ui.centered_and_justified(|ui| {
-                    ui.label(RichText::new("Select a registry key to view its values").italics().color(Color32::GRAY));
+                    ui.label(RichText::new("Select a registry key to view its values").italics().color(theme::weak_text(ui)));
                 });
                 return;
             }
@@ -592,9 +593,9 @@ impl RegistryEditor {
             }
 
             let label_color = if is_selected {
-                Color32::from_rgb(100, 180, 255)
+                theme::info(ui)
             } else {
-                Color32::from_rgb(220, 220, 230)
+                theme::text(ui)
             };
             let icon = if is_expanded { "/" } else { "." };
             let resp = ui.selectable_label(is_selected, RichText::new(format!("{} {}", icon, node.name)).color(label_color));
@@ -654,15 +655,15 @@ impl RowViewer<RegistryValueEntry> for RegistryValueRowViewer {
                     icons::CLIPBOARD
                 };
                 let display_name = if row.name.is_empty() { "(Default)" } else { &row.name };
-                ui.label(RichText::new(format!("{} {}", icon, display_name)).color(Color32::from_rgb(220, 220, 230)));
+                ui.label(RichText::new(format!("{} {}", icon, display_name)).color(theme::text(ui)));
             }
             1 => {
                 let color = match row.kind.as_str() {
-                    "REG_SZ" | "REG_EXPAND_SZ" => Color32::from_rgb(130, 200, 130),
-                    "REG_DWORD" | "REG_QWORD" => Color32::from_rgb(130, 170, 255),
-                    "REG_BINARY" => Color32::from_rgb(255, 180, 100),
-                    "REG_MULTI_SZ" => Color32::from_rgb(200, 160, 255),
-                    _ => Color32::GRAY,
+                    "REG_SZ" | "REG_EXPAND_SZ" => theme::tag_color(ui, 1),
+                    "REG_DWORD" | "REG_QWORD" => theme::tag_color(ui, 0),
+                    "REG_BINARY" => theme::tag_color(ui, 2),
+                    "REG_MULTI_SZ" => theme::tag_color(ui, 3),
+                    _ => theme::weak_text(ui),
                 };
                 ui.label(RichText::new(&row.kind).color(color).small());
             }
@@ -673,7 +674,7 @@ impl RowViewer<RegistryValueEntry> for RegistryValueRowViewer {
                 } else {
                     truncated
                 };
-                ui.label(RichText::new(display).color(Color32::from_rgb(200, 200, 200)));
+                ui.label(RichText::new(display).color(theme::text(ui)));
             }
             _ => {}
         }

@@ -6,6 +6,7 @@ use crate::plugins::remote::{
 use crossbeam::channel::{Receiver, Sender};
 use eframe::egui::{self, Color32, Event, RichText, Stroke, Ui};
 use std::collections::HashMap;
+use crate::ui_tools::theme;
 
 /// `RUST_LOG=egui_remote=debug` for pointer-move spam; `=error` for milestones only.
 const EGUI_REMOTE_LOG: &str = "egui_remote";
@@ -129,7 +130,7 @@ impl InlineEguiViewer {
                 ui.add_space(40.0);
                 ui.label(
                     RichText::new("Waiting for egui frames...")
-                        .color(Color32::GRAY)
+                        .color(theme::weak_text(ui))
                         .size(14.0),
                 );
                 ui.add_space(8.0);
@@ -137,7 +138,7 @@ impl InlineEguiViewer {
                     RichText::new(
                         "Enable Egui Frame Capture on the machine being viewed; keep Remote Viewer off there.",
                     )
-                    .color(Color32::from_rgb(120, 120, 140))
+                    .color(theme::faint_text(ui))
                     .small(),
                 );
                 ui.spinner();
@@ -224,11 +225,10 @@ impl InlineEguiViewer {
                 let local =
                     canvas_rect.min + (hp - egui::pos2(screen_min_x, screen_min_y)) * scale;
                 if canvas_rect.contains(local) {
-                    painter.circle_filled(
-                        local,
-                        5.0,
-                        Color32::from_rgba_unmultiplied(255, 200, 0, 200),
-                    );
+                    let marker = theme::warn(ui);
+                    painter.circle_filled(local, 5.0, marker.gamma_multiply(0.8));
+                    // White ring: the crosshair sits over arbitrary remote pixels, so it needs one
+                    // contrast edge the theme cannot take away.
                     painter.circle_stroke(local, 9.0, Stroke::new(1.2_f32, Color32::WHITE));
                     let arm = 12.0f32;
                     painter.line_segment(
@@ -236,14 +236,14 @@ impl InlineEguiViewer {
                             local - egui::vec2(arm, 0.0),
                             local + egui::vec2(arm, 0.0),
                         ],
-                        Stroke::new(1.0_f32, Color32::YELLOW),
+                        Stroke::new(1.0_f32, marker),
                     );
                     painter.line_segment(
                         [
                             local - egui::vec2(0.0, arm),
                             local + egui::vec2(0.0, arm),
                         ],
-                        Stroke::new(1.0_f32, Color32::YELLOW),
+                        Stroke::new(1.0_f32, marker),
                     );
                 }
             }

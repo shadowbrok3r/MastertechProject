@@ -117,7 +117,7 @@ impl EnhancedAiPlayground {
         let _ = self.response_tx.try_send(ChatMessage {
             id: uuid::Uuid::new_v4().to_string(),
             thread_id: thread_id.clone(),
-            ts: 0,
+            ts: crate::tabs::ai_playground::now_ts(),
             from: SentFrom::Me,
             content: ChatMessageType::Text(label),
         });
@@ -391,7 +391,7 @@ impl EnhancedAiPlayground {
     fn is_tool_line(message: &ChatMessage) -> bool {
         #[cfg(not(target_arch = "wasm32"))]
         if let ChatMessageType::Text(t) = &message.content {
-            return matches!(message.from, SentFrom::Gpt)
+            return matches!(message.from, SentFrom::Assistant)
                 && t.starts_with(crate::ai::claude_code::TOOL_PREFIX);
         }
         #[cfg(target_arch = "wasm32")]
@@ -548,7 +548,7 @@ impl EnhancedAiPlayground {
         })
     }
 
-    fn upsert_stream(&mut self, tid: &str, id: &str, ts: i32, from: SentFrom, chunk: String, reasoning: bool) {
+    fn upsert_stream(&mut self, tid: &str, id: &str, ts: i64, from: SentFrom, chunk: String, reasoning: bool) {
         let thread = self.thread_entry(tid);
         if let Some(m) = thread.messages.iter_mut().find(|m| m.id == id) {
             match &mut m.content {
@@ -569,7 +569,20 @@ impl EnhancedAiPlayground {
     /// Persists one thread to the database (fire-and-forget).
     fn save_thread(&mut self, tid: &str) {
         if let Some(thread) = self.threads.get(tid) {
-            let messages = serde_json::to_value(&thread.messages).unwrap_or_else(|_| serde_json::Value::Array(Vec::new()));
+            // Streaming opens a Reasoning/Text block before any token arrives;
+            // blocks that never received one would persist as empty noise.
+            let keep: Vec<&ChatMessage> = thread
+                .messages
+                .iter()
+                .filter(|m| match &m.content {
+                    ChatMessageType::Text(t)
+                    | ChatMessageType::Reasoning(t)
+                    | ChatMessageType::Code(t) => !t.trim().is_empty(),
+                    ChatMessageType::Done => false,
+                    _ => true,
+                })
+                .collect();
+            let messages = serde_json::to_value(&keep).unwrap_or_else(|_| serde_json::Value::Array(Vec::new()));
             let title = self.thread_title(tid);
             let id = tid.to_string();
             PlatformSpawner::spawn(async move {
@@ -651,7 +664,7 @@ impl EnhancedAiPlayground {
         let _ = self.response_tx.try_send(ChatMessage {
             id: uuid::Uuid::new_v4().to_string(),
             thread_id: thread_id.clone(),
-            ts: 0,
+            ts: crate::tabs::ai_playground::now_ts(),
             from: SentFrom::Me,
             content: ChatMessageType::Text(input.clone()),
         });

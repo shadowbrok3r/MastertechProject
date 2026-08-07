@@ -1,0 +1,34 @@
+id = "20260807190000__connected_client_autopilot_opt_out"
+name = "connected_client_autopilot_opt_out"
+# Applied to surrealdb-dev (Mastertech/MastertechDB) 2026-08-07; confirmed with
+# INFO FOR TABLE connected_client, not the step status.
+state = "completed"
+# Placeholders until `surrealkit rollout lint` reports the real current hash.
+source_schema_hash = "7b546ec723709cda1926bbf8b1df0740f93eeddbeafd869e1538115d44451899"
+target_schema_hash = "7b546ec723709cda1926bbf8b1df0740f93eeddbeafd869e1538115d44451899"
+# Purely additive with a DEFAULT, and connected_client is SCHEMALESS, so the
+# admin console writes this field with or without the DDL. Either ordering of
+# app deploy vs. migration is safe.
+compatibility = "phased"
+renames = []
+
+# Unattended sweeps are opt-out: a machine is eligible unless an operator
+# excludes it from the admin console client card. DEFAULT does not backfill
+# pre-existing rows, so every reader must coalesce NONE to false
+# (`(autopilot_opt_out ?? false) == false`) rather than compare against false.
+
+[[steps]]
+id = "add_autopilot_opt_out"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE autopilot_opt_out ON connected_client TYPE bool DEFAULT false PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "remove_autopilot_opt_out"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE FIELD IF EXISTS autopilot_opt_out ON connected_client;
+"""

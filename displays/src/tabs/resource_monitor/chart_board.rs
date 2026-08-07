@@ -12,7 +12,8 @@ use web_time::Instant;
 use crate::ui_tools::{icons, theme};
 
 const HISTORY_SECS: f64 = 120.0;
-const MAX_SAMPLES: usize = 2048;
+/// Backstop for `HISTORY_SECS`; holds the full window at a 30 Hz sample rate.
+const MAX_SAMPLES: usize = 4096;
 /// Narrowest value domain a heatmap maps across, as a fraction of the domain's top.
 const MIN_SPAN_FRAC: f64 = 0.04;
 

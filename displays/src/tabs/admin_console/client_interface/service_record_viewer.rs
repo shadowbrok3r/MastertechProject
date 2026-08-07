@@ -1,6 +1,6 @@
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::{ConnectedClient, LiveTaskPayload, RecordId};
-use eframe::egui::{Align, Color32, ComboBox, Layout, RichText, Ui};
+use eframe::egui::{Align, ComboBox, Layout, RichText, Ui};
 
 use crate::chats::ChatView;
 use crate::modals::task_modal::{ModalAction, TaskModal};
@@ -8,6 +8,7 @@ use crate::ui_tools::icons;
 use crate::{get_database_users, DisplayModal, PlatformSpawner, Spawner};
 
 use super::ui::WsDisplayState;
+use crate::ui_tools::theme;
 
 /// Per-client "Service Record" page. Resolves the task whose computer
 /// record matches the connected client (by linked computer RecordId, or
@@ -136,7 +137,7 @@ impl ServiceRecordViewer {
             ui.label(
                 RichText::new(format!("{} Service Record", icons::TASK_EXISTS))
                     .strong()
-                    .color(Color32::from_rgb(120, 200, 255)),
+                    .color(theme::info(ui)),
             );
             if labels.len() > 1 {
                 ui.separator();
@@ -153,7 +154,7 @@ impl ServiceRecordViewer {
                 if ui
                     .button(
                         RichText::new(format!("{} Close", icons::CLOSE))
-                            .color(Color32::from_rgb(255, 150, 120)),
+                            .color(theme::warn(ui)),
                     )
                     .on_hover_text("Close the service record and return to the Home view")
                     .clicked()
@@ -189,7 +190,7 @@ impl ServiceRecordViewer {
                             .as_deref()
                             .unwrap_or("No service task is linked to this machine."),
                     )
-                    .color(Color32::GRAY),
+                    .color(theme::weak_text(ui)),
                 );
                 ui.add_space(6.0);
                 ui.label(
@@ -198,7 +199,7 @@ impl ServiceRecordViewer {
                          so its service ticket, notes, and diagnostics can be matched.",
                     )
                     .small()
-                    .color(Color32::from_rgb(120, 120, 140)),
+                    .color(theme::faint_text(ui)),
                 );
             });
             return;

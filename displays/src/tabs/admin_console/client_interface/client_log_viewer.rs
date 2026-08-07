@@ -5,10 +5,11 @@
 //! `--log-to-file`, so this works against any connected client.
 
 use crossbeam::channel::Sender;
-use eframe::egui::{self, Color32, ComboBox, RichText, ScrollArea, TextEdit, Ui};
+use eframe::egui::{self, ComboBox, RichText, ScrollArea, TextEdit, Ui};
 
 use crate::ui_tools::icons;
 use crate::Cmd;
+use crate::ui_tools::theme;
 
 /// How much of the client's ring to pull.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -154,7 +155,7 @@ impl ClientLogViewer {
         ui.add_space(4.0);
 
         if let Some(status) = &self.status {
-            ui.label(RichText::new(status).color(Color32::from_rgb(160, 190, 160)).small());
+            ui.label(RichText::new(status).color(theme::success(ui)).small());
         }
 
         if self.loading {
@@ -169,7 +170,7 @@ impl ClientLogViewer {
             ui.label(
                 RichText::new("No log fetched yet. Click Fetch to pull the client's log ring.")
                     .italics()
-                    .color(Color32::GRAY),
+                    .color(theme::weak_text(ui)),
             );
             return;
         }
@@ -184,7 +185,7 @@ impl ClientLogViewer {
             if let Some(at) = self.fetched_at {
                 summary.push_str(&format!("  |  fetched {}", at.format("%I:%M:%S %p")));
             }
-            ui.label(RichText::new(summary).small().color(Color32::GRAY));
+            ui.label(RichText::new(summary).small().color(theme::weak_text(ui)));
         });
 
         ui.add_space(2.0);

@@ -36,6 +36,8 @@ pub enum TabId {
     Terminal,
     ShopifyOrders,
     ServerConsole,
+    AgentSessions,
+    AgentAudit,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,6 +122,8 @@ const MT_NATIVE: &[TabId] = &[
     TabId::StressTest,
     TabId::Terminal,
     TabId::ServerConsole,
+    TabId::AgentSessions,
+    TabId::AgentAudit,
 ];
 
 const WH_WASM: &[TabId] = &[
@@ -180,6 +184,8 @@ impl TabId {
             Self::Terminal => "terminal",
             Self::ShopifyOrders => "shopify_orders",
             Self::ServerConsole => "server_console",
+            Self::AgentSessions => "agent_sessions",
+            Self::AgentAudit => "agent_audit",
         }
     }
 
@@ -226,6 +232,8 @@ impl TabId {
             Self::Terminal => "Terminal",
             Self::ShopifyOrders => "Shopify Orders",
             Self::ServerConsole => "Server Console",
+            Self::AgentSessions => "Agent Sessions",
+            Self::AgentAudit => "Agent Audit",
         }
     }
 
@@ -286,6 +294,8 @@ impl TabId {
             "Terminal" => Some(Self::Terminal),
             "Shopify Orders" => Some(Self::ShopifyOrders),
             "Server Console" => Some(Self::ServerConsole),
+            "Agent Sessions" => Some(Self::AgentSessions),
+            "Agent Audit" => Some(Self::AgentAudit),
             _ => None,
         }
     }
@@ -326,6 +336,8 @@ impl TabId {
             "terminal" => Some(Self::Terminal),
             "shopify_orders" => Some(Self::ShopifyOrders),
             "server_console" => Some(Self::ServerConsole),
+            "agent_sessions" => Some(Self::AgentSessions),
+            "agent_audit" => Some(Self::AgentAudit),
             _ => None,
         }
     }

@@ -162,8 +162,8 @@ fn emit_id(tx: &Sender<ChatMessage>, thread_id: &str, id: String, content: ChatM
     let _ = tx.try_send(ChatMessage {
         id,
         thread_id: thread_id.to_string(),
-        ts: 0,
-        from: SentFrom::Gpt,
+        ts: crate::tabs::ai_playground::now_ts(),
+        from: SentFrom::Assistant,
         content,
     });
 }

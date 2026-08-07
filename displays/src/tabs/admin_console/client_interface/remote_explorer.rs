@@ -11,7 +11,7 @@
 //! - Context menu with download, copy to tools, delete options
 
 use eframe::egui::{
-    self, Align, Align2, CentralPanel, Color32, FontId, Frame, Image, ImageSource, Key,
+    self, Align, Align2, CentralPanel, FontId, Frame, Image, ImageSource, Key,
     KeyboardShortcut, Layout, Margin, Response, RichText, ScrollArea, Sense, Stroke, TextEdit,
     TextureOptions, Ui, Vec2, CornerRadius, load::Bytes, scroll_area, Widget,
 };
@@ -29,6 +29,8 @@ use std::sync::{Arc, Mutex};
 use crate::{Cmd, RemoteDirEntry, PlatformSpawner, Spawner};
 use crate::ui_tools::icons::{self, menu_label};
 use database::schema::file_storage::{self, FileEntry};
+use crate::ui_tools::theme;
+use crate::ui_tools::glass_card;
 
 /// Shared path → PNG-bytes thumbnail cache. The explorer fills it from
 /// `ThumbnailResponse`s; the row viewer reads it to paint icon-mode cells.
@@ -1021,7 +1023,7 @@ impl RemoteExplorer {
     pub fn display(&mut self, ui: &mut Ui, cmd_tx: &Sender<Cmd>) {
         self.forget_pending_images(ui.ctx());
         let inner_margin = Margin::same(4);
-        let stroke = Stroke::new(0.7_f32, Color32::from_additive_luminance(100));
+        let stroke = glass_card::card_stroke(ui);
         let radius = CornerRadius::same(5);
         
         // Poll for My Tools updates
@@ -1059,7 +1061,7 @@ impl RemoteExplorer {
         
         // Main content area
         let panel_frame = Frame::default()
-            .fill(Color32::from_rgb(12, 12, 14))
+            .fill(theme::bg_surface(ui))
             .inner_margin(inner_margin)
             .corner_radius(radius)
             .stroke(stroke);
@@ -1240,7 +1242,7 @@ impl RemoteExplorer {
         const ENTRY_H: f32 = 24.0;
 
         let sidebar_frame = Frame::default()
-            .fill(Color32::from_rgb(20, 20, 24))
+            .fill(glass_card::card_fill(ui))
             .inner_margin(Margin::same(8))
             .corner_radius(radius)
             .stroke(stroke);
@@ -1260,7 +1262,7 @@ impl RemoteExplorer {
                     // Quick access first — matches Windows File Explorer's
                     // navigation-pane ordering. ⭐ is BMP (U+2B50) and
                     // renders in the default proportional font.
-                    ui.label(RichText::new(format!("{} Quick Access", icons::STAR)).strong().color(Color32::LIGHT_GRAY));
+                    ui.label(RichText::new(format!("{} Quick Access", icons::STAR)).strong().color(theme::strong_text(ui)));
                     ui.add_space(4.);
 
                     for shortcut in &self.shortcuts {
@@ -1275,7 +1277,7 @@ impl RemoteExplorer {
                         // Plain "Drives" header (no supplementary-plane
                         // emoji prefix that may fall back to a missing-
                         // glyph box).
-                        ui.label(RichText::new("Drives").strong().color(Color32::LIGHT_GRAY));
+                        ui.label(RichText::new("Drives").strong().color(theme::strong_text(ui)));
                         ui.add_space(4.);
 
                         for drive in &self.drives {
@@ -1295,7 +1297,7 @@ impl RemoteExplorer {
     
     fn display_tools_sidebar(&mut self, ui: &mut Ui, cmd_tx: &Sender<Cmd>, stroke: Stroke, radius: CornerRadius) {
         let sidebar_frame = Frame::default()
-            .fill(Color32::from_rgb(24, 20, 28))
+            .fill(glass_card::card_fill(ui))
             .inner_margin(Margin::same(8))
             .corner_radius(radius)
             .stroke(stroke);
@@ -1333,7 +1335,7 @@ impl RemoteExplorer {
                             ui.label(
                                 RichText::new("My Tools")
                                     .strong()
-                                    .color(Color32::from_rgb(200, 180, 255)),
+                                    .color(theme::accent_secondary(ui)),
                             );
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 if ui.small_button(icons::REFRESH).on_hover_text("Refresh").clicked() {
@@ -1350,7 +1352,7 @@ impl RemoteExplorer {
                             ui.spinner();
                             ui.label("Loading tools...");
                         } else if self.my_tools.is_empty() {
-                            ui.label(RichText::new("No tools yet").italics().color(Color32::GRAY));
+                            ui.label(RichText::new("No tools yet").italics().color(theme::weak_text(ui)));
                             ui.add_space(10.);
                             ui.label("Upload scripts and files here to easily transfer them to client machines.");
                         } else {
@@ -1443,7 +1445,7 @@ impl RemoteExplorer {
             ui.label(RichText::new(format!("{} {}", icons::FILE, filename)).strong());
             
             if self.preview.modified {
-                ui.label(RichText::new(icons::STATUS_DOT).color(Color32::YELLOW));
+                ui.label(RichText::new(icons::STATUS_DOT).color(theme::warn(ui)));
             }
             
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1860,7 +1862,7 @@ impl RowViewer<RemoteDirEntry> for RemoteFileRowViewer {
                 } else {
                     let glyph = icons::file_icon(&row.name, row.is_directory);
                     let color = if row.is_directory {
-                        Color32::from_rgb(130, 170, 255)
+                        theme::info(ui)
                     } else {
                         ui.style().visuals.text_color()
                     };
@@ -1869,9 +1871,9 @@ impl RowViewer<RemoteDirEntry> for RemoteFileRowViewer {
             }
             1 => {
                 let name_color = if row.is_directory {
-                    Color32::from_rgb(130, 170, 255)
+                    theme::info(ui)
                 } else {
-                    Color32::from_rgb(220, 220, 220)
+                    theme::text(ui)
                 };
                 
                 ui.add(egui::Label::new(RichText::new(&row.name).color(name_color).underline()).sense(Sense::click()));
@@ -1879,7 +1881,7 @@ impl RowViewer<RemoteDirEntry> for RemoteFileRowViewer {
             2 => {
                 ui.label(
                     RichText::new(format_modified_date(row.modified.as_deref()))
-                        .color(Color32::GRAY)
+                        .color(theme::weak_text(ui))
                         .small(),
                 );
             }
@@ -1887,17 +1889,17 @@ impl RowViewer<RemoteDirEntry> for RemoteFileRowViewer {
                 if row.is_directory {
                     ui.label("");
                 } else if let Some(size) = row.size {
-                    ui.label(RichText::new(format_file_size(size)).color(Color32::GRAY).small());
+                    ui.label(RichText::new(format_file_size(size)).color(theme::weak_text(ui)).small());
                 } else {
                     ui.label("");
                 }
             }
             4 => {
                 if row.is_directory {
-                    ui.label(RichText::new("Folder").color(Color32::from_rgb(130, 170, 255)).small());
+                    ui.label(RichText::new("Folder").color(theme::info(ui)).small());
                 } else {
                     let ext = row.name.rsplit('.').next().unwrap_or("").to_lowercase();
-                    ui.label(RichText::new(ext).color(Color32::GRAY).small());
+                    ui.label(RichText::new(ext).color(theme::weak_text(ui)).small());
                 }
             }
             _ => {}
@@ -2162,9 +2164,9 @@ fn file_name_of(path: &str) -> String {
 fn icon_placeholder(ui: &mut Ui, name: &str, is_dir: bool, avail: Vec2) {
     let glyph = icons::file_icon(name, is_dir);
     let color = if is_dir {
-        Color32::from_rgb(130, 170, 255)
+        theme::info(ui)
     } else {
-        Color32::from_gray(150)
+        theme::weak_text(ui)
     };
     let size = (avail.min_elem() * 0.5).clamp(14.0, 64.0);
     ui.allocate_ui(avail, |ui| {
