@@ -387,8 +387,10 @@ pub fn match_machine(index: &Index, d: &crate::Smbios) -> Vec<Match> {
                     hit = Some((Confidence::Exact, name.to_string()));
                     break;
                 }
-                // A chassis token embedded in a longer marketing string.
-                if hit.is_none() && token.len() >= 5 && (key.contains(&token) || token.contains(&key))
+                // A chassis token embedded in a longer string. OEMs prefix the
+                // family with a platform code — SMBIOS says PF5LUXG, the folder
+                // is LUXG — so 4-char tokens have to qualify.
+                if hit.is_none() && token.len() >= 4 && (key.contains(&token) || token.contains(&key))
                 {
                     hit = Some((Confidence::Partial, name.to_string()));
                 }

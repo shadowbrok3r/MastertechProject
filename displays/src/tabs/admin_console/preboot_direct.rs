@@ -268,11 +268,14 @@ fn lan_ip_toward(base_url: &str) -> Option<std::net::IpAddr> {
     Some(ip)
 }
 
-/// Relay base url to advertise in a beacon: the console's own configured relay,
-/// with a loopback/unspecified/`localhost` host rewritten to `ip` (the same LAN
-/// IP the direct addr advertises) so firmware reaches the relay this console
-/// actually uses. Falls back to [`DEFAULT_RELAY_PORT`] when the rewritten base
-/// carries no port. None when no valid http(s) url can be built.
+/// Relay base url to advertise in a beacon.
+///
+/// Firmware has no DNS resolver and no TLS stack, so a beacon may only ever name
+/// plain HTTP on a literal IPv4. Anything else — `https`, a hostname, loopback,
+/// unspecified — is rewritten to this console's own LAN `ip` on
+/// [`DEFAULT_RELAY_PORT`], which is where `preboot-relay` listens. Advertising
+/// the configured public https host instead wedges every firmware upload behind
+/// a name it cannot resolve. None when no valid url can be built.
 fn relay_url_for(base: &str, ip: std::net::IpAddr) -> Option<String> {
     let std::net::IpAddr::V4(v4) = ip else { return None };
     let base = base.trim().trim_end_matches('/');
@@ -285,13 +288,16 @@ fn relay_url_for(base: &str, ip: std::net::IpAddr) -> Option<String> {
         Some((h, p)) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => (h, p.parse::<u16>().ok()),
         _ => (authority, None),
     };
-    let local = host.is_empty()
-        || host.eq_ignore_ascii_case("localhost")
-        || host.parse::<std::net::IpAddr>().map(|h| h.is_loopback() || h.is_unspecified()).unwrap_or(false);
-    let url = if local {
-        format!("{scheme}://{v4}:{}", port.unwrap_or(DEFAULT_RELAY_PORT))
+    // Only a literal IPv4 over plain http is usable as-is; its port carries over.
+    let host_ipv4 = host.parse::<std::net::Ipv4Addr>().ok();
+    let usable = scheme == "http"
+        && host_ipv4.is_some_and(|h| !h.is_loopback() && !h.is_unspecified());
+    let url = if usable {
+        format!("http://{host}:{}", port.unwrap_or(DEFAULT_RELAY_PORT))
     } else {
-        base.to_string()
+        // A rewritten host means the original port belonged to a different
+        // service (443 for the public host), so fall back to the relay's.
+        format!("http://{v4}:{DEFAULT_RELAY_PORT}")
     };
     preboot::is_valid_relay_url(&url).then_some(url)
 }
@@ -416,4 +422,53 @@ async fn read_frame<R: AsyncReadExt + Unpin>(r: &mut R) -> std::io::Result<(u8, 
     r.read_exact(&mut buf).await?;
     let tag = buf[0];
     Ok((tag, buf[1..].to_vec()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lan() -> std::net::IpAddr {
+        "192.168.22.91".parse().unwrap()
+    }
+
+    #[test]
+    fn https_public_host_is_rewritten_to_this_console() {
+        assert_eq!(
+            relay_url_for("https://axum.master-tech.app", lan()).unwrap(),
+            "http://192.168.22.91:8082"
+        );
+    }
+
+    #[test]
+    fn a_hostname_over_plain_http_is_still_rewritten() {
+        assert_eq!(
+            relay_url_for("http://relay.local:8082", lan()).unwrap(),
+            "http://192.168.22.91:8082"
+        );
+    }
+
+    #[test]
+    fn loopback_is_rewritten_keeping_the_relay_port() {
+        assert_eq!(
+            relay_url_for("http://localhost:8082", lan()).unwrap(),
+            "http://192.168.22.91:8082"
+        );
+    }
+
+    #[test]
+    fn a_real_lan_relay_is_advertised_verbatim() {
+        assert_eq!(
+            relay_url_for("http://192.168.22.139:8082", lan()).unwrap(),
+            "http://192.168.22.139:8082"
+        );
+    }
+
+    #[test]
+    fn a_portless_ipv4_gets_the_relay_port() {
+        assert_eq!(
+            relay_url_for("http://192.168.22.139", lan()).unwrap(),
+            "http://192.168.22.139:8082"
+        );
+    }
 }

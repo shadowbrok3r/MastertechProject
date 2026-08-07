@@ -5686,6 +5686,20 @@ fn adopt_relay(app: &mut App, url: &str, src: TargetSource) {
     if !tcp_protocol::preboot::is_valid_relay_url(url) {
         return;
     }
+    // Nothing automatic may point the box at a url needing DNS or TLS: a beacon
+    // advertising the public https host would otherwise wedge every upload.
+    // An operator can still force one, with the reason on screen.
+    if let Some(why) = unreachable_reason(url) {
+        if src < TargetSource::Operator {
+            logln(format!(
+                "relay: ignoring {url} from {} - {why}",
+                src.label()
+            ));
+            return;
+        }
+        logln(format!("relay: operator set {url} - {why}"));
+        app.status = format!("relay set to {url}, but {why}");
+    }
     if !app.target.is_empty() && app.target_src > src {
         return;
     }
@@ -5737,6 +5751,26 @@ fn relay_on_beacon_subnet(app: &App, relay: &str, addr: &str) -> bool {
     }
 }
 
+/// Why firmware may not be able to reach `url`. There is no DNS resolver and no
+/// TLS stack of our own, so only plain HTTP to a literal IPv4 works on every
+/// platform; `EFI_HTTP_PROTOCOL` supplies both on some firmware and neither on
+/// most. `None` means reachable anywhere.
+fn unreachable_reason(url: &str) -> Option<String> {
+    let rest = match url.split_once("://") {
+        Some(("http", r)) => r,
+        Some(("https", _)) => {
+            return Some("https needs a TLS stack this firmware may not have".into());
+        }
+        _ => return Some("no http(s) scheme".into()),
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = authority.rsplit_once(':').map(|(h, _)| h).unwrap_or(authority);
+    if netraw::parse_ipv4(host).is_none() {
+        return Some(format!("host '{host}' needs DNS this firmware may not have"));
+    }
+    None
+}
+
 /// Hold an off-subnet advertised relay for operator confirmation instead of
 /// adopting it: uploads to it carry serial, SMBIOS and OA3 key material.
 fn offer_relay(app: &mut App, url: &str) {
@@ -5744,8 +5778,17 @@ fn offer_relay(app: &mut App, url: &str) {
         return;
     }
     app.pending_relay = Some(url.to_string());
-    logln(format!("relay: off-subnet relay {url} offered - 'y' accepts"));
-    app.status = format!("beacon offers off-subnet relay {url} - 'y' accepts");
+    // Say up front when accepting it cannot work, so 'y' is an informed press.
+    match unreachable_reason(url) {
+        Some(why) => {
+            logln(format!("relay: {url} offered - 'y' accepts, but {why}"));
+            app.status = format!("beacon offers {url} - 'y' accepts, but {why}");
+        }
+        None => {
+            logln(format!("relay: off-subnet relay {url} offered - 'y' accepts"));
+            app.status = format!("beacon offers off-subnet relay {url} - 'y' accepts");
+        }
+    }
 }
 
 /// Settle the relay target from a beacon: the url a v2 beacon advertises when
@@ -6496,7 +6539,7 @@ fn page_network(frame: &mut Frame, area: Rect, app: &App) {
     ));
     if app.editing == EditField::Target {
         l.push(Line::from(Span::styled(
-            fit("[EDITING - type host:port, ENTER saves]", lw),
+            fit("[EDITING - http://<ip>:port, Del clears, ENTER saves]", lw),
             Style::default().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
         )));
     }
@@ -8309,6 +8352,9 @@ fn run() -> Result<()> {
                 terminput::KeyCode::Backspace => {
                     field.pop();
                 }
+                // Wiping a long wrong value one character at a time is painful
+                // locally and one keypress per character over the remote link.
+                terminput::KeyCode::Delete => field.clear(),
                 terminput::KeyCode::Char(c) if c == '\u{8}' || c == '\u{7f}' => {
                     field.pop();
                 }
