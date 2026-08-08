@@ -322,7 +322,7 @@ impl WebSocketClient {
                                             handled_as_admin_cmd = true;
                                         }
                                         Cmd::DesktopMonitorList(monitors) => {
-                                            log::info!("Received {} monitor(s) from client", monitors.len());
+                                            log::debug!("Received {} monitor(s) from client", monitors.len());
                                             self.desktop_monitors = monitors;
                                             handled_as_admin_cmd = true;
                                         }
@@ -383,6 +383,8 @@ impl WebSocketClient {
                     );
                     self.is_connected = false;
                     self.connection_status = "Disconnected".to_string();
+                    self.client_version = None;
+                    self.cmd_protocol_mismatch = false;
                     self.last_pong_time = None;
                     self.last_app_pong_received = None;
                     self.history.push(History {
@@ -406,9 +408,13 @@ impl WebSocketClient {
                         // open_session gate stay honest.
                         self.is_connected = false;
                         self.connection_status = "Reconnecting…".to_string();
+                        self.client_version = None;
+                        self.cmd_protocol_mismatch = false;
                     } else {
                         self.is_connected = false;
                         self.connection_status = format!("Error: {err}");
+                        self.client_version = None;
+                        self.cmd_protocol_mismatch = false;
                         self.history.push(History {
                             from: "Client".to_string(),
                             message: format!("Connection error: {err}"),
@@ -469,25 +475,26 @@ impl WebSocketClient {
             Cmd::FileSystemAction(ref action) => {
                 match action {
                     FileSystemAction::EnterDirectory(directory) => {
-                        log::info!("web_console/websockets.rs -> EnterDirectory -> {directory:?}\nweb_console/websockets.rs -> EnterDirectory -> Root: {:?}", self.explorer.root);
-                        log::info!("Prefix before double clicking folder: {}", self.explorer.current_prefix);
                         self.explorer.double_click_folder(&directory);
-                        log::info!("After: {}", self.explorer.current_prefix);
+                        log::debug!(
+                            "EnterDirectory -> {directory:?}; prefix now {}",
+                            self.explorer.current_prefix
+                        );
                     },
                     FileSystemAction::GetNode(new_node) => {
-                        log::info!("web_console/websockets.rs -> GetNode -> Root: {:?}", self.explorer.root); // {new_node:?}
                         if let Node::Folder(prefix, _) = new_node {
                             if &self.explorer.current_prefix == "current" {
                                 self.explorer.current_prefix = prefix.clone();
                             }
-                            log::info!("web_console/websockets.rs -> Current prefix: {}\nNew prefix: {}", self.explorer.current_prefix, prefix);
                         }
                         let insert_node = self.explorer.insert_node(new_node.clone());
-                        log::info!("web_console/websockets.rs -> InsertNode -> {insert_node:?}");
+                        log::debug!("GetNode -> insert_node {insert_node:?}");
                     },
                     FileSystemAction::RequestNewContents(directory) => {
-                        log::info!("web_console/websockets.rs -> RequestNewContents -> {directory}");
-                        log::info!("ACTION TO SEND: {}", crate::shape_fp::redacted(&command));
+                        log::debug!(
+                            "RequestNewContents -> {directory}: {}",
+                            crate::shape_fp::redacted(&command)
+                        );
                         self.transport.send(WsMessage::Binary(serialize_command(&command)));
                     }
                     FileSystemAction::Execute(label) => { 
@@ -521,7 +528,6 @@ impl WebSocketClient {
                     },
                     FileSystemAction::ExpandDirectory(directory) => self.explorer.expand_folder(&directory),
                     FileSystemAction::NavigateHome => {
-                        log::info!("web_console/websockets.rs -> NavigateHome");
                         // self.explorer.navigation_stack.clear();
                         // self.explorer.current_prefix.clear();
                     }
@@ -541,12 +547,12 @@ impl WebSocketClient {
                 self.transport.send(WsMessage::Binary(serialize_command(&Cmd::Quit)));
             },
             Cmd::ListDirectory(path) => {
-                log::info!("Requesting directory listing for: {}", path);
+                log::debug!("Requesting directory listing for: {}", path);
                 self.remote_explorer.loading = true;
                 self.transport.send(WsMessage::Binary(serialize_command(&Cmd::ListDirectory(path))));
             },
             Cmd::DirectoryListing(entries, path) => {
-                log::info!("Received directory listing with {} entries at path: {:?}", entries.len(), path);
+                log::debug!("Received directory listing with {} entries at path: {:?}", entries.len(), path);
                 self.remote_explorer.set_entries(entries, path);
             },
             _ => self.transport.send(WsMessage::Binary(serialize_command(&command)))
@@ -611,13 +617,13 @@ impl WebSocketClient {
                 if let Some(cmd) = deserializer::<Cmd>(&bin){
                     // Handle DirectoryListing directly here for the remote explorer
                     if let Cmd::DirectoryListing(entries, path) = &cmd {
-                        log::info!("Received directory listing with {} entries at path: {:?}", entries.len(), path);
+                        log::debug!("Received directory listing with {} entries at path: {:?}", entries.len(), path);
                         self.remote_explorer.set_entries(entries.clone(), path.clone());
                     } else if let Cmd::DriveList(drives) = &cmd {
-                        log::info!("Received drive list with {} drives", drives.len());
+                        log::debug!("Received drive list with {} drives", drives.len());
                         self.remote_explorer.set_drives(drives.clone());
                     } else if let Cmd::FileChunk(data, is_last) = cmd {
-                        log::info!("Received file chunk: {} bytes, is_last: {}", data.len(), is_last);
+                        log::debug!("Received file chunk: {} bytes, is_last: {}", data.len(), is_last);
                         
                         // Check if this is for "Copy to My Tools" (native only)
                         #[cfg(not(target_arch = "wasm32"))]
@@ -1103,7 +1109,7 @@ impl WebSocketClient {
                         // Stage-4 confirmation modal reads the full
                         // payload (incl. live_specs) for the merge
                         // preview.
-                        log::info!(
+                        log::debug!(
                             "OpenServiceCandidatesResponse for {}: match={} candidates={}",
                             self.client.connection_string,
                             match_.is_some(),
@@ -1187,6 +1193,7 @@ impl WebSocketClient {
                 _ => ("?", "?", "?", "?"),
             };
             self.cmd_protocol_mismatch = true;
+            self.client_version = Some(peer_ver.to_string());
             self.history.push(History {
                 from: "System".to_string(),
                 message: format!(
@@ -1202,6 +1209,13 @@ impl WebSocketClient {
             return;
         }
 
+        // Version sentinel: __CLIENT_VERSION__|<peer_ver>. Only sent when the
+        // fingerprints match, so it also clears a mismatch from a prior session.
+        if let Some(peer_ver) = text.strip_prefix("__CLIENT_VERSION__|") {
+            self.client_version = Some(peer_ver.to_string());
+            self.cmd_protocol_mismatch = false;
+            return;
+        }
 
         // Handle connection state notifications from WebSocket server
         match text.as_str() {
@@ -1220,6 +1234,8 @@ impl WebSocketClient {
                 log::info!("Client disconnected from room");
                 self.is_connected = false;
                 self.connection_status = "Client Disconnected".to_string();
+                self.client_version = None;
+                self.cmd_protocol_mismatch = false;
                 self.history.push(History {
                     from: "System".to_string(),
                     message: "Client disconnected".to_string(),

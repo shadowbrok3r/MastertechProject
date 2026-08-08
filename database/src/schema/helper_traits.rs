@@ -8,7 +8,7 @@ use std::{collections::HashMap, fmt::Debug};
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
-use log::{debug, info};
+use log::debug;
 
 /// Get the associated data tied to an ID
 #[async_trait(?Send)]
@@ -238,7 +238,7 @@ impl EmployeeHelper for Employee {
             return Err(anyhow::anyhow!("No orders found"));
         }
 
-        info!("helper_traits -> Orders list: {orders:?}");
+        debug!("helper_traits -> Orders list: {orders:?}");
 
         Ok(orders)
     }
@@ -263,7 +263,7 @@ impl EmployeeHelper for Employee {
             return Err(anyhow::anyhow!("No orders found"));
         }
 
-        info!("helper_traits -> Orders list: {orders:?}");
+        debug!("helper_traits -> Orders list: {orders:?}");
 
         Ok(orders)
     }
@@ -307,7 +307,7 @@ impl EmployeeHelper for Employee {
         let mut query: HashMap<&str, &str> = HashMap::new();
         let pagination = format!("{},{}",start_idx.clone(), offset);
 
-        info!("helper_traits -> Pagination: {pagination}");
+        debug!("helper_traits -> Pagination: {pagination}");
 
         query.insert("filter[id_store]", id_store);
         query.insert("filter[id_order_type]", OrderType::ServiceOrder.to_id_str());
@@ -325,7 +325,7 @@ impl EmployeeHelper for Employee {
             return Err(anyhow::anyhow!("No orders found"));
         }
 
-        info!("helper_traits -> Orders list: {orders:?}");
+        debug!("helper_traits -> Orders list: {orders:?}");
         Ok(orders)
     }
 
@@ -335,7 +335,7 @@ impl EmployeeHelper for Employee {
         let pagination = format!("{},{}", start_idx, offset);
         let states = format!("[{}]", state_ids.join("|"));
 
-        info!("helper_traits -> States filter: {states}, pagination: {pagination}");
+        debug!("helper_traits -> States filter: {states}, pagination: {pagination}");
 
         query.insert("filter[id_store]", id_store);
         query.insert("filter[id_order_type]", order_type);
@@ -350,7 +350,7 @@ impl EmployeeHelper for Employee {
             .await
             .context("Pulling orders list")?;
 
-        info!("helper_traits -> Orders list: {orders:?}");
+        debug!("helper_traits -> Orders list: {orders:?}");
         Ok(orders)
     }
 
@@ -358,7 +358,7 @@ impl EmployeeHelper for Employee {
         let mut api_call = Prestashop::default();
         let mut query = HashMap::new();
         let task_notes = &mut vec![];
-        info!("helper_traits -> Pulling order {service_number}");
+        debug!("helper_traits -> Pulling order {service_number}");
         query.insert("filter[id]", service_number);
         query.insert("output_format", "JSON");
         // api_call.display = "[id,id_address_invoice,id_customer,current_state,date_add,id_employee_sales_rep,id_employee_split_rep,id_store,associations]";
@@ -732,11 +732,7 @@ impl From<PrestashopPayload> for TaskPayload {
         ticket.salesman = email_split_rep.to_string();
         ticket.sales_rep = email.to_string();
         ticket.tech = email.to_string();
-        info!(
-            "Salesman: {:?}\nTech: {:?}",
-            ticket.salesman.clone(),
-            ticket.tech.clone()
-        );
+        debug!("Salesman: {:?} / Tech: {:?}", ticket.salesman, ticket.tech);
         ticket.customer = Some(customer.clone());
         ticket.checkin_rep = email.to_string();
         ticket.terms = value.order.payment.clone();
@@ -770,7 +766,9 @@ impl From<PrestashopPayload> for TaskPayload {
                 
                 Ok::<(), anyhow::Error>(())
             }.await;
-            log::info!("Res: {res:?}");
+            if let Err(e) = res {
+                log::warn!("employee lookup failed: {e:?}");
+            }
         });
 
         let user = &mut User::default();
@@ -809,7 +807,7 @@ impl From<PrestashopPayload> for TaskPayload {
                     ticket.checkin_notes = service.check_in_notes.clone();
                 }
             } else {
-                info!("helper_traits -> Theres a couple.... {:?}", service_details);
+                debug!("helper_traits -> multiple service details: {:?}", service_details);
             }
         }
 

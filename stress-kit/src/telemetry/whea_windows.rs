@@ -38,7 +38,7 @@ impl WheaMonitor {
     /// instead of recording a vacuous pass.
     pub fn open() -> Option<Self> {
         let baseline = count_all()?;
-        log::info!(
+        log::debug!(
             "stress-kit/whea: WHEA-Logger on {CHANNEL} (baseline = {} corrected, {} fatal)",
             baseline.corrected,
             baseline.fatal

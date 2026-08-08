@@ -214,6 +214,9 @@ pub struct WebSocketClient {
     pub self_update_rx: Option<Receiver<Cmd>>,
     /// True when the client reported a mismatched `Cmd` shape fingerprint.
     pub cmd_protocol_mismatch: bool,
+    /// MasterTech build version the client reported in its shape-fp frame;
+    /// `None` until a session opens and cleared when one drops.
+    pub client_version: Option<String>,
 }
 
 impl Drop for WebSocketClient {
@@ -270,8 +273,9 @@ For example, if the user types 'get' you should return suggestions like:
 Get-CimClass
 Get-WmiObject")
             ));
-            let run_mcp_server_tcp = run_mcp_server_tcp();
-            log::warn!("run_mcp_server_tcp: {run_mcp_server_tcp:?}");
+            if let Err(e) = run_mcp_server_tcp() {
+                log::warn!("run_mcp_server_tcp failed: {e}");
+            }
         }
 
         Self {
@@ -398,6 +402,7 @@ Get-WmiObject")
             #[cfg(not(target_arch = "wasm32"))]
             self_update_rx: None,
             cmd_protocol_mismatch: false,
+            client_version: None,
         }
     }
 

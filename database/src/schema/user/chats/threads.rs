@@ -101,7 +101,7 @@ impl ChatThread {
     }
 
     pub async fn create_thread(self) -> anyhow::Result<Option<Self>, anyhow::Error> {
-        log::info!("Creating thread: {:?}", &self);
+        log::debug!("Creating thread: {:?}", &self);
         let thread_record: Option<Self> = db()
             .create(CHAT_THREAD_TABLE)
             .content(self.clone())
@@ -188,7 +188,7 @@ impl ChatThread {
                 created_at: Utc::now().into(),
             };
 
-            log::info!("New Thread: {new_thread:?}");
+            log::debug!("New Thread: {new_thread:?}");
 
             let created_thread = db()
                 .create(new_thread.clone().id)

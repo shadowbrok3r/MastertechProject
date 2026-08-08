@@ -12,6 +12,9 @@ use anyhow::{Error, Result};
 use web_time::Instant;
 use regex::Regex;
 
+/// Query durations at or below this log at debug!; above it they log at warn!.
+const SLOW_QUERY_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(1);
+
 /// Embedding endpoint formerly called DB-side by fn::embed_text.
 pub const OLLAMA_EMBEDDINGS_URL: &str = "https://ollama.shadowbroker.app/api/embeddings";
 /// Dimension of nomic-embed-text vectors; the HNSW indexes require exactly this.
@@ -217,7 +220,7 @@ where
         .await?
         .take(0)?;
 
-    info!("schema/utilities.rs/query_id -> Record: {:?}\nSELECT * FROM ONLY ${id:?}", record);
+    debug!("query_id {id:?} -> {record:?}");
     Ok(record)
 }
 
@@ -237,7 +240,7 @@ where
         .await?
         .take(1)?;
 
-    info!("schema/utilities.rs -> Query: {:?}  // {}", record, query);
+    debug!("check_id_existence -> {record:?}  // {query}");
     Ok(record)
 }
 
@@ -284,7 +287,7 @@ pub async fn get_tasks_for_store(tx: Sender<Vec<LiveTaskPayload>>, store: String
             service_ticket.customer
         
      */
-    let start_query = Instant::now(); // Start timing the query
+    let start_query = Instant::now();
 
     let query_results: Vec<LiveTaskPayload> = db()
         .query(query)
@@ -292,8 +295,12 @@ pub async fn get_tasks_for_store(tx: Sender<Vec<LiveTaskPayload>>, store: String
         .await?
         .take(0)?;
 
-    let query_duration = start_query.elapsed(); // Measure query duration
-    warn!("Query execution time for chunk {query_duration:?}");
+    let query_duration = start_query.elapsed();
+    if query_duration > SLOW_QUERY_THRESHOLD {
+        warn!("get_tasks_for_store: slow query {query_duration:?}");
+    } else {
+        debug!("get_tasks_for_store: {query_duration:?}");
+    }
 
     tx.try_send(query_results)?;
 
@@ -321,7 +328,7 @@ pub async fn get_completed_tasks_for_store(tx: Sender<Vec<LiveTaskPayload>>, sto
         
     "#; */ // 
     
-    let start_query = Instant::now(); // Start timing the query
+    let start_query = Instant::now();
 
     let query_results: Vec<LiveTaskPayload> = db()
         .query(query)
@@ -329,8 +336,12 @@ pub async fn get_completed_tasks_for_store(tx: Sender<Vec<LiveTaskPayload>>, sto
         .await?
         .take(0)?;
 
-    let query_duration = start_query.elapsed(); // Measure query duration
-    warn!("Query execution time for chunk {query_duration:?}\ntask len: {}", query_results.len());
+    let query_duration = start_query.elapsed();
+    if query_duration > SLOW_QUERY_THRESHOLD {
+        warn!("get_completed_tasks_for_store: slow query {query_duration:?} ({} tasks)", query_results.len());
+    } else {
+        debug!("get_completed_tasks_for_store: {query_duration:?} ({} tasks)", query_results.len());
+    }
 
     tx.try_send(query_results)?;
     
@@ -501,15 +512,15 @@ pub async fn modify_connected_client(tx: Sender<Vec<ConnectedClient>>) -> Result
 }
 
 pub async fn delete_task(id: RecordId) -> Result<(), Error> {
-    info!("schema/utilities.rs -> deleting id: {id:?}");
-    let x = id.clone();
+    let key = id.key_string();
     let delete_result: Option<Record> = db().delete(
-        (TASK_TABLE, id.key_string())
+        (TASK_TABLE, key.clone())
     )
     .await?;
 
-    info!("schema/utilities.rs -> delete_result: {delete_result:?} for {:?}", x.key_string());
-    
+    info!("Deleted task {key}");
+    debug!("delete_task -> {delete_result:?}");
+
     Ok(())
 }
 
@@ -551,7 +562,7 @@ impl NotificationMod for Notification {
         let query: Option<Record> = db()
             .delete(("notification", self.id.key_string()))
             .await?;
-        info!("schema/utilities.rs -> Deleted notification: {query:?}");
+        debug!("schema/utilities.rs -> Deleted notification: {query:?}");
         Ok(())
     }
 
@@ -563,7 +574,7 @@ impl NotificationMod for Notification {
             .await?
             .take(0)?;
         
-        info!("schema/utilities.rs -> Updated notification: {query:?}");
+        debug!("schema/utilities.rs -> Updated notification: {query:?}");
 
         Ok(())
     }
@@ -585,7 +596,9 @@ pub fn get_local_seb_data() -> anyhow::Result<LocalSebData, anyhow::Error> {
             let _ = tx.send(result);
             Ok::<(), anyhow::Error>(())
         }.await;
-        log::info!("Res: {res:?}");
+        if let Err(e) = res {
+            log::warn!("get_local_seb_data failed: {e:?}");
+        }
     });
 
     if let Ok(seb) = rx.recv() {
@@ -627,7 +640,7 @@ pub async fn create_full_task_payload(
     allow_placeholder_computer: bool,
     assignee_override: Option<RecordId>,
 ) -> TaskCreationResult {
-    info!("schema/utilities.rs -> Send_Payload");
+    debug!("schema/utilities.rs -> Send_Payload");
     if send_specs
         && !allow_placeholder_computer
         && !super::entity_link::computer_has_minimal_hardware(&computer_data)
@@ -642,7 +655,7 @@ pub async fn create_full_task_payload(
     // pick); otherwise derive from the ticket salesman, falling back to the
     // authenticated creator only as a last resort.
     let assignee_id = if let Some(id) = assignee_override {
-        log::info!("schema/utilities.rs -> using assignee override: {id:?}");
+        debug!("schema/utilities.rs -> using assignee override: {id:?}");
         id
     } else {
         let queried_salesman = match User::query_user_from_email(ticket_data.salesman.clone()).await {
@@ -657,7 +670,7 @@ pub async fn create_full_task_payload(
                 }
             }
         };
-        log::error!("schema/utilities.rs -> Queried Salesman (Which will be assignee): {:?}", queried_salesman);
+        debug!("schema/utilities.rs -> queried salesman (assignee): {:?}", queried_salesman);
         queried_salesman.get_id()
     };
     
@@ -703,7 +716,7 @@ pub async fn create_full_task_payload(
     task_data.priority = Priority::Normal;
     task_data.assignee = assignee_id;
 
-    info!("schema/utilities.rs -> cust_record: {customer_data:?}");
+    debug!("schema/utilities.rs -> cust_record: {customer_data:?}");
     let update_customer: std::result::Result<Option<Record>, surrealdb::Error> = db()
         .upsert(customer_id.clone())
         .content(customer_data.clone())
@@ -712,7 +725,7 @@ pub async fn create_full_task_payload(
     // A cust_code/email collision leaves the requested id absent, so link to the row that persisted.
     let customer_id = match update_customer {
         Ok(record) => {
-            log::info!("Updated Customer {record:?}");
+            debug!("Updated Customer {record:?}");
             record.map(|r| r.id).unwrap_or(customer_id)
         }
         Err(e) => match find_customer_by_identity(&customer_data).await {
@@ -739,7 +752,7 @@ pub async fn create_full_task_payload(
             .content(computer_data)
             .await;
         match create_computer_record {
-            Ok(record) => info!("schema/utilities.rs -> create_computer_record: {record:?}"),
+            Ok(record) => debug!("schema/utilities.rs -> create_computer_record: {record:?}"),
             Err(e) => return TaskCreationResult::Error { message: format!("Failed to create computer record: {e}") },
         }
         ticket_data.computer = Some(computer_id);
@@ -751,14 +764,14 @@ pub async fn create_full_task_payload(
         };
     }
 
-    info!("schema/utilities.rs -> ticket record: {ticket_data:?}");
+    debug!("schema/utilities.rs -> ticket record: {ticket_data:?}");
     let service_ticket_record: std::result::Result<Option<Record>, surrealdb::Error> = db()
         .upsert(ticket_id)
         .content(ticket_data)
         .await;
     
     match service_ticket_record {
-        Ok(record) => info!("schema/utilities.rs -> service_ticket_record: {record:?}"),
+        Ok(record) => debug!("schema/utilities.rs -> service_ticket_record: {record:?}"),
         Err(e) => return TaskCreationResult::Error { message: format!("Failed to create service ticket: {e}") },
     }
 
@@ -776,9 +789,8 @@ pub async fn create_full_task_payload(
         }
     }
 
-    info!("schema/utilities.rs -> Task Data: {:?}", &task_data);
+    debug!("schema/utilities.rs -> Task Data: {:?}", &task_data);
 
-    
     let check_task_record: Vec<LiveTaskPayload> = match db()
         .query("SELECT * FROM task WHERE service_number == $service_number")
         .bind(("service_number", service_number.clone()))
@@ -788,7 +800,7 @@ pub async fn create_full_task_payload(
         Err(e) => return TaskCreationResult::Error { message: format!("Failed to check for existing task: {e}") },
     };
 
-    info!("schema/utilities.rs -> check_task_record: {check_task_record:?}");
+    debug!("schema/utilities.rs -> check_task_record: {check_task_record:?}");
 
     let result = if !check_task_record.is_empty() {
         // Task already exists with this service number
@@ -810,7 +822,7 @@ pub async fn create_full_task_payload(
                                 note.task_id = Some(task.id.clone());
                             }
                         }
-                        info!("schema/utilities.rs -> upsert_task_record: {record:?}");
+                        debug!("schema/utilities.rs -> upsert_task_record: {record:?}");
                         updated = true;
                     },
                     Err(e) => return TaskCreationResult::Error { message: format!("Failed to update task: {e}") },
@@ -831,7 +843,7 @@ pub async fn create_full_task_payload(
             .content(task_data).await;
         match create_result {
             Ok(record) => {
-                info!("schema/utilities.rs -> create_task_record: {record:?}");
+                debug!("schema/utilities.rs -> create_task_record: {record:?}");
                 TaskCreationResult::Created { service_number: service_number.clone() }
             },
             Err(e) => return TaskCreationResult::Error { message: format!("Failed to create task: {e}") },
@@ -840,8 +852,9 @@ pub async fn create_full_task_payload(
 
     // Process notes regardless of task creation result (notes might already exist, that's fine)
     for mut note in task_notes {
-        let res = note.handle_note_creation().await;
-        info!("schema/utilities.rs -> Task Note Creation from Mastertech: {res:?}");
+        if let Err(e) = note.handle_note_creation().await {
+            warn!("Task note creation failed: {e:?}");
+        }
     }
 
     result
@@ -856,7 +869,7 @@ pub async fn create_and_link_records(
     mut computer_data: ComputerData,
     connection_string: String,
 ) -> TaskCreationResult {
-    info!("schema/utilities.rs -> create_and_link_records");
+    debug!("schema/utilities.rs -> create_and_link_records");
     let service_number = ticket_data.service_number.clone();
     if service_number.is_empty() {
         return TaskCreationResult::Error {
@@ -868,7 +881,7 @@ pub async fn create_and_link_records(
     computer_data.id = canonical.clone();
 
     let customer_id = customer_data.id.clone();
-    info!("schema/utilities.rs -> create_and_link_records cust_record: {customer_data:?}");
+    debug!("schema/utilities.rs -> create_and_link_records cust_record: {customer_data:?}");
     let update_customer: std::result::Result<Option<Record>, surrealdb::Error> = db()
         .upsert(customer_id.clone())
         .content(customer_data.clone())
@@ -876,7 +889,7 @@ pub async fn create_and_link_records(
     // A cust_code/email collision leaves the requested id absent, so link to the row that persisted.
     let customer_id = match update_customer {
         Ok(record) => {
-            log::info!("Updated Customer {record:?}");
+            debug!("Updated Customer {record:?}");
             record.map(|r| r.id).unwrap_or(customer_id)
         }
         Err(e) => match find_customer_by_identity(&customer_data).await {
@@ -899,7 +912,7 @@ pub async fn create_and_link_records(
         let create_computer_record: std::result::Result<Option<Record>, surrealdb::Error> =
             db().upsert(canonical.clone()).content(computer_data).await;
         match create_computer_record {
-            Ok(record) => info!("schema/utilities.rs -> create_computer_record: {record:?}"),
+            Ok(record) => debug!("schema/utilities.rs -> create_computer_record: {record:?}"),
             Err(e) => {
                 return TaskCreationResult::Error {
                     message: format!("Failed to create computer record: {e}"),
@@ -947,13 +960,13 @@ pub async fn create_and_link_records(
     ticket_data.computer = Some(canonical.clone());
 
     let ticket_id = ticket_data.id.clone();
-    info!("schema/utilities.rs -> create_and_link_records ticket record: {ticket_data:?}");
+    debug!("schema/utilities.rs -> create_and_link_records ticket record: {ticket_data:?}");
     let service_ticket_record: std::result::Result<Option<Record>, surrealdb::Error> = db()
         .upsert(ticket_id)
         .content(ticket_data)
         .await;
     match service_ticket_record {
-        Ok(record) => info!("schema/utilities.rs -> service_ticket_record: {record:?}"),
+        Ok(record) => debug!("schema/utilities.rs -> service_ticket_record: {record:?}"),
         Err(e) => {
             return TaskCreationResult::Error {
                 message: format!("Failed to create service ticket: {e}"),
@@ -1260,7 +1273,7 @@ impl Customer {
                 .request_resources_checked("addresses", query.clone())
                 .await?;
 
-            log::info!("Addresses: {customer_addresses:#?}");
+            debug!("Addresses: {customer_addresses:#?}");
 
             for addr in customer_addresses.iter() {
                 if !addr.id_customer.is_empty() {
@@ -1316,7 +1329,7 @@ pub async fn get_prestashop_payload_from_phone(phone: &str) -> anyhow::Result<Pr
             .request_resources_checked("addresses", query.clone())
             .await?;
 
-        log::info!("Addresses: {customer_addresses:#?}");
+        debug!("Addresses: {customer_addresses:#?}");
 
         if let Some(address) = customer_addresses.get(0) {
             tmp_address = address.clone();
@@ -1382,10 +1395,10 @@ pub async fn get_prestashop_payload_from_phone(phone: &str) -> anyhow::Result<Pr
     }
 
     if potential_order.id_customer.is_empty() {
-        info!("schema/utilities.rs -> Order is likely gonna fuKKKK");
+        warn!("Prestashop order has no id_customer");
     }
 
-    info!("schema/utilities.rs -> order: {potential_order:#?}");
+    debug!("schema/utilities.rs -> order: {potential_order:#?}");
 
     let sales_rep: Option<Employee> = if !potential_order.id_employee_sales_rep.eq("0") {
         api_call
@@ -1418,7 +1431,7 @@ pub async fn get_prestashop_payload_from_phone(phone: &str) -> anyhow::Result<Pr
         .await?;
 
 
-    info!("schema/utilities.rs -> address: {tmp_address:#?}");
+    debug!("schema/utilities.rs -> address: {tmp_address:#?}");
 
     let customer = CustomerData {
         id: RecordId::new(
@@ -1460,7 +1473,7 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
         .request_resources_checked("customer_threads", query.clone())
         .await?;
 
-    log::info!("CUSTOMER THREADS LEN: {}", customer_threads.len());
+    debug!("get_prestashop_payload -> {} customer threads", customer_threads.len());
     
     let mut customer_messages: Vec<CustomerMessage> = Vec::new();
     let mut task_notes: Vec<TaskNotePayload> = Vec::new();
@@ -1469,7 +1482,7 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
         for thread in customer_threads.iter() {
             if &thread.id != ""  && !thread.associations.customer_messages.is_empty() {
                 for msg in thread.associations.customer_messages.iter() {
-                    log::info!("Pulling Customer messages");
+                    debug!("Pulling Customer messages");
                     let msg: CustomerMessage =  api_call
                         .request_subresources_by_id_wasm(
                             "customer_messages",
@@ -1489,19 +1502,17 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
         }
     }
 
-    log::info!("Pulling order: {order_number}");
+    debug!("Pulling order: {order_number}");
 
     let order: Order = api_call
         .request_subresources_by_id_wasm("orders", "order", order_number)
         .await?;
 
-    log::info!("Pulled order");
-
     if order.id_customer.is_empty() {
-        info!("schema/utilities.rs -> Order is likely gonna fuKKKK");
+        warn!("Prestashop order has no id_customer");
     }
 
-    info!("schema/utilities.rs -> order: {order:#?}");
+    debug!("schema/utilities.rs -> order: {order:#?}");
 
     // let user = &mut User::default();
 
@@ -1592,7 +1603,7 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
         }
     }
 
-    info!("schema/utilities.rs -> address: {customer_address:#?}");
+    debug!("schema/utilities.rs -> address: {customer_address:#?}");
 
     let customer = CustomerData {
         id: RecordId::new(
@@ -1637,15 +1648,13 @@ pub fn get_missing_call_days(order_date_str: &str, customer_messages: &[Customer
 
     // Determine the current local date.
     let today: NaiveDate = Local::now().naive_local().date();
-    log::info!("Order date: {}", order_date);
-    log::info!("Today: {}", today);
-    
-    // Log all customer message dates for debugging.
+    debug!("Order date {order_date}, today {today}");
+
     let msg_dates: Vec<String> = customer_messages
         .iter()
         .map(|msg| msg.date_add.clone())
         .collect();
-    log::info!("Customer messages received: {:?}", msg_dates);
+    debug!("Customer messages received: {:?}", msg_dates);
 
     let mut missing_days = Vec::new();
     let mut day = match order_date.succ_opt() {
@@ -1658,10 +1667,10 @@ pub fn get_missing_call_days(order_date_str: &str, customer_messages: &[Customer
 
     // Iterate until including today.
     while day <= today {
-        log::info!("Checking day: {}", day.format("%Y-%m-%d"));
+        log::trace!("Checking day: {}", day.format("%Y-%m-%d"));
         // Skip Sundays.
         if day.weekday() == Weekday::Sun {
-            log::info!("Skipping Sunday: {}", day.format("%Y-%m-%d"));
+            log::trace!("Skipping Sunday: {}", day.format("%Y-%m-%d"));
             day = match day.succ_opt() {
                 Some(d) => d,
                 None => {
@@ -1677,10 +1686,10 @@ pub fn get_missing_call_days(order_date_str: &str, customer_messages: &[Customer
         for msg in customer_messages {
             match NaiveDateTime::parse_from_str(&msg.date_add, "%Y-%m-%d %H:%M:%S") {
                 Ok(msg_dt) => {
-                    log::info!("  Comparing {} with customer message date {}",
+                    log::trace!("  Comparing {} with customer message date {}",
                              day.format("%Y-%m-%d"), msg_dt.date().format("%Y-%m-%d"));
                     if msg_dt.date() == day {
-                        log::info!("  Found matching call for day {}", day.format("%Y-%m-%d"));
+                        log::trace!("  Found matching call for day {}", day.format("%Y-%m-%d"));
                         called = true;
                         break;
                     }
@@ -1690,7 +1699,7 @@ pub fn get_missing_call_days(order_date_str: &str, customer_messages: &[Customer
         }
         
         if !called {
-            log::info!("No call found for day {}", day.format("%Y-%m-%d"));
+            log::trace!("No call found for day {}", day.format("%Y-%m-%d"));
             missing_days.push(day.format("%Y-%m-%d").to_string());
         }
         
@@ -1702,7 +1711,7 @@ pub fn get_missing_call_days(order_date_str: &str, customer_messages: &[Customer
             }
         };
     }
-    log::info!("Missing days: {:?}", missing_days);
+    debug!("Missing days: {:?}", missing_days);
     missing_days
 }
 

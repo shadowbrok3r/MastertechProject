@@ -2,7 +2,6 @@ use database::schema::{FilterLiveTasks, LiveTaskPayload, Status, Store};
 use std::collections::{BTreeMap, HashSet};
 use crate::app_state::SharedContext; 
 use database::live_data::Action;
-use log::info;
 
 impl SharedContext {
     pub fn receive_users(&mut self) {
@@ -13,13 +12,13 @@ impl SharedContext {
                     self.layout_configs = None;
                     self.init_layout_configs();
                 } else {
-                    info!("Received user update for a different user, ignoring.");
+                    log::debug!("Received user update for a different user, ignoring.");
                 }
             }
         }
 
         if let Ok(users) = self.store_users_rx.try_recv() {
-            info!("Received new store users: {} users", users.len());
+            log::debug!("Received new store users: {} users", users.len());
 
             // Check if store_users has changed significantly
             let old_username: HashSet<String> = self
@@ -42,7 +41,6 @@ impl SharedContext {
                         _ => status.as_str().to_string(),
                     })
                     .collect::<HashSet<String>>();
-                // log::warn!("old_statuses: {:?}", statuses);
                 statuses
             });
 
@@ -57,12 +55,9 @@ impl SharedContext {
                             _ => status.as_str().to_string(),
                         })
                         .collect::<HashSet<String>>();
-                    // log::warn!("new_statuses: {:?}", statuses);
                     statuses
                 });
             let statuses_changed = old_statuses != new_statuses;
-
-            log::warn!("Statuses changed: {}", statuses_changed);
 
             // Update store_users
             self.store_users.clear();
@@ -70,7 +65,7 @@ impl SharedContext {
 
             // Reinitialize layout_configs if statuses or users changed
             if users_changed || statuses_changed {
-                log::warn!("Reinitializing layout_configs due to users_changed={} or statuses_changed={}", users_changed, statuses_changed);
+                log::debug!("Reinitializing layout_configs (users_changed={users_changed}, statuses_changed={statuses_changed})");
                 self.layout_configs = None;
                 self.init_layout_configs();
             }
@@ -121,7 +116,7 @@ impl SharedContext {
                                 .into_iter()
                                 .filter(|task| !task.completed)
                                 .collect::<Vec<LiveTaskPayload>>();
-                            log::warn!("receive_store_users: MyTasks status={}, tasks_found={}", status_str, filtered.len());
+                            log::trace!("receive_store_users: MyTasks status={}, tasks_found={}", status_str, filtered.len());
                             if !filtered.is_empty() {
                                 new_task_map.entry(status_str.clone()).or_insert(filtered);
                             }
@@ -133,7 +128,7 @@ impl SharedContext {
                                 .filter_by_assignee(user)
                                 .filter_by_completion(page == "CompletedTasks")
                                 .filter_by_store(user, &store_selection);
-                            log::warn!("receive_store_users: {} user={:?}, tasks_found={}", page, user.get_initials(), filtered.len());
+                            log::trace!("receive_store_users: {} user={:?}, tasks_found={}", page, user.get_initials(), filtered.len());
                             if !filtered.is_empty() {
                                 new_task_map
                                     .entry(user.get_initials().to_string())
@@ -141,7 +136,7 @@ impl SharedContext {
                             }
                         }
                     }
-                    log::warn!("receive_store_users: {} task_map_keys={:?}", page, new_task_map.keys());
+                    log::trace!("receive_store_users: {} task_map_keys={:?}", page, new_task_map.keys());
                     layout.task_map = new_task_map.clone();
                     layout.update_col_names(new_task_map.keys().cloned().collect());
                 }

@@ -27,7 +27,7 @@ impl TdrMonitor {
         let path = PathBuf::from(LOG_PATH);
         match count_tdr_events(&path) {
             Ok(baseline) => {
-                log::info!(
+                log::debug!(
                     "stress-kit/tdr: opened {} (baseline = {} TDR events)",
                     path.display(),
                     baseline

@@ -200,8 +200,21 @@ impl AgentSessions {
         ui.separator();
 
         ScrollArea::vertical().id_salt("agent_session_body").show(ui, |ui| {
-            for (idx, (ts, entry)) in session.entries.iter().enumerate() {
-                entry_ui(ui, &session.trace_id, idx, ts, entry);
+            // Consecutive tool activity collapses into one block.
+            let entries = &session.entries;
+            let mut i = 0;
+            while i < entries.len() {
+                if is_tool_entry(&entries[i].1) {
+                    let start = i;
+                    while i < entries.len() && is_tool_entry(&entries[i].1) {
+                        i += 1;
+                    }
+                    tool_group_ui(ui, &session.trace_id, start, &entries[start..i]);
+                } else {
+                    let (ts, entry) = &entries[i];
+                    entry_ui(ui, &session.trace_id, i, ts, entry);
+                    i += 1;
+                }
             }
         });
     }
@@ -214,6 +227,32 @@ fn summary_line(s: &AgentSession) -> String {
         .map(|t| t.lines().next().unwrap_or("").chars().take(48).collect::<String>())
         .unwrap_or_default();
     format!("{clock}  {}  ({})\n{head}", s.agent, s.short_id())
+}
+
+fn is_tool_entry(e: &Entry) -> bool {
+    matches!(e, Entry::ToolCall { .. } | Entry::ToolResult { .. })
+}
+
+/// Wraps a run of tool activity in one collapsible block, each call still
+/// collapsible inside it.
+fn tool_group_ui(ui: &mut Ui, trace: &str, offset: usize, group: &[(String, Entry)]) {
+    let calls = group.iter().filter(|(_, e)| matches!(e, Entry::ToolCall { .. })).count();
+    let failures = group.iter().filter(|(_, e)| e.is_failure()).count();
+    let plural = if calls == 1 { "" } else { "s" };
+    let title = if failures > 0 {
+        RichText::new(format!("{calls} tool call{plural} · {failures} failed"))
+            .color(Color32::from_rgb(220, 120, 120))
+    } else {
+        RichText::new(format!("{calls} tool call{plural}")).weak()
+    };
+    egui::CollapsingHeader::new(title)
+        .id_salt(format!("{trace}:group:{offset}"))
+        .default_open(failures > 0)
+        .show(ui, |ui| {
+            for (n, (ts, entry)) in group.iter().enumerate() {
+                entry_ui(ui, trace, offset + n, ts, entry);
+            }
+        });
 }
 
 fn entry_text(e: &Entry) -> &str {

@@ -17,7 +17,8 @@ use eframe::egui::{
     Ui,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 use web_time::Instant;
 
 pub mod client_card;
@@ -80,6 +81,13 @@ pub enum DetailViewMode {
 
 /// Maximum age (in hours) before a client is considered stale and auto-hidden
 pub const STALE_CLIENT_HOURS: i64 = 4;
+
+/// Inserts `conn_string` into the latch, returning true only the first time.
+fn warn_once(seen: &Mutex<HashSet<String>>, conn_string: &str) -> bool {
+    seen.lock()
+        .map(|mut guard| guard.insert(conn_string.to_string()))
+        .unwrap_or(false)
+}
 
 /// Main state for the revamped web console
 #[derive(Serialize)]
@@ -147,6 +155,9 @@ pub struct WebConsole {
     pub ping_timeout_secs: u64,
     /// Whether to hide stale clients
     pub hide_stale_clients: bool,
+    /// Connection strings already warned about for missing computer data
+    #[serde(skip)]
+    pub missing_computer_warned: Arc<Mutex<HashSet<String>>>,
 }
 
 impl Default for WebConsole {
@@ -188,6 +199,7 @@ impl WebConsole {
             detail_view_modes: HashMap::new(),
             ping_timeout_secs: 10,
             hide_stale_clients: true,
+            missing_computer_warned: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -203,7 +215,7 @@ impl WebConsole {
 
         // Receive computer data updates
         while let Ok((conn_string, computer)) = self.computer_rx.try_recv() {
-            log::info!("WebConsole: Cached computer data for {}", conn_string);
+            log::debug!("WebConsole: Cached computer data for {}", conn_string);
             self.computer_cache.insert(conn_string.clone(), computer.clone());
             
             // If TUR modal is open for this client, update it with the computer data
@@ -288,9 +300,8 @@ impl WebConsole {
         self.loading = true;
         let tx = self.clients_tx.clone();
         PlatformSpawner::spawn(async move {
-            match get_connected_clients(tx, database::schema::ClientScope::MyStore).await {
-                Ok(_) => log::info!("WebConsole: Refreshed client list"),
-                Err(e) => log::error!("WebConsole: Failed to refresh clients: {e:?}"),
+            if let Err(e) = get_connected_clients(tx, database::schema::ClientScope::MyStore).await {
+                log::error!("WebConsole: Failed to refresh clients: {e:?}");
             }
         });
     }
@@ -342,8 +353,8 @@ impl WebConsole {
                 .delete((CONNECTED_CLIENT_TABLE, id.key_string()))
                 .await;
             match result {
-                Ok(_) => log::info!("WebConsole: Deleted client {}", conn_string),
-                Err(e) => log::error!("WebConsole: Failed to delete client: {e:?}"),
+                Ok(_) => log::info!("Deleted client {conn_string}"),
+                Err(e) => log::error!("WebConsole: Failed to delete client {conn_string}: {e:?}"),
             }
         });
     }
@@ -356,12 +367,13 @@ impl WebConsole {
             
             // Check cache first
             if self.computer_cache.contains_key(&conn_string) {
-                log::info!("WebConsole: Computer data already cached for {}", conn_string);
+                log::debug!("WebConsole: Computer data already cached for {}", conn_string);
                 return;
             }
 
             // Use the stored channel sender
             let cache_tx = self.computer_tx.clone();
+            let warned = self.missing_computer_warned.clone();
 
             PlatformSpawner::spawn(async move {
                 use database::db;
@@ -370,15 +382,22 @@ impl WebConsole {
                     .await;
                 match result {
                     Ok(Some(computer)) => {
-                        log::info!("WebConsole: Fetched computer data for {}", conn_string);
+                        log::debug!("WebConsole: Fetched computer data for {}", conn_string);
                         let _ = cache_tx.send((conn_string, computer));
                     }
-                    Ok(None) => log::warn!("WebConsole: No computer data found in DB for {}", conn_string),
+                    Ok(None) => {
+                        if warn_once(&warned, &conn_string) {
+                            log::warn!("WebConsole: No computer data found in DB for {conn_string}");
+                        }
+                    }
                     Err(e) => log::error!("WebConsole: Failed to fetch computer: {e:?}"),
                 }
             });
-        } else {
-            log::warn!("WebConsole: Client has no computer record ID");
+        } else if warn_once(&self.missing_computer_warned, &client.connection_string) {
+            log::warn!(
+                "WebConsole: Client {} has no computer record ID",
+                client.connection_string
+            );
         }
     }
 
@@ -464,7 +483,7 @@ impl WebConsole {
                 .query("UPDATE connected_client SET connected = false WHERE connection_string == $conn")
                 .bind(("conn", conn_string.clone()))
                 .await;
-            log::info!("WebConsole: Marked {} as disconnected", conn_string);
+            log::debug!("WebConsole: Marked {} as disconnected", conn_string);
         });
     }
 
@@ -595,7 +614,7 @@ impl WebConsole {
                         self.tur_modal_state = None;
                     }
                     tur_modal::TurModalResult::Confirmed(data) => {
-                        log::info!("TUR creation confirmed: {:?}", data);
+                        log::debug!("TUR creation confirmed: {:?}", data);
                         // TODO: Navigate to TUR sheet tab with pre-populated data
                         self.tur_modal_client = None;
                         self.tur_modal_state = None;

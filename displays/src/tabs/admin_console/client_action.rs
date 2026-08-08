@@ -184,7 +184,7 @@ impl AdminConsole {
             if existing.is_connected {
                 return true;
             }
-            log::info!(
+            log::debug!(
                 "open_session -> swapping fresh transport into existing session for {}",
                 client.connection_string
             );
@@ -231,11 +231,11 @@ impl AdminConsole {
         match (client.local_ip.as_deref(), client.tcp_port) {
             (Some(ip), Some(port)) if !ip.is_empty() => {
                 let target = format!("{ip}:{port}");
-                log::info!("open_session -> direct TCP to {target} for {}", client.connection_string);
+                log::debug!("open_session -> direct TCP to {target} for {}", client.connection_string);
                 AdminTransport::from_tcp(target, client.connection_string.clone())
             }
             _ => {
-                log::info!("open_session -> relay tunnel for {} (no TCP coords)", client.connection_string);
+                log::debug!("open_session -> relay tunnel for {} (no TCP coords)", client.connection_string);
                 AdminTransport::from_tunnel(client.connection_string.clone())
             }
         }
@@ -313,7 +313,7 @@ impl AdminConsole {
             .collect();
         for client in want {
             if !self.session_layout.contains_key(&client.connection_string) {
-                log::info!(
+                log::debug!(
                     "ensure_sessions -> holding autopilot session for {}",
                     client.connection_string
                 );
@@ -416,37 +416,44 @@ impl ClientHandler for ConnectedClient {
         let id = self.id.clone();
         PlatformSpawner::spawn(async move {
             db().set("id", id).await.unwrap();
-            db().set("history", Some(history.clone())).await.unwrap();
+            db().set("history", Some(history)).await.unwrap();
             let query = "UPDATE $id SET command_history += $history";
             let update_history: Result<_, surrealdb::Error> = db()
                 .query(query)
                 .await;
 
-            log::info!("History Response: {update_history:?}");
-            log::info!("History: {:#?}", history.clone());
+            if let Err(e) = update_history {
+                log::warn!("export_logs: command_history append failed: {e}");
+            }
         });
      }
 
     fn delete_client(&mut self) {
         let id = self.id.clone();
+        let conn_string = self.connection_string.clone();
         PlatformSpawner::spawn(async move {
-            let update_history: Result<Option<Record>, surrealdb::Error> = db()
+            let deleted: Result<Option<Record>, surrealdb::Error> = db()
                 .delete((CONNECTED_CLIENT_TABLE, id.key_string()))
                 .await;
 
-            log::info!("History: {update_history:#?}");
+            match deleted {
+                Ok(_) => log::info!("Deleted client {conn_string}"),
+                Err(e) => log::warn!("delete_client: delete failed: {e}"),
+            }
         });
      }
 
     fn disconnect_client(&mut self) {
         let id = self.id.clone();
         PlatformSpawner::spawn(async move {
-            let update_history: Result<_, surrealdb::Error> = db()
+            let disconnected: Result<_, surrealdb::Error> = db()
                 .query("UPDATE $id SET connected = false")
                 .bind(("id", id))
                 .await;
 
-            log::info!("History: {update_history:#?}");
+            if let Err(e) = disconnected {
+                log::warn!("disconnect_client: connected=false write failed: {e}");
+            }
         });
      }
 }

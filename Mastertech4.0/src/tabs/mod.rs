@@ -5,7 +5,7 @@ use crate::app_state::MastertechContext;
 use eframe::egui::{Ui, WidgetText};
 use github::get_github_releases;
 use std::sync::atomic::Ordering;
-use log::{error, info};
+use log::error;
 use egui::Color32;
 use anyhow::Error;
 use tokio::spawn;
@@ -206,9 +206,11 @@ impl TabViewer for MastertechContext {
                             std::convert::Into::<Store>::into(store_sel).as_str().to_string();
 
                         spawn(async move {
-                            let get_completed_tasks_for_store =
-                                get_completed_tasks_for_store(tasks_tx, store_selection).await;
-                            info!("get_completed_tasks_for_store: {get_completed_tasks_for_store:?}");
+                            if let Err(e) =
+                                get_completed_tasks_for_store(tasks_tx, store_selection).await
+                            {
+                                error!("get_completed_tasks_for_store: {e:?}");
+                            }
                         });
                     }
                 }
@@ -225,9 +227,9 @@ impl TabViewer for MastertechContext {
                             std::convert::Into::<Store>::into(store_sel).as_str().to_string();
 
                         spawn(async move {
-                            let get_tasks_for_store =
-                                get_tasks_for_store(tasks_tx, store_selection).await;
-                            info!("get_tasks_for_store: {get_tasks_for_store:?}");
+                            if let Err(e) = get_tasks_for_store(tasks_tx, store_selection).await {
+                                error!("get_tasks_for_store: {e:?}");
+                            }
                         });
                     }
                 }
@@ -235,9 +237,8 @@ impl TabViewer for MastertechContext {
                     let github_tx = self.github_releases_channel.0.clone();
                     let client = self.client.clone();
                     spawn(async move {
-                        match get_github_releases(github_tx, client).await {
-                            Ok(_) => info!("get_github_releases ran ok"),
-                            Err(e) => error!("Error getting github releases: {e:?}"),
+                        if let Err(e) = get_github_releases(github_tx, client).await {
+                            error!("Error getting github releases: {e:?}");
                         }
 
                         Ok::<(), Error>(())

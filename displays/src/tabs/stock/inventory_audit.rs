@@ -514,7 +514,7 @@ pub async fn lookup_serials_in_odoo(
                 }
             }
             Ok(None) => {
-                log::info!("No stock.lot found in Odoo for serial {serial}");
+                log::debug!("No stock.lot found in Odoo for serial {serial}");
             }
             Err(e) => {
                 log::warn!("stock.lot lookup failed for {serial}: {e:?}");

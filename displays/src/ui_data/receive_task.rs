@@ -93,7 +93,7 @@ impl SharedContext {
         }
 
         if let Ok(new_task) = self.live_tasks_rx.try_recv() {
-            log::info!("New Task Update: {:?}", new_task.0);
+            log::debug!("New Task Update: {:?}", new_task.0);
             
             let tx = self.new_ticket_tx.clone();
             let notes_tx = self.associated_notes_tx.clone();
@@ -101,9 +101,8 @@ impl SharedContext {
                 if !service_num.is_empty() {
                     let new_task = new_task.clone();
                     PlatformSpawner::spawn(async move {
-                        match get_associated_ticket(tx, new_task.clone()).await {
-                            Ok(_) => log::info!("Got associated ticket"),
-                            Err(e) => log::error!("Error getting associated ticket: {e:?}"),
+                        if let Err(e) = get_associated_ticket(tx, new_task.clone()).await {
+                            log::error!("Error getting associated ticket: {e:?}");
                         }
                         match TaskNotePayload::get_db_notes_from_task_id(new_task.1.id.clone()).await {
                             Ok(notes) => { let _ = notes_tx.try_send(notes); },
@@ -150,15 +149,12 @@ impl SharedContext {
                             
                             // Save history record asynchronously
                             PlatformSpawner::spawn(async move {
-                                match history.save().await {
-                                    Ok(_) => log::info!("Task history record saved successfully"),
-                                    Err(e) => log::error!("Error saving task history: {:?}", e),
+                                if let Err(e) = history.save().await {
+                                    log::error!("Error saving task history: {:?}", e);
                                 }
                             });
                         }
                     }
-                    
-                    log::info!("Task data was handled successfully");
                 }
                 Err(e) => {
                     log::error!("Error handling task data: {e:?}");

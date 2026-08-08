@@ -133,7 +133,7 @@ impl ConnectionManager {
             "master",
         );
 
-        log::info!("ConnectionManager: Connecting to {}", url);
+        log::debug!("ConnectionManager: Connecting to {}", url);
 
         match ewebsock::connect(&url, Default::default()) {
             Ok((ws_sender, ws_receiver)) => {
@@ -247,7 +247,7 @@ impl ConnectionManager {
             match event {
                 ewebsock::WsEvent::Message(msg) => self.handle_message(msg),
                 ewebsock::WsEvent::Opened => {
-                    log::info!(
+                    log::debug!(
                         "ConnectionManager: WebSocket opened for {}",
                         self.client.connection_string
                     );
@@ -255,7 +255,7 @@ impl ConnectionManager {
                     self.last_pong_time = Some(Instant::now());
                 }
                 ewebsock::WsEvent::Closed => {
-                    log::info!(
+                    log::debug!(
                         "ConnectionManager: WebSocket closed for {}",
                         self.client.connection_string
                     );
@@ -279,7 +279,7 @@ impl ConnectionManager {
         match msg {
             WsMessage::Text(text) => {
                 let text_str = text.to_string();
-                log::info!("ConnectionManager: Received TEXT message ({} bytes): {}", 
+                log::debug!("ConnectionManager: Received TEXT message ({} bytes): {}", 
                     text_str.len(), 
                     if text_str.len() > 100 { &text_str[..100] } else { &text_str }
                 );
@@ -292,21 +292,21 @@ impl ConnectionManager {
                 
                 // Try to deserialize as command
                 if let Ok(cmd) = serde_json::from_str::<Cmd>(&text) {
-                    log::info!("ConnectionManager: Deserialized as Cmd: {}", crate::shape_fp::redacted(&cmd));
+                    log::debug!("ConnectionManager: Deserialized as Cmd: {}", crate::shape_fp::redacted(&cmd));
                     let _ = self.receive_cmd_tx.send(cmd);
                 }
             }
             WsMessage::Binary(data) => {
-                log::info!("ConnectionManager: Received BINARY message ({} bytes)", data.len());
+                log::debug!("ConnectionManager: Received BINARY message ({} bytes)", data.len());
                 
                 // Try to deserialize as command using bincode
                 if let Some(cmd) = deserialize_command(&data) {
-                    log::info!("ConnectionManager: Deserialized binary as Cmd: {}", crate::shape_fp::redacted(&cmd));
+                    log::debug!("ConnectionManager: Deserialized binary as Cmd: {}", crate::shape_fp::redacted(&cmd));
                     let _ = self.receive_cmd_tx.send(cmd);
                 } else {
                     // Try to interpret as UTF-8 text (shell output)
                     if let Ok(text) = String::from_utf8(data.to_vec()) {
-                        log::info!("ConnectionManager: Binary decoded as UTF-8 text ({} bytes): {}", 
+                        log::debug!("ConnectionManager: Binary decoded as UTF-8 text ({} bytes): {}", 
                             text.len(),
                             if text.len() > 100 { &text[..100] } else { &text }
                         );
@@ -314,7 +314,7 @@ impl ConnectionManager {
                             log::warn!("ConnectionManager: Failed to forward binary-as-text to shell: {:?}", e);
                         }
                     } else {
-                        log::info!("ConnectionManager: Binary is not valid UTF-8, storing in buffer");
+                        log::debug!("ConnectionManager: Binary is not valid UTF-8, storing in buffer");
                         self.binary_buffer.push(data.to_vec());
                     }
                 }
@@ -344,9 +344,8 @@ impl ConnectionManager {
         if let Some(sender) = &self.ws_sender {
             if let Ok(mut guard) = sender.lock() {
                 while let Ok(cmd) = self.send_cmd_rx.try_recv() {
-                    log::info!("ConnectionManager: Sending command to client: {}", crate::shape_fp::redacted(&cmd));
+                    log::debug!("ConnectionManager: Sending command to client: {}", crate::shape_fp::redacted(&cmd));
                     let data = serialize_command(&cmd);
-                    log::info!("ConnectionManager: Serialized command to {} bytes", data.len());
                     guard.send(WsMessage::Binary(data.into()));
                 }
             }

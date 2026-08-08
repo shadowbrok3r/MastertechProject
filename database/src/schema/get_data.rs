@@ -63,8 +63,8 @@ pub async fn get_services_by_status(
         .await
         .context("Pulling orders list")?;
 
-    log::info!("Orders: {orders:?}");
-    log::info!("Api query: {query:?}");
+    log::debug!("Orders: {orders:?}");
+    log::debug!("Api query: {query:?}");
 
     for order in orders.iter() {
         let api_call = Prestashop::default();
@@ -74,7 +74,7 @@ pub async fn get_services_by_status(
             break;
         }
 
-        log::info!("Pulling order {}", order.id);
+        log::debug!("Pulling order {}", order.id);
         
         query.insert("filter[id_order]", order.id.as_str());
         query.insert("output_format", "JSON");
@@ -113,7 +113,7 @@ pub async fn get_services_by_status(
         }
     }
 
-    log::info!("Missed orders: {:#?}", missed_orders);
+    log::debug!("Missed orders: {:#?}", missed_orders);
 
     Ok(missed_orders)
 }
@@ -125,7 +125,7 @@ pub async fn get_order_info_from_serial(serial: &str) -> anyhow::Result<crate::s
             log::error!("Everest fallback failed: {e:?}");
             match crate::schema::everest::request_everest(&serial).await {
                 Ok(ev) => { 
-                    log::info!("Everest info: {ev}"); 
+                    log::debug!("Everest info: {ev}"); 
                     Ok(crate::schema::prestashop::PrestashopPayload::default())
                 },
                 Err(e2) => Err(anyhow::anyhow!("Everest fallback failed: {e2:?}")),

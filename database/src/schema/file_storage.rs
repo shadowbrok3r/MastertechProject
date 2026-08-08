@@ -96,15 +96,13 @@ impl FileEntry {
 /// * `backend` - The backend path (e.g., "file:/path/to/storage/", "C:/SurrealBuckets/user", or "memory")
 pub async fn define_bucket(bucket_name: &str, backend: &str) -> anyhow::Result<(), anyhow::Error> {
     let sanitized = sanitize_bucket_name(bucket_name);
-    log::info!("About to query DB. client ptr: {:?}", std::sync::Arc::as_ptr(&db()));
 
     let resolved_backend = resolve_backend(backend);
     let query = format!(
         r#"DEFINE BUCKET IF NOT EXISTS {sanitized} BACKEND '{resolved_backend}' PERMISSIONS FULL"#
     );
-    log::info!("define_bucket query: {}", query);
     db().query(&query).await?;
-    log::info!("Defined bucket: {} with backend: {}", sanitized, resolved_backend);
+    log::debug!("Defined bucket: {} with backend: {}", sanitized, resolved_backend);
     Ok(())
 }
 
@@ -112,11 +110,10 @@ pub async fn define_bucket(bucket_name: &str, backend: &str) -> anyhow::Result<(
 /// Uses a file backend at the default storage location
 pub async fn init_user_bucket(username: &str) -> anyhow::Result<(), anyhow::Error> {
     let bucket_name = sanitize_bucket_name(username);
-    log::info!("About to query DB. client ptr: {:?}", std::sync::Arc::as_ptr(&db()));
     // Use memory backend for user buckets by default (can be changed to file backend)
     let query = format!(r#"DEFINE BUCKET IF NOT EXISTS {} PERMISSIONS FULL"#, bucket_name);
     db().query(&query).await?;
-    log::info!("Initialized user bucket: {}", bucket_name);
+    log::debug!("Initialized user bucket: {}", bucket_name);
     Ok(())
 }
 
@@ -162,7 +159,7 @@ pub async fn put_file(bucket: &str, path: &str, data: Vec<u8>) -> anyhow::Result
     let bucket_name = sanitize_bucket_name(bucket);
     let normalized_path = normalize_path(path);
     let data_len = data.len();
-    log::info!("file_storage::put_file -> Starting upload: {}:{} ({} bytes)", bucket_name, normalized_path, data_len);
+    log::debug!("file_storage::put_file -> Starting upload: {}:{} ({} bytes)", bucket_name, normalized_path, data_len);
     
     // Ensure connection is alive before querying
     if let Err(e) = ensure_connected_or_reconnect().await {
@@ -220,7 +217,6 @@ pub async fn put_file_if_not_exists(bucket: &str, path: &str, data: Vec<u8>) -> 
     
     // SurrealQL method syntax: f"bucket:/path".put_if_not_exists(data)
     let query = format!(r#"f"{}:{}".put_if_not_exists($data)"#, bucket_name, normalized_path);
-    log::info!("About to query DB. client ptr: {:?}", std::sync::Arc::as_ptr(&db()));
     db()
         .query(&query)
         .bind(("data", data))
@@ -236,7 +232,6 @@ pub async fn put_file_if_not_exists(bucket: &str, path: &str, data: Vec<u8>) -> 
 pub async fn get_file(bucket: &str, path: &str) -> anyhow::Result<Option<Vec<u8>>, anyhow::Error> {
     let bucket_name = sanitize_bucket_name(bucket);
     let normalized_path = normalize_path(path);
-    log::info!("About to query DB. client ptr: {:?}", std::sync::Arc::as_ptr(&db()));
     
     // Ensure connection is alive before querying
     if let Err(e) = ensure_connected_or_reconnect().await {
@@ -262,7 +257,6 @@ pub async fn get_file(bucket: &str, path: &str) -> anyhow::Result<Option<Vec<u8>
 pub async fn get_file_as_string(bucket: &str, path: &str) -> anyhow::Result<Option<String>, anyhow::Error> {
     let bucket_name = sanitize_bucket_name(bucket);
     let normalized_path = normalize_path(path);
-    log::info!("About to query DB. client ptr: {:?}", std::sync::Arc::as_ptr(&db()));
     
     // Ensure connection is alive before querying
     if let Err(e) = ensure_connected_or_reconnect().await {
@@ -282,7 +276,6 @@ pub async fn get_file_as_string(bucket: &str, path: &str) -> anyhow::Result<Opti
 pub async fn head_file(bucket: &str, path: &str) -> anyhow::Result<Option<FileMetadata>, anyhow::Error> {
     let bucket_name = sanitize_bucket_name(bucket);
     let normalized_path = normalize_path(path);
-    log::info!("About to query DB. client ptr: {:?}", std::sync::Arc::as_ptr(&db()));
     // SurrealQL method syntax: f"bucket:/path".head()
     let query = format!(r#"f"{}:{}".head()"#, bucket_name, normalized_path);
     
@@ -302,7 +295,6 @@ pub async fn head_file(bucket: &str, path: &str) -> anyhow::Result<Option<FileMe
 pub async fn delete_file(bucket: &str, path: &str) -> anyhow::Result<(), anyhow::Error> {
     let bucket_name = sanitize_bucket_name(bucket);
     let normalized_path = normalize_path(path);
-    log::info!("About to query DB. client ptr: {:?}", std::sync::Arc::as_ptr(&db()));
     // SurrealQL method syntax: f"bucket:/path".delete()
     let query = format!(r#"f"{}:{}".delete()"#, bucket_name, normalized_path);
     
@@ -316,7 +308,6 @@ pub async fn delete_file(bucket: &str, path: &str) -> anyhow::Result<(), anyhow:
 pub async fn file_exists(bucket: &str, path: &str) -> anyhow::Result<bool, anyhow::Error> {
     let bucket_name = sanitize_bucket_name(bucket);
     let normalized_path = normalize_path(path);
-    log::info!("About to query DB. client ptr: {:?}", std::sync::Arc::as_ptr(&db()));
     // SurrealQL method syntax: f"bucket:/path".exists()
     let query = format!(r#"f"{}:{}".exists()"#, bucket_name, normalized_path);
     
@@ -354,7 +345,6 @@ fn key_in_prefix(key: &str, clean_prefix: &str) -> bool {
 }
 
 pub async fn list_files(bucket: &str, prefix: &str) -> anyhow::Result<Vec<FileEntry>, anyhow::Error> {
-    log::info!("file_storage::list_files -> bucket: {}, prefix: {}", bucket, prefix);
     let bucket_name = sanitize_bucket_name(bucket);
     
     // Ensure connection is alive before querying
@@ -367,13 +357,13 @@ pub async fn list_files(bucket: &str, prefix: &str) -> anyhow::Result<Vec<FileEn
     // with elevated privileges, invoked via api::invoke('/files/{bucket}').body.
     let query = format!(r#"RETURN api::invoke('/files/{}').body"#, bucket_name);
     
-    log::info!("file_storage::list_files -> query: {}", query);
-    
+    log::debug!("file_storage::list_files -> query: {}", query);
+
     let mut response = db().query(&query).await?;
     let entries: Vec<SurrealFileEntry> = response.take(0)?;
     
     if entries.is_empty() {
-        log::info!("file_storage::list_files -> No files in bucket '{}' (prefix: '{}')", 
+        log::debug!("file_storage::list_files -> No files in bucket '{}' (prefix: '{}')",
             bucket_name, prefix);
         return Ok(Vec::new());
     }
@@ -399,7 +389,7 @@ pub async fn list_files(bucket: &str, prefix: &str) -> anyhow::Result<Vec<FileEn
         })
         .collect();
     
-    log::info!("file_storage::list_files -> {} files in bucket '{}' (prefix: '{}')", 
+    log::debug!("file_storage::list_files -> {} files in bucket '{}' (prefix: '{}')",
         file_entries.len(), bucket_name, prefix);
     Ok(file_entries)
 }

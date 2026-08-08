@@ -4,13 +4,12 @@ use database::schema::{
 };
 use reqwest::Client;
 use crate::{app_state::SharedContext, modals::ModalType, PlatformSpawner, Spawner};
-use log::info;
 
 impl SharedContext {
     pub fn receive_prestashop(&mut self) {
         if let Ok(data) = self.tur_channel.1.try_recv() {
             self.tur.data = data.clone();
-            info!("SharedContext -> receive_prestashop -> {:?}", self.tur.data.clone());
+            log::debug!("receive_prestashop -> order {}", self.tur.data.order.id);
 
             let customer_email = data.customer.email.clone();
             let client = Client::new();
@@ -40,7 +39,7 @@ impl SharedContext {
 
             PlatformSpawner::spawn(async move {
                 if !customer_email.is_empty() {
-                    log::warn!("Spawned thread, checking for CarboniteResponse");
+                    log::debug!("Spawned thread, checking for CarboniteResponse");
                     let response_json = CarboniteResponse::default()
                         .from_customer_email(customer_email.clone(), client)
                         .await;
@@ -61,7 +60,7 @@ impl SharedContext {
 
             for (title, modal) in self.opened_modals.iter_mut() {
                 if let ModalType::CreateTaskModal(create_task_modal) = modal {
-                    info!("Updating modal data for {title}");
+                    log::trace!("Updating modal data for {title}");
                     create_task_modal.update_tur_info(self.tur.clone());
                 }
             }
@@ -71,7 +70,7 @@ impl SharedContext {
     /// Receive extracted specs from async extraction
     pub fn receive_extracted_specs(&mut self) {
         if let Ok(specs) = self.specs_channel.1.try_recv() {
-            info!(
+            log::debug!(
                 "Received extracted specs: cpu='{}', gpu='{}', ram='{}', serial='{}', mfg='{}'",
                 specs.cpu, specs.gpu, specs.ram, specs.device_serial, specs.device_mfg
             );
@@ -88,7 +87,7 @@ impl SharedContext {
 
             for (title, modal) in self.opened_modals.iter_mut() {
                 if let ModalType::CreateTaskModal(create_task_modal) = modal {
-                    info!("Updating modal with extracted specs for {title}");
+                    log::trace!("Updating modal with extracted specs for {title}");
                     create_task_modal.update_tur_info(self.tur.clone());
                 }
             }

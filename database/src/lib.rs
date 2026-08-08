@@ -149,6 +149,12 @@ pub const XBM_API_URL: &str = env!("XBM_API_URL");
 /// runtime; reads then fall back to the Admin GraphQL path where available.
 pub const XBM_API_KEY: &str = env!("XBM_API_KEY");
 
+/// ZeroClaw agent gateway base (no trailing slash).
+pub const ZEROCLAW_GATEWAY_URL: &str = env!("ZEROCLAW_GATEWAY_URL");
+/// ZeroClaw `zc_` bearer token. Either value empty disables the dispatcher,
+/// session viewer and event watcher at runtime.
+pub const ZEROCLAW_GATEWAY_TOKEN: &str = env!("ZEROCLAW_GATEWAY_TOKEN");
+
 /// SurrealDB endpoint this process connects to, matching [`init_database`]:
 /// debug → [`DB_URL_LOCAL`], release → [`DB_URL_DEV`].
 #[inline]
@@ -321,8 +327,10 @@ impl Database {
     ) -> anyhow::Result<Self, anyhow::Error> {
         let dbh = db();
         if cfg!(debug_assertions) {
-            let try_local = dbh.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;
-            log::info!("Attempting to connect to local DB: {try_local:?}");
+            match dbh.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await {
+                Ok(_) => log::info!("Connected to {DB_URL_LOCAL:?}"),
+                Err(e) => log::error!("Failed connecting to: {DB_URL_LOCAL:?}\n{e:?}"),
+            }
         } else {
             match dbh.connect::<surrealdb::engine::remote::ws::Wss>(DB_URL_DEV).await {
                 Ok(_) => log::info!("Connected to {DB_URL_DEV:?}"),
@@ -331,11 +339,9 @@ impl Database {
         }
 
         match dbh.use_ns(NS).use_db(DB).await {
-            Ok(_) => log::info!("Using NS: {NS:?}\nUsing DB: {DB:?}"),
-            Err(e) => log::error!("Failed Using NS: {NS:?}\nFailed Using DB: {DB:?}\nE: {e:?}"),
+            Ok(_) => log::debug!("Using NS {NS:?} / DB {DB:?}"),
+            Err(e) => log::error!("Failed using NS {NS:?} / DB {DB:?}: {e:?}"),
         }
-
-        log::info!("About to query DB. client ptr: {:?}", Arc::as_ptr(&dbh));
 
         match jwt {
             Some(jwt) => {
@@ -375,7 +381,7 @@ impl Database {
                     params: Auth { email: full_email.clone(), password: password.clone() },
                 };
 
-                info!("No JWT, sigining in: {:?}\n{:?}\n{:?}\n{:?}\n", full_email, creds.namespace, creds.database, creds.access);
+                info!("No JWT, signing in as {full_email} on access {}", creds.access);
 
                 // Select a specific namespace / database
                 let jwt = dbh
@@ -413,8 +419,10 @@ impl Database {
     ) -> anyhow::Result<Self, anyhow::Error> {
         let dbh = db();
         if cfg!(debug_assertions) {
-            let try_local = dbh.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;
-            log::info!("Attempting to connect to local DB: {try_local:?}");
+            match dbh.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await {
+                Ok(_) => log::info!("Connected to {DB_URL_LOCAL:?}"),
+                Err(e) => log::error!("Failed connecting to: {DB_URL_LOCAL:?}\n{e:?}"),
+            }
         } else {
             match dbh.connect::<surrealdb::engine::remote::ws::Wss>(DB_URL_DEV).await {
                 Ok(_) => log::info!("Connected to {DB_URL_DEV:?}"),
@@ -425,12 +433,8 @@ impl Database {
             }
         }
         match dbh.use_ns(NS).use_db(DB).await {
-            Ok(_) => log::info!("Using NS: {NS:?}\nUsing DB: {DB:?}"),
-            Err(e) => log::error!("Failed Using NS: {NS:?}\nFailed Using DB: {DB:?}\nE: {e:?}"),
-        }
-
-        if cfg!(debug_assertions) {
-            info!("signup: {signup:?}");
+            Ok(_) => log::debug!("Using NS {NS:?} / DB {DB:?}"),
+            Err(e) => log::error!("Failed using NS {NS:?} / DB {DB:?}: {e:?}"),
         }
 
         // Select a specific namespace / database
@@ -484,8 +488,10 @@ pub fn get_database_users() -> Vec<User> {
 pub async fn init_database() -> anyhow::Result<(), anyhow::Error> {
     let dbh = db();
     if cfg!(debug_assertions) {
-        let try_local = dbh.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;
-        log::info!("Attempting to connect to local DB: {try_local:?}");
+        match dbh.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await {
+            Ok(_) => log::info!("Connected to {DB_URL_LOCAL:?}"),
+            Err(e) => log::error!("Failed connecting to: {DB_URL_LOCAL:?}\n{e:?}"),
+        }
     } else {
         match dbh.connect::<surrealdb::engine::remote::ws::Wss>(DB_URL_DEV).await {
             Ok(_) => log::info!("Connected to {DB_URL_DEV:?}"),

@@ -364,10 +364,10 @@ impl WasmPlugin {
 
         match (abi_version, fingerprint) {
             (Some(v), Some(fp)) => {
-                log::info!("WASM plugin '{id_str}' ABI stamp: abi=v{v}, fingerprint={fp:#018x}");
+                log::debug!("WASM plugin '{id_str}' ABI stamp: abi=v{v}, fingerprint={fp:#018x}");
             }
             (Some(v), None) => {
-                log::info!("WASM plugin '{id_str}' ABI stamp: abi=v{v}, no fingerprint export");
+                log::debug!("WASM plugin '{id_str}' ABI stamp: abi=v{v}, no fingerprint export");
             }
             (None, _) => {
                 log::debug!("WASM plugin '{id_str}' has no ABI stamp (legacy plugin)");

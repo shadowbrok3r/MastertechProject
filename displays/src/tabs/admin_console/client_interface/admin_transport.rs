@@ -441,7 +441,7 @@ async fn run_session(
             .await
         } else {
             let target = target_addr.clone().unwrap_or_default();
-            log::info!(
+            log::debug!(
                 "admin_transport -> dialing {target} (attempt {failed_attempts}, relaunch_grace={relaunch_grace_active})"
             );
             attempt_tcp(
@@ -583,7 +583,7 @@ async fn attempt_tunnel(
 
     let session_id = uuid::Uuid::new_v4().to_string();
     let master_url = derive_tunnel_url(master_base, &session_id, TUNNEL_ROLE_MASTER);
-    log::info!("admin_transport -> tunnel dial {master_url} for {connection_string}");
+    log::debug!("admin_transport -> tunnel dial {master_url} for {connection_string}");
 
     let tunnel = match tokio::time::timeout(TUNNEL_CONNECT_TIMEOUT, connect_tunnel(&master_url)).await {
         Ok(Ok(s)) => s,
@@ -705,7 +705,7 @@ where
         return opened;
     }
 
-    log::info!("admin_transport -> handshake sent for {connection_string}; awaiting peer");
+    log::debug!("admin_transport -> handshake sent for {connection_string}; awaiting peer");
 
     // Send our Cmd shape fingerprint before the writer task takes the write half.
     let fp_payload = tcp_protocol::encode_shape_fp(
@@ -797,7 +797,7 @@ where
                         // Pinger task exited — either pong timeout or
                         // handshake-time bail. Drop the session so the
                         // outer loop redials.
-                        log::info!("admin_transport -> ping channel closed; ending writer");
+                        log::debug!("admin_transport -> ping channel closed; ending writer");
                         break;
                     };
                     if let Err(e) = write_frame(&mut write_half, FRAME_TAG_PING, &payload).await {
@@ -946,6 +946,9 @@ where
                     }
                     Some((_, _, peer_ver)) => {
                         log::debug!("admin_transport -> Cmd shape ok (agent ver={peer_ver})");
+                        let _ = in_tx.send(WsEvent::Message(WsMessage::Text(
+                            format!("__CLIENT_VERSION__|{peer_ver}").into(),
+                        )));
                     }
                     None => log::warn!("admin_transport -> malformed shape-fp frame"),
                 }

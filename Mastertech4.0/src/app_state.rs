@@ -204,7 +204,8 @@ impl MasterTechApp {
             &url_string,
             "client",
         );
-        log::info!("Client ID: {url_string} | WS URL: {ws_url}");
+        log::info!("Client ID: {url_string}");
+        log::debug!("Client WS URL: {ws_url}");
 
         let send_specs = true;
         // if cfg!(target_os = "windows") { true } else { false };

@@ -204,7 +204,7 @@ where
 {
     if !force {
         if let Some(data) = read_stock_cache::<T>(key).await? {
-            info!("{key}: {} rows from cache", data.len());
+            log::debug!("{key}: {} rows from cache", data.len());
             return Ok((data, false));
         }
     }
@@ -220,11 +220,11 @@ where
 
     let Some(token) = token else {
         if let Some(data) = stale {
-            info!("{key}: refresh in progress elsewhere, serving current cache");
+            log::debug!("{key}: refresh in progress elsewhere, serving current cache");
             return Ok((data, false));
         }
         let data = fetch().await?;
-        info!("{key}: {} rows from Odoo (no cache write)", data.len());
+        log::debug!("{key}: {} rows from Odoo (no cache write)", data.len());
         return Ok((data, false));
     };
 
@@ -238,7 +238,7 @@ where
                     false
                 }
             };
-            info!("{key}: {} rows from Odoo (cache written: {wrote})", data.len());
+            log::debug!("{key}: {} rows from Odoo (cache written: {wrote})", data.len());
             Ok((data, wrote))
         }
         Err(e) => {
@@ -284,7 +284,7 @@ pub async fn find_attached_serials(
 ) -> Result<(), Error> {
     if !write_cache {
         let result = fetch_attached_serials_from_odoo(&serials).await?;
-        info!("serials (uncached check): {} rows from Odoo", result.len());
+        log::debug!("serials (uncached check): {} rows from Odoo", result.len());
         stock_tx.try_send(SerialData { result })?;
         return Ok(());
     }
@@ -374,7 +374,7 @@ pub async fn get_order_from_prestashop(order_id: &str) -> Result<PrestashopOrder
     let presta = Prestashop::default();
     
     let order: Order = presta.request_subresources_by_id_wasm("orders", "order", order_id).await?;
-    info!("Fetched order {} with {} rows", order.id, order.associations.order_rows.len());
+    log::debug!("Fetched order {} with {} rows", order.id, order.associations.order_rows.len());
     
     // Convert the database Order type to our local PrestashopOrder type
     let order_rows: Vec<OrderRow> = order.associations.order_rows
@@ -405,7 +405,7 @@ pub struct OdooProductResult {
 pub async fn get_product_cost_from_odoo(search_term: &str) -> Result<Option<OdooProductResult>, Error> {
     let client = Client::new();
     let url = ODOO_JSONRPC_URL;
-    log::warn!("Searching for product: {search_term}");
+    log::debug!("Searching for product: {search_term}");
     let request_body = json!({
         "jsonrpc": "2.0",
         "method": "call",
@@ -447,24 +447,29 @@ pub async fn get_product_cost_from_odoo(search_term: &str) -> Result<Option<Odoo
         .await?;
     
     let response_text = response.text().await?;
-    log::warn!("Response text: {response_text}");
-    if let Ok(parsed) = serde_json::from_str::<OdooCostResponse>(&response_text) {
-        if !parsed.result.is_empty() {
-            // Sort by qty_available descending and take the product with highest quantity
-            let mut products = parsed.result;
-            products.sort_by(|a, b| b.qty_available.partial_cmp(&a.qty_available).unwrap_or(std::cmp::Ordering::Equal));
-            
-            if let Some(product) = products.first() {
-                info!("Found product '{}' (id: {}, qty: {}) with cost ${:.2}", 
-                      product.default_code, product.id, product.qty_available, product.standard_price);
-                return Ok(Some(OdooProductResult {
-                    id: product.id,
-                    cost: product.standard_price,
-                }));
-            }
+    let Ok(parsed) = serde_json::from_str::<OdooCostResponse>(&response_text) else {
+        log::warn!(
+            "Odoo cost response unparseable for '{search_term}': {}",
+            response_text.chars().take(300).collect::<String>()
+        );
+        return Ok(None);
+    };
+
+    if !parsed.result.is_empty() {
+        // Sort by qty_available descending and take the product with highest quantity
+        let mut products = parsed.result;
+        products.sort_by(|a, b| b.qty_available.partial_cmp(&a.qty_available).unwrap_or(std::cmp::Ordering::Equal));
+
+        if let Some(product) = products.first() {
+            log::debug!("Found product '{}' (id: {}, qty: {}) with cost ${:.2}",
+                  product.default_code, product.id, product.qty_available, product.standard_price);
+            return Ok(Some(OdooProductResult {
+                id: product.id,
+                cost: product.standard_price,
+            }));
         }
     }
-    
+
     Ok(None)
 }
 
@@ -474,20 +479,20 @@ pub async fn get_cost_breakdown(
     cost_tx: Sender<Vec<CostBreakdownData>>,
     summary_tx: Sender<CostBreakdownSummary>,
 ) -> Result<(), Error> {
-    info!("Fetching cost breakdown for order #{}", order_id);
-    
+    log::debug!("Fetching cost breakdown for order #{}", order_id);
+
     let presta = Prestashop::default();
     
     // Get order from Prestashop (full order for customer ID and total)
     let full_order: Order = presta.request_subresources_by_id_wasm("orders", "order", &order_id).await?;
-    info!("Got {} order rows", full_order.associations.order_rows.len());
+    log::debug!("Got {} order rows", full_order.associations.order_rows.len());
     
     // Get customer name
     let customer_name = if !full_order.id_customer.is_empty() && full_order.id_customer != "0" {
         match presta.request_subresources_by_id_wasm::<Customer>("customers", "customer", &full_order.id_customer).await {
             Ok(customer) => format!("{} {}", customer.firstname, customer.lastname),
             Err(e) => {
-                info!("Failed to fetch customer: {:?}", e);
+                log::warn!("Failed to fetch customer: {:?}", e);
                 "Unknown".to_string()
             }
         }
@@ -532,7 +537,7 @@ pub async fn get_cost_breakdown(
     
     let profit = order_total - total_cost;
     
-    info!("Cost breakdown complete: {} items, total: ${:.2}, cost: ${:.2}, profit: ${:.2}", 
+    log::debug!("Cost breakdown complete: {} items, total: ${:.2}, cost: ${:.2}, profit: ${:.2}",
           cost_data.len(), order_total, total_cost, profit);
     
     // Send summary
@@ -893,7 +898,7 @@ pub async fn get_systems_in_store(
     ctx: eframe::egui::Context,
     tx: Sender<SystemStreamMsg>,
 ) -> Result<(), Error> {
-    info!("Streaming systems in-store for store {}", store_id);
+    log::debug!("Streaming systems in-store for store {}", store_id);
 
     let presta = Prestashop::default();
 
@@ -913,7 +918,7 @@ pub async fn get_systems_in_store(
 
             match presta.request_resources_checked::<Order>("orders", query_refs).await {
                 Ok(orders) => {
-                    info!("Got {} orders for customer {} type {:?}", orders.len(), customer_id, order_type.to_id());
+                    log::debug!("Got {} orders for customer {} type {:?}", orders.len(), customer_id, order_type.to_id());
                     for order in orders.iter() {
                         let data = process_order_to_system_data(order).await;
                         let _ = tx.try_send(SystemStreamMsg::Row(Box::new(data)));
@@ -943,7 +948,7 @@ pub async fn reconcile_systems_in_store(
     ctx: eframe::egui::Context,
     tx: Sender<SystemStreamMsg>,
 ) -> Result<(), Error> {
-    info!("Reconciling {} cached systems for store {}", cached.len(), store_id);
+    log::debug!("Reconciling {} cached systems for store {}", cached.len(), store_id);
 
     let cached_by_id: HashMap<String, SystemInStoreData> =
         cached.into_iter().map(|s| (s.order_id.clone(), s)).collect();
@@ -1022,8 +1027,8 @@ pub async fn add_order_to_systems(
     order_id: String,
     systems_tx: Sender<SystemInStoreData>,
 ) -> Result<(), Error> {
-    info!("Adding order {} to systems in-store", order_id);
-    
+    log::debug!("Adding order {} to systems in-store", order_id);
+
     let presta = Prestashop::default();
     let order: Order = presta.request_subresources_by_id_wasm("orders", "order", &order_id).await?;
     
@@ -1107,7 +1112,7 @@ async fn get_customer_info(customer_id: &str) -> (String, String) {
             (customer_id.to_string(), name)
         }
         Err(e) => {
-            info!("Failed to fetch customer {}: {:?}", customer_id, e);
+            log::warn!("Failed to fetch customer {}: {:?}", customer_id, e);
             (customer_id.to_string(), "Unknown".to_string())
         }
     }
@@ -1146,12 +1151,12 @@ async fn extract_model_from_order(order: &Order) -> String {
             ).await {
                 Ok(config) => {
                     if !config.name.is_empty() {
-                        info!("Got order_config name: {} for order {}", config.name, order.id);
+                        log::trace!("Got order_config name: {} for order {}", config.name, order.id);
                         return config.name;
                     }
                 }
                 Err(e) => {
-                    info!("Failed to fetch order_config {}: {:?}, falling back to product_name", row.id_order_config, e);
+                    log::debug!("Failed to fetch order_config {}: {:?}, falling back to product_name", row.id_order_config, e);
                 }
             }
         }
@@ -1196,13 +1201,13 @@ async fn extract_specs_from_order(order: &Order) -> (String, String, String) {
     // Step 2: For RCI systems, fetch OrderDetail and parse specs from detail_notes
     let is_rci = order.id_order_type == OrderType::Rci.to_id().to_string();
     if is_rci && (cpu.is_empty() || gpu.is_empty() || ram.is_empty()) {
-        info!("RCI order {} - looking for U/DESKTOP, U/LAPTOPS, or RCI/ in {} order_serials", 
+        log::debug!("RCI order {} - looking for U/DESKTOP, U/LAPTOPS, or RCI/ in {} order_serials",
               order.id, order.associations.order_serial.len());
         
         // Find U/DESKTOP, U/LAPTOPS, or RCI-prefixed product in order_serial to get id_order_detail
         for serial in order.associations.order_serial.iter() {
             let ref_lower = serial.product_reference.to_lowercase();
-            info!("  Checking serial: product_ref='{}', id_order_detail='{}'", 
+            log::trace!("  Checking serial: product_ref='{}', id_order_detail='{}'",
                   serial.product_reference, serial.id_order_detail);
             
             // Match U/DESKTOP, U/LAPTOPS, or any RCI/ prefixed products
@@ -1212,7 +1217,7 @@ async fn extract_specs_from_order(order: &Order) -> (String, String, String) {
                 || ref_lower.starts_with("rci/");
             
             if is_rci_product && !serial.id_order_detail.is_empty() && serial.id_order_detail != "0" {
-                info!("  Found matching serial, fetching OrderDetail id={}", serial.id_order_detail);
+                log::debug!("  Found matching serial, fetching OrderDetail id={}", serial.id_order_detail);
                 
                 // Fetch OrderDetail using id_order_detail
                 let presta = Prestashop::default();
@@ -1222,14 +1227,11 @@ async fn extract_specs_from_order(order: &Order) -> (String, String, String) {
                     &serial.id_order_detail
                 ).await {
                     Ok(detail) => {
-                        info!("  OrderDetail fetched, detail_notes length={}", detail.detail_notes.len());
-                        if !detail.detail_notes.is_empty() {
-                            info!("  detail_notes: {:?}", &detail.detail_notes[..detail.detail_notes.len().min(200)]);
-                        }
-                        
+                        log::trace!("  OrderDetail fetched, detail_notes length={}", detail.detail_notes.len());
+
                         // Parse detail_notes format: "Brand: DELL\r\nCPU: i7-10610U\r\nRAM: 16GB\r\n..."
                         let (parsed_cpu, parsed_gpu, parsed_ram) = parse_detail_notes(&detail.detail_notes);
-                        info!("  Parsed specs: cpu='{}', gpu='{}', ram='{}'", parsed_cpu, parsed_gpu, parsed_ram);
+                        log::debug!("  Parsed specs: cpu='{}', gpu='{}', ram='{}'", parsed_cpu, parsed_gpu, parsed_ram);
                         
                         if cpu.is_empty() && !parsed_cpu.is_empty() {
                             cpu = parsed_cpu;
@@ -1247,7 +1249,7 @@ async fn extract_specs_from_order(order: &Order) -> (String, String, String) {
                         }
                     }
                     Err(e) => {
-                        info!("  Failed to fetch OrderDetail: {:?}", e);
+                        log::warn!("  Failed to fetch OrderDetail: {:?}", e);
                     }
                 }
             }
@@ -1255,7 +1257,7 @@ async fn extract_specs_from_order(order: &Order) -> (String, String, String) {
         
         // Fallback: If still missing specs, check ALL order_serial entries for detail_notes
         if cpu.is_empty() || gpu.is_empty() || ram.is_empty() {
-            info!("RCI order {} - fallback: checking all order_serial entries for detail_notes", order.id);
+            log::debug!("RCI order {} - fallback: checking all order_serial entries for detail_notes", order.id);
             for serial in order.associations.order_serial.iter() {
                 if serial.id_order_detail.is_empty() || serial.id_order_detail == "0" {
                     continue;
@@ -1269,8 +1271,8 @@ async fn extract_specs_from_order(order: &Order) -> (String, String, String) {
                 ).await {
                     Ok(detail) => {
                         if !detail.detail_notes.is_empty() {
-                            info!("  Found detail_notes in serial '{}': {:?}", 
-                                  serial.product_reference, 
+                            log::trace!("  Found detail_notes in serial '{}': {:?}",
+                                  serial.product_reference,
                                   &detail.detail_notes[..detail.detail_notes.len().min(200)]);
                             
                             let (parsed_cpu, parsed_gpu, parsed_ram) = parse_detail_notes(&detail.detail_notes);
@@ -1291,7 +1293,7 @@ async fn extract_specs_from_order(order: &Order) -> (String, String, String) {
                         }
                     }
                     Err(e) => {
-                        info!("  Failed to fetch OrderDetail {}: {:?}", serial.id_order_detail, e);
+                        log::warn!("  Failed to fetch OrderDetail {}: {:?}", serial.id_order_detail, e);
                     }
                 }
             }

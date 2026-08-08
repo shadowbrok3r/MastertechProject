@@ -33,7 +33,6 @@ pub async fn get_task_summary(
     _mm: ModelManager,
     params: GetTaskSummaryParams,
 ) -> Result<TaskSummary, String> {
-    log::info!("Calling task");
     let task: Option<TaskSummary> = db()
         .query("SELECT id, task_name, task_description FROM task WHERE service_number == $task_id")
         .bind(("task_id", params.task_id))
@@ -41,6 +40,6 @@ pub async fn get_task_summary(
         .map_err(|e| e.to_string())?
         .take(0)
         .map_err(|e| e.to_string())?;
-    log::info!("{task:?}");
+    log::debug!("{task:?}");
     Ok(task.unwrap())
 }

@@ -52,7 +52,7 @@ impl OpenAiMcpSession {
             );
         }
 
-        log::info!("Initialized GeminiMcpSession (addr='{}', model='{}')", addr, model);
+        log::debug!("Initialized GeminiMcpSession (addr='{}', model='{}')", addr, model);
         Ok(Self {
             oa_client,
             model,
@@ -74,7 +74,7 @@ impl OpenAiMcpSession {
     ) -> Result<()> {
         use schemars::JsonSchema;
         use schemars::schema_for;
-        log::info!("stream_command_completions(chat+json): partial='{}' shell={:?}", partial, shell);
+        log::debug!("stream_command_completions(chat+json): partial='{}' shell={:?}", partial, shell);
 
         #[derive(Debug, serde::Serialize, serde::Deserialize, JsonSchema)]
         #[serde(deny_unknown_fields)]
@@ -146,7 +146,7 @@ impl OpenAiMcpSession {
 
         let resp = tokio::select! {
             r = send_fut => r?,
-            _ = &mut cancel_rx => { log::info!("streaming cancelled before start for '{}'", partial); return Err(anyhow::anyhow!("cancelled")); }
+            _ = &mut cancel_rx => { log::debug!("streaming cancelled before start for '{}'", partial); return Err(anyhow::anyhow!("cancelled")); }
         };
         if !resp.status().is_success() {
             let status = resp.status();
@@ -222,8 +222,8 @@ impl OpenAiMcpSession {
         while let Some(chunk_res) = tokio::select! {
             c = sse.next() => c,
             _ = &mut cancel_rx => {
-                if emitted { log::info!("streaming cancelled after emission for '{}'", partial); return Ok(()); }
-                else { log::info!("streaming cancelled mid-stream for '{}'", partial); return Err(anyhow::anyhow!("cancelled")); }
+                if emitted { log::debug!("streaming cancelled after emission for '{}'", partial); return Ok(()); }
+                else { log::debug!("streaming cancelled mid-stream for '{}'", partial); return Err(anyhow::anyhow!("cancelled")); }
             }
         } {
             let chunk = match chunk_res { Ok(c) => c, Err(e) => { log::error!("SSE network chunk error: {e}"); break; } };
@@ -288,7 +288,7 @@ impl OpenAiMcpSession {
         }
         if out.is_empty() { return Ok(()); }
         let _ = progress_tx.try_send(crate::mcp::DiagnosticResponse::CommandCompletions { completions: out, context_info: None });
-        log::info!("emitted streaming suggestions ({} chars raw)", raw.len());
+        log::debug!("emitted streaming suggestions ({} chars raw)", raw.len());
         Ok(())
     }
 

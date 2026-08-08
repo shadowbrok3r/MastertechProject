@@ -35,7 +35,7 @@ impl LiveTaskPayload {
     }
 
     pub async fn update_assignee(&self, assignee: RecordId) -> anyhow::Result<(), anyhow::Error> {
-        log::info!("assignee: {assignee:?}");
+        log::debug!("assignee: {assignee:?}");
         let _update_task: Vec<Record> = db()
             .query("UPDATE $id SET assignee=$assignee, status ='Todo'")
             .bind(("id", self.id.clone()))

@@ -10013,7 +10013,7 @@ pub async fn run_plugin_mcp_server(manager: Arc<RwLock<PluginManager>>) -> anyho
             }
             res = listener.accept() => {
                 let (stream, client_addr) = res?;
-                log::info!("Plugin MCP: accepted connection from {client_addr}");
+                log::debug!("Plugin MCP: accepted connection from {client_addr}");
                 match rmcp::serve_server(provider.clone(), stream).await {
                     Ok(handle) => {
                         if let Err(e) = handle.waiting().await {
@@ -10024,7 +10024,7 @@ pub async fn run_plugin_mcp_server(manager: Arc<RwLock<PluginManager>>) -> anyho
                             {
                                 log::error!("Plugin MCP client {client_addr} error: {e:?}");
                             } else {
-                                log::info!("Plugin MCP client {client_addr} disconnected.");
+                                log::debug!("Plugin MCP client {client_addr} disconnected.");
                             }
                         }
                     }
@@ -10036,6 +10036,16 @@ pub async fn run_plugin_mcp_server(manager: Arc<RwLock<PluginManager>>) -> anyho
 }
 
 // ─── stdio server ──────────────────────────────────────────────────────────────
+
+/// Logs a 'plugins' bucket define failure, at debug only when the DB connection is not up yet.
+fn log_plugins_bucket_failure(e: &impl std::fmt::Display) {
+    let msg = e.to_string();
+    if msg.contains("uninitialised") || msg.contains("uninitialized") {
+        log::debug!("Failed to define 'plugins' bucket before DB connect: {msg}");
+    } else {
+        log::warn!("Failed to define 'plugins' bucket (non-fatal): {msg}");
+    }
+}
 
 /// Start the plugin MCP server on the process's stdin/stdout.
 ///
@@ -10056,9 +10066,7 @@ pub async fn run_plugin_mcp_server(manager: Arc<RwLock<PluginManager>>) -> anyho
 /// is present.
 pub async fn run_plugin_mcp_server_stdio(manager: Arc<RwLock<PluginManager>>) -> anyhow::Result<()> {
     if let Err(e) = database::schema::define_bucket("plugins", "memory").await {
-        log::warn!("Failed to define 'plugins' bucket (non-fatal): {e}");
-    } else {
-        log::info!("SurrealDB 'plugins' bucket initialized");
+        log_plugins_bucket_failure(&e);
     }
 
     ensure_script_run_drainer_spawned();
@@ -10116,9 +10124,7 @@ pub async fn run_plugin_mcp_server_http(manager: Arc<RwLock<PluginManager>>) -> 
     };
 
     if let Err(e) = database::schema::define_bucket("plugins", "memory").await {
-        log::warn!("Failed to define 'plugins' bucket (non-fatal): {e}");
-    } else {
-        log::info!("SurrealDB 'plugins' bucket initialized");
+        log_plugins_bucket_failure(&e);
     }
 
     ensure_script_run_drainer_spawned();
@@ -10139,9 +10145,7 @@ pub async fn run_plugin_mcp_server_http(manager: Arc<RwLock<PluginManager>>) -> 
     );
     let router = axum::Router::new().nest_service("/mcp", service);
 
-    log::info!(
-        "Plugin MCP (Streamable HTTP) listening at http://{addr}/mcp — set Cursor MCP URL to this (not :9003 TCP)"
-    );
+    log::info!("Plugin MCP (Streamable HTTP) listening at http://{addr}/mcp");
 
     // `with_graceful_shutdown` lets us tear down the axum server when the
     // global shutdown signal fires, so the `#[tokio::main]` runtime drop after

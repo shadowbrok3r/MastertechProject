@@ -162,9 +162,20 @@ pub fn spawn_prober(
     use crate::{PlatformSpawner, Spawner};
 
     PlatformSpawner::spawn(async move {
+        // Holds the last round's error text so an unchanging failure warns once.
+        let mut last_err: Option<String> = None;
         loop {
-            if let Err(e) = run_probe_round(&tx, &clients).await {
-                log::warn!("reachability prober: round failed: {e:?}");
+            match run_probe_round(&tx, &clients).await {
+                Ok(()) => last_err = None,
+                Err(e) => {
+                    let msg = format!("{e:?}");
+                    if last_err.as_deref() == Some(msg.as_str()) {
+                        log::debug!("reachability prober: round failed: {msg}");
+                    } else {
+                        log::warn!("reachability prober: round failed: {msg}");
+                        last_err = Some(msg);
+                    }
+                }
             }
 
             // Sleep with a shutdown-aware wait: as soon as the
@@ -173,7 +184,7 @@ pub fn spawn_prober(
             // waiting on a 30-second sleep.
             tokio::select! {
                 _ = crate::wait_for_shutdown() => {
-                    log::info!("reachability prober -> shutdown signaled; exiting");
+                    log::debug!("reachability prober -> shutdown signaled; exiting");
                     return;
                 }
                 _ = tokio::time::sleep(PROBE_INTERVAL) => {}
@@ -200,7 +211,14 @@ async fn run_probe_round(
             .cloned()
             .collect(),
         Err(e) => {
-            log::warn!("reachability prober: clients mutex poisoned ({e}); skipping round");
+            // Poisoning is permanent; warn on the first round only.
+            static POISON_WARNED: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
+            if POISON_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                log::debug!("reachability prober: clients mutex poisoned ({e}); skipping round");
+            } else {
+                log::warn!("reachability prober: clients mutex poisoned ({e}); skipping round");
+            }
             return Ok(());
         }
     };

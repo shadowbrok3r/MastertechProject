@@ -212,7 +212,7 @@ pub async fn bind_listener() -> Result<(TcpListener, SocketAddr)> {
     match TcpListener::bind(&preferred).await {
         Ok(l) => {
             let addr = l.local_addr()?;
-            log::info!("tcp_listener -> bound preferred port: {addr}");
+            log::debug!("tcp_listener -> bound preferred port: {addr}");
             Ok((l, addr))
         }
         Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
@@ -223,7 +223,7 @@ pub async fn bind_listener() -> Result<(TcpListener, SocketAddr)> {
                 .await
                 .context("bind 0.0.0.0:0 fallback")?;
             let addr = l.local_addr()?;
-            log::info!("tcp_listener -> bound fallback port: {addr}");
+            log::debug!("tcp_listener -> bound fallback port: {addr}");
             Ok((l, addr))
         }
         Err(e) => Err(anyhow!("bind listener: {e}")),
@@ -535,14 +535,14 @@ async fn run_session_loop<R: AsyncRead + Unpin + Send + 'static>(
             // can keep the runtime busy long enough that runtime drop hangs on
             // exit.
             _ = displays::wait_for_shutdown() => {
-                log::info!("tcp_listener -> shutdown signaled; ending session loop");
+                log::debug!("tcp_listener -> shutdown signaled; ending session loop");
                 break Ok(());
             }
 
             // Inbound: complete frames only (never partial — see module comment).
             msg = in_rx.recv() => {
                 let Some(res) = msg else {
-                    log::info!("tcp_listener -> inbound channel closed");
+                    log::debug!("tcp_listener -> inbound channel closed");
                     break Ok(());
                 };
                 match res {
@@ -619,7 +619,7 @@ async fn run_session_loop<R: AsyncRead + Unpin + Send + 'static>(
                         }
                     }
                     Ok(InboundFrame::Eof) => {
-                        log::info!("tcp_listener -> peer closed connection cleanly");
+                        log::debug!("tcp_listener -> peer closed connection cleanly");
                         break Ok(());
                     }
                     Err(e) => break Err(e),
@@ -804,7 +804,7 @@ async fn writer_task<W: AsyncWrite + Unpin + Send + 'static>(
         frame_bytes.push(tag);
         frame_bytes.extend_from_slice(&payload);
         if let Err(e) = write_half.write_all(&frame_bytes).await {
-            log::info!("tcp_listener -> write frame to {peer_label} failed: {e}");
+            log::debug!("tcp_listener -> write frame to {peer_label} failed: {e}");
             return;
         }
     }
@@ -846,7 +846,12 @@ pub async fn upsert_self_identity(connected: bool) {
         .bind(("boot_environment", identity.boot_environment.as_str()))
         .await;
     if let Err(e) = res {
-        log::warn!("upsert_self_identity -> upsert failed: {e:?}");
+        // Startup runs this before the DB websocket signs in; not a failure.
+        if e.to_string().contains("Connection uninitialised") {
+            log::debug!("upsert_self_identity -> DB not connected yet; skipped");
+        } else {
+            log::warn!("upsert_self_identity -> upsert failed: {e}");
+        }
     }
 }
 
@@ -902,20 +907,26 @@ pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) 
     const MIN_BACKOFF: Duration = Duration::from_secs(5);
     const MAX_BACKOFF: Duration = Duration::from_secs(60);
     let mut backoff = MIN_BACKOFF;
+    // Holds the previous failure cause so an unchanging failure warns once.
+    let mut last_failure: Option<String> = None;
     let (local_ip, listener, addr) = loop {
-        match detect_local_ipv4() {
+        let cause = match detect_local_ipv4() {
             Some(ip) => match bind_listener().await {
                 Ok((listener, addr)) => break (ip, listener, addr),
-                Err(e) => log::warn!(
-                    "spawn_direct_tcp_listener -> bind failed: {e:?}; \
-                     clearing coords, retrying in {backoff:?}"
-                ),
+                Err(e) => format!("bind failed: {e:?}"),
             },
-            None => log::warn!(
-                "spawn_direct_tcp_listener -> no routable IPv4 detected; \
-                 clearing coords, retrying in {backoff:?}"
-            ),
-        }
+            None => "no routable IPv4 detected".to_string(),
+        };
+        let retry_level = if last_failure.as_deref() == Some(cause.as_str()) {
+            log::Level::Debug
+        } else {
+            last_failure = Some(cause.clone());
+            log::Level::Warn
+        };
+        log::log!(
+            retry_level,
+            "spawn_direct_tcp_listener -> {cause}; clearing coords, retrying in {backoff:?}"
+        );
         clear_tcp_coords(client_uuid.clone()).await;
         tokio::select! {
             biased;
@@ -933,11 +944,11 @@ pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) 
     // can click "Allow" once. We never block on this.
     #[cfg(target_os = "windows")]
     match try_add_firewall_rule(addr.port(), "Mastertech Direct TCP") {
-        Ok(true) => log::info!(
+        Ok(true) => log::debug!(
             "spawn_direct_tcp_listener -> firewall rule added for port {}",
             addr.port()
         ),
-        Ok(false) => log::info!(
+        Ok(false) => log::debug!(
             "spawn_direct_tcp_listener -> firewall rule not added (likely needs admin); \
              relying on Windows allow-access popup on first bind"
         ),
@@ -989,10 +1000,9 @@ pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) 
                 .await;
             match res {
                 Ok(_) => {
-                    log::info!(
+                    log::debug!(
                         "spawn_direct_tcp_listener -> published {ip_string}:{port} \
-                         (cs={connection_string}) to {:?}",
-                        publish_uuid
+                         (cs={connection_string})"
                     );
                     return;
                 }
@@ -1024,7 +1034,7 @@ pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) 
             tokio::select! {
                 biased;
                 _ = displays::wait_for_shutdown() => {
-                    log::info!("tcp_listener heartbeat -> shutdown signaled; stopping");
+                    log::debug!("tcp_listener heartbeat -> shutdown signaled; stopping");
                     return;
                 }
                 _ = tokio::time::sleep(Duration::from_secs(15 * 60)) => {

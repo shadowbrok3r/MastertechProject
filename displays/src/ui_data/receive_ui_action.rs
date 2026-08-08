@@ -3,7 +3,6 @@ use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use database::schema::{RecordIdExt, TaskNoteRead};
 use crate::app_state::SharedContext;
 use crate::viewports::ViewportData;
-use log::info;
 
 impl SharedContext {
     pub fn receive_ui_action(&mut self) {
@@ -39,7 +38,7 @@ impl SharedContext {
                     }
                 }
                 TaskUiActions::OpenChatModal((task_id, notes, service_number)) => {
-                    info!("receive_ui_action -> Got Chat action: {:?}", task_id);
+                    log::debug!("receive_ui_action -> Got Chat action: {:?}", task_id);
                     // Mark notes as read for this task
                     self.last_read_notes.insert(task_id.clone(), chrono::Utc::now());
                     let read_task_id = task_id.clone();
@@ -105,7 +104,7 @@ impl SharedContext {
                     }
                 }
                 TaskUiActions::OpenCreateTaskModalFromOrder(presta_payload) => {
-                    info!("Opening create task modal from order: {}", presta_payload.order.id);
+                    log::debug!("Opening create task modal from order: {}", presta_payload.order.id);
                     let mut create_modal = CreateTaskModal::new(
                         "Create Task",
                         self.store_users.clone(),
@@ -151,7 +150,7 @@ impl SharedContext {
                         .or_insert(ModalType::CreateTaskModal(create_modal));
                 }
                 TaskUiActions::OpenCreateTaskModalFromSystem(system_data) => {
-                    info!("Opening create task modal from system: {}", system_data.order_id);
+                    log::debug!("Opening create task modal from system: {}", system_data.order_id);
                     let mut create_modal = CreateTaskModal::new(
                         "Create Task",
                         self.store_users.clone(),
@@ -182,7 +181,7 @@ impl SharedContext {
                         .or_insert(ModalType::CreateTaskModal(create_modal));
                 }
                 TaskUiActions::OpenViewport(task) => {
-                    info!("receive_ui_action -> TaskUiActions::OpenViewport");
+                    log::debug!("receive_ui_action -> TaskUiActions::OpenViewport");
                     let modal = TaskModal::new(
                         ChatView::new(
                             // task.task_note.clone(),
@@ -202,21 +201,21 @@ impl SharedContext {
                             is_visible: Arc::new(AtomicBool::new(true)),
                             modal: ModalType::TaskModal(modal),
                         });
-                        info!("receive_ui_action -> self.show_tasks_viewport: {:?}", self.show_tasks_viewport);
+                        log::debug!("receive_ui_action -> self.show_tasks_viewport: {:?}", self.show_tasks_viewport);
                 },
                 TaskUiActions::OpenAdminConsole(connection_string) => {
-                    info!("receive_ui_action -> OpenAdminConsole: {connection_string}");
+                    log::debug!("receive_ui_action -> OpenAdminConsole: {connection_string}");
                     self.pending_tab_opens.push(TabId::AdminConsole);
                     self.pending_activate_tab = Some(TabId::AdminConsole);
                     // Surface which client to focus once the tab is active.
                     self.pending_admin_console_focus = Some(connection_string);
                 }
                 TaskUiActions::OpenClientDiagnostics(connection_string) => {
-                    info!("receive_ui_action -> OpenClientDiagnostics: {connection_string}");
+                    log::debug!("receive_ui_action -> OpenClientDiagnostics: {connection_string}");
                     self.client_diagnostics_popup = Some(connection_string);
                 }
                 TaskUiActions::RefreshOpenServiceSuggestions(connection_string) => {
-                    info!(
+                    log::debug!(
                         "receive_ui_action -> RefreshOpenServiceSuggestions: {connection_string}"
                     );
                     // Fire `Cmd::RequestOpenServiceCandidates { refresh: true }`
@@ -263,7 +262,7 @@ impl SharedContext {
                     // Stage 4 owns the actual modal rendering; for
                     // Stage 3 we just stash the selection so the modal
                     // (when wired in the next step) knows what to show.
-                    info!(
+                    log::debug!(
                         "receive_ui_action -> OpenServiceCandidateModal: \
                          cs={connection_string} idx={candidate_index}"
                     );

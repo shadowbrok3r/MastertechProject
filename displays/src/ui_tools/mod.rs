@@ -126,7 +126,7 @@ fn style_from_value(value: serde_json::Value) -> Style {
             let default = serde_json::to_value(Style::default()).unwrap_or_default();
             match serde_json::from_value::<Style>(merge_over_default(default, value)) {
                 Ok(style) => {
-                    log::info!("theme migrated to the current egui Style schema");
+                    log::debug!("theme migrated to the current egui Style schema");
                     style
                 }
                 Err(e2) => {

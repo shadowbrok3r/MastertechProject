@@ -67,7 +67,7 @@ impl crate::app_state::SharedContext {
         self.live_streams_expected += 1;
         let (fut, handle) = futures::future::abortable(async move {
             let res = listen_data_filtered::<T>(tx, query.clone(), vec![], Some(registered)).await;
-            log::info!("live stream ended (`{query}`): {res:?}");
+            log::debug!("live stream ended (`{query}`): {res:?}");
             if let Err(e) = res {
                 let _ = error_tx.try_send((epoch, e.to_string()));
             }
@@ -94,7 +94,7 @@ impl crate::app_state::SharedContext {
             );
         }
         for (cs, mut ws) in layout.ws_clients.drain() {
-            log::info!("end_admin_sessions -> closing {cs}");
+            log::debug!("end_admin_sessions -> closing {cs}");
             ws.transport.close();
         }
         layout.session_layout.clear();
@@ -168,7 +168,7 @@ impl crate::app_state::SharedContext {
         self.store_selection = user.get_store().into_store_id() as u64;
         let user = user.clone();
         let name = user.get_name();
-        log::info!("Getting Initial data: {}", self.store_selection);
+        log::debug!("loading initial data for store {}", self.store_selection);
 
         // Bucket listings are lazy: the File Browser / web-console explorer
         // request contents on first render instead of during login.
@@ -189,29 +189,34 @@ impl crate::app_state::SharedContext {
             let store = user.get_store();
             let notifs_tx = self.notification_tx.clone();
             PlatformSpawner::spawn(async move {
-                let get_store_users = get_store_users(store_users_tx, store).await;
-                log::info!("get_store_users: {get_store_users:?}");
+                if let Err(e) = get_store_users(store_users_tx, store).await {
+                    log::error!("get_store_users failed: {e:?}");
+                }
             });
 
             PlatformSpawner::spawn(async move {
-                let get_tasks = get_tasks_for_store(initial_tasks_tx, store.as_str().to_string()).await;
-                log::info!("get_tasks: {get_tasks:?}");
+                if let Err(e) = get_tasks_for_store(initial_tasks_tx, store.as_str().to_string()).await {
+                    log::error!("get_tasks_for_store failed: {e:?}");
+                }
             });
 
             PlatformSpawner::spawn(async move {
-                let get_qcs = get_qcs().await;
-                log::error!("get_qcs: {get_qcs:?}");
+                if let Err(e) = get_qcs().await {
+                    log::error!("get_qcs failed: {e:?}");
+                }
             });
 
             PlatformSpawner::spawn(async move {
-                let get_notifications = get_notifications(notifs_tx).await;
-                log::info!("get_notifications: {get_notifications:?}");
+                if let Err(e) = get_notifications(notifs_tx).await {
+                    log::error!("get_notifications failed: {e:?}");
+                }
             });
 
             let read_state_tx = self.read_state_tx.clone();
             PlatformSpawner::spawn(async move {
-                let res = TaskNoteRead::fetch_all_for_user(read_state_tx).await;
-                log::info!("fetch_all_for_user (task_note_read): {res:?}");
+                if let Err(e) = TaskNoteRead::fetch_all_for_user(read_state_tx).await {
+                    log::error!("fetch_all_for_user (task_note_read) failed: {e:?}");
+                }
             });
 
             // AI task snapshot — mandatory on refetch: live events missed
@@ -294,7 +299,7 @@ impl crate::app_state::SharedContext {
                 });
             }
         } else {
-            log::info!("load_data: live queries already active; skipping re-spawn");
+            log::debug!("load_data: live queries already active; skipping re-spawn");
         }
 
         // Per-admin TCP reachability prober; spawned once — the loop runs
@@ -316,8 +321,9 @@ impl crate::app_state::SharedContext {
         let new_notes_tx = self.associated_notes_tx.clone();
         
         PlatformSpawner::spawn(async move {
-            let get_notes = TaskNotePayload::get_all_notes_in_my_store(new_notes_tx).await;
-            log::info!("get_notes: {get_notes:?}");
+            if let Err(e) = TaskNotePayload::get_all_notes_in_my_store(new_notes_tx).await {
+                log::error!("get_all_notes_in_my_store failed: {e:?}");
+            }
         });
 
         ctx.request_repaint();
@@ -375,7 +381,7 @@ impl crate::app_state::SharedContext {
                 .iter()
                 .map(|u| (u.get_id().key_string().to_string(), u.get_store().as_str().to_string()))
                 .collect();
-            log::info!("user store map -> {} users", self.user_store_map.len());
+            log::debug!("user store map -> {} users", self.user_store_map.len());
         }
 
         // Drain the full error backlog every frame (five streams die at once
@@ -516,7 +522,7 @@ impl crate::app_state::SharedContext {
             if is_visible {
                 if let Some(hidden_at) = self.tab_hidden_at.take() {
                     let elapsed = web_time::Instant::now().duration_since(hidden_at);
-                    log::info!("Tab visible after {:?} hidden", elapsed);
+                    log::debug!("Tab visible after {:?} hidden", elapsed);
                     if elapsed >= LONG_HIDE_AUTO_RELOAD {
                         log::warn!(
                             "Tab was hidden for {:?} (>= {:?}) — auto-reloading page",
@@ -538,13 +544,13 @@ impl crate::app_state::SharedContext {
                 self.canary_nonce = None;
                 self.last_canary_at = None;
             } else {
-                log::info!("Tab hidden");
+                log::debug!("Tab hidden");
                 self.tab_hidden_at = Some(web_time::Instant::now());
             }
         }
 
         if let Ok(state) = self.app_state_rx.try_recv() {
-            log::info!("Got a new state: {state:?}\nbefore state: {:?}", self.state);
+            log::info!("app state {:?} -> {state:?}", self.state);
             if let crate::app_state::AppState::NoAuth(reason) = &state {
                 // Every route back to login lands here, so sessions and live
                 // streams opened under the old identity end in one place.

@@ -857,13 +857,9 @@ impl SharedContext {
             let mut statuses = self
                 .current_user
                 .as_ref()
-                .map(|user| {
-                    let user_statuses = user.get_statuses();
-                    log::warn!("Current user statuses: {:?}", user_statuses);
-                    user_statuses
-                })
+                .map(|user| user.get_statuses())
                 .unwrap_or_else(|| {
-                    log::warn!("No current user; using default statuses");
+                    log::debug!("No current user; using default statuses");
                     Status::VALUES.to_vec()
                 });
 
@@ -873,20 +869,16 @@ impl SharedContext {
                 .flat_map(|u| u.get_statuses())
                 .collect::<std::collections::HashSet<Status>>();
 
-            log::warn!("Store users statuses: {:?}", store_user_statuses);
-            
             statuses.extend(store_user_statuses.into_iter());
             // Add statuses from tasks
             let task_statuses = self.task_index
                 .values()
                 .map(|task| task.status.clone())
                 .collect::<std::collections::HashSet<Status>>();
-            log::warn!("Task statuses: {:?}", task_statuses);
             statuses.extend(task_statuses.into_iter());
 
             // MyTasks: Current user's tasks, non-Complete and not completed, keyed by all statuses
             let valid_statuses = {
-                log::warn!("Raw statuses: {:?}", statuses);
                 let filtered_statuses = statuses
                     .into_iter()
                     .filter(|s| *s != Status::Complete)
@@ -905,7 +897,7 @@ impl SharedContext {
                     .collect::<std::collections::HashSet<String>>()
                     .into_iter()
                     .collect::<Vec<String>>();
-                log::warn!("MyTasks valid_statuses: {:?}", filtered_statuses);
+                log::debug!("MyTasks valid_statuses: {:?}", filtered_statuses);
                 // If user has a saved order for My Tasks, apply it here
                 if let Some(user) = self.current_user.as_ref() {
                     if let Some(saved) = user.get_page_task_columns("My Tasks") {

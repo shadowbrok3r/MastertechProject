@@ -23,8 +23,7 @@ pub fn check_antivirus() -> anyhow::Result<Vec<String>, anyhow::Error> {
     let mut active_antivirus = Vec::new();
     unsafe {
         // Initialize COM for multithreaded usage.
-        let x = CoInitializeEx(Some(std::ptr::null_mut()), COINIT_MULTITHREADED).map(|| {});
-        log::info!("CoInit: {x:?}");
+        let _ = CoInitializeEx(Some(std::ptr::null_mut()), COINIT_MULTITHREADED).map(|| {});
         // Create an instance of the product list.
         let product_list: IWSCProductList = CoCreateInstance(
             &CLSID_WSC_PRODUCT_LIST,

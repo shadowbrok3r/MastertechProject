@@ -12,7 +12,6 @@ use super::SessionLayout;
 use crate::get_database_users;
 use crate::ui_tools::{glass_card, icons, theme};
 use crate::Spawner;
-use log::info;
 
 use super::{AdminConsole, RightPanel};
 
@@ -320,7 +319,6 @@ impl AdminConsole {
                                 )
                                 .on_hover_text("Open / focus this machine");
                             if connect_btn.clicked() {
-                                info!("Sent Connection Command");
                                 let _ = tx.try_send(ClientUiAction::ConnectClient(client.clone()));
                             }
                         },

@@ -117,6 +117,8 @@ pub struct ShellView {
     diagnostic_tx: Sender<crate::mcp::DiagnosticResponse>,
     /// Interactive mode (persistent shell session)
     pub interactive_mode: bool,
+    /// Whether the missing output-channel warning has already fired
+    missing_output_warned: bool,
 }
 
 impl ShellView {
@@ -161,6 +163,7 @@ impl ShellView {
             #[cfg(not(target_arch = "wasm32"))]
             diagnostic_tx,
             interactive_mode: false,
+            missing_output_warned: false,
         }
     }
 
@@ -168,10 +171,8 @@ impl ShellView {
     pub fn receive(&mut self, ctx: &Context) {
         // Receive shell output from the connection manager
         if let Some(rx) = &self.shell_output_rx {
-            let mut received_count = 0;
             while let Ok(output) = rx.try_recv() {
-                received_count += 1;
-                log::info!("ShellView: Received output ({} bytes): {}", 
+                log::debug!("ShellView: Received output ({} bytes): {}", 
                     output.len(),
                     if output.len() > 200 { &output[..200] } else { &output }
                 );
@@ -188,27 +189,26 @@ impl ShellView {
                         self.output_buffer.push('\n');
                     }
                     self.output_buffer.push_str(&cleaned);
-                    log::info!("ShellView: Output buffer now {} bytes", self.output_buffer.len());
                 }
                 
                 if is_done {
-                    log::info!("ShellView: DONE marker received, completing command");
                     // Command completed - move output to history
                     self.is_loading = false;
                     if let Some(last_entry) = self.history.last_mut() {
                         last_entry.output = std::mem::take(&mut self.output_buffer);
                         last_entry.success = !last_entry.output.to_lowercase().contains("error");
-                        log::info!("ShellView: Command completed, output: {} bytes", last_entry.output.len());
+                        log::debug!("ShellView: Command completed, output: {} bytes", last_entry.output.len());
                     }
                 }
                 
                 ctx.request_repaint();
             }
-            if received_count > 0 {
-                log::info!("ShellView: Processed {} messages this frame", received_count);
-            }
-        } else {
-            log::warn!("ShellView: No shell_output_rx channel available!");
+        } else if !self.missing_output_warned {
+            self.missing_output_warned = true;
+            log::warn!(
+                "ShellView: no shell_output_rx channel available for {}",
+                self.client.connection_string
+            );
         }
         
         // Receive diagnostic responses (AI completions)
@@ -305,11 +305,9 @@ impl ShellView {
         let cmd = Cmd::InteractiveInput(command.clone());
         
         log::info!("ShellView: Executing command: {}", command);
-        log::info!("ShellView: Sending Cmd::InteractiveInput to client");
 
-        match self.send_cmd_tx.send(cmd) {
-            Ok(_) => log::info!("ShellView: Command sent successfully"),
-            Err(e) => log::error!("ShellView: Failed to send command: {:?}", e),
+        if let Err(e) = self.send_cmd_tx.send(cmd) {
+            log::error!("ShellView: Failed to send command: {:?}", e);
         }
 
         // Clear input

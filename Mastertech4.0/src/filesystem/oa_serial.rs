@@ -73,8 +73,6 @@ pub fn get_oa3_msdm_key() -> anyhow::Result<String, anyhow::Error> {
 // Prefer exact-structure parse when possible; otherwise fall back to a generic transform.
 // ----------------------------------------------------
 pub fn to_oa3_13digit(input: &str) -> Result<String, anyhow::Error> {
-    log::info!("Raw OA3 Key: {input}");
-
     let s = input.trim();
 
     // Try exact structure first: split on '-' and use first 3 blocks
@@ -87,7 +85,7 @@ pub fn to_oa3_13digit(input: &str) -> Result<String, anyhow::Error> {
             if p0.len() >= 2 {
                 let candidate: String = p0.chars().skip(2).chain(p1.chars()).chain(p2.chars()).collect();
                 if candidate.len() == 13 && candidate.chars().all(|c| c.is_ascii_digit()) {
-                    log::info!("parsed13: {candidate}");
+                    log::debug!("Parsed Windows S/N: {}", mask_serial(&candidate));
                     return Ok(candidate);
                 }
             }
@@ -107,8 +105,14 @@ pub fn to_oa3_13digit(input: &str) -> Result<String, anyhow::Error> {
     if !candidate.chars().all(|c| c.is_ascii_digit()) {
         return Err(anyhow::anyhow!("Parsed serial contains non-digit characters"));
     }
-    log::info!("Parsed Windows S/N: {candidate}");
+    log::debug!("Parsed Windows S/N: {}", mask_serial(&candidate));
     Ok(candidate)
+}
+
+// Keeps only the trailing 5 characters of a serial.
+pub(crate) fn mask_serial(serial: &str) -> String {
+    let skip = serial.chars().count().saturating_sub(5);
+    format!("***{}", serial.chars().skip(skip).collect::<String>())
 }
 
 #[cfg(test)]

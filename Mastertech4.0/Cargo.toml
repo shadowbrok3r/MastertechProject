@@ -1,6 +1,6 @@
 [package]
 name = "MasterTech"
-version = "4.8.0"
+version.workspace = true
 edition = "2024"
 description = "Mastertech"
 build = "build.rs"

@@ -1,7 +1,7 @@
 use super::{db, schema::{utilities::LiveUpdate, ConnectedClient, LiveTaskPayload, RecordIdExt, TaskNotePayload, TaskPayload}};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use crossbeam::channel::Sender;
-use log::{debug, error, info};
+use log::{debug, error};
 use structdiff::StructDiff;
 use futures::StreamExt;
 use std::fmt::Debug;
@@ -65,7 +65,7 @@ pub fn handle_live_update<T: Serialize + for<'a> Deserialize<'a> + Debug + Parti
     let index = existing_data.iter().position(|x| *x == new_data);
     if let Some(idx) = index {
         if let Some(dat) = existing_data.get_mut(idx) {
-            info!("Replacing existing_data@{idx} with -> {:?}", dat);
+            debug!("Replacing existing_data@{idx} with -> {:?}", dat);
             *dat = new_data;
         }
     }
@@ -76,7 +76,7 @@ pub fn handle_live_delete<T: Serialize + for<'a> Deserialize<'a> + Debug + Parti
     debug!("Data was Deleted: {:?}", data_to_delete);
     let index = existing_data.iter().position(|x| *x == data_to_delete);
     if let Some(idx) = index {
-        info!("Deleting @ {idx}");
+        debug!("Deleting @ {idx}");
         existing_data.remove(idx);
     }
     Ok(())
@@ -87,7 +87,7 @@ pub fn handle_live_delete_client(existing_clients: &mut Vec<ConnectedClient>, cl
     debug!("Client was Deleted: {:?}", client_to_delete);
     let index = existing_clients.iter().position(|x| x.connection_string == client_to_delete.connection_string);
     if let Some(idx) = index {
-        info!("Deleting client @ {idx}");
+        debug!("Deleting client @ {idx}");
         existing_clients.remove(idx);
     }
     Ok(())
@@ -110,7 +110,7 @@ impl LiveUpdate for LiveTaskPayload {
         debug!("Data was Deleted: {:?}", self);
         if !existing_tasks.is_empty(){
             let index = existing_tasks.iter().position(|x| x.id == self.id);
-            info!("Index of deleted data: {index:?}");
+            debug!("Index of deleted data: {index:?}");
             if let Some(idx) = index {
                 existing_tasks.remove(idx);
             }
@@ -148,7 +148,7 @@ pub fn update_or_insert_anything<T: StructDiff + PartialEq + Debug>(current_data
     let mut updated = false;
     for existing_data in &mut current_data.iter_mut() {
         if *existing_data == new_data{
-            info!("existing_data match's new_data: {:?} // {:?}", existing_data, new_data);
+            debug!("existing_data match's new_data: {:?} // {:?}", existing_data, new_data);
             let diffs = existing_data.diff(&new_data);
             existing_data.apply_mut(diffs);
             updated = true;
@@ -192,7 +192,7 @@ pub fn update_or_insert(tasks: &mut Vec<LiveTaskPayload>, new_task: LiveTaskPayl
 
     for existing_task in tasks.iter_mut() {
         if existing_task.id.clone() == new_task.id {
-            info!("ID's match: {:?} // {:?}", &existing_task.id, &new_task.id);
+            debug!("ID's match: {:?} // {:?}", &existing_task.id, &new_task.id);
             // Calculate the diff and apply it to the existing task
             let diffs = existing_task.diff(&new_task.clone());
             existing_task.apply_mut(diffs);
@@ -204,7 +204,7 @@ pub fn update_or_insert(tasks: &mut Vec<LiveTaskPayload>, new_task: LiveTaskPayl
     }
     
     if !updated {
-        info!("data was NOT updated");
+        debug!("No matching task; inserting {:?}", &new_task.id);
         tasks.push(new_task.into());
     }
     
@@ -318,7 +318,7 @@ where
     }
     let mut response = q.await?;
 
-    info!("listen_data_filtered: opened stream for `{query}`");
+    debug!("listen_data_filtered: opened stream for `{query}`");
 
     // 2. Stream notifications until the stream ends, errors out, or
     //    this task is aborted. Dropping `stream` (function return,
@@ -339,7 +339,7 @@ where
                     surrealdb_types::Action::Update => Action::Update,
                     surrealdb_types::Action::Delete => Action::Delete,
                     surrealdb_types::Action::Killed => {
-                        info!("listen_data_filtered: live query killed");
+                        debug!("listen_data_filtered: live query killed");
                         return Ok(());
                     }
                     surrealdb_types::Action::Error => {

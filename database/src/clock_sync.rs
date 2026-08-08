@@ -44,7 +44,7 @@ fn fetch_true_unix_time() -> anyhow::Result<i64> {
     for server in NTP_SERVERS {
         match query_sntp(server, QUERY_TIMEOUT) {
             Ok(secs) => {
-                log::info!("clock_sync: {server} -> unix {secs}");
+                log::debug!("clock_sync: {server} -> unix {secs}");
                 return Ok(secs);
             }
             Err(e) => {

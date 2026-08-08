@@ -15,7 +15,6 @@ use egui_data_table::Renderer;
 use egui_extras::DatePickerButton;
 use chrono::{DateTime, Duration, Utc};
 use crate::ui_tools::selection_stats::{render_selection_stats, selection_stats};
-use log::info;
 use std::collections::HashMap;
 
 pub mod everest_lookup;
@@ -522,8 +521,9 @@ impl StockTable {
                             if Button::new("Refresh").ui(ui).clicked() {
                                 let stock_tx = self.extra_stock_channel.0.clone();
                                 PlatformSpawner::spawn(async move {
-                                    let stock = get_extra_stock_info(stock_tx.clone(), true).await;
-                                    info!("Stock call: {stock:?}");
+                                    if let Err(e) = get_extra_stock_info(stock_tx.clone(), true).await {
+                                        log::error!("get_extra_stock_info failed: {e:?}");
+                                    }
                                 });
                             }
                             ui.add_space(10.);
@@ -556,9 +556,9 @@ impl StockTable {
                                 let stock_tx = self.stock_channel.0.clone();
                                 let store_selection = self.store_selection;
                                 PlatformSpawner::spawn(async move {
-                                    info!("Store: {:?}", store_selection);
-                                    let stock = get_stock(stock_tx.clone(), store_selection, false).await;
-                                    info!("Stock call: {stock:?}");
+                                    if let Err(e) = get_stock(stock_tx.clone(), store_selection, false).await {
+                                        log::error!("get_stock failed for store {store_selection}: {e:?}");
+                                    }
                                 });
                                 // Re-pull the audit list for the newly selected store.
                                 let audit_tx = self.audit_list_channel.0.clone();
@@ -636,8 +636,9 @@ impl StockTable {
                                 let stock_tx = self.stock_channel.0.clone();
                                 let store_selection = self.store_selection;
                                 PlatformSpawner::spawn(async move {
-                                    let stock = get_stock(stock_tx.clone(), store_selection, true).await;
-                                    info!("Stock call: {stock:?}");
+                                    if let Err(e) = get_stock(stock_tx.clone(), store_selection, true).await {
+                                        log::error!("get_stock failed for store {store_selection}: {e:?}");
+                                    }
                                 });
                             }
                             ui.add_space(10.);
@@ -649,11 +650,8 @@ impl StockTable {
                                 let store_selection = self.store_selection;
                                 // Personal live check for the rows on screen; never writes the shared cache.
                                 PlatformSpawner::spawn(async move {
-                                    let _res = find_attached_serials(sns, store_selection, true, false, tx.clone()).await;
-                                    if let Err(e) = _res {
+                                    if let Err(e) = find_attached_serials(sns, store_selection, true, false, tx.clone()).await {
                                         log::error!("S/N Info call error: {e:?}");
-                                    } else {
-                                        log::info!("S/N Info call ran ok");
                                     }
                                 });
                             }
@@ -2215,15 +2213,17 @@ impl StockTable {
             self.first_run = false;
             let stock_tx = self.extra_stock_channel.0.clone();
             PlatformSpawner::spawn(async move {
-                let stock = get_extra_stock_info(stock_tx.clone(), false).await;
-                log::info!("Stock call: {stock:?}");
+                if let Err(e) = get_extra_stock_info(stock_tx.clone(), false).await {
+                    log::error!("get_extra_stock_info failed: {e:?}");
+                }
             });
 
             let stock_tx = self.stock_channel.0.clone();
             let store_selection = self.store_selection;
             PlatformSpawner::spawn(async move {
-                let stock = get_stock(stock_tx.clone(), store_selection, false).await;
-                log::info!("Stock call: {stock:?}");
+                if let Err(e) = get_stock(stock_tx.clone(), store_selection, false).await {
+                    log::error!("get_stock failed for store {store_selection}: {e:?}");
+                }
             });
 
             // Seed the audit-source combobox so it's populated by the
@@ -2238,7 +2238,7 @@ impl StockTable {
 
             self.is_admin = get_current_user_from_auth()
                 .map(|user| if user.get_username().is_empty() {
-                    log::info!("User is empty");
+                    log::debug!("User is empty");
                     false
                 } else {
                     user.is_admin() | user.is_manager()
@@ -2372,21 +2372,21 @@ impl StockTable {
 
         // Handle cost breakdown data
         if let Ok(cost_data) = self.cost_channel.1.try_recv() {
-            log::info!("Received cost breakdown data: {} items", cost_data.len());
+            log::debug!("Received cost breakdown data: {} items", cost_data.len());
             self.cost_loading = false;
             self.cost_breakdown_table.replace(cost_data);
         }
 
         // Handle cost breakdown summary
         if let Ok(summary) = self.cost_summary_channel.1.try_recv() {
-            log::info!("Received cost summary: customer={}, total=${:.2}, cost=${:.2}, profit=${:.2}",
+            log::debug!("Received cost summary: customer={}, total=${:.2}, cost=${:.2}, profit=${:.2}",
                       summary.customer_name, summary.order_total, summary.total_cost, summary.profit);
             self.cost_summary = Some(summary);
         }
 
         // Handle bulk cost breakdown results
         if let Ok(rows) = self.bulk_orders_channel.1.try_recv() {
-            log::info!("Received bulk order rows: {}", rows.len());
+            log::debug!("Received bulk order rows: {}", rows.len());
             self.bulk_loading = false;
             self.bulk_orders_table.replace(rows);
         }
@@ -2463,7 +2463,7 @@ impl StockTable {
 
         // Handle single system add
         if let Ok(system_data) = self.systems_add_channel.1.try_recv() {
-            log::info!("Adding system to table: {}", system_data.order_id);
+            log::debug!("Adding system to table: {}", system_data.order_id);
             let mut data = self.systems_in_store_table.take();
             // Only add if not already in the table
             if !data.iter().any(|s| s.order_id == system_data.order_id) {
@@ -2485,14 +2485,14 @@ impl StockTable {
 
         // Handle single system task creation
         if let Ok(system_data) = self.systems_task_channel.1.try_recv() {
-            log::info!("Creating task for system: {}", system_data.order_id);
+            log::debug!("Creating task for system: {}", system_data.order_id);
             // Send the system data to the create task modal via TaskUiActions
             let _ = ui_actions_tx.try_send(TaskUiActions::OpenCreateTaskModalFromSystem(system_data));
         }
 
         // Handle customer change request (open modal)
         if let Ok(request) = self.customer_change_channel.1.try_recv() {
-            log::info!("Opening customer change modal for order: {}", request.order_id);
+            log::debug!("Opening customer change modal for order: {}", request.order_id);
             self.customer_modal_open = true;
             self.customer_modal_order_id = request.order_id;
             self.customer_modal_current_name = request.customer_name;
@@ -2502,7 +2502,7 @@ impl StockTable {
 
         // Handle customer search results
         if let Ok(results) = self.customer_search_results_channel.1.try_recv() {
-            log::info!("Received customer search results: {} customers", results.len());
+            log::debug!("Received customer search results: {} customers", results.len());
             self.customer_search_results = results;
             self.customer_searching = false;
         }
@@ -2514,7 +2514,7 @@ impl StockTable {
             if let Some(order) = result.order {
                 let doc = order.header.doc_no.clone();
                 let rows = order_to_rows(&order);
-                log::info!(
+                log::debug!(
                     "Everest order loaded: DOC {} with {} item rows",
                     doc, rows.len()
                 );

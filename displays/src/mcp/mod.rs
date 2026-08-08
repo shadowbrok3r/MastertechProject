@@ -52,7 +52,7 @@ impl McpService {
                 Ok(sess) => {
                     let mut guard = session_slot.lock().await;
                     *guard = Some(sess);
-                    log::info!("OpenAI-MCP session connected to {}", addr);
+                    log::debug!("OpenAI-MCP session connected to {}", addr);
                 }
                 Err(e) => log::error!("Failed to connect OpenAI-MCP session: {e:?}"),
             }
@@ -77,8 +77,7 @@ pub fn run_mcp_server_tcp() -> anyhow::Result<()> {
 
             loop {
                 let (stream, client_addr) = listener.accept().await?;
-                log::info!("Accepted TCP connection from: {}", client_addr);
-                log::info!("Serving client {}...", client_addr);
+                log::debug!("MCP: serving client {client_addr}");
                 match rmcp::serve_server(tool_provider.clone(), stream).await {
                     Ok(server_handle) => {
                         if let Err(e) = server_handle.waiting().await {
@@ -88,7 +87,7 @@ pub fn run_mcp_server_tcp() -> anyhow::Result<()> {
                             {
                                 log::error!("Client {} error: {:?}", client_addr, e);
                             } else {
-                                log::info!("Client {} disconnected.", client_addr);
+                                log::debug!("Client {} disconnected.", client_addr);
                             }
                         }
                     }
@@ -97,7 +96,9 @@ pub fn run_mcp_server_tcp() -> anyhow::Result<()> {
             }
         }.await;
 
-        log::warn!("mcp server run result: {result:?}");
+        if let Err(e) = result {
+            log::warn!("MCP server (:9002) accept loop stopped: {e}");
+        }
     });
     }); // Once guard
     Ok(())

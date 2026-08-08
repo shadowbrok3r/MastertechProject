@@ -85,7 +85,12 @@ impl Notification {
             .await?
             .take(0)?;
 
-        log::info!("Created notification: {notif:?}");
+        log::info!(
+            "Created notification '{}' for {}",
+            self.notification_type,
+            self.user.key_string()
+        );
+        log::debug!("Created notification: {notif:?}");
 
         Ok(())
     }

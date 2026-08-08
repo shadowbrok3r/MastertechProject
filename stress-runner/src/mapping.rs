@@ -254,7 +254,7 @@ pub fn stable_machine_hash() -> String {
             if let Some(p) = &path
                 && let Some(existing) = crate::host_identity::read_machine_id(p)
             {
-                log::info!("stable_machine_hash: loaded {} = {existing}", p.display());
+                log::debug!("stable_machine_hash: loaded {} = {existing}", p.display());
                 return existing;
             }
             // WinPE runs off a RAM disk, so there is never a persisted id here.

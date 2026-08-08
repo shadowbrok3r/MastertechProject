@@ -154,12 +154,16 @@ async fn announce(user: &RecordId, kind: &str, detail: String) {
 pub fn spawn(user: RecordId) {
     let Some((url, token)) = crate::ai::mcp_chat::zeroclaw_gateway() else {
         let path = crate::ai::mcp_chat::zeroclaw_config_path();
-        log::warn!("zeroclaw_events: gateway not configured - write {}", path.display());
+        log::warn!(
+            "zeroclaw_events: gateway not configured - set ZEROCLAW_GATEWAY_URL/_TOKEN in .env and \
+             rebuild, or write {}",
+            path.display()
+        );
         PlatformSpawner::spawn(async move {
             announce(
                 &user,
                 "ZeroClaw Error",
-                format!("Watcher inactive: no gateway configured ({})", path.display()),
+                "Watcher inactive: no ZeroClaw gateway configured in this build".to_string(),
             )
             .await;
         });
@@ -191,7 +195,7 @@ pub fn spawn(user: RecordId) {
                 }
             }
         }
-        log::info!("zeroclaw_events: polling {url}/api/events/history every {POLL_SECS}s");
+        log::debug!("zeroclaw_events: polling {url}/api/events/history every {POLL_SECS}s");
         let caught_up = mark.at.map(|t| t.to_string()).unwrap_or_else(|| "nothing".into());
         announce(
             &user,
@@ -199,9 +203,20 @@ pub fn spawn(user: RecordId) {
             format!("Watcher started - polling {url} every {POLL_SECS}s, caught up to {caught_up}"),
         )
         .await;
+        // Only the first failure of a run warns; the rest are silent until a poll succeeds.
+        let mut failing = false;
         loop {
-            if let Err(e) = poll_once(&client, &url, &token, &user, &mut mark).await {
-                log::warn!("zeroclaw_events: poll failed: {e}");
+            match poll_once(&client, &url, &token, &user, &mut mark).await {
+                Err(e) if failing => log::debug!("zeroclaw_events: poll failed: {e}"),
+                Err(e) => {
+                    failing = true;
+                    log::warn!("zeroclaw_events: poll failed: {e}");
+                }
+                Ok(()) if failing => {
+                    failing = false;
+                    log::info!("zeroclaw_events: polling recovered");
+                }
+                Ok(()) => {}
             }
             tokio::time::sleep(std::time::Duration::from_secs(POLL_SECS)).await;
         }

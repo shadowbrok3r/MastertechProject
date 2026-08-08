@@ -24,7 +24,7 @@ impl UserMessage {
     }
 
     pub async fn create_message(self) -> anyhow::Result<Option<Self>, anyhow::Error> {
-        log::info!("Creating message: {:?}", &self);
+        log::debug!("Creating message: {:?}", &self);
         let message_record: Option<Self> = db()
             .create(USER_MESSAGE_TABLE)
             .content(self.clone())

@@ -354,7 +354,6 @@ impl RowViewer<SerialsData> for SerialsViewer {
         match column {
             4 => {
                 if resp.clicked() && &row.5 != "Not Attached" && &row.5 != "S/N Info ⮫" {
-                    log::info!("Clicked on order: {}", row.5);
                     resp.ctx.open_url(OpenUrl::new_tab(xidax_order_url(last_n(&row.5, 7))));
                 }
                 None

@@ -7,7 +7,7 @@ use eframe::egui::{
 };
 use egui_extras::{Column, TableBuilder};
 use futures::StreamExt;
-use log::{error, info};
+use log::{debug, error};
 use reqwest::{
     header::{ACCEPT, CONTENT_TYPE, USER_AGENT},
     Client,
@@ -96,7 +96,7 @@ impl MastertechContext {
                     let toast_tx = get_toast_sender();
                     match create_issue {
                         Ok(val) => {
-                            info!("Sent request ok: {val:?}");
+                            debug!("Issue created: {val:?}");
                             let _ = toast_tx.try_send(ToastMessage::Success(
                                 "GitHub issue submitted successfully".to_string(),
                             ));
@@ -175,16 +175,15 @@ impl MastertechContext {
                                                     let asset = asset.clone();
                                                     let tx = self.bytes_channel.0.clone();
                                                     spawn(async move {
-                                                        let download_res = download_release(
+                                                        if let Err(e) = download_release(
                                                             asset,
                                                             tx,
                                                             Client::new(),
                                                         )
-                                                        .await;
-                                                        info!(
-                                                            "Download Result: {:?}",
-                                                            download_res
-                                                        );
+                                                        .await
+                                                        {
+                                                            error!("Download failed: {e:?}");
+                                                        }
                                                     });
                                                 }
 
@@ -265,7 +264,7 @@ pub async fn download_release(
         let mut downloaded_bytes: u64 = 0;
 
         let mut byte_stream = resp.bytes_stream();
-        info!("Content length: {content_length}");
+        debug!("Content length: {content_length}");
 
         let mut byte_vec = Vec::new();
 
@@ -277,7 +276,7 @@ pub async fn download_release(
         }
 
         if downloaded_bytes == content_length {
-            info!("Downloaded: {downloaded_bytes}");
+            debug!("Downloaded: {downloaded_bytes}");
             let x = byte_vec.concat();
             if let Some(ref file) = file {
                 file.write(x.as_slice()).await?;

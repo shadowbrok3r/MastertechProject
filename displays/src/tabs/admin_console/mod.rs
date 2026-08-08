@@ -11,7 +11,6 @@ use crate::ui_tools::{glass_card, theme};
 use client_action::ClientUiAction;
 use client_interface::TransportKind;
 use serde::Serialize;
-use log::info;
 
 use super::script_editor::ScriptEditor;
 use crate::tabs::admin_console::ui::CLIENT_ROW_CONTENT_W;
@@ -533,7 +532,7 @@ impl AdminConsole {
         // outlives the admin session.
         let inv_rx = crate::get_security_inventory_receiver();
         while let Ok(event) = inv_rx.try_recv() {
-            log::info!(
+            log::debug!(
                 "AdminConsole::receive -> caching security inventory for {} ({} products)",
                 event.connection_string,
                 event.products.len(),
@@ -564,7 +563,7 @@ impl AdminConsole {
                         .bind(("products", products))
                         .await;
                     match res {
-                        Ok(_) => log::info!(
+                        Ok(_) => log::debug!(
                             "Persisted security inventory for {cs} to computer row"
                         ),
                         Err(e) => log::error!(
@@ -1466,9 +1465,8 @@ impl SharedContext {
         let tx = self.connected_clients_tx.clone();
         let scope = self.client_scope;
         PlatformSpawner::spawn(async move {
-            match get_connected_clients(tx, scope).await {
-                Ok(_) => info!("web_console/mod.rs -> get_connected_clients ran ok"),
-                Err(e) => log::warn!("web_console/mod.rs -> get_connected_clients error: {e:?}"),
+            if let Err(e) = get_connected_clients(tx, scope).await {
+                log::warn!("get_connected_clients failed: {e:?}");
             }
         });
     }

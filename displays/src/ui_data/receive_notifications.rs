@@ -4,7 +4,6 @@ use crate::{app_state::SharedContext, ui_tools::{theme, toasts::ToastStyle}};
 use database::schema::LiveTaskPayload;
 use crate::{ui_tools::toasts::{Toast, ToastKind, ToastOptions}, TaskUiActions};
 use eframe::egui::{Button, FontId, Margin, RichText, Ui, Widget};
-use log::info;
 use regex::Regex;
 use database::live_data::Action;
 
@@ -49,15 +48,9 @@ impl SharedContext {
                 continue;
             }
 
-            // Test text
-            let mut inputs = BTreeSet::new();
-            for task in self.tasks.iter() {
-                inputs.insert(task.task_name.clone());
-            }
-
             let user = self.current_user.clone().unwrap_or_default();
             if notification.user == user.get_id() {
-                info!("Action: {action:?} - Notification: {notification:?}");
+                log::debug!("Action: {action:?} - Notification: {notification:?}");
             }
             match action {
                 Action::Create => {
@@ -74,33 +67,7 @@ impl SharedContext {
                         }
                         self.notification_center.apply_update(notification.clone());
                     } else {
-                        let username_regex = Regex::new(r"tagged (\w+\.\w+)").unwrap();
-                        let task_name_regex = Regex::new(r"in task (.+)").unwrap();
-
                         if let Some(usr) = self.current_user.as_ref() {
-                            // Find the username
-                            if let Some(captures) =
-                                username_regex.captures(&notification.notification_description)
-                            {
-                                let username = captures.get(1).unwrap().as_str();
-                                info!("Found username: {}", username);
-                            } else {
-                                info!("Username not found");
-                            }
-                            // Find the task name
-                            if let Some(captures) =
-                                task_name_regex.captures(&notification.notification_description)
-                            {
-                                let task_name = captures.get(1).unwrap().as_str();
-                                // Check if the task name exists in the inputs BTreeSet
-                                if inputs.contains(task_name) {
-                                    info!("Found task name: {}", task_name);
-                                } else {
-                                    info!("Task name not found in inputs");
-                                }
-                            } else {
-                                info!("Task name not found");
-                            }
                             if notification.user == usr.get_id() {
                                 self.notification_center.read_notifications = false;
                                 let toast = &mut self.toasts;
@@ -202,7 +169,6 @@ pub fn show_notification(
                 .inner_margin(Margin::same(15))
                 .outer_margin(Margin::same(5))
                 .show(ui, |ui| {
-                    info!("{pos:?}, {before:?}, {task_name:?}, {after:?}");
                     ui.horizontal_wrapped(|ui| {
                         // Show the text before the task name
                         ui.label(RichText::new(before));

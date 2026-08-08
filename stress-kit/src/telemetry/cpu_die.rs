@@ -62,7 +62,7 @@ impl CpuDieMonitor {
             Vendor::Other => false,
         };
         if !reachable {
-            log::info!(
+            log::debug!(
                 "stress-kit/cpu-die: no die sensor path on this backend for this CPU; \
                  CPU die temperature unavailable"
             );
@@ -83,7 +83,7 @@ impl CpuDieMonitor {
         me.cached = me.read_all();
         me.last_good = Instant::now();
         match me.cached.as_ref() {
-            Some(die) => log::info!(
+            Some(die) => log::debug!(
                 "stress-kit/cpu-die: {:?} sensor, package {:?}, {} per-core value(s)",
                 die.reader,
                 die.package_c,

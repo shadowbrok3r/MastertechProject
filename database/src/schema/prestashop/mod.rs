@@ -4,7 +4,7 @@ use reqwest::{ header::{ACCEPT, CONTENT_TYPE}, Client};
 use serde_json::{from_value, Value};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use log::info;
+use log::debug;
 
 pub use crate::{PRESTASHOP_API_URL, PRESTASHOP_API_URL_WASM};
 
@@ -213,7 +213,7 @@ impl<'a> Prestashop<'a> {
             .json()
             .await?;
 
-        info!("prestashop_schema -> query:{url}\nresponse: {:#?}", response);
+        debug!("prestashop_schema -> query:{url} response: {:#?}", response);
 
         let x: T = from_value(response[name].clone())?;
         // info!("prestashop_schema -> x: {x:#?}");
@@ -245,7 +245,7 @@ impl<'a> Prestashop<'a> {
             .json()
             .await?;
 
-        log::info!("prestashop_schema -> query:{url}\nResponse: {:?}", response[name].clone());
+        log::debug!("prestashop_schema -> query:{url} response: {:?}", response[name]);
 
         let x: T = from_value(response[name].clone())?;
         // info!("prestashop_schema -> x: {x:#?}");
@@ -271,7 +271,7 @@ impl<'a> Prestashop<'a> {
     //         .await?
     //         .json()
     //         .await?;
-    //     info!("prestashop_schema -> response: {:#?}", response);
+    //     debug!("prestashop_schema -> response: {:#?}", response);
     //     let x: Vec<T> = from_value(response[resource_name].clone())?;
     //     info!("prestashop_schema -> x: {x:#?}");
     //     Ok(x)
@@ -288,7 +288,7 @@ impl<'a> Prestashop<'a> {
         T: for<'de> Deserialize<'de> + std::fmt::Debug + Send,
     {
         let url = self.query_args_wasm(resource_name, url_params);
-        log::info!("prestashop_schema -> GET {url}");
+        log::debug!("prestashop_schema -> GET {url}");
 
         let response = self
             .client
@@ -424,8 +424,8 @@ impl<'a> Prestashop<'a> {
     where
         T: for<'de> Deserialize<'de> + std::fmt::Debug + Send,
     {
-        info!(
-            "resource_name: {resource_name:#?}, {url_params:#?}\nURL: {:#?}",
+        debug!(
+            "resource_name: {resource_name:#?}, {url_params:#?} URL: {:#?}",
             self.query_args_wasm(resource_name, url_params.clone())
         );
 
@@ -437,9 +437,9 @@ impl<'a> Prestashop<'a> {
             .json()
             .await?;
 
-        info!("prestashop_schema -> response: {:#?}", response);
+        debug!("prestashop_schema -> response: {:#?}", response);
         let t: T = from_value(response[resource_name].get(0).cloned().unwrap_or_default())?;
-        info!("prestashop_schema -> Value: {t:?}");
+        debug!("prestashop_schema -> Value: {t:?}");
         // let x: T = from_value(t.get(0).cloned().unwrap_or_default())?;
         // info!("prestashop_schema -> x: {x:#?}");
 
@@ -454,11 +454,11 @@ impl<'a> Prestashop<'a> {
         -> anyhow::Result<String, anyhow::Error>
     {
         let base_url = format!("{PRESTASHOP_API_URL_WASM}/{resource_name}/{id}");
-        info!("prestashop_schema -> URL: {base_url:?}");
+        debug!("prestashop_schema -> URL: {base_url:?}");
 
         let response: String = self.client.delete(base_url).send().await?.text().await?;
 
-        info!("prestashop_schema -> response: {:#?}", response);
+        debug!("prestashop_schema -> response: {:#?}", response);
 
         Ok(response) 
     }
@@ -485,7 +485,7 @@ impl<'a> Prestashop<'a> {
         );
 
         // Send HTTP POST request with the XML payload
-        info!("prestashop_schema -> Payload: {:?}", payload);
+        debug!("prestashop_schema -> Payload: {:?}", payload);
         let response_text = self.client
             .post(format!("{PRESTASHOP_API_URL_WASM}/customer_threads"))
             .header("Content-type", "application/xml")
@@ -495,7 +495,7 @@ impl<'a> Prestashop<'a> {
             .text()
             .await?;
 
-        info!("prestashop_schema -> response text: {response_text:?}");
+        debug!("prestashop_schema -> response text: {response_text:?}");
         // Parse the XML response to extract values
         let id = response_text
             .split("<id><![CDATA[")
@@ -544,7 +544,7 @@ impl<'a> Prestashop<'a> {
         );
 
         // Send HTTP POST request with the XML payload
-        info!("prestashop_schema -> Payload: {:?}", payload);
+        debug!("prestashop_schema -> Payload: {:?}", payload);
         let response_text = self.client
             .post(format!("{PRESTASHOP_API_URL_WASM}/customer_messages"))
             .header("Content-type", "application/xml")
@@ -554,7 +554,7 @@ impl<'a> Prestashop<'a> {
             .text()
             .await?;
 
-        info!("prestashop_schema -> response text: {response_text:?}");
+        debug!("prestashop_schema -> response text: {response_text:?}");
         // Parse the XML response to extract values
         let id = response_text
             .split("<id><![CDATA[")
@@ -604,7 +604,7 @@ impl<'a> Prestashop<'a> {
         );
 
         // Send HTTP POST request with the XML payload
-        info!("prestashop_schema -> Payload: {:?}", payload);
+        debug!("prestashop_schema -> Payload: {:?}", payload);
         let response_text = self.client
             .put(format!("{PRESTASHOP_API_URL_WASM}/customer_messages"))
             .header("Content-type", "application/xml")
@@ -614,7 +614,7 @@ impl<'a> Prestashop<'a> {
             .text()
             .await?;
 
-        info!("prestashop_schema -> response text: {response_text:?}");
+        debug!("prestashop_schema -> response text: {response_text:?}");
         // Parse the XML response to extract values
         let id = response_text
             .split("<id><![CDATA[")

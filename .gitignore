@@ -52,3 +52,4 @@ history.txt
 # firmware share on every run, and the relay reads it from here (BIOSLOVE_INDEX)
 # so it never needs a flash drive plugged in.
 bioslove-index/index.json
+bioslove-index/index.json.bak

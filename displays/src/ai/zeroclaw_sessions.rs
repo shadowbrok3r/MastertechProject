@@ -175,7 +175,8 @@ async fn get(client: &reqwest::Client, url: &str, token: &str, path: &str) -> an
 pub async fn fetch() -> anyhow::Result<Vec<AgentSession>> {
     let Some((url, token)) = crate::ai::mcp_chat::zeroclaw_gateway() else {
         anyhow::bail!(
-            "No ZeroClaw gateway configured - write {}",
+            "No ZeroClaw gateway configured - set ZEROCLAW_GATEWAY_URL/_TOKEN in .env and rebuild, \
+             or write {}",
             crate::ai::mcp_chat::zeroclaw_config_path().display()
         );
     };

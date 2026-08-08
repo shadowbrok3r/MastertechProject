@@ -10,6 +10,7 @@
 use displays::Cmd;
 use ewebsock::{WsEvent, WsMessage};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 
 /// Bound at most once per process.
@@ -17,6 +18,26 @@ static STARTED: AtomicBool = AtomicBool::new(false);
 /// Set to retire the channel (e.g. before handing the room to another agent
 /// in this process). The loop exits at its next boundary and stays off.
 static STOPPED: AtomicBool = AtomicBool::new(false);
+/// Set once the room channel has opened at least once.
+static OPENED_ONCE: AtomicBool = AtomicBool::new(false);
+/// Last reported churn cause; cleared by the next successful open.
+static CHURN_REPORTED: Mutex<Option<String>> = Mutex::new(None);
+
+/// Warn when the churn cause differs from the last reported one, debug for repeats.
+fn churn_level(cause: &str) -> log::Level {
+    let mut last = CHURN_REPORTED.lock().unwrap_or_else(|e| e.into_inner());
+    if last.as_deref() == Some(cause) {
+        log::Level::Debug
+    } else {
+        *last = Some(cause.to_string());
+        log::Level::Warn
+    }
+}
+
+/// Re-arms churn reporting so the next failure warns again.
+fn clear_churn() {
+    *CHURN_REPORTED.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
 
 /// Reconnect backoff bounds; the channel retries for the process lifetime.
 const MIN_BACKOFF: Duration = Duration::from_secs(5);
@@ -82,7 +103,7 @@ async fn run() {
         database::WS_CLIENT_URL
     };
     let url = database::websocket_url_with_room(base, &connection_string, "client");
-    log::info!("relay_control -> room channel for {connection_string} via {url}");
+    log::debug!("relay_control -> room channel for {connection_string} via {url}");
 
     let mut backoff = MIN_BACKOFF;
     loop {
@@ -100,7 +121,13 @@ async fn run() {
                 SocketEnd::Ended { opened: true } => backoff = MIN_BACKOFF,
                 SocketEnd::Ended { opened: false } => {}
             },
-            Err(e) => log::warn!("relay_control -> connect failed: {e}; retrying in {backoff:?}"),
+            Err(e) => {
+                let cause = format!("connect failed: {e}");
+                log::log!(
+                    churn_level(&cause),
+                    "relay_control -> {cause}; retrying in {backoff:?}"
+                );
+            }
         }
         if should_stop() {
             return;
@@ -135,14 +162,20 @@ async fn serve_room_socket(
             match event {
                 WsEvent::Opened => {
                     opened = true;
-                    log::info!("relay_control -> room channel open");
+                    clear_churn();
+                    if OPENED_ONCE.swap(true, Ordering::SeqCst) {
+                        log::debug!("relay_control -> room channel open");
+                    } else {
+                        log::info!("relay_control -> room channel open");
+                    }
                 }
                 WsEvent::Closed => {
-                    log::info!("relay_control -> room channel closed; will reconnect");
+                    log::debug!("relay_control -> room channel closed; will reconnect");
                     return SocketEnd::Ended { opened };
                 }
                 WsEvent::Error(e) => {
-                    log::warn!("relay_control -> room channel error: {e}");
+                    let cause = format!("room channel error: {e}");
+                    log::log!(churn_level(&cause), "relay_control -> {cause}");
                     return SocketEnd::Ended { opened };
                 }
                 WsEvent::Message(WsMessage::Binary(bin)) => handle_binary(&bin),
@@ -155,14 +188,13 @@ async fn serve_room_socket(
             last_ping = tokio::time::Instant::now();
         }
         if last_event.elapsed() >= LIVENESS_TIMEOUT {
-            log::warn!(
-                "relay_control -> no room traffic for {LIVENESS_TIMEOUT:?}; reconnecting"
-            );
+            let cause = format!("no room traffic for {LIVENESS_TIMEOUT:?}");
+            log::log!(churn_level(&cause), "relay_control -> {cause}; reconnecting");
             sender.close();
             return SocketEnd::Ended { opened };
         }
         if opened && started.elapsed() >= MAX_SOCKET_AGE {
-            log::info!("relay_control -> recycling room socket after {MAX_SOCKET_AGE:?}");
+            log::debug!("relay_control -> recycling room socket after {MAX_SOCKET_AGE:?}");
             sender.close();
             return SocketEnd::Recycled;
         }

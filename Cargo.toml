@@ -68,6 +68,11 @@ exclude = [
     "mtech-plugin-sdk/examples/minimal_guest",
 ]
 
+# Shipped MasterTech release version. `displays` and `Mastertech4.0` inherit it so
+# the build version the agent reports over the wire matches the app it ships in.
+[workspace.package]
+version = "4.8.0"
+
 [workspace.dependencies]
 backdrop-blur-core = { path = "backdrop-blur/crates/backdrop-blur-core" }
 backdrop-blur-glow = { path = "backdrop-blur/crates/backdrop-blur-glow" }
@@ -90,7 +95,7 @@ egui-data-table = { git = "https://github.com/shadowbrok3r/egui-data-table", fea
 # Fork: crates.io 0.16.0 is the newest release and it only compiles against egui 0.35.
 egui_json_tree = { git = "https://github.com/shadowbrok3r/egui_json_tree", features = ["serde_json"] }
 egui_dock = { git = "https://github.com/shadowbrok3r/egui_dock",  features = [ "serde" ] }
-rmcp = { version = "3.1.1", features = ["server", "client", "transport-async-rw", "transport-streamable-http-server"] }
+rmcp = { version = "3.1.2", features = ["server", "client", "transport-async-rw", "transport-streamable-http-server"] }
 axum = { version = "0.8", default-features = true, features = ["tokio"] }
 chrono = { version = "0.4", default-features = false, features = ["now"] } 
 tokio = { version = "1", features = ["full", "tracing"] }

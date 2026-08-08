@@ -369,7 +369,7 @@ mod backend {
                         return false;
                     }
                 }
-                log::info!("backdrop blur ready (grab-pass over glow)");
+                log::debug!("backdrop blur ready (grab-pass over glow)");
                 true
             }
             Err(e) => {

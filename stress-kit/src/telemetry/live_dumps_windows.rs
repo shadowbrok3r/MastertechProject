@@ -52,7 +52,7 @@ impl LiveDumpWatcher {
         match collect_dumps(&watcher.root) {
             Ok(found) => {
                 watcher.available = true;
-                log::info!(
+                log::debug!(
                     "stress-kit/live-dumps: baselined {} dump(s) under {}",
                     found.len(),
                     watcher.root.display()

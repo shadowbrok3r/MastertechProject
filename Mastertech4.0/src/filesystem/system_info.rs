@@ -6,7 +6,7 @@ use num_format::{Locale, ToFormattedString};
 use crossbeam::channel::Sender;
 use async_trait::async_trait;
 use database::schema::RecordId;
-use log::{error, info};
+use log::debug;
 use reqwest::Client;
 use anyhow::Context;
 use super::SYSINFO;
@@ -40,8 +40,8 @@ pub trait ComputerInfo {
 #[async_trait]
 impl ComputerInfo for ComputerData {
     async fn get_computer_data(&mut self) -> anyhow::Result<Self, anyhow::Error> {
-        info!("Filesystem -> get_computer_data -> Getting sysinfo");
-        
+        debug!("get_computer_data: getting sysinfo");
+
         let sys = &mut SYSINFO.lock().await;
         // info!("GPU: {gpu_info:?}");
         sys.refresh_all();
@@ -90,7 +90,7 @@ impl ComputerInfo for ComputerData {
             self.oa3_key = crate::filesystem::oa_serial::get_oa3_msdm_key().ok();
         }
 
-        info!("Filesystem -> get_computer_data -> Pulling Drive information");
+        debug!("get_computer_data: pulling drive information");
         let mut disks = Disks::new_with_refreshed_list();
         let client = Client::new();
 
@@ -104,24 +104,24 @@ impl ComputerInfo for ComputerData {
                         .to_formatted_string(&Locale::en),
                     drive_letter: disk.mount_point().to_str().unwrap_or("").to_string(),
                 });
-                info!("Filesystem -> get_computer_data -> DriveData: {:?}", disk.name());
+                debug!("get_computer_data: DriveData {:?}", disk.name());
             }
         }
 
         let seb_data: Result<LocalSebData, anyhow::Error> = request_seb_info(client, None)
             .await
             .or_else(|err| {
-                error!("Error Pulling SEB info: {:?}", err.to_string());
+                debug!("get_computer_data: no SEB info: {err}");
                 Err(err)
             })
             .and_then(|data| {
-                info!("Filesystem -> get_computer_data -> Pulled SEB Data successfully: {data:#?}");
+                debug!("get_computer_data: SEB data {data:#?}");
                 Ok(data)
             });
 
         #[cfg(target_os = "windows")]
         {
-            info!("Filesystem -> get_computer_data -> pulling GPU");
+            debug!("get_computer_data: pulling GPU");
             // Using Powershell instead using Get-CimInstance because wmic is deprecated in favor
             // of it
             let process = tokio::process::Command::new("powershell")
@@ -131,17 +131,14 @@ impl ComputerInfo for ComputerData {
                 .output()
                 .await;
 
-            info!("Filesystem -> get_computer_data -> GPU process result: {process:?}");
-
             let mut gpu_name = String::new();
             if let Ok(out) = process {
                 let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                info!("Filesystem -> get_computer_data -> GPU raw output: {:?}", raw);
                 if !raw.is_empty() {
                     gpu_name = raw;
                 } else {
                     // Fallback: try Win32_DisplayConfiguration
-                    info!("Filesystem -> get_computer_data -> GPU empty, trying fallback");
+                    debug!("get_computer_data: GPU query empty, trying fallback");
                     if let Ok(fallback_out) = tokio::process::Command::new("powershell")
                         .args(["-NoProfile", "-NonInteractive", "-Command",
                             "Get-CimInstance Win32_DisplayConfiguration -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty DeviceName"])
@@ -156,7 +153,7 @@ impl ComputerInfo for ComputerData {
                     }
                 }
             } else {
-                info!("Filesystem -> get_computer_data -> GPU PowerShell command failed, trying wmic fallback");
+                debug!("get_computer_data: GPU PowerShell command failed, trying wmic fallback");
                 if let Ok(fallback_out) = tokio::process::Command::new("wmic")
                     .args(["path", "win32_videocontroller", "get", "name", "/value"])
                     .creation_flags(CREATE_NO_WINDOW)
@@ -171,16 +168,16 @@ impl ComputerInfo for ComputerData {
             }
 
             if !gpu_name.is_empty() {
-                info!("Filesystem -> get_computer_data -> GPU: {:?}", gpu_name);
+                debug!("get_computer_data: GPU {:?}", gpu_name);
                 self.gpu = gpu_name;
             } else {
-                info!("Filesystem -> get_computer_data -> GPU: could not determine (all methods failed)");
+                log::warn!("get_computer_data: GPU could not be determined (all methods failed)");
             }
         }
 
         #[cfg(target_os = "linux")]
         {
-            info!("Filesystem -> get_computer_data -> Pulling linux gpu");
+            debug!("get_computer_data: pulling linux GPU");
             let re = regex::Regex::new(r"\[(.*)\]").unwrap();
             let gpu = String::from_utf8(
                 tokio::process::Command::new("sh")
@@ -206,26 +203,20 @@ impl ComputerInfo for ComputerData {
             self.seb_info = Some(seb_info);
         }
 
-        info!("Filesystem -> get_computer_data -> Pulling CPU");
         self.cpu = sys.cpus()[0].brand().trim().to_string();
-        info!("Filesystem -> get_computer_data -> Pulling RAM");
         self.ram = format!(
-            "{} Gb", 
+            "{} Gb",
             (sys.total_memory() / (1024 * 1024 * 1024) + 1)
                 .to_formatted_string(&Locale::en)
                 .trim()
         );
-        
-        info!("Filesystem -> get_computer_data -> Pulling OS");
         self.operating_system = System::long_os_version().unwrap_or_default();
-        info!("Filesystem -> get_computer_data -> Pulling Hostname");
         self.hostname = System::host_name().unwrap_or_default();
 
         let client_hash = generate_client_id(self.hostname.clone(), self.cpu.trim().to_string());
         let id = format!("{}:{}", self.hostname.clone(), client_hash.split_at(9).0);
-        info!("Filesystem -> get_computer_data -> ID: {id}");
         self.id = RecordId::new(COMPUTER_TABLE, id.clone());
-        info!("Filesystem -> get_computer_data -> RecordID: {:?}", self.id.clone());
+        debug!("get_computer_data: computer record {id}");
 
         #[cfg(target_os="windows")]
         {
@@ -242,18 +233,14 @@ impl ComputerInfo for ComputerData {
                         self.installed_programs = Some(programs);
                     }
                 }
-                Err(e) => log::warn!(
-                    "Filesystem -> get_computer_data -> installed_programs scan failed (continuing): {e:?}"
-                ),
+                Err(e) => log::warn!("get_computer_data: installed_programs scan failed: {e}"),
             }
 
             match check_windows_activation() {
                 Ok(license_status) => {
                     self.windows_active = Some(license_status.license_status == 1);
                 }
-                Err(e) => log::warn!(
-                    "Filesystem -> get_computer_data -> windows activation check failed (continuing): {e:?}"
-                ),
+                Err(e) => log::warn!("get_computer_data: windows activation check failed: {e}"),
             }
         }
 
@@ -261,15 +248,15 @@ impl ComputerInfo for ComputerData {
     }
 
     async fn get_computer_data_no_gpu(&mut self) -> anyhow::Result<Self, anyhow::Error> {
-        info!("Filesystem -> get_computer_data -> Getting sysinfo");
-    
+        debug!("get_computer_data_no_gpu: getting sysinfo");
+
         let _gpu_info = Gpu::default();
         
         let sys = &mut SYSINFO.lock().await;
         // info!("GPU: {gpu_info:?}");
         sys.refresh_all();
         
-        info!("Filesystem -> get_computer_data -> Pulling Drive information");
+        debug!("get_computer_data_no_gpu: pulling drive information");
         let mut disks = Disks::new_with_refreshed_list();
         let client = Client::new();
 
@@ -283,24 +270,24 @@ impl ComputerInfo for ComputerData {
                         .to_formatted_string(&Locale::en),
                     drive_letter: disk.mount_point().to_str().unwrap_or("").to_string(),
                 });
-                info!("Filesystem -> get_computer_data -> DriveData: {:?}", disk.name());
+                debug!("get_computer_data_no_gpu: DriveData {:?}", disk.name());
             }
         }
 
         let seb_data: Result<LocalSebData, anyhow::Error> = request_seb_info(client, None)
             .await
             .or_else(|err| {
-                error!("Error Pulling SEB info: {:?}", err.to_string());
+                debug!("get_computer_data_no_gpu: no SEB info: {err}");
                 Err(err)
             })
             .and_then(|data| {
-                info!("Filesystem -> get_computer_data -> Pulled SEB Data successfully: {data:#?}");
+                debug!("get_computer_data_no_gpu: SEB data {data:#?}");
                 Ok(data)
             });
 
         #[cfg(target_os = "windows")]
         {
-            info!("Filesystem -> get_computer_data -> pulling GPU");
+            debug!("get_computer_data_no_gpu: pulling GPU");
             // Using Powershell instead using Get-CimInstance because wmic is deprecated in favor
             // of it
             let process = tokio::process::Command::new("powershell")
@@ -309,19 +296,15 @@ impl ComputerInfo for ComputerData {
                 .output()
                 .await;
 
-            info!("Filesystem -> get_computer_data -> Process: {process:?}");
-
             let x = process.unwrap().stdout;
-            info!("Filesystem -> get_computer_data -> x: {x:?}");
-
             let gpu = String::from_utf8(x).unwrap_or(String::new());
-            info!("Filesystem -> get_computer_data -> GPU: {gpu:?}");
+            debug!("get_computer_data_no_gpu: GPU {gpu:?}");
             self.gpu = gpu.clone().trim().to_string();
         }
 
         #[cfg(target_os = "linux")]
         {
-            info!("Filesystem -> get_computer_data -> Pulling linux gpu");
+            debug!("get_computer_data_no_gpu: pulling linux GPU");
             let re = regex::Regex::new(r"\[(.*)\]").unwrap();
             let gpu = String::from_utf8(
                 tokio::process::Command::new("sh")
@@ -347,23 +330,18 @@ impl ComputerInfo for ComputerData {
             self.seb_info = Some(seb_info);
         }
 
-        info!("Filesystem -> get_computer_data -> Pulling CPU");
         self.cpu = sys.cpus()[0].brand().trim().to_string();
-        info!("Filesystem -> get_computer_data -> Pulling RAM");
         self.ram = (sys.total_memory() / (1024 * 1024 * 1024) + 1)
             .to_formatted_string(&Locale::en)
             .trim()
             .to_string();
-        info!("Filesystem -> get_computer_data -> Pulling OS");
         self.operating_system = System::long_os_version().unwrap_or_default();
-        info!("Filesystem -> get_computer_data -> Pulling Hostname");
         self.hostname = System::host_name().unwrap_or_default();
 
         let client_hash = generate_client_id(self.hostname.clone(), self.cpu.trim().to_string());
         let id = format!("{}:{}", self.hostname.clone(), client_hash.split_at(9).0);
-        info!("Filesystem -> get_computer_data -> ID: {id}");
         self.id = RecordId::new(COMPUTER_TABLE, id.clone());
-        info!("Filesystem -> get_computer_data -> RecordID: {:?}", self.id.clone());
+        debug!("get_computer_data_no_gpu: computer record {id}");
         Ok(self.to_owned())
     }
 
@@ -478,9 +456,7 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
 
     for component in components.list_mut() {
         component.refresh();
-        log::error!("component: {component:#?}");
         component_temps.insert(component.label().to_string(), component.temperature().unwrap_or_default());
-        // comps += format!("{component:#?} \n", component.).as_str();
     }
 
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -532,16 +508,27 @@ pub fn generate_client_id(hostname: String, cpu: String) -> String {
 }
 
 pub async fn live_computer_stats(tx: Sender<SystemInformation>) -> anyhow::Result<(), anyhow::Error>{
+    // Holds the last sample error so an unchanged failure logs once, not every tick.
+    let mut last_err: Option<String> = None;
     loop {
         // A failed sample is skipped, not fatal: propagating it here used to
         // end the loop and stop live telemetry for the life of the process.
         match get_sysinfo().await {
             Ok(info) => {
+                last_err = None;
                 if tx.send(info).is_err() {
                     return Ok(());
                 }
             }
-            Err(e) => log::warn!("live_computer_stats: sysinfo sample failed, retrying: {e}"),
+            Err(e) => {
+                let text = e.to_string();
+                if last_err.as_deref() == Some(text.as_str()) {
+                    debug!("live_computer_stats: sysinfo sample failed, retrying: {text}");
+                } else {
+                    log::warn!("live_computer_stats: sysinfo sample failed, retrying: {text}");
+                    last_err = Some(text);
+                }
+            }
         }
         tokio::time::sleep(std::time::Duration::from_secs_f32(0.1)).await;
     }
@@ -662,9 +649,7 @@ pub async fn get_sysinfo_no_gpu() -> anyhow::Result<SystemInformation, anyhow::E
 
     for component in components.list_mut() {
         component.refresh();
-        log::error!("component: {component:#?}");
         component_temps.insert(component.label().to_string(), component.temperature().unwrap_or_default());
-        // comps += format!("{component:#?} \n", component.).as_str();
     }
 
     tokio::time::sleep(Duration::from_millis(200)).await;

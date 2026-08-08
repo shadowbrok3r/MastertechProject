@@ -61,7 +61,7 @@ pub struct StorageThermalMonitor {
 impl StorageThermalMonitor {
     pub fn open() -> Option<Self> {
         let cached = read_all();
-        log::info!("stress-kit/storage-thermal: {} disk sensor(s)", cached.len());
+        log::debug!("stress-kit/storage-thermal: {} disk sensor(s)", cached.len());
         Some(Self {
             cached,
             last_polled: Instant::now(),

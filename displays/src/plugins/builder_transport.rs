@@ -149,7 +149,7 @@ pub fn list_workers() -> Vec<WorkerInfo> {
         .map(|(k, _)| k.clone())
         .collect();
     for k in &stale {
-        log::info!("pruning stale build worker {}", k);
+        log::debug!("pruning stale build worker {}", k);
         reg.remove(k);
     }
     reg.values().cloned().collect()

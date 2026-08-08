@@ -3,7 +3,7 @@ use crate::SurrealValue;
 use crate::schema::prestashop::{PRESTASHOP_API_URL, PRESTASHOP_API_URL_WASM, OrderType, Prestashop};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use log::info;
+use log::debug;
 
 /// Comprehensive specs extracted from an order
 #[derive(Debug, Default, Clone)]
@@ -417,7 +417,7 @@ impl Order {
         );
 
         // Send HTTP POST request with the XML payload
-        log::info!("prestashop_schema -> Payload: {:?}", payload);
+        log::debug!("prestashop_schema -> Payload: {:?}", payload);
         let response_text = client
             .post(format!("{PRESTASHOP_API_URL_WASM}/customer_messages"))
             .header("Content-type", "application/xml")
@@ -427,7 +427,7 @@ impl Order {
             .text()
             .await?;
 
-        log::info!("prestashop_schema -> response text: {response_text:?}");
+        log::debug!("prestashop_schema -> response text: {response_text:?}");
         // Parse the XML response to extract values
         let _id = response_text
             .split("<id><![CDATA[")
@@ -500,13 +500,13 @@ impl Order {
         // Step 2: For RCI systems, fetch OrderDetail and parse specs from detail_notes
         let is_rci = self.id_order_type == OrderType::Rci.to_id().to_string();
         if is_rci && (specs.cpu.is_empty() || specs.gpu.is_empty() || specs.ram.is_empty()) {
-            info!("RCI order {} - looking for U/DESKTOP, U/LAPTOPS, or RCI/ in {} order_serials", 
+            debug!("RCI order {} - looking for U/DESKTOP, U/LAPTOPS, or RCI/ in {} order_serials", 
                   self.id, self.associations.order_serial.len());
             
             // Find U/DESKTOP, U/LAPTOPS, or RCI-prefixed product in order_serial to get id_order_detail
             for serial in self.associations.order_serial.iter() {
                 let ref_lower = serial.product_reference.to_lowercase();
-                info!("  Checking serial: product_ref='{}', id_order_detail='{}'", 
+                debug!("  Checking serial: product_ref='{}', id_order_detail='{}'", 
                       serial.product_reference, serial.id_order_detail);
                 
                 // Match U/DESKTOP, U/LAPTOPS, or any RCI/ prefixed products
@@ -516,7 +516,7 @@ impl Order {
                     || ref_lower.starts_with("rci/");
                 
                 if is_rci_product && !serial.id_order_detail.is_empty() && serial.id_order_detail != "0" {
-                    info!("  Found matching serial, fetching OrderDetail id={}", serial.id_order_detail);
+                    debug!("  Found matching serial, fetching OrderDetail id={}", serial.id_order_detail);
                     
                     // Also capture serial number for RCI products
                     if specs.device_serial.is_empty() && !serial.serial_number.is_empty() {
@@ -531,14 +531,14 @@ impl Order {
                         &serial.id_order_detail
                     ).await {
                         Ok(detail) => {
-                            info!("  OrderDetail fetched, detail_notes length={}", detail.detail_notes.len());
+                            debug!("  OrderDetail fetched, detail_notes length={}", detail.detail_notes.len());
                             if !detail.detail_notes.is_empty() {
-                                info!("  detail_notes: {:?}", &detail.detail_notes[..detail.detail_notes.len().min(200)]);
+                                debug!("  detail_notes: {:?}", &detail.detail_notes[..detail.detail_notes.len().min(200)]);
                             }
                             
                             // Parse detail_notes format: "Brand: DELL\r\nCPU: i7-10610U\r\nRAM: 16GB\r\n..."
                             let (parsed_cpu, parsed_gpu, parsed_ram, parsed_brand) = Self::parse_detail_notes(&detail.detail_notes);
-                            info!("  Parsed specs: cpu='{}', gpu='{}', ram='{}', brand='{}'", parsed_cpu, parsed_gpu, parsed_ram, parsed_brand);
+                            debug!("  Parsed specs: cpu='{}', gpu='{}', ram='{}', brand='{}'", parsed_cpu, parsed_gpu, parsed_ram, parsed_brand);
                             
                             if specs.cpu.is_empty() && !parsed_cpu.is_empty() {
                                 specs.cpu = parsed_cpu;
@@ -559,7 +559,7 @@ impl Order {
                             }
                         }
                         Err(e) => {
-                            info!("  Failed to fetch OrderDetail: {:?}", e);
+                            debug!("  Failed to fetch OrderDetail: {:?}", e);
                         }
                     }
                 }
@@ -567,7 +567,7 @@ impl Order {
             
             // Fallback: If still missing specs, check ALL order_serial entries for detail_notes
             if specs.cpu.is_empty() || specs.gpu.is_empty() || specs.ram.is_empty() {
-                info!("RCI order {} - fallback: checking all order_serial entries for detail_notes", self.id);
+                debug!("RCI order {} - fallback: checking all order_serial entries for detail_notes", self.id);
                 for serial in self.associations.order_serial.iter() {
                     if serial.id_order_detail.is_empty() || serial.id_order_detail == "0" {
                         continue;
@@ -581,7 +581,7 @@ impl Order {
                     ).await {
                         Ok(detail) => {
                             if !detail.detail_notes.is_empty() {
-                                info!("  Found detail_notes in serial '{}': {:?}", 
+                                debug!("  Found detail_notes in serial '{}': {:?}", 
                                       serial.product_reference, 
                                       &detail.detail_notes[..detail.detail_notes.len().min(200)]);
                                 
@@ -606,7 +606,7 @@ impl Order {
                             }
                         }
                         Err(e) => {
-                            info!("  Failed to fetch OrderDetail {}: {:?}", serial.id_order_detail, e);
+                            debug!("  Failed to fetch OrderDetail {}: {:?}", serial.id_order_detail, e);
                         }
                     }
                 }
@@ -621,7 +621,7 @@ impl Order {
                     // Parse CPU and GPU from laptop product name
                     // Examples: "SM-5 15" RTX 5060 Core Ultra 7 275HX", "SM3 14" RYZEN 7 255"
                     let (parsed_cpu, parsed_gpu) = Self::parse_laptop_product_name(&row.product_name);
-                    info!("  Parsed laptop '{}': cpu='{}', gpu='{}'", row.product_name, parsed_cpu, parsed_gpu);
+                    debug!("  Parsed laptop '{}': cpu='{}', gpu='{}'", row.product_name, parsed_cpu, parsed_gpu);
                     if specs.cpu.is_empty() && !parsed_cpu.is_empty() {
                         specs.cpu = parsed_cpu;
                     }
@@ -633,7 +633,7 @@ impl Order {
             }
         }
         
-        info!("Order {} extracted specs: cpu='{}', gpu='{}', ram='{}', serial='{}', mfg='{}'",
+        debug!("Order {} extracted specs: cpu='{}', gpu='{}', ram='{}', serial='{}', mfg='{}'",
               self.id, specs.cpu, specs.gpu, specs.ram, specs.device_serial, specs.device_mfg);
         
         specs

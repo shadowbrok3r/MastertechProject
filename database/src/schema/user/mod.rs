@@ -393,26 +393,26 @@ impl User {
     /// - `Ok(())` on success.
     /// - `Err(Error)` if an error occurs while saving the settings.
     pub async fn save_mastertech_ui_layout(&mut self, settings: Value) -> anyhow::Result<(), anyhow::Error>{
-        log::info!("helper_traits -> Settings for MASTERTECH: {:?}", settings.clone());
+        log::debug!("save_mastertech_ui_layout -> {:?}", settings);
         match db()
             .query("UPDATE $auth.id SET user_settings.ui_layout.mastertech = $settings")
             .bind(("settings", settings))
             .await
         {
-            Ok(res) => log::info!("helper_traits -> Result: {res:?}"),
+            Ok(res) => log::debug!("helper_traits -> Result: {res:?}"),
             Err(e) => log::error!("helper_traits -> Error updating User Settings: {e:?}"),
         }
         Ok(())
     }
     
     pub async fn save_version(&mut self, version: impl Display + Serialize + 'static + SurrealValue) -> anyhow::Result<(), anyhow::Error> {
-        log::info!("helper_traits -> save_version -> {version}");
+        log::debug!("save_version -> {version}");
         match db()
             .query("UPDATE $auth.id SET version = $version")
             .bind(("version", version))
             .await
         {
-            Ok(res) => log::info!("helper_traits -> save_version -> Result: {res:?}"),
+            Ok(res) => log::debug!("helper_traits -> save_version -> Result: {res:?}"),
             Err(e) => log::error!("helper_traits -> save_version -> Error updating User Settings: {e:?}"),
         }
         Ok(())
@@ -424,13 +424,13 @@ impl User {
     /// - `Ok(())` on success.
     /// - `Err(Error)` if an error occurs while saving the settings.
     pub async fn save_mtechserver_ui_layout(&mut self, settings: Value) -> anyhow::Result<(), anyhow::Error>{
-        log::info!("helper_traits -> Settings for MTECHSERVER: {:?}", settings.clone());
+        log::debug!("save_mtechserver_ui_layout -> {:?}", settings);
         match db()
             .query("UPDATE $auth.id SET user_settings.ui_layout.mtechserver = $settings")
             .bind(("settings", settings))
             .await
         {
-            Ok(res) => log::info!("helper_traits -> Result: {res:?}"),
+            Ok(res) => log::debug!("helper_traits -> Result: {res:?}"),
             Err(e) => log::error!("helper_traits -> Error updating User Settings: {e:?}"),
         }
         Ok(())
@@ -606,7 +606,7 @@ impl User {
             .await?
             .take(0)?;
 
-        log::info!("user/mod.rs -> Inserted user status");
+        log::debug!("user/mod.rs -> Inserted user status");
         Ok(())
     }
 
@@ -622,19 +622,19 @@ impl User {
             .await?
             .take(0)?;
 
-        log::info!("user/mod.rs -> Inserted user status");
+        log::debug!("user/mod.rs -> Removed user status");
         Ok(())
     }
 
     pub async fn update_color_scheme(color_scheme: Bytes) -> anyhow::Result<(), anyhow::Error> {
-        log::error!("color_scheme BYTES: {color_scheme:?}");
+        log::debug!("update_color_scheme -> {color_scheme:?}");
 
         match db()  
             .query("UPDATE $auth.id SET user_settings.color_scheme = $color_scheme")
             .bind(("color_scheme", color_scheme))
             .await 
         {
-            Ok(res) => log::info!("Res: {res:?}"),
+            Ok(res) => log::debug!("Res: {res:?}"),
             Err(e) => log::error!("Error updating User Settings: {e:?}"),
         };
 
@@ -643,13 +643,13 @@ impl User {
 
     /// Update just the mobile color scheme (serialized egui::Style bytes) in the database
     pub async fn update_mobile_color_scheme(color_scheme: Bytes) -> anyhow::Result<(), anyhow::Error> {
-        log::info!("mobile_color_scheme BYTES: {color_scheme:?}");
+        log::debug!("update_mobile_color_scheme -> {color_scheme:?}");
         match db()
             .query("UPDATE $auth.id SET user_settings.mobile_color_scheme = $color_scheme")
             .bind(("color_scheme", color_scheme))
             .await
         {
-            Ok(res) => log::info!("update_mobile_color_scheme -> Res: {res:?}"),
+            Ok(res) => log::debug!("update_mobile_color_scheme -> Res: {res:?}"),
             Err(e) => log::error!("update_mobile_color_scheme -> Error updating User Settings: {e:?}"),
         };
         Ok(())
@@ -672,7 +672,7 @@ impl User {
             .bind(("settings", settings))
             .await
         {
-            Ok(res) => log::info!("user/mod.rs -> save_mcp_settings -> Result: {res:?}"),
+            Ok(res) => log::debug!("user/mod.rs -> save_mcp_settings -> Result: {res:?}"),
             Err(e) => log::error!("user/mod.rs -> save_mcp_settings -> Error: {e:?}"),
         }
         Ok(())

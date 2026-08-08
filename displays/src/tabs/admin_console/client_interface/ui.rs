@@ -559,6 +559,40 @@ impl WebSocketClient {
                     ui.colored_label(badge_color, RichText::new(badge).small().strong())
                         .on_hover_text(badge_hover);
 
+                    // ── Client build badge: MasterTech version the agent reported ──
+                    if let Some(ver) = self.client_version.as_deref() {
+                        let admin_ver = crate::shape_fp::BUILD_VERSION;
+                        let (ver_color, ver_text, ver_hover) = if self.cmd_protocol_mismatch {
+                            (
+                                theme::warn(ui),
+                                format!("{} v{ver}", icons::STATUS_WARN),
+                                format!(
+                                    "Client MasterTech build v{ver} — out of date against this \
+                                     console's v{admin_ver} (Cmd protocol mismatch). \
+                                     Push a self-update."
+                                ),
+                            )
+                        } else if ver != admin_ver {
+                            // Shape matches, so commands still work; the build still differs.
+                            (
+                                theme::info(ui),
+                                format!("v{ver}"),
+                                format!(
+                                    "Client MasterTech build v{ver} differs from this console's \
+                                     v{admin_ver}, but the Cmd protocol matches."
+                                ),
+                            )
+                        } else {
+                            (
+                                theme::weak_text(ui),
+                                format!("v{ver}"),
+                                format!("Client MasterTech build v{ver} (console v{admin_ver})"),
+                            )
+                        };
+                        ui.colored_label(ver_color, RichText::new(ver_text).small())
+                            .on_hover_text(ver_hover);
+                    }
+
                     if let Some((ref name, sent, total)) = self.file_transfer_progress {
                         let short = name.rsplit(['/', '\\']).next().unwrap_or(name);
                         ui.colored_label(

@@ -11,24 +11,24 @@ impl MasterTechApp {
             ctx.request_repaint();
             match db {
                 Ok(db) => {
-                    log::info!("3");
                     if self.context.shared_ctx.current_user.is_none() && db.user.is_some() {
                         self.context.shared_ctx.current_user = db.user;
                         self.context.shared_ctx.state = AppState::NoAuth("Setting encrypted data".to_string());
                         let login_mut = self.context.shared_ctx.login_mut();
                         if let Some(login) = login_mut {
-                            match save_encrypted_user_data(&login, HASH) {
-                                Ok(_) => log::info!("User data saved successfully"),
-                                Err(e) => log::error!("Failed to save user data: {e:?}"),
+                            if let Err(e) = save_encrypted_user_data(&login, HASH) {
+                                let msg = e.to_string();
+                                if msg.contains("is empty") {
+                                    // Empty credentials are routine on a JWT-restored session.
+                                    log::debug!("User data not saved: {msg}");
+                                } else {
+                                    log::error!("Failed to save encrypted user data: {msg}");
+                                }
                             }
                             self.context.shared_ctx.state = AppState::Authenticated(MainPages::Tasks);
                         } else {
                             log::error!("No login mut: {:?}", self.context.shared_ctx.state);
                         }
-                        log::info!("10");
-                        
-                    } else {
-                        log::info!("11");
                     }
 
                     let usr = self.context.shared_ctx.current_user.clone();
@@ -38,14 +38,11 @@ impl MasterTechApp {
                     } else {
                         self.context.shared_ctx.first_run = true;
                         self.first_run(ctx);
-                        log::error!("2");
                         self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                     }
                 }
                 Err(ref e) => {
-                    log::info!("6");
                     if e.to_string().contains("Already connected") {
-                        log::info!("7");
                         let usr = self.context.shared_ctx.current_user.clone();
                         if let Some(user) = usr {
                             self.context.shared_ctx.load_data(ctx, &user);
@@ -63,12 +60,10 @@ impl MasterTechApp {
                         } else {
                             self.context.shared_ctx.first_run = true;
                             self.first_run(ctx);
-                            log::error!("2");
                             self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                         }
                     } else {
-                        log::info!("8");
-                        log::error!("{e:?}");
+                        log::error!("Database sign-in failed: {e:?}");
                         // eframe::web::storage::local_storage_get(key)
                         let toast = &mut self.context.shared_ctx.toasts;
                         let auth_toast = Toast {
@@ -123,10 +118,8 @@ impl MasterTechApp {
                                 created_at: Datetime::now(),
                                 accessed_at: None,
                             };
-                            let res = create_guest_notification(notification).await;
-                            match res {
-                                Ok(_) => log::info!("Notification from guest account created successfully"),
-                                Err(e) => log::error!("Failed to create notification: {e:?}"),
+                            if let Err(e) = create_guest_notification(notification).await {
+                                log::error!("Failed to create notification: {e:?}");
                             }
                         });
 

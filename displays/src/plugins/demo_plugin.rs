@@ -57,7 +57,7 @@ impl MastertechPlugin for HelloMastertechPlugin {
     }
 
     fn on_load(&mut self, host: &PluginHost) {
-        log::info!("HelloMastertechPlugin loaded");
+        log::debug!("HelloMastertechPlugin loaded");
         host.send_notification(
             "Plugins",
             "Hello Demo plugin loaded (see floating window).",
@@ -66,7 +66,7 @@ impl MastertechPlugin for HelloMastertechPlugin {
     }
 
     fn on_unload(&mut self) {
-        log::info!("HelloMastertechPlugin unloaded");
+        log::debug!("HelloMastertechPlugin unloaded");
     }
 
     fn logic(&mut self, _host: &PluginHost) {

@@ -322,7 +322,7 @@ impl PluginManager {
     }
 
     pub fn register(&mut self, mut plugin: Box<dyn MastertechPlugin>) {
-        log::info!("Plugin registered: {} v{}", plugin.name(), plugin.version());
+        log::debug!("Plugin registered: {} v{}", plugin.name(), plugin.version());
         if self.setup_done {
             plugin.on_load(&self.host);
         }
@@ -434,7 +434,7 @@ impl PluginManager {
         #[cfg(feature = "wasm-plugins")]
         while let Ok((plugin_id, wasm_bytes)) = WASM_LOAD_CHANNEL.1.try_recv() {
             let size = wasm_bytes.len();
-            log::info!("Loading remote WASM plugin '{plugin_id}' ({size} bytes)...");
+            log::debug!("Loading remote WASM plugin '{plugin_id}' ({size} bytes)...");
             self.unregister(&plugin_id);
 
             // Cache bytes before loading so remote tool calls can dispatch on background threads
@@ -478,7 +478,7 @@ impl PluginManager {
                 if let Some(wasm_bytes) = bytes_opt {
                     let result_tx = REMOTE_TOOL_RESULT_CHANNEL.0.clone();
                     std::thread::spawn(move || {
-                        log::info!("[remote-dispatch] Running {plugin_id}::{tool_name} on background thread");
+                        log::debug!("[remote-dispatch] Running {plugin_id}::{tool_name} on background thread");
                         let args: serde_json::Value =
                             serde_json::from_str(&args_json).unwrap_or(serde_json::json!({}));
                         // Inner channel: worker → watchdog (bounded(1) so we don't block)

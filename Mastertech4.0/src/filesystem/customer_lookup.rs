@@ -132,27 +132,30 @@ struct EverestOrderHeader {
 /// [`lookup_customer_and_open_orders`].
 pub async fn lookup_customer_by_serial(serial13: &str) -> Result<String> {
     // 1) Try PrestaShop first
-    match request_prestashop(serial13).await {
+    let ps_err = match request_prestashop(serial13).await {
         Ok(m) => {
             log::info!("PrestaShop customer lookup success: {}", m.friendly_name);
             return Ok(m.friendly_name);
         }
         Err(e) => {
-            log::warn!("PrestaShop lookup failed: {:?} -> trying Everest fallback", e);
+            log::debug!("PrestaShop lookup failed, trying Everest fallback: {e}");
+            e
         }
-    }
+    };
 
     // 2) Fallback to Everest
-    match request_everest(serial13).await {
+    let ev_err = match request_everest(serial13).await {
         Ok(result) => {
             log::info!("Everest customer lookup success: {}", result);
             return Ok(result);
         }
         Err(e) => {
-            log::warn!("Everest fallback also failed: {:?}", e);
+            log::debug!("Everest fallback failed: {e}");
+            e
         }
-    }
+    };
 
+    log::info!("No customer match for serial (prestashop: {ps_err}; everest: {ev_err})");
     Err(anyhow!("Could not find customer for serial: {}", serial13))
 }
 
@@ -177,8 +180,7 @@ pub async fn lookup_customer_and_open_orders(
         .await
         .unwrap_or_else(|e| {
             log::warn!(
-                "PrestaShop open-order lookup failed for customer {}: {e:?} \
-                 (returning empty candidates list — friendly_name still resolved)",
+                "PrestaShop open-order lookup failed for customer {}: {e}",
                 m.id_customer
             );
             Vec::new()
@@ -214,7 +216,7 @@ pub async fn lookup_open_service_orders_for_customer(
     let list_url = format!(
         "{PRESTASHOP_API_URL_WASM}/orders?output_format=JSON&filter[id_customer]={id_customer}&display=[id]"
     );
-    log::info!("PrestaShop customer orders list URL: {list_url}");
+    log::debug!("PrestaShop customer orders list URL: {list_url}");
     let list: CustomerOrdersResponse = client
         .get(&list_url)
         .send()
@@ -231,6 +233,7 @@ pub async fn lookup_open_service_orders_for_customer(
     // free.  Best-effort: an individual order parse error is logged
     // and skipped so one bad order can't sink the whole picker.
     let mut candidates = Vec::new();
+    let mut failed = 0usize;
     for entry in list.orders.iter() {
         let id = match &entry.id {
             serde_json::Value::String(s) => s.clone(),
@@ -241,7 +244,7 @@ pub async fn lookup_open_service_orders_for_customer(
             Ok(order) => {
                 let state = OrderState::state_from_id_str(&order.current_state);
                 if matches!(state, OrderState::AcceptedByOdoo) {
-                    log::debug!(
+                    log::trace!(
                         "PrestaShop order {id} is AcceptedByOdoo; skipping"
                     );
                     continue;
@@ -250,9 +253,17 @@ pub async fn lookup_open_service_orders_for_customer(
                 candidates.push(candidate);
             }
             Err(e) => {
-                log::warn!("PrestaShop full-order fetch failed for {id}: {e:?}");
+                failed += 1;
+                log::debug!("PrestaShop full-order fetch failed for {id}: {e}");
             }
         }
+    }
+
+    if failed > 0 {
+        log::warn!(
+            "PrestaShop full-order fetch failed for {failed} of {} orders",
+            list.orders.len()
+        );
     }
 
     // Newest-first so the admin modal can show the most recent order at
@@ -330,19 +341,15 @@ async fn request_prestashop(serial13: &str) -> Result<PrestashopCustomerMatch> {
         "{PRESTASHOP_API_URL_WASM}/order_serial?output_format=JSON&display=full&filter[serial_number]=[{serial13}]"
     );
 
-    log::info!("PrestaShop order_serial request URL: {}", url1);
-
     let resp1 = client
         .get(&url1)
         .send()
         .await?
         .error_for_status()
-        .inspect(|r| log::info!("PrestaShop order_serial response: {:?}", r))
-        .inspect_err(|e| log::error!("PrestaShop order_serial request failed: {:?}", e))
+        .inspect(|r| log::debug!("PrestaShop order_serial HTTP {}", r.status()))
         .context("PrestaShop order_serial request failed")?
         .json::<OrderSerialsResponse>()
         .await
-        .inspect_err(|e| log::error!("Failed to parse order_serial response: {:?}", e))
         .context("Failed to parse order_serial response")?;
 
     let id_order = resp1
@@ -360,12 +367,10 @@ async fn request_prestashop(serial13: &str) -> Result<PrestashopCustomerMatch> {
         .send()
         .await?
         .error_for_status()
-        .inspect(|r| log::info!("PrestaShop orders response: {:?}", r))
-        .inspect_err(|e| log::error!("PrestaShop orders request failed: {:?}", e))
+        .inspect(|r| log::debug!("PrestaShop orders HTTP {}", r.status()))
         .context("PrestaShop orders request failed")?
         .json::<OrderResponse>()
         .await
-        .inspect_err(|e| log::error!("Failed to parse order response: {:?}", e))
         .context("Failed to parse order response")?;
 
     let id_customer = resp2.order.id_customer.trim().to_string();

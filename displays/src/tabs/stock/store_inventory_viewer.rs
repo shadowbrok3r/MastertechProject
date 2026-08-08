@@ -2,7 +2,6 @@ use egui_data_table::{viewer::{DecodeErrorBehavior, RowCodec}, RowViewer};
 use eframe::egui::{Color32, Response, RichText, Ui};
 use egui_extras::Column as TableColumnConfig;
 use database::SurrealValue;
-use log::info;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use crate::tabs::stock::ProductID;
@@ -161,7 +160,6 @@ impl RowViewer<StockQuantityData> for StockQuantityViewer {
         dst: &mut StockQuantityData,
         column: usize,
     ) {
-        info!("Source: {:?}\nDest: {:?}\nCol: {:?}", src.2, dst.2, column);
         match column {
             0 => dst.0 = src.0.clone(),
             1 => dst.1 = src.1.clone(),
@@ -244,10 +242,8 @@ impl RowCodec<StockQuantityData> for Codec {
 
                 if let Some(caps) = re.captures(&src_row.0) {
                     let inner_text = &caps[1];
-                    log::info!("Text inside brackets: {}", inner_text);
-                    dst.push_str(&inner_text);
+                    dst.push_str(inner_text);
                 } else {
-                    log::info!("No brackets found");
                     dst.push_str(&src_row.0);
                 }
             },

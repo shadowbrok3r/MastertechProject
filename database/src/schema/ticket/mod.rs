@@ -86,7 +86,7 @@ impl TicketPayload {
 
 impl TicketData {
     pub async fn get_associated_ticket(id: RecordId) -> anyhow::Result<Self, anyhow::Error> {
-        log::info!("task id: {id:?}");
+        log::debug!("task id: {id:?}");
         let ticket: Option<Self> = db()
             .query("SELECT VALUE service_ticket.* FROM task WHERE id == $id")
             .bind(("id", id))

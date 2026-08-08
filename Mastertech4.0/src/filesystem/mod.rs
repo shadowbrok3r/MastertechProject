@@ -75,8 +75,7 @@ pub fn get_client_hash() -> ConnectedClient {
             );
 
             log::info!(
-                "get_client_hash: cached client identity (id={id}, hostname={hostname:?}, \
-                 boot_environment={})",
+                "client identity: {id} (boot_environment={})",
                 boot_environment.as_str()
             );
 
@@ -106,11 +105,10 @@ pub fn local_computer_record() -> RecordId {
 static MACHINE_INSTANCE: std::sync::OnceLock<std::sync::Arc<machine::Machine>> = std::sync::OnceLock::new();
 
 pub async fn get_machine_instance() -> Result<&'static std::sync::Arc<machine::Machine>, nvml_wrapper::error::NvmlError> {
-    log::info!("Initializing NVML");
+    log::debug!("Initializing NVML");
     // Initialize NVML_INSTANCE inside the function to handle potential errors
     let nvml_instance = nvml_wrapper::Nvml::init().map(std::sync::Arc::new)?;
 
-    log::info!("Initializing Machine Instance");
     // Use SYSINFO and NVML_INSTANCE to create the machine instance
     let machine = machine::Machine::new(
         nvml_instance,

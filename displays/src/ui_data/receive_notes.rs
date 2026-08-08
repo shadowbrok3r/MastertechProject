@@ -1,13 +1,12 @@
 use crate::{app_state::SharedContext, modals::ModalType, ui_tools::toasts::{Toast, ToastKind, ToastOptions, ToastStyle}};
 use database::schema::{LiveTaskPayload, Store};
 use database::live_data::Action;
-use log::info;
 
 impl SharedContext {
     pub fn receive_notes(&mut self) {
         // Handle single note updates from notes_rx
         if let Ok(note_payload) = self.notes_rx.try_recv() {
-            info!("receive_notes -> notes_rx.try_recv() -> New note: {:?}", note_payload);
+            log::debug!("receive_notes -> notes_rx.try_recv() -> New note: {:?}", note_payload);
             self.new_note = true;
             let mut note = note_payload.1.clone();
             let action = note_payload.0.clone();
@@ -19,7 +18,7 @@ impl SharedContext {
             if let Some(note_service_number) = &note.service_number {
                 if let Some(selected_order) = &self.task_audit_table.services_viewer.selected {
                     if selected_order.order.id == *note_service_number {
-                        info!("receive_notes -> Inserting note into task audit sidepanel chat view for service {}", note_service_number);
+                        log::debug!("receive_notes -> Inserting note into task audit sidepanel chat view for service {}", note_service_number);
                         let mut note_clone = note.clone();
                         if action == Action::Delete {
                             self.task_audit_table.services_viewer.chat_view.delete_note(&note_clone);
@@ -51,7 +50,7 @@ impl SharedContext {
                             .find(|task| Some(task.id.clone()) == Some(chat_view.task_id.clone()) );
 
                         if let Some(task) = task {
-                            info!("receive_notes -> Inserting note into ChatView modal for task {:?}", task.id);
+                            log::debug!("receive_notes -> Inserting note into ChatView modal for task {:?}", task.id);
                             // if let Err(e) = handle_live_notes(note_payload.clone(), task) {
                             //     log::error!("receive_notes -> Error in handle_live_notes for ChatView: {:?}", e);
                             // }
@@ -63,7 +62,7 @@ impl SharedContext {
                                 }
                             }
                         } else if action == Action::Create {
-                            info!("receive_notes -> Inserting note into ChatView modal (no task)");
+                            log::debug!("receive_notes -> Inserting note into ChatView modal (no task)");
                             chat_view.insert_note(&mut note);
                         }
                     }
@@ -108,7 +107,7 @@ impl SharedContext {
         // Handle batch of associated notes from associated_notes_rx
         if let Ok(notes) = self.associated_notes_rx.try_recv() {
 
-            info!("receive_notes -> associated_notes_rx.try_recv() -> Received {} notes", notes.len());
+            log::debug!("receive_notes -> associated_notes_rx.try_recv() -> Received {} notes", notes.len());
 
             // Initialize layout_configs if needed
             self.init_layout_configs();

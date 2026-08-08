@@ -27,9 +27,7 @@ impl MasterTechApp {
 
         match load_encrypted_user_data(HASH) {
             Some(login) => {
-                if cfg!(debug_assertions) {
-                    log::error!("loaded data: {login:?}");
-                }
+                log::debug!("loaded stored login for {}", login.username);
                 let tx = self.context.shared_ctx.db_tx.clone();
                 spawn(async move {
                     let db = Database::new(login.username.clone(), login.password.clone(), None).await;
@@ -199,7 +197,7 @@ impl MasterTechApp {
                             })
                             .await
                             .unwrap_or_default();
-                            log::info!("detected_antivirus: {detected_antivirus:?}");
+                            log::debug!("detected_antivirus: {detected_antivirus:?}");
                             let _ = current_antivirus_tx.try_send(detected_antivirus);
                         });
                     }
@@ -216,9 +214,8 @@ impl MasterTechApp {
                 let client = self.context.client.clone();
         
                 spawn(async move {
-                    match get_github_releases(github_tx, client).await {
-                        Ok(_) => log::info!("get_github_releases ran ok"),
-                        Err(e) => log::error!("Error getting github releases: {e:?}"),
+                    if let Err(e) = get_github_releases(github_tx, client).await {
+                        log::error!("Error getting github releases: {e:?}");
                     }
                 });
             } 
@@ -277,7 +274,7 @@ impl MasterTechApp {
                 }
             }
             if let Some(seb_inf) = &self.context.computer_data.seb_info {
-                log::info!("SEB: {seb_inf:#?}");
+                log::debug!("SEB: {seb_inf:#?}");
             }
 
             // Taken from the cached identity rather than recomputed from the
@@ -333,7 +330,7 @@ impl MasterTechApp {
                     .await
                     {
                         if let Some(name) = cached.friendly_name.filter(|s| !s.is_empty()) {
-                            log::info!(
+                            log::debug!(
                                 "first_run -> friendly_name cached in DB ({name}); \
                                  skipping OA-serial customer lookup"
                             );
@@ -370,16 +367,11 @@ impl MasterTechApp {
                                         .bind(("id", client_uuid.clone()))
                                         .bind(("name", match_.friendly_name.clone()))
                                         .await;
-                                    match res {
-                                        Ok(_) => log::info!(
-                                            "first_run -> persisted friendly_name {:?} \
-                                             to {client_uuid:?}",
-                                            match_.friendly_name
-                                        ),
-                                        Err(e) => log::warn!(
+                                    if let Err(e) = res {
+                                        log::warn!(
                                             "first_run -> failed to persist friendly_name \
                                              to {client_uuid:?}: {e}"
-                                        ),
+                                        );
                                     }
                                     let _ = fname_tx.try_send(match_.friendly_name.clone());
 
@@ -403,7 +395,7 @@ impl MasterTechApp {
                                         candidates.len()
                                     );
                                     for c in &candidates {
-                                        log::info!(
+                                        log::debug!(
                                             "first_run -> candidate: #{} [{}] state={} \
                                              ({}) checkin={:?}",
                                             c.service_number,
@@ -420,9 +412,8 @@ impl MasterTechApp {
                                 }
                                 Err(e) => {
                                     log::warn!(
-                                        "first_run -> structured PrestaShop lookup \
-                                         failed: {e:?} — falling back to Everest \
-                                         friendly_name only"
+                                        "first_run -> PrestaShop lookup failed ({e}); \
+                                         falling back to Everest"
                                     );
                                     if let Ok(name) =
                                         lookup_customer_by_serial(&serial13).await
@@ -478,7 +469,7 @@ impl MasterTechApp {
         }
 
         while let Ok(copied_items) = self.context.copied_items_rx.try_recv() {
-            log::info!("{copied_items}\n");
+            log::debug!("copied: {copied_items}");
             ctx.request_repaint();
         }
 

@@ -268,7 +268,7 @@ impl CarboniteResponse {
             .await?;
 
         let response_json: Vec<Self> = response.json().await?;
-        log::info!("response_json: {:?}", response_json);
+        log::debug!("response_json: {:?}", response_json);
         Ok(response_json)
     }
 

@@ -56,23 +56,21 @@ impl FileExplorerView {
 
     /// Initialize the explorer by requesting the current directory
     pub fn initialize(&mut self) {
-        log::info!("FileExplorer: Initializing - requesting 'current' directory");
+        log::debug!("FileExplorer: Initializing - requesting 'current' directory");
         self.loading = true;
         let cmd = Cmd::FileSystemAction(FileSystemAction::EnterDirectory("current".to_string()));
-        match self.send_cmd_tx.send(cmd) {
-            Ok(_) => log::info!("FileExplorer: Initialize command sent"),
-            Err(e) => log::error!("FileExplorer: Failed to send initialize command: {:?}", e),
+        if let Err(e) = self.send_cmd_tx.send(cmd) {
+            log::error!("FileExplorer: Failed to send initialize command: {:?}", e);
         }
     }
 
     /// Navigate to a specific path
     pub fn navigate_to(&mut self, path: &str) {
-        log::info!("FileExplorer: Navigating to path: {}", path);
+        log::debug!("FileExplorer: Navigating to path: {}", path);
         self.loading = true;
         let cmd = Cmd::FileSystemAction(FileSystemAction::EnterDirectory(path.to_string()));
-        match self.send_cmd_tx.send(cmd) {
-            Ok(_) => log::info!("FileExplorer: Navigate command sent for path: {}", path),
-            Err(e) => log::error!("FileExplorer: Failed to send navigate command: {:?}", e),
+        if let Err(e) = self.send_cmd_tx.send(cmd) {
+            log::error!("FileExplorer: Failed to send navigate command: {:?}", e);
         }
     }
 
@@ -107,14 +105,14 @@ impl FileExplorerView {
         // Log if action changed (compare by debug string since FileSystemAction doesn't impl PartialEq)
         let action_changed = format!("{:?}", prev_action) != format!("{:?}", self.filesystem.current_action);
         if action_changed {
-            log::info!("FileExplorer: Action changed from {:?} to {:?}", 
+            log::debug!("FileExplorer: Action changed from {:?} to {:?}", 
                 prev_action, self.filesystem.current_action);
         }
         
         // If we had a pending action and the filesystem processed it, clear loading
         if had_action && self.filesystem.current_action.is_some() {
             // Action was processed, loading is done
-            log::info!("FileExplorer: Action processed, clearing loading state");
+            log::debug!("FileExplorer: Action processed, clearing loading state");
             self.loading = false;
         }
         
@@ -122,7 +120,7 @@ impl FileExplorerView {
         if self.loading {
             if let database::schema::Node::Folder(_, children) = &self.filesystem.root {
                 if !children.is_empty() {
-                    log::info!("FileExplorer: Root has {} children, clearing loading state", children.len());
+                    log::debug!("FileExplorer: Root has {} children, clearing loading state", children.len());
                     self.loading = false;
                 }
             }
@@ -202,7 +200,6 @@ impl FileExplorerView {
                     if response.lost_focus() {
                         self.is_editing_path = false;
                         if ui.input(|i| i.key_pressed(eframe::egui::Key::Enter)) {
-                            log::info!("FileExplorer: Navigating to path: {}", self.path_input);
                             self.navigate_to(&self.path_input.clone());
                         }
                     }
@@ -274,10 +271,9 @@ impl WebSocketFileSysHelper {
 
 impl FileSysHelper for WebSocketFileSysHelper {
     fn handle_filesystem_action(&mut self, action: &FileSystemAction) {
-        log::info!("WebSocketFileSysHelper: Forwarding action to client: {:?}", action);
-        match self.send_cmd_tx.try_send(Cmd::FileSystemAction(action.clone())) {
-            Ok(_) => log::info!("WebSocketFileSysHelper: Action forwarded successfully"),
-            Err(e) => log::error!("WebSocketFileSysHelper: Failed to forward action: {:?}", e),
+        log::debug!("WebSocketFileSysHelper: Forwarding action to client: {:?}", action);
+        if let Err(e) = self.send_cmd_tx.try_send(Cmd::FileSystemAction(action.clone())) {
+            log::error!("WebSocketFileSysHelper: Failed to forward action: {:?}", e);
         }
     }
 }

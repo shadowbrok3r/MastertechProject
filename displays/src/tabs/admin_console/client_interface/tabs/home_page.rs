@@ -538,6 +538,7 @@ impl WebSocketClient {
             &computer_label,
             &self.client.connection_string,
             self.client.boot_environment,
+            self.client_version.as_deref(),
         );
         let actions = self.home_page.render_inventory(ui);
         ui.separator();
@@ -744,6 +745,7 @@ fn render_status_header(
     computer_label: &str,
     connection_string: &str,
     boot_environment: database::schema::BootEnvironment,
+    client_version: Option<&str>,
 ) {
     ui.horizontal(|ui| {
         ui.label(
@@ -777,6 +779,18 @@ fn render_status_header(
                     .color(theme::weak_text(ui))
                     .monospace(),
             );
+            if let Some(ver) = client_version {
+                ui.label(
+                    RichText::new(format!("client v{ver}"))
+                        .small()
+                        .color(theme::weak_text(ui))
+                        .monospace(),
+                )
+                .on_hover_text(format!(
+                    "Client MasterTech build v{ver} (console v{})",
+                    crate::shape_fp::BUILD_VERSION
+                ));
+            }
         });
     });
 }

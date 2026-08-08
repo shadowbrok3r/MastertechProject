@@ -1,6 +1,6 @@
 use crossbeam::channel::Sender;
 use futures::StreamExt;
-use log::{error, info};
+use log::{debug, error};
 use reqwest::{
     header::{ACCEPT, CONTENT_TYPE, USER_AGENT},
     Client,
@@ -79,7 +79,7 @@ pub async fn run(client: Client, tx: Sender<(u64, u64)>) -> anyhow::Result<(), a
             return Ok(());
         };
         let total_length: u64 = asset0.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
-        info!("response: {url}\nLen: {total_length}");
+        debug!("update asset {url} ({total_length} bytes)");
 
         let url = proxied_github_asset_url(url);
 
@@ -93,10 +93,8 @@ pub async fn run(client: Client, tx: Sender<(u64, u64)>) -> anyhow::Result<(), a
             .await?
             .error_for_status()?;
 
-        info!("response: {response:?}");
-
         let staged = crate::utilities::safe_swap::staged_update_path()?;
-        info!("staged update path: {staged:?}");
+        debug!("staged update path: {staged:?}");
         let mut staged_file = File::create(&staged).await?;
 
         let mut stream = response.bytes_stream();
@@ -145,7 +143,6 @@ pub async fn run(client: Client, tx: Sender<(u64, u64)>) -> anyhow::Result<(), a
         if let Err(e) = tx.send((downloaded_bytes, final_total)) {
             error!("Error sending completion: {e}");
         }
-        info!("DONE");
     }
 
     Ok(())

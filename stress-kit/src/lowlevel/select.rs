@@ -62,11 +62,15 @@ fn open_in_priority_order() -> LowLevelAccess {
                 return LowLevelAccess::new(backend, detail, rejected);
             }
             Err(reason) => {
-                log::info!("stress-kit/lowlevel: {} unavailable — {reason}", candidate.label());
+                log::debug!("stress-kit/lowlevel: {} unavailable — {reason}", candidate.label());
                 rejected.push(RejectedBackend { backend: candidate, reason });
             }
         }
     }
+    log::info!(
+        "stress-kit/lowlevel: no backend opened; CPU die temperature and board voltages \
+         unavailable"
+    );
     LowLevelAccess::unavailable(
         "No low-level sensor backend is available, so CPU die temperature and board voltage \
          rails cannot be read. Disk temperatures and ACPI zones are unaffected.",

@@ -194,7 +194,7 @@ impl LiveTaskPayload {
         send_specs: bool,
     ) -> anyhow::Result<(), anyhow::Error> {
         // let mut task_data = self;
-        log::info!("schema/utilities.rs -> Send_Payload");
+        log::debug!("schema/utilities.rs -> Send_Payload");
         let queried_salesman = match User::query_user_from_email(ticket_data.salesman.clone()).await {
             Ok(user) => user,
             Err(e) => {
@@ -225,7 +225,7 @@ impl LiveTaskPayload {
         //     ticket_data.computer = Some(computer_data.id.clone());
         // }
     
-        log::info!("schema/utilities.rs -> cust_record: {customer_data:?}");
+        log::debug!("schema/utilities.rs -> cust_record: {customer_data:?}");
         let update_customer: Result<Option<Record>, surrealdb::Error> = db()
             .upsert(customer_id)
             .content(customer_data.clone())
@@ -246,17 +246,17 @@ impl LiveTaskPayload {
                 .upsert(computer_id)
                 .content(computer_data)
                 .await?;
-            log::info!("schema/utilities.rs -> create_computer_record: {create_computer_record:?}");
+            log::debug!("schema/utilities.rs -> create_computer_record: {create_computer_record:?}");
         }
     
-        log::info!("schema/utilities.rs -> ticket record: {ticket_data:?}");
+        log::debug!("schema/utilities.rs -> ticket record: {ticket_data:?}");
         let service_ticket_record: Option<Record> = db()
             .upsert(ticket_id)
             .content(ticket_data)
             .await?;
-        log::info!("schema/utilities.rs -> service_ticket_record: {service_ticket_record:?}");
+        log::debug!("schema/utilities.rs -> service_ticket_record: {service_ticket_record:?}");
     
-        log::info!("schema/utilities.rs -> Task Data: {:?}", &task_data);
+        log::debug!("schema/utilities.rs -> Task Data: {:?}", &task_data);
     
         
         let check_task_record: Vec<LiveTaskPayload> = db()
@@ -265,7 +265,7 @@ impl LiveTaskPayload {
             .await?
             .take(0)?;
     
-        log::info!("schema/utilities.rs -> check_task_record: {check_task_record:?}");
+        log::debug!("schema/utilities.rs -> check_task_record: {check_task_record:?}");
     
         if !check_task_record.is_empty() {
             for task in check_task_record.iter() {
@@ -282,7 +282,7 @@ impl LiveTaskPayload {
                             note.task_id = Some(task.id.clone());
                         }
                     }
-                    log::info!("schema/utilities.rs -> upsert_task_record: {upsert_task_record:?}");
+                    log::debug!("schema/utilities.rs -> upsert_task_record: {upsert_task_record:?}");
                 }
     
             } 
@@ -290,12 +290,13 @@ impl LiveTaskPayload {
             let create_task_record: Option<Record> = db()
                 .create(TASK_TABLE)
                 .content(task_data).await?;
-            log::info!("schema/utilities.rs -> create_task_record: {create_task_record:?}");
+            log::debug!("schema/utilities.rs -> create_task_record: {create_task_record:?}");
         }
     
         for mut note in task_notes {
-            let res = note.handle_note_creation().await;
-            log::info!("schema/utilities.rs -> Task Note Creation from Mastertech: {res:?}");
+            if let Err(e) = note.handle_note_creation().await {
+                log::warn!("Task note creation failed: {e:?}");
+            }
         }
     
         Ok(())
@@ -589,7 +590,7 @@ impl TaskHistory {
             .create(TASK_HISTORY_TABLE)
             .content(self.clone())
             .await?;
-        log::info!("Created task history record: {:?}", record);
+        log::debug!("Created task history record: {:?}", record);
         Ok(record)
     }
 

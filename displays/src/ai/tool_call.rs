@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use anyhow::{Error, Result};
 use database::schema::RecordId;
 use database::{db, SurrealValue};
-use log::info;
+use log::debug;
 
 use super::{chat, gpts, oa_client::new_oa_client};
 
@@ -66,7 +66,7 @@ pub async fn call() -> Result<(), Error> {
     if let Some(tool_calls) = first_choice.message.tool_calls {
         for tool in tool_calls {
             let ChatCompletionMessageToolCalls::Function(tool) = tool else { continue };
-            info!(
+            debug!(
                 r#"
     ===   function: '{}'
         arguments: {}"#,
@@ -99,7 +99,6 @@ pub struct TaskSummary {
 }
 
 pub async fn get_task_summary(params: GetTaskSummaryParams) -> Result<TaskSummary, String> {
-    log::info!("Calling task");
     let task: Option<TaskSummary> = db()
         .query("SELECT id, task_name, task_description FROM task WHERE service_number == $task_id")
         .bind(("task_id", params.task_id))
@@ -107,7 +106,7 @@ pub async fn get_task_summary(params: GetTaskSummaryParams) -> Result<TaskSummar
         .map_err(|e| e.to_string())?
         .take(0)
         .map_err(|e| e.to_string())?;
-    log::info!("{task:?}");
+    log::debug!("{task:?}");
     Ok(task.unwrap())
 }
 
@@ -164,7 +163,7 @@ pub async fn call_with_response(input: &str) -> Result<Vec<ChatChoice>, Box<Erro
 
     // -- If message.content, end early
     if let Some(response_content) = first_choice.message.content {
-        log::info!("Response early (no tools):\n\n{response_content}");
+        log::debug!("Response early (no tools):\n\n{response_content}");
         // return Ok(res);
     }
 
@@ -184,7 +183,7 @@ pub async fn call_with_response(input: &str) -> Result<Vec<ChatChoice>, Box<Erro
         let fn_name = tool_call.function.name.clone();
         let params: Value = serde_json::from_str(&tool_call.function.arguments).unwrap();
 
-        log::info!("Params: {params:?}\ntool_call_id: {tool_call_id:?}\nfn_name: {fn_name:?}");
+        log::debug!("Params: {params:?}\ntool_call_id: {tool_call_id:?}\nfn_name: {fn_name:?}");
         // Execute with rpc_router
         let call_result = rpc_router
             .call_route(None, fn_name, Some(params))
@@ -273,7 +272,7 @@ pub async fn call_with_response_ai_tools(input: &str) -> Result<Vec<ChatChoice>,
     // -- Execute question with conv
     let response: Vec<ChatChoice> = conv::send_user_msg(oa_client, ai_tools, messages).await?;
 
-    info!("\nFinal answer:\n\n{response:?}");
+    debug!("\nFinal answer:\n\n{response:?}");
 
     Ok(response)
 }

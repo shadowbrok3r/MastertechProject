@@ -83,11 +83,10 @@ impl MasterTechApp {
                 Version::parse(env!("CARGO_PKG_VERSION")).expect("Invalid version format");
 
             for release in releases.iter() {
-                info!("TagName: {:?}", release.tag_name);
                 let Ok(github_release_version) =
                     Version::parse(release.tag_name.trim_start_matches('v'))
                 else {
-                    error!("skipping release with unparseable tag {:?}", release.tag_name);
+                    debug!("skipping release with unparseable tag {:?}", release.tag_name);
                     continue;
                 };
                 if current_version >= github_release_version {
@@ -114,8 +113,9 @@ impl MasterTechApp {
 
                 let tx = self.context.bytes_tx.clone();
                 spawn(async move {
-                    let download = run(client, tx.clone()).await;
-                    info!("Download: {download:?}");
+                    if let Err(e) = run(client, tx.clone()).await {
+                        error!("self-update download failed: {e:?}");
+                    }
                 });
                 break;
             }

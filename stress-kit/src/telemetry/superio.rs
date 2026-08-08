@@ -214,12 +214,12 @@ impl SuperIoMonitor {
                 Some(_bus) => {
                     let hit = LpcSlot::ALL.iter().find_map(|&slot| probe_slot(lpc, slot));
                     if hit.is_none() {
-                        log::info!("stress-kit/superio: no supported SuperIO hardware monitor found");
+                        log::debug!("stress-kit/superio: no supported SuperIO hardware monitor found");
                     }
                     hit
                 }
                 None => {
-                    log::info!(
+                    log::debug!(
                         "stress-kit/superio: ISA bus unavailable; probe skipped and board \
                          voltages disabled"
                     );
@@ -248,7 +248,7 @@ impl SuperIoMonitor {
             return None;
         }
         me.last_good = Instant::now();
-        log::info!(
+        log::debug!(
             "stress-kit/superio: {chip} HWM @ 0x{hwm_base:04X}, {} rail(s) on nominal \
              (uncalibrated) dividers",
             me.cached.len()
@@ -399,7 +399,7 @@ fn log_rail_state(rail: &Rail, state: RailState, volts: Option<f32>) {
             volts.unwrap_or_default(),
             rail.reportable.min
         ),
-        RailState::Unmapped => log::info!(
+        RailState::Unmapped => log::debug!(
             "stress-kit/superio: {} channel {} reads {:.3} V, below reportable {:.2} V and never \
              nominal; treated as unwired, not a collapse",
             rail.label,
@@ -407,12 +407,19 @@ fn log_rail_state(rail: &Rail, state: RailState, volts: Option<f32>) {
             volts.unwrap_or_default(),
             rail.reportable.min
         ),
-        RailState::Discarded => log::warn!(
-            "stress-kit/superio: {} discarded ({}), no data or above reportable {:.2} V",
-            rail.label,
-            volts.map_or_else(|| "no data".to_string(), |v| format!("{v:.3} V")),
-            rail.reportable.max
-        ),
+        RailState::Discarded => match volts {
+            Some(v) if v > rail.reportable.max => log::warn!(
+                "stress-kit/superio: {} reads {v:.3} V, above its reportable ceiling {:.2} V; \
+                 discarded",
+                rail.label,
+                rail.reportable.max
+            ),
+            _ => log::debug!(
+                "stress-kit/superio: {} discarded ({})",
+                rail.label,
+                volts.map_or_else(|| "no data".to_string(), |v| format!("{v:.3} V"))
+            ),
+        },
     }
 }
 

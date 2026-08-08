@@ -1,6 +1,7 @@
 use eframe::egui::{
-    Align, Button, CentralPanel, CollapsingHeader, Color32, Frame, Key, KeyboardShortcut, Layout,
-    Margin, Modifiers, Popup, PopupCloseBehavior, RichText, ScrollArea, TextEdit, Ui,
+    text::LayoutJob, Align, Button, CentralPanel, CollapsingHeader, Color32, FontId, Frame, Key,
+    KeyboardShortcut, Layout, Margin, Modifiers, Popup, PopupCloseBehavior, RichText, ScrollArea,
+    TextEdit, TextFormat, Ui,
 };
 use crate::{
     tabs::ai_playground::{ChatMessage, ChatMessageType, ChatThread, SentFrom},
@@ -400,18 +401,21 @@ impl EnhancedAiPlayground {
     }
 
     fn render_tool_group(&self, ui: &mut Ui, group: &[ChatMessage]) {
+        let salt = group.first().map(|m| m.id.as_str()).unwrap_or("tools");
+        let plural = if group.len() == 1 { "" } else { "s" };
+        let title = format!("{}  {} tool call{plural}", icons::WRENCH, group.len());
         Frame::group(ui.style()).fill(ui.visuals().extreme_bg_color).show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(
-                RichText::new(format!("{}  {} tool call(s)", icons::WRENCH, group.len()))
-                    .small()
-                    .weak(),
-            );
-            for m in group {
-                if let ChatMessageType::Text(t) = &m.content {
-                    self.render_tool_line(ui, &m.id, t);
-                }
-            }
+            CollapsingHeader::new(RichText::new(title).small().weak())
+                .id_salt(format!("tool-group-{salt}"))
+                .default_open(true)
+                .show(ui, |ui| {
+                    for m in group {
+                        if let ChatMessageType::Text(t) = &m.content {
+                            self.render_tool_line(ui, &m.id, t);
+                        }
+                    }
+                });
         });
     }
 
@@ -436,18 +440,43 @@ impl EnhancedAiPlayground {
             None => ("", rest.trim()),
         };
 
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(name).monospace().small().strong());
-            if !status.is_empty() {
-                ui.label(RichText::new(status).small().color(Color32::LIGHT_GREEN));
-            }
-        });
-        if !args.is_empty() {
-            Self::render_payload(ui, &format!("tool-args-{id}"), "arguments", args);
+        let mut header = LayoutJob::default();
+        header.append(
+            name,
+            0.0,
+            TextFormat {
+                font_id: FontId::monospace(11.0),
+                color: ui.visuals().strong_text_color(),
+                ..Default::default()
+            },
+        );
+        if !status.is_empty() {
+            header.append(
+                &format!("  {status}"),
+                0.0,
+                TextFormat {
+                    font_id: FontId::proportional(11.0),
+                    color: Color32::LIGHT_GREEN,
+                    ..Default::default()
+                },
+            );
         }
-        if !result.is_empty() {
-            Self::render_payload(ui, &format!("tool-res-{id}"), "result", result);
+        // Nothing to reveal when the call carried neither payload.
+        if args.is_empty() && result.is_empty() {
+            ui.label(header);
+            return;
         }
+        CollapsingHeader::new(header)
+            .id_salt(format!("tool-call-{id}"))
+            .default_open(false)
+            .show(ui, |ui| {
+                if !args.is_empty() {
+                    Self::render_payload(ui, &format!("tool-args-{id}"), "arguments", args);
+                }
+                if !result.is_empty() {
+                    Self::render_payload(ui, &format!("tool-res-{id}"), "result", result);
+                }
+            });
     }
 
     /// JSON payloads get a tree; anything else falls back to monospace text.

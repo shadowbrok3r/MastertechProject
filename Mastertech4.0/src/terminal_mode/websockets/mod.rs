@@ -104,7 +104,7 @@ fn send_file_chunks(data: Vec<u8>, sender: &mut ClientTransport) {
         let response = Cmd::FileChunk(chunk.to_vec(), is_last);
         match encode_to_vec(&response, standard()) {
             Ok(payload) => {
-                log::info!(
+                log::trace!(
                     "Sending chunk {}/{} ({} bytes)",
                     i + 1,
                     total_chunks,
@@ -121,11 +121,7 @@ fn send_file_chunks(data: Vec<u8>, sender: &mut ClientTransport) {
             }
         }
     }
-    if total_chunks > 1 {
-        log::info!("All {total_chunks} chunks sent successfully");
-    } else {
-        log::info!("File chunk sent successfully");
-    }
+    log::debug!("Sent {total_chunks} file chunk(s)");
 }
 
 /// Which custom stress plan a `RunRemoteScenario` / `RunRemoteConcurrent` carries.
@@ -791,7 +787,7 @@ fn resolve_special_path(path: &str) -> String {
         };
         
         if let Some(resolved_path) = resolved {
-            log::info!("Resolved '{}' to '{}'", path, resolved_path);
+            log::debug!("Resolved '{}' to '{}'", path, resolved_path);
             return resolved_path;
         }
     }
@@ -1065,7 +1061,7 @@ impl TerminalWebsocketClient {
         // Viewer-readiness signals arm streaming for this transport.
         if command == "READY" || command == "MASTER_CONNECTED" {
             self.stream_arm.arm();
-            log::info!("handle_text_command: terminal streaming armed by {command:?}");
+            log::debug!("handle_text_command: terminal streaming armed by {command:?}");
             return;
         }
         // Drop control-plane sentinels before they reach the shell.
@@ -1223,19 +1219,17 @@ impl TerminalWebsocketClient {
                                         if !*ready && txt == "READY".to_string() {
                                             let _ = start_tx.send(true);
                                             *ready = true;
-                                            log::info!("WebSocket sender marked as ready");
+                                            log::debug!("WebSocket sender marked as ready");
                                         } else if *ready && txt != "READY".to_string() {
-                                            log::info!("GOT TEXT: {txt:?}");
+                                            log::debug!("websockets -> shell text command: {txt:?}");
                                             // Check if we need to start a persistent shell
                                             if self.persistent_shell.is_none() {
-                                                log::error!("persistent_shell IS NONE");
                                                 let shell = PersistentShell::new(
                                                     self.command_tx.clone()
                                                 );
                                                 self.persistent_shell = Some(shell);
-                                                
+
                                                 if let Some(shell) = &mut self.persistent_shell {
-                                                    log::error!("persistent_shell IS SOME");
                                                     if let Err(e) = shell.start().await {
                                                         log::error!("Failed to start persistent shell: {}", e);
                                                         // Fallback to old method
@@ -1246,11 +1240,10 @@ impl TerminalWebsocketClient {
                                                             tx, 
                                                             new_input_rx
                                                         ).await;
-                                                        log::info!("start_websocket_sender -> handle_windows_cmd_interactive: {handle_windows_cmd_interactive:?}");
+                                                        log::debug!("start_websocket_sender -> handle_windows_cmd_interactive: {handle_windows_cmd_interactive:?}");
                                                         self.interactive_input_tx = new_input_tx.clone();
                                                         self.persistent_shell = None;
                                                     } else {
-                                                        log::error!("STARTED persistent_shell");
                                                         // Send the command to the persistent shell
                                                         if let Err(e) = shell.send_command(txt).await {
                                                             log::error!("Failed to send command to persistent shell: {}", e);
@@ -1258,7 +1251,6 @@ impl TerminalWebsocketClient {
                                                     }
                                                 }
                                             } else {
-                                                log::error!("USING persistent_shell");
                                                 // Use existing persistent shell
                                                 if let Some(shell) = &mut self.persistent_shell {
                                                     if let Err(e) = shell.send_command(txt).await {
@@ -1274,10 +1266,8 @@ impl TerminalWebsocketClient {
                                         if *ready {
                                             // Deserialize incoming TerminalEvent from egui and forward to rendering loop
                                             if let Ok(event) = serde_json::from_slice::<TerminalEvent>(&bin) {
-                                                log::info!("Received TerminalEvent from egui: {:?}", event);
-                                                if event_tx.send(event.into()).is_ok() {
-                                                    log::info!("Forwarded TerminalEvent to rendering loop");
-                                                } else {
+                                                log::debug!("Received TerminalEvent from egui: {:?}", event);
+                                                if event_tx.send(event.into()).is_err() {
                                                     log::warn!("Failed to forward TerminalEvent to rendering loop");
                                                 }
                                             } else if let Some(cmd) = displays::try_deserialize_command(&bin) {
@@ -1514,16 +1504,17 @@ impl TerminalWebsocketClient {
             Cmd::LiveData => {
                 // If already running, do nothing
                 if self.join_handle.is_some() {
-                    log::info!("websockets -> LiveData already running, ignoring request");
+                    log::debug!("websockets -> LiveData already running, ignoring request");
                     return;
                 }
-                log::info!("websockets -> Starting live stats task");
+                log::debug!("websockets -> Starting live stats task");
                 let tx = self.sysinfo_tx.clone();
                 let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
                 self.live_stats_stop_tx = Some(stop_tx);
                 self.join_handle = Some(tokio::spawn(async move {
-                    let res = live_computer_stats(tx, stop_rx).await;
-                    log::info!("live_computer_stats completed: {res:?}");
+                    if let Err(e) = live_computer_stats(tx, stop_rx).await {
+                        log::warn!("live_computer_stats ended with error: {e:?}");
+                    }
                 }));
             }
             Cmd::TaskManager => todo!(),
@@ -1531,20 +1522,17 @@ impl TerminalWebsocketClient {
             // Cmd::PullKeys(_) => todo!(),
             // Cmd::PullTicket(_) => todo!(),
             Cmd::Quit => {
-                log::info!("websockets -> Received Cmd::Quit, stopping live stats");
+                log::debug!("websockets -> Cmd::Quit; stopping live stats");
                 // Signal the live stats task to stop and await it
                 if let Some(stop_tx) = self.live_stats_stop_tx.take() {
-                    log::info!("websockets -> Sending stop signal to live stats task");
                     let _ = stop_tx.send(true);
                 } else {
-                    log::warn!("websockets -> No live stats stop channel found");
+                    log::debug!("websockets -> Cmd::Quit; no live stats stop channel found");
                 }
                 if let Some(handle) = self.join_handle.take() {
-                    log::info!("websockets -> Waiting for live stats task to complete");
                     let _ = handle.await;
-                    log::info!("websockets -> Live stats task completed");
                 } else {
-                    log::warn!("websockets -> No live stats join handle found");
+                    log::debug!("websockets -> Cmd::Quit; no live stats join handle found");
                 }
             }
             Cmd::KillProcess(pid) => {
@@ -1559,7 +1547,7 @@ impl TerminalWebsocketClient {
                     match output {
                         Ok(out) => {
                             if out.status.success() {
-                                log::info!("Successfully killed process {}", pid);
+                                log::debug!("Successfully killed process {}", pid);
                             } else {
                                 let stderr = String::from_utf8_lossy(&out.stderr);
                                 log::error!("Failed to kill process {}: {}", pid, stderr);
@@ -1578,7 +1566,7 @@ impl TerminalWebsocketClient {
                     match output {
                         Ok(out) => {
                             if out.status.success() {
-                                log::info!("Successfully killed process {}", pid);
+                                log::debug!("Successfully killed process {}", pid);
                             } else {
                                 let stderr = String::from_utf8_lossy(&out.stderr);
                                 log::error!("Failed to kill process {}: {}", pid, stderr);
@@ -1690,7 +1678,6 @@ impl TerminalWebsocketClient {
                 sender.send(WsMessage::Binary(payload));
             }
             Cmd::GetDrives => {
-                log::info!("websockets -> Getting drives");
                 use sysinfo::Disks;
                 
                 let disks = Disks::new_with_refreshed_list();
@@ -1698,7 +1685,7 @@ impl TerminalWebsocketClient {
                     .filter_map(|disk| disk.mount_point().to_str().map(|s| s.to_string()))
                     .collect();
                 
-                log::info!("websockets -> Found {} drives: {:?}", drives.len(), drives);
+                log::debug!("websockets -> Found {} drives: {:?}", drives.len(), drives);
                 
                 let response = Cmd::DriveList(drives);
                 let payload = encode_to_vec(&response, standard()).expect("Failed to serialize DriveList");
@@ -1729,7 +1716,7 @@ impl TerminalWebsocketClient {
                     // disk to avoid a whole-file RAM load, sent inline.
                     match std::fs::read(path) {
                         Ok(data) => {
-                            log::info!("File read successfully, {} bytes", data.len());
+                            log::debug!("File read successfully, {} bytes", data.len());
                             send_file_chunks(data, sender);
                         }
                         Err(e) => {
@@ -1864,7 +1851,7 @@ impl TerminalWebsocketClient {
                             match encode_to_vec(&response, standard()) {
                                 Ok(payload) => {
                                     sender.send(WsMessage::Binary(payload));
-                                    log::info!("Sent file preview content");
+                                    log::debug!("Sent file preview content");
                                 }
                                 Err(e) => {
                                     log::error!("Failed to serialize preview content: {}", e);
@@ -1895,7 +1882,7 @@ impl TerminalWebsocketClient {
                 
                 match std::fs::write(&dest_path, &data) {
                     Ok(_) => {
-                        log::info!("Successfully wrote file to: {}", dest_path);
+                        log::debug!("Successfully wrote file to: {}", dest_path);
                         let response = Cmd::SaveResult(true, format!("File saved: {}", dest_path));
                         if let Ok(payload) = encode_to_vec(&response, standard()) {
                             sender.send(WsMessage::Binary(payload));
@@ -1960,7 +1947,7 @@ impl TerminalWebsocketClient {
                             match encode_to_vec(&response, standard()) {
                                 Ok(payload) => {
                                     sender.send(WsMessage::Binary(payload));
-                                    log::info!("Sent thumbnail");
+                                    log::debug!("Sent thumbnail");
                                 }
                                 Err(e) => {
                                     log::error!("Failed to serialize thumbnail: {}", e);
@@ -2004,7 +1991,7 @@ impl TerminalWebsocketClient {
                 
                 match std::fs::write(&path_str, &content) {
                     Ok(_) => {
-                        log::info!("Successfully saved file: {}", path_str);
+                        log::debug!("Successfully saved file: {}", path_str);
                         let response = Cmd::SaveResult(true, format!("File saved: {}", path_str));
                         if let Ok(payload) = encode_to_vec(&response, standard()) {
                             sender.send(WsMessage::Binary(payload));
@@ -2151,7 +2138,7 @@ impl TerminalWebsocketClient {
                     match output {
                         Ok(out) => {
                             if out.status.success() {
-                                log::info!("Workstation locked successfully");
+                                log::debug!("Workstation locked successfully");
                             } else {
                                 let stderr = String::from_utf8_lossy(&out.stderr);
                                 log::error!("Failed to lock workstation: {}", stderr);
@@ -2649,7 +2636,7 @@ impl TerminalWebsocketClient {
 
             // --- Driver protections (HVCI + vulnerable driver blocklist) ---
             Cmd::SetDriverProtections { enable, request_id } => {
-                log::warn!(
+                log::info!(
                     "websockets -> SetDriverProtections(enable={enable}, request={request_id:?})"
                 );
 
@@ -4155,7 +4142,7 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
             }
 
             Cmd::DirectFileTransfer { filename, chunk_index, total_chunks, data } => {
-                log::info!("DirectFileTransfer: {filename} chunk {chunk_index}/{total_chunks} ({} bytes)", data.len());
+                log::debug!("DirectFileTransfer: {filename} chunk {chunk_index}/{total_chunks} ({} bytes)", data.len());
                 let entry = self.file_transfer_buffers
                     .entry(filename.clone())
                     .or_insert_with(|| (total_chunks, Vec::new()));
@@ -4298,7 +4285,7 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
             Cmd::None => {},
             // ── Remote self-update (terminal-mode path) ──────────────────
             Cmd::MastertechSelfUpdateChunk { chunk_index, total_chunks, data } => {
-                log::info!(
+                log::debug!(
                     "[self-update] chunk {}/{} ({} bytes) via terminal WS",
                     chunk_index + 1,
                     total_chunks,
@@ -4521,9 +4508,10 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
             // An unhandled variant used to vanish with no trace, which reads as
             // a hang to the admin rather than a version mismatch.
             other => {
-                log::warn!(
-                    "websockets -> unhandled Cmd variant {}; client build may predate the admin",
-                    cmd_variant_name(&other)
+                let variant = cmd_variant_name(&other);
+                log::log!(
+                    unhandled_cmd_level(&variant),
+                    "websockets -> unhandled Cmd variant {variant}; client build may predate the admin"
                 );
             }
         }
@@ -4547,6 +4535,23 @@ fn send_remote_exec_result(
     };
     if let Ok(bytes) = encode_to_vec(&result_cmd, standard()) {
         sender.send(WsMessage::Binary(bytes));
+    }
+}
+
+/// Cmd variant names already reported as unhandled.
+static UNHANDLED_CMD_SEEN: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashSet<String>>,
+> = std::sync::OnceLock::new();
+
+/// Warn the first time a variant arrives unhandled, debug for every repeat.
+fn unhandled_cmd_level(variant: &str) -> log::Level {
+    let Ok(mut seen) = UNHANDLED_CMD_SEEN.get_or_init(Default::default).lock() else {
+        return log::Level::Debug;
+    };
+    if seen.insert(variant.to_string()) {
+        log::Level::Warn
+    } else {
+        log::Level::Debug
     }
 }
 
@@ -4889,7 +4894,7 @@ pub async fn live_computer_stats(tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>
             res = stop_rx.changed() => {
                 // Err = stop sender dropped (session died); Ok + true = explicit Quit.
                 if res.is_err() || *stop_rx.borrow() {
-                    log::info!("live_computer_stats: stop signaled or session closed; exiting");
+                    log::debug!("live_computer_stats: stop signaled or session closed; exiting");
                     break;
                 }
             }
@@ -5051,7 +5056,7 @@ pub async fn create_client(mut client: ConnectedClient) -> anyhow::Result<Connec
         client.id.clone(),
     )
     .await;
-    log::info!("websockets -> query_id: {existing_row:?}");
+    log::debug!("websockets -> query_id: {existing_row:?}");
 
     let existing: Option<ConnectedClient> = match &existing_row {
         Ok(opt) => opt.clone(),
@@ -5085,31 +5090,31 @@ pub async fn create_client(mut client: ConnectedClient) -> anyhow::Result<Connec
     // successful lookup.
     #[cfg(target_os = "windows")]
     if locked {
-        log::info!(
+        log::debug!(
             "websockets -> create_client: customer_locked is true; \
              skipping OA-serial customer lookup"
         );
     } else if cached_friendly.is_some() {
-        log::info!(
-            "websockets -> create_client: friendly_name already cached in DB ({:?}); \
-             skipping OA-serial customer lookup",
-            cached_friendly
+        log::debug!(
+            "websockets -> create_client: friendly_name already cached in DB; \
+             skipping OA-serial customer lookup"
         );
     } else {
-        use crate::filesystem::oa_serial::{get_oa_style_serial, to_oa3_13digit};
+        use crate::filesystem::oa_serial::{get_oa_style_serial, mask_serial, to_oa3_13digit};
         use crate::filesystem::customer_lookup::lookup_customer_by_serial;
 
         match get_oa_style_serial() {
             Ok(raw_serial) => {
-                log::info!("websockets -> Raw OA serial: {}", raw_serial);
+                // OA serial is Windows-license-derived; kept out of shipped logs.
+                log::debug!("websockets -> Raw OA serial: {}", mask_serial(&raw_serial));
 
                 match to_oa3_13digit(&raw_serial) {
                     Ok(serial13) => {
-                        log::info!("websockets -> 13-digit serial: {}", serial13);
+                        log::debug!("websockets -> 13-digit serial: {}", mask_serial(&serial13));
 
                         match lookup_customer_by_serial(&serial13).await {
                             Ok(customer_string) => {
-                                log::info!("websockets -> Customer found: {}", customer_string);
+                                log::debug!("websockets -> Customer found: {}", customer_string);
                                 client.friendly_name = Some(customer_string);
                             }
                             Err(e) => {
@@ -5134,7 +5139,7 @@ pub async fn create_client(mut client: ConnectedClient) -> anyhow::Result<Connec
     )
     .await;
 
-    log::info!("websockets -> check_id_existence: {check_id_existence:?}");
+    log::debug!("websockets -> check_id_existence: {check_id_existence:?}");
 
     // Persist the client via explicit SET clauses with per-field
     // `.bind()`.  This used to be `UPDATE $id MERGE $patch` with a
@@ -5207,7 +5212,7 @@ pub async fn create_client(mut client: ConnectedClient) -> anyhow::Result<Connec
     }
     let merge_res = q.await;
     match merge_res {
-        Ok(_) => log::info!(
+        Ok(_) => log::debug!(
             "websockets -> create_client: partial-merge UPDATE applied for {:?}",
             client.id
         ),
