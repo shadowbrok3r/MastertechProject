@@ -23,6 +23,10 @@ use axum::response::{IntoResponse, Response};
 /// Route firmware fetches BIOSLove payloads from, content-addressed by digest.
 const PAYLOAD_ROUTE: &str = "/api/v1/qc/bioslove/payload/{sha256}";
 
+/// Ceiling on one share read. A 16 MiB ROM takes well under a second on the LAN;
+/// anything near this means the share is gone.
+const SHARE_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
 #[derive(Clone)]
 struct Relay {
     client: reqwest::Client,
@@ -45,7 +49,7 @@ async fn main() {
     let share = std::env::var("BIOSLOVE_SHARE").unwrap_or_else(|_| {
         r"\\opk-riv\winbits\Drivers\Thumb\multiboot\BiosLove".to_string()
     });
-    let index = std::env::var("BIOSLOVE_INDEX").unwrap_or_else(|_| "index.json".to_string());
+    let index = resolve_index_path();
     let payloads = load_payload_map(&index, &share);
 
     let relay = Relay {
@@ -61,12 +65,54 @@ async fn main() {
         "preboot-relay: {} payload digest(s) from {index} over {share}",
         relay.payloads.len()
     );
+    if !relay.payloads.is_empty() && !std::path::Path::new(&share).is_dir() {
+        eprintln!(
+            "preboot-relay: WARNING {share} is not reachable - payload fetches will fail until it is"
+        );
+    }
     let app = Router::new()
         .route(PAYLOAD_ROUTE, axum::routing::get(payload))
         .fallback(proxy)
         .with_state(relay);
     let listener = tokio::net::TcpListener::bind(&listen).await.expect("bind listen addr");
     axum::serve(listener, app).await.expect("serve");
+}
+
+/// Locate `index.json` without depending on the working directory.
+///
+/// `cargo run` from this crate, from the repo root, and the built binary run
+/// from anywhere all have different working directories, so a bare relative
+/// default silently finds nothing. `BIOSLOVE_INDEX` overrides the search.
+fn resolve_index_path() -> String {
+    if let Ok(v) = std::env::var("BIOSLOVE_INDEX") {
+        if !v.trim().is_empty() {
+            return v;
+        }
+    }
+    let mut candidates: Vec<PathBuf> = vec![
+        PathBuf::from("index.json"),
+        // Running from this crate's directory.
+        PathBuf::from("../bioslove-index/index.json"),
+        // Running from the repo root.
+        PathBuf::from("bioslove-index/index.json"),
+    ];
+    // Installed layout: <repo>/preboot-relay/target/<profile>/preboot-relay.exe
+    if let Ok(exe) = std::env::current_exe() {
+        for up in [3usize, 4] {
+            let mut p = exe.clone();
+            for _ in 0..=up {
+                p.pop();
+            }
+            candidates.push(p.join("bioslove-index").join("index.json"));
+        }
+    }
+    for c in &candidates {
+        if c.is_file() {
+            return c.display().to_string();
+        }
+    }
+    // Nothing found: report the bare name so the error names something familiar.
+    "index.json".to_string()
 }
 
 /// Map every digest in a `bioslove-index` document to its file on the share.
@@ -140,8 +186,10 @@ async fn payload(State(relay): State<Relay>, AxPath(sha): AxPath<String>) -> Res
         println!("GET payload/{sha} -> 404 (not in index)");
         return (StatusCode::NOT_FOUND, "unknown payload digest").into_response();
     };
-    match tokio::fs::read(path).await {
-        Ok(bytes) => {
+    // An unreachable SMB host blocks for tens of seconds; firmware waiting on a
+    // flash deserves a fast, legible refusal instead of a stall.
+    match tokio::time::timeout(SHARE_READ_TIMEOUT, tokio::fs::read(path)).await {
+        Ok(Ok(bytes)) => {
             println!("GET payload/{sha} -> 200 ({}B) {}", bytes.len(), path.display());
             (
                 StatusCode::OK,
@@ -150,9 +198,21 @@ async fn payload(State(relay): State<Relay>, AxPath(sha): AxPath<String>) -> Res
             )
                 .into_response()
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             eprintln!("GET payload/{sha} -> 502 {}: {e}", path.display());
             (StatusCode::BAD_GATEWAY, format!("share read failed: {e}")).into_response()
+        }
+        Err(_) => {
+            eprintln!(
+                "GET payload/{sha} -> 504 share did not respond in {}s: {}",
+                SHARE_READ_TIMEOUT.as_secs(),
+                path.display()
+            );
+            (
+                StatusCode::GATEWAY_TIMEOUT,
+                "firmware share did not respond; check it is reachable",
+            )
+                .into_response()
         }
     }
 }

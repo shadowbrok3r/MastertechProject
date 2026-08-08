@@ -497,6 +497,73 @@ fn parse_pb_key(s: &str) -> Option<tcp_protocol::preboot::PbKeyCode> {
     })
 }
 
+/// Ask firmware for one state topic and wait for the answer.
+///
+/// The reply carries a JSON *document* rather than fixed fields, so it is parsed
+/// back into a value here: a caller gets structured data, not a string holding
+/// JSON, and a new firmware topic needs no change on this side.
+async fn preboot_query(
+    serial: &str,
+    topic: &str,
+    arg: &str,
+    limit: u32,
+    timeout_ms: u64,
+) -> Result<serde_json::Value, ErrorData> {
+    let hub = preboot_hub()?;
+    if !hub.is_connected(serial) {
+        return Err(ErrorData::new(
+            ErrorCode::INVALID_PARAMS,
+            format!("no direct link for serial '{serial}'; call preboot_list_clients"),
+            None,
+        ));
+    }
+    // Drop a stale answer so the poll below cannot return a previous topic's.
+    let _ = hub.take_query_result(serial);
+    let req = tcp_protocol::preboot::PbQuery {
+        topic: topic.to_string(),
+        arg: arg.to_string(),
+        limit,
+    };
+    if !hub.send_query(serial, &req) {
+        return Err(ErrorData::new(
+            ErrorCode::INTERNAL_ERROR,
+            "direct link dropped the query frame".to_string(),
+            None,
+        ));
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+    while std::time::Instant::now() < deadline {
+        if let Some(r) = hub.take_query_result(serial) {
+            if !r.ok {
+                return Err(ErrorData::new(
+                    ErrorCode::INVALID_PARAMS,
+                    format!("firmware refused topic '{}': {}", r.topic, r.error),
+                    None,
+                ));
+            }
+            let mut v: serde_json::Value = serde_json::from_str(&r.json).map_err(|e| {
+                ErrorData::new(
+                    ErrorCode::INTERNAL_ERROR,
+                    format!("firmware sent invalid JSON for '{}': {e}", r.topic),
+                    None,
+                )
+            })?;
+            if r.truncated {
+                if let Some(o) = v.as_object_mut() {
+                    o.insert("truncated".into(), serde_json::Value::Bool(true));
+                }
+            }
+            return Ok(v);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    Err(ErrorData::new(
+        ErrorCode::INTERNAL_ERROR,
+        format!("firmware did not answer topic '{topic}' within {timeout_ms}ms"),
+        None,
+    ))
+}
+
 /// Flatten a decoded firmware frame into one string per terminal row.
 fn preboot_frame_lines(f: &tcp_protocol::preboot::PreBootFrame) -> Vec<String> {
     let cols = f.cols.max(1) as usize;
@@ -696,6 +763,45 @@ pub struct PrebootRunPluginParams {
     #[schemars(description = "JSON-encoded argument string passed to the plugin tool")]
     pub args: Option<String>,
     #[schemars(description = "How long to wait for the firmware's result (default 30000ms)")]
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct PrebootLogsParams {
+    #[schemars(description = "Firmware serial, from preboot_list_clients")]
+    pub serial: String,
+    #[schemars(
+        description = "Case-insensitive substring filter applied before the tail is taken, \
+                       e.g. 'flash:' for pre-flight lines or 'bioslove:' for the flash runner. \
+                       Empty returns everything."
+    )]
+    pub contains: Option<String>,
+    #[schemars(description = "How many matching lines to return, newest last (default 200, max 5000)")]
+    pub limit: Option<u32>,
+    #[schemars(description = "How long to wait for the firmware's answer (default 10000ms)")]
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct PrebootSysInfoParams {
+    #[schemars(description = "Firmware serial, from preboot_list_clients")]
+    pub serial: String,
+    #[schemars(
+        description = "Top-level section to return instead of the whole document: system, cpu, \
+                       memory, storage, network, diagnostics, bios_settings, firmware_update, \
+                       boot_diagnostics, volume_signatures, identity. Empty returns everything, \
+                       which on a machine with a large HII database is big - prefer a section."
+    )]
+    pub section: Option<String>,
+    #[schemars(description = "How long to wait for the firmware's answer (default 20000ms)")]
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct PrebootFlashStateParams {
+    #[schemars(description = "Firmware serial, from preboot_list_clients")]
+    pub serial: String,
+    #[schemars(description = "How long to wait for the firmware's answer (default 10000ms)")]
     pub timeout_ms: Option<u64>,
 }
 
@@ -3561,8 +3667,11 @@ impl PluginToolProvider {
     #[tool(
         name = "preboot_screen",
         description = "Read the pre-boot box's current TUI screen as text, one string per terminal row. \
-                       This is how to see what the firmware is displaying - the Storage tab's SMART/ATA \
-                       attributes, the log ring, stress results. Requires preboot_stream_ctl {stream:true} first."
+                       Use this to see what the operator is looking at, or to confirm a keypress landed. \
+                       For data rather than appearance prefer preboot_get_logs, preboot_get_system_info, \
+                       preboot_get_flash_state and preboot_get_status: a screen row is clipped to the \
+                       panel it sits in and long reports are cut off with no scrollback. \
+                       Requires preboot_stream_ctl {stream:true} first."
     )]
     async fn preboot_screen(
         &self,
@@ -3651,6 +3760,87 @@ impl PluginToolProvider {
             serde_json::json!({ "serial": p.serial, "chars": p.text.chars().count(), "sent": sent }),
         )
         .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "preboot_get_logs",
+        description = "Read a pre-boot box's log ring as text lines - the real buffer, not a picture \
+                       of the Log tab. Prefer this over preboot_screen for anything log-shaped: the \
+                       screen only shows the last ~45 rows and drops the rest, and the ring holds 500. \
+                       `contains` filters before the tail is taken, so a busy ring still yields the \
+                       lines you want ('flash:' for pre-flight verdicts, 'tcp:' for networking, \
+                       'bioslove:' for a running flash). No streaming or keypresses needed."
+    )]
+    async fn preboot_get_logs(
+        &self,
+        Parameters(p): Parameters<PrebootLogsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let v = preboot_query(
+            &p.serial,
+            "logs",
+            p.contains.as_deref().unwrap_or(""),
+            p.limit.unwrap_or(0),
+            p.timeout_ms.unwrap_or(10_000),
+        )
+        .await?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(v).map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "preboot_get_system_info",
+        description = "Read a pre-boot box's full hardware report as structured JSON - the same \
+                       document the firmware pushes to axum. Covers SMBIOS/DMI, CPU, memory and SPD, \
+                       storage with SMART/ATA, network, ESRT/capsule and power, BIOS setup questions, \
+                       boot diagnostics, volume signatures and serial provenance. Use this instead of \
+                       tabbing through the TUI with preboot_send_key. Pass `section` to fetch one part; \
+                       the whole document is large on machines with a big HII database."
+    )]
+    async fn preboot_get_system_info(
+        &self,
+        Parameters(p): Parameters<PrebootSysInfoParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let v = preboot_query(
+            &p.serial,
+            "sysinfo",
+            p.section.as_deref().unwrap_or(""),
+            0,
+            p.timeout_ms.unwrap_or(20_000),
+        )
+        .await?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(v).map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "preboot_get_flash_state",
+        description = "Read a pre-boot box's BIOSLove flash state as JSON: the detected model and \
+                       match evidence, the loaded index, the selected recipe with every step and \
+                       payload digest, the power gate's verdict, and the full pre-flight report \
+                       including why a step was refused. The TUI panel truncates that report with no \
+                       scrollback, so this is the only reliable way to read a refusal."
+    )]
+    async fn preboot_get_flash_state(
+        &self,
+        Parameters(p): Parameters<PrebootFlashStateParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let v =
+            preboot_query(&p.serial, "flash", "", 0, p.timeout_ms.unwrap_or(10_000)).await?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(v).map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "preboot_get_status",
+        description = "Read a pre-boot box's connection and mode state as JSON: current tab, status \
+                       line, effective serial, LAN IP, relay target with its provenance and any \
+                       reason it is unusable, presence/agent/streaming flags. This is the status bar \
+                       as data - use it to check what a box is doing without a screenshot."
+    )]
+    async fn preboot_get_status(
+        &self,
+        Parameters(p): Parameters<PrebootFlashStateParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let v =
+            preboot_query(&p.serial, "status", "", 0, p.timeout_ms.unwrap_or(10_000)).await?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(v).map_err(to_internal)?]))
     }
 
     #[tool(

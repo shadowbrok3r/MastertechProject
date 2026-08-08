@@ -14,7 +14,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use tcp_protocol::preboot::{self, PbPluginResult, PbPluginRun, PbStreamCtl, PreBootEvent};
+use tcp_protocol::preboot::{
+    self, PbPluginResult, PbPluginRun, PbQuery, PbQueryResult, PbStreamCtl, PreBootEvent,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Mutex, mpsc};
 
@@ -42,6 +44,8 @@ struct Session {
     tx: mpsc::UnboundedSender<Vec<u8>>,
     /// Most recent plugin result pushed by the firmware.
     plugin_result: Option<PbPluginResult>,
+    /// Most recent state-query answer pushed by the firmware.
+    query_result: Option<PbQueryResult>,
     last_seen: std::time::Instant,
     peer: String,
 }
@@ -200,6 +204,11 @@ impl DirectHub {
         self.inner.try_lock().ok()?.get_mut(serial)?.plugin_result.take()
     }
 
+    /// Take (and clear) the last state-query answer for `serial`, if any.
+    pub fn take_query_result(&self, serial: &str) -> Option<PbQueryResult> {
+        self.inner.try_lock().ok()?.get_mut(serial)?.query_result.take()
+    }
+
     /// Retries the lock so a keystroke isn't silently dropped on contention.
     fn send_tagged(&self, serial: &str, tag: u8, body: &[u8]) -> bool {
         for _ in 0..LOCK_RETRIES {
@@ -226,6 +235,10 @@ impl DirectHub {
             preboot::FRAME_TAG_PREBOOT_STREAM_CTL,
             &preboot::encode_stream_ctl(&PbStreamCtl { stream }),
         )
+    }
+
+    pub fn send_query(&self, serial: &str, req: &PbQuery) -> bool {
+        self.send_tagged(serial, preboot::FRAME_TAG_PREBOOT_QUERY, &preboot::encode_query(req))
     }
 
     pub fn run_plugin(&self, serial: &str, req: &PbPluginRun) -> bool {
@@ -338,6 +351,7 @@ async fn handle_conn(
                 frame_seq: 0,
                 tx,
                 plugin_result: None,
+                query_result: None,
                 last_seen: std::time::Instant::now(),
                 peer: peer.clone(),
             },
@@ -389,6 +403,9 @@ async fn handle_conn(
                 }
                 t if t == preboot::FRAME_TAG_PREBOOT_PLUGIN_RESULT => {
                     s.plugin_result = preboot::decode_plugin_result(&body);
+                }
+                t if t == preboot::FRAME_TAG_PREBOOT_QUERY_RESULT => {
+                    s.query_result = preboot::decode_query_result(&body);
                 }
                 t if t == tcp_protocol::FRAME_TAG_PING => {
                     let _ = s.tx.send(frame_bytes(tcp_protocol::FRAME_TAG_PONG, &[]));

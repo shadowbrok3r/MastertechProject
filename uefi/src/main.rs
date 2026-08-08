@@ -216,6 +216,19 @@ fn logln(s: String) {
     LOG_SEQ.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 }
 
+/// Per-connection TCP tracing. On until a request completes cleanly, then off:
+/// the agent polls every few seconds and seven boilerplate lines a poll drain a
+/// 500-line ring in minutes, taking every other diagnostic with them.
+static TCP_TRACE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
+
+fn tcp_trace() -> bool {
+    TCP_TRACE.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+fn set_tcp_trace(on: bool) {
+    TCP_TRACE.store(on, core::sync::atomic::Ordering::Relaxed);
+}
+
 fn log_seq() -> u64 {
     LOG_SEQ.load(core::sync::atomic::Ordering::Relaxed)
 }
@@ -2541,27 +2554,36 @@ mod net_tcp {
         let (rip, rport) =
             parse_target(target).ok_or_else(|| "bad target (use a.b.c.d or a.b.c.d:port)".to_string())?;
         let host = target.to_string();
-        logln(format!(
-            "tcp: target {}.{}.{}.{}:{} ({})",
-            rip.0[0],
-            rip.0[1],
-            rip.0[2],
-            rip.0[3],
-            rport,
-            if framed { "qc-frame" } else { "http" }
-        ));
+        if crate::tcp_trace() {
+            logln(format!(
+                "tcp: target {}.{}.{}.{}:{} ({})",
+                rip.0[0],
+                rip.0[1],
+                rip.0[2],
+                rip.0[3],
+                rport,
+                if framed { "qc-frame" } else { "http" }
+            ));
+        }
 
         let handles = boot::find_handles::<Tcp4Sb>().map_err(|e| {
+            crate::set_tcp_trace(true);
             logln(format!("tcp: find Tcp4Sb ERR {e:?}"));
             format!("no TCP4 service ({e:?})")
         })?;
-        logln(format!("tcp: Tcp4Sb handles={}", handles.len()));
+        if crate::tcp_trace() {
+            logln(format!("tcp: Tcp4Sb handles={}", handles.len()));
+        }
 
         let mut last = "no TCP4 interface".to_string();
         for (idx, sbh) in handles.into_iter().enumerate() {
             match try_one(sbh, idx, rip, rport, path, &host, body, framed) {
-                Ok(s) => return Ok(s),
+                Ok(s) => {
+                    crate::set_tcp_trace(false);
+                    return Ok(s);
+                }
                 Err(e) => {
+                    crate::set_tcp_trace(true);
                     logln(format!("tcp: if{idx} failed: {e}"));
                     last = e;
                 }
@@ -2598,7 +2620,9 @@ mod net_tcp {
             return Err(format!("create_child: {st:?}"));
         }
         let child_handle = unsafe { Handle::from_ptr(child) }.ok_or("null child handle")?;
-        logln(format!("tcp: if{idx} child created"));
+        if crate::tcp_trace() {
+            logln(format!("tcp: if{idx} child created"));
+        }
 
         let result = try_child(child_handle, idx, rip, rport, path, host, body, framed);
 
@@ -2648,7 +2672,9 @@ mod net_tcp {
         if st != Status::SUCCESS {
             return Err(format!("configure: {st:?} (DHCP first?)"));
         }
-        logln(format!("tcp: if{idx} configured"));
+        if crate::tcp_trace() {
+            logln(format!("tcp: if{idx} configured"));
+        }
 
         // One reusable completion event (we poll status, never wait on it).
         let event = unsafe { boot::create_event(EventType::empty(), Tpl::CALLBACK, None, None) }
@@ -2670,7 +2696,9 @@ mod net_tcp {
         if st != Status::SUCCESS {
             return Err(format!("connect: {st:?}"));
         }
-        logln(format!("tcp: if{idx} connected"));
+        if crate::tcp_trace() {
+            logln(format!("tcp: if{idx} connected"));
+        }
 
         // Transmit the request (framed QC payload or a hand-built HTTP request).
         let req = if framed {
@@ -2705,7 +2733,9 @@ mod net_tcp {
         if st != Status::SUCCESS {
             return Err(format!("transmit: {st:?}"));
         }
-        logln(format!("tcp: if{idx} sent {} bytes", req.len()));
+        if crate::tcp_trace() {
+            logln(format!("tcp: if{idx} sent {} bytes", req.len()));
+        }
 
         // Best-effort single read of the response.
         let mut rxbuf = vec![0u8; 1024];
@@ -2753,7 +2783,9 @@ mod net_tcp {
             }
             s => format!("(recv: {s:?})"),
         };
-        logln(format!("tcp: if{idx} resp: {resp_line}"));
+        if crate::tcp_trace() {
+            logln(format!("tcp: if{idx} resp: {resp_line}"));
+        }
 
         // Politely close.
         let _ = unsafe { ((*tcp_ptr).configure)(tcp_ptr, core::ptr::null()) };
@@ -5106,8 +5138,16 @@ fn prepare_flash_step(app: &mut App) {
 
         match capsule::power_verdict(&app.info.power) {
             Ok(m) => note.push(format!("ok  power: {m}")),
+            Err(e) if capsule::power_unreadable(&app.info.power) && app.ac_confirmed => {
+                note.push(format!("WARN power: {e}"));
+                note.push("WARN operator confirmed AC by hand ('p')".to_string());
+            }
             Err(e) => {
                 note.push(format!("BLOCKED power: {e}"));
+                if capsule::power_unreadable(&app.info.power) {
+                    note.push("  no SMBIOS battery record and no SBS read on this chipset".into());
+                    note.push("  connect AC, then press 'p' to confirm it by hand".into());
+                }
                 blocked = true;
             }
         }
@@ -5345,9 +5385,36 @@ fn page_flash(frame: &mut Frame, area: Rect, app: &App) {
         kv("Family", d.sys_family.clone()),
         kv("Chassis", format!("{} ({})", d.chassis_type, machine_side(app).label())),
         kv("BIOS", format!("{} {}", d.bios_version, d.bios_date)),
-        Line::from(""),
-        header("Index"),
     ];
+    let p = &app.info.power;
+    let power_ok = capsule::power_verdict(p);
+    left.push(Line::from(vec![
+        Span::styled(format!("{:<14}", "Power"), Style::default().fg(palette::LABEL)),
+        Span::styled(
+            match (p.portable, p.charge_pct, p.discharging) {
+                (false, _, _) => format!("AC-only ({})", p.source),
+                (true, Some(c), Some(true)) => format!("ON BATTERY {c}%"),
+                (true, Some(c), _) => format!("AC, {c}%"),
+                (true, None, Some(true)) => "ON BATTERY, charge unknown".to_string(),
+                (true, None, _) => format!("unreadable ({})", p.source),
+            },
+            Style::default().fg(if power_ok.is_ok() {
+                palette::GOOD
+            } else if app.ac_confirmed && capsule::power_unreadable(p) {
+                palette::WARN
+            } else {
+                palette::ERR
+            }),
+        ),
+    ]));
+    if app.ac_confirmed && capsule::power_unreadable(p) {
+        left.push(Line::from(Span::styled(
+            "AC confirmed by operator",
+            Style::default().fg(palette::WARN),
+        )));
+    }
+    left.push(Line::from(""));
+    left.push(header("Index"));
     match &app.flash_index {
         Some(index) => {
             left.push(kv(
@@ -5520,6 +5587,43 @@ fn page_flash(frame: &mut Frame, area: Rect, app: &App) {
                     )
                 },
             ]));
+            // Ahead of the sequence: the panel has no scrollback, and a long
+            // recipe pushes the verdict off the bottom.
+            detail.push(Line::from(""));
+            detail.push(header("Pre-flight"));
+            if app.flash_note.is_empty() {
+                detail.push(Line::from(Span::styled(
+                    "  ENTER verifies the selected step ([ ] move the cursor)",
+                    Style::default().fg(palette::MUTED),
+                )));
+            }
+            for n in &app.flash_note {
+                let c = if n.starts_with("BLOCKED") || n.starts_with("FAILED") {
+                    palette::ERR
+                } else if n.starts_with("WARN") {
+                    palette::WARN
+                } else if n.starts_with("ok") || n.starts_with("ready") {
+                    palette::GOOD
+                } else {
+                    palette::TEXT
+                };
+                detail.push(Line::from(Span::styled(
+                    format!("  {n}"),
+                    Style::default().fg(c),
+                )));
+            }
+            if app.flash_armed {
+                detail.push(Line::from(Span::styled(
+                    "  ARMED - press F again to run the vendor tool. It writes firmware.",
+                    Style::default().fg(palette::ERR),
+                )));
+            } else if app.flash_ready.is_some() {
+                detail.push(Line::from(Span::styled(
+                    "  verified - press F to arm",
+                    Style::default().fg(palette::ACCENT),
+                )));
+            }
+
             if !e.steps.is_empty() {
                 detail.push(Line::from(""));
                 detail.push(header("Sequence"));
@@ -5573,40 +5677,6 @@ fn page_flash(frame: &mut Frame, area: Rect, app: &App) {
                 detail.push(Line::from(Span::styled(
                     format!("  ! {w}"),
                     Style::default().fg(palette::WARN),
-                )));
-            }
-            detail.push(Line::from(""));
-            detail.push(header("Pre-flight"));
-            if app.flash_note.is_empty() {
-                detail.push(Line::from(Span::styled(
-                    "  ENTER verifies the selected step ([ ] move the cursor)",
-                    Style::default().fg(palette::MUTED),
-                )));
-            }
-            for n in &app.flash_note {
-                let c = if n.starts_with("BLOCKED") || n.starts_with("FAILED") {
-                    palette::ERR
-                } else if n.starts_with("WARN") {
-                    palette::WARN
-                } else if n.starts_with("ok") || n.starts_with("ready") {
-                    palette::GOOD
-                } else {
-                    palette::TEXT
-                };
-                detail.push(Line::from(Span::styled(
-                    format!("  {n}"),
-                    Style::default().fg(c),
-                )));
-            }
-            if app.flash_armed {
-                detail.push(Line::from(Span::styled(
-                    "  ARMED - press F again to run the vendor tool. It writes firmware.",
-                    Style::default().fg(palette::ERR),
-                )));
-            } else if app.flash_ready.is_some() {
-                detail.push(Line::from(Span::styled(
-                    "  verified - press F to arm",
-                    Style::default().fg(palette::ACCENT),
                 )));
             }
         }
@@ -6197,6 +6267,22 @@ fn direct_pump(
                         }
                     }
                     t if t == tcp_protocol::FRAME_TAG_PONG => {}
+                    t if t == preboot::FRAME_TAG_PREBOOT_QUERY => {
+                        if let Some(req) = preboot::decode_query(&body) {
+                            let res = answer_query(app, &req);
+                            if let Some(link) = app.direct.as_mut() {
+                                let out = preboot::encode_query_result(&res);
+                                if let Err(e) =
+                                    link.send(preboot::FRAME_TAG_PREBOOT_QUERY_RESULT, &out)
+                                {
+                                    logln(format!("direct: query result send failed: {e}"));
+                                    app.direct = None;
+                                    app.direct_stream = false;
+                                    return Ok(true);
+                                }
+                            }
+                        }
+                    }
                     t if t == preboot::FRAME_TAG_PREBOOT_PLUGIN_RUN => {
                         if let Some(req) = preboot::decode_plugin_run(&body) {
                             let res = run_plugin_direct(app, &req, terminal);
@@ -6227,6 +6313,246 @@ fn direct_pump(
         }
     }
     Ok(handled)
+}
+
+/// Answer a console state query. Every topic returns a JSON document so a new
+/// one costs no wire change; an unknown topic names the ones that exist.
+fn answer_query(
+    app: &App,
+    req: &tcp_protocol::preboot::PbQuery,
+) -> tcp_protocol::preboot::PbQueryResult {
+    use tcp_protocol::preboot::PbQueryResult;
+
+    let mut out = PbQueryResult {
+        topic: req.topic.clone(),
+        ..Default::default()
+    };
+    let (json, truncated) = match req.topic.as_str() {
+        "logs" => query_logs(&req.arg, req.limit),
+        "sysinfo" => match query_sysinfo(app, &req.arg) {
+            Ok(j) => (j, false),
+            Err(e) => {
+                out.error = e;
+                return out;
+            }
+        },
+        "flash" => (query_flash(app), false),
+        "status" => (query_status(app), false),
+        other => {
+            out.error = format!(
+                "unknown topic '{other}'; known topics: logs, sysinfo, flash, status"
+            );
+            return out;
+        }
+    };
+    // The link streams ~250 KB TUI frames routinely, so this is generous; it
+    // exists so one pathological answer can't stall the main loop mid-send.
+    const MAX_ANSWER_BYTES: usize = 4 << 20;
+    if json.len() > MAX_ANSWER_BYTES {
+        out.error = format!(
+            "'{}' is {} bytes, over the {MAX_ANSWER_BYTES}-byte answer cap; request a section or a smaller limit",
+            req.topic,
+            json.len()
+        );
+        return out;
+    }
+    out.ok = true;
+    out.json = json;
+    out.truncated = truncated;
+    out
+}
+
+/// Log ring tail, optionally filtered. `limit` 0 means the default window.
+fn query_logs(filter: &str, limit: u32) -> (String, bool) {
+    let want = if limit == 0 { 200 } else { limit.min(5000) as usize };
+    let needle = filter.to_ascii_lowercase();
+    let Ok(g) = LOG.lock() else {
+        return ("{\"lines\":[],\"error\":\"log ring busy\"}".to_string(), false);
+    };
+    let matched: Vec<&String> = g
+        .iter()
+        .filter(|l| needle.is_empty() || l.to_ascii_lowercase().contains(&needle))
+        .collect();
+    let total = matched.len();
+    let tail: Vec<&&String> = matched.iter().skip(total.saturating_sub(want)).collect();
+    (
+        serde_json::json!({
+            "held": g.len(),
+            "matched": total,
+            "returned": tail.len(),
+            "filter": filter,
+            "lines": tail.iter().map(|l| l.as_str()).collect::<Vec<_>>(),
+        })
+        .to_string(),
+        tail.len() < total,
+    )
+}
+
+/// The same document the fingerprint push sends, optionally one top-level key.
+fn query_sysinfo(app: &App, section: &str) -> Result<String, String> {
+    let full = fingerprint_json(&app.info);
+    if section.trim().is_empty() {
+        return Ok(full);
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(&full).map_err(|e| format!("own fingerprint json is invalid: {e}"))?;
+    match v.get(section) {
+        Some(part) => Ok(part.to_string()),
+        None => {
+            let keys: Vec<&str> = v.as_object().map(|o| o.keys().map(|k| k.as_str()).collect()).unwrap_or_default();
+            Err(format!("no section '{section}'; have: {}", keys.join(", ")))
+        }
+    }
+}
+
+/// Flash tab state: detection, the selected recipe, and the pre-flight verdict.
+fn query_flash(app: &App) -> String {
+    let d = &app.info.dmi;
+    let rows = flash_rows(app);
+    let selected = rows.get(app.flash_sel).and_then(|(ei, _)| {
+        app.flash_index.as_ref().map(|i| (&i.entries[*ei], *ei))
+    });
+    let power = &app.info.power;
+
+    let index = app.flash_index.as_ref().map(|i| {
+        serde_json::json!({
+            "generated_at": i.generated_at,
+            "source": i.source,
+            "laptop": i.laptop_count(),
+            "desktop": i.desktop_count(),
+        })
+    });
+
+    let matches: Vec<serde_json::Value> = app
+        .flash_matches
+        .iter()
+        .filter_map(|m| {
+            let e = app.flash_index.as_ref()?.entries.get(m.entry)?;
+            Some(serde_json::json!({
+                "folder": e.folder,
+                "side": e.side.label(),
+                "confidence": m.confidence.label(),
+                "evidence": m.evidence(),
+            }))
+        })
+        .collect();
+
+    let rows_json: Vec<serde_json::Value> = rows
+        .iter()
+        .filter_map(|(ei, conf)| {
+            let e = app.flash_index.as_ref()?.entries.get(*ei)?;
+            Some(serde_json::json!({
+                "folder": e.folder,
+                "side": e.side.label(),
+                "lane": e.lane.label(),
+                "launchable": e.lane.launchable(),
+                "bios": e.versions.bios,
+                "payloads_resolved": e.reachable,
+                "confidence": conf.map(|c| c.label()),
+            }))
+        })
+        .collect();
+
+    let selected_json = selected.map(|(e, _)| {
+        let steps: Vec<serde_json::Value> = e
+            .steps
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "index": s.index,
+                    "kind": s.kind.label(),
+                    "exec": s.exec,
+                    "exec_sha256": s.exec_sha256,
+                    "args": s.args,
+                    "after": s.after.label(),
+                    "resolved": s.resolved,
+                    "note": s.note,
+                    "files": s.files.iter().map(|f| serde_json::json!({
+                        "name": f.name, "size": f.size, "sha256": f.sha256,
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "folder": e.folder,
+            "side": e.side.label(),
+            "lane": e.lane.label(),
+            "launchable": e.lane.launchable(),
+            "modelstring": e.modelstring,
+            "aliases": e.aliases,
+            "versions": { "bios": e.versions.bios, "ec": e.versions.ec, "me": e.versions.me },
+            "payloads_resolved": e.reachable,
+            "resolved_steps": e.resolved_steps(),
+            "warnings": e.warnings,
+            "steps": steps,
+        })
+    });
+
+    serde_json::json!({
+        "machine": {
+            "board_product": d.board_product,
+            "sys_product": d.sys_product,
+            "sys_family": d.sys_family,
+            "chassis": d.chassis_type,
+            "side": machine_side(app).label(),
+            "bios_version": d.bios_version,
+            "bios_date": d.bios_date,
+        },
+        "power": {
+            "portable": power.portable,
+            "battery_present": power.battery_present,
+            "charge_pct": power.charge_pct,
+            "discharging": power.discharging,
+            "source": power.source,
+            "verdict": match capsule::power_verdict(power) {
+                Ok(m) => serde_json::json!({ "ok": true, "detail": m }),
+                Err(e) => serde_json::json!({ "ok": false, "detail": e }),
+            },
+            "unreadable": capsule::power_unreadable(power),
+            "ac_confirmed_by_operator": app.ac_confirmed,
+        },
+        "index": index,
+        "index_error": app.flash_err,
+        "index_path": bioslove::INDEX_PATH,
+        "search": app.flash_filter,
+        "matches": matches,
+        "rows": rows_json,
+        "selected": selected_json,
+        "step_cursor": app.flash_step,
+        "preflight": {
+            "note": app.flash_note,
+            "blocked": app.flash_blocked,
+            "ready": app.flash_ready.is_some(),
+            "armed": app.flash_armed,
+        },
+        "resume": app.flash_resume.as_ref().map(|r| serde_json::json!({
+            "folder": r.folder,
+            "serial": r.serial,
+            "next_step": r.next_step,
+            "total_steps": r.total_steps,
+            "last_status": r.last_status,
+        })),
+    })
+    .to_string()
+}
+
+/// Connection and mode flags — the status bar, as data.
+fn query_status(app: &App) -> String {
+    serde_json::json!({
+        "tab": TABS.get(app.tab).copied().unwrap_or(""),
+        "tab_index": app.tab,
+        "status": app.status,
+        "serial": effective_serial(&app.info),
+        "net_ip": local_ip(app),
+        "relay_target": app.target,
+        "relay_source": target_src_tag(app.target_src),
+        "relay_unreachable_reason": unreachable_reason(&app.target),
+        "presence": { "on": app.present, "registered": app.present_registered },
+        "agent_polling": app.agent,
+        "streaming": { "relay": app.streaming, "direct": app.direct_stream },
+        "direct_linked": app.direct.is_some(),
+    })
+    .to_string()
 }
 
 /// Run a plugin for a direct-link request: registry id or URL fetched over the
@@ -7847,6 +8173,7 @@ fn render(frame: &mut Frame, app: &App) {
             ("Up/Dn", "select"),
             ("[ ]", "step"),
             ("ENTER", "verify"),
+            ("p", "confirm AC"),
             ("F F", "RUN step"),
             ("f", "reload index"),
             ("q", "quit"),
@@ -8044,6 +8371,8 @@ struct App {
     flash_resume: Option<flashstate::FlashState>,
     /// Volume the index was read from; where fetched payloads and logs are written.
     flash_volume: Option<uefi::Handle>,
+    /// Operator asserts AC is connected when the power state cannot be read.
+    ac_confirmed: bool,
 }
 
 /// A recipe step that passed every gate and is ready to run.
@@ -8326,6 +8655,7 @@ fn run() -> Result<()> {
         flash_armed: false,
         flash_resume: None,
         flash_volume: None,
+        ac_confirmed: false,
     };
 
     terminal.clear()?;
@@ -8608,6 +8938,17 @@ fn run() -> Result<()> {
                 } else {
                     EditField::Target
                 };
+            }
+            // Operator attestation for a portable whose power cannot be measured.
+            terminput::KeyCode::Char('p') if app.tab == TAB_FLASH => {
+                app.ac_confirmed = !app.ac_confirmed;
+                clear_flash_prep(&mut app);
+                app.status = if app.ac_confirmed {
+                    "AC confirmed by operator - press ENTER to re-verify".into()
+                } else {
+                    "AC confirmation withdrawn".into()
+                };
+                app.dirty = true;
             }
             terminput::KeyCode::Char('p') => {
                 logln(format!("POST key: target='{}'", app.target));

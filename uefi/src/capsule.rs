@@ -237,6 +237,13 @@ pub fn power_verdict(power: &PowerState) -> Result<String, String> {
     }
 }
 
+/// True when a portable's power could not be measured at all, as opposed to
+/// being measured and found unfit. Only this case is open to operator
+/// attestation: nothing contradicts the claim that AC is connected.
+pub fn power_unreadable(power: &PowerState) -> bool {
+    power.portable && power.charge_pct.is_none() && power.discharging.is_none()
+}
+
 /// Every gate that must pass before a capsule is downloaded or flashed.
 /// Returns advisory warnings on success. `force` permits a same-version
 /// reflash, a missing version gate, and a retry after a prior format/auth

@@ -204,6 +204,12 @@ pub mod preboot {
     /// [`PbStreamCtl`]. Lets a viewer opening/closing gate the frame flow over
     /// the direct socket the same way the relay's viewer flag does.
     pub const FRAME_TAG_PREBOOT_STREAM_CTL: u8 = 0x0A;
+    /// Console → firmware: read a named slice of firmware state. Body is a
+    /// bincode [`PbQuery`]. 0x0B is the top-level shape-fingerprint tag, so the
+    /// pre-boot query pair starts at 0x0C.
+    pub const FRAME_TAG_PREBOOT_QUERY: u8 = 0x0C;
+    /// Firmware → console: the answer. Body is a bincode [`PbQueryResult`].
+    pub const FRAME_TAG_PREBOOT_QUERY_RESULT: u8 = 0x0D;
 
     /// Mirrors `ratatui::style::Color` so a cell's color survives the wire
     /// without pulling ratatui into firmware's wire crate.
@@ -325,6 +331,28 @@ pub mod preboot {
         pub stream: bool,
     }
 
+    /// Console → firmware state read. `topic` selects the document; `arg` and
+    /// `limit` are topic-specific filters. Answered with a [`PbQueryResult`].
+    #[derive(Serialize, Deserialize, Clone, Debug, Default)]
+    #[cfg_attr(feature = "fingerprint", derive(facet::Facet))]
+    pub struct PbQuery {
+        pub topic: String,
+        pub arg: String,
+        pub limit: u32,
+    }
+
+    /// Firmware → console answer. `json` is a self-describing document so a new
+    /// topic needs no wire change; `truncated` says a cap dropped part of it.
+    #[derive(Serialize, Deserialize, Clone, Debug, Default)]
+    #[cfg_attr(feature = "fingerprint", derive(facet::Facet))]
+    pub struct PbQueryResult {
+        pub topic: String,
+        pub ok: bool,
+        pub json: String,
+        pub error: String,
+        pub truncated: bool,
+    }
+
     pub fn encode_plugin_run(p: &PbPluginRun) -> Vec<u8> {
         bincode::serde::encode_to_vec(p, bincode::config::standard()).unwrap_or_default()
     }
@@ -341,6 +369,18 @@ pub mod preboot {
         bincode::serde::encode_to_vec(p, bincode::config::standard()).unwrap_or_default()
     }
     pub fn decode_stream_ctl(b: &[u8]) -> Option<PbStreamCtl> {
+        bincode::serde::decode_from_slice(b, bincode::config::standard()).ok().map(|(v, _)| v)
+    }
+    pub fn encode_query(p: &PbQuery) -> Vec<u8> {
+        bincode::serde::encode_to_vec(p, bincode::config::standard()).unwrap_or_default()
+    }
+    pub fn decode_query(b: &[u8]) -> Option<PbQuery> {
+        bincode::serde::decode_from_slice(b, bincode::config::standard()).ok().map(|(v, _)| v)
+    }
+    pub fn encode_query_result(p: &PbQueryResult) -> Vec<u8> {
+        bincode::serde::encode_to_vec(p, bincode::config::standard()).unwrap_or_default()
+    }
+    pub fn decode_query_result(b: &[u8]) -> Option<PbQueryResult> {
         bincode::serde::decode_from_slice(b, bincode::config::standard()).ok().map(|(v, _)| v)
     }
 
@@ -565,6 +605,18 @@ mod preboot_shape_fp {
         assert_eq!(shape_fingerprint::<PbPluginResult>(), 0xb2ca_f75a_d3e2_f0bc);
     }
 
+    // Firmware state-query wire; no ratatui counterpart.
+    #[test]
+    fn pb_query_pin() {
+        assert_eq!(shape_fingerprint::<PbQuery>(), 0xb377_b7fa_ccfe_06c0);
+    }
+
+    // Firmware state-query answer; no ratatui counterpart.
+    #[test]
+    fn pb_query_result_pin() {
+        assert_eq!(shape_fingerprint::<PbQueryResult>(), 0xa522_4ac5_c450_a1f8);
+    }
+
     // Firmware stream-gate wire; no ratatui counterpart.
     #[test]
     fn pb_stream_ctl_pin() {
@@ -582,6 +634,47 @@ mod tests {
         let (seq, ts) = decode_ping_payload(&bytes).unwrap();
         assert_eq!(seq, 42);
         assert_eq!(ts, 0x1234_5678_9abc_def0);
+    }
+
+    #[test]
+    fn query_roundtrip() {
+        use super::preboot::*;
+        let q = PbQuery { topic: "logs".into(), arg: "flash:".into(), limit: 500 };
+        let back = decode_query(&encode_query(&q)).unwrap();
+        assert_eq!((back.topic.as_str(), back.arg.as_str(), back.limit), ("logs", "flash:", 500));
+
+        let r = PbQueryResult {
+            topic: "flash".into(),
+            ok: true,
+            json: r#"{"preflight":{"blocked":true}}"#.into(),
+            error: String::new(),
+            truncated: true,
+        };
+        let back = decode_query_result(&encode_query_result(&r)).unwrap();
+        assert!(back.ok && back.truncated);
+        assert_eq!(back.json, r#"{"preflight":{"blocked":true}}"#);
+    }
+
+    #[test]
+    fn query_tags_are_distinct() {
+        use super::preboot::*;
+        let tags = [
+            FRAME_TAG_PREBOOT_FRAME,
+            FRAME_TAG_PREBOOT_INPUT,
+            FRAME_TAG_PREBOOT_HELLO,
+            FRAME_TAG_PREBOOT_PLUGIN_RUN,
+            FRAME_TAG_PREBOOT_PLUGIN_RESULT,
+            FRAME_TAG_PREBOOT_STREAM_CTL,
+            FRAME_TAG_PREBOOT_QUERY,
+            FRAME_TAG_PREBOOT_QUERY_RESULT,
+            FRAME_TAG_BINARY,
+            FRAME_TAG_TEXT,
+            FRAME_TAG_PING,
+            FRAME_TAG_PONG,
+            FRAME_TAG_SHAPE_FP,
+        ];
+        let unique: std::collections::BTreeSet<u8> = tags.iter().copied().collect();
+        assert_eq!(unique.len(), tags.len(), "a frame tag is used twice: {tags:?}");
     }
 
     #[test]

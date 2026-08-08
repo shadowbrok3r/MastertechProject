@@ -209,9 +209,15 @@ cargo run -p esp-image -- list --image esp.img --dir /bioslove
 | `Up`/`Down` | Select a model |
 | `[` `]` | Move the step cursor within the selected recipe |
 | `ENTER` | Verify the selected step — reads bytes, checks digests, validates the PE. **Runs nothing** |
+| `p` | Confirm by hand that AC is connected, when the power state cannot be read |
 | `F` `F` | Arm, then run the step |
 
 Clearing the search box returns to the auto-detected list.
+
+`ENTER` never loads or starts an image and never writes firmware. Its one side
+effect is on the **USB volume**: a payload absent from the stick is fetched from
+the relay and written to `\bioslove\cache\<folder>\`. Nothing is written to the
+machine until `F` `F`.
 
 ### Matching
 
@@ -257,6 +263,22 @@ Every one must pass, and each prints its verdict:
 Dimmed rows are entries whose payloads did not resolve — the index knows the
 script references a file the share no longer has.
 
+#### When the power state is unreadable
+
+Live charge comes from the SBS Smart Battery over SMBus, and that lookup walks
+PCI `00:1f.x` for vendor `0x8086` — **Intel only**. On an AMD laptop it finds
+nothing, so the reading falls back to SMBIOS type 22, and boards that omit that
+record (LUXG/`PF5LUXG` among them) leave the app with no power reading at all.
+
+The gate distinguishes *measured and unfit* from *not measurable*:
+
+- discharging, or below the 50% floor → refused outright, no override
+- no reading at all → refused, but `p` records an operator attestation that AC is
+  connected and downgrades it to a warning. The Flash tab shows `AC confirmed by
+  operator` and the pre-flight report keeps a `WARN` line saying a human asserted it
+
+`p` clears any prepared step, so press `ENTER` again after it.
+
 ### Multi-reboot recipes
 
 36 steps power the machine off and 8 reboot. Position is saved to an NV UEFI
@@ -270,23 +292,59 @@ so a machine that dies mid-recipe still leaves a record.
 
 ## 5. Remote operation
 
-With the direct link up, from the admin console or MCP:
+With the direct link up, from the admin console or MCP.
+
+### Reading state — prefer these
 
 ```
-preboot_list_clients                      # serial, peer, idle seconds
+preboot_list_clients                              # serial, peer, idle seconds
+preboot_get_status          {serial}              # the status bar, as data
+preboot_get_logs            {serial, contains, limit}
+preboot_get_system_info     {serial, section}
+preboot_get_flash_state     {serial}
+```
+
+These return **JSON from firmware memory**, not a picture of a panel. That matters:
+a TUI row is clipped to the panel it sits in and long reports scroll off with no
+scrollback, so a screen read can silently omit the thing you are looking for. Each
+one is a single round trip — no `stream_ctl`, no keypresses, no tab navigation.
+
+- `preboot_get_logs` filters *before* taking the tail, so a ring flooded by one
+  subsystem still yields the lines you want: `contains: "flash:"` for pre-flight
+  verdicts, `"tcp:"` for networking, `"bioslove:"` for a running flash.
+- `preboot_get_system_info` returns the same document the fingerprint push sends
+  to axum. Pass `section` (`storage`, `diagnostics`, `bios_settings`, `identity`,
+  `firmware_update`, …) — the whole document is large where the HII database is.
+- `preboot_get_flash_state` carries the entire pre-flight report including the
+  refusal reason, the power gate's verdict, and every step's payload digests.
+
+Firmware answers on the main loop, so a box wedged in a blocking network call
+answers late; the tools time out with the topic named rather than hanging.
+
+### Driving the UI
+
+```
 preboot_stream_ctl  {serial, stream:true} # required before reading the screen
 preboot_screen      {serial}              # the TUI as text rows
 preboot_send_key    {serial, key}         # one keypress
 preboot_type        {serial, text}        # literal text
 ```
 
-`preboot_type` sends **literal characters only** — `\b` arrives as a backslash and
-a `b`. Use `preboot_send_key` with `backspace` for editing. The relay-URL field has
-no clear operation, so fixing a long wrong value remotely costs one keypress per
-character.
+Use these to *act*, or to see what the operator is seeing. `preboot_type` sends
+**literal characters only** — `\b` arrives as a backslash and a `b`. Use
+`preboot_send_key` with `backspace` or `delete` for editing.
 
-Reading the Log tab remotely (`0`, then `preboot_screen`) is usually the fastest
-way to diagnose a box that is on the network but not in the roster.
+### Wire
+
+Query and answer are frame tags `0x0C`/`0x0D` carrying bincode `PbQuery` /
+`PbQueryResult` ([tcp_protocol/src/lib.rs](../tcp_protocol/src/lib.rs)). The answer
+body is a JSON *document*, so adding a topic changes only the firmware's
+`answer_query` — no wire change, no fingerprint change. Both structs are pinned by
+`shape_fingerprint` tests; a field added on one side without the other fails the
+build rather than silently mis-decoding.
+
+Firmware older than these tags ignores the query frame (unknown tags are dropped),
+so the tool reports a timeout against a stale box rather than misreporting.
 
 ## 6. Troubleshooting
 
@@ -300,6 +358,8 @@ way to diagnose a box that is on the network but not in the roster.
 | In the roster but nothing persists | The server's DB connection can wedge. `/register` and `/viewer` are in-memory and keep returning 200 while every write hangs — check `GET /api/v1/admin/info` for `db_connected` |
 | `\bioslove\index.json not found` | Index was never generated or never copied. See §4 |
 | Flash tab shows no match | Chassis token may be shorter than the partial threshold, or the folder has no `ver.txt` and so no aliases |
+| `preboot_get_*` times out but `preboot_screen` works | The box is running firmware older than frame tag `0x0C`. Reflash the stick |
+| A `preboot_get_*` tool isn't listed at all | The console binary predates it — rebuild and restart MasterTech, not just the firmware |
 
 ## 7. Layout
 
