@@ -5346,6 +5346,8 @@ fn do_flash_step(
         total_steps: total,
         recipe_sha256: digest,
         last_status: String::new(),
+        running: true,
+        running_cmd: p.command_line.clone(),
     };
     if let Err(e) = flashstate::save(&state) {
         logln(format!("bioslove: {e}"));
@@ -5372,6 +5374,11 @@ fn do_flash_step(
         p.command_line, p.exec_path
     ));
 
+    // Last word before the box goes silent: StartImage blocks this loop, which
+    // is what polls the EFI network stack, so a console watching the link sees
+    // an unreachable machine for the whole run unless it is told to expect it.
+    announce_busy(app, true, &p.command_line, "");
+
     let guard = launch::save_console();
     let mut dp_buf: Vec<u8> = Vec::new();
     let cpath = uefi::CString16::try_from(p.exec_path.as_str()).ok();
@@ -5394,6 +5401,8 @@ fn do_flash_step(
             // Nothing ran, so the saved position must go back to this step.
             let mut back = state.clone();
             back.next_step = p.step;
+            back.running = false;
+            back.running_cmd.clear();
             let _ = flashstate::save(&back);
             format!("launch-failed: {e}")
         }
@@ -5410,6 +5419,8 @@ fn do_flash_step(
             }
             let mut done = state.clone();
             done.last_status = format!("{:?}", ran.status);
+            done.running = false;
+            done.running_cmd.clear();
             if done.complete() {
                 let _ = flashstate::clear();
                 app.flash_resume = None;
@@ -5421,6 +5432,9 @@ fn do_flash_step(
             format!("returned {:?}", ran.status)
         }
     };
+    // The console dropped this box the moment the child took the loop, so say
+    // what happened and re-dial rather than waiting out the discovery backoff.
+    announce_busy(app, false, &p.command_line, &result);
     flashstate::append_log(
         p.volume,
         &flashstate::LogEntry {
@@ -6397,6 +6411,42 @@ fn direct_pump(
     }
     Ok(handled)
 }
+
+/// Tell a linked console that a child image is taking the main loop, or that it
+/// has returned.
+///
+/// `StartImage` blocks the loop that polls the EFI network stack, so for the
+/// whole run the box answers nothing — no frames, no pong, not even ARP. A
+/// viewer cannot tell that from a dead machine, so this is sent as the last
+/// thing before the handover and the first thing after. On the way out the
+/// socket is usually already gone; dropping it here re-arms discovery so the
+/// console gets the box back in seconds rather than a backoff period.
+fn announce_busy(app: &mut App, active: bool, what: &str, status: &str) {
+    let body = tcp_protocol::preboot::encode_busy(&tcp_protocol::preboot::PbBusy {
+        active,
+        what: what.to_string(),
+        expect_secs: CHILD_SILENCE_BUDGET_SECS,
+        status: status.to_string(),
+    });
+    let sent = match app.direct.as_mut() {
+        Some(link) => link
+            .send(tcp_protocol::preboot::FRAME_TAG_PREBOOT_BUSY, &body)
+            .is_ok(),
+        None => false,
+    };
+    if !sent && !active {
+        // The console tore the session down while we were blocked.
+        app.direct = None;
+        app.direct_stream = false;
+        app.discover_backoff_ms = 0;
+        app.discover_next_ms = 0;
+        logln("direct: link lost during the child image; re-dialling".to_string());
+    }
+}
+
+/// How long a box may reasonably stay silent inside a child image. A 16 MiB SPI
+/// verify runs for minutes, so a viewer must not call it dead before this.
+const CHILD_SILENCE_BUDGET_SECS: u32 = 600;
 
 /// Answer a console state query. Every topic returns a JSON document so a new
 /// one costs no wire change; an unknown topic names the ones that exist.

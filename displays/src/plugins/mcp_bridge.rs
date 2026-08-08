@@ -3629,7 +3629,12 @@ impl PluginToolProvider {
         description = "List UEFI pre-boot boxes currently linked to this console over the direct :9209 socket. \
                        These are firmware clients running before any OS, so none of the Windows-agent tools \
                        (remote_egui_*, driver_snapshot_*, scripts_run_remote) apply to them - use the preboot_* \
-                       tools instead. Returns serial, socket peer, and seconds since the last frame."
+                       tools instead. Returns serial, socket peer, and seconds since the last frame. \
+                       Also returns `running`: boxes that announced they were handing the CPU to a vendor \
+                       firmware tool. Those DISAPPEAR from `clients` for the whole run - a blocking child \
+                       image stalls the firmware's polled network stack, so the box answers nothing, not even \
+                       ping. A serial in `running` with `within_expected_window: true` is working, NOT dead; \
+                       do not power it off."
     )]
     async fn preboot_list_clients(
         &self,
@@ -3639,10 +3644,38 @@ impl PluginToolProvider {
         let agents: Vec<serde_json::Value> = hub
             .agents()
             .into_iter()
-            .map(|a| serde_json::json!({ "serial": a.serial, "peer": a.peer, "idle_secs": a.idle_secs }))
+            .map(|a| {
+                let busy = hub.busy_record(&a.serial).filter(|b| b.busy.active);
+                serde_json::json!({
+                    "serial": a.serial,
+                    "peer": a.peer,
+                    "idle_secs": a.idle_secs,
+                    "running": busy.map(|b| b.busy.what),
+                })
+            })
+            .collect();
+        // A box mid-child-image is absent from `agents` by construction, so the
+        // retained record is the only thing that can report it.
+        let linked: std::collections::HashSet<String> =
+            hub.agents().into_iter().map(|a| a.serial).collect();
+        let running: Vec<serde_json::Value> = hub
+            .busy_serials()
+            .into_iter()
+            .filter(|(s, r)| r.busy.active && !linked.contains(s))
+            .map(|(serial, r)| {
+                serde_json::json!({
+                    "serial": serial,
+                    "running": r.busy.what,
+                    "silent_secs": r.at.elapsed().as_secs(),
+                    "expect_secs": r.busy.expect_secs,
+                    "within_expected_window": r.within_budget(),
+                    "note": "firmware handed the CPU to this tool; it cannot answer the network until it returns",
+                })
+            })
             .collect();
         Ok(CallToolResult::success(vec![
-            ContentBlock::json(serde_json::json!({ "clients": agents })).map_err(to_internal)?,
+            ContentBlock::json(serde_json::json!({ "clients": agents, "running": running }))
+                .map_err(to_internal)?,
         ]))
     }
 

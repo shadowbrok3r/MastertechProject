@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use tcp_protocol::preboot::{
-    self, PbPluginResult, PbPluginRun, PbQuery, PbQueryResult, PbStreamCtl, PreBootEvent,
+    self, PbBusy, PbPluginResult, PbPluginRun, PbQuery, PbQueryResult, PbStreamCtl, PreBootEvent,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Mutex, mpsc};
@@ -64,9 +64,30 @@ pub struct DirectAgent {
 }
 
 /// Shared registry of direct sessions, keyed by firmware serial (HELLO body).
+/// A box's last "entering/leaving a child image" report, kept keyed by serial.
+///
+/// This deliberately outlives the session: the box goes silent *because* the
+/// child blocked its polled network stack, so the socket dies mid-run and the
+/// session is torn down. Without a record that survives that, a machine part-way
+/// through a firmware flash is indistinguishable from one that was unplugged.
+#[derive(Clone, Debug)]
+pub struct BusyRecord {
+    pub busy: PbBusy,
+    pub at: std::time::Instant,
+}
+
+impl BusyRecord {
+    /// Still inside the window the firmware said to expect silence for.
+    pub fn within_budget(&self) -> bool {
+        self.busy.active && self.at.elapsed().as_secs() <= u64::from(self.busy.expect_secs)
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct DirectHub {
     inner: Arc<Mutex<HashMap<String, Session>>>,
+    /// Survives session teardown, unlike everything in `inner`.
+    busy: Arc<Mutex<HashMap<String, BusyRecord>>>,
     started: Arc<std::sync::atomic::AtomicBool>,
     advertising: Arc<std::sync::atomic::AtomicBool>,
     port: Arc<std::sync::atomic::AtomicU16>,
@@ -92,6 +113,7 @@ impl DirectHub {
         }
         self.port.store(port, std::sync::atomic::Ordering::Release);
         let inner = self.inner.clone();
+        let busy = self.busy.clone();
         let started = self.started.clone();
         PlatformSpawner::spawn(async move {
             let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
@@ -109,8 +131,9 @@ impl DirectHub {
                     Ok((sock, peer)) => {
                         errors = 0;
                         let inner = inner.clone();
+                        let busy = busy.clone();
                         PlatformSpawner::spawn(async move {
-                            if let Err(e) = handle_conn(sock, peer.to_string(), inner).await {
+                            if let Err(e) = handle_conn(sock, peer.to_string(), inner, busy).await {
                                 log::debug!("preboot direct: session {peer} ended: {e}");
                             }
                         });
@@ -236,6 +259,19 @@ impl DirectHub {
         self.inner.try_lock().ok()?.get_mut(serial)?.query_result.take()
     }
 
+    /// Last child-image report for `serial`, kept across disconnects.
+    pub fn busy_record(&self, serial: &str) -> Option<BusyRecord> {
+        self.busy.try_lock().ok()?.get(serial).cloned()
+    }
+
+    /// Every retained child-image report, including boxes with no live session.
+    pub fn busy_serials(&self) -> Vec<(String, BusyRecord)> {
+        match self.busy.try_lock() {
+            Ok(m) => m.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
     /// Retries the lock so a keystroke isn't silently dropped on contention.
     fn send_tagged(&self, serial: &str, tag: u8, body: &[u8]) -> bool {
         for _ in 0..LOCK_RETRIES {
@@ -355,6 +391,7 @@ async fn handle_conn(
     mut sock: tokio::net::TcpStream,
     peer: String,
     inner: Arc<Mutex<HashMap<String, Session>>>,
+    busy: Arc<Mutex<HashMap<String, BusyRecord>>>,
 ) -> std::io::Result<()> {
     sock.set_nodelay(true).ok();
     // First frame must be HELLO carrying the serial.
@@ -395,6 +432,7 @@ async fn handle_conn(
     let (mut rd, mut wr) = sock.into_split();
     let serial_r = serial.clone();
     let inner_r = inner.clone();
+    let busy_r = busy.clone();
     let ping_tx = {
         let map = inner.lock().await;
         map.get(&serial).map(|s| s.tx.clone())
@@ -433,6 +471,29 @@ async fn handle_conn(
                 }
                 t if t == preboot::FRAME_TAG_PREBOOT_QUERY_RESULT => {
                     s.query_result = preboot::decode_query_result(&body);
+                }
+                t if t == preboot::FRAME_TAG_PREBOOT_BUSY => {
+                    if let Some(b) = preboot::decode_busy(&body) {
+                        if b.active {
+                            log::info!(
+                                "preboot direct: '{serial_r}' entering child image '{}'; silence expected for up to {}s",
+                                b.what, b.expect_secs
+                            );
+                        } else {
+                            log::info!(
+                                "preboot direct: '{serial_r}' returned from '{}': {}",
+                                b.what, b.status
+                            );
+                        }
+                        // Recorded outside the session map so it survives the
+                        // teardown the child image is about to cause.
+                        if let Ok(mut m) = busy_r.try_lock() {
+                            m.insert(
+                                serial_r.clone(),
+                                BusyRecord { busy: b, at: std::time::Instant::now() },
+                            );
+                        }
+                    }
                 }
                 t if t == tcp_protocol::FRAME_TAG_PING => {
                     let _ = s.tx.send(frame_bytes(tcp_protocol::FRAME_TAG_PONG, &[]));

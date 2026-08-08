@@ -37,6 +37,16 @@ pub struct FlashState {
     /// EFI status text from the last step that returned.
     #[serde(default)]
     pub last_status: String,
+    /// A child image was started and has not returned. Written before the
+    /// launch and cleared after, so a hang or a power cut leaves it set: on the
+    /// next boot that is the only evidence of what the machine was doing, since
+    /// a blocked child stalls the polled network stack and takes the console
+    /// link, frame streaming and even ICMP with it.
+    #[serde(default)]
+    pub running: bool,
+    /// Command line of the child recorded in `running`.
+    #[serde(default)]
+    pub running_cmd: String,
 }
 
 impl FlashState {

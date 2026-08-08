@@ -210,6 +210,12 @@ pub mod preboot {
     pub const FRAME_TAG_PREBOOT_QUERY: u8 = 0x0C;
     /// Firmware → console: the answer. Body is a bincode [`PbQueryResult`].
     pub const FRAME_TAG_PREBOOT_QUERY_RESULT: u8 = 0x0D;
+    /// Firmware → console: a child image is about to take over, or has returned.
+    /// Body is a bincode [`PbBusy`]. Sent because `StartImage` blocks the app's
+    /// main loop, which drives the *polled* EFI network stack — so for the whole
+    /// run the box answers nothing at all, not even ARP, and is indistinguishable
+    /// from a dead one. This frame is the last thing it says before going quiet.
+    pub const FRAME_TAG_PREBOOT_BUSY: u8 = 0x0E;
 
     /// Mirrors `ratatui::style::Color` so a cell's color survives the wire
     /// without pulling ratatui into firmware's wire crate.
@@ -371,6 +377,28 @@ pub mod preboot {
     pub fn decode_stream_ctl(b: &[u8]) -> Option<PbStreamCtl> {
         bincode::serde::decode_from_slice(b, bincode::config::standard()).ok().map(|(v, _)| v)
     }
+    /// Firmware → console: entering or leaving a blocking child image.
+    #[derive(Serialize, Deserialize, Clone, Debug, Default)]
+    #[cfg_attr(feature = "fingerprint", derive(facet::Facet))]
+    pub struct PbBusy {
+        /// True on the way in, false once the child returns.
+        pub active: bool,
+        /// Command line of the child, for the console to display.
+        pub what: String,
+        /// How long the box may reasonably stay silent, in seconds. A viewer
+        /// that has not exceeded this should say "running", not "offline".
+        pub expect_secs: u32,
+        /// EFI status text once `active` is false; empty on the way in.
+        pub status: String,
+    }
+
+    pub fn encode_busy(p: &PbBusy) -> Vec<u8> {
+        bincode::serde::encode_to_vec(p, bincode::config::standard()).unwrap_or_default()
+    }
+    pub fn decode_busy(b: &[u8]) -> Option<PbBusy> {
+        bincode::serde::decode_from_slice(b, bincode::config::standard()).ok().map(|(v, _)| v)
+    }
+
     pub fn encode_query(p: &PbQuery) -> Vec<u8> {
         bincode::serde::encode_to_vec(p, bincode::config::standard()).unwrap_or_default()
     }
@@ -617,6 +645,12 @@ mod preboot_shape_fp {
         assert_eq!(shape_fingerprint::<PbQueryResult>(), 0xa522_4ac5_c450_a1f8);
     }
 
+    // Firmware busy/child-image wire; no ratatui counterpart.
+    #[test]
+    fn pb_busy_pin() {
+        assert_eq!(shape_fingerprint::<PbBusy>(), 0x82f4_a6ad_a1aa_cbae);
+    }
+
     // Firmware stream-gate wire; no ratatui counterpart.
     #[test]
     fn pb_stream_ctl_pin() {
@@ -667,6 +701,7 @@ mod tests {
             FRAME_TAG_PREBOOT_STREAM_CTL,
             FRAME_TAG_PREBOOT_QUERY,
             FRAME_TAG_PREBOOT_QUERY_RESULT,
+            FRAME_TAG_PREBOOT_BUSY,
             FRAME_TAG_BINARY,
             FRAME_TAG_TEXT,
             FRAME_TAG_PING,

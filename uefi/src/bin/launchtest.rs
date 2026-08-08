@@ -144,6 +144,8 @@ fn flashstate_selftest(volume: uefi::Handle) {
                 total_steps: 3,
                 recipe_sha256: "deadbeef".to_string(),
                 last_status: "WARN_DELETE_FAILURE".to_string(),
+                running: false,
+                running_cmd: String::new(),
             };
             match flashstate::save(&st) {
                 Ok(()) => println!("  saved : nothing stored, wrote one - reboot to check"),
