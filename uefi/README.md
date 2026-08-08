@@ -145,16 +145,45 @@ If you add a new OEM filler string, add it to that list.
 Replaces the BIOSLove USB's `dir *.nsh` model picker. It identifies the machine,
 verifies every byte against an index, then launches the vendor's own flasher.
 
-### It needs `\bioslove\index.json`
+### What the stick has to carry
 
-Without it the tab shows `\bioslove\index.json not found on any volume`. The index
-is generated off-box from the authoritative share:
+**Nothing but the app**, if the relay is reachable. Both the index and the
+payloads fall back to the LAN:
+
+| | On the stick | Fetched from the relay |
+|---|---|---|
+| `\EFI\BOOT\BOOTX64.EFI` | **required** — it is what boots | — |
+| `\bioslove\index.json` | used first if present | `GET /api/v1/qc/bioslove/index` |
+| payload tree | used first if present | `GET /api/v1/qc/bioslove/payload/<sha256>` |
+
+So three stick recipes all work:
+
+- **App only (~9 MB)** — needs the relay for both index and payloads
+- **App + index (~9.5 MB)** — model list works offline; payloads come over the LAN
+- **Full BIOSLove drive (~5.5 GB)** — works with no network at all
+
+The one hard requirement for the LAN path is a **writable volume** to stage into.
+Nothing in `EFI_FILE_PROTOCOL` reports writability, so the app proves it by
+writing `\bioslove\.writable`, trying the index's volume, then its own boot
+volume, then anything else attached. The Flash tab names what it settled on:
+
+| `Staging` | Meaning |
+|---|---|
+| `this boot volume` | Normal — staged files live on the stick |
+| `THIS MACHINE's disk` | Boot volume was read-only, so it fell through to another filesystem — on an ISO boot that is usually the customer's own ESP |
+| `none - LAN fetch unavailable` | Nothing writable; the fetch is refused up front rather than failing mid-step |
+
+A **Ventoy ISO boot presents a read-only filesystem**, so it lands in one of the
+last two rows. Use a plain FAT32 stick with `\EFI\BOOT\BOOTX64.EFI` on it if you
+want network payloads without writing to the machine being serviced.
+
+The index is generated off-box from the authoritative share:
 
 ```bash
 cargo run -p bioslove-index -- --out index.json
 ```
 
-Then place it, plus the payload tree, on the boot volume:
+For a stick that carries the payload tree, the layout is:
 
 ```
 \EFI\BOOT\BOOTX64.EFI          the app
@@ -167,21 +196,26 @@ Then place it, plus the payload tree, on the boot volume:
 prepends, so a BIOSLove stick already has the tree in the right place — only
 `index.json` is new. Override with `--payload-root` if you lay it out differently.
 
-### Or let it fetch payloads over the LAN
+### Serving it over the LAN
 
-Payloads do not have to be on the stick. `preboot-relay` serves them from the
-share, content-addressed by digest, and the firmware stages what a step needs
-into `\bioslove\cache\<folder>\`:
+`preboot-relay` serves the index and every payload from the share,
+content-addressed by digest; the firmware stages what a step needs into
+`\bioslove\cache\<folder>\`:
 
 ```bash
 cd preboot-relay
-BIOSLOVE_INDEX=../bioslove-index/index.json cargo run --release
-#  -> preboot-relay: 585 payload digest(s) from … over \\opk-riv\…\BiosLove
+cargo run --release
+#  -> preboot-relay: 585 payload digest(s) from ../bioslove-index/index.json over \\opk-riv\…
+#  -> preboot-relay: index ready (512444 bytes) on /api/v1/qc/bioslove/index
 ```
 
-Resolution order is **stick first, network second** — the relay is the least
-reliable link in the chain, so a network failure degrades to "use what's here"
-instead of blocking a flash. When anything has to be fetched, the *whole* step is
+It finds `index.json` without help — `BIOSLOVE_INDEX`, then the working directory,
+then `../bioslove-index/`, `bioslove-index/`, and paths relative to the executable
+— so it works from the crate directory or the repo root.
+
+Resolution order is **stick first, network second** for both the index and the
+payloads — the relay is the least reliable link in the chain, so a network failure
+degrades to "use what's here" instead of blocking a flash. When anything has to be fetched, the *whole* step is
 staged into the cache directory, because a vendor tool resolves its ROM relative
 to its own device path and cannot straddle two directories.
 
@@ -189,9 +223,8 @@ Every fetched byte is digest-checked before use, and the route serves only
 digests present in the index, so a request cannot name a file outside the share.
 A 16 MiB ROM transfers in about 0.3 s on a gigabit LAN.
 
-That means a working stick can be just the app plus the index — about 9 MB
-instead of 5.5 GB — with the share as the single source of truth and no per-stick
-drift. `BIOSLOVE_SHARE` overrides the share root.
+That means a working stick can be just the app — with the share as the single
+source of truth and no per-stick drift. `BIOSLOVE_SHARE` overrides the share root.
 
 To build a test image instead of a physical stick:
 
@@ -356,7 +389,9 @@ so the tool reports a timeout against a stale box rather than misreporting.
 | `PRS arm` never reaches `reg` | Presence POSTs failing, or the serial is empty |
 | Visible to `preboot_screen` but absent from the roster | Direct path up, HTTP relay path down. The roster comes from the DB |
 | In the roster but nothing persists | The server's DB connection can wedge. `/register` and `/viewer` are in-memory and keep returning 200 while every write hangs — check `GET /api/v1/admin/info` for `db_connected` |
-| `\bioslove\index.json not found` | Index was never generated or never copied. See §4 |
+| `\bioslove\index.json not found …; and no relay set to fetch it from` | No index on any volume *and* no usable relay. Set the relay, or copy the index onto the stick |
+| `Staging  none - LAN fetch unavailable` | No attached volume accepts writes — usually a Ventoy/ISO boot. Use a plain FAT32 stick for network payloads |
+| `Staging  THIS MACHINE's disk` | Boot volume is read-only, so staging fell through to the serviced machine's ESP. Works, but leaves files behind |
 | Flash tab shows no match | Chassis token may be shorter than the partial threshold, or the folder has no `ver.txt` and so no aliases |
 | `preboot_get_*` times out but `preboot_screen` works | The box is running firmware older than frame tag `0x0C`. Reflash the stick |
 | A `preboot_get_*` tool isn't listed at all | The console binary predates it — rebuild and restart MasterTech, not just the firmware |

@@ -497,6 +497,47 @@ pub fn load_from_volume() -> Result<(Index, uefi::Handle), String> {
     Ok((parse(&bytes)?, volume))
 }
 
+/// Probe file used to prove a volume accepts writes.
+const WRITE_PROBE: &str = "\\bioslove\\.writable";
+
+/// Which volume staging landed on, so the UI can say whose disk gets written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StagingVolume {
+    /// The volume the index came from, or the one the app booted from.
+    Own,
+    /// Some other attached filesystem — on an ISO boot this is typically the
+    /// machine's own ESP, so staged payloads land on the customer's disk.
+    Foreign,
+}
+
+/// First attached volume that actually accepts a write.
+///
+/// The index's own volume is not usable as staging on its own: a box booted off
+/// a Ventoy ISO reads it from a read-only filesystem, and a network-fetched
+/// index has no volume at all. Writability is proven by writing, since nothing
+/// in `EFI_FILE_PROTOCOL` reports it up front.
+pub fn writable_volume(
+    prefer: &[uefi::Handle],
+) -> Option<(uefi::Handle, StagingVolume)> {
+    for h in prefer {
+        if write_file_on_volume(*h, WRITE_PROBE, b"1").is_ok() {
+            return Some((*h, StagingVolume::Own));
+        }
+    }
+    let all = boot::find_handles::<SimpleFileSystem>().ok()?;
+    all.into_iter()
+        .filter(|h| !prefer.contains(h))
+        .find(|h| write_file_on_volume(*h, WRITE_PROBE, b"1").is_ok())
+        .map(|h| (h, StagingVolume::Foreign))
+}
+
+/// Volume this image was loaded from, the natural scratch space on a boot stick.
+pub fn boot_volume() -> Option<uefi::Handle> {
+    use uefi::proto::loaded_image::LoadedImage;
+    let li = boot::open_protocol_exclusive::<LoadedImage>(boot::image_handle()).ok()?;
+    li.device()
+}
+
 /// Parse and version-gate an index document.
 pub fn parse(bytes: &[u8]) -> Result<Index, String> {
     let index: Index =

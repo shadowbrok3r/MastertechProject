@@ -4881,17 +4881,48 @@ fn adopt_flash_resume(app: &mut App) {
 
 /// Read the BIOSLove index off an attached volume and auto-detect this machine.
 fn load_bioslove_index(app: &mut App) {
-    match bioslove::load_from_volume() {
-        Ok((index, volume)) => {
+    // Stick first so a box with no network still works, then the relay so a bare
+    // boot stick needs nothing but the app itself.
+    let loaded = match bioslove::load_from_volume() {
+        Ok((index, volume)) => Ok((index, Some(volume), "volume")),
+        Err(vol_err) => match fetch_bioslove_index(app) {
+            Ok(index) => Ok((index, None, "relay")),
+            Err(net_err) => Err(format!("{vol_err}; and {net_err}")),
+        },
+    };
+    match loaded {
+        Ok((index, source_volume, from)) => {
             logln(format!(
-                "bioslove: index {} entries ({} laptop, {} desktop) generated {}",
+                "bioslove: index {} entries ({} laptop, {} desktop) generated {} via {from}",
                 index.entries.len(),
                 index.laptop_count(),
                 index.desktop_count(),
                 index.generated_at
             ));
             app.flash_err.clear();
-            app.flash_volume = Some(volume);
+            // Staging needs a volume that takes writes, which the index's own
+            // may not be (read-only ISO) or may not exist (fetched over LAN).
+            let prefer: Vec<uefi::Handle> = source_volume
+                .into_iter()
+                .chain(bioslove::boot_volume())
+                .collect();
+            match bioslove::writable_volume(&prefer) {
+                Some((h, kind)) => {
+                    app.flash_volume = Some(h);
+                    app.flash_staging = Some(kind);
+                    if kind == bioslove::StagingVolume::Foreign {
+                        logln(
+                            "bioslove: staging to a volume this app did not boot from - likely this machine's ESP"
+                                .to_string(),
+                        );
+                    }
+                }
+                None => {
+                    app.flash_volume = None;
+                    app.flash_staging = None;
+                    logln("bioslove: no writable volume; network staging unavailable".to_string());
+                }
+            }
             app.flash_index = Some(index);
             redetect_bioslove(app);
             adopt_flash_resume(app);
@@ -4915,6 +4946,22 @@ fn load_bioslove_index(app: &mut App) {
             app.status = "no BIOSLove index found - see the Flash tab".into();
         }
     }
+}
+
+/// Relay route serving the model index itself.
+const INDEX_ROUTE: &str = "/api/v1/qc/bioslove/index";
+
+/// Pull the model index from the relay, for a stick that carries only the app.
+fn fetch_bioslove_index(app: &App) -> Result<bioslove::Index, String> {
+    if app.target.is_empty() {
+        return Err("no relay set to fetch it from".to_string());
+    }
+    if let Some(reason) = unreachable_reason(&app.target) {
+        return Err(format!("the relay is unusable: {reason}"));
+    }
+    let bytes = download_capsule(&app.target, INDEX_ROUTE)
+        .map_err(|e| format!("fetching it from {} failed: {e}", app.target))?;
+    bioslove::parse(&bytes)
 }
 
 /// Drop a prepared step; the selection or the index moved under it.
@@ -5423,6 +5470,22 @@ fn page_flash(frame: &mut Frame, area: Rect, app: &App) {
             ));
             left.push(kv("Built", index.generated_at.clone()));
             left.push(kv("Source", index.source.clone()));
+            left.push(Line::from(vec![
+                Span::styled(format!("{:<14}", "Staging"), Style::default().fg(palette::LABEL)),
+                match app.flash_staging {
+                    Some(bioslove::StagingVolume::Own) => {
+                        Span::styled("this boot volume", Style::default().fg(palette::GOOD))
+                    }
+                    Some(bioslove::StagingVolume::Foreign) => Span::styled(
+                        "THIS MACHINE's disk",
+                        Style::default().fg(palette::WARN),
+                    ),
+                    None => Span::styled(
+                        "none - LAN fetch unavailable",
+                        Style::default().fg(palette::WARN),
+                    ),
+                },
+            ]));
         }
         None => {
             left.push(Line::from(Span::styled(
@@ -6514,6 +6577,11 @@ fn query_flash(app: &App) -> String {
         "index": index,
         "index_error": app.flash_err,
         "index_path": bioslove::INDEX_PATH,
+        "staging": match app.flash_staging {
+            Some(bioslove::StagingVolume::Own) => "boot_volume",
+            Some(bioslove::StagingVolume::Foreign) => "foreign_volume",
+            None => "none",
+        },
         "search": app.flash_filter,
         "matches": matches,
         "rows": rows_json,
@@ -8373,6 +8441,8 @@ struct App {
     flash_volume: Option<uefi::Handle>,
     /// Operator asserts AC is connected when the power state cannot be read.
     ac_confirmed: bool,
+    /// Whose disk fetched payloads are staged onto.
+    flash_staging: Option<bioslove::StagingVolume>,
 }
 
 /// A recipe step that passed every gate and is ready to run.
@@ -8656,6 +8726,7 @@ fn run() -> Result<()> {
         flash_resume: None,
         flash_volume: None,
         ac_confirmed: false,
+        flash_staging: None,
     };
 
     terminal.clear()?;

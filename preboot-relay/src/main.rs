@@ -23,6 +23,9 @@ use axum::response::{IntoResponse, Response};
 /// Route firmware fetches BIOSLove payloads from, content-addressed by digest.
 const PAYLOAD_ROUTE: &str = "/api/v1/qc/bioslove/payload/{sha256}";
 
+/// Route firmware fetches the model index from when no volume carries one.
+const INDEX_ROUTE: &str = "/api/v1/qc/bioslove/index";
+
 /// Ceiling on one share read. A 16 MiB ROM takes well under a second on the LAN;
 /// anything near this means the share is gone.
 const SHARE_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
@@ -33,6 +36,8 @@ struct Relay {
     upstream: String,
     /// sha256 -> file on the firmware share. Empty when no index was loaded.
     payloads: Arc<HashMap<String, PathBuf>>,
+    /// The index document itself, served to firmware booted off a bare stick.
+    index_bytes: Arc<Vec<u8>>,
 }
 
 #[tokio::main]
@@ -50,6 +55,7 @@ async fn main() {
         r"\\opk-riv\winbits\Drivers\Thumb\multiboot\BiosLove".to_string()
     });
     let index = resolve_index_path();
+    let index_bytes = std::fs::read(&index).unwrap_or_default();
     let payloads = load_payload_map(&index, &share);
 
     let relay = Relay {
@@ -59,11 +65,17 @@ async fn main() {
             .expect("reqwest client"),
         upstream,
         payloads: Arc::new(payloads),
+        index_bytes: Arc::new(index_bytes),
     };
     println!("preboot-relay: listening on {listen} -> {}", relay.upstream);
     println!(
         "preboot-relay: {} payload digest(s) from {index} over {share}",
         relay.payloads.len()
+    );
+    println!(
+        "preboot-relay: index {} ({} bytes) on {INDEX_ROUTE}",
+        if relay.index_bytes.is_empty() { "MISSING" } else { "ready" },
+        relay.index_bytes.len()
     );
     if !relay.payloads.is_empty() && !std::path::Path::new(&share).is_dir() {
         eprintln!(
@@ -72,6 +84,7 @@ async fn main() {
     }
     let app = Router::new()
         .route(PAYLOAD_ROUTE, axum::routing::get(payload))
+        .route(INDEX_ROUTE, axum::routing::get(index_doc))
         .fallback(proxy)
         .with_state(relay);
     let listener = tokio::net::TcpListener::bind(&listen).await.expect("bind listen addr");
@@ -177,6 +190,26 @@ fn load_payload_map(index_path: &str, share: &str) -> HashMap<String, PathBuf> {
         }
     }
     map
+}
+
+/// Serve the model index, so a box booted off a bare stick can populate its
+/// Flash tab without carrying a copy.
+async fn index_doc(State(relay): State<Relay>) -> Response {
+    if relay.index_bytes.is_empty() {
+        println!("GET bioslove/index -> 503 (no index loaded)");
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "relay has no index; generate it with bioslove-index",
+        )
+            .into_response();
+    }
+    println!("GET bioslove/index -> 200 ({}B)", relay.index_bytes.len());
+    (
+        StatusCode::OK,
+        [(CONTENT_TYPE, "application/json")],
+        relay.index_bytes.to_vec(),
+    )
+        .into_response()
 }
 
 /// Serve one payload by digest, straight off the share.
