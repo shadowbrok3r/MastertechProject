@@ -223,6 +223,21 @@ pub struct Index {
     pub entries: Vec<Entry>,
 }
 
+/// Directory network-fetched payloads are staged into, one subdirectory per
+/// model. A vendor tool resolves its ROM relative to its own device path, so
+/// everything one step needs has to land in a single directory.
+pub const CACHE_ROOT: &str = "\\bioslove\\cache";
+
+/// Staging directory for `entry`'s payloads.
+pub fn cache_dir(entry: &Entry) -> String {
+    format!("{CACHE_ROOT}\\{}", entry.folder)
+}
+
+/// Trailing component of a backslash-separated path.
+pub fn base_name(path: &str) -> &str {
+    path.rsplit('\\').next().unwrap_or(path)
+}
+
 impl Index {
     /// Volume path of a file inside an entry's folder. `name` may carry a
     /// backslash-separated subdirectory, as the generator emits it.
@@ -341,13 +356,24 @@ fn normalize_pattern(s: &str) -> String {
         .collect()
 }
 
+/// The SMBIOS values the matcher needs, so this module does not depend on the
+/// app's system-info shape.
+pub struct MachineKeys<'a> {
+    /// Chassis runs on a battery, i.e. the `laptop` side of the share.
+    pub portable: bool,
+    pub board_product: &'a str,
+    pub sys_product: &'a str,
+    pub sys_family: &'a str,
+    pub sys_version: &'a str,
+}
+
 /// Candidate SMBIOS values, strongest key first.
-fn match_keys(d: &crate::Smbios) -> Vec<(KeySource, &str)> {
+fn match_keys<'a>(d: &MachineKeys<'a>) -> Vec<(KeySource, &'a str)> {
     let mut keys = vec![
-        (KeySource::BoardProduct, d.board_product.as_str()),
-        (KeySource::SysProduct, d.sys_product.as_str()),
-        (KeySource::SysFamily, d.sys_family.as_str()),
-        (KeySource::SysVersion, d.sys_version.as_str()),
+        (KeySource::BoardProduct, d.board_product),
+        (KeySource::SysProduct, d.sys_product),
+        (KeySource::SysFamily, d.sys_family),
+        (KeySource::SysVersion, d.sys_version),
     ];
     keys.retain(|(_, v)| normalize(v).len() >= 3);
     keys
@@ -357,8 +383,8 @@ fn match_keys(d: &crate::Smbios) -> Vec<(KeySource, &str)> {
 ///
 /// Entries on the other side of the laptop/desktop split are excluded outright:
 /// chassis type is the one signal that is never ambiguous.
-pub fn match_machine(index: &Index, d: &crate::Smbios) -> Vec<Match> {
-    let side = if d.is_portable() {
+pub fn match_machine(index: &Index, d: &MachineKeys<'_>) -> Vec<Match> {
+    let side = if d.portable {
         Side::Laptop
     } else {
         Side::Desktop
@@ -464,10 +490,11 @@ pub fn search(index: &Index, side: Option<Side>, needle: &str) -> Vec<usize> {
     hits
 }
 
-/// Read `INDEX_PATH` off the first attached volume that has it.
-pub fn load_from_volume() -> Result<Index, String> {
-    let (bytes, _) = read_file_any_volume(INDEX_PATH, INDEX_MAX_BYTES)?;
-    parse(&bytes)
+/// Read `INDEX_PATH` off the first attached volume that has it, returning that
+/// volume so payloads and the cache land beside the index.
+pub fn load_from_volume() -> Result<(Index, uefi::Handle), String> {
+    let (bytes, volume) = read_file_any_volume(INDEX_PATH, INDEX_MAX_BYTES)?;
+    Ok((parse(&bytes)?, volume))
 }
 
 /// Parse and version-gate an index document.
@@ -505,6 +532,52 @@ pub fn read_file_any_volume(path: &str, max: usize) -> Result<(Vec<u8>, uefi::Ha
         }
     }
     Err(last)
+}
+
+/// Write `bytes` to a volume-relative path, creating parent directories and
+/// replacing any existing file.
+pub fn write_file_on_volume(
+    volume: uefi::Handle,
+    path: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
+    use uefi::proto::media::file::{File, FileAttribute, FileMode, FileType};
+
+    let path = path.replace('/', "\\");
+    let cpath = uefi::CString16::try_from(path.as_str())
+        .map_err(|_| format!("path is not valid UCS-2: {path}"))?;
+    let mut sfs = unsafe {
+        boot::open_protocol::<SimpleFileSystem>(
+            OpenProtocolParams {
+                handle: volume,
+                agent: boot::image_handle(),
+                controller: None,
+            },
+            OpenProtocolAttributes::GetProtocol,
+        )
+    }
+    .map_err(|e| format!("open volume: {e:?}"))?;
+    let mut root = sfs.open_volume().map_err(|e| format!("open root: {e:?}"))?;
+
+    if let Some((dir, _)) = path.rsplit_once('\\') {
+        crate::flashstate::ensure_dir(&mut root, dir);
+    }
+    // Delete any existing file rather than overwrite it: EFI_FILE_PROTOCOL has no
+    // truncate, so a shorter payload would leave the old tail behind.
+    if let Ok(h) = root.open(&cpath, FileMode::ReadWrite, FileAttribute::empty()) {
+        if let Ok(FileType::Regular(old)) = h.into_type() {
+            let _ = old.delete();
+        }
+    }
+    let handle = root
+        .open(&cpath, FileMode::CreateReadWrite, FileAttribute::empty())
+        .map_err(|e| format!("create {path}: {e:?}"))?;
+    let FileType::Regular(mut f) = handle.into_type().map_err(|e| format!("{e:?}"))? else {
+        return Err(format!("{path} is a directory"));
+    };
+    f.write(bytes).map_err(|e| format!("write {path}: {e:?}"))?;
+    f.flush().map_err(|e| format!("flush {path}: {e:?}"))?;
+    Ok(())
 }
 
 /// Read a volume-relative path off one known filesystem.

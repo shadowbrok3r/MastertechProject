@@ -167,6 +167,32 @@ Then place it, plus the payload tree, on the boot volume:
 prepends, so a BIOSLove stick already has the tree in the right place — only
 `index.json` is new. Override with `--payload-root` if you lay it out differently.
 
+### Or let it fetch payloads over the LAN
+
+Payloads do not have to be on the stick. `preboot-relay` serves them from the
+share, content-addressed by digest, and the firmware stages what a step needs
+into `\bioslove\cache\<folder>\`:
+
+```bash
+cd preboot-relay
+BIOSLOVE_INDEX=../bioslove-index/index.json cargo run --release
+#  -> preboot-relay: 585 payload digest(s) from … over \\opk-riv\…\BiosLove
+```
+
+Resolution order is **stick first, network second** — the relay is the least
+reliable link in the chain, so a network failure degrades to "use what's here"
+instead of blocking a flash. When anything has to be fetched, the *whole* step is
+staged into the cache directory, because a vendor tool resolves its ROM relative
+to its own device path and cannot straddle two directories.
+
+Every fetched byte is digest-checked before use, and the route serves only
+digests present in the index, so a request cannot name a file outside the share.
+A 16 MiB ROM transfers in about 0.3 s on a gigabit LAN.
+
+That means a working stick can be just the app plus the index — about 9 MB
+instead of 5.5 GB — with the share as the single source of truth and no per-stick
+drift. `BIOSLOVE_SHARE` overrides the share root.
+
 To build a test image instead of a physical stick:
 
 ```bash

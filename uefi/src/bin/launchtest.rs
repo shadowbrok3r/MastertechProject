@@ -16,6 +16,8 @@ use uefi::boot;
 use uefi::proto::media::file::{Directory, File, FileAttribute, FileMode, FileType};
 use uefi::proto::media::fs::SimpleFileSystem;
 
+#[path = "../bioslove.rs"]
+mod bioslove;
 #[path = "../capsule.rs"]
 mod capsule;
 #[path = "../flashstate.rs"]
@@ -63,6 +65,7 @@ fn main() {
     println!("args : {}", if args.is_empty() { "<none - control run>" } else { &args });
 
     flashstate_selftest(volume);
+    cache_selftest(volume);
 
     let Some(bytes) = read_on_volume(volume, &tool) else {
         println!("FAIL could not read {tool}");
@@ -162,6 +165,46 @@ fn flashstate_selftest(volume: uefi::Handle) {
         },
     );
     println!("  log   : append attempted");
+}
+
+/// Exercise the payload cache: nested directory creation, a large-ish write, and
+/// replacement by a SHORTER file — EFI_FILE_PROTOCOL has no truncate, so a
+/// careless overwrite leaves the old tail behind and the digest check fails.
+fn cache_selftest(volume: uefi::Handle) {
+    println!("--- payload cache self-test ---");
+    let path = "\\bioslove\\cache\\TESTMODEL\\payload.bin";
+
+    let big: Vec<u8> = (0..64_000u32).map(|i| (i % 251) as u8).collect();
+    match bioslove::write_file_on_volume(volume, path, &big) {
+        Ok(()) => println!("  write : ok {} B", big.len()),
+        Err(e) => {
+            println!("  write : FAIL {e}");
+            return;
+        }
+    }
+    match bioslove::read_file_on_volume(volume, path, bioslove::PAYLOAD_MAX_BYTES) {
+        Ok(back) => println!(
+            "  read  : {} B, identical={}",
+            back.len(),
+            back == big
+        ),
+        Err(e) => println!("  read  : FAIL {e}"),
+    }
+
+    let small = b"short".to_vec();
+    match bioslove::write_file_on_volume(volume, path, &small) {
+        Ok(()) => println!("  rewrite: ok {} B", small.len()),
+        Err(e) => println!("  rewrite: FAIL {e}"),
+    }
+    match bioslove::read_file_on_volume(volume, path, bioslove::PAYLOAD_MAX_BYTES) {
+        Ok(back) => println!(
+            "  reread : {} B, exact={} (a tail would read {} B)",
+            back.len(),
+            back == small,
+            big.len()
+        ),
+        Err(e) => println!("  reread : FAIL {e}"),
+    }
 }
 
 /// Give the console time to flush over serial, then power the VM off.

@@ -161,7 +161,7 @@ impl LogEntry<'_> {
 
 /// Create each component of `path`. `File::open` with `Create` makes only the
 /// leaf, so a missing parent fails the whole write with NOT_FOUND.
-fn ensure_dir(root: &mut uefi::proto::media::file::Directory, path: &str) {
+pub fn ensure_dir(root: &mut uefi::proto::media::file::Directory, path: &str) {
     let mut cur = String::new();
     for part in path.trim_matches('\\').split('\\') {
         cur.push('\\');

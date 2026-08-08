@@ -4761,12 +4761,23 @@ fn flash_rows(app: &App) -> Vec<(usize, Option<bioslove::Confidence>)> {
         .collect()
 }
 
+/// The SMBIOS values the BIOSLove matcher keys on.
+fn machine_keys(d: &Smbios) -> bioslove::MachineKeys<'_> {
+    bioslove::MachineKeys {
+        portable: d.is_portable(),
+        board_product: &d.board_product,
+        sys_product: &d.sys_product,
+        sys_family: &d.sys_family,
+        sys_version: &d.sys_version,
+    }
+}
+
 /// Re-run the SMBIOS match against the loaded index.
 fn redetect_bioslove(app: &mut App) {
     let Some(index) = &app.flash_index else {
         return;
     };
-    app.flash_matches = bioslove::match_machine(index, &app.info.dmi);
+    app.flash_matches = bioslove::match_machine(index, &machine_keys(&app.info.dmi));
     app.flash_sel = 0;
     app.dirty = true;
 }
@@ -4839,7 +4850,7 @@ fn adopt_flash_resume(app: &mut App) {
 /// Read the BIOSLove index off an attached volume and auto-detect this machine.
 fn load_bioslove_index(app: &mut App) {
     match bioslove::load_from_volume() {
-        Ok(index) => {
+        Ok((index, volume)) => {
             logln(format!(
                 "bioslove: index {} entries ({} laptop, {} desktop) generated {}",
                 index.entries.len(),
@@ -4848,6 +4859,7 @@ fn load_bioslove_index(app: &mut App) {
                 index.generated_at
             ));
             app.flash_err.clear();
+            app.flash_volume = Some(volume);
             app.flash_index = Some(index);
             redetect_bioslove(app);
             adopt_flash_resume(app);
@@ -4881,9 +4893,158 @@ fn clear_flash_prep(app: &mut App) {
     app.flash_armed = false;
 }
 
-/// Trailing path component of a backslash-separated volume path.
-fn base_name(path: &str) -> &str {
-    path.rsplit('\\').next().unwrap_or(path)
+/// Relay route serving BIOSLove payloads, content-addressed by digest.
+const PAYLOAD_ROUTE: &str = "/api/v1/qc/bioslove/payload";
+
+/// Where a step's files came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PayloadSource {
+    /// Present on an attached volume, digests matching the index.
+    Stick,
+    /// Fetched from the relay and staged into the cache directory.
+    Network,
+}
+
+/// A step's files, all resolved into one directory on one volume.
+struct StagedStep {
+    volume: uefi::Handle,
+    /// Volume path of the tool to launch.
+    exec_path: String,
+    /// Verified tool bytes.
+    bytes: Vec<u8>,
+    source: PayloadSource,
+}
+
+/// Read one of an entry's files off any attached volume, requiring the index
+/// digest when the index carries one.
+fn stick_file(
+    index: &bioslove::Index,
+    entry: &bioslove::Entry,
+    name: &str,
+    sha256: &str,
+) -> Result<(Vec<u8>, uefi::Handle), String> {
+    let path = index.file_path(entry, name);
+    let (bytes, volume) = bioslove::read_file_any_volume(&path, bioslove::PAYLOAD_MAX_BYTES)?;
+    if !sha256.is_empty() {
+        let got = capsule::sha256_hex(&bytes);
+        if got != sha256 {
+            return Err(format!("{name} digest {} != index", sha_prefix(&got)));
+        }
+    }
+    Ok((bytes, volume))
+}
+
+/// Satisfy every file a step needs, preferring what is already on a volume and
+/// falling back to the relay.
+///
+/// The stick stays the primary source: the relay has proven the least reliable
+/// link, and a network failure must degrade to "use what's here" rather than
+/// block a flash. When anything has to come over the network the *whole* step is
+/// staged into one cache directory, because the child image resolves its ROM
+/// relative to its own device path and cannot straddle two directories.
+fn stage_step(
+    app: &App,
+    index: &bioslove::Index,
+    entry: &bioslove::Entry,
+    step: &bioslove::Step,
+    note: &mut Vec<String>,
+) -> Result<StagedStep, String> {
+    // The tool first, then every payload it names.
+    let mut needed: Vec<(&str, &str)> = vec![(step.exec.as_str(), step.exec_sha256.as_str())];
+    for f in &step.files {
+        needed.push((f.name.as_str(), f.sha256.as_str()));
+    }
+
+    // Probe the stick for all of them before committing to a source.
+    let mut stick: Vec<(Vec<u8>, uefi::Handle)> = Vec::new();
+    let mut miss: Option<String> = None;
+    for (name, sha) in &needed {
+        match stick_file(index, entry, name, sha) {
+            Ok(hit) => stick.push(hit),
+            Err(e) => {
+                miss = Some(e);
+                break;
+            }
+        }
+    }
+
+    if miss.is_none() {
+        for ((name, _), (bytes, _)) in needed.iter().zip(stick.iter()) {
+            note.push(format!("ok  {} {} B on volume", name, bytes.len()));
+        }
+        let (bytes, volume) = stick.swap_remove(0);
+        return Ok(StagedStep {
+            volume,
+            exec_path: index.file_path(entry, &step.exec),
+            bytes,
+            source: PayloadSource::Stick,
+        });
+    }
+
+    let why = miss.unwrap_or_default();
+    note.push(format!("WARN not on this volume: {why}"));
+    let Some(volume) = app.flash_volume else {
+        return Err(format!("{why}, and no writable volume for a fetch"));
+    };
+    if app.target.is_empty() {
+        return Err(format!("{why}, and no relay set to fetch from"));
+    }
+    if let Some(reason) = unreachable_reason(&app.target) {
+        return Err(format!("{why}, and the relay is unusable: {reason}"));
+    }
+
+    // Content-addressed, so a digest mismatch cannot survive the round trip and
+    // the same bytes are never stored twice.
+    let dir = bioslove::cache_dir(entry);
+    note.push(format!("fetching {} file(s) into {dir}", needed.len()));
+    let mut exec_cached = String::new();
+    for (name, sha) in &needed {
+        let leaf = bioslove::base_name(name);
+        let dest = format!("{dir}\\{leaf}");
+        if sha.is_empty() {
+            return Err(format!("{name} has no digest in the index; cannot fetch it"));
+        }
+        // A previous run may already have staged it.
+        if let Ok(have) = bioslove::read_file_on_volume(volume, &dest, bioslove::PAYLOAD_MAX_BYTES)
+        {
+            if capsule::sha256_hex(&have) == *sha {
+                note.push(format!("ok  {leaf} already cached"));
+                if *name == step.exec.as_str() {
+                    exec_cached = dest.clone();
+                }
+                continue;
+            }
+        }
+        let bytes = download_capsule(&app.target, &format!("{PAYLOAD_ROUTE}/{sha}"))
+            .map_err(|e| format!("fetch {leaf}: {e}"))?;
+        let got = capsule::sha256_hex(&bytes);
+        if got != *sha {
+            return Err(format!(
+                "fetched {leaf} digest {} != index",
+                sha_prefix(&got)
+            ));
+        }
+        bioslove::write_file_on_volume(volume, &dest, &bytes)
+            .map_err(|e| format!("stage {leaf}: {e}"))?;
+        note.push(format!("ok  {leaf} {} B fetched", bytes.len()));
+        if *name == step.exec.as_str() {
+            exec_cached = dest.clone();
+        }
+    }
+
+    let exec_path = if exec_cached.is_empty() {
+        format!("{dir}\\{}", bioslove::base_name(&step.exec))
+    } else {
+        exec_cached
+    };
+    let bytes = bioslove::read_file_on_volume(volume, &exec_path, bioslove::PAYLOAD_MAX_BYTES)
+        .map_err(|e| format!("reread staged tool: {e}"))?;
+    Ok(StagedStep {
+        volume,
+        exec_path,
+        bytes,
+        source: PayloadSource::Network,
+    })
 }
 
 /// Read the step under the cursor, verify every byte it will touch against the
@@ -4935,7 +5096,7 @@ fn prepare_flash_step(app: &mut App) {
             step.index,
             entry.steps.len(),
             step.kind.label(),
-            base_name(&step.exec)
+            bioslove::base_name(&step.exec)
         ));
 
         if !step.resolved {
@@ -4961,68 +5122,35 @@ fn prepare_flash_step(app: &mut App) {
         }
 
         if !blocked {
-            let exec_path = index.file_path(entry, &step.exec);
-            match bioslove::read_file_any_volume(&exec_path, bioslove::PAYLOAD_MAX_BYTES) {
+            match stage_step(app, index, entry, step, &mut note) {
                 Err(e) => {
-                    note.push(format!("BLOCKED tool: {e}"));
+                    note.push(format!("BLOCKED {e}"));
                     blocked = true;
                 }
-                Ok((bytes, volume)) => {
+                Ok(staged) => {
+                    note.push(match staged.source {
+                        PayloadSource::Stick => "ok  source: this volume".to_string(),
+                        PayloadSource::Network => {
+                            format!("ok  source: relay, staged in {}", bioslove::cache_dir(entry))
+                        }
+                    });
+                    let bytes = staged.bytes;
+                    let volume = staged.volume;
+                    let exec_path = staged.exec_path;
                     let dry = launch::dry_run(&bytes);
-                    if !step.exec_sha256.is_empty() && dry.sha256 != step.exec_sha256 {
+                    if dry.ok {
                         note.push(format!(
-                            "BLOCKED tool digest {} does not match the index",
+                            "ok  tool is a valid EFI application ({} B, {})",
+                            dry.bytes,
                             sha_prefix(&dry.sha256)
                         ));
-                        blocked = true;
-                    } else if step.exec_sha256.is_empty() {
-                        note.push("WARN tool has no digest in the index".to_string());
-                    } else {
-                        note.push(format!("ok  tool digest {}", sha_prefix(&dry.sha256)));
-                    }
-                    if dry.ok {
-                        note.push(format!("ok  tool is a valid EFI application ({} B)", dry.bytes));
                     } else {
                         note.push(format!("BLOCKED tool {}: {}", dry.verdict, dry.detail));
                         blocked = true;
                     }
 
-                    for f in &step.files {
-                        let path = index.file_path(entry, &f.name);
-                        match bioslove::read_file_on_volume(
-                            volume,
-                            &path,
-                            bioslove::PAYLOAD_MAX_BYTES,
-                        ) {
-                            Err(e) => {
-                                note.push(format!("BLOCKED payload {}: {e}", f.name));
-                                blocked = true;
-                            }
-                            Ok(p) => {
-                                let got = capsule::sha256_hex(&p);
-                                if f.sha256.is_empty() {
-                                    note.push(format!("WARN payload {} has no digest", f.name));
-                                } else if got != f.sha256 {
-                                    note.push(format!(
-                                        "BLOCKED payload {} digest {} does not match the index",
-                                        f.name,
-                                        sha_prefix(&got)
-                                    ));
-                                    blocked = true;
-                                } else {
-                                    note.push(format!(
-                                        "ok  payload {} {} B {}",
-                                        f.name,
-                                        p.len(),
-                                        sha_prefix(&got)
-                                    ));
-                                }
-                            }
-                        }
-                    }
-
                     if !blocked {
-                        let cmd = format!("{} {}", base_name(&step.exec), step.args);
+                        let cmd = format!("{} {}", bioslove::base_name(&step.exec), step.args);
                         note.push(format!("ready to run: {}", cmd.trim()));
                         note.push(match step.after {
                             bioslove::After::Returns => {
@@ -7909,6 +8037,8 @@ struct App {
     flash_armed: bool,
     /// Recipe position carried across a reboot, when it matches this machine.
     flash_resume: Option<flashstate::FlashState>,
+    /// Volume the index was read from; where fetched payloads and logs are written.
+    flash_volume: Option<uefi::Handle>,
 }
 
 /// A recipe step that passed every gate and is ready to run.
@@ -8190,6 +8320,7 @@ fn run() -> Result<()> {
         flash_ready: None,
         flash_armed: false,
         flash_resume: None,
+        flash_volume: None,
     };
 
     terminal.clear()?;
@@ -8530,10 +8661,21 @@ fn run() -> Result<()> {
             }
             terminput::KeyCode::Char('y') => {
                 match app.pending_relay.take() {
-                    Some(url) => {
-                        adopt_relay(&mut app, &url, TargetSource::Operator);
-                        app.status = relay_line(&app);
-                    }
+                    // Accepting an offer is trusting the beacon, not asserting
+                    // knowledge of this platform, so it gets the same
+                    // reachability rule the beacon itself gets. Typing one with
+                    // 'e' stays the deliberate override.
+                    Some(url) => match unreachable_reason(&url) {
+                        Some(why) => {
+                            logln(format!("relay: refused offer {url} - {why}"));
+                            app.status =
+                                format!("refused {url}: {why} - use 'e' to set one by hand");
+                        }
+                        None => {
+                            adopt_relay(&mut app, &url, TargetSource::Operator);
+                            app.status = relay_line(&app);
+                        }
+                    },
                     None => app.status = "no relay offer to accept".into(),
                 }
             }
