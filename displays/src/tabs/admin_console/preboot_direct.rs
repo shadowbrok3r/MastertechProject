@@ -35,6 +35,12 @@ const PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
 /// Lock attempts before a session read/send gives up.
 const LOCK_RETRIES: usize = 64;
 
+/// Consecutive `accept` failures tolerated before the listener rebinds.
+const ACCEPT_ERROR_LIMIT: u32 = 10;
+
+/// Pause between failed accepts, so a persistent fault cannot spin the runtime.
+const ACCEPT_ERROR_BACKOFF: std::time::Duration = std::time::Duration::from_millis(200);
+
 /// Per-session shared state, updated by the reader task and read by egui.
 struct Session {
     /// Latest decoded frame bytes (bincode `PreBootFrame`).
@@ -73,24 +79,35 @@ impl DirectHub {
 
     /// Bind the listener once (idempotent). Accepted connections register a
     /// session on HELLO and pump frames until the socket closes.
+    ///
+    /// The caller re-invokes this every UI frame, so releasing `started` on any
+    /// exit is what makes the listener self-healing. Without that, a failed bind
+    /// (the port is still in `TIME_WAIT` from a previous instance) or a single
+    /// transient `accept` error retires the listener for the life of the process:
+    /// the console keeps running, firmware's connect gets an RST, and only an
+    /// app restart brings it back.
     pub fn start(&self, port: u16) {
         if self.started.swap(true, std::sync::atomic::Ordering::AcqRel) {
             return;
         }
         self.port.store(port, std::sync::atomic::Ordering::Release);
         let inner = self.inner.clone();
+        let started = self.started.clone();
         PlatformSpawner::spawn(async move {
             let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
                 Ok(l) => l,
                 Err(e) => {
-                    log::warn!("preboot direct: bind :{port} failed: {e}");
+                    log::warn!("preboot direct: bind :{port} failed: {e}; retrying");
+                    started.store(false, std::sync::atomic::Ordering::Release);
                     return;
                 }
             };
             log::info!("preboot direct: listening on 0.0.0.0:{port}");
+            let mut errors = 0u32;
             loop {
                 match listener.accept().await {
                     Ok((sock, peer)) => {
+                        errors = 0;
                         let inner = inner.clone();
                         PlatformSpawner::spawn(async move {
                             if let Err(e) = handle_conn(sock, peer.to_string(), inner).await {
@@ -99,11 +116,21 @@ impl DirectHub {
                         });
                     }
                     Err(e) => {
-                        log::warn!("preboot direct: accept failed: {e}");
-                        break;
+                        // A peer that vanishes between SYN and accept, or a
+                        // momentary descriptor shortage, is routine.
+                        errors += 1;
+                        log::warn!("preboot direct: accept failed ({errors}): {e}");
+                        if errors >= ACCEPT_ERROR_LIMIT {
+                            log::error!(
+                                "preboot direct: {errors} consecutive accept failures; rebinding"
+                            );
+                            break;
+                        }
+                        tokio::time::sleep(ACCEPT_ERROR_BACKOFF).await;
                     }
                 }
             }
+            started.store(false, std::sync::atomic::Ordering::Release);
         });
     }
 
@@ -447,6 +474,33 @@ mod tests {
 
     fn lan() -> std::net::IpAddr {
         "192.168.22.91".parse().unwrap()
+    }
+
+    /// A bind that loses the port must not latch `started`: the caller retries
+    /// every UI frame, and a stuck latch means the console never listens again
+    /// and firmware's connect gets an RST until the app is restarted.
+    #[test]
+    fn failed_bind_releases_the_start_latch() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let _g = rt.enter();
+
+        // Must squat the same wildcard address the hub binds: on Windows a
+        // 0.0.0.0 bind does not collide with one on 127.0.0.1.
+        let squatter = std::net::TcpListener::bind(("0.0.0.0", 0)).unwrap();
+        let port = squatter.local_addr().unwrap().port();
+
+        let hub = DirectHub::new();
+        hub.start(port);
+        assert!(hub.started.load(std::sync::atomic::Ordering::Acquire), "latched while spawning");
+
+        // Let the spawned task run its bind and fail.
+        rt.block_on(async { tokio::time::sleep(std::time::Duration::from_millis(150)).await });
+
+        assert!(
+            !hub.started.load(std::sync::atomic::Ordering::Acquire),
+            "latch stayed set after a failed bind - start() can never rebind"
+        );
+        drop(squatter);
     }
 
     #[test]
