@@ -5179,6 +5179,11 @@ fn prepare_flash_step(app: &mut App) {
         }
     }
 
+    // Mirror the report into the log ring: the Flash panel is the only other
+    // place it appears, which leaves a refusal invisible to remote diagnosis.
+    for n in &note {
+        logln(format!("flash: {n}"));
+    }
     app.status = if blocked {
         "pre-flight refused this step; see the Flash tab".into()
     } else {
