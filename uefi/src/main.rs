@@ -4881,6 +4881,9 @@ fn adopt_flash_resume(app: &mut App) {
 
 /// Read the BIOSLove index off an attached volume and auto-detect this machine.
 fn load_bioslove_index(app: &mut App) {
+    // A reload can replace the recipe under a verified step, leaving bytes armed
+    // against a step that no longer sits at the cursor.
+    clear_flash_prep(app);
     // Stick first so a box with no network still works, then the relay so a bare
     // boot stick needs nothing but the app itself.
     let loaded = match bioslove::load_from_volume() {
@@ -5292,9 +5295,11 @@ fn do_flash_step(
         return Ok(());
     };
     // The row set can move under a prepared step (a changed search term), so the
-    // selection must still be the entry that was verified.
+    // selection must still be the entry that was verified — and the cursor must
+    // still be on the step whose bytes were loaded, or a reload could run one
+    // step's tool while the operator is reading another's report.
     let selected = flash_rows(app).get(app.flash_sel).map(|(ei, _)| *ei);
-    if selected != Some(p.entry) {
+    if selected != Some(p.entry) || p.step != app.flash_step {
         clear_flash_prep(app);
         app.status = "selection moved since verification - press ENTER again".into();
         return Ok(());
@@ -8241,6 +8246,7 @@ fn render(frame: &mut Frame, app: &App) {
             ("Up/Dn", "select"),
             ("[ ]", "step"),
             ("ENTER", "verify"),
+            ("Esc", "cancel step"),
             ("p", "confirm AC"),
             ("F F", "RUN step"),
             ("f", "reload index"),
@@ -8931,6 +8937,17 @@ fn run() -> Result<()> {
         }
 
         match key.code {
+            // Back out of a verified step. Shadows the global Esc-quits so a
+            // loaded step cannot be abandoned by exiting the app; 'q' still quits.
+            terminput::KeyCode::Esc if app.tab == TAB_FLASH => {
+                if app.flash_ready.is_some() || app.flash_blocked || !app.flash_note.is_empty() {
+                    clear_flash_prep(&mut app);
+                    app.status = "step cancelled - pick another with [ ] or Up/Dn".into();
+                } else {
+                    app.status = "nothing to cancel ('q' quits)".into();
+                }
+                app.dirty = true;
+            }
             terminput::KeyCode::Char('q') | terminput::KeyCode::Esc => {
                 if app.stress.is_active() {
                     app.stress.stop();

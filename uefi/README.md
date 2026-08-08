@@ -242,8 +242,15 @@ cargo run -p esp-image -- list --image esp.img --dir /bioslove
 | `Up`/`Down` | Select a model |
 | `[` `]` | Move the step cursor within the selected recipe |
 | `ENTER` | Verify the selected step — reads bytes, checks digests, validates the PE. **Runs nothing** |
+| `Esc` | Cancel a verified step and back out. `q` still quits |
 | `p` | Confirm by hand that AC is connected, when the power state cannot be read |
 | `F` `F` | Arm, then run the step |
+
+A verified step is dropped whenever the thing it was verified against moves:
+`Up`/`Down`, `[`/`]`, `p`, `Esc`, or `f` (an index reload can replace the recipe
+underneath it). `F` `F` re-checks that both the selected entry **and** the step
+cursor still match what was loaded, and refuses otherwise — so a stale
+verification can never launch a different step's tool.
 
 Clearing the search box returns to the auto-detected list.
 
