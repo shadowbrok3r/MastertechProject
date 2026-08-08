@@ -162,10 +162,18 @@ So three stick recipes all work:
 - **App + index (~9.5 MB)** — model list works offline; payloads come over the LAN
 - **Full BIOSLove drive (~5.5 GB)** — works with no network at all
 
-The one hard requirement for the LAN path is a **writable volume** to stage into.
-Nothing in `EFI_FILE_PROTOCOL` reports writability, so the app proves it by
-writing `\bioslove\.writable`, trying the index's volume, then its own boot
-volume, then anything else attached. The Flash tab names what it settled on:
+The one hard requirement for the LAN path is a **writable volume with room** to
+stage into. Nothing in `EFI_FILE_PROTOCOL` reports writability, so the app proves
+it by writing `\bioslove\.writable`, trying the index's volume, then its own boot
+volume, then anything else attached — and it checks `FileSystemInfo::free_space`
+against the step's actual payload size before committing.
+
+That capacity check matters more than it sounds. On an ISO boot the only writable
+filesystems are EFI system partitions: a Ventoy stick's is **32 MB** and a
+machine's own ESP is typically 100–260 MB. A 16 MiB ROM does not fit in the
+former, and without the check the copy dies partway through with `VOLUME_FULL`.
+
+The Flash tab names what it settled on:
 
 | `Staging` | Meaning |
 |---|---|

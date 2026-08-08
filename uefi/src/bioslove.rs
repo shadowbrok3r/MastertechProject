@@ -510,24 +510,53 @@ pub enum StagingVolume {
     Foreign,
 }
 
-/// First attached volume that actually accepts a write.
+/// Free bytes on a volume; `None` when the filesystem will not report it.
+pub fn free_space(volume: uefi::Handle) -> Option<u64> {
+    use uefi::proto::media::file::{File, FileSystemInfo};
+    let mut sfs = unsafe {
+        boot::open_protocol::<SimpleFileSystem>(
+            OpenProtocolParams {
+                handle: volume,
+                agent: boot::image_handle(),
+                controller: None,
+            },
+            OpenProtocolAttributes::GetProtocol,
+        )
+    }
+    .ok()?;
+    let mut root = sfs.open_volume().ok()?;
+    root.get_boxed_info::<FileSystemInfo>().ok().map(|i| i.free_space())
+}
+
+/// First attached volume that accepts a write **and** has room for `need_bytes`.
 ///
 /// The index's own volume is not usable as staging on its own: a box booted off
 /// a Ventoy ISO reads it from a read-only filesystem, and a network-fetched
 /// index has no volume at all. Writability is proven by writing, since nothing
-/// in `EFI_FILE_PROTOCOL` reports it up front.
+/// in `EFI_FILE_PROTOCOL` reports it up front. Capacity has to be checked too —
+/// an ISO boot leaves only small EFI system partitions writable, and a 16 MiB
+/// ROM fails partway through the copy with `VOLUME_FULL` otherwise.
 pub fn writable_volume(
     prefer: &[uefi::Handle],
+    need_bytes: u64,
 ) -> Option<(uefi::Handle, StagingVolume)> {
+    let fits = |h: uefi::Handle| -> bool {
+        if write_file_on_volume(h, WRITE_PROBE, b"1").is_err() {
+            return false;
+        }
+        // A filesystem that won't report free space still gets a try; the write
+        // is the final authority either way.
+        free_space(h).is_none_or(|f| f >= need_bytes)
+    };
     for h in prefer {
-        if write_file_on_volume(*h, WRITE_PROBE, b"1").is_ok() {
+        if fits(*h) {
             return Some((*h, StagingVolume::Own));
         }
     }
     let all = boot::find_handles::<SimpleFileSystem>().ok()?;
     all.into_iter()
         .filter(|h| !prefer.contains(h))
-        .find(|h| write_file_on_volume(*h, WRITE_PROBE, b"1").is_ok())
+        .find(|h| fits(*h))
         .map(|h| (h, StagingVolume::Foreign))
 }
 

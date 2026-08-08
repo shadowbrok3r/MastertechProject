@@ -4909,7 +4909,7 @@ fn load_bioslove_index(app: &mut App) {
                 .into_iter()
                 .chain(bioslove::boot_volume())
                 .collect();
-            match bioslove::writable_volume(&prefer) {
+            match bioslove::writable_volume(&prefer, 0) {
                 Some((h, kind)) => {
                     app.flash_volume = Some(h);
                     app.flash_staging = Some(kind);
@@ -4977,6 +4977,10 @@ fn clear_flash_prep(app: &mut App) {
 
 /// Relay route serving BIOSLove payloads, content-addressed by digest.
 const PAYLOAD_ROUTE: &str = "/api/v1/qc/bioslove/payload";
+
+/// Headroom for the vendor tool itself, whose size the index does not carry.
+/// The largest on the share is well under a megabyte.
+const TOOL_ALLOWANCE: u64 = 4 * 1024 * 1024;
 
 /// Where a step's files came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -5065,8 +5069,19 @@ fn stage_step(
 
     let why = miss.unwrap_or_default();
     note.push(format!("WARN not on this volume: {why}"));
-    let Some(volume) = app.flash_volume else {
-        return Err(format!("{why}, and no writable volume for a fetch"));
+    // Pick the staging volume against this step's real size: the load-time pick
+    // only proved something was writable, and on an ISO boot the only writable
+    // filesystems are small EFI partitions a 16 MiB ROM will not fit in.
+    let need: u64 = step.files.iter().map(|f| f.size).sum::<u64>() + TOOL_ALLOWANCE;
+    let prefer: Vec<uefi::Handle> = app.flash_volume.into_iter().collect();
+    let volume = match bioslove::writable_volume(&prefer, need) {
+        Some((h, _)) => h,
+        None => {
+            return Err(format!(
+                "{why}, and no attached volume has {} MiB free to stage into",
+                need / (1024 * 1024)
+            ));
+        }
     };
     if app.target.is_empty() {
         return Err(format!("{why}, and no relay set to fetch from"));
