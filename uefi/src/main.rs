@@ -31,6 +31,7 @@ mod hii;
 mod netraw;
 mod order;
 mod pecheck;
+mod shellio;
 mod smart;
 mod smolnet;
 mod stream;
@@ -289,8 +290,23 @@ fn create_ui() -> Result<(
         Some(h) => h,
         None => uefi::boot::get_handle_for_protocol::<console::text::Output>()?,
     };
-    let mut output = uefi::boot::open_protocol_exclusive::<console::text::Output>(output_handle)?;
-    logln(format!("console: render handle={output_handle:?}"));
+    // Shared, never exclusive. EXCLUSIVE detaches every other agent from this
+    // protocol, and one of them is the ConSplitter behind `gST->ConOut` — the
+    // console every child image writes to. Holding it exclusively leaves our own
+    // TUI rendering perfectly while a launched vendor tool writes into a
+    // splitter with no device behind it: a black screen on a lit panel, and a
+    // tool stuck at a prompt nobody can see.
+    let mut output = unsafe {
+        uefi::boot::open_protocol::<console::text::Output>(
+            uefi::boot::OpenProtocolParams {
+                handle: output_handle,
+                agent: uefi::boot::image_handle(),
+                controller: None,
+            },
+            uefi::boot::OpenProtocolAttributes::GetProtocol,
+        )
+    }?;
+    logln(format!("console: render handle={output_handle:?} (shared)"));
 
     // Switch to the largest text mode the console supports so the TUI fills
     // the panel (GOP consoles boot in 80x25). ratatui re-reads the backend
@@ -4982,6 +4998,66 @@ const PAYLOAD_ROUTE: &str = "/api/v1/qc/bioslove/payload";
 /// The largest on the share is well under a megabyte.
 const TOOL_ALLOWANCE: u64 = 4 * 1024 * 1024;
 
+/// Relay route serving the EFI Shell vendor tools are launched under.
+const SHELL_ROUTE: &str = "/api/v1/qc/bioslove/shell";
+
+/// The exact shell build BIOSLove ships as `_BiosLove.efi` (EFI Shell 2.70).
+/// Pinned so a swapped binary is refused rather than silently trusted.
+const SHELL_SHA256: &str = "da5f4aa2008e6e26c3553b3dee4cf835ceac88820658693704cea35f62733ce3";
+
+/// Directory part of a volume path.
+fn parent_dir(path: &str) -> String {
+    match path.rfind('\\') {
+        Some(i) if i > 0 => path[..i].to_string(),
+        _ => "\\".to_string(),
+    }
+}
+
+/// Fetch the EFI Shell, preferring a copy already staged on the volume.
+///
+/// Vendor flashers are EDK2 StdLib applications and need a real shell; launched
+/// bare they hang before producing any output. Kept out of the index because it
+/// is one binary for every model, not a per-model payload.
+fn obtain_shell(app: &App, volume: uefi::Handle, note: &mut Vec<String>) -> Option<Vec<u8>> {
+    if let Ok(b) =
+        bioslove::read_file_on_volume(volume, launch::SHELL_ON_VOLUME, bioslove::PAYLOAD_MAX_BYTES)
+    {
+        if capsule::sha256_hex(&b) == SHELL_SHA256 {
+            note.push(format!("ok  shell {} B on volume", b.len()));
+            return Some(b);
+        }
+        note.push("WARN staged shell has the wrong digest; refetching".to_string());
+    }
+    if app.target.is_empty() {
+        note.push("WARN no shell on this volume and no relay to fetch one".to_string());
+        return None;
+    }
+    if let Some(reason) = unreachable_reason(&app.target) {
+        note.push(format!("WARN no shell on this volume; relay unusable: {reason}"));
+        return None;
+    }
+    match download_capsule(&app.target, SHELL_ROUTE) {
+        Ok(b) if capsule::sha256_hex(&b) == SHELL_SHA256 => {
+            note.push(format!("ok  shell {} B fetched", b.len()));
+            if let Err(e) = bioslove::write_file_on_volume(volume, launch::SHELL_ON_VOLUME, &b) {
+                note.push(format!("WARN could not cache the shell: {e}"));
+            }
+            Some(b)
+        }
+        Ok(b) => {
+            note.push(format!(
+                "WARN relay shell digest {} != expected",
+                sha_prefix(&capsule::sha256_hex(&b))
+            ));
+            None
+        }
+        Err(e) => {
+            note.push(format!("WARN shell fetch failed: {e}"));
+            None
+        }
+    }
+}
+
 /// Where a step's files came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PayloadSource {
@@ -5270,6 +5346,21 @@ fn prepare_flash_step(app: &mut App) {
                                 "expect: unknown - the script does not say".to_string()
                             }
                         });
+                        let work_dir = parent_dir(&exec_path);
+                        let shell = obtain_shell(app, volume, &mut note);
+                        match shell.is_some() {
+                            true => {
+                                note.push(format!("ok  runs under the EFI Shell in {work_dir}"));
+                                note.push(
+                                    "WARN when it finishes you get a shell prompt - type 'exit'"
+                                        .to_string(),
+                                );
+                            }
+                            false => note.push(
+                                "WARN no shell - direct launch, which hangs EDK2 StdLib tools"
+                                    .to_string(),
+                            ),
+                        }
                         ready = Some(PreparedStep {
                             entry: ei,
                             step: app.flash_step,
@@ -5277,6 +5368,8 @@ fn prepare_flash_step(app: &mut App) {
                             exec_path,
                             command_line: cmd.trim().to_string(),
                             bytes,
+                            work_dir,
+                            shell,
                         });
                     }
                 }
@@ -5367,7 +5460,11 @@ fn do_flash_step(
         },
     );
 
-    app.status = format!("RUNNING {} - DO NOT POWER OFF", p.command_line);
+    app.status = if p.shell.is_some() {
+        format!("RUNNING {} - DO NOT POWER OFF - type 'exit' when it finishes", p.command_line)
+    } else {
+        format!("RUNNING {} - DO NOT POWER OFF", p.command_line)
+    };
     terminal.draw(|frame| render(frame, app))?;
     logln(format!(
         "bioslove: starting {} from {}",
@@ -5380,15 +5477,33 @@ fn do_flash_step(
     announce_busy(app, true, &p.command_line, "");
 
     let guard = launch::save_console();
-    let mut dp_buf: Vec<u8> = Vec::new();
-    let cpath = uefi::CString16::try_from(p.exec_path.as_str()).ok();
-    let dp = cpath
-        .as_ref()
-        .and_then(|c| launch::file_device_path(p.volume, c, &mut dp_buf).ok());
-    if dp.is_none() {
-        logln("bioslove: no device path for the child; it may not find its payload".to_string());
-    }
-    let outcome = launch::run(&p.bytes, &p.command_line, dp);
+    let outcome = match p.shell.as_ref() {
+        Some(shell) => {
+            // The tool runs as the shell's child, in a directory the shell sets,
+            // which is the environment every script on the share assumes.
+            launch::run_via_shell(shell, p.volume, &p.work_dir, &p.command_line).map(|r| {
+                logln(format!(
+                    "bioslove: shell mapped the staging volume to fs{}",
+                    r.fs_index
+                ));
+                launch::Ran { status: r.status }
+            })
+        }
+        None => {
+            let mut dp_buf: Vec<u8> = Vec::new();
+            let cpath = uefi::CString16::try_from(p.exec_path.as_str()).ok();
+            let dp = cpath
+                .as_ref()
+                .and_then(|c| launch::file_device_path(p.volume, c, &mut dp_buf).ok());
+            if dp.is_none() {
+                logln(
+                    "bioslove: no device path for the child; it may not find its payload"
+                        .to_string(),
+                );
+            }
+            launch::run(&p.bytes, &p.command_line, dp)
+        }
+    };
     guard.restore();
     terminal.clear()?;
     app.dirty = true;
@@ -8527,6 +8642,11 @@ struct PreparedStep {
     /// Full command line, argv[0] included.
     command_line: String,
     bytes: Vec<u8>,
+    /// Directory holding the tool and its payloads; the shell's working dir.
+    work_dir: String,
+    /// EFI Shell to run the tool under. `None` falls back to a direct launch,
+    /// which is known to hang on EDK2 StdLib tools like AFU.
+    shell: Option<Vec<u8>>,
 }
 
 impl App {

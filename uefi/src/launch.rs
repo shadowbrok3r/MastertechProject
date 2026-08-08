@@ -81,6 +81,8 @@ pub struct ShellArgs {
     _strings: Vec<CString16>,
     _argv: Vec<*const u16>,
     _arg_info: Vec<ShellArgInfo>,
+    // Both protocols point at these; they must outlive the child.
+    _streams: crate::shellio::StdStreams,
     params: Box<uefi_raw::protocol::shell_params::ShellParametersProtocol>,
     iface: Box<ShellInterface>,
     installed_params: bool,
@@ -133,7 +135,11 @@ fn split_args(line: &str) -> Vec<String> {
 }
 
 /// Build both shell argument protocols and install them on `image`.
-fn install_shell_args(image: Handle, command_line: &str) -> Result<ShellArgs, String> {
+fn install_shell_args(
+    image: Handle,
+    command_line: &str,
+    legacy_iface: bool,
+) -> Result<ShellArgs, String> {
     let strings: Vec<CString16> = split_args(command_line)
         .iter()
         .map(|a| CString16::try_from(a.as_str()))
@@ -148,12 +154,17 @@ fn install_shell_args(image: Handle, command_line: &str) -> Result<ShellArgs, St
         .map(|_| ShellArgInfo { attributes: 0 })
         .collect();
 
+    // EDK2 StdLib brings up its C runtime from these before `main` runs; given
+    // nulls it never reaches the program, so the tool hangs with a lit panel and
+    // nothing drawn. Console-backed shims are the minimum that lets it start.
+    let streams = crate::shellio::StdStreams::new();
+
     let mut params = Box::new(uefi_raw::protocol::shell_params::ShellParametersProtocol {
         argv: argv.as_ptr(),
         argc: argv.len(),
-        std_in: core::ptr::null(),
-        std_out: core::ptr::null(),
-        std_err: core::ptr::null(),
+        std_in: streams.stdin.as_ptr().cast(),
+        std_out: streams.stdout.as_ptr().cast(),
+        std_err: streams.stderr.as_ptr().cast(),
     });
 
     // The child's own LoadedImage, which the 1.10 block exposes as `Info`.
@@ -177,9 +188,9 @@ fn install_shell_args(image: Handle, command_line: &str) -> Result<ShellArgs, St
         argc: argv.len(),
         redir_argv: core::ptr::null(),
         redir_argc: 0,
-        std_in: core::ptr::null_mut(),
-        std_out: core::ptr::null_mut(),
-        std_err: core::ptr::null_mut(),
+        std_in: streams.stdin.as_ptr().cast(),
+        std_out: streams.stdout.as_ptr().cast(),
+        std_err: streams.stderr.as_ptr().cast(),
         arg_info: arg_info.as_ptr().cast_mut(),
         echo_on: 1,
     });
@@ -192,14 +203,19 @@ fn install_shell_args(image: Handle, command_line: &str) -> Result<ShellArgs, St
         )
     }
     .is_ok();
-    let installed_iface = unsafe {
-        boot::install_protocol_interface(
-            Some(image),
-            &SHELL_INTERFACE_GUID,
-            (&raw mut *iface).cast(),
-        )
-    }
-    .is_ok();
+    // Only for vendor tools. A child that is itself an EFI Shell must not see
+    // the 1.10 block: a real shell parent installs the 2.0 protocol alone, and
+    // that is the environment in which `exit` returns instead of dropping to a
+    // prompt.
+    let installed_iface = legacy_iface
+        && unsafe {
+            boot::install_protocol_interface(
+                Some(image),
+                &SHELL_INTERFACE_GUID,
+                (&raw mut *iface).cast(),
+            )
+        }
+        .is_ok();
 
     if !installed_params && !installed_iface {
         return Err("could not install either shell argument protocol".into());
@@ -210,11 +226,126 @@ fn install_shell_args(image: Handle, command_line: &str) -> Result<ShellArgs, St
         _strings: strings,
         _argv: argv,
         _arg_info: arg_info,
+        _streams: streams,
         params,
         iface,
         installed_params,
         installed_iface,
     })
+}
+
+/// Exit code the generated script returns when it landed on the wrong volume,
+/// chosen to be distinguishable from anything a vendor tool returns.
+const WRONG_VOLUME: usize = 77;
+
+/// Where the shell binary is kept on the staging volume.
+pub const SHELL_ON_VOLUME: &str = "\\bioslove\\shell.efi";
+
+/// Marker written beside a step's payloads so the script can confirm the volume.
+const VOLUME_MARKER: &str = "mtech.tag";
+
+/// Outcome of running a command through a real EFI Shell.
+pub struct ShellRan {
+    pub status: Status,
+    /// Which `fsN` the shell mapped the staging volume to.
+    pub fs_index: usize,
+    /// Script the shell executed, for the log.
+    pub script: String,
+}
+
+/// Order to try `fsN` in: the shell numbers filesystems by walking
+/// `LocateHandleBuffer(ByProtocol, SimpleFileSystem)`, which is the same call
+/// this makes, so the staging volume's index in that list is almost certainly
+/// its `fsN`. "Almost" is why the script verifies it and the caller retries.
+fn fs_candidates(volume: Handle) -> Vec<usize> {
+    let all = boot::find_handles::<uefi::proto::media::fs::SimpleFileSystem>().unwrap_or_default();
+    let best = all.iter().position(|h| *h == volume);
+    let mut order: Vec<usize> = best.into_iter().collect();
+    order.extend((0..all.len().max(1)).filter(|i| Some(*i) != best));
+    order
+}
+
+/// Script that pins the shell to the right volume, gives it a working directory,
+/// and runs one command.
+///
+/// A freshly launched shell has **no** current directory — `cd` reports "Current
+/// directory not specified" and every relative path fails. Vendor tools resolve
+/// their ROM next to themselves, so establishing the directory is not optional;
+/// this is the same `fsN` walk BIOSLove's own `startup.nsh` does.
+fn shell_script(fs: usize, work_dir: &str, command_line: &str) -> String {
+    let mut s = String::new();
+    s.push_str("@echo -off\r\n");
+    s.push_str(&format!(
+        "if not exist fs{fs}:{work_dir}\\{VOLUME_MARKER} then\r\n  exit {WRONG_VOLUME}\r\nendif\r\n"
+    ));
+    s.push_str(&format!("fs{fs}:\r\n"));
+    s.push_str(&format!("cd {work_dir}\r\n"));
+    s.push_str(&format!("{command_line}\r\n"));
+    // Surfaced on the console; the shell's own exit status is what we capture.
+    s.push_str("echo MTECH_RC=%lasterror%\r\n");
+    // `exit` in a script ends the script, not the shell -- this shell rejects
+    // `-exit` as a flag and its line editor reads ConIn directly, so a canned
+    // stdin cannot answer for the operator. The prompt is therefore expected,
+    // and the tech is told exactly what to do with it.
+    // Quoted: EDK2 `echo` parses a leading '-' in any word as a flag and fails
+    // the line, which is why BIOSLove's own menu scripts quote their banners.
+    s.push_str("echo .\r\n");
+    s.push_str("echo \"*** step finished. Type  exit  to return to Mastertech ***\"\r\n");
+    s.push_str("echo .\r\n");
+    s.push_str("exit\r\n");
+    s
+}
+
+/// Run `command_line` through a real EFI Shell staged on `volume`.
+///
+/// Launching a vendor flasher directly from `LoadImage` does not work: these are
+/// EDK2 StdLib applications that expect a full shell, and without one AFU hangs
+/// before printing even a usage banner. Handing the job to the shell the tools
+/// actually ship with removes that whole class of problem.
+pub fn run_via_shell(
+    shell_bytes: &[u8],
+    volume: Handle,
+    work_dir: &str,
+    command_line: &str,
+) -> Result<ShellRan, String> {
+    crate::bioslove::write_file_on_volume(
+        volume,
+        &format!("{work_dir}\\{VOLUME_MARKER}"),
+        b"mtech",
+    )?;
+
+    let mut last = String::from("no filesystem candidates");
+    for fs in fs_candidates(volume) {
+        let script = shell_script(fs, work_dir, command_line);
+        let script_path = format!("{work_dir}\\run.nsh");
+        crate::bioslove::write_file_on_volume(volume, &script_path, script.as_bytes())?;
+
+        // The shell resolves the script by absolute path; its own image path is
+        // only provenance, so it is kept out of the per-model directory.
+        let mut dp_buf: Vec<u8> = Vec::new();
+        let cpath = CString16::try_from(SHELL_ON_VOLUME)
+            .map_err(|_| "shell path is not valid UCS-2".to_string())?;
+        let dp = file_device_path(volume, &cpath, &mut dp_buf).ok();
+        // Flags are not an option: this shell rejects `-nostartup`/`-exit` as
+        // commands in both protocol modes.
+        let cmd = format!("shell.efi fs{fs}:{script_path}");
+
+        match run(shell_bytes, &cmd, dp) {
+            Ok(ran) if ran.status.0 == WRONG_VOLUME => {
+                last = format!("fs{fs} is not the staging volume");
+                continue;
+            }
+            Ok(ran) => {
+                return Ok(ShellRan {
+                    status: ran.status,
+                    fs_index: fs,
+                    script,
+                });
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(format!("could not locate the staging volume from the shell ({last})"))
 }
 
 /// Device path of `file` on the volume behind `volume`, built into `buf`.
@@ -282,6 +413,16 @@ pub struct Ran {
 /// off the machine instead. The caller owns the console: save it first and
 /// restore it after, because the child writes directly to ConOut.
 pub fn run(bytes: &[u8], command_line: &str, file_path: Option<&DevicePath>) -> Result<Ran, String> {
+    run_inner(bytes, command_line, file_path, true, true)
+}
+
+fn run_inner(
+    bytes: &[u8],
+    command_line: &str,
+    file_path: Option<&DevicePath>,
+    shell_args: bool,
+    legacy_iface: bool,
+) -> Result<Ran, String> {
     let image = boot::load_image(
         boot::image_handle(),
         LoadImageSource::FromBuffer {
@@ -327,10 +468,14 @@ pub fn run(bytes: &[u8], command_line: &str, file_path: Option<&DevicePath>) -> 
 
     // Almost every vendor tool takes argv from a shell protocol, not from the
     // load options set above.
-    let args = install_shell_args(image, command_line).map_err(|e| {
-        let _ = boot::unload_image(image);
-        e
-    })?;
+    let args = if shell_args {
+        Some(install_shell_args(image, command_line, legacy_iface).map_err(|e| {
+            let _ = boot::unload_image(image);
+            e
+        })?)
+    } else {
+        None
+    };
 
     let result = boot::start_image(image);
     // Uninstall before the handle goes away; only reached if the child returned.

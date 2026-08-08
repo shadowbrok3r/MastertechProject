@@ -2,9 +2,12 @@
 //!
 //! Two roles render the same data differently: the assigned tech gets an
 //! open interactive checklist; the requesting operator gets a done-state
-//! review card with Open Diagnostics / Resume Session / Close actions.
+//! review card. The Open Diagnostics / Resume Session / Close action row
+//! renders for whoever may close the handback.
 
-use crate::modals::tabs::ai_checklist_panel::{ai_checklist_progress, display_ai_checklist};
+use crate::modals::tabs::ai_checklist_panel::{
+    ai_checklist_progress, can_close_ai_task, display_ai_checklist,
+};
 use crate::ui_tools::{icons, theme};
 use crate::TaskUiActions;
 use crossbeam::channel::Sender;
@@ -232,8 +235,8 @@ impl AiTaskCardView {
                         });
                 });
 
-            // Operator review actions.
-            if self.role == AiCardRole::Operator {
+            // Handback actions — requester always, assignee once complete.
+            if can_close_ai_task(task, &current_user.get_id(), &self.items) {
                 ui.separator();
                 ui.horizontal(|ui| {
                     if Button::new(crate::ui_tools::icons::menu_item(
@@ -261,11 +264,14 @@ impl AiTaskCardView {
                             let _ = tx.try_send(TaskUiActions::OpenAdminConsole(cs.clone()));
                         }
                     }
-                    if Button::new(RichText::new("Close").weak())
-                        .small()
-                        .ui(ui)
-                        .on_hover_text("Accept the handback and close this AI task")
-                        .clicked()
+                    if Button::new(crate::ui_tools::icons::menu_item(
+                        icons::CHECK,
+                        "Accept & close",
+                    ))
+                    .small()
+                    .ui(ui)
+                    .on_hover_text("Close this AI task and record the outcome in the session log")
+                    .clicked()
                     {
                         let _ = tx.try_send(TaskUiActions::CloseAiTask(task.id.clone()));
                     }

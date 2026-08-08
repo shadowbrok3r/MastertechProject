@@ -5,9 +5,12 @@
 
 use database::schema::{AiTask, AiTaskItem, AiTaskStatus, DiagnosticEntry, DiagnosticSession, RecordId, RecordIdExt, User};
 use eframe::egui::{
-    CollapsingHeader, Color32, Frame, Grid, Margin, RichText, ScrollArea, Spinner, Ui, Vec2, Widget,
+    Button, CollapsingHeader, Color32, Frame, Grid, Margin, RichText, ScrollArea, Spinner, Ui, Vec2,
+    Widget,
 };
-use crate::modals::tabs::ai_checklist_panel::{ai_checklist_progress, display_ai_checklist};
+use crate::modals::tabs::ai_checklist_panel::{
+    ai_checklist_progress, can_close_ai_task, display_ai_checklist,
+};
 use crate::ui_tools::{icons, theme};
 use crate::TaskUiActions;
 use crossbeam::channel::Sender;
@@ -211,6 +214,22 @@ fn render_ai_handoff_panel(
                                 display_ai_checklist(ui, task, items, ctx.store_users, interactive, tx);
                             });
                     });
+            }
+
+            if let (Some(tx), Some(user)) = (ctx.ui_actions_tx, ctx.current_user) {
+                if can_close_ai_task(task, &user.get_id(), items) {
+                    ui.separator();
+                    if Button::new(icons::menu_item(icons::CHECK, "Accept & close"))
+                        .small()
+                        .ui(ui)
+                        .on_hover_text(
+                            "Close this AI task and record the outcome in the session log",
+                        )
+                        .clicked()
+                    {
+                        let _ = tx.try_send(TaskUiActions::CloseAiTask(task.id.clone()));
+                    }
+                }
             }
 
             if ui

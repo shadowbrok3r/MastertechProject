@@ -26,6 +26,8 @@ mod flashstate;
 mod launch;
 #[path = "../pecheck.rs"]
 mod pecheck;
+#[path = "../shellio.rs"]
+mod shellio;
 
 /// `capsule` logs through the crate root; here that is just the console.
 fn logln(s: String) {

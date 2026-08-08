@@ -4,7 +4,7 @@
 use crate::TaskUiActions;
 use crate::ui_tools::theme;
 use crossbeam::channel::Sender;
-use database::schema::{AiTask, AiTaskItem, RecordIdExt, User};
+use database::schema::{AiTask, AiTaskItem, AiTaskStatus, RecordId, RecordIdExt, User};
 use eframe::egui::{Checkbox, ProgressBar, RichText, Ui, Widget};
 
 /// Short "3:41 PM" form of a Surreal datetime.
@@ -20,6 +20,16 @@ fn user_name(store_users: &[User], id: &database::schema::RecordId) -> String {
         .find(|u| u.get_id() == *id)
         .map(|u| u.get_name().to_string())
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// True when `user_id` may close `task`: the requester on any handback, the
+/// assignee once every item is checked.
+pub fn can_close_ai_task(task: &AiTask, user_id: &RecordId, items: &[AiTaskItem]) -> bool {
+    task.status == AiTaskStatus::AwaitingFollowup
+        && (*user_id == task.requested_by
+            || (*user_id == task.assignee
+                && !items.is_empty()
+                && items.iter().all(|i| i.checked)))
 }
 
 /// Fraction + thin progress bar. Returns (checked, total).
@@ -58,7 +68,8 @@ pub fn display_ai_checklist(
         return;
     }
     let mut sorted: Vec<&AiTaskItem> = items.iter().collect();
-    sorted.sort_by_key(|i| i.position);
+    // Checked items sink below the open ones; position orders within each group.
+    sorted.sort_by_key(|i| (i.checked, i.position));
 
     for item in sorted {
         ui.push_id(("ai_item", item.id.key_string()), |ui| {

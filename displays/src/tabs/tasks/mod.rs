@@ -299,9 +299,9 @@ impl SharedContext {
             });
         }
 
-        // Build the AI Tasks column cards: tech section (my open handoffs,
-        // plus a short grace window after completion) and operator review
-        // section (handoffs I requested that await follow-up).
+        // Build the AI Tasks column cards: tech section (my handoffs, held
+        // until closed) and operator review section (handoffs I requested
+        // that await follow-up). The grace window only drives the done banner.
         let mut my_tasks_ai_cards: Vec<crate::tabs::tasks::ai_task_cards::AiTaskCardView> =
             Vec::new();
         if page == "My Tasks" {
@@ -320,9 +320,9 @@ impl SharedContext {
                     AiTaskStatus::Open if is_tech => AiCardRole::AssignedTech,
                     // Review card wins for an operator who is also the tech.
                     AiTaskStatus::AwaitingFollowup if is_op => AiCardRole::Operator,
-                    AiTaskStatus::AwaitingFollowup if is_tech && in_grace => {
-                        AiCardRole::AssignedTech
-                    }
+                    // Card persists past the grace window so the assignee keeps
+                    // a route to the handback until it is closed.
+                    AiTaskStatus::AwaitingFollowup if is_tech => AiCardRole::AssignedTech,
                     _ => continue,
                 };
 

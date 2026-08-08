@@ -26,6 +26,14 @@ const PAYLOAD_ROUTE: &str = "/api/v1/qc/bioslove/payload/{sha256}";
 /// Route firmware fetches the model index from when no volume carries one.
 const INDEX_ROUTE: &str = "/api/v1/qc/bioslove/index";
 
+/// Route firmware fetches the EFI Shell from. Vendor flashers are EDK2 StdLib
+/// applications and hang when launched without one, so it is served like the
+/// index rather than being a per-model payload.
+const SHELL_ROUTE: &str = "/api/v1/qc/bioslove/shell";
+
+/// BIOSLove ships the shell under this name at the share root.
+const SHELL_FILE: &str = "_BiosLove.efi";
+
 /// Ceiling on one share read. A 16 MiB ROM takes well under a second on the LAN;
 /// anything near this means the share is gone.
 const SHARE_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
@@ -38,6 +46,8 @@ struct Relay {
     payloads: Arc<HashMap<String, PathBuf>>,
     /// The index document itself, served to firmware booted off a bare stick.
     index_bytes: Arc<Vec<u8>>,
+    /// Share root, for artifacts served by name rather than digest.
+    share: Arc<String>,
 }
 
 #[tokio::main]
@@ -66,6 +76,7 @@ async fn main() {
         upstream,
         payloads: Arc::new(payloads),
         index_bytes: Arc::new(index_bytes),
+        share: Arc::new(share.clone()),
     };
     println!("preboot-relay: listening on {listen} -> {}", relay.upstream);
     println!(
@@ -85,6 +96,7 @@ async fn main() {
     let app = Router::new()
         .route(PAYLOAD_ROUTE, axum::routing::get(payload))
         .route(INDEX_ROUTE, axum::routing::get(index_doc))
+        .route(SHELL_ROUTE, axum::routing::get(shell))
         .fallback(proxy)
         .with_state(relay);
     let listener = tokio::net::TcpListener::bind(&listen).await.expect("bind listen addr");
@@ -210,6 +222,31 @@ async fn index_doc(State(relay): State<Relay>) -> Response {
         relay.index_bytes.to_vec(),
     )
         .into_response()
+}
+
+/// Serve the EFI Shell vendor tools are launched under.
+async fn shell(State(relay): State<Relay>) -> Response {
+    let path = std::path::Path::new(relay.share.as_str()).join(SHELL_FILE);
+    match tokio::time::timeout(SHARE_READ_TIMEOUT, tokio::fs::read(&path)).await {
+        Ok(Ok(bytes)) => {
+            println!("GET bioslove/shell -> 200 ({}B) {}", bytes.len(), path.display());
+            (
+                StatusCode::OK,
+                [(CONTENT_TYPE, "application/octet-stream")],
+                bytes,
+            )
+                .into_response()
+        }
+        Ok(Err(e)) => {
+            eprintln!("GET bioslove/shell -> 502 {}: {e}", path.display());
+            (StatusCode::BAD_GATEWAY, format!("shell read failed: {e}")).into_response()
+        }
+        Err(_) => (
+            StatusCode::GATEWAY_TIMEOUT,
+            "firmware share did not respond; check it is reachable",
+        )
+            .into_response(),
+    }
 }
 
 /// Serve one payload by digest, straight off the share.

@@ -296,6 +296,61 @@ time under `match safety`.
 Only the first two are launchable. For the rest the app identifies the folder and
 prints the exact procedure rather than pretending it can help.
 
+### How a vendor tool is started
+
+**Through a real EFI Shell, not directly.** The flashers on the share are EDK2
+StdLib applications, and `LoadImage`/`StartImage` on one by itself does not work:
+AFU hangs with the panel lit and nothing drawn, before printing even a usage
+banner. Under a shell the same binary runs, prints, and returns.
+
+The shell is `_BiosLove.efi` — BIOSLove's boot loader *is* EFI Shell 2.70 — staged
+to `\bioslove\shell.efi` and pinned by digest, fetched from the relay
+(`GET /api/v1/qc/bioslove/shell`) when a volume has no copy.
+
+`F` `F` then generates a script beside the payloads and runs it:
+
+```
+@echo -off
+if not exist fs0:\bioslove\cache\LUXG\mtech.tag then
+  exit 77
+endif
+fs0:
+cd \bioslove\cache\LUXG
+AfuEfix64.efi PFxLUxxN106PCL02.ROM /D
+echo MTECH_RC=%lasterror%
+```
+
+Every line is load-bearing:
+
+- A freshly launched shell has **no working directory** — `cd` reports *"Current
+  directory not specified"* and every relative path fails. Vendor tools resolve
+  their ROM next to themselves, so the `fsN:` + `cd` is mandatory. This is the
+  same walk BIOSLove's own `startup.nsh` does.
+- `fsN` cannot be known from outside the shell, so it is derived from the
+  volume's index in `LocateHandleBuffer(SimpleFileSystem)` — the same enumeration
+  the shell numbers from — and then *verified* by the marker. A wrong guess
+  returns `77` and the next index is tried.
+- `%lasterror%` carries the tool's own exit code to the console.
+
+#### You have to type `exit` when it finishes
+
+A step marked `returns here` ends at a shell prompt, and the tech types `exit` to
+return to Mastertech. The script prints the instruction. This is a limitation,
+not an oversight — three ways round it were tried and none work on this shell:
+
+| Attempt | Result |
+|---|---|
+| `-nostartup` / `-exit` flags | `'-nostartup' is not recognized as an internal or external command`, in both protocol modes |
+| Omitting the EFI 1.10 `ShellInterface` | Made it *more* boot-like — it began running the `startup.nsh` countdown |
+| Canned `StdIn` via the shell-parameters protocol | Ignored; the line editor reads `gST->ConIn` directly |
+
+Swapping `gST->ConIn` for the child's lifetime would close it and is the route to
+take if unattended operation is ever needed. The real BIOS step ends in `/reboot`
+and never returns, so today this only affects EC steps and probes.
+
+Quote any `echo` text in a generated script: EDK2 parses a leading `-` in a word
+as a flag and fails the line.
+
 ### Gates before anything runs
 
 Every one must pass, and each prints its verdict:
