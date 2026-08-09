@@ -244,6 +244,21 @@ pub const SHELL_ON_VOLUME: &str = "\\bioslove\\shell.efi";
 /// Marker written beside a step's payloads so the script can confirm the volume.
 const VOLUME_MARKER: &str = "mtech.tag";
 
+/// Sentinel the script overwrites once it is actually executing.
+///
+/// The retry cannot key off the shell's exit status. A wrong `fsN` makes the
+/// shell fail to *find* the script — "is not recognized as an internal or
+/// external command" — which is not the guard's `77`, and retrying on any
+/// failure would re-run a flasher that had genuinely run and returned an error.
+/// So the script proves it reached the command, and only its absence retries.
+const RAN_SENTINEL: &str = "mtech.ran";
+
+/// Written before each attempt; the script replaces it.
+const SENTINEL_PENDING: &[u8] = b"pending";
+
+/// How many `fsN` mappings to sweep before giving up.
+const FS_SWEEP: usize = 10;
+
 /// Outcome of running a command through a real EFI Shell.
 pub struct ShellRan {
     pub status: Status,
@@ -261,7 +276,9 @@ fn fs_candidates(volume: Handle) -> Vec<usize> {
     let all = boot::find_handles::<uefi::proto::media::fs::SimpleFileSystem>().unwrap_or_default();
     let best = all.iter().position(|h| *h == volume);
     let mut order: Vec<usize> = best.into_iter().collect();
-    order.extend((0..all.len().max(1)).filter(|i| Some(*i) != best));
+    // The shell's numbering does not have to match ours — it skips volumes it
+    // cannot map — so the sweep goes wider than the handle count.
+    order.extend((0..FS_SWEEP).filter(|i| Some(*i) != best));
     order
 }
 
@@ -280,6 +297,8 @@ fn shell_script(fs: usize, work_dir: &str, command_line: &str) -> String {
     ));
     s.push_str(&format!("fs{fs}:\r\n"));
     s.push_str(&format!("cd {work_dir}\r\n"));
+    // Proof of execution, written before the tool so it survives any outcome.
+    s.push_str(&format!("echo ran > {RAN_SENTINEL}\r\n"));
     s.push_str(&format!("{command_line}\r\n"));
     // Surfaced on the console; the shell's own exit status is what we capture.
     s.push_str("echo MTECH_RC=%lasterror%\r\n");
@@ -314,11 +333,13 @@ pub fn run_via_shell(
         b"mtech",
     )?;
 
+    let sentinel_path = format!("{work_dir}\\{RAN_SENTINEL}");
     let mut last = String::from("no filesystem candidates");
     for fs in fs_candidates(volume) {
         let script = shell_script(fs, work_dir, command_line);
         let script_path = format!("{work_dir}\\run.nsh");
         crate::bioslove::write_file_on_volume(volume, &script_path, script.as_bytes())?;
+        crate::bioslove::write_file_on_volume(volume, &sentinel_path, SENTINEL_PENDING)?;
 
         // The shell resolves the script by absolute path; its own image path is
         // only provenance, so it is kept out of the per-model directory.
@@ -330,20 +351,29 @@ pub fn run_via_shell(
         // commands in both protocol modes.
         let cmd = format!("shell.efi fs{fs}:{script_path}");
 
-        match run(shell_bytes, &cmd, dp) {
-            Ok(ran) if ran.status.0 == WRONG_VOLUME => {
-                last = format!("fs{fs} is not the staging volume");
-                continue;
-            }
-            Ok(ran) => {
-                return Ok(ShellRan {
-                    status: ran.status,
-                    fs_index: fs,
-                    script,
-                });
-            }
+        let ran = match run(shell_bytes, &cmd, dp) {
+            Ok(r) => r,
             Err(e) => return Err(e),
+        };
+
+        // The sentinel, not the status, decides whether this mapping worked.
+        let executed = crate::bioslove::read_file_on_volume(volume, &sentinel_path, 4096)
+            .map(|b| b != SENTINEL_PENDING)
+            .unwrap_or(false);
+        if !executed {
+            last = if ran.status.0 == WRONG_VOLUME {
+                format!("fs{fs} is not the staging volume")
+            } else {
+                format!("fs{fs}: shell could not run the script ({:?})", ran.status)
+            };
+            crate::logln(format!("bioslove: {last}; trying the next mapping"));
+            continue;
         }
+        return Ok(ShellRan {
+            status: ran.status,
+            fs_index: fs,
+            script,
+        });
     }
     Err(format!("could not locate the staging volume from the shell ({last})"))
 }
