@@ -70,11 +70,117 @@ pub const WS_MASTER_URL: &str = env!("WS_MASTER_URL");
 /// connects without `role=master`, it is treated as a second client and **replaces** the
 /// real remote client in the room — use `role` `"master"` for all admin URLs and `"client"`
 /// for remote Mastertech clients.
+///
+/// Any `room_id`/`role` already present in `base_url` is dropped: the baked
+/// `WS_*_URL` values carry a `?role=…` of their own, and appending onto them
+/// emitted the key twice. Other query parameters are preserved.
 #[must_use]
 pub fn websocket_url_with_room(base_url: &str, room_id: &str, role: &str) -> String {
-    let base = base_url.trim_end_matches(['&', '?']).trim_end();
-    let join = if base.contains('?') { '&' } else { '?' };
-    format!("{base}{join}room_id={room_id}&role={role}")
+    let trimmed = base_url.trim().trim_end_matches(['&', '?']);
+    let (path, query) = trimmed.split_once('?').unwrap_or((trimmed, ""));
+
+    let mut url = String::with_capacity(trimmed.len() + room_id.len() + role.len() + 16);
+    url.push_str(path);
+    url.push('?');
+    for kv in query.split('&').filter(|kv| !kv.is_empty()) {
+        let key = kv.split('=').next().unwrap_or("");
+        if key == "room_id" || key == "role" {
+            continue;
+        }
+        url.push_str(kv);
+        url.push('&');
+    }
+    url.push_str("room_id=");
+    url.push_str(room_id);
+    url.push_str("&role=");
+    url.push_str(role);
+    url
+}
+
+#[cfg(test)]
+mod websocket_url_tests {
+    use super::websocket_url_with_room;
+
+    #[test]
+    fn appends_to_a_bare_base() {
+        assert_eq!(
+            websocket_url_with_room("wss://sock.example.app/websocket", "HOST:abc", "master"),
+            "wss://sock.example.app/websocket?room_id=HOST:abc&role=master"
+        );
+    }
+
+    #[test]
+    fn replaces_a_baked_role_instead_of_doubling_it() {
+        // The shape the deployed .env / CI secrets actually carry.
+        assert_eq!(
+            websocket_url_with_room(
+                "wss://sock.example.app/websocket?role=client",
+                "HOST:abc",
+                "client"
+            ),
+            "wss://sock.example.app/websocket?room_id=HOST:abc&role=client"
+        );
+        assert_eq!(
+            websocket_url_with_room(
+                "wss://sock.example.app/websocket?role=master",
+                "HOST:abc",
+                "master"
+            ),
+            "wss://sock.example.app/websocket?room_id=HOST:abc&role=master"
+        );
+    }
+
+    #[test]
+    fn callers_role_wins_over_a_conflicting_baked_one() {
+        assert_eq!(
+            websocket_url_with_room(
+                "ws://127.0.0.1:8081/websocket?role=client",
+                "HOST:abc",
+                "master"
+            ),
+            "ws://127.0.0.1:8081/websocket?room_id=HOST:abc&role=master"
+        );
+    }
+
+    #[test]
+    fn drops_a_stale_room_id_too() {
+        assert_eq!(
+            websocket_url_with_room(
+                "wss://sock.example.app/websocket?room_id=OLD&role=client",
+                "NEW",
+                "client"
+            ),
+            "wss://sock.example.app/websocket?room_id=NEW&role=client"
+        );
+    }
+
+    #[test]
+    fn preserves_unrelated_query_params() {
+        assert_eq!(
+            websocket_url_with_room(
+                "wss://sock.example.app/websocket?token=t1&role=client",
+                "HOST:abc",
+                "master"
+            ),
+            "wss://sock.example.app/websocket?token=t1&room_id=HOST:abc&role=master"
+        );
+    }
+
+    #[test]
+    fn tolerates_trailing_separators() {
+        assert_eq!(
+            websocket_url_with_room("wss://sock.example.app/websocket?", "HOST:abc", "client"),
+            "wss://sock.example.app/websocket?room_id=HOST:abc&role=client"
+        );
+        assert_eq!(
+            websocket_url_with_room(
+                "wss://sock.example.app/websocket?role=client&",
+                "HOST:abc",
+                "client"
+            ),
+            "wss://sock.example.app/websocket?room_id=HOST:abc&role=client"
+        );
+    }
 }
 
 pub const ODOO_API_KEY: &str = env!("ODOO_API_KEY");

@@ -954,6 +954,25 @@ pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) 
         ),
         Err(e) => log::warn!("spawn_direct_tcp_listener -> netsh spawn failed: {e}"),
     }
+    // WinPE's filter policy ignores netsh rules, so inbound dials to this
+    // listener time out even on-subnet; wpeutil is the PE-supported switch.
+    #[cfg(target_os = "windows")]
+    if stress_runner::is_winpe() {
+        match crate::utilities::network::try_disable_winpe_firewall() {
+            Ok(true) => log::info!(
+                "spawn_direct_tcp_listener -> WinPE firewall disabled; inbound {} reachable",
+                addr.port()
+            ),
+            Ok(false) => log::warn!(
+                "spawn_direct_tcp_listener -> wpeutil DisableFirewall refused; \
+                 inbound stays blocked, admins must use the relay"
+            ),
+            Err(e) => log::warn!(
+                "spawn_direct_tcp_listener -> wpeutil spawn failed: {e}; \
+                 inbound stays blocked, admins must use the relay"
+            ),
+        }
+    }
     #[cfg(not(target_os = "windows"))]
     let _ = try_add_firewall_rule;
 

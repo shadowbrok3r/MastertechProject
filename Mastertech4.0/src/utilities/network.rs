@@ -100,3 +100,23 @@ pub fn try_add_firewall_rule(port: u16, rule_name: &str) -> std::io::Result<bool
 pub fn try_add_firewall_rule(_port: u16, _rule_name: &str) -> std::io::Result<bool> {
     Ok(false)
 }
+
+/// Disable the WinPE firewall via `wpeutil DisableFirewall`.
+///
+/// WinPE's filter policy is not backed by the Windows Firewall service, so
+/// `netsh advfirewall` rules do not open ports there — inbound stays blocked
+/// and direct-TCP dials to the listener time out even on the same subnet.
+/// `wpeutil` is the supported PE switch. Returns `Ok(true)` when wpeutil
+/// reported success; `Err` only on spawn failure.
+#[cfg(target_os = "windows")]
+pub fn try_disable_winpe_firewall() -> std::io::Result<bool> {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let output = Command::new("wpeutil")
+        .arg("DisableFirewall")
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()?;
+    Ok(output.status.success())
+}

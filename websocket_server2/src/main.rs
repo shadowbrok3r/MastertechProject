@@ -19,6 +19,10 @@ use uuid::Uuid;
 type SessionID = String;
 type RoomID = String;
 
+/// Ceiling on the post-upgrade `connected_client` probe so a wedged relay DB
+/// connection retires the task instead of accumulating one per room join.
+const CONNECT_CLIENT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 #[derive(Debug)]
 enum ChatMessage {
     Send {
@@ -849,8 +853,26 @@ async fn websocket_handler(
 
     info!("Client connected. Role: {:?}, Room: {:?}, Session: {:?}", role, room_id, session_id);
 
-    let res = connect_client(room_id.clone()).await;
-    println!("Res: {res:?}");
+    // Off the upgrade path: `connect_client` is a read-only probe whose result
+    // is discarded, but awaiting it here gated every room join on the relay's
+    // own DB connection. A wedged connection stalled the upgrade past the
+    // client's handshake window, so no master or agent could register a room
+    // while /tunnel — which touches no DB — kept upgrading normally.
+    {
+        let room_id = room_id.clone();
+        tokio::spawn(async move {
+            match tokio::time::timeout(CONNECT_CLIENT_TIMEOUT, connect_client(room_id.clone())).await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => warn!("connect_client({room_id}) failed: {e:?}"),
+                Err(_) => warn!(
+                    "connect_client({room_id}) timed out after {CONNECT_CLIENT_TIMEOUT:?}; \
+                     relay DB connection is unhealthy"
+                ),
+            }
+        });
+    }
+
     ws.on_upgrade(move |socket| chat_server.handle_ws(socket, session_id, room_id, role))
 }
 
