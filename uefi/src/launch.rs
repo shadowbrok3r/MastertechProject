@@ -417,10 +417,32 @@ pub fn save_console() -> ConsoleGuard {
 
 impl ConsoleGuard {
     /// Restore the saved mode and blank the screen the child wrote over.
+    ///
+    /// A vendor tool or shell leaves the console in whatever mode it chose. The
+    /// firmware then reports *our* mode as still current while the hardware is
+    /// painting the child's, so the TUI redraws at full size into a smaller
+    /// screen and only its top-left corner is visible. Bouncing through another
+    /// mode forces a real switch instead of a `set_mode(current)` no-op.
     pub fn restore(self) {
         uefi::system::with_stdout(|out| {
-            if let Some(m) = self.mode {
-                let _ = out.set_mode(m);
+            if let Some(target) = self.mode {
+                let bounce = out
+                    .modes()
+                    .find(|m| m.index() != target.index())
+                    .map(|m| m.index());
+                if let Some(i) = bounce {
+                    if let Some(m) = out.modes().find(|m| m.index() == i) {
+                        let _ = out.set_mode(m);
+                    }
+                }
+                if let Some(m) = out.modes().find(|m| m.index() == target.index()) {
+                    let _ = out.set_mode(m);
+                }
+                crate::logln(format!(
+                    "console: restored mode {}x{}",
+                    target.columns(),
+                    target.rows()
+                ));
             }
             let _ = out.clear();
         });
