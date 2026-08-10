@@ -880,7 +880,9 @@ async fn clear_tcp_coords(client_uuid: database::schema::RecordId) {
         .bind(("cs", identity.connection_string.clone()))
         .bind(("client_hash", identity.client_hash.clone()))
         .bind(("computer", computer))
-        .await;
+        .await
+        // Statement errors only surface via check(); see the publisher task.
+        .and_then(|r| r.check());
     if let Err(e) = res {
         log::warn!("spawn_direct_tcp_listener -> clear coords failed: {e:?}");
     }
@@ -1016,7 +1018,12 @@ pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) 
                 .bind(("client_hash", client_hash.clone()))
                 .bind(("computer", computer.clone()))
                 .bind(("boot_environment", boot_environment.as_str()))
-                .await;
+                .await
+                // `query().await` is Ok as long as the request round-tripped;
+                // a statement error (field coercion, ASSERT) only surfaces via
+                // check(). Without it a rejected publish logged as success and
+                // the row silently kept its stale coords.
+                .and_then(|r| r.check());
             match res {
                 Ok(_) => {
                     log::debug!(
@@ -1060,7 +1067,9 @@ pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) 
                     let res = db()
                         .query("UPDATE $client SET connected = true, last_update = time::now()")
                         .bind(("client", heartbeat_uuid.clone()))
-                        .await;
+                        .await
+                        // Statement errors only surface via check(); see publisher.
+                        .and_then(|r| r.check());
                     match res {
                         Ok(_) => log::debug!(
                             "tcp_listener heartbeat -> refreshed last_update"

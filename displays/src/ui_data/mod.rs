@@ -609,6 +609,10 @@ impl crate::app_state::SharedContext {
         // recurring problem will surface again once the previous toast
         // has had time to be read.
         const DEDUP_WINDOW: std::time::Duration = std::time::Duration::from_secs(5);
+        // Hard ceiling on toast text; the full text goes to the log. Applied at
+        // the sink so no emitter (plugin notifications, tool results, crash
+        // verdicts) can wallpaper the screen with an unreadable toast.
+        const TOAST_MAX_CHARS: usize = 240;
         let toast_rx = get_toast_receiver();
         while let Ok(msg) = toast_rx.try_recv() {
             let (kind, text) = match msg {
@@ -616,6 +620,14 @@ impl crate::app_state::SharedContext {
                 ToastMessage::Error(text) => (ToastKind::Error, text),
                 ToastMessage::Warning(text) => (ToastKind::Warning, text),
                 ToastMessage::Info(text) => (ToastKind::Info, text),
+            };
+            let text = if text.chars().count() > TOAST_MAX_CHARS {
+                log::info!("toast truncated to {TOAST_MAX_CHARS} chars; full text: {text}");
+                let mut clipped: String = text.chars().take(TOAST_MAX_CHARS).collect();
+                clipped.push('…');
+                clipped
+            } else {
+                text
             };
 
             if let Some(target) = admin_tcp_toast_target(&text) {

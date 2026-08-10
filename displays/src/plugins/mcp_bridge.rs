@@ -303,6 +303,60 @@ async fn resolve_entity_links_mcp(
         }
     }
 
+    // Auto-heal instead of prompting when the caller's ids resolved to real
+    // rows and every issue is a repairable gap in the stored links (a stale or
+    // missing connected_client/computer link — e.g. a task-creation link write
+    // the DB rejected). Ambiguity (unresolvable ids, non-canonical keys, a
+    // conflicting live customer) still prompts, as does an admin-pinned link.
+    if let (Some(cs), Some(cust), Some(comp)) = (
+        bundle.connection_string.as_deref(),
+        validation.resolved_customer_id.clone(),
+        validation.resolved_computer_id.clone(),
+    ) {
+        use database::schema::entity_link::LinkValidationIssue as Issue;
+        let repairable = !validation.issues.is_empty()
+            && validation.issues.iter().all(|i| {
+                matches!(
+                    i,
+                    Issue::MissingCustomer
+                        | Issue::MissingComputer
+                        | Issue::ConnectedClientComputerMismatch { .. }
+                )
+            });
+        if repairable {
+            let locked = database::schema::entity_link::load_connected_client_graph(cs)
+                .await
+                .ok()
+                .and_then(|g| g.client)
+                .map(|c| c.customer_locked)
+                .unwrap_or(false);
+            if locked {
+                log::info!(
+                    "resolve_entity_links_mcp -> {cs} links repairable but customer_locked; \
+                     leaving to the operator"
+                );
+            } else {
+                match database::schema::entity_link::link_connected_client_record(
+                    cs,
+                    &cust.key_string(),
+                    None,
+                    None,
+                )
+                .await
+                {
+                    Ok(report) => {
+                        log::info!("resolve_entity_links_mcp -> auto-linked {cs}: {report}");
+                        return Ok((cust, comp));
+                    }
+                    Err(e) => log::warn!(
+                        "resolve_entity_links_mcp -> auto-link failed for {cs}: {e:?}; \
+                         falling back to the operator modal"
+                    ),
+                }
+            }
+        }
+    }
+
     if entity_link_ui_active() {
         let request_id = uuid::Uuid::new_v4().to_string();
         let rx = register_entity_link_resolution(EntityLinkRequest {
@@ -3426,7 +3480,7 @@ impl PluginToolProvider {
         name = "desktop_focus",
         description = "What currently has keyboard focus on the client: the foreground window's title, class, process, position and size, the focused control's class, and the text caret position. \
                        Cheap — use it instead of a screenshot whenever you only need to know WHERE input would land, and always before typing into something you did not just activate. \
-                       Reports when the UAC secure desktop owns input, which no injection can reach. Requires remote_exec_arm (window titles reveal what the user is doing)."
+                       Names the desktop that owns input (`input_desktop`: Default / Screen-saver / Winlogon) and whether this session can reach it (`input_reachable`); `secure_desktop_suspected` means Winlogon specifically. Requires remote_exec_arm (window titles reveal what the user is doing)."
     )]
     async fn desktop_focus(
         &self,
@@ -9559,8 +9613,11 @@ and rects; `desktop_activate_window` raises one by handle or title. Prefer that 
 title bar. `desktop_focus` is a cheap "where would my keystroke land" check — it costs a few
 hundred bytes instead of a whole image, so use it liberally between actions.
 
-If `desktop_focus` reports `secure_desktop_suspected`, a UAC prompt owns input and NOTHING can be
-injected until a human dismisses it — do not retry, say so.
+If `desktop_focus` reports `input_reachable: false`, another desktop owns input and neither capture
+nor injection can reach it — read `input_desktop` before deciding what to do, because the remedies
+differ. `Winlogon` (also flagged `secure_desktop_suspected`) is a UAC prompt or the logon screen and
+needs a human; `Screen-saver` needs the screensaver cleared, e.g. terminating the running `*.scr`
+via remote_exec. Do not retry blind.
 
 Gated exactly like RemoteExec: `remote_exec_arm` first, and the client's consent banner shows
 "VIEWING YOUR SCREEN" in red while capture or input is live. Captures and injections are written to

@@ -13,11 +13,26 @@
 
 use displays::remote_desktop::{FocusInfo, WindowInfo};
 
+/// Which desktop currently receives input, and whether this session shares it.
+pub struct InputDesktop {
+    /// `Default`, `Screen-saver`, `Winlogon`, …; `None` when access was denied.
+    pub name: Option<String>,
+    /// The input desktop is this session's, so injection and capture reach it.
+    pub reachable: bool,
+    /// Winlogon, or an input desktop this process may not even open.
+    pub secure: bool,
+}
+
 #[cfg(target_os = "windows")]
 mod imp {
     use super::*;
     use windows::core::BOOL;
-    use windows::Win32::Foundation::{HWND, LPARAM, RECT};
+    use windows::Win32::Foundation::{E_ACCESSDENIED, HANDLE, HWND, LPARAM, RECT};
+    use windows::Win32::System::StationsAndDesktops::{
+        CloseDesktop, GetThreadDesktop, GetUserObjectInformationW, OpenInputDesktop,
+        DESKTOP_CONTROL_FLAGS, DESKTOP_READOBJECTS, HDESK, UOI_NAME,
+    };
+    use windows::Win32::System::Threading::GetCurrentThreadId;
     use windows::Win32::UI::HiDpi::{
         SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT,
         DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
@@ -52,6 +67,52 @@ mod imp {
     fn wide_to_string(buf: &[u16]) -> String {
         let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
         String::from_utf16_lossy(&buf[..end])
+    }
+
+    fn desktop_name(hdesk: HDESK) -> Option<String> {
+        let mut buf = [0u16; 128];
+        unsafe {
+            GetUserObjectInformationW(
+                HANDLE(hdesk.0),
+                UOI_NAME,
+                Some(buf.as_mut_ptr().cast()),
+                std::mem::size_of_val(&buf) as u32,
+                None,
+            )
+        }
+        .ok()?;
+        Some(wide_to_string(&buf))
+    }
+
+    pub fn input_desktop() -> InputDesktop {
+        let opened =
+            unsafe { OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_READOBJECTS) };
+        let hdesk = match opened {
+            Ok(h) => h,
+            Err(e) => {
+                return InputDesktop {
+                    name: None,
+                    reachable: false,
+                    // Only the secure desktop denies a read handle.
+                    secure: e.code() == E_ACCESSDENIED,
+                };
+            }
+        };
+        let name = desktop_name(hdesk);
+        let _ = unsafe { CloseDesktop(hdesk) };
+
+        // GetThreadDesktop's handle is owned by the system; do not close it.
+        let own = unsafe { GetThreadDesktop(GetCurrentThreadId()) }
+            .ok()
+            .and_then(desktop_name);
+
+        InputDesktop {
+            reachable: matches!((&name, &own), (Some(a), Some(b)) if a.eq_ignore_ascii_case(b)),
+            secure: name
+                .as_deref()
+                .is_some_and(|n| n.eq_ignore_ascii_case("winlogon")),
+            name,
+        }
     }
 
     fn window_title(hwnd: HWND) -> String {
@@ -109,16 +170,19 @@ mod imp {
 
     pub fn focus() -> FocusInfo {
         let _dpi = DpiScope::per_monitor();
+        let desk = input_desktop();
         let fg = unsafe { GetForegroundWindow() };
 
-        // A null foreground window means another desktop owns input — normally
-        // the UAC secure desktop, which no injection can reach.
+        // A null foreground window means no window on this desktop holds focus,
+        // which any desktop other than this session's also produces.
         if fg.0.is_null() {
             return FocusInfo {
                 foreground: None,
                 focused_control_class: None,
                 caret: None,
-                secure_desktop_suspected: true,
+                input_desktop: desk.name,
+                input_reachable: desk.reachable,
+                secure_desktop_suspected: desk.secure,
                 dpi_context: "per-monitor-v2 (thread override)".into(),
             };
         }
@@ -146,7 +210,9 @@ mod imp {
             foreground: describe(fg, fg),
             focused_control_class,
             caret,
-            secure_desktop_suspected: false,
+            input_desktop: desk.name,
+            input_reachable: desk.reachable,
+            secure_desktop_suspected: desk.secure,
             dpi_context: "per-monitor-v2 (thread override)".into(),
         }
     }
@@ -233,11 +299,20 @@ mod imp {
 #[cfg(not(target_os = "windows"))]
 mod imp {
     use super::*;
+    pub fn input_desktop() -> InputDesktop {
+        InputDesktop {
+            name: None,
+            reachable: true,
+            secure: false,
+        }
+    }
     pub fn focus() -> FocusInfo {
         FocusInfo {
             foreground: None,
             focused_control_class: None,
             caret: None,
+            input_desktop: None,
+            input_reachable: true,
             secure_desktop_suspected: false,
             dpi_context: "unsupported on this platform".into(),
         }
@@ -250,7 +325,22 @@ mod imp {
     }
 }
 
-pub use imp::{activate, focus, list};
+pub use imp::{activate, focus, input_desktop, list};
+
+fn describe_owner(name: Option<&str>, secure: bool) -> String {
+    match (name, secure) {
+        (Some(name), true) => format!("the secure desktop ({name}) owns input"),
+        (Some(name), false) => format!("the {name} desktop owns input"),
+        (None, _) => "the input desktop is not readable by this session".into(),
+    }
+}
+
+/// `Some(description)` when a desktop other than this session's owns input, so
+/// captures and injected input cannot reach the screen.
+pub fn unreachable_input_desktop() -> Option<String> {
+    let desk = input_desktop();
+    (!desk.reachable).then(|| describe_owner(desk.name.as_deref(), desk.secure))
+}
 
 /// `Ok(())` when the foreground window's title contains `needle`.
 ///
@@ -258,11 +348,11 @@ pub use imp::{activate, focus, list};
 /// change cannot slip between the caller's check and the keystroke.
 pub fn assert_foreground_title(needle: &str) -> Result<(), String> {
     let info = focus();
-    if info.secure_desktop_suspected {
-        return Err(
-            "the secure desktop (UAC prompt) currently owns input; no injection can reach it"
-                .into(),
-        );
+    if !info.input_reachable {
+        return Err(format!(
+            "{}; no injection can reach it",
+            describe_owner(info.input_desktop.as_deref(), info.secure_desktop_suspected)
+        ));
     }
     let actual = info
         .foreground

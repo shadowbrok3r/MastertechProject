@@ -5230,7 +5230,9 @@ pub async fn create_client(mut client: ConnectedClient) -> anyhow::Result<Connec
     if has_customer {
         q = q.bind(("customer", client.customer.clone().unwrap()));
     }
-    let merge_res = q.await;
+    // Statement errors only surface via check(); without it a coercion
+    // failure (e.g. a row predating a required field) logged as success.
+    let merge_res = q.await.and_then(|r| r.check());
     match merge_res {
         Ok(_) => log::debug!(
             "websockets -> create_client: partial-merge UPDATE applied for {:?}",

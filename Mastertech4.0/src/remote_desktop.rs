@@ -217,7 +217,12 @@ fn grab(monitor_id: u32, scale: f32, quality: u8) -> anyhow::Result<Option<Deskt
 
     let mon_x = monitor.x().unwrap_or(0);
     let mon_y = monitor.y().unwrap_or(0);
-    let rgba = monitor.capture_image()?;
+    let rgba = monitor
+        .capture_image()
+        .map_err(|e| match crate::window_info::unreachable_input_desktop() {
+            Some(why) => anyhow::anyhow!("{why}, so this session cannot capture the screen: {e}"),
+            None => anyhow::Error::from(e),
+        })?;
     let (w, h) = (rgba.width(), rgba.height());
     // Input mapping reads this; a capture must happen before injection works.
     *ACTIVE_GEOM.lock().unwrap() = Some(MonitorGeom {

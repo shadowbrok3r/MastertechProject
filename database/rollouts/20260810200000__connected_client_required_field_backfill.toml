@@ -1,0 +1,45 @@
+id = "20260810200000__connected_client_required_field_backfill"
+name = "connected_client_required_field_backfill"
+# Applied to surrealdb-dev (Mastertech/MastertechDB) 2026-08-10 19:50Z; verified
+# by re-counting NONE rows (2,744 -> 0), not the step status.
+state = "completed"
+# Data-only backfill; the schema file set is unchanged, so source == target.
+# Placeholders until `surrealkit rollout lint` reports the real current hash.
+source_schema_hash = "7b546ec723709cda1926bbf8b1df0740f93eeddbeafd869e1538115d44451899"
+target_schema_hash = "7b546ec723709cda1926bbf8b1df0740f93eeddbeafd869e1538115d44451899"
+compatibility = "phased"
+renames = []
+
+# The boot_environment (20260804120000) and autopilot_opt_out (20260807190000)
+# rollouts added required-typed fields (`TYPE string` / `TYPE bool`) with a
+# DEFAULT but no backfill. DEFAULT does not backfill existing rows, and SurrealDB
+# re-validates the whole document on every write — so every row created before
+# those fields became unwritable: any UPDATE/UPSERT fails with e.g. "Couldn't
+# coerce value for field `autopilot_opt_out` ... Expected `bool` but found NONE".
+# At authoring time 2,744 of 2,769 connected_client rows were in this state:
+# clients could not publish coords or `connected = true` (invisible in the admin
+# console, unreachable by direct TCP), and the relay's activity stamps failed.
+# This backfills the documented defaults onto exactly the rows holding NONE;
+# readers already coalesce to these same values, so no behavior changes.
+#
+# client_kind and customer_locked counted zero NONE rows but are included for
+# idempotence: `??` keeps any existing value.
+#
+# No rollback step: reverting to NONE would re-break the rows, and the values
+# written are the fields' own schema DEFAULTs.
+
+[[steps]]
+id = "backfill_required_fields"
+phase = "start"
+kind = "run_sql"
+sql = """
+UPDATE connected_client SET
+    autopilot_opt_out = autopilot_opt_out ?? false,
+    boot_environment  = boot_environment ?? 'installed',
+    client_kind       = client_kind ?? 'machine',
+    customer_locked   = customer_locked ?? false
+WHERE autopilot_opt_out == NONE
+   OR boot_environment == NONE
+   OR client_kind == NONE
+   OR customer_locked == NONE;
+"""

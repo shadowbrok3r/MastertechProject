@@ -124,9 +124,16 @@ pub struct FocusInfo {
     /// Text caret in physical screen pixels — literally where typed characters
     /// will appear. `None` when nothing is accepting text.
     pub caret: Option<(i32, i32, u32, u32)>,
-    /// True when the process could not read the foreground state, which on
-    /// Windows almost always means the secure desktop (a UAC prompt) is up.
-    /// Input injection cannot reach it.
+    /// Name of the desktop that owns input: `Default` for the normal
+    /// interactive desktop, `Screen-saver` while a screensaver runs, `Winlogon`
+    /// for the secure desktop. `None` when opening it was denied.
+    pub input_desktop: Option<String>,
+    /// True when `input_desktop` is the desktop this session runs on, and so
+    /// injected input and captures can reach it.
+    pub input_reachable: bool,
+    /// True only for the Winlogon secure desktop — a UAC prompt or the logon
+    /// screen — or when opening the input desktop was denied, which is itself
+    /// that signal. A screensaver also blocks input but is not this.
     pub secure_desktop_suspected: bool,
     /// How the client resolved coordinates, for diagnosing DPI mismatches.
     pub dpi_context: String,
