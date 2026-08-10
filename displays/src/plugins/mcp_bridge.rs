@@ -107,6 +107,44 @@ pub(crate) fn unregister_pending_request(request_id: &str) {
     }
 }
 
+/// Hardware specs for a connected client from its live `SystemInformation`
+/// stream. When nothing has been cached yet, asks the client to start
+/// streaming and waits briefly for the first tick.
+///
+/// `None` when no admin session is open for the client — the stream and the
+/// send channel are the same session, so neither the cache nor the nudge can
+/// reach a machine nobody is connected to.
+async fn live_specs_for_client(
+    connection_string: &str,
+) -> Option<database::schema::ComputerSpecs> {
+    let client = database::schema::entity_link::load_connected_client_graph(connection_string)
+        .await
+        .ok()?
+        .client?;
+
+    if let Some(specs) = crate::live_computer_specs(&client) {
+        return Some(specs);
+    }
+
+    // LiveData is a no-op on a client already streaming, so this is safe to
+    // send into an open session that simply hasn't ticked into our cache yet.
+    let bytes =
+        bincode::serde::encode_to_vec(&crate::Cmd::LiveData, bincode::config::standard()).ok()?;
+    if let Err(e) = super::remote_egui_control::hub().send_raw_binary(connection_string, bytes) {
+        log::debug!("live_specs_for_client: no session for {connection_string}: {e}");
+        return None;
+    }
+
+    for _ in 0..10 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        if let Some(specs) = crate::live_computer_specs(&client) {
+            return Some(specs);
+        }
+    }
+    log::warn!("live_specs_for_client: {connection_string} streamed no sysinfo within 5s");
+    None
+}
+
 // ─── Headless (MCP-triggered) crash-dump fetch routing ──────────────────────
 //
 // connection_string → (destination zip path, pending request_id). Set by
@@ -510,6 +548,24 @@ async fn preboot_query(
     timeout_ms: u64,
 ) -> Result<serde_json::Value, ErrorData> {
     let hub = preboot_hub()?;
+    // A box running a child image cannot service queries: the child owns the
+    // polled network stack, so the query frame is never read. Reported up front
+    // instead of after the full deadline, which reads as a dead link.
+    if let Some(rec) = hub.busy_record(serial) {
+        if rec.within_budget() {
+            let elapsed = rec.at.elapsed().as_secs();
+            let budget = rec.busy.expect_secs;
+            return Err(ErrorData::new(
+                ErrorCode::INVALID_PARAMS,
+                format!(
+                    "'{serial}' is running child image '{}' ({elapsed}s of up to {budget}s); \
+                     it answers no queries until that returns. Poll preboot_get_status.",
+                    rec.busy.what
+                ),
+                None,
+            ));
+        }
+    }
     if !hub.is_connected(serial) {
         return Err(ErrorData::new(
             ErrorCode::INVALID_PARAMS,
@@ -5497,16 +5553,18 @@ impl PluginToolProvider {
 
     #[tool(
         name = "link_connected_client",
-        description = "Link a connected client to a customer and its canonical computer:HOST:hash9 record, creating the computer row when missing. Use for the hardware-swap case: a machine reconnects under a new disk-persistent client id with null customer/computer (repair_entity_links can't fix that — it only repoints existing links). Upserts the computer (sets customer + hostname only; never clobbers existing specs), then sets connected_client.customer/computer and optionally friendly_name. Component specs repopulate from the client's own check-in."
+        description = "Link a connected client to a customer and its canonical computer:HOST:hash9 record, creating the computer row when missing. Use for the hardware-swap case: a machine reconnects under a new disk-persistent client id with null customer/computer (repair_entity_links can't fix that — it only repoints existing links). Upserts the computer (customer + hostname + hardware specs read from the client's live SystemInformation stream: cpu, gpu, ram, drives, operating_system, motherboard_*, product_*), then sets connected_client.customer/computer and optionally friendly_name. A spec the live read could not supply is left as-is, so this never blanks good data. `specs_written` in the result lists the fields that landed; it is EMPTY when no admin session is open for the client (the spec stream and the request channel are that same session) — connect from the Web Console and re-run to fill the row instead of sending a tech to type specs in by hand."
     )]
     async fn link_connected_client(
         &self,
         Parameters(p): Parameters<LinkConnectedClientParams>,
     ) -> Result<CallToolResult, ErrorData> {
+        let specs = live_specs_for_client(&p.connection_string).await;
         let report = database::schema::entity_link::link_connected_client_record(
             &p.connection_string,
             &p.customer_id,
             p.friendly_name.as_deref(),
+            specs.as_ref(),
         )
         .await
         .map_err(|e| ErrorData::invalid_params(e.to_string(), None))?;
@@ -7881,7 +7939,14 @@ matched, and an error when the lookup itself failed."
 
     #[tool(
         name = "query_surrealdb",
-        description = "Run a read-only SurrealQL query against the Mastertech database. Only SELECT and RETURN statements are allowed."
+        description = "Run a read-only SurrealQL query against the Mastertech database. Only SELECT and RETURN statements are allowed. \
+This is SurrealDB 3.x, which rejects several patterns that are legal in SQL and in older SurrealDB — read these before writing a query: \
+(1) ORDER BY may only name fields the projection actually returns. `SELECT id, summary FROM x ORDER BY started_at` fails with 'Missing order idiom'; either add `started_at` to the projection or use `SELECT *`. Aliases count, so ORDER BY the alias you defined. \
+(2) SPLIT and GROUP BY are mutually exclusive, and SPLIT may only name a projected field. To count array members, use `SELECT field, count() FROM x GROUP BY field` over a projected array, or flatten in a subquery first. \
+(3) Aggregates do not nest: `math::sum(count())` is rejected. Aggregate in a subquery and aggregate its result in the outer query. \
+(4) NONE poisons arithmetic and casts. `time::now() - started_at` fails with \"Cannot perform subtraction with 'none' and 'datetime'\" the moment one row has no `started_at`, and `<datetime>` of NONE fails outright. Guard every optional field with `??` (`started_at ?? time::now()`) or filter with `WHERE started_at != NONE` before doing arithmetic on it. \
+(5) Queries are cut off at 45s. Add a LIMIT, narrow the WHERE, or aggregate server-side rather than pulling rows to count them. \
+A failed query returns the database error plus a hint naming which of these rules it hit."
     )]
     async fn query_surrealdb(
         &self,
@@ -7897,9 +7962,9 @@ matched, and an error when the lookup itself failed."
         let result: Vec<serde_json::Value> = database::db()
             .query(trimmed)
             .await
-            .map_err(to_internal)?
+            .map_err(|e| surrealql_error(e.to_string()))?
             .take(0)
-            .map_err(to_internal)?;
+            .map_err(|e| surrealql_error(e.to_string()))?;
         Ok(CallToolResult::success(vec![ContentBlock::json(
             serde_json::json!({ "results": result }),
         )
@@ -9796,6 +9861,54 @@ impl ServerHandler for PluginToolProvider {
 
 fn to_internal<E: std::fmt::Display>(e: E) -> ErrorData {
     ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None)
+}
+
+/// Names the SurrealDB 3.x rule a failed query hit and how to satisfy it.
+///
+/// The raw engine errors state what was rejected but not what to write instead,
+/// so the same handful of parse and NONE-arithmetic failures were being retried
+/// unchanged. Returns the original error with a fix appended.
+fn surrealql_error(raw: String) -> ErrorData {
+    let hint = if raw.contains("Missing order idiom") {
+        Some(
+            "ORDER BY may only name a field the projection returns. Add that field \
+             (or its alias) to the SELECT list, or select `*`.",
+        )
+    } else if raw.contains("SPLIT and GROUP are mutually exclusive") {
+        Some(
+            "SPLIT cannot be combined with GROUP BY. Flatten the array in a subquery, \
+             then GROUP BY over the subquery's result.",
+        )
+    } else if raw.contains("Missing split idiom") {
+        Some("SPLIT may only name a field the projection returns. Add it to the SELECT list.")
+    } else if raw.contains("Nested aggregate functions are not supported") {
+        Some(
+            "Aggregates do not nest. Compute the inner aggregate in a subquery and \
+             aggregate its result in the outer query.",
+        )
+    } else if raw.contains("with 'none' and") || raw.contains("using input `NONE`") {
+        Some(
+            "A row holds NONE where a value was required. Guard the field with `??` \
+             (e.g. `started_at ?? time::now()`) or filter with `WHERE <field> != NONE` \
+             before the arithmetic or cast.",
+        )
+    } else if raw.contains("exceeded the timeout") {
+        Some(
+            "The 45s query budget was exhausted. Add a LIMIT, narrow the WHERE, or \
+             aggregate server-side instead of returning rows to count.",
+        )
+    } else if raw.contains("does not exist") {
+        Some(
+            "No such table. `INFO FOR DB` is not reachable from this tool; check the \
+             table name against database/schema/*.surql.",
+        )
+    } else {
+        None
+    };
+    match hint {
+        Some(h) => ErrorData::new(ErrorCode::INTERNAL_ERROR, format!("{raw}\n\nFix: {h}"), None),
+        None => ErrorData::new(ErrorCode::INTERNAL_ERROR, raw, None),
+    }
 }
 
 // Emits an image content block when a plugin result carries base64 image bytes; otherwise JSON.

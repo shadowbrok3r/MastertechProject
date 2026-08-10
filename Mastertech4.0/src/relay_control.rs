@@ -20,17 +20,23 @@ static STARTED: AtomicBool = AtomicBool::new(false);
 static STOPPED: AtomicBool = AtomicBool::new(false);
 /// Set once the room channel has opened at least once.
 static OPENED_ONCE: AtomicBool = AtomicBool::new(false);
-/// Last reported churn cause; cleared by the next successful open.
-static CHURN_REPORTED: Mutex<Option<String>> = Mutex::new(None);
+/// Last reported churn cause and when it warned; cleared by the next successful open.
+static CHURN_REPORTED: Mutex<Option<(String, std::time::Instant)>> = Mutex::new(None);
+/// How long an unchanged churn cause stays demoted to debug. Without a ceiling a
+/// relay that is down for the whole session warns once and then logs nothing,
+/// which reads as a healthy channel.
+const CHURN_REWARN_AFTER: Duration = Duration::from_secs(300);
 
-/// Warn when the churn cause differs from the last reported one, debug for repeats.
+/// Warn when the churn cause differs from the last reported one or the last
+/// warning aged past [`CHURN_REWARN_AFTER`]; debug for repeats in between.
 fn churn_level(cause: &str) -> log::Level {
     let mut last = CHURN_REPORTED.lock().unwrap_or_else(|e| e.into_inner());
-    if last.as_deref() == Some(cause) {
-        log::Level::Debug
-    } else {
-        *last = Some(cause.to_string());
-        log::Level::Warn
+    match last.as_ref() {
+        Some((prev, at)) if prev == cause && at.elapsed() < CHURN_REWARN_AFTER => log::Level::Debug,
+        _ => {
+            *last = Some((cause.to_string(), std::time::Instant::now()));
+            log::Level::Warn
+        }
     }
 }
 
@@ -48,6 +54,11 @@ const MAX_BACKOFF: Duration = Duration::from_secs(60);
 /// so a stalled socket is re-registered instead of orphaned relay-side.
 const PING_INTERVAL: Duration = Duration::from_secs(10);
 const LIVENESS_TIMEOUT: Duration = Duration::from_secs(25);
+/// Window for the handshake to produce `WsEvent::Opened`. Separate from
+/// [`LIVENESS_TIMEOUT`], which only describes an already-open socket: the relay
+/// is fronted by Cloudflare, so a cold upgrade can outlast the silence window
+/// and must not be scored as a stalled connection.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(45);
 /// Hard socket lifetime. A relay that drops our room slot without closing the
 /// socket leaves us auto-ponging a connection it no longer routes, which no
 /// silence check can observe; recycling caps that blind window.
@@ -103,7 +114,10 @@ async fn run() {
         database::WS_CLIENT_URL
     };
     let url = database::websocket_url_with_room(base, &connection_string, "client");
-    log::debug!("relay_control -> room channel for {connection_string} via {url}");
+    // Logged once per process: without a live room socket the relay has no
+    // `role=client` peer to forward OpenRelayTunnel to, so every admin tunnel
+    // attempt expires unpaired.
+    log::info!("relay_control -> room channel for {connection_string} via {url}");
 
     let mut backoff = MIN_BACKOFF;
     loop {
@@ -183,12 +197,21 @@ async fn serve_room_socket(
             }
         }
 
-        if last_ping.elapsed() >= PING_INTERVAL {
+        if opened && last_ping.elapsed() >= PING_INTERVAL {
             sender.send(WsMessage::Ping(Vec::new()));
             last_ping = tokio::time::Instant::now();
         }
-        if last_event.elapsed() >= LIVENESS_TIMEOUT {
-            let cause = format!("no room traffic for {LIVENESS_TIMEOUT:?}");
+        // An unopened socket is timed against the handshake window; the silence
+        // window only describes a socket that reached `Opened` and went quiet.
+        let (deadline, cause) = if opened {
+            (LIVENESS_TIMEOUT, format!("no room traffic for {LIVENESS_TIMEOUT:?}"))
+        } else {
+            (
+                CONNECT_TIMEOUT,
+                format!("room channel never opened within {CONNECT_TIMEOUT:?}"),
+            )
+        };
+        if last_event.elapsed() >= deadline {
             log::log!(churn_level(&cause), "relay_control -> {cause}; reconnecting");
             sender.close();
             return SocketEnd::Ended { opened };

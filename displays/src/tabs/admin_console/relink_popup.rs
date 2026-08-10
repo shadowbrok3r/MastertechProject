@@ -10,10 +10,12 @@
 //!  - `connected_client` row: `customer` + `friendly_name` +
 //!    `customer_locked = true` (the lock flag is what stops the
 //!    auto-derived name from clobbering the admin's choice on next
-//!    reconnect).
-//!  - The associated `computer` row (if the connected_client has one
-//!    linked), updating its `customer` field so downstream task /
-//!    service-order creation picks up the right owner.
+//!    reconnect) + the `computer` link.
+//!  - The associated `computer` row — its `customer` field so downstream
+//!    task / service-order creation picks up the right owner, plus the
+//!    hardware specs from the client's live `SystemInformation` feed. The
+//!    row is minted at the canonical `computer:HOST:hash9` id when the
+//!    client's link is absent or dangling.
 //!
 //! Phone and email lookups can return multiple matches, so the popup
 //! shows a results list and the admin picks the right one before the
@@ -23,9 +25,10 @@ use crate::{PlatformSpawner, Spawner};
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use database::{
     schema::{
+        entity_link::{canonical_computer_id, upsert_computer_record},
         prestashop::{Address, Customer, PrestashopPayload},
-        utilities::{get_prestashop_payload, get_prestashop_payload_from_phone},
-        ConnectedClient, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE,
+        utilities::{get_prestashop_payload, get_prestashop_payload_from_phone, record_exists},
+        ConnectedClient, RecordIdExt, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE,
     },
     db,
 };
@@ -456,6 +459,8 @@ impl RelinkClientPopup {
         let tx = self.channel.0.clone();
         let client_id = self.client.id.clone();
         let computer_link = self.client.computer.clone();
+        let connection_string = self.client.connection_string.clone();
+        let specs = crate::live_computer_specs(&self.client);
         let new_customer = payload.customer.clone();
         let new_customer_id = new_customer.id.clone();
         let new_friendly = format!(
@@ -481,21 +486,52 @@ impl RelinkClientPopup {
                 return;
             }
 
-            // 2) Patch the connected_client row: customer + friendly_name +
-            //    customer_locked, leaving everything else (computer,
-            //    local_ip, tcp_port, command_history, …) intact. We use a
+            // 2) Pick the computer row to own. Keep an existing link so a
+            //    machine's service history stays on its row; fall back to the
+            //    canonical `computer:HOST:hash9` id when the link is absent or
+            //    dangling, which is what mints a row for a client that never
+            //    got one.
+            let computer_id = match &computer_link {
+                Some(id) => match record_exists(id.clone()).await {
+                    Ok(Some(true)) => id.clone(),
+                    Ok(_) => canonical_computer_id(&connection_string),
+                    // A failed probe is not proof the row is gone; repointing
+                    // on it would move a machine off a live row.
+                    Err(e) => {
+                        let _ = tx.send(RelinkEvent::ApplyError(format!(
+                            "could not check whether {} still exists: {e}",
+                            id.key_string()
+                        )));
+                        return;
+                    }
+                },
+                None => canonical_computer_id(&connection_string),
+            };
+            // Identity hostname from the connection string, not the live one:
+            // under WinPE the reported name is `HBCD_PE`.
+            let hostname = connection_string
+                .split(':')
+                .next()
+                .unwrap_or(&connection_string)
+                .to_string();
+
+            // 3) Patch the connected_client row: customer + friendly_name +
+            //    customer_locked + the computer link, leaving everything else
+            //    (local_ip, tcp_port, command_history, …) intact. We use a
             //    targeted UPDATE rather than `.content(...)` to avoid
             //    clobbering fields the popup doesn't know about.
             let cc_table = CONNECTED_CLIENT_TABLE;
             let cc_update = db()
                 .query(
                     "UPDATE $id SET customer = $customer, \
+                                    computer = $computer, \
                                     friendly_name = $name, \
                                     customer_locked = true, \
                                     last_update = time::now()",
                 )
                 .bind(("id", client_id.clone()))
                 .bind(("customer", new_customer_id.clone()))
+                .bind(("computer", computer_id.clone()))
                 .bind(("name", new_friendly.clone()))
                 .await;
             if let Err(e) = cc_update {
@@ -505,17 +541,25 @@ impl RelinkClientPopup {
                 return;
             }
 
-            // 3) If the connected_client has a computer link, repoint that
-            //    row's owner too. Without this the customer→computer graph
-            //    still resolves to the previous (wrong) owner.
-            if let Some(computer_id) = computer_link {
-                let comp_table = COMPUTER_TABLE;
-                let comp_update = db()
-                    .query("UPDATE $id SET customer = $customer")
-                    .bind(("id", computer_id.clone()))
-                    .bind(("customer", new_customer_id.clone()))
-                    .await;
-                if let Err(e) = comp_update {
+            // 4) Repoint the computer row's owner and fill in whatever specs
+            //    the client's live feed has streamed. Without the repoint the
+            //    customer→computer graph still resolves to the previous
+            //    (wrong) owner; without the specs a freshly minted row stays
+            //    blank until a tech types the machine's hardware in by hand.
+            let comp_table = COMPUTER_TABLE;
+            let written = upsert_computer_record(
+                &computer_id,
+                &hostname,
+                Some(&new_customer_id),
+                specs.as_ref(),
+            )
+            .await;
+            match written {
+                Ok(fields) => log::debug!(
+                    "relink: {comp_table} {} specs written: {fields:?}",
+                    computer_id.key_string()
+                ),
+                Err(e) => {
                     let _ = tx.send(RelinkEvent::ApplyError(format!(
                         "{comp_table} update failed: {e}"
                     )));

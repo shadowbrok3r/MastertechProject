@@ -57,7 +57,7 @@ async fn links_client_and_mints_spec_less_computer() {
     };
     let customer = std::env::var("LINK_LIVE_CUSTOMER").unwrap_or_else(|_| "customer:2".into());
 
-    let report = link_connected_client_record(&cs, &customer, None)
+    let report = link_connected_client_record(&cs, &customer, None, None)
         .await
         .expect("link_connected_client_record must succeed");
     eprintln!("link_live: report = {report}");

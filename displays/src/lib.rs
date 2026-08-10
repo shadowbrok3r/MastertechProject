@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use once_cell::sync::Lazy;
 use database::schema::RecordId;
 use egui_extras::Strip;
-use std::fmt::Debug;
+use std::{collections::HashMap, fmt::Debug, sync::Mutex};
 
 pub mod virtual_filesystem;
 pub mod channel_manager;
@@ -104,6 +104,55 @@ pub fn get_security_inventory_sender() -> Sender<SecurityInventoryEvent> {
 
 pub fn get_security_inventory_receiver() -> Receiver<SecurityInventoryEvent> {
     GLOBAL_SECURITY_INVENTORY_CHANNEL.1.clone()
+}
+
+/// Newest `SystemInformation` seen from each connected client, keyed by
+/// `connection_string`. Written by the per-session `WebSocketClient::receive`
+/// sysinfo handler — the same payload that drives the live charts — so any
+/// code that needs a machine's current hardware facts can read them without
+/// a new wire message or a round-trip to the client.
+///
+/// Consumers: the admin re-link popup and the `link_connected_client` MCP
+/// tool, both of which write these specs onto the `computer` row they link.
+/// An entry survives session teardown; staleness is bounded by how long ago
+/// the client last streamed, which callers can ignore because specs only
+/// overwrite on a non-empty read.
+static LATEST_CLIENT_SYSINFO: Lazy<Mutex<HashMap<String, SystemInformation>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+pub fn cache_client_sysinfo(connection_string: &str, info: &SystemInformation) {
+    if connection_string.is_empty() {
+        return;
+    }
+    if let Ok(mut cache) = LATEST_CLIENT_SYSINFO.lock() {
+        cache.insert(connection_string.to_string(), info.clone());
+    }
+}
+
+pub fn latest_client_sysinfo(connection_string: &str) -> Option<SystemInformation> {
+    LATEST_CLIENT_SYSINFO
+        .lock()
+        .ok()?
+        .get(connection_string)
+        .cloned()
+}
+
+/// Hardware specs for a connected client's `computer` row, from the newest
+/// live payload it streamed. `None` when nothing has been received for it.
+///
+/// Drops `operating_system` for a WinPE session: under PE the live read
+/// describes the boot image, not the customer's installed Windows.
+pub fn live_computer_specs(
+    client: &database::schema::ConnectedClient,
+) -> Option<database::schema::ComputerSpecs> {
+    use database::schema::{BootEnvironment, ComputerSpecs};
+
+    let info = latest_client_sysinfo(&client.connection_string)?;
+    let mut specs = ComputerSpecs::from(&info);
+    if client.boot_environment == BootEnvironment::WinPe {
+        specs.operating_system.clear();
+    }
+    (!specs.is_empty()).then_some(specs)
 }
 
 pub fn get_users_channel_sender() -> Sender<Vec<User>> {

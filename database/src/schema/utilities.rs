@@ -778,9 +778,11 @@ pub async fn create_full_task_payload(
     // Canonical computer id key equals the connection_string; link the
     // connected_client so the admin console reads customer instead of None.
     if super::entity_link::is_canonical_computer_key(&connection_string) {
+        // No specs: the computer row's own upsert above already carries them.
         if let Err(e) = super::entity_link::link_connected_client_record(
             &connection_string,
             &customer_id.key_string(),
+            None,
             None,
         )
         .await
@@ -974,9 +976,11 @@ pub async fn create_and_link_records(
         }
     }
 
+    // No specs: `computer_data` was written to the same row above.
     if let Err(e) = super::entity_link::link_connected_client_record(
         &connection_string,
         &customer_id.key_string(),
+        None,
         None,
     )
     .await

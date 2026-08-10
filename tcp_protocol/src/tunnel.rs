@@ -44,6 +44,10 @@ pub const TUNNEL_ROLE_CLIENT: &str = "client";
 pub const TUNNEL_PATH: &str = "/tunnel";
 /// How long [`send_oneshot_ws_binary`] waits for the relay's first `Text` reply.
 pub const ONESHOT_REPLY_WINDOW: Duration = Duration::from_secs(2);
+/// Deadline for [`send_oneshot_ws_binary`]'s connect + send + flush. Cloudflare
+/// fronts the relay and answers a stalled origin with 524 only after ~100 s, so
+/// an unbounded connect blocks the caller's whole retry schedule for minutes.
+pub const ONESHOT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Derive the relay tunnel URL from a configured `/websocket` room URL.
 ///
@@ -76,13 +80,26 @@ pub async fn connect_tunnel(url: &str) -> Result<TunnelStream, tungstenite::Erro
 /// client), then drops the connection. Returns the relay's first `Text` reply
 /// if one arrives within [`ONESHOT_REPLY_WINDOW`], otherwise `None`; a
 /// timeout, a close without text, and non-`Text` frames all yield `None`.
+///
+/// Connect + send + flush are bounded by [`ONESHOT_CONNECT_TIMEOUT`] and report
+/// a timeout as `Error::Io(ErrorKind::TimedOut)`.
 pub async fn send_oneshot_ws_binary(
     url: &str,
     payload: Vec<u8>,
 ) -> Result<Option<String>, tungstenite::Error> {
-    let (mut ws, _resp) = tokio_tungstenite::connect_async(url).await?;
-    ws.send(Message::Binary(payload.into())).await?;
-    ws.flush().await?;
+    let mut ws = tokio::time::timeout(ONESHOT_CONNECT_TIMEOUT, async {
+        let (mut ws, _resp) = tokio_tungstenite::connect_async(url).await?;
+        ws.send(Message::Binary(payload.into())).await?;
+        ws.flush().await?;
+        Ok::<_, tungstenite::Error>(ws)
+    })
+    .await
+    .map_err(|_| {
+        tungstenite::Error::Io(io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!("relay one-shot did not connect within {ONESHOT_CONNECT_TIMEOUT:?}"),
+        ))
+    })??;
 
     let reply = tokio::time::timeout(ONESHOT_REPLY_WINDOW, async {
         while let Some(msg) = ws.next().await {

@@ -610,6 +610,9 @@ impl WebSocketClient {
         // SystemInformation can't be misread as telemetry.
         if let Some(sysinfo) = deserialize_exact::<SystemInformation>(&bin) {
             log::debug!("[sysinfo] {} bytes -> resource monitor", bin.len());
+            // Also the spec source for the re-link popup and the
+            // `link_connected_client` MCP tool.
+            crate::cache_client_sysinfo(&self.client.connection_string, &sysinfo);
             self.resource_monitor.set_sysinfo(sysinfo);
             return;
         }

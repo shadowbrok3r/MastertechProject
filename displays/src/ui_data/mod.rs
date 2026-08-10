@@ -388,17 +388,28 @@ impl crate::app_state::SharedContext {
         // on a WS reset); errors from replaced stream generations are noise.
         // Stamp the most recent error so the canary knows not to refill the
         // backoff budget while a stream is still actively failing.
+        // One WS reset kills every stream at once, so the backlog is reported as
+        // a single line with a count rather than one identical warning per stream.
         let mut reconnect_wanted = false;
+        let mut error_count = 0usize;
+        let mut first_error: Option<String> = None;
         while let Ok((epoch, error_msg)) = self.live_query_error_rx.try_recv() {
             if epoch != self.live_epoch {
                 log::debug!("Ignoring stale live-query error (epoch {epoch}): {error_msg}");
                 continue;
             }
-            log::warn!("Live query connection error detected: {}", error_msg);
+            error_count += 1;
+            if first_error.is_none() {
+                first_error = Some(error_msg);
+            }
             self.last_stream_error_at = Some(web_time::Instant::now());
             reconnect_wanted = true;
         }
         if reconnect_wanted {
+            log::warn!(
+                "Live query connection error detected on {error_count} stream(s): {}",
+                first_error.as_deref().unwrap_or("unknown")
+            );
             // A permanently-failing stream can't storm: the backoff (below)
             // caps at 60s and the canary won't refill it while errors keep
             // arriving, so this self-throttles to one retry per 60s and

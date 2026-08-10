@@ -1134,6 +1134,10 @@ impl TerminalWebsocketClient {
         // Keepalive: ping cadence and the silence window after which the socket is presumed dead.
         const PING_INTERVAL: Duration = Duration::from_secs(10);
         const LIVENESS_TIMEOUT: Duration = Duration::from_secs(45);
+        // Window for the handshake to produce `Opened`. `ewebsock::connect` returns
+        // before the upgrade completes, so an unopened socket must be timed against
+        // this rather than the silence window, which only describes an open socket.
+        const CONNECT_TIMEOUT: Duration = Duration::from_secs(45);
         // Ceiling for the reconnect backoff; the control channel retries forever.
         const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(60);
         let mut reconnect_attempts: u32 = 0;
@@ -1145,6 +1149,7 @@ impl TerminalWebsocketClient {
                 Ok((ws_sender, receiver)) => {
                     let mut last_event_at = Instant::now();
                     let mut last_ping_at = Instant::now();
+                    let mut opened = false;
                     // Wrap the raw `WsSender` in our transport-agnostic
                     // `ClientTransport`. Existing `sender.send(WsMessage::...)`
                     // call sites inside `handle_command` work unchanged
@@ -1166,6 +1171,7 @@ impl TerminalWebsocketClient {
                         match event {
                             WsEvent::Opened => {
                                 log::info!("start_websocket_sender -> Connection Opened");
+                                opened = true;
                                 reconnect_attempts = 0;
                                 let _ = connection_state_tx.send((true, "Connected".to_string()));
                             },
@@ -1324,14 +1330,28 @@ impl TerminalWebsocketClient {
 
                     // Keepalive: pong replies refresh last_event_at; prolonged silence means the
                     // socket died without a Close/Error event (half-open TCP), so force a redial.
-                    if last_ping_at.elapsed() >= PING_INTERVAL {
+                    if opened && last_ping_at.elapsed() >= PING_INTERVAL {
                         sender.send(WsMessage::Ping(Vec::new()));
                         last_ping_at = Instant::now();
                     }
-                    if last_event_at.elapsed() >= LIVENESS_TIMEOUT {
+                    // An unopened socket is timed against the handshake window; the
+                    // silence window only applies once `Opened` has arrived.
+                    let (deadline, cause) = if opened {
+                        (LIVENESS_TIMEOUT, format!("no socket events for {LIVENESS_TIMEOUT:?}"))
+                    } else {
+                        (
+                            CONNECT_TIMEOUT,
+                            format!(
+                                "relay never completed the handshake within {CONNECT_TIMEOUT:?} \
+                                 (no Opened event); this client has no relay room presence, so \
+                                 admin tunnel sessions to it cannot pair"
+                            ),
+                        )
+                    };
+                    if last_event_at.elapsed() >= deadline {
                         reconnect_attempts += 1;
                         let delay = (RECONNECT_DELAY * reconnect_attempts.min(12)).min(MAX_RECONNECT_DELAY);
-                        log::warn!("start_websocket_sender -> no socket events for {LIVENESS_TIMEOUT:?}; reconnecting (attempt {reconnect_attempts}) after {delay:?}");
+                        log::warn!("start_websocket_sender -> {cause}; reconnecting (attempt {reconnect_attempts}) after {delay:?}");
                         let _ = connection_state_tx.send((false, "Connection silent — reconnecting".to_string()));
                         let _ = start_tx.send(false);
                         *ready = false;

@@ -2,7 +2,7 @@
 //! customer / computer / connected_client / diagnostic_session graphs.
 
 use super::{
-    utilities::record_exists, ComputerData, ConnectedClient, CustomerData, RecordId,
+    utilities::record_exists, ComputerData, ComputerSpecs, ConnectedClient, CustomerData, RecordId,
     RecordIdExt,     COMPUTER_TABLE, CUSTOMER_TABLE,
 };
 use crate::db;
@@ -523,27 +523,81 @@ pub async fn repair_connection_links(
     Ok(report)
 }
 
+/// Upsert a `computer` row's owner, hostname, and hardware specs.
+///
+/// Only the spec fields `specs` actually carries reach the SET clause, so a
+/// field the live feed could not read leaves the stored value untouched
+/// instead of blanking it. Returns the spec field names written.
+pub async fn upsert_computer_record(
+    computer_id: &RecordId,
+    hostname: &str,
+    customer: Option<&RecordId>,
+    specs: Option<&ComputerSpecs>,
+) -> Result<Vec<&'static str>, anyhow::Error> {
+    // A blank key would mint `computer:` and latch every later blank write to
+    // that one row through the table's unique index.
+    if computer_id.key_string().trim().is_empty() {
+        anyhow::bail!("refusing to upsert a computer row with a blank record key");
+    }
+
+    let specs = specs.filter(|s| !s.is_empty());
+    let strings = specs.map(ComputerSpecs::populated_strings).unwrap_or_default();
+    let drives = specs.map(|s| s.drives.as_slice()).filter(|d| !d.is_empty());
+
+    let mut assignments = vec!["hostname = $host".to_string()];
+    if customer.is_some() {
+        assignments.push("customer = $cust".to_string());
+    }
+    for (field, _) in &strings {
+        assignments.push(format!("{field} = ${field}"));
+    }
+    if drives.is_some() {
+        assignments.push("drives = $drives".to_string());
+    }
+
+    let sql = format!("UPSERT $cid SET {}", assignments.join(", "));
+    let conn = db();
+    let mut query = conn
+        .query(sql)
+        .bind(("cid", computer_id.clone()))
+        .bind(("host", hostname.to_string()));
+    if let Some(cust) = customer {
+        query = query.bind(("cust", cust.clone()));
+    }
+    for (field, value) in &strings {
+        query = query.bind((*field, value.to_string()));
+    }
+    if let Some(drives) = drives {
+        query = query.bind(("drives", drives.to_vec()));
+    }
+
+    query.await?.take::<Option<ComputerData>>(0)?;
+    Ok(specs.map(ComputerSpecs::populated_fields).unwrap_or_default())
+}
+
 /// Link a connected client to a customer and its canonical computer record,
 /// creating the `computer:HOST:hash9` row when missing. Built for the
 /// hardware-swap case where a machine reconnects under a new persistent
 /// client id with null customer/computer (which `repair_connection_links`
 /// can't fix — it only repoints existing links and never mints the row).
 ///
-/// Upserts the computer (sets customer + hostname only — never clobbers
-/// existing specs), then links `connected_client.customer/computer` and,
-/// when supplied, `friendly_name`. Component specs (CPU/GPU/RAM) are left to
-/// the client's own check-in to populate, since on a part swap they differ
-/// from any record carried forward.
+/// Upserts the computer (customer + hostname, plus every spec field `specs`
+/// carries), then links `connected_client.customer/computer` and, when
+/// supplied, `friendly_name`. Spec fields absent from `specs` keep whatever
+/// the row already holds, so a partial live read never blanks good data.
 pub async fn link_connected_client_record(
     connection_string: &str,
     customer_id: &str,
     friendly_name: Option<&str>,
+    specs: Option<&ComputerSpecs>,
 ) -> Result<serde_json::Value, anyhow::Error> {
     let cs = connection_string.trim();
     let customer = resolve_customer_id(customer_id)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     let canonical = canonical_computer_id(cs);
+    // Identity hostname from the connection string, not the live one: under
+    // WinPE the reported name is `HBCD_PE`.
     let hostname = cs.split(':').next().unwrap_or(cs).to_string();
 
     let graph = load_connected_client_graph(cs)
@@ -554,14 +608,8 @@ pub async fn link_connected_client_record(
     }
     let computer_existed = graph.computer.is_some();
 
-    db()
-        .query("UPSERT $cid SET customer = $cust, hostname = $host")
-        .bind(("cid", canonical.clone()))
-        .bind(("cust", customer.clone()))
-        .bind(("host", hostname))
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?
-        .take::<Option<ComputerData>>(0)?;
+    let specs_written =
+        upsert_computer_record(&canonical, &hostname, Some(&customer), specs).await?;
 
     db()
         .query(
@@ -583,6 +631,7 @@ pub async fn link_connected_client_record(
         "computer": canonical.key_string(),
         "computer_created": !computer_existed,
         "friendly_name": friendly_name,
+        "specs_written": specs_written,
         "linked": true,
     }))
 }

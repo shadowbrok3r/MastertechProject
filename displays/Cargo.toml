@@ -12,7 +12,7 @@ wasm-plugins = ["dep:wasmtime", "dep:wasmtime-wasi", "dep:wat"]
 puffin = []
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))'.dependencies]
-eframe = { version = "0.36", features = ["x11", "wayland"], default-features = false }
+eframe = { version = "0.36", features = ["x11", "wayland", "links"], default-features = false }
 
 # Desktop-only: the admin console's remote-desktop clipboard mirroring reads the
 # operator's clipboard, which egui only exposes on paste. No iOS/Android/wasm

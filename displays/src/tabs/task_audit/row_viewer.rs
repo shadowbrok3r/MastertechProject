@@ -198,12 +198,12 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                 .ui(ui);
 
                 if res.clicked() {
-                    log::error!("Clicked on order: {}", row.order.id);
+                    log::debug!("Clicked on order: {}", row.order.id);
                 }
             },
-            1 => { 
+            1 => {
                 if ui.button(format!(" {} ⬈", row.customer.name.clone())).clicked() {
-                    log::error!("Clicked on customer: {}", row.customer.name);
+                    log::debug!("Clicked on customer: {}", row.customer.name);
                     self.chat_view.messages.clear();
                     self.selected = Some(row.clone());
                     let notes_tx = self.notes_channel.0.clone();
@@ -478,20 +478,20 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
     ) -> Option<eframe::egui::Response> {
         match column {
             0 => {
-                let resp = Some(
-                    Hyperlink::from_label_and_url(
-                        format!(" {}", row.order.id.clone()), 
-                        xidax_order_url(&row.order.id)
-                    )
-                    .open_in_new_tab(true)
-                    .ui(ui)
-                );
-                
-                if resp.is_some() {
-                    log::error!("Clicked on order: {}", row.order.id);
+                let resp = Hyperlink::from_label_and_url(
+                    format!(" {}", row.order.id.clone()),
+                    xidax_order_url(&row.order.id),
+                )
+                .open_in_new_tab(true)
+                .ui(ui);
+
+                // `resp.is_some()` was always true, so this fired every frame
+                // the cell painted rather than on a click.
+                if resp.clicked() {
+                    log::debug!("Clicked on order: {}", row.order.id);
                 }
 
-                resp
+                Some(resp)
             },
             _ => None,
         }

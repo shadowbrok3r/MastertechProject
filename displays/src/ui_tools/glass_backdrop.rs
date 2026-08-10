@@ -417,7 +417,8 @@ mod backend {
         {
             log::warn!(
                 "backdrop blur enqueued {enqueued} surface(s) but no paint callback ran; \
-                 the renderer is wired against a different egui_glow than the host paints with"
+                 panels render unfrosted. Cause is unconfirmed — `cargo tree -i egui_glow` \
+                 resolves a single 0.36, so this is not the duplicate-egui_glow case"
             );
         }
         Some(match outcome {

@@ -211,7 +211,10 @@ impl ComputerInfo for ComputerData {
                 .trim()
         );
         self.operating_system = System::long_os_version().unwrap_or_default();
-        self.hostname = System::host_name().unwrap_or_default();
+        // Identity hostname, not the live one: under WinPE the live name is
+        // `HBCD_PE`, which keys this row away from the `connected_client` the
+        // same session publishes and from the machine's normal Windows check-in.
+        self.hostname = stress_runner::identity_hostname();
 
         let client_hash = generate_client_id(self.hostname.clone(), self.cpu.trim().to_string());
         let id = format!("{}:{}", self.hostname.clone(), client_hash.split_at(9).0);
@@ -336,7 +339,8 @@ impl ComputerInfo for ComputerData {
             .trim()
             .to_string();
         self.operating_system = System::long_os_version().unwrap_or_default();
-        self.hostname = System::host_name().unwrap_or_default();
+        // Identity hostname, not the live one; see `get_computer_data`.
+        self.hostname = stress_runner::identity_hostname();
 
         let client_hash = generate_client_id(self.hostname.clone(), self.cpu.trim().to_string());
         let id = format!("{}:{}", self.hostname.clone(), client_hash.split_at(9).0);

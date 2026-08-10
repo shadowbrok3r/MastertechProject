@@ -12,6 +12,17 @@ pub mod task_note_builder;
 pub use task_note_builder::*;
 // pub use builder::*;
 
+/// True when a write was rejected because the record id is already taken.
+///
+/// The resync paths create every message in a PrestaShop thread and rely on
+/// this rejection to leave already-synced notes untouched, so it is the
+/// expected outcome there rather than a failure. Matches `Error::RecordExists`
+/// specifically — `IndexExists` renders "already contains" and is a real fault.
+pub fn is_record_exists(e: &anyhow::Error) -> bool {
+    let msg = e.to_string();
+    msg.contains("Database record ") && msg.contains(" already exists")
+}
+
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference, SurrealValue)]
 pub struct TaskNotePayload {
@@ -419,6 +430,14 @@ impl TaskNotePayload {
 
     /// Creates the task note record in the database.
     ///
+    /// CREATE, never UPSERT: a PrestaShop-sourced note's id is derived from the
+    /// customer_message id, so a resync addresses rows that may already exist,
+    /// and the engine's duplicate-id rejection is what stops the resync from
+    /// rewriting them. An UPSERT here would reset `private` to false and
+    /// overwrite `task_id` without the repair pass in
+    /// [`Self::check_existing_note_record`]. Callers classify the rejection
+    /// with [`is_record_exists`].
+    ///
     /// # Returns
     /// - `Ok(())` if the task_note created successfully.
     /// - `Err(anyhow::Error)` if an error occurs during the creation.
@@ -813,6 +832,10 @@ impl TaskNotePayload {
 
                             match task_note.create_task_note_in_db().await {
                                 Ok(_) => log::debug!("Created task note: {task_note:?}"),
+                                Err(e) if is_record_exists(&e) => log::debug!(
+                                    "task_note already synced, leaving it untouched: {:?}",
+                                    task_note.id
+                                ),
                                 Err(e) => log::error!("Error creating task note: {e:?}"),
                             }
                             log::warn!("task_note/mod.rs -> check_or_create_notes_from_thread -> Created note: {task_note:?}");
@@ -890,6 +913,10 @@ impl TaskNotePayload {
                             if task_id.is_some() {
                                 match task_note.create_task_note_in_db().await {
                                     Ok(_) => log::debug!("Created task note: {task_note:?}"),
+                                    Err(e) if is_record_exists(&e) => log::debug!(
+                                        "task_note already synced, leaving it untouched: {:?}",
+                                        task_note.id
+                                    ),
                                     Err(e) => log::error!("Error creating task note: {e:?}"),
                                 }
                             }

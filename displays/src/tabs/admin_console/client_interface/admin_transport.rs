@@ -394,6 +394,12 @@ async fn run_session(
             if target_addr.as_deref() != Some(fresh.as_str()) {
                 log::info!("admin_transport -> refreshed dial target {target_addr:?} -> {fresh}");
                 connect_failure_toasted = false;
+                // New coords are an untested path, so restart the rotation
+                // TCP-first instead of carrying the old address's failure
+                // count into the slower tunnel half of the rotation.
+                failed_attempts = 0;
+                tunnel_switch_toasted = false;
+                no_agent_toasted = false;
             }
             target_addr = Some(fresh);
         }

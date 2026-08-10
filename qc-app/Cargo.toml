@@ -14,7 +14,7 @@ resources = ["src/assets/**/*png", "src/assets/**/*ico"]
 skia-render = ["dep:egui_skia", "dep:skia-safe", "dep:softbuffer", "dep:winit", "dep:raw-window-handle"]
 
 [dependencies]
-eframe = { version = "0.36", features = ["persistence", "serde", "default_fonts", "glow"], default-features = false }
+eframe = { version = "0.36", features = ["persistence", "serde", "default_fonts", "glow", "links"], default-features = false }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 egui-phosphor = { version = "0.12.0", default-features = false, features = ["regular"] }
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "rustls", "stream"] }
@@ -55,7 +55,7 @@ once_cell.workspace = true
 futures.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))'.dependencies]
-eframe = { version = "0.36", features = ["x11", "wayland"], default-features = false }
+eframe = { version = "0.36", features = ["x11", "wayland", "links"], default-features = false }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62", features = [
