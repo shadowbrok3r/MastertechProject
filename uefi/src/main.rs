@@ -6322,7 +6322,7 @@ fn reconcile_beacon(b: &mut tcp_protocol::preboot::Beacon, src: [u8; 4]) {
 fn listen_for_relay(app: &mut App, listen_ms: u64) -> bool {
     match netraw::discover_console(tcp_protocol::preboot::DISCOVERY_PORT, listen_ms) {
         Some(mut s) => {
-            reconcile_beacon(&mut s.beacon, s.src);
+            reconcile_beacon(&mut s.beacon, s.src.ip);
             adopt_beacon_relay(app, &s.beacon);
             true
         }
@@ -6337,7 +6337,7 @@ fn listen_for_relay(app: &mut App, listen_ms: u64) -> bool {
 fn discover_console_addr(app: &mut App, listen_ms: u64) -> (Option<String>, bool) {
     if let Some(mut s) = netraw::discover_console(tcp_protocol::preboot::DISCOVERY_PORT, listen_ms)
     {
-        reconcile_beacon(&mut s.beacon, s.src);
+        reconcile_beacon(&mut s.beacon, s.src.ip);
         adopt_beacon_relay(app, &s.beacon);
         return (Some(s.beacon.addr), true);
     }
@@ -6516,11 +6516,10 @@ fn connect_all(
             app.arm_presence(now, false);
             app.connect_steps.push((true, "armed".to_string()));
         }
-        let was_agent = app.agent;
-        app.agent = true;
-        app.agent_next_ms = clock.now_ms();
+        // Left off: each poll is two blocking HTTP round-trips on the render
+        // loop, so arming it by default freezes a box nobody is driving.
         app.connect_steps
-            .push((true, if was_agent { "already on".into() } else { "auto-poll on".into() }));
+            .push((true, if app.agent { "already on".into() } else { "off - Shift+A".into() }));
     }
 
     let ok = app.connect_steps.iter().filter(|(ok, _)| *ok).count();
@@ -7216,7 +7215,7 @@ const CONNECT_PLAN: [&str; 5] = [
     "get a DHCP lease",
     "find the console",
     "appear in console",
-    "poll for commands",
+    "command polling (Shift+A)",
 ];
 
 fn page_network(frame: &mut Frame, area: Rect, app: &App) {
@@ -9025,9 +9024,19 @@ fn run() -> Result<()> {
     let mut last_draw_ms = 0u64;
     let mut last_log_seq = log_seq();
     let mut was_linked = false;
+    let mut was_stressing = false;
 
     loop {
         app.stress.tick();
+        // The fingerprint is uploaded once at registration, before any stage has
+        // run, so its `stress` payload would stay null without this re-upload.
+        if was_stressing && !app.stress.is_active() && app.present_registered {
+            match upload_fingerprint(&app) {
+                Ok(_) => logln("stress: results uploaded with fingerprint".into()),
+                Err(e) => logln(format!("stress: result upload failed: {e}")),
+            }
+        }
+        was_stressing = app.stress.is_active();
         let now = clock.now_ms();
         relay_gate::tick(now);
         // A grown log ring changes the Log tab.

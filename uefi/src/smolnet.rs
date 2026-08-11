@@ -49,6 +49,8 @@ fn lease() -> Result<RawNet, String> {
 
 struct SnpDevice {
     snp: Held<SimpleNetwork>,
+    /// Handed to smoltcp ahead of the NIC, once.
+    primed: Option<Vec<u8>>,
 }
 
 struct SnpRx(Vec<u8>);
@@ -59,6 +61,9 @@ impl Device for SnpDevice {
     type TxToken<'a> = SnpTx<'a> where Self: 'a;
 
     fn receive(&mut self, _t: Instant) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
+        if let Some(frame) = self.primed.take() {
+            return Some((SnpRx(frame), SnpTx(&self.snp)));
+        }
         let mut buf = [0u8; 2048];
         match self.snp.receive(&mut buf, None, None, None, None) {
             Ok(n) => Some((SnpRx(buf[..n].to_vec()), SnpTx(&self.snp))),
@@ -97,7 +102,7 @@ impl TxToken for SnpTx<'_> {
 /// the peer closes (request must carry `Connection: close`) or the deadline.
 fn request(host_port: &str, ip: [u8; 4], port: u16, req: &[u8]) -> Result<Vec<u8>, String> {
     let rn = lease()?;
-    let mut device = SnpDevice { snp: netraw::open_snp()? };
+    let mut device = SnpDevice { snp: netraw::open_snp()?, primed: None };
 
     let mac = rn.mac;
     let seed = u64::from_le_bytes([mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], 0, 0]);
@@ -113,6 +118,19 @@ fn request(host_port: &str, ip: [u8; 4], port: u16, req: &[u8]) -> Result<Vec<u8
         .routes_mut()
         .add_default_ipv4_route(v4(rn.gateway))
         .map_err(|e| format!("smol route: {e:?}"))?;
+
+    // smoltcp's ARP request can go unanswered indefinitely: the reply is unicast,
+    // and the firmware's own network drivers drain the same receive queue. A
+    // reply synthesized from an address already seen on the wire fills the
+    // neighbor cache without one. smoltcp accepts it because the target is us
+    // and the sender is unicast and on-subnet.
+    if let Some(mac) = netraw::neighbor_mac(ip) {
+        device.primed = Some(netraw::build_arp_reply(
+            netraw::Origin { mac, ip },
+            netraw::Origin { mac: rn.mac, ip: rn.ip },
+        ));
+        logln(format!("smol: seeded {} from a seen frame", netraw::ip_str(ip)));
+    }
 
     let mut sockets = SocketSet::new(vec![]);
     let rx = tcp::SocketBuffer::new(vec![0u8; RX_BUF]);

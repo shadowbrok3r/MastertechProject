@@ -22,6 +22,36 @@ const CHUNK_DATA: usize = 1400;
 static MSG_ID: AtomicU32 = AtomicU32::new(1);
 static IP_ID: AtomicU32 = AtomicU32::new(0x4d54);
 
+/// The observed layer-2/3 origin of a received frame.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Origin {
+    pub mac: [u8; 6],
+    pub ip: [u8; 4],
+}
+
+/// Origins seen on the wire. A host that has sent us a frame is reachable and
+/// its MAC is known, so a stack whose own ARP goes unanswered can still address
+/// it. Small and append-only: the console and its relay are the only entries.
+static NEIGHBORS: std::sync::Mutex<Vec<Origin>> = std::sync::Mutex::new(Vec::new());
+
+/// Record an origin observed on a received frame.
+pub fn note_neighbor(o: Origin) {
+    if o.ip == [0; 4] || o.mac == [0; 6] {
+        return;
+    }
+    if let Ok(mut g) = NEIGHBORS.lock() {
+        match g.iter_mut().find(|n| n.ip == o.ip) {
+            Some(n) => n.mac = o.mac,
+            None => g.push(o),
+        }
+    }
+}
+
+/// The MAC last seen sending from `ip`, if any.
+pub fn neighbor_mac(ip: [u8; 4]) -> Option<[u8; 6]> {
+    NEIGHBORS.lock().ok()?.iter().find(|n| n.ip == ip).map(|n| n.mac)
+}
+
 /// A DHCP-acquired IPv4 configuration on the raw SNP path.
 #[derive(Clone, Copy)]
 pub struct RawNet {
@@ -326,6 +356,22 @@ fn build_arp_request(src_mac: [u8; 6], src_ip: [u8; 4], target_ip: [u8; 4]) -> V
     frame
 }
 
+/// An ARP reply asserting `from.ip is at from.mac`, addressed to `to`. Injected
+/// into a local stack whose own ARP request never draws a reply back.
+pub fn build_arp_reply(from: Origin, to: Origin) -> Vec<u8> {
+    let mut frame = Vec::with_capacity(42);
+    eth_header(&mut frame, to.mac, from.mac, 0x0806);
+    frame.extend_from_slice(&[0x00, 0x01]); // htype: ethernet
+    frame.extend_from_slice(&[0x08, 0x00]); // ptype: IPv4
+    frame.extend_from_slice(&[6, 4]); // hlen, plen
+    frame.extend_from_slice(&[0x00, 0x02]); // op: reply
+    frame.extend_from_slice(&from.mac);
+    frame.extend_from_slice(&from.ip);
+    frame.extend_from_slice(&to.mac);
+    frame.extend_from_slice(&to.ip);
+    frame
+}
+
 /// Parse an ARP reply for `want_ip`, returning its MAC.
 fn parse_arp_reply(frame: &[u8], want_ip: [u8; 4]) -> Option<[u8; 6]> {
     if frame.len() < 42 || u16::from_be_bytes([frame[12], frame[13]]) != 0x0806 {
@@ -391,11 +437,11 @@ impl RawNet {
     }
 }
 
-/// Extract the source IPv4 and UDP payload from a raw Ethernet frame destined
-/// for `want_port`. Mirrors `parse_dhcp`'s layering (Eth → IPv4 → UDP) without
-/// the DHCP specifics. The source address is observed, not claimed, so it is
-/// the one address in a datagram known to be reachable at layer 2.
-fn udp_payload_for_port(frame: &[u8], want_port: u16) -> Option<([u8; 4], &[u8])> {
+/// Extract the sender's origin and the UDP payload from a raw Ethernet frame
+/// destined for `want_port`. Mirrors `parse_dhcp`'s layering (Eth → IPv4 → UDP)
+/// without the DHCP specifics. The origin is observed, not claimed, so it is
+/// the one host in a datagram known to be reachable at layer 2.
+fn udp_payload_for_port(frame: &[u8], want_port: u16) -> Option<(Origin, &[u8])> {
     if frame.len() < 14 + 20 + 8 {
         return None;
     }
@@ -419,15 +465,17 @@ fn udp_payload_for_port(frame: &[u8], want_port: u16) -> Option<([u8; 4], &[u8])
     if udp_len < 8 || udp_len > udp.len() {
         return None;
     }
-    let mut src = [0u8; 4];
-    src.copy_from_slice(&ip[12..16]);
-    Some((src, &udp[8..udp_len]))
+    let mut src_ip = [0u8; 4];
+    src_ip.copy_from_slice(&ip[12..16]);
+    let mut mac = [0u8; 6];
+    mac.copy_from_slice(&frame[6..12]);
+    Some((Origin { mac, ip: src_ip }, &udp[8..udp_len]))
 }
 
-/// A beacon and the IPv4 its frame actually came from.
+/// A beacon and the origin its frame actually came from.
 pub struct Sighting {
     pub beacon: tcp_protocol::preboot::Beacon,
-    pub src: [u8; 4],
+    pub src: Origin,
 }
 
 /// Listen for a console discovery beacon on `port` for up to `budget_ms` and
@@ -448,15 +496,16 @@ pub fn discover_console(port: u16, budget_ms: u64) -> Option<Sighting> {
         };
         if let Some((src, payload)) = udp_payload_for_port(&buf[..n], port) {
             if let Some(b) = tcp_protocol::preboot::parse_beacon_v2(payload) {
+                note_neighbor(src);
                 match b.relay.as_deref() {
                     Some(relay) => logln(format!(
                         "netraw: discovery beacon from {} -> {} (relay {relay})",
-                        ip_str(src),
+                        ip_str(src.ip),
                         b.addr
                     )),
                     None => logln(format!(
                         "netraw: discovery beacon v1 from {} -> {}",
-                        ip_str(src),
+                        ip_str(src.ip),
                         b.addr
                     )),
                 }

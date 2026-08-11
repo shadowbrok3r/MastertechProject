@@ -102,11 +102,11 @@ impl WebSocketClient {
         // Retire a finished transfer bar. Applies to both the plain file transfer and the
         // self-update, whose result frame may never arrive because the client relaunches into it.
         #[cfg(not(target_arch = "wasm32"))]
-        if let Some(done_at) = self.file_transfer_done_at {
-            if done_at.elapsed() >= TRANSFER_BAR_LINGER {
-                self.file_transfer_progress = None;
-                self.file_transfer_done_at = None;
-            }
+        if let Some(done_at) = self.file_transfer_done_at
+            && done_at.elapsed() >= TRANSFER_BAR_LINGER
+        {
+            self.file_transfer_progress = None;
+            self.file_transfer_done_at = None;
         }
 
         // Drain file-transfer chunks produced by background thread and send to remote
