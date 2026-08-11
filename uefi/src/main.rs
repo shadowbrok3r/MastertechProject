@@ -150,8 +150,9 @@ const DIRECT_PORT: u16 = 9209;
 /// emits no frames, so without this the console sees the session as stale.
 const DIRECT_KEEPALIVE_MS: u64 = 10_000;
 
-/// Budget for one TCP connect or transmit; a dropped SYN costs the loop all of it.
-const TCP_CONNECT_TIMEOUT_MS: u32 = 10_000;
+/// Budget for one TCP connect or transmit; a dropped SYN costs the loop all of
+/// it, and a background poll pays it once per interface it has to sweep.
+const TCP_CONNECT_TIMEOUT_MS: u32 = 4_000;
 
 /// Redraw floor so live values keep ticking without a state change.
 const REDRAW_MIN_MS: u64 = 200;
@@ -2225,6 +2226,26 @@ mod net_tcp {
     #[unsafe_protocol(Tcp4Protocol::GUID)]
     struct Tcp4(Tcp4Protocol);
 
+    /// The Tcp4Sb that last carried a request, as a raw pointer (0 = none).
+    /// Sweeping every interface costs a full connect budget per dead one, so the
+    /// last winner is tried first.
+    static PINNED_SB: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+    fn pin_iface(h: Handle) {
+        PINNED_SB.store(h.as_ptr() as usize, core::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// `handles` with the pinned interface moved to the front.
+    fn pinned_first(mut handles: Vec<Handle>) -> Vec<Handle> {
+        let pinned = PINNED_SB.load(core::sync::atomic::Ordering::Relaxed);
+        if pinned != 0 {
+            if let Some(i) = handles.iter().position(|h| h.as_ptr() as usize == pinned) {
+                handles.swap(0, i);
+            }
+        }
+        handles
+    }
+
     // TCP4 protocol statuses absent from uefi-raw's core Status list.
     const ERROR_BIT: usize = 1 << (usize::BITS - 1);
     const CONNECTION_FIN: Status = Status(ERROR_BIT | 104);
@@ -2350,8 +2371,9 @@ mod net_tcp {
         let (rip, rport) =
             parse_target(target).ok_or_else(|| "bad target (use a.b.c.d or a.b.c.d:port)".to_string())?;
         logln(format!("tcp: GET {target}{path}"));
-        let handles = boot::find_handles::<Tcp4Sb>()
-            .map_err(|e| format!("no TCP4 service ({e:?})"))?;
+        let handles = pinned_first(
+            boot::find_handles::<Tcp4Sb>().map_err(|e| format!("no TCP4 service ({e:?})"))?,
+        );
         let mut last = "no TCP4 interface".to_string();
         for (idx, sbh) in handles.into_iter().enumerate() {
             let mut sb = match unsafe {
@@ -2383,7 +2405,10 @@ mod net_tcp {
             let result = get_child(child_handle, idx, rip, rport, path, target, max_cap);
             let _ = unsafe { (sb.0.destroy_child)(&mut sb.0, child) };
             match result {
-                Ok(out) => return Ok(out),
+                Ok(out) => {
+                    pin_iface(sbh);
+                    return Ok(out);
+                }
                 Err(e) => {
                     logln(format!("tcp: GET if{idx} failed: {e}"));
                     last = e;
@@ -2592,11 +2617,11 @@ mod net_tcp {
             ));
         }
 
-        let handles = boot::find_handles::<Tcp4Sb>().map_err(|e| {
+        let handles = pinned_first(boot::find_handles::<Tcp4Sb>().map_err(|e| {
             crate::set_tcp_trace(true);
             logln(format!("tcp: find Tcp4Sb ERR {e:?}"));
             format!("no TCP4 service ({e:?})")
-        })?;
+        })?);
         if crate::tcp_trace() {
             logln(format!("tcp: Tcp4Sb handles={}", handles.len()));
         }
@@ -2605,6 +2630,7 @@ mod net_tcp {
         for (idx, sbh) in handles.into_iter().enumerate() {
             match try_one(sbh, idx, rip, rport, path, &host, body, framed) {
                 Ok(s) => {
+                    pin_iface(sbh);
                     crate::set_tcp_trace(false);
                     return Ok(s);
                 }
