@@ -2,6 +2,7 @@ use crate::remote_desktop::{
     DesktopFrameEncoding, DesktopFrameMessage, DesktopInputEvent, DesktopModifiers,
     DesktopMouseButton,
 };
+use crate::remote_viewer::input_focus::RemoteViewFocus;
 use crate::tabs::admin_console::client_interface::clipboard_bridge::CLIPBOARD_MAX_BYTES;
 use crossbeam::channel::{Receiver, Sender};
 use eframe::egui::{
@@ -23,6 +24,7 @@ pub struct DesktopViewer {
     last_sent_pos: Option<(f32, f32)>,
     canvas_hovered: bool,
     kb_focus: bool,
+    focus: RemoteViewFocus,
     pub frames_shown: u64,
     pub last_latency_ms: u128,
     pub last_encode_ms: u32,
@@ -79,6 +81,7 @@ impl DesktopViewer {
             last_sent_pos: None,
             canvas_hovered: false,
             kb_focus: false,
+            focus: RemoteViewFocus::new(),
             frames_shown: 0,
             last_latency_ms: 0,
             last_encode_ms: 0,
@@ -199,6 +202,8 @@ impl DesktopViewer {
 
         let hovered = response.hovered();
         self.canvas_hovered = hovered;
+        // Focus first: a forwarded Tab/Enter must not also reach the host UI behind the canvas.
+        self.kb_focus = self.focus.update(&response);
         let inp = ui.ctx().input(|i| i.clone());
 
         // Emitted ahead of the event walk below so the clipboard reaches the
@@ -240,12 +245,8 @@ impl DesktopViewer {
                         PointerButton::Middle => DesktopMouseButton::Middle,
                         _ => continue,
                     };
-                    if *pressed {
-                        if !canvas_rect.contains(*pos) {
-                            self.kb_focus = false;
-                            continue;
-                        }
-                        self.kb_focus = true;
+                    if *pressed && !canvas_rect.contains(*pos) {
+                        continue;
                     }
                     let (nx, ny) = to_norm(*pos);
                     send_input(DesktopInputEvent::MouseButton {
@@ -288,6 +289,8 @@ impl DesktopViewer {
                 delta_y: scroll.y,
             });
         }
+
+        self.focus.swallow_keys(ui);
 
         if got_new {
             ui.ctx().request_repaint();

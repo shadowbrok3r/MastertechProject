@@ -11,11 +11,12 @@ use smoltcp::socket::tcp;
 use smoltcp::time::Instant;
 use smoltcp::wire::{EthernetAddress, HardwareAddress, IpAddress, IpCidr, IpListenEndpoint, Ipv4Address};
 
-use uefi::boot::{self, ScopedProtocol};
+use uefi::boot;
 use uefi::proto::network::snp::SimpleNetwork;
 
 use crate::logln;
 use crate::netraw::{self, RawNet};
+use crate::protoguard::Held;
 
 const RX_BUF: usize = 32 * 1024;
 const TX_BUF: usize = 16 * 1024;
@@ -43,7 +44,7 @@ fn lease() -> Result<RawNet, String> {
 }
 
 struct SnpDevice {
-    snp: ScopedProtocol<SimpleNetwork>,
+    snp: Held<SimpleNetwork>,
 }
 
 struct SnpRx(Vec<u8>);

@@ -3,6 +3,7 @@ use crate::plugins::remote::{
     EguiFrameMessage, EguiInputEvent, EguiModifiers, WireClippedMesh, WireTextureId,
     WireTexturesDelta,
 };
+use crate::remote_viewer::input_focus::RemoteViewFocus;
 use crossbeam::channel::{Receiver, Sender};
 use eframe::egui::{self, Color32, Event, RichText, Stroke, Ui};
 use std::collections::HashMap;
@@ -27,6 +28,8 @@ pub struct InlineEguiViewer {
     remote_canvas_was_hovered: bool,
     /// Keyboard forwarding without calling [`egui::Response::has_focus`] (avoids nested `ctx` locks).
     remote_kb_focus: bool,
+    /// Owns egui focus while the canvas is armed, so Tab/Enter never reach the host UI.
+    focus: RemoteViewFocus,
     /// Throttle `PointerMoved` error logs (still use debug each move when log level allows).
     remote_diag_tick: u32,
     /// Last host-space position we actually sent to the remote, for de-duplication.
@@ -46,6 +49,7 @@ impl InlineEguiViewer {
             has_received_frame: false,
             remote_canvas_was_hovered: false,
             remote_kb_focus: false,
+            focus: RemoteViewFocus::new(),
             remote_diag_tick: 0,
             last_sent_host_pos: None,
         }
@@ -185,6 +189,10 @@ impl InlineEguiViewer {
             egui::Sense::click_and_drag().union(egui::Sense::hover()),
         );
 
+        // Focus before any forwarding: a Tab or Enter bound for the remote must not also move focus
+        // or activate a widget in the host console behind this canvas.
+        self.remote_kb_focus = self.focus.update(&response);
+
         let hovered = response.hovered();
         if self.remote_canvas_was_hovered && !hovered {
             log::debug!(
@@ -192,7 +200,6 @@ impl InlineEguiViewer {
                 "[admin_inline] PointerLeave (was hovered, now not)"
             );
             send_input(EguiInputEvent::PointerLeave);
-            self.remote_kb_focus = false;
         }
         self.remote_canvas_was_hovered = hovered;
 
@@ -293,7 +300,6 @@ impl InlineEguiViewer {
             );
             if let Some(pos) = ip {
                 if canvas_rect.contains(pos) {
-                    self.remote_kb_focus = true;
                     let r = to_host(pos);
                     send_input(EguiInputEvent::PointerButton {
                         x: r.x,
@@ -367,6 +373,8 @@ impl InlineEguiViewer {
                 }
             }
         }
+
+        self.focus.swallow_keys(ui);
 
         if got_new_frame {
             ui.ctx().request_repaint();

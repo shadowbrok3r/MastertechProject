@@ -1,4 +1,5 @@
 use crate::mcp_tool_log::{self, McpToolCallLog, McpToolCallStatus};
+use crate::ui_tools::framed_controls::FramedSelectable;
 use crate::ui_tools::icons;
 use crate::{PlatformSpawner, Spawner};
 use eframe::egui::{Align, Button, Color32, Layout, RichText, ScrollArea, TextEdit, Ui, Widget};
@@ -144,7 +145,7 @@ impl McpToolLogViewer {
                     let home_active = self.active_tab.is_none();
                     let home_label = format!("{} Tool Calls", icons::CLIPBOARD);
                     if ui
-                        .selectable_label(home_active, home_label)
+                        .framed_selectable_label(home_active, home_label)
                         .on_hover_text("Back to the MCP tool calls log")
                         .clicked()
                     {
@@ -154,7 +155,7 @@ impl McpToolLogViewer {
                         ui.label(icons::CARET_RIGHT);
                         let is_active = self.active_tab == Some(i);
                         if ui
-                            .selectable_label(is_active, &tab.short_label)
+                            .framed_selectable_label(is_active, &tab.short_label)
                             .on_hover_text(&tab.id)
                             .clicked()
                         {

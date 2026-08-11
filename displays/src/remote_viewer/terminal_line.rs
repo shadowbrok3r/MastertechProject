@@ -13,6 +13,16 @@ impl Widget for TerminalLine {
     }
 }
 
+/// Paint one laid-out terminal row at `top_left` without allocating or sensing.
+///
+/// Rows inside a grid are hit-tested against the whole grid rect, not per row: a row's galley stops
+/// at its last non-blank cell (`keep_trailing_whitespace: false`), so per-row senses leave every
+/// blank cell unclickable.
+pub fn paint_terminal_line(ui: &Ui, top_left: eframe::egui::Pos2, job: LayoutJob) {
+    let galley = ui.fonts_mut(|f| f.layout_job(job));
+    ui.painter().galley(top_left, galley, Color32::WHITE);
+}
+
 
 // #[must_use = "You should put this widget in an ui with `ui.add(widget);`"]
 // pub struct TerminalLine {

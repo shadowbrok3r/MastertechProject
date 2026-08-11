@@ -5,6 +5,7 @@ use eframe::egui::{
 };
 
 use crate::{Cmd, PlatformSpawner, RemoteScriptItem, RemoteScriptStatus, Spawner};
+use crate::ui_tools::framed_controls::FramedSelectable;
 use crate::ui_tools::theme;
 
 /// Log lines retained in the viewer; the oldest are dropped past this.
@@ -302,7 +303,7 @@ impl RemoteScriptsViewer {
                     } else {
                         cat.name.clone()
                     };
-                    if ui.selectable_label(selected, &label).clicked() {
+                    if ui.framed_selectable_label(selected, &label).clicked() {
                         self.selected_category = i;
                     }
                 }

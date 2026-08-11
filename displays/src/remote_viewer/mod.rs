@@ -1,11 +1,35 @@
-use ratagui::BufferMessage;
+use ratagui::{BufferMessage, TerminalEvent};
 use ratatui::buffer::Buffer;
 use anyhow::Context;
 use bincode::{config::*, serde::*};
+use crossbeam::channel::{Receiver, Sender};
+use once_cell::sync::Lazy;
 
+pub mod input_focus;
 pub mod preboot;
 pub mod ratagui;
 pub mod terminal_line;
+
+// ─── Global terminal input channel ────────────────────────────────────────────
+//
+// The admin's terminal viewer sends `TerminalEvent`s as untagged JSON over whatever transport the
+// session negotiated. Only the WebSocket receive path ever decoded them, so on a direct-TCP or
+// relay session every click and keystroke fell through to `try_deserialize_command` and was dropped
+// as an undecodable `Cmd`. Both receive paths now push into this process-wide channel and
+// `terminal_mode`'s draw loop drains it, the same shape as `plugins::egui_input_sender`.
+
+static TERMINAL_INPUT_CHANNEL: Lazy<(Sender<TerminalEvent>, Receiver<TerminalEvent>)> =
+    Lazy::new(crossbeam::channel::unbounded);
+
+/// Sender for `TerminalEvent`s decoded off any transport. Call from a receive path.
+pub fn terminal_input_sender() -> Sender<TerminalEvent> {
+    TERMINAL_INPUT_CHANNEL.0.clone()
+}
+
+/// Drain all pending `TerminalEvent`s. Called from `terminal_mode`'s draw loop.
+pub fn drain_terminal_inputs() -> impl Iterator<Item = TerminalEvent> {
+    std::iter::from_fn(|| TERMINAL_INPUT_CHANNEL.1.try_recv().ok())
+}
 
 // zstd (C backend) doesn't build on wasm32; its only callers are the tokio
 // live-terminal viewer, so the buffer codecs are gated to that feature.

@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;
 use web_time::Instant;
 // crossterm::event::{KeyCode, KeyModifiers}
-use super::{terminal_line::TerminalLine, SerializableBuffer};
+use super::input_focus::RemoteViewFocus;
+use super::{terminal_line::paint_terminal_line, SerializableBuffer};
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 struct InstantWrapper(Instant);
@@ -63,15 +64,15 @@ pub struct RataguiBackend {
     scroll_accum: f32,
     #[serde(skip)]
     event_tx: Sender<TerminalEvent>,
+    /// Gates keyboard forwarding and swallows the keys the host must not act on.
+    #[serde(skip)]
+    focus: RemoteViewFocus,
+    #[serde(skip)]
+    input_capture: bool,
 }
 
 impl Widget for &mut RataguiBackend {
     fn ui(self, ui: &mut Ui) -> Response {
-        let spacik = eframe::egui::style::Spacing {
-            item_spacing: eframe::egui::vec2(0.0, 0.0),
-            ..Default::default()
-        };
-        *ui.spacing_mut() = spacik;
         let elpsd = self.timestamp.0.elapsed().as_millis();
 
         if elpsd > 1200 {
@@ -113,86 +114,106 @@ impl Widget for &mut RataguiBackend {
             log::debug!("Rebuilt LayoutJob: frame_index={}", self.frame_index);
         }
 
-        // Handle keyboard input
-        ui.input(|i| {
-            for event in &i.events {
-                if let eframe::egui::Event::Key { key, pressed, modifiers, .. } = event {
-                    if *pressed {
-                        let event = TerminalEvent::KeyPress { code: *key, modifiers: *modifiers };
-                        log::info!("Sent key press event: {event:#?}");
-                        if let Err(e) = self.event_tx.send(event) {
-                            log::warn!("Failed to send key event: {e:?}");
-                        }
-                    }
-                }
-            }
-        });
+        let jobs = self
+            .cached_job
+            .as_ref()
+            .expect("Cached job should be initialized")
+            .clone();
 
-        let jobs = self.cached_job.as_ref().expect("Cached job should be initialized");
+        // One rect over the whole grid, so a click on a blank cell lands and the cell math has a
+        // single stable origin.
+        let grid_size = eframe::egui::vec2(
+            available_chars_width as f32 * char_width,
+            available_chars_height as f32 * char_height,
+        );
+        let grid_rect = eframe::egui::Rect::from_min_size(ui.cursor().min, grid_size);
+        // Click, not click_and_drag: drag sensing defers `clicked()` until egui can rule out a drag,
+        // which reads as lag on a TUI where every click is a menu selection.
+        let sense = if self.input_capture {
+            eframe::egui::Sense::click()
+        } else {
+            eframe::egui::Sense::hover()
+        };
+        let response = ui.allocate_rect(grid_rect, sense);
+
+        for (row, job) in jobs.into_iter().enumerate() {
+            let top_left = grid_rect.min + eframe::egui::vec2(0.0, row as f32 * char_height);
+            paint_terminal_line(ui, top_left, job);
+        }
+
+        if !self.input_capture {
+            if needs_rebuild || needs_resize {
+                ui.ctx().request_repaint();
+            }
+            return response;
+        }
+
+        let focused = self.focus.update(&response);
+        let cell_at = |pos: eframe::egui::Pos2| -> (u16, u16) {
+            let rel = pos - grid_rect.min;
+            let x = (rel.x / char_width).floor().clamp(0.0, available_chars_width as f32 - 1.0);
+            let y = (rel.y / char_height).floor().clamp(0.0, available_chars_height as f32 - 1.0);
+            (x as u16, y as u16)
+        };
+
+        if (response.clicked() || response.secondary_clicked())
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            let (x, y) = cell_at(pos);
+            if self.event_tx.send(TerminalEvent::MouseClick { x, y }).is_ok() {
+                log::debug!("Sent mouse click event: x={x}, y={y}");
+            } else {
+                log::warn!("Failed to send mouse event");
+            }
+        }
+
+        if self.hover_events && let Some(pos) = response.hover_pos() {
+            let (x, y) = cell_at(pos);
+            let _ = self.event_tx.send(TerminalEvent::MouseMove { x, y });
+        }
+
+        // One scroll event per accumulated wheel notch under the pointer.
         let scroll_y = ui.input(|i| i.smooth_scroll_delta.y);
-        let hover_pos = ui.input(|i| i.pointer.hover_pos());
-        let mut combined_response = None;
-        ui.vertical(|ui| {
-            for (i, job) in jobs.iter().enumerate() {
-                let r = ui.add(TerminalLine(job.clone()));
-                if r.clicked() {
-                    let pos = r.interact_pointer_pos().unwrap_or(r.rect.min);
-                    let x = ((pos.x - r.rect.min.x) / char_width).floor() as u16;
-                    let y = i as u16;
-                    let event = TerminalEvent::MouseClick { x, y };
-                    if self.event_tx.send(event).is_ok() {
-                        log::info!("Sent mouse click event: x={}, y={}", x, y);
-                    } else {
-                        log::warn!("Failed to send mouse event");
-                    }
-                }
-                if r.secondary_clicked() {
-                    let pos = r.interact_pointer_pos().unwrap_or(r.rect.min);
-                    let x = ((pos.x - r.rect.min.x) / char_width).floor() as u16;
-                    let y = i as u16;
-                    let event = TerminalEvent::MouseClick { x, y };
-                    if self.event_tx.send(event).is_ok() {
-                        log::info!("Sent mouse click event: x={}, y={}", x, y);
-                    } else {
-                        log::warn!("Failed to send mouse event");
-                    }
-                }
-                if self.hover_events {
-                    if let Some(pos) = r.hover_pos() {
-                        let x = ((pos.x - r.rect.min.x) / char_width).floor().max(0.0) as u16;
-                        let _ = self.event_tx.send(TerminalEvent::MouseMove { x, y: i as u16 });
-                    }
-                }
-                // One scroll event per accumulated wheel notch on the hovered row.
-                if scroll_y != 0.0 {
-                    if let Some(pos) = hover_pos {
-                        if r.rect.contains(pos) {
-                            const SCROLL_STEP: f32 = 50.0;
-                            self.scroll_accum += scroll_y;
-                            let x = ((pos.x - r.rect.min.x) / char_width).floor().max(0.0) as u16;
-                            while self.scroll_accum.abs() >= SCROLL_STEP {
-                                let up = self.scroll_accum > 0.0;
-                                self.scroll_accum -= if up { SCROLL_STEP } else { -SCROLL_STEP };
-                                let _ = self.event_tx.send(TerminalEvent::MouseScroll { x, y: i as u16, up });
-                            }
+        if scroll_y != 0.0
+            && response.contains_pointer()
+            && let Some(pos) = response.hover_pos()
+        {
+            const SCROLL_STEP: f32 = 50.0;
+            self.scroll_accum += scroll_y;
+            let (x, y) = cell_at(pos);
+            while self.scroll_accum.abs() >= SCROLL_STEP {
+                let up = self.scroll_accum > 0.0;
+                self.scroll_accum -= if up { SCROLL_STEP } else { -SCROLL_STEP };
+                let _ = self.event_tx.send(TerminalEvent::MouseScroll { x, y, up });
+            }
+        }
+
+        // Keys only while the grid owns focus, then swallowed so the host UI never sees them.
+        if focused {
+            let keys: Vec<TerminalEvent> = ui.input(|i| {
+                i.events
+                    .iter()
+                    .filter_map(|e| match e {
+                        eframe::egui::Event::Key { key, pressed: true, modifiers, .. } => {
+                            Some(TerminalEvent::KeyPress { code: *key, modifiers: *modifiers })
                         }
-                    }
-                }
-                if i == 0 {
-                    combined_response = Some(r);
+                        _ => None,
+                    })
+                    .collect()
+            });
+            for event in keys {
+                log::debug!("Sent key press event: {event:?}");
+                if let Err(e) = self.event_tx.send(event) {
+                    log::warn!("Failed to send key event: {e:?}");
                 }
             }
-        });
+            self.focus.swallow_keys(ui);
+        }
+
         if needs_rebuild || needs_resize {
             ui.ctx().request_repaint();
         }
-        combined_response.unwrap_or_else(|| {
-            let pos = ui.cursor().min;
-            ui.allocate_rect(
-                eframe::egui::Rect::from_min_size(pos, eframe::egui::vec2(1.0, 1.0)),
-                eframe::egui::Sense::click() // Changed: Detect clicks in fallback
-            )
-        })
+        response
     }
 }
 
@@ -222,7 +243,9 @@ impl RataguiBackend {
             buffer_changed: false,
             hover_events: false,
             scroll_accum: 0.0,
-            event_tx
+            event_tx,
+            focus: RemoteViewFocus::new(),
+            input_capture: true,
         }
     }
 
@@ -254,7 +277,9 @@ impl RataguiBackend {
             buffer_changed: false,
             hover_events: false,
             scroll_accum: 0.0,
-            event_tx
+            event_tx,
+            focus: RemoteViewFocus::new(),
+            input_capture: true,
         }
     }
 
@@ -266,6 +291,14 @@ impl RataguiBackend {
     /// default so the remote viewer's event channel stays click-only.
     pub fn set_hover_events(&mut self, enabled: bool) {
         self.hover_events = enabled;
+    }
+
+    /// Emit input events and hold keyboard focus over the grid. On by default.
+    ///
+    /// Turn it off for a caller that runs its own focus id and reads `egui` input directly —
+    /// otherwise the grid takes focus out from under it on the first click and its keyboard dies.
+    pub fn set_input_capture(&mut self, enabled: bool) {
+        self.input_capture = enabled;
     }
 
     pub fn frame_index(&self) -> u64 {

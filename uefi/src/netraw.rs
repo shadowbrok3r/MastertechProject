@@ -6,10 +6,11 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 use core::time::Duration;
 
-use uefi::boot::{self, OpenProtocolAttributes, OpenProtocolParams, ScopedProtocol};
+use uefi::boot;
 use uefi::proto::network::snp::{NetworkState, ReceiveFlags, SimpleNetwork};
 
 use crate::logln;
+use crate::protoguard::{self, Held};
 
 /// Orchestrator UDP port for the raw fingerprint upload (axum_server listener).
 pub const UDP_PORT: u16 = 9202;
@@ -34,19 +35,15 @@ pub fn ip_str(o: [u8; 4]) -> String {
     format!("{}.{}.{}.{}", o[0], o[1], o[2], o[3])
 }
 
-pub(crate) fn open_snp() -> Result<ScopedProtocol<SimpleNetwork>, String> {
+pub(crate) fn open_snp() -> Result<Held<SimpleNetwork>, String> {
     let handle = boot::find_handles::<SimpleNetwork>()
         .map_err(|e| format!("no SNP: {e:?}"))?
         .into_iter()
         .next()
         .ok_or_else(|| "no SNP handle".to_string())?;
-    let snp = unsafe {
-        boot::open_protocol::<SimpleNetwork>(
-            OpenProtocolParams { handle, agent: boot::image_handle(), controller: None },
-            OpenProtocolAttributes::GetProtocol,
-        )
-    }
-    .map_err(|e| format!("open SNP: {e:?}"))?;
+    // Held: rebinding the NIC drivers drops this open record under us.
+    let snp = protoguard::get::<SimpleNetwork>(handle)
+        .map_err(|e| format!("open SNP: {e:?}"))?;
     if snp.mode().state == NetworkState::STOPPED {
         let _ = snp.start();
     }

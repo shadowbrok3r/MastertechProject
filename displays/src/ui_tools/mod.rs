@@ -18,6 +18,7 @@ pub mod neon_glass;
 pub mod soft_glass;
 pub mod glass_backdrop;
 pub mod glass_card;
+pub mod framed_controls;
 pub mod theme_chrome;
 pub mod theme_config;
 pub mod terminal_font;

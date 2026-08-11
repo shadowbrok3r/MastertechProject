@@ -49,7 +49,10 @@ pub enum BetaTerminalAction {
 impl BetaTerminal {
     pub fn new() -> Self {
         let (tx, rx) = unbounded();
-        let backend = RataguiBackend::new(140, 38, tx.clone());
+        let mut backend = RataguiBackend::new(140, 38, tx.clone());
+        // This view owns `focus_id` and reads egui input itself; letting the grid capture would
+        // steal that focus on the first click.
+        backend.set_input_capture(false);
         let terminal = Terminal::new(backend).expect("ratatui terminal init");
         let nonce = NEXT_BETA_TERMINAL_NONCE.fetch_add(1, Ordering::Relaxed);
         Self {

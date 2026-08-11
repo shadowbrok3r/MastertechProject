@@ -569,19 +569,29 @@ async fn run_session_loop<R: AsyncRead + Unpin + Send + 'static>(
                                 }
                             }
                             _ => {
-                                match displays::try_deserialize_command(&bytes) {
-                                    // Queued in arrival order; a send error means
-                                    // the dispatch task is gone, so end the session
-                                    // instead of silently swallowing commands.
-                                    Some(cmd) => {
-                                        if work_tx.send(SessionWork::Command(cmd)).is_err() {
-                                            break Err(anyhow!("dispatch task ended"));
+                                // Terminal-viewer input arrives untagged as JSON; try it before
+                                // `Cmd` (same order as the WebSocket path) or every click and
+                                // keystroke from a TCP/relay admin is dropped as undecodable.
+                                if let Ok(ev) = serde_json::from_slice::<
+                                    displays::remote_viewer::ratagui::TerminalEvent,
+                                >(&bytes)
+                                {
+                                    let _ = displays::remote_viewer::terminal_input_sender().try_send(ev);
+                                } else {
+                                    match displays::try_deserialize_command(&bytes) {
+                                        // Queued in arrival order; a send error means
+                                        // the dispatch task is gone, so end the session
+                                        // instead of silently swallowing commands.
+                                        Some(cmd) => {
+                                            if work_tx.send(SessionWork::Command(cmd)).is_err() {
+                                                break Err(anyhow!("dispatch task ended"));
+                                            }
                                         }
+                                        None => log::warn!(
+                                            "tcp_listener -> dropping undecodable Cmd frame ({} bytes); peer likely newer build",
+                                            bytes.len()
+                                        ),
                                     }
-                                    None => log::warn!(
-                                        "tcp_listener -> dropping undecodable Cmd frame ({} bytes); peer likely newer build",
-                                        bytes.len()
-                                    ),
                                 }
                             }
                         }

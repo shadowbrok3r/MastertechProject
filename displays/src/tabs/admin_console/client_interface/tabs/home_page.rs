@@ -23,6 +23,7 @@
 //!      this client's computer id every ~1 s. Catches runs started
 //!      outside this admin session and gives canonical truth.
 
+use crate::ui_tools::framed_controls::FramedSelectable;
 use crate::ui_tools::{icons, theme};
 use crate::Cmd;
 use crate::{PlatformSpawner, Spawner};
@@ -576,13 +577,13 @@ impl WebSocketClient {
             let overview_active = self.home_page.sub_tab == HomeSubTab::Overview;
             let processes_active = self.home_page.sub_tab == HomeSubTab::Processes;
             if ui
-                .selectable_label(overview_active, format!("{} Overview", icons::CHART))
+                .framed_selectable_label(overview_active, format!("{} Overview", icons::CHART))
                 .clicked()
             {
                 self.home_page.sub_tab = HomeSubTab::Overview;
             }
             if ui
-                .selectable_label(processes_active, format!("{} Processes", icons::LIST))
+                .framed_selectable_label(processes_active, format!("{} Processes", icons::LIST))
                 .clicked()
             {
                 self.home_page.sub_tab = HomeSubTab::Processes;

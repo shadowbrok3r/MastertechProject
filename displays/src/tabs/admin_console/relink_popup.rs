@@ -35,6 +35,7 @@ use database::{
 use eframe::egui::{
     self, Align, Button, Layout, RichText, ScrollArea, TextEdit, Ui, Window,
 };
+use crate::ui_tools::framed_controls::FramedSelectable;
 use crate::ui_tools::theme;
 
 /// Which lookup the admin is performing. Only one input is active at a
@@ -265,7 +266,7 @@ impl RelinkClientPopup {
                 RelinkSearchKind::OrderNumber,
             ] {
                 if ui
-                    .selectable_label(self.kind == kind, kind.label())
+                    .framed_selectable_label(self.kind == kind, kind.label())
                     .clicked()
                 {
                     self.kind = kind;

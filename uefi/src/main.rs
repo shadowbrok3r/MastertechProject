@@ -31,6 +31,7 @@ mod hii;
 mod netraw;
 mod order;
 mod pecheck;
+mod protoguard;
 mod shellio;
 mod smart;
 mod smolnet;
@@ -912,16 +913,9 @@ fn collect_nics() -> Vec<Nic> {
     let found = handles.len();
     let mut unopenable = 0usize;
     for handle in handles {
-        let params = OpenProtocolParams {
-            handle,
-            agent: uefi::boot::image_handle(),
-            controller: None,
-        };
         // Non-exclusive read so we don't wrestle the protocol away from the
         // firmware's network stack.
-        let snp = match unsafe {
-            uefi::boot::open_protocol::<SimpleNetwork>(params, OpenProtocolAttributes::GetProtocol)
-        } {
+        let snp = match protoguard::get::<SimpleNetwork>(handle) {
             Ok(s) => s,
             Err(_) => {
                 unopenable += 1;
@@ -1311,7 +1305,9 @@ fn run_dhcp() -> (Vec<IfaceIp>, Option<netraw::RawNet>, String) {
     if let Ok(handles) = uefi::boot::find_handles::<Ip4Config2>() {
         logln(format!("dhcp: Ip4Config2 handles={}", handles.len()));
         for (i, h) in handles.into_iter().enumerate() {
-            if let Ok(mut cfg) = Ip4Config2::new(h) {
+            // `ifup` switches the IP4 policy to DHCP, which tears the IPv4 stack
+            // down and can take this open record with it — hence Held.
+            if let Ok(mut cfg) = Ip4Config2::new(h).map(protoguard::Held::new) {
                 logln(format!("dhcp: if{i} ifup..."));
                 if let Err(e) = cfg.ifup() {
                     logln(format!("dhcp: if{i} ifup ERR {e:?}"));
@@ -1335,25 +1331,22 @@ fn run_dhcp() -> (Vec<IfaceIp>, Option<netraw::RawNet>, String) {
         use uefi::proto::network::pxe::BaseCode;
         if let Ok(handles) = uefi::boot::find_handles::<BaseCode>() {
             for h in handles {
-                let Ok(mut bc) = (unsafe {
-                    uefi::boot::open_protocol::<BaseCode>(
-                        OpenProtocolParams {
-                            handle: h,
-                            agent: uefi::boot::image_handle(),
-                            controller: None,
-                        },
-                        OpenProtocolAttributes::GetProtocol,
-                    )
-                }) else {
+                // `start` pins the IP4 policy to static and destroys the IP4
+                // children, so this open record may not survive to the drop.
+                let Ok(mut bc) = protoguard::get::<BaseCode>(h) else {
                     continue;
                 };
-                let _ = bc.start(false);
+                let started = bc.start(false).is_ok();
                 if bc.dhcp(false).is_ok() {
                     if let core::net::IpAddr::V4(v4) = bc.mode().station_ip() {
                         if !v4.is_unspecified() {
                             out.push(IfaceIp { ip: ip_str(v4.octets()), mask: String::new() });
                         }
                     }
+                } else if started {
+                    // Release the stack, or the static policy `start` forced
+                    // outlives the failed attempt and blocks the next path.
+                    let _ = bc.stop();
                 }
             }
         }
@@ -2815,7 +2808,8 @@ mod net_tcp {
     pub struct DirectLink {
         sb: boot::ScopedProtocol<Tcp4Sb>,
         child: uefi_raw::Handle,
-        tcp: boot::ScopedProtocol<Tcp4>,
+        // Held: every teardown path destroys the child handle this is open on.
+        tcp: crate::protoguard::Held<Tcp4>,
         event: uefi::Event,
         rx: Vec<u8>,
     }
@@ -2853,16 +2847,7 @@ mod net_tcp {
                 }
             };
 
-            let mut tcp = match unsafe {
-                boot::open_protocol::<Tcp4>(
-                    OpenProtocolParams {
-                        handle: child_handle,
-                        agent: boot::image_handle(),
-                        controller: None,
-                    },
-                    OpenProtocolAttributes::GetProtocol,
-                )
-            } {
+            let mut tcp = match crate::protoguard::get::<Tcp4>(child_handle) {
                 Ok(t) => t,
                 Err(e) => {
                     let _ = unsafe { (sb.0.destroy_child)(&mut sb.0, child) };

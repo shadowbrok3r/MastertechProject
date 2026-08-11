@@ -1,5 +1,5 @@
 use crate::{Cmd, PlatformSpawner, Spawner, channel_manager::ChannelManager, tabs::{ai_playground::enhanced::EnhancedAiPlayground, tasks::task_layout::{SortField, SortOptions}}, ui_tools::toasts::{Toast, ToastOptions, ToastStyle}, virtual_filesystem::FileSystem};
-use eframe::egui::{self, Align, CentralPanel, Context, Frame, Layout, Margin, RichText, ScrollArea, Ui, Vec2};
+use eframe::egui::{self, Align, CentralPanel, Context, Frame, Layout, Margin, RichText, ScrollArea, Ui};
 use database::schema::{utilities::get_connected_clients, ConnectedClient, RecordIdExt, Sortable};
 use crossbeam::channel::{Receiver, Sender};
 use std::collections::{BTreeMap, HashMap};
@@ -7,6 +7,7 @@ use client_interface::WebSocketClient;
 use crate::app_state::SharedContext;
 use crate::tabs::tasks::client_cards::should_show_connected_client_in_summaries;
 use crate::ui_tools::icons::{self, menu_label};
+use crate::ui_tools::framed_controls::{framed_menu_style, FramedSelectable};
 use crate::ui_tools::{glass_card, theme};
 use client_action::ClientUiAction;
 use client_interface::TransportKind;
@@ -732,9 +733,8 @@ impl SharedContext {
             .exact_size(26.)
             .show(ui, |ui |
         {
-            egui::MenuBar::new().ui(ui, |ui| {
+            egui::MenuBar::new().style(framed_menu_style).ui(ui, |ui| {
                 ui.set_height(20.);
-                ui.style_mut().spacing.button_padding = Vec2::new(5.0, 1.0);
                 let txt = match self.web_console_layout.open_menu {
                     false => "Show Clients ->",
                     true => "<- Hide Clients",
@@ -826,21 +826,29 @@ impl SharedContext {
                 }); // ── end Clients menu ─────────────────────────────────
 
                 // ── Panels menu: open Script Editor / Chat as a right panel ──
-                ui.menu_button("Panels", |ui| {
-                    let cur = self.web_console_layout.right_panel;
-                    let script_open = cur == Some(RightPanel::ScriptEditor);
-                    if ui.selectable_label(script_open, "Script Editor").clicked() {
-                        self.web_console_layout.right_panel =
-                            if script_open { None } else { Some(RightPanel::ScriptEditor) };
-                        ui.close();
-                    }
-                    let chat_open = cur == Some(RightPanel::Chat);
-                    if ui.selectable_label(chat_open, format!("{}  Chat", icons::CHAT)).clicked() {
-                        self.web_console_layout.right_panel =
-                            if chat_open { None } else { Some(RightPanel::Chat) };
-                        ui.close();
-                    }
-                });
+                // Framed popup style so the two toggles show an off-state frame.
+                egui::containers::menu::MenuButton::new("Panels")
+                    .config(
+                        egui::containers::menu::MenuConfig::default().style(framed_menu_style),
+                    )
+                    .ui(ui, |ui| {
+                        let cur = self.web_console_layout.right_panel;
+                        let script_open = cur == Some(RightPanel::ScriptEditor);
+                        if ui.framed_selectable_label(script_open, "Script Editor").clicked() {
+                            self.web_console_layout.right_panel =
+                                if script_open { None } else { Some(RightPanel::ScriptEditor) };
+                            ui.close();
+                        }
+                        let chat_open = cur == Some(RightPanel::Chat);
+                        if ui
+                            .framed_selectable_label(chat_open, format!("{}  Chat", icons::CHAT))
+                            .clicked()
+                        {
+                            self.web_console_layout.right_panel =
+                                if chat_open { None } else { Some(RightPanel::Chat) };
+                            ui.close();
+                        }
+                    });
 
                 ui.separator();
 

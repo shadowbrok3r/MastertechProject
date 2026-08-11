@@ -10,6 +10,7 @@ use egui_data_table::{
 use egui_extras::Column as TableColumnConfig;
 use serde::Serialize;
 use crate::{Cmd, StartupApp};
+use crate::ui_tools::framed_controls::FramedSelectable;
 use crate::ui_tools::icons;
 use crate::ui_tools::theme;
 
@@ -178,9 +179,13 @@ impl StartupAppsViewer {
                 .show(ui);
 
             ui.separator();
-            ui.selectable_value(&mut self.viewer.show_mode, ShowMode::All, "All");
-            ui.selectable_value(&mut self.viewer.show_mode, ShowMode::EnabledOnly, "Enabled");
-            ui.selectable_value(&mut self.viewer.show_mode, ShowMode::DisabledOnly, "Disabled");
+            ui.framed_selectable_value(&mut self.viewer.show_mode, ShowMode::All, "All");
+            ui.framed_selectable_value(&mut self.viewer.show_mode, ShowMode::EnabledOnly, "Enabled");
+            ui.framed_selectable_value(
+                &mut self.viewer.show_mode,
+                ShowMode::DisabledOnly,
+                "Disabled",
+            );
 
             if let Some((msg, success)) = &self.status_message {
                 let color = if *success { theme::success(ui) } else { theme::error(ui) };

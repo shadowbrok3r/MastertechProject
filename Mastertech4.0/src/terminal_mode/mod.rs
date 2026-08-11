@@ -308,8 +308,12 @@ impl <'a>TerminalApp<'a> {
                 if !splash_screen.is_rendered() {
                     Self::render_splash_screen(f, &mut splash_screen);
                 } else {
-                    // Process events from egui via WebSocket
-                    while let Ok(event) = event_rx.try_recv() {
+                    // Process events from egui: the WebSocket sender's channel plus the
+                    // transport-agnostic channel the TCP/relay receive path feeds.
+                    let queued = std::iter::from_fn(|| event_rx.try_recv().ok()).chain(
+                        displays::remote_viewer::drain_terminal_inputs().map(LocalTermEvent),
+                    );
+                    for event in queued.collect::<Vec<_>>() {
                         if let Ok(mouse) = TryFrom::try_from(event.clone()) {
                             if self.handle_events(Some(mouse), None) {
                                 log::info!("Quit signal received from handle_events (mouse)");
