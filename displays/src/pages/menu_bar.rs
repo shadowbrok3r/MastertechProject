@@ -144,7 +144,10 @@ impl SharedContext {
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.add_space(8.0);
-                        
+
+                        crate::ui_tools::do_not_disturb::toggle_button(ui);
+                        ui.add_space(4.0);
+
                         // Notification count badges
                         let unread_count = self.notification_center.unread_count();
                         let alert_count = self.notification_center.alert_count();

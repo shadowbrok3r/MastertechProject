@@ -1,6 +1,7 @@
-//! HTTP over raw SimpleNetwork via smoltcp, for firmware that never instantiated
+//! HTTP over raw L2 frames via smoltcp, for firmware that never instantiated
 //! its UEFI IPv4/TCP stack (Ip4Dxe/Tcp4 absent). smoltcp owns ARP/IPv4/TCP in
-//! software over raw L2 frames; the IPv4 lease is seeded from [`netraw::dhcp`].
+//! software; frames move over [`netraw::Link`] (MNP when bound, raw SNP
+//! otherwise) and the IPv4 lease is seeded from [`netraw::dhcp`].
 
 use core::sync::atomic::{AtomicU16, Ordering};
 use core::time::Duration;
@@ -12,11 +13,9 @@ use smoltcp::time::Instant;
 use smoltcp::wire::{EthernetAddress, HardwareAddress, IpAddress, IpCidr, IpListenEndpoint, Ipv4Address};
 
 use uefi::boot;
-use uefi::proto::network::snp::SimpleNetwork;
 
 use crate::logln;
-use crate::netraw::{self, RawNet};
-use crate::protoguard::Held;
+use crate::netraw::{self, Link, RawNet};
 
 const RX_BUF: usize = 32 * 1024;
 const TX_BUF: usize = 16 * 1024;
@@ -27,34 +26,28 @@ const DEADLINE_MS: i64 = 15_000;
 const CONNECT_DEADLINE_MS: i64 = 2_500;
 
 static LOCAL_PORT: AtomicU16 = AtomicU16::new(0);
-static LEASE: std::sync::Mutex<Option<RawNet>> = std::sync::Mutex::new(None);
 
 fn v4(o: [u8; 4]) -> Ipv4Address {
     Ipv4Address::new(o[0], o[1], o[2], o[3])
 }
 
-/// DHCP lease, acquired once over raw SNP then cached for the session.
+/// The shared raw lease, acquiring one when none is held yet. Reading
+/// [`netraw::current`] (not a module-local copy) picks up background renewals.
 fn lease() -> Result<RawNet, String> {
-    if let Ok(g) = LEASE.lock() {
-        if let Some(rn) = *g {
-            return Ok(rn);
-        }
+    match netraw::current() {
+        Some(rn) => Ok(rn),
+        None => netraw::dhcp(),
     }
-    let rn = netraw::dhcp()?;
-    if let Ok(mut g) = LEASE.lock() {
-        *g = Some(rn);
-    }
-    Ok(rn)
 }
 
 struct SnpDevice {
-    snp: Held<SimpleNetwork>,
+    link: Link,
     /// Handed to smoltcp ahead of the NIC, once.
     primed: Option<Vec<u8>>,
 }
 
 struct SnpRx(Vec<u8>);
-struct SnpTx<'a>(&'a SimpleNetwork);
+struct SnpTx<'a>(&'a Link);
 
 impl Device for SnpDevice {
     type RxToken<'a> = SnpRx where Self: 'a;
@@ -62,17 +55,17 @@ impl Device for SnpDevice {
 
     fn receive(&mut self, _t: Instant) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
         if let Some(frame) = self.primed.take() {
-            return Some((SnpRx(frame), SnpTx(&self.snp)));
+            return Some((SnpRx(frame), SnpTx(&self.link)));
         }
         let mut buf = [0u8; 2048];
-        match self.snp.receive(&mut buf, None, None, None, None) {
-            Ok(n) => Some((SnpRx(buf[..n].to_vec()), SnpTx(&self.snp))),
-            Err(_) => None,
+        match self.link.recv(&mut buf, 0) {
+            (Some(n), _) => Some((SnpRx(buf[..n].to_vec()), SnpTx(&self.link))),
+            (None, _) => None,
         }
     }
 
     fn transmit(&mut self, _t: Instant) -> Option<Self::TxToken<'_>> {
-        Some(SnpTx(&self.snp))
+        Some(SnpTx(&self.link))
     }
 
     fn capabilities(&self) -> DeviceCapabilities {
@@ -93,7 +86,7 @@ impl TxToken for SnpTx<'_> {
     fn consume<R, F: FnOnce(&mut [u8]) -> R>(self, len: usize, f: F) -> R {
         let mut buf = vec![0u8; len];
         let r = f(&mut buf);
-        let _ = self.0.transmit(0, &buf, None, None, None);
+        let _ = self.0.transmit(&buf);
         r
     }
 }
@@ -102,7 +95,7 @@ impl TxToken for SnpTx<'_> {
 /// the peer closes (request must carry `Connection: close`) or the deadline.
 fn request(host_port: &str, ip: [u8; 4], port: u16, req: &[u8]) -> Result<Vec<u8>, String> {
     let rn = lease()?;
-    let mut device = SnpDevice { snp: netraw::open_snp()?, primed: None };
+    let mut device = SnpDevice { link: Link::open()?, primed: None };
 
     let mac = rn.mac;
     let seed = u64::from_le_bytes([mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], 0, 0]);

@@ -55,7 +55,16 @@ impl SharedContext {
             match action {
                 Action::Create => {
                     if notification.notification_type.as_str() == "Admin" {
-                        self.notification_modal = Some(notification.clone());
+                        // Silenced admins fall through to the center rather
+                        // than the modal, so the message is not lost.
+                        if crate::ui_tools::do_not_disturb::silenced() {
+                            if notification.user == user.get_id() {
+                                self.notification_center.read_notifications = false;
+                            }
+                            self.notification_center.apply_update(notification.clone());
+                        } else {
+                            self.notification_modal = Some(notification.clone());
+                        }
                     } else if notification.notification_type.as_str() == "Approval" {
                         // The blocking interruption is the sql_approval modal,
                         // driven by that table's own live stream. Raising the

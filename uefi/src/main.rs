@@ -28,6 +28,7 @@ mod charts;
 mod flashstate;
 mod launch;
 mod hii;
+mod mnp;
 mod netraw;
 mod order;
 mod pecheck;
@@ -162,6 +163,15 @@ const BUSY_STALL_MS: u64 = 20;
 
 /// Stall ceiling when no deadline is imminent.
 const IDLE_STALL_MAX_MS: u64 = 250;
+
+/// Interval between firmware-lease watch ticks (cheap protocol reads, no I/O).
+const LEASE_WATCH_MS: u64 = 10_000;
+
+/// Backoff between DHCP re-kicks after a lost firmware lease.
+const DHCP_REKICK_BACKOFF_MS: u64 = 60_000;
+
+/// Backoff between raw-lease renewal attempts.
+const RAW_RENEW_BACKOFF_MS: u64 = 60_000;
 
 /// Stall floor, so the loop always yields to firmware timers.
 const MIN_STALL_MS: u64 = 1;
@@ -1319,6 +1329,7 @@ fn net_stack_summary() -> String {
 }
 
 /// A DHCP/static IPv4 lease on one interface.
+#[derive(PartialEq, Eq)]
 struct IfaceIp {
     ip: String,
     mask: String,
@@ -6484,7 +6495,7 @@ fn connect_all(
     if app.direct.is_some() {
         app.connect_steps.push((true, "already linked".to_string()));
     } else {
-        app.status = "connect 3/5: listening for a console beacon...".into();
+        app.status = "connect 3/5: listening for the admin console's beacon...".into();
         terminal.draw(|frame| render(frame, app))?;
         let heard = if leased {
             kick_discovery(app, clock)
@@ -7213,8 +7224,8 @@ fn nkeys(k1: &str, d1: &str, k2: &str, d2: &str) -> Line<'static> {
 const CONNECT_PLAN: [&str; 5] = [
     "bind NIC drivers",
     "get a DHCP lease",
-    "find the console",
-    "appear in console",
+    "find the admin console",
+    "appear in its roster",
     "command polling (Shift+A)",
 ];
 
@@ -8627,6 +8638,14 @@ struct App {
     connect_steps: Vec<(bool, String)>,
     /// Raw SimpleNetwork lease (set when DHCP succeeded only via the SNP path).
     raw_net: Option<netraw::RawNet>,
+    /// Clock time of the next firmware-lease watch tick.
+    lease_watch_next_ms: u64,
+    /// Earliest clock time a lost firmware lease may be re-kicked.
+    dhcp_rekick_next_ms: u64,
+    /// Earliest clock time the raw lease may be renewed or re-acquired.
+    raw_renew_next_ms: u64,
+    /// Ip4Config2 has reported a non-zero address at least once.
+    fw_lease_seen: bool,
     /// Rendered output from the last WASM plugin run.
     plugin_out: Vec<String>,
     /// Registry plugin id to fetch from the upload target.
@@ -8866,20 +8885,29 @@ fn service_background(
     clock: &Clock,
 ) -> Result<()> {
     let now = clock.now_ms();
+    watch_fw_lease(app, now);
+    service_raw_lease(app, now);
+    // At most one blocking network job per tick. Deadlines that lose the tick
+    // stay due and win one of the next (the idle stall is ≤250ms), so jobs
+    // serialize instead of stacking multi-second freezes back to back.
+    let mut netted = false;
     if app.agent && now >= app.agent_next_ms {
         agent_poll(app, terminal)?;
         app.agent_next_ms = clock.now_ms().saturating_add(AGENT_POLL_MS);
         app.dirty = true;
+        netted = true;
     }
-    if app.present && now >= app.viewer_next_ms {
+    if !netted && app.present && now >= app.viewer_next_ms {
         viewer_check(app);
         app.viewer_next_ms = clock.now_ms().saturating_add(VIEWER_CHECK_MS);
         app.dirty = true;
+        netted = true;
     }
-    if app.present && now >= app.present_next_ms {
+    if !netted && app.present && now >= app.present_next_ms {
         presence_beat(app);
         app.present_next_ms = clock.now_ms().saturating_add(PRESENCE_HEARTBEAT_MS);
         app.dirty = true;
+        netted = true;
     }
     // Service the direct socket (input/stream-ctl/plugin frames), or back off
     // through discovery attempts until a console listener answers.
@@ -8895,7 +8923,7 @@ fn service_background(
             };
             app.direct_pump_next_ms = clock.now_ms().saturating_add(interval);
         }
-    } else if app.present && now >= app.discover_next_ms {
+    } else if !netted && app.present && now >= app.discover_next_ms {
         // The console beacons every ~3s, so widen the listen window as the
         // backoff spreads attempts out, holding the listen duty cycle at ~10%.
         let listen = (app.discover_backoff_ms / 10)
@@ -8913,6 +8941,103 @@ fn service_background(
         app.dirty = true;
     }
     Ok(())
+}
+
+/// Watch the firmware's Ip4Config2 lease. The raw receive paths drain unicast
+/// frames from the shared SNP queue, which can starve the firmware DHCP
+/// client's renewal ACK until its lease expires and the address silently drops
+/// to 0.0.0.0. Detect the drop, surface it, and re-kick the DHCP policy —
+/// `set_policy` returns immediately, unlike `ifup`'s 30s wait.
+fn watch_fw_lease(app: &mut App, now: u64) {
+    if now < app.lease_watch_next_ms {
+        return;
+    }
+    app.lease_watch_next_ms = now.saturating_add(LEASE_WATCH_MS);
+    let Ok(handles) = uefi::boot::find_handles::<Ip4Config2>() else {
+        return;
+    };
+    if handles.is_empty() {
+        return;
+    }
+    let mut fresh = Vec::new();
+    for h in handles.iter().copied() {
+        if let Ok(mut cfg) = Ip4Config2::new(h).map(protoguard::Held::new) {
+            if let Ok(info) = cfg.get_interface_info() {
+                fresh.push(IfaceIp {
+                    ip: ip_str(info.station_addr.0),
+                    mask: ip_str(info.subnet_mask.0),
+                });
+            }
+        }
+    }
+    let had = app.ifaces.iter().any(|i| i.ip != "0.0.0.0" && !i.ip.is_empty());
+    let have = fresh.iter().any(|i| i.ip != "0.0.0.0");
+    if have {
+        if app.fw_lease_seen && !had {
+            let ip = fresh.iter().find(|i| i.ip != "0.0.0.0").map(|i| i.ip.clone());
+            logln(format!("lease: recovered {}", ip.unwrap_or_default()));
+            app.status = relay_line(app);
+        }
+        if fresh != app.ifaces {
+            app.ifaces = fresh;
+            app.dirty = true;
+        }
+        app.fw_lease_seen = true;
+        return;
+    }
+    // Nothing held. Only meaningful when this path granted the lease: PXE- or
+    // raw-sourced addresses never show in Ip4Config2 and must not be clobbered.
+    if !app.fw_lease_seen {
+        return;
+    }
+    if had {
+        logln("lease: firmware IPv4 address lost (renewal starved or expired)".into());
+        app.ifaces = fresh;
+        app.status = "DHCP lease lost - re-kicking (auto)".into();
+        app.dirty = true;
+    }
+    if now >= app.dhcp_rekick_next_ms {
+        app.dhcp_rekick_next_ms = now.saturating_add(DHCP_REKICK_BACKOFF_MS);
+        use uefi_raw::protocol::network::ip4_config2::Ip4Config2Policy;
+        for h in handles.iter().copied() {
+            if let Ok(mut cfg) = Ip4Config2::new(h).map(protoguard::Held::new) {
+                // Static first: re-asserting DHCP is a no-op when the policy
+                // never left DHCP, and the transition is what re-arms Dhcp4.
+                let _ = cfg.set_policy(Ip4Config2Policy::STATIC);
+                let _ = cfg.set_policy(Ip4Config2Policy::DHCP);
+            }
+        }
+        logln("lease: DHCP policy re-kicked".into());
+    }
+}
+
+/// Keep the raw SNP lease alive: renew past T1, re-acquire once expired. The
+/// firmware never renews this one — it is our own DHCP client — so without
+/// this the address ages out server-side while the box keeps using it.
+fn service_raw_lease(app: &mut App, now: u64) {
+    let Some(rn) = netraw::current() else {
+        return;
+    };
+    if !rn.renew_due(now) || now < app.raw_renew_next_ms {
+        return;
+    }
+    app.raw_renew_next_ms = now.saturating_add(RAW_RENEW_BACKOFF_MS);
+    let refreshed = if rn.expired(now) {
+        logln("netraw: lease expired - full re-acquire".into());
+        netraw::dhcp()
+    } else {
+        netraw::renew(&rn)
+    };
+    match refreshed {
+        Ok(new) => {
+            // Keep the app copy in step when the raw path is the active lease.
+            if app.raw_net.is_some() {
+                app.raw_net = Some(new);
+                app.dirty = true;
+            }
+        }
+        Err(e) => logln(format!("netraw: lease refresh failed ({e}) - retrying in 60s")),
+    }
 }
 
 /// Milliseconds to stall: the gap to the nearest deadline, capped by how hot
@@ -8964,6 +9089,10 @@ fn run() -> Result<()> {
         agent_ran: false,
         connect_steps: Vec::new(),
         raw_net: None,
+        lease_watch_next_ms: 0,
+        dhcp_rekick_next_ms: 0,
+        raw_renew_next_ms: 0,
+        fw_lease_seen: false,
         plugin_out: Vec::new(),
         plugin_id_in: "com.mastertech.uefi-diag".to_string(),
         plugin_wasm: Vec::new(),
@@ -9270,10 +9399,17 @@ fn run() -> Result<()> {
                 app.status = "DHCP: working (up to 30s)...".into();
                 terminal.draw(|frame| render(frame, &app))?;
                 let (ifaces, raw, status) = run_dhcp();
-                let networked = !ifaces.is_empty() || raw.is_some();
-                app.ifaces = ifaces;
-                app.raw_net = raw;
-                app.status = status;
+                let got = ifaces.iter().any(|i| i.ip != "0.0.0.0") || raw.is_some();
+                let held = local_ip(&app).is_some();
+                if got || !held {
+                    app.ifaces = ifaces;
+                    app.raw_net = raw;
+                    app.status = status;
+                } else {
+                    // A failed re-run must not discard the lease still in hand.
+                    app.status = format!("{status} - kept the existing lease");
+                }
+                let networked = got || held;
                 // Network is up by operator choice — auto-appear in the console.
                 let now = clock.now_ms();
                 if networked && !app.present {

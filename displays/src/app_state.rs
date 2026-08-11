@@ -1128,8 +1128,9 @@ impl SharedContext {
         }
 
         // Pump the AI attention/review queue into the blocking modal slot,
-        // one popup at a time; outcomes route through TaskUiActions.
-        if self.ai_popup_modal.is_none() {
+        // one popup at a time; outcomes route through TaskUiActions. Do Not
+        // Disturb holds the queue instead of draining it.
+        if self.ai_popup_modal.is_none() && !crate::ui_tools::do_not_disturb::is_enabled() {
             if let Some(popup) = self.ai_popup_queue.pop_front() {
                 self.ai_popup_modal =
                     Some(crate::modals::ai_attention_modal::AiAttentionModal {

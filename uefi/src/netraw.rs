@@ -1,7 +1,11 @@
-//! Raw IPv4 over SimpleNetwork for firmware that won't instantiate its UEFI
-//! IPv4 stack (Ip4Dxe/Tcp4 absent). Hand-builds Ethernet/IPv4/UDP frames:
-//! DHCP (DORA) for an address, ARP to resolve the next hop, then a chunked UDP
-//! upload of the fingerprint. No Ip4Config2/Tcp4/Http dependency.
+//! Raw IPv4 for firmware that won't instantiate its UEFI IPv4 stack
+//! (Ip4Dxe/Tcp4 absent). Hand-builds Ethernet/IPv4/UDP frames: DHCP (DORA) for
+//! an address, ARP to resolve the next hop, then a chunked UDP upload of the
+//! fingerprint. No Ip4Config2/Tcp4/Http dependency.
+//!
+//! Frames move over [`Link`]: MNP when MnpDxe is bound (each consumer gets a
+//! copy of every matching frame, so this app and the firmware stack stop
+//! stealing each other's unicast replies), raw SimpleNetwork otherwise.
 
 use core::sync::atomic::{AtomicU32, Ordering};
 use core::time::Duration;
@@ -10,6 +14,7 @@ use uefi::boot;
 use uefi::proto::network::snp::{NetworkState, ReceiveFlags, SimpleNetwork};
 
 use crate::logln;
+use crate::mnp::MnpNet;
 use crate::protoguard::{self, Held};
 
 /// Orchestrator UDP port for the raw fingerprint upload (axum_server listener).
@@ -59,13 +64,57 @@ pub struct RawNet {
     pub ip: [u8; 4],
     pub mask: [u8; 4],
     pub gateway: [u8; 4],
+    /// DHCP server that granted the lease (option 54).
+    pub server: [u8; 4],
+    /// Mono clock at grant, None when the TSC is unusable.
+    pub obtained_ms: Option<u64>,
+    /// Lease duration (option 51); 0 = unknown, never renewed.
+    pub lease_secs: u32,
+}
+
+impl RawNet {
+    /// Past the T1 midpoint, where a client renews.
+    pub fn renew_due(&self, now_ms: u64) -> bool {
+        match self.obtained_ms {
+            Some(t0) if self.lease_secs > 0 => {
+                now_ms.saturating_sub(t0) >= u64::from(self.lease_secs) * 500
+            }
+            _ => false,
+        }
+    }
+
+    /// Past the full lease duration; the address is no longer ours to use.
+    pub fn expired(&self, now_ms: u64) -> bool {
+        match self.obtained_ms {
+            Some(t0) if self.lease_secs > 0 => {
+                now_ms.saturating_sub(t0) >= u64::from(self.lease_secs) * 1000
+            }
+            _ => false,
+        }
+    }
+}
+
+/// The live raw lease. `dhcp()`/`renew()` update it on success; consumers that
+/// cannot reach `App` state (smolnet) read it here, so a background renewal is
+/// picked up by every later request instead of a stale per-module copy.
+static CURRENT: std::sync::Mutex<Option<RawNet>> = std::sync::Mutex::new(None);
+
+/// The last successfully acquired or renewed raw lease.
+pub fn current() -> Option<RawNet> {
+    CURRENT.lock().ok().and_then(|g| *g)
+}
+
+fn set_current(rn: RawNet) {
+    if let Ok(mut g) = CURRENT.lock() {
+        *g = Some(rn);
+    }
 }
 
 pub fn ip_str(o: [u8; 4]) -> String {
     format!("{}.{}.{}.{}", o[0], o[1], o[2], o[3])
 }
 
-pub(crate) fn open_snp() -> Result<Held<SimpleNetwork>, String> {
+fn open_snp() -> Result<Held<SimpleNetwork>, String> {
     let handle = boot::find_handles::<SimpleNetwork>()
         .map_err(|e| format!("no SNP: {e:?}"))?
         .into_iter()
@@ -87,6 +136,75 @@ pub(crate) fn open_snp() -> Result<Held<SimpleNetwork>, String> {
         None,
     );
     Ok(snp)
+}
+
+/// The frame transport: an MNP child when the managed stack exists, raw
+/// SimpleNetwork otherwise. Same three primitives either way, so the DHCP,
+/// ARP and beacon logic above it never cares which one is live.
+pub(crate) enum Link {
+    Mnp(MnpNet),
+    Snp(Held<SimpleNetwork>),
+}
+
+impl Link {
+    /// Prefer MNP; fall back to raw SNP where MnpDxe never bound. Logs the
+    /// choice once, and again only when it changes.
+    pub fn open() -> Result<Self, String> {
+        match MnpNet::open() {
+            Ok(net) => {
+                let m = net.mac;
+                crate::mnp::announce(
+                    1,
+                    &format!(
+                        "MNP (demuxed) mac={:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x} media={}",
+                        m[0], m[1], m[2], m[3], m[4], m[5], net.media_present
+                    ),
+                );
+                Ok(Link::Mnp(net))
+            }
+            Err(e) => {
+                let snp = open_snp()?;
+                crate::mnp::announce(2, &format!("raw SNP (MNP: {e})"));
+                Ok(Link::Snp(snp))
+            }
+        }
+    }
+
+    pub fn mac(&self) -> [u8; 6] {
+        match self {
+            Link::Mnp(n) => n.mac,
+            Link::Snp(s) => {
+                let a = s.mode().current_address.0;
+                [a[0], a[1], a[2], a[3], a[4], a[5]]
+            }
+        }
+    }
+
+    pub fn media_present(&self) -> bool {
+        match self {
+            Link::Mnp(n) => n.media_present,
+            Link::Snp(s) => bool::from(s.mode().media_present),
+        }
+    }
+
+    /// Send one fully built Ethernet frame.
+    pub fn transmit(&self, frame: &[u8]) -> Result<(), String> {
+        match self {
+            Link::Mnp(n) => n.transmit(frame),
+            Link::Snp(s) => s
+                .transmit(0, frame, None, None, None)
+                .map_err(|e| format!("SNP tx: {e:?}")),
+        }
+    }
+
+    /// Poll for one frame, up to `timeout_ms` (0 = single non-blocking pass).
+    /// Returns the frame length and the milliseconds actually spent waiting.
+    pub fn recv(&mut self, buf: &mut [u8], timeout_ms: u64) -> (Option<usize>, u64) {
+        match self {
+            Link::Mnp(n) => n.recv(buf, timeout_ms),
+            Link::Snp(s) => recv_frame(s, buf, timeout_ms),
+        }
+    }
 }
 
 /// Poll the NIC for one frame, up to `timeout_ms`. Returns the frame length and
@@ -164,14 +282,22 @@ fn build_udp_frame(
     frame
 }
 
-/// BOOTP/DHCP message wrapped in a broadcast IPv4/UDP/Ethernet frame.
-fn build_dhcp(mac: [u8; 6], xid: u32, msg_type: u8, request_ip: Option<[u8; 4]>, server_id: Option<[u8; 4]>) -> Vec<u8> {
+/// BOOTP/DHCP message wrapped in a broadcast IPv4/UDP/Ethernet frame. A set
+/// `ciaddr` is the RENEWING/REBINDING request form (no option 50/54 with it).
+fn build_dhcp(
+    mac: [u8; 6],
+    xid: u32,
+    msg_type: u8,
+    request_ip: Option<[u8; 4]>,
+    server_id: Option<[u8; 4]>,
+    ciaddr: Option<[u8; 4]>,
+) -> Vec<u8> {
     let mut d = Vec::with_capacity(300);
     d.extend_from_slice(&[1, 1, 6, 0]); // op=request, htype=eth, hlen=6, hops=0
     d.extend_from_slice(&xid.to_be_bytes());
     d.extend_from_slice(&[0, 0]); // secs
     d.extend_from_slice(&[0x80, 0x00]); // flags: broadcast
-    d.extend_from_slice(&[0; 4]); // ciaddr
+    d.extend_from_slice(&ciaddr.unwrap_or([0; 4]));
     d.extend_from_slice(&[0; 4]); // yiaddr
     d.extend_from_slice(&[0; 4]); // siaddr
     d.extend_from_slice(&[0; 4]); // giaddr
@@ -198,11 +324,18 @@ fn build_dhcp(mac: [u8; 6], xid: u32, msg_type: u8, request_ip: Option<[u8; 4]>,
     build_udp_frame(mac, [0xFF; 6], [0; 4], [255; 4], 68, 67, &d)
 }
 
-/// A DHCP reply's address fields: (yiaddr, server_id, mask, gateway).
-type ReplyAddrs = ([u8; 4], [u8; 4], [u8; 4], [u8; 4]);
+/// A DHCP reply's address fields and lease duration.
+#[derive(Clone, Copy)]
+struct Lease4 {
+    yiaddr: [u8; 4],
+    server: [u8; 4],
+    mask: [u8; 4],
+    gateway: [u8; 4],
+    lease_secs: u32,
+}
 
 /// Parse a DHCP reply frame into its message type and address fields.
-fn parse_dhcp(frame: &[u8], xid: u32) -> Option<(u8, ReplyAddrs)> {
+fn parse_dhcp(frame: &[u8], xid: u32) -> Option<(u8, Lease4)> {
     if frame.len() < 14 + 20 + 8 + 240 {
         return None;
     }
@@ -226,9 +359,15 @@ fn parse_dhcp(frame: &[u8], xid: u32) -> Option<(u8, ReplyAddrs)> {
     if dhcp[236..240] != [0x63, 0x82, 0x53, 0x63] {
         return None;
     }
-    let mut yiaddr = [0u8; 4];
-    yiaddr.copy_from_slice(&dhcp[16..20]);
-    let (mut msg_type, mut server_id, mut mask, mut gateway) = (0u8, [0u8; 4], [0u8; 4], [0u8; 4]);
+    let mut l = Lease4 {
+        yiaddr: [0; 4],
+        server: [0; 4],
+        mask: [0; 4],
+        gateway: [0; 4],
+        lease_secs: 0,
+    };
+    l.yiaddr.copy_from_slice(&dhcp[16..20]);
+    let mut msg_type = 0u8;
     let mut i = 240;
     while i < dhcp.len() {
         let opt = dhcp[i];
@@ -250,14 +389,15 @@ fn parse_dhcp(frame: &[u8], xid: u32) -> Option<(u8, ReplyAddrs)> {
         let val = &dhcp[val_start..val_start + len];
         match opt {
             53 if len == 1 => msg_type = val[0],
-            54 if len == 4 => server_id.copy_from_slice(val),
-            1 if len == 4 => mask.copy_from_slice(val),
-            3 if len >= 4 => gateway.copy_from_slice(&val[..4]),
+            54 if len == 4 => l.server.copy_from_slice(val),
+            1 if len == 4 => l.mask.copy_from_slice(val),
+            3 if len >= 4 => l.gateway.copy_from_slice(&val[..4]),
+            51 if len == 4 => l.lease_secs = u32::from_be_bytes([val[0], val[1], val[2], val[3]]),
             _ => {}
         }
         i = val_start + len;
     }
-    Some((msg_type, (yiaddr, server_id, mask, gateway)))
+    Some((msg_type, l))
 }
 
 /// Retransmit windows for one DORA step. A single send loses the exchange
@@ -265,52 +405,53 @@ fn parse_dhcp(frame: &[u8], xid: u32) -> Option<(u8, ReplyAddrs)> {
 /// the same queue, so one-shot is not enough.
 const DORA_WINDOWS_MS: [u64; 3] = [2_000, 3_000, 5_000];
 
+/// Shorter windows for a background renewal, which holds the run loop.
+const RENEW_WINDOWS_MS: [u64; 2] = [1_500, 2_500];
+
 /// Broadcast `frame` and wait for a `want`-typed DHCP reply, retransmitting per
-/// [`DORA_WINDOWS_MS`]. Logs the frame tally, which separates "nothing reaches
-/// us at all" from "traffic flows but the server never answered".
+/// `windows`. Logs the frame tally, which separates "nothing reaches us at all"
+/// from "traffic flows but the server never answered".
 fn await_reply(
-    snp: &SimpleNetwork,
+    link: &mut Link,
     frame: &[u8],
     xid: u32,
     want: u8,
     label: &str,
-) -> Option<ReplyAddrs> {
+    windows: &[u64],
+) -> Option<Lease4> {
     let mut buf = [0u8; 2048];
     let mut seen = 0usize;
-    for (try_n, window) in DORA_WINDOWS_MS.iter().enumerate() {
-        if let Err(e) = snp.transmit(0, frame, None, None, None) {
-            logln(format!("netraw: {label} tx{try_n} ERR {e:?}"));
+    for (try_n, window) in windows.iter().enumerate() {
+        if let Err(e) = link.transmit(frame) {
+            logln(format!("netraw: {label} tx{try_n} ERR {e}"));
             continue;
         }
         let mut waited = 0u64;
         while waited < *window {
-            let (got, spent) = recv_frame(snp, &mut buf, window - waited);
+            let (got, spent) = link.recv(&mut buf, window - waited);
             // 1ms floor bounds the loop when frames arrive with no wait.
             waited += spent.max(1);
             let Some(n) = got else { break };
             seen += 1;
-            if let Some((mt, addrs)) = parse_dhcp(&buf[..n], xid)
+            if let Some((mt, lease)) = parse_dhcp(&buf[..n], xid)
                 && mt == want
             {
                 logln(format!("netraw: {label} on try {try_n} ({seen} frames seen)"));
-                return Some(addrs);
+                return Some(lease);
             }
         }
     }
-    logln(format!("netraw: {label} timeout after {} tries, {seen} frames seen", DORA_WINDOWS_MS.len()));
+    logln(format!("netraw: {label} timeout after {} tries, {seen} frames seen", windows.len()));
     None
 }
 
-/// Acquire an IPv4 lease over raw SNP (DHCP DORA).
+/// Acquire an IPv4 lease over the raw path (DHCP DORA).
 pub fn dhcp() -> Result<RawNet, String> {
-    let snp = open_snp()?;
-    let mode = snp.mode();
-    let m = mode.current_address.0;
-    let mac = [m[0], m[1], m[2], m[3], m[4], m[5]];
+    let mut link = Link::open()?;
+    let mac = link.mac();
     logln(format!(
-        "netraw: snp state={:?} media={} mac={:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-        mode.state,
-        bool::from(mode.media_present),
+        "netraw: dhcp media={} mac={:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+        link.media_present(),
         mac[0],
         mac[1],
         mac[2],
@@ -320,26 +461,64 @@ pub fn dhcp() -> Result<RawNet, String> {
     ));
     let xid = u32::from_be_bytes([mac[2], mac[3], mac[4], mac[5]]);
 
-    let discover = build_dhcp(mac, xid, 1, None, None);
-    let Some((yiaddr, server_id, mut mask, mut gateway)) =
-        await_reply(&snp, &discover, xid, 2, "OFFER")
-    else {
-        return Err("no DHCP OFFER (raw SNP)".into());
+    let discover = build_dhcp(mac, xid, 1, None, None, None);
+    let Some(offer) = await_reply(&mut link, &discover, xid, 2, "OFFER", &DORA_WINDOWS_MS) else {
+        return Err("no DHCP OFFER (raw path)".into());
     };
-    logln(format!("netraw: OFFER {} from server {}", ip_str(yiaddr), ip_str(server_id)));
+    logln(format!("netraw: OFFER {} from server {}", ip_str(offer.yiaddr), ip_str(offer.server)));
 
-    let request = build_dhcp(mac, xid, 3, Some(yiaddr), Some(server_id));
-    let Some((_, _, mk, gw)) = await_reply(&snp, &request, xid, 5, "ACK") else {
-        return Err("no DHCP ACK (raw SNP)".into());
+    let request = build_dhcp(mac, xid, 3, Some(offer.yiaddr), Some(offer.server), None);
+    let Some(ack) = await_reply(&mut link, &request, xid, 5, "ACK", &DORA_WINDOWS_MS) else {
+        return Err("no DHCP ACK (raw path)".into());
     };
-    if mk != [0; 4] {
-        mask = mk;
+    let pick = |a: [u8; 4], o: [u8; 4]| if a != [0; 4] { a } else { o };
+    let rn = RawNet {
+        mac,
+        ip: offer.yiaddr,
+        mask: pick(ack.mask, offer.mask),
+        gateway: pick(ack.gateway, offer.gateway),
+        server: pick(ack.server, offer.server),
+        obtained_ms: crate::mono::now_ms(),
+        lease_secs: if ack.lease_secs != 0 { ack.lease_secs } else { offer.lease_secs },
+    };
+    logln(format!(
+        "netraw: ACK {} mask {} gw {} lease {}s",
+        ip_str(rn.ip),
+        ip_str(rn.mask),
+        ip_str(rn.gateway),
+        rn.lease_secs
+    ));
+    set_current(rn);
+    Ok(rn)
+}
+
+/// Renew an existing lease: a REQUEST in the RENEWING form (ciaddr set, no
+/// option 50/54). Broadcast, with the broadcast reply flag set, so the ACK
+/// survives the firmware stack draining unicast frames from the same queue.
+pub fn renew(rn: &RawNet) -> Result<RawNet, String> {
+    let mut link = Link::open()?;
+    let xid = u32::from_be_bytes([rn.mac[2], rn.mac[3], rn.mac[4], rn.mac[5]]);
+    let request = build_dhcp(rn.mac, xid, 3, None, None, Some(rn.ip));
+    let Some(ack) = await_reply(&mut link, &request, xid, 5, "RENEW", &RENEW_WINDOWS_MS) else {
+        return Err("no renewal ACK".into());
+    };
+    let keep = |a: [u8; 4], old: [u8; 4]| if a != [0; 4] { a } else { old };
+    let renewed = RawNet {
+        mac: rn.mac,
+        ip: keep(ack.yiaddr, rn.ip),
+        mask: keep(ack.mask, rn.mask),
+        gateway: keep(ack.gateway, rn.gateway),
+        server: keep(ack.server, rn.server),
+        obtained_ms: crate::mono::now_ms(),
+        lease_secs: if ack.lease_secs != 0 { ack.lease_secs } else { rn.lease_secs },
+    };
+    if renewed.ip != rn.ip {
+        logln(format!("netraw: renewal moved {} -> {}", ip_str(rn.ip), ip_str(renewed.ip)));
+    } else {
+        logln(format!("netraw: lease renewed {} for {}s", ip_str(renewed.ip), renewed.lease_secs));
     }
-    if gw != [0; 4] {
-        gateway = gw;
-    }
-    logln(format!("netraw: ACK {} mask {} gw {}", ip_str(yiaddr), ip_str(mask), ip_str(gateway)));
-    Ok(RawNet { mac, ip: yiaddr, mask, gateway })
+    set_current(renewed);
+    Ok(renewed)
 }
 
 fn build_arp_request(src_mac: [u8; 6], src_ip: [u8; 4], target_ip: [u8; 4]) -> Vec<u8> {
@@ -395,15 +574,15 @@ impl RawNet {
     }
 
     /// ARP the next hop toward `ip` (the host on-subnet, else the gateway).
-    fn resolve(&self, snp: &SimpleNetwork, ip: [u8; 4]) -> Result<[u8; 6], String> {
+    fn resolve(&self, link: &mut Link, ip: [u8; 4]) -> Result<[u8; 6], String> {
         let target = if self.same_subnet(ip) { ip } else { self.gateway };
         let mut buf = [0u8; 2048];
         for _ in 0..4 {
-            snp.transmit(0, &build_arp_request(self.mac, self.ip, target), None, None, None)
-                .map_err(|e| format!("ARP tx: {e:?}"))?;
+            link.transmit(&build_arp_request(self.mac, self.ip, target))
+                .map_err(|e| format!("ARP tx: {e}"))?;
             let mut waited = 0u64;
             while waited < 1000 {
-                let (got, spent) = recv_frame(snp, &mut buf, 1000 - waited);
+                let (got, spent) = link.recv(&mut buf, 1000 - waited);
                 // 1ms floor bounds the loop when frames arrive with no wait.
                 waited += spent.max(1);
                 let Some(n) = got else { break };
@@ -417,8 +596,8 @@ impl RawNet {
 
     /// Send `payload` to `dst_ip:dst_port` as chunked UDP. Returns chunk count.
     pub fn send_udp(&self, dst_ip: [u8; 4], dst_port: u16, payload: &[u8]) -> Result<usize, String> {
-        let snp = open_snp()?;
-        let dst_mac = self.resolve(&snp, dst_ip)?;
+        let mut link = Link::open()?;
+        let dst_mac = self.resolve(&mut link, dst_ip)?;
         let total = payload.len().div_ceil(CHUNK_DATA).max(1) as u16;
         let msg_id = MSG_ID.fetch_add(1, Ordering::Relaxed);
         for (seq, chunk) in payload.chunks(CHUNK_DATA).enumerate() {
@@ -429,9 +608,8 @@ impl RawNet {
             body.extend_from_slice(&total.to_be_bytes());
             body.extend_from_slice(chunk);
             let frame = build_udp_frame(self.mac, dst_mac, self.ip, dst_ip, dst_port, dst_port, &body);
-            snp.transmit(0, &frame, None, None, None)
-                .map_err(|e| format!("UDP tx seq {seq}: {e:?}"))?;
-            let _ = boot::stall(Duration::from_millis(2));
+            link.transmit(&frame).map_err(|e| format!("UDP tx seq {seq}: {e}"))?;
+            boot::stall(Duration::from_millis(2));
         }
         Ok(total as usize)
     }
@@ -484,11 +662,11 @@ pub struct Sighting {
 /// IP4/UDP4 stack), so it works on the raw path; best-effort when the UEFI
 /// stack owns the NIC. Returns None on timeout or if no beacon parsed.
 pub fn discover_console(port: u16, budget_ms: u64) -> Option<Sighting> {
-    let snp = open_snp().ok()?;
+    let mut link = Link::open().ok()?;
     let mut buf = [0u8; 2048];
     let mut waited = 0u64;
     while waited < budget_ms {
-        let (got, spent) = recv_frame(&snp, &mut buf, budget_ms - waited);
+        let (got, spent) = link.recv(&mut buf, budget_ms - waited);
         // 1ms floor bounds the loop when frames arrive with no wait.
         waited += spent.max(1);
         let Some(n) = got else {

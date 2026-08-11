@@ -643,14 +643,23 @@ impl WebSocketClient {
                         ui.separator();
                     }
 
-                    // The one place this session's connection string is printed.
-                    ui.label(
-                        RichText::new(self.client.connection_string.as_str())
-                            .small()
-                            .monospace()
-                            .color(theme::weak_text(ui)),
-                    )
-                    .on_hover_text("Connection string (host:client hash)");
+                    // The one place this session's connection string is printed, and the fastest way
+                    // to get it into an MCP call or a ticket.
+                    if ui
+                        .button(
+                            RichText::new(self.client.connection_string.as_str())
+                                .small()
+                                .monospace()
+                                .color(theme::weak_text(ui)),
+                        )
+                        .on_hover_text("Connection string (host:client hash) — click to copy")
+                        .clicked()
+                    {
+                        ui.ctx().copy_text(self.client.connection_string.clone());
+                        let _ = crate::get_toast_sender().try_send(crate::ToastMessage::Success(
+                            format!("Copied {}", self.client.connection_string),
+                        ));
+                    }
 
                     if let Some((ref name, sent, total)) = self.file_transfer_progress {
                         ui.separator();

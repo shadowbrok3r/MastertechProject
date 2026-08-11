@@ -83,8 +83,12 @@ impl Toasts {
         self
     }
 
-    /// Add a new toast
+    /// Add a new toast, or drop it to the log while Do Not Disturb is on.
     pub fn add(&mut self, toast: Toast) -> &mut Self {
+        if super::do_not_disturb::silenced() {
+            log::debug!("toast silenced by Do Not Disturb: {}", toast.text.text());
+            return self;
+        }
         self.added_toasts.push(toast);
         self
     }

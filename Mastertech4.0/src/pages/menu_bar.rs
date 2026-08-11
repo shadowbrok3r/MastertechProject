@@ -110,7 +110,10 @@ impl MasterTechApp {
                     
                     ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
                         ui.add_space(8.0);
-                        
+
+                        displays::ui_tools::do_not_disturb::toggle_button(ui);
+                        ui.add_space(4.0);
+
                         // Notification count badges
                         let unread_count = self.context.shared_ctx.notification_center.unread_count();
                         let alert_count = self.context.shared_ctx.notification_center.alert_count();

@@ -123,6 +123,7 @@ pub const ROBOT: &str = p::ROBOT;
 pub const STAR: &str = p::STAR;
 pub const CHAT: &str = p::CHAT;
 pub const BELL: &str = p::BELL;
+pub const BELL_SLASH: &str = p::BELL_SLASH;
 pub const GAME: &str = p::GAME_CONTROLLER;
 pub const FLASK: &str = p::FLASK;
 pub const MONITOR: &str = p::MONITOR;
