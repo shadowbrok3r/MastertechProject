@@ -1,4 +1,4 @@
-use eframe::egui::{Align, Id, Layout, RichText, Ui};
+use eframe::egui::{Align, Id, Layout, ProgressBar, RichText, Ui};
 use crate::Cmd;
 use crate::ui_tools::icons::{self, menu_label};
 use crate::ui_tools::theme;
@@ -83,6 +83,13 @@ impl WebSocketClient {
         self.receive(ui.ctx());
         ui.set_min_height(600.);
 
+        // Active-run detection drives the nav row's live strip, so it has to run on every view, not
+        // only while Home is open. Both calls are interval-gated internally.
+        self.home_page
+            .ingest_script_log(&self.remote_scripts_viewer.log_messages);
+        self.home_page
+            .maybe_poll_active_runs(self.client.computer.as_ref());
+
         // Auto-stop remote-desktop streaming when the operator navigates away.
         if self.desktop_streaming && !matches!(self.state, WsDisplayState::RemoteDesktop) {
             self.desktop_streaming = false;
@@ -115,10 +122,20 @@ impl WebSocketClient {
                 let sys_color = theme::success(ui);
                 let os_btn_color = theme::text(ui);
 
-                // Standalone Home shortcut, left of the View menu.
+                // Home shortcut doubling as the machine identity — the only place this session
+                // names its machine, so the Home page no longer repeats it.
+                let machine_label = self
+                    .client
+                    .friendly_name
+                    .clone()
+                    .unwrap_or_else(|| self.client.connection_string.clone());
                 if ui
-                    .button(icons::icon_sized(icons::HOME, 18.0).color(btn_color).strong())
-                    .on_hover_text("Home")
+                    .button(
+                        RichText::new(format!("{} {machine_label}", icons::HOME))
+                            .color(btn_color)
+                            .strong(),
+                    )
+                    .on_hover_text(format!("Home — {}", self.client.connection_string))
                     .clicked()
                 {
                     let _ = self.display_state_channel.0.try_send(WsDisplayState::Home);
@@ -126,6 +143,18 @@ impl WebSocketClient {
                         let _ = self.send_cmd_tx.try_send(Cmd::LiveData);
                         self.live_stats_active = true;
                     }
+                }
+                if self.client.boot_environment.is_preboot() {
+                    ui.label(
+                        RichText::new(format!("{} WinPE", icons::POWER))
+                            .small()
+                            .strong()
+                            .color(theme::accent(ui)),
+                    )
+                    .on_hover_text(
+                        "This client booted into WinPE. Its key is the offline Windows \
+                         install's; live readings come from the PE session.",
+                    );
                 }
 
                 // ── View ─────────────────────────────────────────────
@@ -482,33 +511,37 @@ impl WebSocketClient {
                 // Show which sub-page is currently active. Operators
                 // arriving back at the window after switching tabs lose
                 // their place otherwise.
-                let current_view = match self.state {
-                    WsDisplayState::Home          => "Home",
-                    WsDisplayState::Explorer      => "Explorer",
-                    WsDisplayState::Shell         => "Shell",
-                    WsDisplayState::ToolBox       => "My Tools",
-                    WsDisplayState::Terminal      => "Remote Viewer",
-                    WsDisplayState::EventLog      => "Event Log",
-                    WsDisplayState::ClientLog     => "Client Log",
-                    WsDisplayState::Services      => "Services",
-                    WsDisplayState::TaskScheduler => "Task Scheduler",
-                    WsDisplayState::Registry      => "Registry",
-                    WsDisplayState::StartupApps   => "Startup Apps",
-                    WsDisplayState::Scripts       => "Scripts",
-                    WsDisplayState::InstalledPrograms => "Installed Programs",
-                    WsDisplayState::McpToolLog    => "MCP Tool Log",
-                    WsDisplayState::ServiceRecord => "Service Record",
-                    WsDisplayState::RemoteDesktop => "Remote Desktop",
-                    WsDisplayState::FleetIntel    => "Fleet Intel",
-                    WsDisplayState::CrashDumps    => "Crash Dumps",
-                };
-                ui.label(
-                    RichText::new(current_view).color(theme::text(ui)).small(),
-                );
+                // let current_view = match self.state {
+                //     WsDisplayState::Home          => "Home",
+                //     WsDisplayState::Explorer      => "Explorer",
+                //     WsDisplayState::Shell         => "Shell",
+                //     WsDisplayState::ToolBox       => "My Tools",
+                //     WsDisplayState::Terminal      => "Remote Viewer",
+                //     WsDisplayState::EventLog      => "Event Log",
+                //     WsDisplayState::ClientLog     => "Client Log",
+                //     WsDisplayState::Services      => "Services",
+                //     WsDisplayState::TaskScheduler => "Task Scheduler",
+                //     WsDisplayState::Registry      => "Registry",
+                //     WsDisplayState::StartupApps   => "Startup Apps",
+                //     WsDisplayState::Scripts       => "Scripts",
+                //     WsDisplayState::InstalledPrograms => "Installed Programs",
+                //     WsDisplayState::McpToolLog    => "MCP Tool Log",
+                //     WsDisplayState::ServiceRecord => "Service Record",
+                //     WsDisplayState::RemoteDesktop => "Remote Desktop",
+                //     WsDisplayState::FleetIntel    => "Fleet Intel",
+                //     WsDisplayState::CrashDumps    => "Crash Dumps",
+                // };
+                // ui.label(
+                //     RichText::new(current_view).color(theme::text(ui)).small(),
+                // );
 
                 if self.persistent_shell_mode {
-                    ui.separator();
                     ui.colored_label(theme::warn(ui), "Persistent Shell");
+                }
+
+                // Home's sub-tabs belong on this row, not on a second row inside the page body.
+                if matches!(self.state, WsDisplayState::Home) {
+                    self.home_page.sub_tab_toggles(ui);
                 }
 
                 // ── Right-aligned status indicator ───────────────────
@@ -539,6 +572,8 @@ impl WebSocketClient {
                     ui.colored_label(status_color, status_text)
                         .on_hover_text(status_tooltip);
 
+                    ui.separator();
+
                     // ── Transport badge: which path carries this session ──
                     let kind = self.transport.kind();
                     let (badge, badge_tip) = match kind {
@@ -559,9 +594,14 @@ impl WebSocketClient {
                     ui.colored_label(badge_color, RichText::new(badge).small().strong())
                         .on_hover_text(badge_hover);
 
+                    ui.separator();
+
                     // ── Client build badge: MasterTech version the agent reported ──
+                    // Shown in full, hash included: the release number sits still between builds,
+                    // so the hash is the only part that identifies which build is out there.
                     if let Some(ver) = self.client_version.as_deref() {
                         let admin_ver = crate::shape_fp::BUILD_VERSION;
+                        use crate::shape_fp::release_of;
                         let (ver_color, ver_text, ver_hover) = if self.cmd_protocol_mismatch {
                             (
                                 theme::warn(ui),
@@ -572,35 +612,67 @@ impl WebSocketClient {
                                      Push a self-update."
                                 ),
                             )
-                        } else if ver != admin_ver {
-                            // Shape matches, so commands still work; the build still differs.
+                        } else if release_of(ver) != release_of(admin_ver) {
+                            // Shape matches, so commands still work; the release still differs.
                             (
                                 theme::info(ui),
                                 format!("v{ver}"),
                                 format!(
-                                    "Client MasterTech build v{ver} differs from this console's \
-                                     v{admin_ver}, but the Cmd protocol matches."
+                                    "Client MasterTech release differs from this console's: \
+                                     v{ver} vs v{admin_ver}. The Cmd protocol matches."
+                                ),
+                            )
+                        } else if ver != admin_ver {
+                            (
+                                theme::weak_text(ui),
+                                format!("v{ver}"),
+                                format!(
+                                    "Same release as this console, different build: \
+                                     v{ver} vs v{admin_ver}."
                                 ),
                             )
                         } else {
                             (
                                 theme::weak_text(ui),
                                 format!("v{ver}"),
-                                format!("Client MasterTech build v{ver} (console v{admin_ver})"),
+                                format!("Client MasterTech build v{ver} — identical to this console"),
                             )
                         };
-                        ui.colored_label(ver_color, RichText::new(ver_text).small())
+                        ui.colored_label(ver_color, RichText::new(ver_text).small().monospace())
                             .on_hover_text(ver_hover);
+                        ui.separator();
                     }
 
+                    // The one place this session's connection string is printed.
+                    ui.label(
+                        RichText::new(self.client.connection_string.as_str())
+                            .small()
+                            .monospace()
+                            .color(theme::weak_text(ui)),
+                    )
+                    .on_hover_text("Connection string (host:client hash)");
+
                     if let Some((ref name, sent, total)) = self.file_transfer_progress {
+                        ui.separator();
                         let short = name.rsplit(['/', '\\']).next().unwrap_or(name);
-                        ui.colored_label(
-                            theme::warn(ui),
-                            RichText::new(format!("{short}  {sent}/{total}")).small(),
+                        let frac = if total > 0 {
+                            (sent as f32 / total as f32).clamp(0.0, 1.0)
+                        } else {
+                            0.0
+                        };
+                        ui.add(
+                            ProgressBar::new(frac)
+                                .desired_width(80.0)
+                                .desired_height(6.0),
                         )
                         .on_hover_text(format!("Sending {name} — chunk {sent} of {total}"));
+                        ui.colored_label(theme::warn(ui), RichText::new(short).small());
                     }
+
+                    // Live stress progress rides this row so it stays visible on every view, not
+                    // just Home's inventory.
+                    ui.separator();
+                    self.home_page.active_run_strip(ui);
                 });
             });
         });

@@ -433,19 +433,23 @@ impl ResourceMonitor {
 
                 ui.add_space(16.0);
 
-                // Identity and rails fill the width the gauge cluster leaves.
+                // Identity and GPUs fill the width the gauge cluster leaves.
                 ui.vertical(|ui| {
                     if let Some(info) = self.machine_info.as_ref() {
                         info.show_header_line(ui);
                         ui.add_space(6.0);
                     }
-                    self.rails_panel(ui);
+                    self.gpu_panel(ui);
                 });
             });
         });
     }
 
-    /// Per-item meter panels: cores, memory, storage, adapters, GPUs, rails.
+    /// Per-item meter panels: cores, memory, storage, adapters, rails.
+    ///
+    /// Rails only render when the snapshot carries them — a remote client's telemetry never does,
+    /// and locally they need a kernel-mode SuperIO backend, so an ungated panel is an empty section
+    /// on most machines.
     #[cfg(feature = "native-telemetry")]
     fn meter_groups(&self, ui: &mut Ui, two_col: bool) {
         if two_col {
@@ -457,13 +461,14 @@ impl ResourceMonitor {
                 self.storage_panel(&mut cols[0]);
                 self.network_panel(&mut cols[1]);
             });
-            self.gpu_panel(ui);
         } else {
             self.cores_panel(ui);
             self.memory_panel(ui);
             self.storage_panel(ui);
             self.network_panel(ui);
-            self.gpu_panel(ui);
+        }
+        if !self.telemetry.rails().is_empty() {
+            self.rails_panel(ui);
         }
     }
 

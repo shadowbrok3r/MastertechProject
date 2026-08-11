@@ -107,6 +107,7 @@ wat = { workspace = true, optional = true }
 plugin_builder = { path = "../plugin_builder" }
 # Client for egui 0.36's native inspection protocol (the `protocol` module needs no feature).
 egui_inspection = "0.36"
+if-addrs = "0.15.0"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 dump-triage = { path = "../dump-triage", default-features = false }

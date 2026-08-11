@@ -391,9 +391,11 @@ impl RawNet {
     }
 }
 
-/// Extract the UDP payload from a raw Ethernet frame destined for `want_port`.
-/// Mirrors `parse_dhcp`'s layering (Eth → IPv4 → UDP) without the DHCP specifics.
-fn udp_payload_for_port(frame: &[u8], want_port: u16) -> Option<&[u8]> {
+/// Extract the source IPv4 and UDP payload from a raw Ethernet frame destined
+/// for `want_port`. Mirrors `parse_dhcp`'s layering (Eth → IPv4 → UDP) without
+/// the DHCP specifics. The source address is observed, not claimed, so it is
+/// the one address in a datagram known to be reachable at layer 2.
+fn udp_payload_for_port(frame: &[u8], want_port: u16) -> Option<([u8; 4], &[u8])> {
     if frame.len() < 14 + 20 + 8 {
         return None;
     }
@@ -417,15 +419,23 @@ fn udp_payload_for_port(frame: &[u8], want_port: u16) -> Option<&[u8]> {
     if udp_len < 8 || udp_len > udp.len() {
         return None;
     }
-    Some(&udp[8..udp_len])
+    let mut src = [0u8; 4];
+    src.copy_from_slice(&ip[12..16]);
+    Some((src, &udp[8..udp_len]))
+}
+
+/// A beacon and the IPv4 its frame actually came from.
+pub struct Sighting {
+    pub beacon: tcp_protocol::preboot::Beacon,
+    pub src: [u8; 4],
 }
 
 /// Listen for a console discovery beacon on `port` for up to `budget_ms` and
 /// return the advertised console endpoint plus the relay url a v2 beacon
-/// carries. Pure SNP receive (no UEFI IP4/UDP4 stack), so it works on the raw
-/// path; best-effort when the UEFI stack owns the NIC. Returns None on timeout
-/// or if no beacon parsed.
-pub fn discover_console(port: u16, budget_ms: u64) -> Option<tcp_protocol::preboot::Beacon> {
+/// carries, alongside the sender's observed address. Pure SNP receive (no UEFI
+/// IP4/UDP4 stack), so it works on the raw path; best-effort when the UEFI
+/// stack owns the NIC. Returns None on timeout or if no beacon parsed.
+pub fn discover_console(port: u16, budget_ms: u64) -> Option<Sighting> {
     let snp = open_snp().ok()?;
     let mut buf = [0u8; 2048];
     let mut waited = 0u64;
@@ -436,16 +446,21 @@ pub fn discover_console(port: u16, budget_ms: u64) -> Option<tcp_protocol::prebo
         let Some(n) = got else {
             break;
         };
-        if let Some(payload) = udp_payload_for_port(&buf[..n], port) {
+        if let Some((src, payload)) = udp_payload_for_port(&buf[..n], port) {
             if let Some(b) = tcp_protocol::preboot::parse_beacon_v2(payload) {
                 match b.relay.as_deref() {
                     Some(relay) => logln(format!(
-                        "netraw: discovery beacon -> {} (relay {relay})",
+                        "netraw: discovery beacon from {} -> {} (relay {relay})",
+                        ip_str(src),
                         b.addr
                     )),
-                    None => logln(format!("netraw: discovery beacon v1 -> {}", b.addr)),
+                    None => logln(format!(
+                        "netraw: discovery beacon v1 from {} -> {}",
+                        ip_str(src),
+                        b.addr
+                    )),
                 }
-                return Some(b);
+                return Some(Sighting { beacon: b, src });
             }
         }
     }

@@ -10,8 +10,20 @@ use facet::{Def, Facet, FieldIter, HasFields, Peek, StructKind, Type, UserType};
 pub static CMD_SHAPE_FP: LazyLock<u64> =
     LazyLock::new(tcp_protocol::shape_fp::shape_fingerprint::<crate::Cmd>);
 
-/// This build's crate version, sent alongside the fingerprint.
-pub const BUILD_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// This build's crate version plus its build hash, sent alongside the fingerprint.
+///
+/// The hash carries the information during development: the release number sits still for weeks
+/// while every rebuild moves the hash, so a bare `4.8.0` cannot tell two builds apart. Format is
+/// `{semver}+{git7}{dirty}.{ts6}` — see `build_hash.rs`.
+pub const BUILD_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+", env!("BUILD_HASH"));
+
+/// The release part of a reported build string, i.e. everything before the build hash.
+///
+/// Wire compatibility is a property of the release, not of the individual compile, so version
+/// *comparisons* use this while the UI shows the full string.
+pub fn release_of(build: &str) -> &str {
+    build.split('+').next().unwrap_or(build)
+}
 
 const MAX_DEPTH: usize = 12;
 

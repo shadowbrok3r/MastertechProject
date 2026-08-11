@@ -36,12 +36,12 @@ pub const CLIENT_ROW_CONTENT_W: f32 = 368.0;
 /// Always allocated, so opening a session cannot widen the row.
 const ROW_BADGE_W: f32 = 38.0;
 
-/// Everything in the header row except the name button: the chevron, focus and
-/// connect buttons, the status dot, the badge slot, and the five gaps between the
-/// six items. Any widget added to that row belongs here too, or the row overflows
-/// `CLIENT_ROW_CONTENT_W` and renders wider than its neighbours.
+/// Everything in the header row except the name button: the focus and connect buttons, the status
+/// dot, the badge slot, and the four gaps between the five items. Any widget added to that row
+/// belongs here too, or the row overflows `CLIENT_ROW_CONTENT_W` and renders wider than its
+/// neighbours.
 const ROW_HEADER_CHROME_W: f32 =
-    ROW_BTN_W * 3.0 + ROW_STATUS_W + ROW_BADGE_W + ROW_ITEM_GAP * 5.0;
+    ROW_BTN_W * 2.0 + ROW_STATUS_W + ROW_BADGE_W + ROW_ITEM_GAP * 4.0;
 pub const CLIENT_NAME_BTN_W: f32 = CLIENT_ROW_CONTENT_W - ROW_HEADER_CHROME_W;
 const CLIENT_DETAILS_VALUE_W: f32 = CLIENT_ROW_CONTENT_W - 90.0;
 
@@ -109,6 +109,16 @@ fn client_name_text(ui: &Ui, client: &ConnectedClient) -> WidgetText {
         job.append(&client.connection_string, 0.0, format(identity));
     }
     WidgetText::from(job)
+}
+
+/// Square icon button for a client row's secondary actions; `tip` names the action.
+fn row_icon_action(ui: &mut Ui, glyph: &str, color: Color32, tip: &str) -> bool {
+    Button::new(RichText::new(glyph).strong().color(color))
+        .fill(ui.style().visuals.window_fill)
+        .min_size(Vec2::new(ROW_BTN_W, ROW_BTN_H))
+        .ui(ui)
+        .on_hover_text(tip)
+        .clicked()
 }
 
 impl AdminConsole {
@@ -220,10 +230,14 @@ impl AdminConsole {
                         Layout::left_to_right(Align::Center),
                         |ui| {
                             ui.spacing_mut().item_spacing.x = ROW_ITEM_GAP;
-                            let chevron = ui
+
+                            // The name button carries the chevron and owns expand/collapse; a
+                            // separate chevron button was a second control for one action.
+                            let name_btn = ui
                                 .add_sized(
-                                    Vec2::new(ROW_BTN_W, ROW_BTN_H),
-                                    Button::new(RichText::new(arrow).strong())
+                                    Vec2::new(CLIENT_NAME_BTN_W, ROW_BTN_H),
+                                    Button::new(client_name_text(ui, client))
+                                        .left_text(RichText::new(arrow).strong())
                                         .fill(ui.style().visuals.window_fill),
                                 )
                                 .on_hover_text(if collapse.is_open() {
@@ -231,7 +245,7 @@ impl AdminConsole {
                                 } else {
                                     "Expand client details & secondary actions"
                                 });
-                            if chevron.clicked() {
+                            if name_btn.clicked() {
                                 collapse.toggle(ui);
                             }
 
@@ -275,19 +289,6 @@ impl AdminConsole {
                             );
                             if let Some(tip) = badge_tip {
                                 badge_slot.on_hover_text(tip);
-                            }
-
-                            let name_btn = ui
-                                .add_sized(
-                                    Vec2::new(CLIENT_NAME_BTN_W, ROW_BTN_H),
-                                    Button::new(client_name_text(ui, client))
-                                        .fill(ui.style().visuals.window_fill),
-                                )
-                                .on_hover_text(
-                                    "Click to expand client details and secondary actions",
-                                );
-                            if name_btn.clicked() {
-                                collapse.toggle(ui);
                             }
 
                             let focus_btn = ui
@@ -369,12 +370,12 @@ impl AdminConsole {
                             .get(client.connection_string.as_str())
                             .copied()
                             .unwrap_or_default();
-                        let (float_label, float_tip) = match layout {
+                        let (float_icon, float_tip) = match layout {
                             SessionLayout::Floating => {
-                                ("Dock", "Floating (unlocked) — click to dock")
+                                (icons::DOCK, "Dock: floating (unlocked) — click to dock")
                             }
                             SessionLayout::Docked => {
-                                ("Float", "Docked (locked) — click to float")
+                                (icons::FLOAT, "Float: docked (locked) — click to float")
                             }
                         };
                         let relink_color = if client.customer_locked {
@@ -382,107 +383,64 @@ impl AdminConsole {
                         } else {
                             theme::weak_text(ui)
                         };
-                        let (auto_label, auto_color, auto_tip) = if client.autopilot_opt_out {
+                        let (auto_color, auto_tip) = if client.autopilot_opt_out {
                             (
-                                "Autopilot off",
                                 theme::weak_text(ui),
-                                "Excluded from unattended agent sweeps.\nClick to allow sweeps again.",
+                                "Autopilot off: excluded from unattended agent sweeps.\nClick to allow sweeps again.",
                             )
                         } else {
                             (
-                                "Autopilot on",
                                 theme::info(ui),
-                                "Eligible for unattended agent sweeps.\nClick to exclude this client.",
+                                "Autopilot on: eligible for unattended agent sweeps.\nClick to exclude this client.",
                             )
                         };
-                        let (relink_label, relink_tip) = if client.customer_locked {
-                            (
-                                "Re-link",
-                                "Customer is locked (manually re-linked).\nClick to change linkage.",
-                            )
+                        let relink_tip = if client.customer_locked {
+                            "Re-link customer: locked (manually re-linked).\nClick to change linkage."
                         } else {
-                            (
-                                "Re-link",
-                                "Re-link to a different customer\n(used-machine-was-our-customer fix)",
-                            )
+                            "Re-link to a different customer\n(used-machine-was-our-customer fix)"
                         };
 
+                        let err_color = ui.style().visuals.error_fg_color;
+                        let plain = theme::text(ui);
                         ui.scope(|ui| {
                             ui.set_max_width(CLIENT_ROW_CONTENT_W);
                             ui.horizontal_wrapped(|ui| {
-                                let disconnect = Button::new(
-                                    RichText::new("Disconnect")
-                                        .strong()
-                                        .color(ui.style().visuals.error_fg_color),
-                                )
-                                .fill(ui.style().visuals.window_fill)
-                                .min_size(Vec2::new(100., ROW_BTN_H))
-                                .ui(ui)
-                                .on_hover_text(
+                                if row_icon_action(
+                                    ui,
+                                    icons::DISCONNECT,
+                                    err_color,
                                     "Disconnect this client\n\
-                                    (closes the local session and removes it from the list;\n\
-                                    the connected_client record stays in the database)",
-                                );
-                                if disconnect.clicked() {
+                                     (closes the local session and removes it from the list;\n\
+                                     the connected_client record stays in the database)",
+                                ) {
                                     let _ = tx.try_send(ClientUiAction::DisconnectClient(client.clone()));
                                 }
-
-
-                                let float_btn = Button::new(
-                                    RichText::new(float_label).strong().color(ui.style().visuals.error_fg_color),
-                                )
-                                .fill(ui.style().visuals.window_fill)
-                                .min_size(Vec2::new(70., ROW_BTN_H))
-                                .ui(ui)
-                                .on_hover_text(float_tip);
-                                if float_btn.clicked() {
+                                if row_icon_action(ui, float_icon, plain, float_tip) {
                                     let _ = tx.try_send(ClientUiAction::ToggleClientFloat(
                                         client.connection_string.clone(),
                                     ));
                                 }
-                                let relink = Button::new(
-                                    RichText::new(relink_label).strong().color(relink_color),
-                                )
-                                .fill(ui.style().visuals.window_fill)
-                                .min_size(Vec2::new(100., ROW_BTN_H))
-                                .ui(ui)
-                                .on_hover_text(relink_tip);
-                                if relink.clicked() {
+                                if row_icon_action(ui, icons::RELINK, relink_color, relink_tip) {
                                     let _ = tx.try_send(ClientUiAction::RelinkCustomer(client.clone()));
                                 }
-                                let link_comp = Button::new(
-                                    RichText::new("Link computer").strong(),
-                                )
-                                .fill(ui.style().visuals.window_fill)
-                                .min_size(Vec2::new(110., ROW_BTN_H))
-                                .ui(ui)
-                                .on_hover_text("Create or repair the computer record for this client");
-                                if link_comp.clicked() {
+                                if row_icon_action(
+                                    ui,
+                                    icons::LINK_COMPUTER,
+                                    plain,
+                                    "Link computer: create or repair the computer record for this client",
+                                ) {
                                     let _ = tx.try_send(ClientUiAction::LinkComputer(client.clone()));
                                 }
-
-                                let repair = Button::new(
-                                    RichText::new("Repair links").strong(),
-                                )
-                                .fill(ui.style().visuals.window_fill)
-                                .min_size(Vec2::new(110., ROW_BTN_H))
-                                .ui(ui)
-                                .on_hover_text(
-                                    "Cascade-repoint FKs to canonical computer id and fix diagnostic sessions",
-                                );
-                                if repair.clicked() {
+                                if row_icon_action(
+                                    ui,
+                                    icons::REPAIR_LINKS,
+                                    plain,
+                                    "Repair links: cascade-repoint FKs to canonical computer id and fix diagnostic sessions",
+                                ) {
                                     let _ =
                                         tx.try_send(ClientUiAction::RepairAssociations(client.clone()));
                                 }
-
-                                let autopilot = Button::new(
-                                    RichText::new(auto_label).strong().color(auto_color),
-                                )
-                                .fill(ui.style().visuals.window_fill)
-                                .min_size(Vec2::new(120., ROW_BTN_H))
-                                .ui(ui)
-                                .on_hover_text(auto_tip);
-                                if autopilot.clicked() {
+                                if row_icon_action(ui, icons::AUTOPILOT, auto_color, auto_tip) {
                                     let _ = tx.try_send(ClientUiAction::ToggleAutopilotOptOut(
                                         client.clone(),
                                     ));

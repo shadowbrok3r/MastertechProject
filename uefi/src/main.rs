@@ -166,6 +166,31 @@ const IDLE_STALL_MAX_MS: u64 = 250;
 /// Stall floor, so the loop always yields to firmware timers.
 const MIN_STALL_MS: u64 = 1;
 
+/// The run loop's TSC calibration, republished for code that cannot reach the
+/// [`Clock`] itself. Callers keep their own fallback for when the TSC is unusable.
+mod mono {
+    use core::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
+
+    static HZ: AtomicU64 = AtomicU64::new(1);
+    static EPOCH: AtomicU64 = AtomicU64::new(0);
+    static OK: AtomicBool = AtomicBool::new(false);
+
+    pub fn publish(hz: u64, epoch: u64, tsc_ok: bool) {
+        HZ.store(hz, Relaxed);
+        EPOCH.store(epoch, Relaxed);
+        OK.store(tsc_ok, Relaxed);
+    }
+
+    /// Milliseconds since the run loop's epoch, or None when the TSC is unusable.
+    pub fn now_ms() -> Option<u64> {
+        if !OK.load(Relaxed) {
+            return None;
+        }
+        let ticks = crate::stress::rdtsc().wrapping_sub(EPOCH.load(Relaxed)) as u128;
+        Some((ticks * 1000 / HZ.load(Relaxed).max(1) as u128) as u64)
+    }
+}
+
 /// Monotonic millisecond clock over the TSC, falling back to the milliseconds
 /// the loop itself stalled when the TSC reads as unusable.
 struct Clock {
@@ -178,10 +203,13 @@ struct Clock {
 impl Clock {
     fn new() -> Self {
         let hz = stress::calibrate_tsc_hz();
+        let epoch = stress::rdtsc();
+        let tsc_ok = hz >= 1_000_000;
+        mono::publish(hz.max(1), epoch, tsc_ok);
         Self {
             hz: hz.max(1),
-            epoch: stress::rdtsc(),
-            tsc_ok: hz >= 1_000_000,
+            epoch,
+            tsc_ok,
             stalled_ms: 0,
         }
     }
@@ -243,10 +271,18 @@ fn log_snapshot() -> Vec<String> {
 struct BufLogger;
 
 impl log::Log for BufLogger {
-    fn enabled(&self, _: &log::Metadata) -> bool {
+    fn enabled(&self, m: &log::Metadata) -> bool {
+        // smoltcp emits a line per frame from inside its poll loop, which costs
+        // a format on every packet and evicts the ring in seconds.
+        if m.target().starts_with("smoltcp") {
+            return m.level() <= log::Level::Info;
+        }
         true
     }
     fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
         logln(format!("[{}] {}", record.level(), record.args()));
     }
     fn flush(&self) {}
@@ -6254,12 +6290,40 @@ fn adopt_beacon_relay(app: &mut App, b: &tcp_protocol::preboot::Beacon) {
     }
 }
 
+/// Rewrite a beacon's self-reported host to the address its frame came from.
+/// A console behind a VPN, a second NIC or a virtual adapter advertises an
+/// address it is not reachable at; the sender's own IPv4 always is. The port
+/// stays as advertised — a listener port cannot be observed from a datagram.
+fn reconcile_beacon(b: &mut tcp_protocol::preboot::Beacon, src: [u8; 4]) {
+    let seen = netraw::ip_str(src);
+    let Some(claimed) = netraw::parse_ipv4(&b.addr) else {
+        return;
+    };
+    if claimed == src {
+        return;
+    }
+    let claimed = netraw::ip_str(claimed);
+    let port = b.addr.split_once(':').map(|(_, p)| p.to_string());
+    b.addr = match port {
+        Some(p) => format!("{seen}:{p}"),
+        None => seen.clone(),
+    };
+    // Only follow the relay url to the same host: it may name a different box.
+    if let Some(relay) = b.relay.as_deref()
+        && relay.contains(&claimed)
+    {
+        b.relay = Some(relay.replace(&claimed, &seen));
+    }
+    logln(format!("netraw: beacon claimed {claimed}, seen from {seen} - using {seen}"));
+}
+
 /// Listen for a console beacon and take the relay it names, without dialing —
 /// works before a DHCP lease exists. True when a beacon was heard.
 fn listen_for_relay(app: &mut App, listen_ms: u64) -> bool {
     match netraw::discover_console(tcp_protocol::preboot::DISCOVERY_PORT, listen_ms) {
-        Some(b) => {
-            adopt_beacon_relay(app, &b);
+        Some(mut s) => {
+            reconcile_beacon(&mut s.beacon, s.src);
+            adopt_beacon_relay(app, &s.beacon);
             true
         }
         None => false,
@@ -6271,9 +6335,11 @@ fn listen_for_relay(app: &mut App, listen_ms: u64) -> bool {
 /// target — advertised by a v2 beacon, or derived from a v1 beacon's IPv4.
 /// Returns `ip[:port]` and whether a beacon was heard.
 fn discover_console_addr(app: &mut App, listen_ms: u64) -> (Option<String>, bool) {
-    if let Some(b) = netraw::discover_console(tcp_protocol::preboot::DISCOVERY_PORT, listen_ms) {
-        adopt_beacon_relay(app, &b);
-        return (Some(b.addr), true);
+    if let Some(mut s) = netraw::discover_console(tcp_protocol::preboot::DISCOVERY_PORT, listen_ms)
+    {
+        reconcile_beacon(&mut s.beacon, s.src);
+        adopt_beacon_relay(app, &s.beacon);
+        return (Some(s.beacon.addr), true);
     }
     (relay_console_addr(app), false)
 }

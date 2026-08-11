@@ -287,6 +287,14 @@ impl RataguiBackend {
         self.frame_index = index; // Don’t invalidate cache here
     }
 
+    /// Character grid the last `ui()` laid out, in cells.
+    ///
+    /// This is the only grid that exists on screen — a caller that wants to request a frame size
+    /// should ask for this, not convert points to cells itself.
+    pub fn grid(&self) -> (u16, u16) {
+        (self.width, self.height)
+    }
+
     /// Emit `TerminalEvent::MouseMove` while the pointer hovers a row. Off by
     /// default so the remote viewer's event channel stays click-only.
     pub fn set_hover_events(&mut self, enabled: bool) {

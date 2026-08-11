@@ -206,6 +206,10 @@ pub struct WebSocketClient {
     pub egui_viewer_active: bool,
     /// File transfer progress: (filename, chunks_sent, total_chunks)
     pub file_transfer_progress: Option<(String, u32, u32)>,
+    /// When the last chunk went out. Drives the linger before the bar clears itself, so a transfer
+    /// whose result frame never lands (a self-update relaunches the client mid-flight) doesn't leave
+    /// a finished bar on the toolbar forever.
+    pub file_transfer_done_at: Option<web_time::Instant>,
     /// Channel receiving chunked Cmds from the background file-read thread
     #[cfg(not(target_arch = "wasm32"))]
     pub file_transfer_rx: Option<Receiver<Cmd>>,
@@ -397,6 +401,7 @@ Get-WmiObject")
             home_page: HomePage::new(),
             egui_viewer_active: false,
             file_transfer_progress: None,
+            file_transfer_done_at: None,
             #[cfg(not(target_arch = "wasm32"))]
             file_transfer_rx: None,
             #[cfg(not(target_arch = "wasm32"))]

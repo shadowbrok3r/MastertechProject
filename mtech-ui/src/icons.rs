@@ -76,6 +76,15 @@ pub const FOCUS: &str = p::CROSSHAIR;
 pub const OPEN: &str = p::ARROWS_OUT_SIMPLE;
 pub const CLOSE: &str = p::X;
 
+/// Client-row actions, as icons with the action in hover text.
+pub const DISCONNECT: &str = p::LINK_BREAK;
+pub const FLOAT: &str = p::PICTURE_IN_PICTURE;
+pub const DOCK: &str = p::ARROW_SQUARE_IN;
+pub const RELINK: &str = p::USER_SWITCH;
+pub const LINK_COMPUTER: &str = p::PLUGS_CONNECTED;
+pub const REPAIR_LINKS: &str = p::WRENCH;
+pub const AUTOPILOT: &str = p::ROBOT;
+
 pub const BETA: &str = p::TEST_TUBE;
 pub const BETA_TAG: &str = BETA;
 

@@ -16,14 +16,15 @@ impl RemoteTerminal {
             }
         }
 
-        let Some((frame_index, mut buffer)) = latest_buffer else {
+        let Some((frame_index, buffer)) = latest_buffer else {
             return false;
         };
 
-        if buffer.area != self.last_target_area {
-            buffer.resize(self.last_target_area);
-            log::debug!("Resized incoming buffer to: {:?}", self.last_target_area);
-        }
+        // No resize to `last_target_area` here. `Buffer::resize` is a flat truncate/extend with no
+        // 2-D reflow, so on any area disagreement it reinterprets the cell array at the wrong stride
+        // and shears the frame — which also lands clicks on the wrong cell. `build_row_job` indexes
+        // through `Buffer::cell`, which is bounds-checked against the buffer's own area, so a
+        // mismatched buffer already crops or pads correctly without being rewritten.
         self.terminal.backend_mut().set_frame_index(frame_index);
         self.terminal.backend_mut().update_buffer(buffer);
         self.latest_frame_index = frame_index;
@@ -38,23 +39,7 @@ impl RemoteTerminal {
     }
 
     pub fn ui(&mut self, ui: &mut Ui) {
-        let available_size = ui.available_size();
-        let target_width = (available_size.x as u16).min(250);
-        let target_height = (available_size.y as u16).min(250);
-        let target_area = Rect::new(0, 0, target_width, target_height);
         let mut needs_repaint = false;
-        
-        // Track if this is the first frame
-        // let mut is_first_frame = self.latest_frame_index == 0; 
-
-        if target_area != self.last_target_area {
-            let _ = self.size_tx.send(target_area);
-            self.terminal.backend_mut().resize(target_width, target_height);
-            self.cached_buffer.resize(target_area);
-            self.last_target_area = target_area;
-            log::debug!("Target area updated: {:?}", target_area);
-            needs_repaint = true;
-        }
 
         if self.poll_frames() {
             needs_repaint = true;
@@ -88,6 +73,19 @@ impl RemoteTerminal {
                 self.last_repaint = Instant::now();
             }
         });
+
+        // Ask for the grid the backend just laid out, rather than converting points to cells a
+        // second way. One frame of lag on a resize, but the requested area and the displayed area
+        // always converge on the same numbers.
+        let (cols, rows) = self.terminal.backend().grid();
+        let grid = Rect::new(0, 0, cols, rows);
+        if grid != self.last_target_area {
+            let _ = self.size_tx.send(grid);
+            self.cached_buffer.resize(grid);
+            self.last_target_area = grid;
+            log::debug!("Target area updated: {grid:?}");
+            needs_repaint = true;
+        }
 
         if needs_repaint {
             ui.ctx().request_repaint();

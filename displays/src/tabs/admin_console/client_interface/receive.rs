@@ -11,6 +11,10 @@ use super::{deserialize_exact, deserializer, is_zstd_frame, ui::WsDisplayState, 
 
 /// Transcript entries retained per session; the oldest are dropped past this.
 const MAX_HISTORY: usize = 2_000;
+
+/// How long a completed transfer bar stays up before clearing itself.
+#[cfg(not(target_arch = "wasm32"))]
+const TRANSFER_BAR_LINGER: std::time::Duration = std::time::Duration::from_millis(2_500);
 /// Unterminated client output held before it is flushed into the transcript.
 const MAX_BUFFER_BYTES: usize = 256 * 1024;
 
@@ -95,6 +99,16 @@ impl WebSocketClient {
             self.transport.send(WsMessage::Binary(serialize_command(&cmd)));
         }
 
+        // Retire a finished transfer bar. Applies to both the plain file transfer and the
+        // self-update, whose result frame may never arrive because the client relaunches into it.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(done_at) = self.file_transfer_done_at {
+            if done_at.elapsed() >= TRANSFER_BAR_LINGER {
+                self.file_transfer_progress = None;
+                self.file_transfer_done_at = None;
+            }
+        }
+
         // Drain file-transfer chunks produced by background thread and send to remote
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(rx) = &self.file_transfer_rx {
@@ -110,7 +124,7 @@ impl WebSocketClient {
             }
             if done {
                 self.file_transfer_rx = None;
-                self.file_transfer_progress = None;
+                self.file_transfer_done_at = Some(web_time::Instant::now());
             }
         }
 
@@ -133,8 +147,9 @@ impl WebSocketClient {
             }
             if done {
                 self.self_update_rx = None;
-                // Keep file_transfer_progress visible briefly; it will be cleared
-                // when MastertechSelfUpdateResult arrives (handled below).
+                // Linger so the operator sees it complete, then clear on the timer above.
+                // `MastertechSelfUpdateResult` clears it sooner when it arrives.
+                self.file_transfer_done_at = Some(web_time::Instant::now());
             }
         }
 
@@ -1025,6 +1040,7 @@ impl WebSocketClient {
                     } else if let Cmd::MastertechSelfUpdateResult { success, message } = cmd {
                         log::info!("Remote self-update result: success={success} {message}");
                         self.file_transfer_progress = None;
+                        self.file_transfer_done_at = None;
                         if success {
                             self.transport.signal_relaunch_pending(20);
                             self.connection_status = "Client relaunching (reconnecting…)".to_string();

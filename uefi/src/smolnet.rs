@@ -22,6 +22,10 @@ const RX_BUF: usize = 32 * 1024;
 const TX_BUF: usize = 16 * 1024;
 const DEADLINE_MS: i64 = 15_000;
 
+/// Budget for the handshake alone. A peer that never answers ARP cannot
+/// complete one, and would otherwise burn the whole-request deadline on it.
+const CONNECT_DEADLINE_MS: i64 = 2_500;
+
 static LOCAL_PORT: AtomicU16 = AtomicU16::new(0);
 static LEASE: std::sync::Mutex<Option<RawNet>> = std::sync::Mutex::new(None);
 
@@ -125,6 +129,15 @@ fn request(host_port: &str, ip: [u8; 4], port: u16, req: &[u8]) -> Result<Vec<u8
         )
         .map_err(|e| format!("smol connect {host_port}: {e:?}"))?;
 
+    // Elapsed wall time, not iterations: a poll costs several ms, so counting
+    // passes stretched both this deadline and smoltcp's own timers.
+    let epoch = crate::mono::now_ms();
+    let elapsed = move |stalls: i64| match (epoch, crate::mono::now_ms()) {
+        (Some(a), Some(b)) => b.saturating_sub(a) as i64,
+        _ => stalls,
+    };
+
+    let mut stalls: i64 = 0;
     let mut clock_ms: i64 = 0;
     let mut sent = 0usize;
     let mut resp: Vec<u8> = Vec::new();
@@ -152,20 +165,25 @@ fn request(host_port: &str, ip: [u8; 4], port: u16, req: &[u8]) -> Result<Vec<u8
         if connected && sent >= req.len() && !sock.may_recv() {
             break;
         }
+        if !connected && clock_ms >= CONNECT_DEADLINE_MS {
+            break;
+        }
 
         boot::stall(Duration::from_millis(1));
-        clock_ms += 1;
+        stalls += 1;
+        clock_ms = elapsed(stalls);
     }
 
     sockets.get_mut::<tcp::Socket>(handle).close();
     for _ in 0..50 {
         iface.poll(Instant::from_millis(clock_ms), &mut device, &mut sockets);
         boot::stall(Duration::from_millis(1));
-        clock_ms += 1;
+        stalls += 1;
+        clock_ms = elapsed(stalls);
     }
 
     if !connected {
-        return Err(format!("smol: no connection to {host_port}"));
+        return Err(format!("smol: no connection to {host_port} in {clock_ms}ms"));
     }
     if resp.is_empty() {
         return Err("smol: empty response".into());

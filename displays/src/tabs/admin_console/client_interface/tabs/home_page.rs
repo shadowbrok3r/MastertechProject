@@ -30,7 +30,8 @@ use crate::{PlatformSpawner, Spawner};
 use database::schema::{HardwareComponent, HardwareKind, RecordId, RecordIdExt, SystemInformation};
 use database::db;
 use eframe::egui::{
-    Align, Button, Id, Label, Layout, ProgressBar, RichText, ScrollArea, Ui, Vec2, Window,
+    collapsing_header::CollapsingState, Align, Button, Id, Label, Layout, ProgressBar, RichText,
+    ScrollArea, Ui, Vec2, Window,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -509,13 +510,9 @@ impl WebSocketClient {
             }
         }
 
-        // Parse any new log lines from the scripts viewer so the
-        // log-stream half of active-run detection stays current.
-        self.home_page.ingest_script_log(&self.remote_scripts_viewer.log_messages);
-
-        // Maybe kick off a DB poll for in-progress runs on this client.
+        // `ingest_script_log` + `maybe_poll_active_runs` run in `show` so the nav row's live strip
+        // stays current on every view.
         let computer_id = self.client.computer.clone();
-        self.home_page.maybe_poll_active_runs(computer_id.as_ref());
         // Inventory poll runs on a slower cadence (components rarely
         // change between frames; one run finishing only flips a status
         // glyph). Both polls share the same computer id.
@@ -527,21 +524,11 @@ impl WebSocketClient {
         self.home_page
             .maybe_ensure_phantom_components(self.resource_monitor.latest_sysinfo.as_ref());
 
-        let computer_label = computer_id
-            .as_ref()
-            .map(|c| c.key_string())
-            .or_else(|| self.client.friendly_name.clone())
-            .unwrap_or_else(|| self.client.connection_string.clone());
-
-        // ── Top: status header + hardware inventory + active runs ──
-        render_status_header(
-            ui,
-            &computer_label,
-            &self.client.connection_string,
-            self.client.boot_environment,
-            self.client_version.as_deref(),
-        );
-        let actions = self.home_page.render_inventory(ui);
+        // Machine identity, build and connection string live in the client nav row; repeating them
+        // here made the hostname appear three times on one screen.
+        let actions = self
+            .home_page
+            .render_inventory(ui, &self.client.connection_string);
         ui.separator();
 
         // Process click-throughs collected during the inventory render.
@@ -572,40 +559,7 @@ impl WebSocketClient {
             }
         }
 
-        // ── Sub-tab nav: Overview | Processes ──
-        ui.horizontal(|ui| {
-            let overview_active = self.home_page.sub_tab == HomeSubTab::Overview;
-            let processes_active = self.home_page.sub_tab == HomeSubTab::Processes;
-            if ui
-                .framed_selectable_label(overview_active, format!("{} Overview", icons::CHART))
-                .clicked()
-            {
-                self.home_page.sub_tab = HomeSubTab::Overview;
-            }
-            if ui
-                .framed_selectable_label(processes_active, format!("{} Processes", icons::LIST))
-                .clicked()
-            {
-                self.home_page.sub_tab = HomeSubTab::Processes;
-            }
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if let Some(snap) = self.resource_monitor.latest_sysinfo.as_ref() {
-                    ui.label(
-                        RichText::new(format!(
-                            "hostname: {}",
-                            if snap.hostname.is_empty() {
-                                "?"
-                            } else {
-                                &snap.hostname
-                            }
-                        ))
-                        .small()
-                        .weak(),
-                    );
-                }
-            });
-        });
-        ui.separator();
+        // Sub-tab nav and the hostname readout moved to the client nav row.
 
         // ── Body ──
         match self.home_page.sub_tab {
@@ -741,59 +695,81 @@ fn identity_hostname(connection_string: &str) -> Option<String> {
     (!host.is_empty()).then(|| host.to_string())
 }
 
-fn render_status_header(
-    ui: &mut Ui,
-    computer_label: &str,
-    connection_string: &str,
-    boot_environment: database::schema::BootEnvironment,
-    client_version: Option<&str>,
-) {
-    ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(format!("{} Home", icons::HOME))
-                .color(theme::accent(ui))
-                .heading(),
-        );
-        ui.add_space(12.0);
-        ui.label(
-            RichText::new(computer_label)
-                .strong()
-                .color(theme::strong_text(ui)),
-        );
-        if boot_environment.is_preboot() {
-            ui.add_space(8.0);
-            ui.label(
-                RichText::new(format!("{} WinPE session", icons::POWER))
-                    .small()
-                    .strong()
-                    .color(theme::accent(ui)),
-            )
-            .on_hover_text(
-                "This client booted into WinPE. Its key is the offline Windows \
-                 install's; live readings come from the PE session.",
-            );
+impl HomePage {
+    /// Overview / Processes toggles, for the client nav row.
+    pub fn sub_tab_toggles(&mut self, ui: &mut Ui) {
+        let overview = self.sub_tab == HomeSubTab::Overview;
+        let processes = self.sub_tab == HomeSubTab::Processes;
+        if ui
+            .framed_selectable_label(overview, format!("{} Overview", icons::CHART))
+            .clicked()
+        {
+            self.sub_tab = HomeSubTab::Overview;
         }
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.label(
-                RichText::new(format!("conn: {connection_string}"))
-                    .small()
-                    .color(theme::weak_text(ui))
-                    .monospace(),
-            );
-            if let Some(ver) = client_version {
-                ui.label(
-                    RichText::new(format!("client v{ver}"))
-                        .small()
-                        .color(theme::weak_text(ui))
-                        .monospace(),
+        if ui
+            .framed_selectable_label(processes, format!("{} Processes", icons::LIST))
+            .clicked()
+        {
+            self.sub_tab = HomeSubTab::Processes;
+        }
+    }
+
+    /// One-line live stress-run readout for the client nav row: the busiest run's label, its
+    /// countdown and a slim bar. Renders nothing when no run is in progress.
+    ///
+    /// Deliberately not the inventory's `render_inline_active_run` — that one is multi-line with a
+    /// stage breakdown and would blow out a single-row toolbar.
+    pub fn active_run_strip(&self, ui: &mut Ui) {
+        let runs = self.merged_active_runs();
+        let Some(run) = runs.first() else { return };
+        let elapsed = run.started_at.elapsed().as_secs_f64();
+        let planned = run.duration_planned_secs.map(|s| s as f64);
+        ui.colored_label(theme::warn(ui), icons::STATUS_WAIT);
+        ui.label(
+            RichText::new(&run.tool_label)
+                .small()
+                .strong()
+                .color(theme::warn(ui)),
+        );
+        match planned {
+            Some(p) if p > 0.0 => {
+                let frac = (elapsed / p).clamp(0.0, 1.0) as f32;
+                ui.add(
+                    ProgressBar::new(frac)
+                        .desired_width(70.0)
+                        .desired_height(5.0),
                 )
                 .on_hover_text(format!(
-                    "Client MasterTech build v{ver} (console v{})",
-                    crate::shape_fp::BUILD_VERSION
+                    "{} elapsed of {}",
+                    fmt_secs(elapsed),
+                    fmt_secs(p)
                 ));
+                ui.label(
+                    RichText::new(fmt_secs((p - elapsed).max(0.0)))
+                        .small()
+                        .monospace()
+                        .color(theme::warn(ui)),
+                );
             }
-        });
-    });
+            _ => {
+                ui.spinner();
+                ui.label(
+                    RichText::new(fmt_secs(elapsed))
+                        .small()
+                        .monospace()
+                        .color(theme::weak_text(ui)),
+                );
+            }
+        }
+        if runs.len() > 1 {
+            ui.label(
+                RichText::new(format!("+{}", runs.len() - 1))
+                    .small()
+                    .color(theme::weak_text(ui)),
+            )
+            .on_hover_text(format!("{} stress runs in progress", runs.len()));
+        }
+    }
 }
 
 /// How far a driver-protections change got.
@@ -988,7 +964,10 @@ async fn write_driver_protections_audit(audit: DriverProtectionsAudit) {
 }
 
 impl HomePage {
-    fn ingest_script_log(&mut self, lines: &[String]) {
+    pub(in crate::tabs::admin_console::client_interface) fn ingest_script_log(
+        &mut self,
+        lines: &[String],
+    ) {
         if lines.len() < self.log_cursor {
             // Log buffer was reset (e.g. cleared by the operator).
             // Re-parse from the start — the existing entries in
@@ -1084,7 +1063,10 @@ impl HomePage {
         }
     }
 
-    fn maybe_poll_active_runs(&mut self, computer: Option<&RecordId>) {
+    pub(in crate::tabs::admin_console::client_interface) fn maybe_poll_active_runs(
+        &mut self,
+        computer: Option<&RecordId>,
+    ) {
         let Some(computer) = computer else { return };
         let should_poll = match self.last_poll {
             None => true,
@@ -1426,7 +1408,8 @@ impl HomePage {
         confirmed
     }
 
-    fn render_inventory(&self, ui: &mut Ui) -> HomeActions {
+    /// `scope` keys the collapse state per client, so two open sessions don't share one toggle.
+    fn render_inventory(&self, ui: &mut Ui, scope: &str) -> HomeActions {
         let mut actions = HomeActions::default();
         let active = self.merged_active_runs();
         let cards: Vec<InventoryCard> = self
@@ -1438,73 +1421,87 @@ impl HomePage {
 
         ui.add_space(6.0);
 
-        // Top summary line: total components + total active runs.
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("Hardware inventory")
-                    .color(theme::accent(ui))
-                    .strong(),
-            );
-            ui.label(
-                RichText::new(format!("({} component(s))", cards.len()))
-                    .color(theme::weak_text(ui))
-                    .small(),
-            );
-            ui.separator();
-            if active.is_empty() {
-                ui.colored_label(theme::weak_text(ui), icons::STATUS_IDLE);
-                ui.colored_label(theme::weak_text(ui), "no stress runs in progress");
-            } else {
-                ui.colored_label(theme::warn(ui), icons::STATUS_WAIT);
-                ui.colored_label(
-                    theme::warn(ui),
-                    format!("{} stress run(s) in progress", active.len()),
+        let state =
+            CollapsingState::load_with_default_open(ui.ctx(), Id::new(("home-inventory", scope)), true);
+        // `openness`, not `is_open`: egui draws the body for any openness above zero, so this is the
+        // exact test for "no card is on screen to carry the live bars" and it skips the animation.
+        let body_hidden = state.openness(ui.ctx()) <= 0.0;
+        state
+            .show_header(ui, |ui| {
+                ui.label(
+                    RichText::new("Hardware inventory")
+                        .color(theme::accent(ui))
+                        .strong(),
                 );
-            }
-        });
+                ui.label(
+                    RichText::new(format!("({} component(s))", cards.len()))
+                        .color(theme::weak_text(ui))
+                        .small(),
+                );
+                ui.separator();
+                if active.is_empty() {
+                    ui.colored_label(theme::weak_text(ui), icons::STATUS_IDLE);
+                    ui.colored_label(theme::weak_text(ui), "no stress runs in progress");
+                } else {
+                    ui.colored_label(theme::warn(ui), icons::STATUS_WAIT);
+                    ui.colored_label(
+                        theme::warn(ui),
+                        format!("{} stress run(s) in progress", active.len()),
+                    );
+                }
+            })
+            .body(|ui| {
+                if cards.is_empty() {
+                    ui.add_space(4.0);
+                    ui.colored_label(
+                        theme::weak_text(ui),
+                        "No hardware_component history yet for this machine. Run any stress test to populate.",
+                    );
+                } else {
+                    let card_cols = if ui.available_width() < 760.0 { 1 } else { 2 };
+                    ui.columns(card_cols, |cols| {
+                        for (idx, card) in cards.iter().enumerate() {
+                            let col = &mut cols[idx % card_cols];
+                            // A run "belongs" to this card if its target OR any
+                            // of its touched_components matches. Same rubric the
+                            // inventory bucketing uses, so the inline progress
+                            // bar shows under every card the run is exercising
+                            // (e.g. gpu_pcie touches both CPU + GPU).
+                            let linked: Vec<&ActiveRun> = active
+                                .iter()
+                                .filter(|r| run_touches_component(r, &card.component_id))
+                                .collect();
+                            render_component_card(col, card, &linked, &mut actions);
+                        }
+                    });
+                }
 
-        if cards.is_empty() {
-            ui.add_space(4.0);
-            ui.colored_label(
-                theme::weak_text(ui),
-                "No hardware_component history yet for this machine. Run any stress test to populate.",
-            );
-        } else {
-            let card_cols = if ui.available_width() < 760.0 { 1 } else { 2 };
-            ui.columns(card_cols, |cols| {
-                for (idx, card) in cards.iter().enumerate() {
-                    let col = &mut cols[idx % card_cols];
-                    // A run "belongs" to this card if its target OR any
-                    // of its touched_components matches. Same rubric the
-                    // inventory bucketing uses, so the inline progress
-                    // bar shows under every card the run is exercising
-                    // (e.g. gpu_pcie touches both CPU + GPU).
-                    let linked: Vec<&ActiveRun> = active
-                        .iter()
-                        .filter(|r| run_touches_component(r, &card.component_id))
-                        .collect();
-                    render_component_card(col, card, &linked, &mut actions);
+                // Unlinked = no card on this page would render this run. With
+                // the touched-components matching, this is rare — only fires
+                // for log-stream entries (no DB metadata yet) and for runs whose
+                // component links don't intersect the cards we have cached.
+                let unlinked: Vec<&ActiveRun> = active
+                    .iter()
+                    .filter(|r| !cards.iter().any(|c| run_touches_component(r, &c.component_id)))
+                    .collect();
+                if !unlinked.is_empty() {
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new("Active runs not yet linked to a component")
+                            .color(theme::weak_text(ui))
+                            .small(),
+                    );
+                    for run in unlinked {
+                        render_active_run_card(ui, run, &mut actions);
+                    }
                 }
             });
-        }
 
-        // Unlinked = no card on this page would render this run. With
-        // the touched-components matching, this is rare — only fires
-        // for log-stream entries (no DB metadata yet) and for runs whose
-        // component links don't intersect the cards we have cached.
-        let unlinked: Vec<&ActiveRun> = active
-            .iter()
-            .filter(|r| !cards.iter().any(|c| run_touches_component(r, &c.component_id)))
-            .collect();
-        if !unlinked.is_empty() {
-            ui.add_space(6.0);
-            ui.label(
-                RichText::new("Active runs not yet linked to a component")
-                    .color(theme::weak_text(ui))
-                    .small(),
-            );
-            for run in unlinked {
-                render_active_run_card(ui, run, &mut actions);
+        // Collapsing the section hides the cards that normally carry the live bars, so re-render
+        // them here. Never both: expanded, the per-component cards own this.
+        if body_hidden {
+            for run in &active {
+                render_inline_active_run(ui, run);
             }
         }
         actions
@@ -1528,29 +1525,42 @@ fn render_component_card(
         _ => icons::PACKAGE,
     };
     glass_card::group(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.colored_label(theme::accent(ui), kind_glyph);
-            ui.label(
-                RichText::new(&card.display_name)
-                    .strong()
-                    .color(theme::strong_text(ui)),
-            );
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        // Hand-rolled instead of `show_header(..).body(..)`: that pair paints the body immediately
+        // after the header, and the live progress has to sit between the two.
+        let mut state = CollapsingState::load_with_default_open(
+            ui.ctx(),
+            Id::new(("home-inventory-card", card.component_id.as_str())),
+            true,
+        );
+        let header = ui
+            .horizontal(|ui| {
+                state.show_toggle_button(ui, eframe::egui::collapsing_header::paint_default_icon);
+                ui.colored_label(theme::accent(ui), kind_glyph);
                 ui.label(
-                    RichText::new(format!("{} runs", card.recent_runs.len()))
-                        .small()
-                        .color(theme::weak_text(ui)),
+                    RichText::new(&card.display_name)
+                        .strong()
+                        .color(theme::strong_text(ui)),
                 );
-                ui.label(
-                    RichText::new(card.kind.to_uppercase())
-                        .small()
-                        .monospace()
-                        .color(theme::weak_text(ui)),
-                );
-            });
-        });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(format!("{} runs", card.recent_runs.len()))
+                            .small()
+                            .color(theme::weak_text(ui)),
+                    );
+                    ui.label(
+                        RichText::new(card.kind.to_uppercase())
+                            .small()
+                            .monospace()
+                            .color(theme::weak_text(ui)),
+                    );
+                    if !active.is_empty() {
+                        ui.colored_label(theme::warn(ui), icons::STATUS_WAIT);
+                    }
+                });
+            })
+            .response;
 
-        // Inline progress for any active run targeting this component.
+        // Above the collapsible body: collapsing a component hides its run history, never a live run.
         for run in active {
             render_inline_active_run(ui, run);
         }
@@ -1558,13 +1568,16 @@ fn render_component_card(
         // History strip: latest N runs as compact rows. Each row is
         // clickable (opens the run in the MCP Tool Log breadcrumb).
         // Failed rows get an extra "Re-run" button for quick retry.
-        if card.recent_runs.is_empty() {
-            ui.colored_label(theme::weak_text(ui), "no run history yet");
-        } else {
-            for past in &card.recent_runs {
-                render_past_run_row(ui, past, actions);
+        state.show_body_indented(&header, ui, |ui| {
+            if card.recent_runs.is_empty() {
+                ui.colored_label(theme::weak_text(ui), "no run history yet");
+            } else {
+                for past in &card.recent_runs {
+                    render_past_run_row(ui, past, actions);
+                }
             }
-        }
+        });
+        state.store(ui.ctx());
         ui.allocate_space(Vec2::new(ui.available_width(), 0.0));
     });
 }

@@ -187,25 +187,30 @@ impl DirectHub {
 
     /// Broadcast a LAN UDP discovery beacon (`ip:port` plus the relay base url)
     /// every ~3s so firmware can find this console without any relay round-trip.
-    /// A fresh socket bound to the chosen LAN IP each cycle forces egress on that
-    /// interface (a 0.0.0.0-bound limited broadcast would leave only the
-    /// OS-default NIC on a multi-homed host) and tracks DHCP address changes.
-    /// Falls back to a v1 beacon when no relay url can be resolved.
+    /// One beacon per usable IPv4, each naming the address of the interface it
+    /// leaves by: firmware reaches this console over the segment the beacon
+    /// arrived on, so any other address in the payload is one it cannot ARP. A
+    /// fresh bound socket each cycle also tracks DHCP address changes. Falls
+    /// back to a v1 beacon when no relay url can be resolved.
     fn beacon(&self, base: String, port: u16) {
         PlatformSpawner::spawn(async move {
             let dest = format!("255.255.255.255:{}", preboot::DISCOVERY_PORT);
             loop {
-                if let Some(ip) = lan_ip_toward(&base) {
-                    if let Ok(sock) = std::net::UdpSocket::bind(std::net::SocketAddr::new(ip, 0)) {
-                        if sock.set_broadcast(true).is_ok() {
-                            let addr = format!("{ip}:{port}");
-                            let msg = match relay_url_for(&base, ip) {
-                                Some(relay) => preboot::encode_beacon_v2(&addr, &relay),
-                                None => preboot::encode_beacon(&addr),
-                            };
-                            let _ = sock.send_to(&msg, &dest);
-                        }
+                for v4 in beacon_source_ips(&base) {
+                    let ip = std::net::IpAddr::V4(v4);
+                    let Ok(sock) = std::net::UdpSocket::bind(std::net::SocketAddr::new(ip, 0))
+                    else {
+                        continue;
+                    };
+                    if sock.set_broadcast(true).is_err() {
+                        continue;
                     }
+                    let addr = format!("{ip}:{port}");
+                    let msg = match relay_url_for(&base, ip) {
+                        Some(relay) => preboot::encode_beacon_v2(&addr, &relay),
+                        None => preboot::encode_beacon(&addr),
+                    };
+                    let _ = sock.send_to(&msg, &dest);
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             }
@@ -342,6 +347,36 @@ fn lan_ip_toward(base_url: &str) -> Option<std::net::IpAddr> {
         return None;
     }
     Some(ip)
+}
+
+/// Every IPv4 this host can broadcast a beacon from, route-preferred first.
+///
+/// [`lan_ip_toward`] alone answers "which interface reaches the relay", which is
+/// the wrong question for a beacon: with a hostname base it resolves against
+/// 8.8.8.8 and so names whichever adapter holds the default route — a VPN, a
+/// hypervisor switch, or the wrong NIC on a multi-homed console. Firmware on
+/// any other segment then learns an address that never answers ARP.
+fn beacon_source_ips(base: &str) -> Vec<std::net::Ipv4Addr> {
+    let preferred = match lan_ip_toward(base) {
+        Some(std::net::IpAddr::V4(v4)) => Some(v4),
+        _ => None,
+    };
+    let mut out: Vec<std::net::Ipv4Addr> = if_addrs::get_if_addrs()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|i| !i.is_loopback())
+        .filter_map(|i| match i.ip() {
+            std::net::IpAddr::V4(v4) => Some(v4),
+            std::net::IpAddr::V6(_) => None,
+        })
+        // APIPA and 0.0.0.0 carry no reachable listener.
+        .filter(|v4| !v4.is_link_local() && !v4.is_unspecified() && !v4.is_broadcast())
+        .collect();
+    if let Some(p) = preferred {
+        out.retain(|v4| *v4 != p);
+        out.insert(0, p);
+    }
+    out
 }
 
 /// Relay base url to advertise in a beacon.
