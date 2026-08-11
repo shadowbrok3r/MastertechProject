@@ -1,0 +1,59 @@
+id = "20260811170000__sql_approval_table"
+name = "sql_approval_table"
+state = "completed"
+source_schema_hash = "0db79997ee062019179e6bfbfb70ae6fcf9be4bc68e9232332a52aea75b83f7b"
+target_schema_hash = "0db79997ee062019179e6bfbfb70ae6fcf9be4bc68e9232332a52aea75b83f7b"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "create_sql_approval"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE sql_approval TYPE ANY SCHEMALESS CHANGEFEED 2d PERMISSIONS FULL;
+
+DEFINE FIELD OVERWRITE statement        ON sql_approval TYPE string                              PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE reason           ON sql_approval TYPE string                              PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE statement_kind   ON sql_approval TYPE string DEFAULT 'unknown'            PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE target_table     ON sql_approval TYPE none | string                       PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE impact_rows      ON sql_approval TYPE none | int                          PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE impact_note      ON sql_approval TYPE none | string                       PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE requested_by     ON sql_approval TYPE none | record<user>                 PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE requested_label  ON sql_approval TYPE string DEFAULT ''                   PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE origin_host      ON sql_approval TYPE string DEFAULT ''                   PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE status           ON sql_approval TYPE string DEFAULT 'pending'            PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE decided_by       ON sql_approval TYPE none | record<user>                 PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE decided_at       ON sql_approval TYPE none | datetime                     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE deny_reason      ON sql_approval TYPE none | string                       PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE result_summary   ON sql_approval TYPE none | string                       PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE executed_at      ON sql_approval TYPE none | datetime                     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE created_at       ON sql_approval TYPE none | datetime DEFAULT time::now() PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE expires_at       ON sql_approval TYPE none | datetime                     PERMISSIONS FULL;
+
+DEFINE INDEX OVERWRITE sql_approval_status_idx ON sql_approval FIELDS status;
+
+DEFINE EVENT OVERWRITE sql_approval_requested ON sql_approval WHEN $event = 'CREATE' THEN {
+    FOR $root IN (SELECT VALUE id FROM user WHERE authorization = 'Root' AND active = true) {
+        CREATE notification CONTENT {
+            notification_description: string::concat('SurrealQL approval requested by ', $value.requested_label, ' — ', $value.reason),
+            notification_type: 'Approval',
+            status: 'Unread',
+            user: $root
+        }
+    }
+};
+
+DEFINE EVENT OVERWRITE sql_approval_decided ON sql_approval WHEN $event = 'UPDATE'
+    AND $before.status = 'pending' AND $after.status != 'pending' THEN {
+    UPDATE $value.id SET decided_at = time::now()
+};
+"""
+
+[[steps]]
+id = "drop_sql_approval"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE TABLE IF EXISTS sql_approval;
+"""

@@ -122,6 +122,30 @@ impl crate::app_state::SharedContext {
         self.live_spawned_at = None;
     }
 
+    /// Drains the `sql_approval` streams and renders the approval modal.
+    ///
+    /// Driven from the shared receive loop rather than `AdminConsole::receive`
+    /// (which only runs while that tab is rendered) so a Root operator sitting
+    /// on any tab still sees a pending mutation. Every call is a no-op for a
+    /// non-Root user: their live stream is never spawned and the modal
+    /// re-checks authorization before drawing.
+    fn receive_sql_approvals(&mut self, ctx: &eframe::egui::Context) {
+        let queue = &mut self.web_console_layout.sql_approvals;
+        while let Ok(rows) = crate::get_sql_approval_snapshot_receiver().try_recv() {
+            queue.set_pending(rows);
+            ctx.request_repaint();
+        }
+        while let Ok((action, row)) = crate::get_sql_approval_receiver().try_recv() {
+            match action {
+                Action::Delete => queue.apply_delete(row),
+                _ => queue.apply_update(row),
+            }
+            ctx.request_repaint();
+        }
+        queue.poll();
+        queue.ui(ctx);
+    }
+
     /// Spawns the chat live streams (participant-filtered) once the chat tab
     /// has requested them; re-run after each reconnect generation.
     fn spawn_chat_streams(&mut self) {
@@ -283,6 +307,32 @@ impl crate::app_state::SharedContext {
                 self.live_ai_task_items_tx.clone(),
                 "LIVE SELECT * FROM ai_task_item WHERE ai_task_ref.assignee.store == $auth.store".to_string(),
             );
+
+            // sql_approval → Root only. Non-Root consoles never subscribe, so
+            // a pending mutation is not even visible to them; they are told
+            // about it through the `Approval` notification the table's CREATE
+            // event mints for each Root account.
+            if user.get_authorization() == database::schema::user::UserAuthorization::Root {
+                self.spawn_live_stream::<database::schema::SqlApproval>(
+                    crate::get_sql_approval_sender(),
+                    "LIVE SELECT * FROM sql_approval".to_string(),
+                );
+
+                // Live queries never replay history: fill from a snapshot so
+                // requests raised before this console signed in still show.
+                let snapshot_tx = crate::get_sql_approval_snapshot_sender();
+                PlatformSpawner::spawn(async move {
+                    if let Err(e) = database::schema::SqlApproval::expire_stale().await {
+                        log::warn!("SqlApproval::expire_stale failed: {e:?}");
+                    }
+                    match database::schema::SqlApproval::list_pending().await {
+                        Ok(rows) => {
+                            let _ = snapshot_tx.try_send(rows);
+                        }
+                        Err(e) => log::warn!("SqlApproval::list_pending failed: {e:?}"),
+                    }
+                });
+            }
 
             // connected_client → scope selected in the admin console.
             let query = connected_client_live_query(self.client_scope, &user);
@@ -599,6 +649,7 @@ impl crate::app_state::SharedContext {
         self.receive_client();
         self.receive_prestashop();
         self.receive_extracted_specs();
+        self.receive_sql_approvals(ctx);
         self.filesystem.receive();
         
         // Deduplicate back-to-back identical toasts within a short

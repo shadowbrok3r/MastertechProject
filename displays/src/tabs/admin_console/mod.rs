@@ -23,9 +23,11 @@ pub mod preboot_direct;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod preboot_viewer;
 pub mod relink_popup;
+pub mod sql_approval_popup;
 pub mod ui;
 
 pub use relink_popup::RelinkClientPopup;
+pub use sql_approval_popup::SqlApprovalQueue;
 
 /// Controls whether a remote-client session is shown inline (docked in the
 /// central panel when it is also the focused client) or in its own floating
@@ -262,6 +264,11 @@ pub struct AdminConsole {
     /// See `relink_popup.rs`.
     #[serde(skip)]
     pub relink_popup: Option<RelinkClientPopup>,
+    /// Pending SurrealQL mutations awaiting a Root decision. Fed by a live
+    /// stream that is only spawned for Root; the modal refuses to render for
+    /// anyone else. See `sql_approval_popup.rs`.
+    #[serde(skip)]
+    pub sql_approvals: SqlApprovalQueue,
     /// `(customer_exists, computer_exists)` per `connection_string`.
     #[serde(skip)]
     pub fk_health_cache: HashMap<String, (bool, bool)>,
@@ -327,6 +334,7 @@ impl AdminConsole {
             script_editor: ScriptEditor::new(),
             ai_playground: EnhancedAiPlayground::default(),
             relink_popup: None,
+            sql_approvals: SqlApprovalQueue::default(),
             fk_health_cache: HashMap::new(),
             fk_health_tx,
             fk_health_rx,

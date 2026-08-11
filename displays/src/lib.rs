@@ -89,6 +89,45 @@ static GLOBAL_SECURITY_INVENTORY_CHANNEL: Lazy<(
     Receiver<SecurityInventoryEvent>,
 )> = Lazy::new(|| crossbeam::channel::unbounded());
 
+/// Global channel carrying `sql_approval` live-query events to the admin
+/// console's approval modal. The producer is the Root-only live stream
+/// spawned in `ui_data::load_data`; the consumer is `AdminConsole::receive`.
+///
+/// Routed through a global Lazy channel for the same reason as
+/// [`GLOBAL_SECURITY_INVENTORY_CHANNEL`]: `AdminConsole::receive` takes only
+/// `&mut self` and a `Context`, so it has no handle on `SharedContext` where
+/// the other live-stream receivers live.
+static GLOBAL_SQL_APPROVAL_CHANNEL: Lazy<(
+    Sender<(database::live_data::Action, database::schema::SqlApproval)>,
+    Receiver<(database::live_data::Action, database::schema::SqlApproval)>,
+)> = Lazy::new(|| crossbeam::channel::unbounded());
+
+pub fn get_sql_approval_sender(
+) -> Sender<(database::live_data::Action, database::schema::SqlApproval)> {
+    GLOBAL_SQL_APPROVAL_CHANNEL.0.clone()
+}
+
+pub fn get_sql_approval_receiver(
+) -> Receiver<(database::live_data::Action, database::schema::SqlApproval)> {
+    GLOBAL_SQL_APPROVAL_CHANNEL.1.clone()
+}
+
+/// Snapshot channel for the initial pending-approval fill, so a Root console
+/// that starts with requests already queued shows them without waiting for
+/// the next live event (live queries never replay history).
+static GLOBAL_SQL_APPROVAL_SNAPSHOT: Lazy<(
+    Sender<Vec<database::schema::SqlApproval>>,
+    Receiver<Vec<database::schema::SqlApproval>>,
+)> = Lazy::new(|| crossbeam::channel::unbounded());
+
+pub fn get_sql_approval_snapshot_sender() -> Sender<Vec<database::schema::SqlApproval>> {
+    GLOBAL_SQL_APPROVAL_SNAPSHOT.0.clone()
+}
+
+pub fn get_sql_approval_snapshot_receiver() -> Receiver<Vec<database::schema::SqlApproval>> {
+    GLOBAL_SQL_APPROVAL_SNAPSHOT.1.clone()
+}
+
 /// Payload pushed on [`GLOBAL_SECURITY_INVENTORY_CHANNEL`] — pairs
 /// the source `connection_string` (so the admin knows which row to
 /// update) with the freshly-gathered inventory.

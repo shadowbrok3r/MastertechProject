@@ -1783,6 +1783,33 @@ pub struct QuerySurrealDbParams {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct SurrealqlExecuteParams {
+    #[schemars(description = "The SurrealQL mutation to run, verbatim. Must start with CREATE, \
+        UPDATE, UPSERT, DELETE, INSERT or RELATE. Schema DDL (DEFINE / REMOVE / ALTER / REBUILD) \
+        is rejected — use the surrealkit rollout flow for schema. SELECT/RETURN are rejected too; \
+        those need no approval, use query_surrealdb.")]
+    pub statement: String,
+    #[schemars(description = "Why this needs to run, in one or two plain sentences. Shown \
+        verbatim on the operator's approval modal and stored on the request — this is the whole \
+        basis on which a human decides, so state the actual effect, not a restatement of the SQL.")]
+    pub reason: String,
+    #[schemars(description = "Seconds to wait for a decision before handing back a request_id \
+        (default 90, max 240). The cap is deliberate: a longer block trips the MCP client's idle \
+        timeout and you lose the response. On timeout the request stays live — poll it with \
+        surrealql_approval_status.")]
+    pub wait_secs: Option<u64>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct SurrealqlApprovalStatusParams {
+    #[schemars(description = "request_id returned by surrealql_execute.")]
+    pub request_id: String,
+    #[schemars(description = "Seconds to keep waiting on a still-pending request (default 0 = \
+        report current state and return immediately, max 240).")]
+    pub wait_secs: Option<u64>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct BenchmarkResultsQueryParams {
     #[schemars(description = "Filter by the machine's hostname as reported by the client (e.g. \
         \"BENCH-07\"). Omit to query across all machines.")]
@@ -8026,6 +8053,170 @@ A failed query returns the database error plus a hint naming which of these rule
     }
 
     #[tool(
+        name = "surrealql_execute",
+        description = "Run a SurrealQL MUTATION, gated on a human approval. Nothing executes until \
+a Root operator approves it in the Mastertech admin console, where they see the statement verbatim, \
+your stated reason, and a count of how many rows it matches. \
+ACCEPTS: CREATE, UPDATE, UPSERT, DELETE, INSERT, RELATE. \
+REJECTS: DEFINE / REMOVE / ALTER / REBUILD — schema DDL applied this way moves the live database \
+without touching database/schema/*.surql, so surrealkit's snapshot and __rollout state silently \
+drift; use the surrealkit rollout flow instead. Also rejects SELECT / RETURN: those need no \
+approval, call query_surrealdb. \
+FLOW: this blocks up to `wait_secs` (default 90) for a decision. Approved → the statement runs and \
+the result comes back in the same call. Denied → you get the operator's note; do not resubmit the \
+same statement, address the objection first. No decision in the window → you get a request_id and \
+the request stays live for 15 minutes; poll it with surrealql_approval_status. \
+WRITE THE REASON FOR A HUMAN: it is the only thing the approver has to judge intent by. State what \
+the write actually does and why it is needed (\"backfill task_ref on 21 crash sightings that were \
+recorded before the session opened\"), not a paraphrase of the SQL."
+    )]
+    async fn surrealql_execute(
+        &self,
+        Parameters(p): Parameters<SurrealqlExecuteParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        use database::schema::sql_approval::{
+            preview_impact, ApprovalStatus, SqlApproval, StatementKind, APPROVAL_TTL_SECS,
+        };
+
+        let statement = p.statement.trim().to_string();
+        let kind = StatementKind::parse(&statement).map_err(to_internal)?;
+        if p.reason.trim().is_empty() {
+            return Err(to_internal(
+                "reason is required — the operator has nothing else to judge the request by.",
+            ));
+        }
+
+        // Best-effort row count so the approver sees blast radius, not just SQL.
+        let (impact_rows, impact_note) = preview_impact(&statement).await;
+        let target_table = database::schema::sql_approval::extract_target(&statement);
+
+        let user = crate::get_current_user_from_auth();
+        let requested_label = match user.as_ref() {
+            Some(u) => format!("AI agent (MCP) as {}", u.get_name()),
+            None => "AI agent (MCP), no signed-in user".to_string(),
+        };
+
+        let request = SqlApproval {
+            statement: statement.clone(),
+            reason: p.reason.trim().to_string(),
+            statement_kind: kind.as_str().to_string(),
+            target_table,
+            impact_rows,
+            impact_note,
+            requested_by: user.as_ref().map(|u| u.get_id()),
+            requested_label,
+            origin_host: hostname_or_unknown(),
+            status: ApprovalStatus::Pending.as_str().to_string(),
+            ..Default::default()
+        };
+
+        let id = request.submit().await.map_err(to_internal)?;
+        let request_id = id.key_string();
+
+        let wait = p.wait_secs.unwrap_or(90).min(240);
+        match await_decision(&id, wait).await? {
+            Some(ApprovalStatus::Approved) => run_approved_statement(&id, &statement).await,
+            Some(ApprovalStatus::Denied) => {
+                let row = SqlApproval::fetch(&id).await.ok().flatten();
+                let note = row
+                    .and_then(|r| r.deny_reason)
+                    .unwrap_or_else(|| "no reason given".to_string());
+                Ok(CallToolResult::success(vec![ContentBlock::json(
+                    serde_json::json!({
+                        "request_id": request_id,
+                        "status": "denied",
+                        "operator_note": note,
+                        "guidance": "A human refused this. Do not resubmit the same statement — \
+                                     address the objection or ask the user."
+                    }),
+                )
+                .map_err(to_internal)?]))
+            }
+            Some(ApprovalStatus::Expired) => Ok(CallToolResult::success(vec![ContentBlock::json(
+                serde_json::json!({
+                    "request_id": request_id,
+                    "status": "expired",
+                    "guidance": "Nobody decided within the 15-minute window. Nothing ran."
+                }),
+            )
+            .map_err(to_internal)?])),
+            Some(other) => Ok(CallToolResult::success(vec![ContentBlock::json(
+                serde_json::json!({ "request_id": request_id, "status": other.as_str() }),
+            )
+            .map_err(to_internal)?])),
+            None => Ok(CallToolResult::success(vec![ContentBlock::json(
+                serde_json::json!({
+                    "request_id": request_id,
+                    "status": "pending",
+                    "waited_secs": wait,
+                    "guidance": format!(
+                        "No decision yet — the request is still live and nothing has run. \
+                         Poll with surrealql_approval_status {{ request_id: \"{request_id}\" }}. \
+                         It expires {APPROVAL_TTL_SECS}s after submission."
+                    )
+                }),
+            )
+            .map_err(to_internal)?])),
+        }
+    }
+
+    #[tool(
+        name = "surrealql_approval_status",
+        description = "Check (or keep waiting on) a surrealql_execute request. When the operator has \
+approved it, THIS call runs the statement and returns the result — approval alone does not execute \
+anything. Returns status pending / approved / denied / executed / failed / expired."
+    )]
+    async fn surrealql_approval_status(
+        &self,
+        Parameters(p): Parameters<SurrealqlApprovalStatusParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        use database::schema::sql_approval::{ApprovalStatus, SqlApproval};
+        use database::schema::{RecordId, SQL_APPROVAL_TABLE};
+
+        let id = RecordId::new(SQL_APPROVAL_TABLE, p.request_id.clone());
+        let Some(row) = SqlApproval::fetch(&id).await.map_err(to_internal)? else {
+            return Err(to_internal(format!(
+                "no sql_approval request with id `{}`",
+                p.request_id
+            )));
+        };
+
+        let wait = p.wait_secs.unwrap_or(0).min(240);
+        let status = match row.status_enum() {
+            ApprovalStatus::Pending if wait > 0 => await_decision(&id, wait).await?,
+            other => Some(other),
+        };
+
+        match status {
+            Some(ApprovalStatus::Approved) => run_approved_statement(&id, &row.statement).await,
+            Some(ApprovalStatus::Denied) => Ok(CallToolResult::success(vec![ContentBlock::json(
+                serde_json::json!({
+                    "request_id": p.request_id,
+                    "status": "denied",
+                    "operator_note": row.deny_reason.unwrap_or_else(|| "no reason given".into()),
+                }),
+            )
+            .map_err(to_internal)?])),
+            Some(other) => Ok(CallToolResult::success(vec![ContentBlock::json(
+                serde_json::json!({
+                    "request_id": p.request_id,
+                    "status": other.as_str(),
+                    "result_summary": row.result_summary,
+                }),
+            )
+            .map_err(to_internal)?])),
+            None => Ok(CallToolResult::success(vec![ContentBlock::json(
+                serde_json::json!({
+                    "request_id": p.request_id,
+                    "status": "pending",
+                    "secs_remaining": row.secs_remaining(),
+                }),
+            )
+            .map_err(to_internal)?])),
+        }
+    }
+
+    #[tool(
         name = "benchmark_results_query",
         description = "Query persisted benchmark scores (benchmark_result table), newest first. Benchmarks run via the StressTests scripts ('Benchmark Suite', 'Benchmark: CPU Multi', 'Benchmark: Memory Latency', ...) — use scripts_run_remote to run them on a connected client, then read the scores here. Filter by hostname and/or kind to compare one machine against the population. Each row carries score/unit/peak/low, threads, temps, an errors count (non-zero invalidates the score), and run_ref linking the backing stress_test_run."
     )]
@@ -9789,6 +9980,14 @@ Use query_surrealdb for any ad-hoc read-only data needs (SELECT/RETURN only).
 - search_odoo_inventory — search Odoo product catalog by part number or name.
 - query_surrealdb — run arbitrary read-only SurrealQL (SELECT/RETURN only).
 
+=== SurrealQL Writes (human-approved) ===
+query_surrealdb is READ-ONLY and always will be. To write, use surrealql_execute — it queues the statement for a Root operator, who sees it verbatim in an approval modal in the admin console along with your stated reason and a count of the rows it matches, and approves or denies it. Nothing runs until they approve.
+- ACCEPTS: CREATE, UPDATE, UPSERT, DELETE, INSERT, RELATE.
+- REJECTS DDL (DEFINE / REMOVE / ALTER / REBUILD). Schema applied this way moves the live database without touching database/schema/*.surql, so surrealkit's snapshot and __rollout state drift from the schema they describe. Schema changes go through the surrealkit rollout flow — that is a human job, hand it off.
+- The `reason` is the entire basis a human has for judging the request. State what the write actually does and why ("backfill task_ref on 21 crash sightings recorded before the session opened"), never a paraphrase of the SQL.
+- surrealql_execute blocks up to wait_secs (default 90, max 240 — a longer block trips the MCP idle timeout). If nobody decides in that window you get a request_id; poll it with surrealql_approval_status, which is also what executes the statement once approved. Requests expire 15 minutes after submission.
+- DENIED means a human refused. Do not resubmit the same statement — address the objection or ask the user. Approval is single-shot: an executed request cannot be re-run, so a failed statement needs a NEW request.
+
 === Remote egui (operator must connect Web Console to a client first) ===
 Flow: remote_egui_list_targets → optional remote_egui_get_last_frame_meta → remote_egui_list_widget_anchors (see keys) → remote_egui_click_anchor and/or remote_egui_type, or remote_egui_perform_steps (click_anchor, text, sleep_ms, key_tap, etc.). Same binary path as inline viewer: EGUI_INPUT_TAG + EguiInputEvent.
 - nav.menu.view — click to open the View menu (top bar).
@@ -9918,6 +10117,131 @@ impl ServerHandler for PluginToolProvider {
 
 fn to_internal<E: std::fmt::Display>(e: E) -> ErrorData {
     ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None)
+}
+
+/// Machine name recorded on an approval request, so the operator can tell
+/// which console raised it.
+fn hostname_or_unknown() -> String {
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "unknown".to_string())
+}
+
+/// Polls one `sql_approval` row until it leaves `pending` or `wait_secs`
+/// elapses. `None` means still pending — the caller reports that and hands
+/// back a request_id rather than blocking past the MCP client's idle timeout.
+async fn await_decision(
+    id: &database::schema::RecordId,
+    wait_secs: u64,
+) -> Result<Option<database::schema::sql_approval::ApprovalStatus>, ErrorData> {
+    use database::schema::sql_approval::{ApprovalStatus, SqlApproval};
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(wait_secs);
+    loop {
+        let row = SqlApproval::fetch(id).await.map_err(to_internal)?;
+        match row {
+            Some(r) => {
+                let status = r.status_enum();
+                if status.is_terminal() {
+                    return Ok(Some(status));
+                }
+                // Expiry is wall-clock, so a request can lapse mid-wait.
+                if r.expires_at.is_some() && r.secs_remaining() == 0 {
+                    let _ = SqlApproval::expire_stale().await;
+                    return Ok(Some(ApprovalStatus::Expired));
+                }
+            }
+            // Row deleted out from under us — treat as a refusal, never as
+            // permission to run.
+            None => return Ok(Some(ApprovalStatus::Denied)),
+        }
+
+        if std::time::Instant::now() >= deadline {
+            return Ok(None);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+    }
+}
+
+/// Executes an approved statement exactly once and records the outcome.
+///
+/// The status flip to `executed`/`failed` is what makes this single-shot: a
+/// second `surrealql_approval_status` call finds a terminal status and reports
+/// it instead of re-running the write.
+async fn run_approved_statement(
+    id: &database::schema::RecordId,
+    statement: &str,
+) -> Result<CallToolResult, ErrorData> {
+    use database::schema::sql_approval::SqlApproval;
+    use database::schema::RecordIdExt;
+
+    let request_id = id.key_string();
+
+    // Re-read and claim under the approved status so two concurrent pollers
+    // cannot both execute; whoever flips it first owns the run.
+    let claimed: Option<SqlApproval> = database::db()
+        .query("UPDATE $id SET status = 'executing' WHERE status = 'approved' RETURN AFTER")
+        .bind(("id", id.clone()))
+        .await
+        .map_err(to_internal)?
+        .take(0)
+        .map_err(to_internal)?;
+
+    if claimed.is_none() {
+        let row = SqlApproval::fetch(id).await.map_err(to_internal)?;
+        let status = row
+            .as_ref()
+            .map(|r| r.status.clone())
+            .unwrap_or_else(|| "missing".to_string());
+        return Ok(CallToolResult::success(vec![ContentBlock::json(
+            serde_json::json!({
+                "request_id": request_id,
+                "status": status,
+                "result_summary": row.and_then(|r| r.result_summary),
+                "guidance": "Already executed or no longer approved; nothing was re-run."
+            }),
+        )
+        .map_err(to_internal)?]));
+    }
+
+    let outcome: Result<Vec<serde_json::Value>, String> = async {
+        let mut resp = database::db()
+            .query(statement)
+            .await
+            .map_err(|e| e.to_string())?;
+        resp.take::<Vec<serde_json::Value>>(0)
+            .map_err(|e| e.to_string())
+    }
+    .await;
+
+    match outcome {
+        Ok(rows) => {
+            let summary = format!("{} row(s) returned", rows.len());
+            let _ = SqlApproval::record_result(id, true, &summary).await;
+            Ok(CallToolResult::success(vec![ContentBlock::json(
+                serde_json::json!({
+                    "request_id": request_id,
+                    "status": "executed",
+                    "rows_returned": rows.len(),
+                    "results": rows,
+                }),
+            )
+            .map_err(to_internal)?]))
+        }
+        Err(e) => {
+            let _ = SqlApproval::record_result(id, false, &e).await;
+            Ok(CallToolResult::success(vec![ContentBlock::json(
+                serde_json::json!({
+                    "request_id": request_id,
+                    "status": "failed",
+                    "error": e,
+                    "guidance": "The statement was approved but the database rejected it. \
+                                 Fix the statement and submit a NEW request — this one is spent."
+                }),
+            )
+            .map_err(to_internal)?]))
+        }
+    }
 }
 
 /// Names the SurrealDB 3.x rule a failed query hit and how to satisfy it.

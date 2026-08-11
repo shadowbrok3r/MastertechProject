@@ -46,6 +46,7 @@ pub mod task_creation;
 pub mod crash_intel;
 pub mod driver_intel;
 pub mod ai_task;
+pub mod sql_approval;
 
 pub use task::*;
 pub use task_note::*;
@@ -73,6 +74,7 @@ pub use task_creation::*;
 pub use crash_intel::*;
 pub use driver_intel::*;
 pub use ai_task::*;
+pub use sql_approval::*;
 
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";
@@ -114,6 +116,7 @@ pub const DRIVER_SNAPSHOT_TABLE: &str = "driver_snapshot";
 pub const KNOWN_BAD_DRIVER_TABLE: &str = "known_bad_driver";
 pub const AI_TASK_TABLE: &str = "ai_task";
 pub const AI_TASK_ITEM_TABLE: &str = "ai_task_item";
+pub const SQL_APPROVAL_TABLE: &str = "sql_approval";
 
 pub use prestashop as prestashop_schema;
 

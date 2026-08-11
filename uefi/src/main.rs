@@ -1300,6 +1300,7 @@ fn run_dhcp() -> (Vec<IfaceIp>, Option<netraw::RawNet>, String) {
     // Bind the MNP→IP4 stack onto the NICs only (skips unrelated controllers that
     // could hang). This is what produces Ip4Config2 / the IP4 service binding.
     connect_network_stack();
+    logln(format!("dhcp: begin - {}", net_stack_summary()));
 
     // Primary: Ip4Config2 ifup on each interface.
     if let Ok(handles) = uefi::boot::find_handles::<Ip4Config2>() {
@@ -1329,26 +1330,39 @@ fn run_dhcp() -> (Vec<IfaceIp>, Option<netraw::RawNet>, String) {
     // up under PXE).
     {
         use uefi::proto::network::pxe::BaseCode;
-        if let Ok(handles) = uefi::boot::find_handles::<BaseCode>() {
-            for h in handles {
-                // `start` pins the IP4 policy to static and destroys the IP4
-                // children, so this open record may not survive to the drop.
-                let Ok(mut bc) = protoguard::get::<BaseCode>(h) else {
-                    continue;
-                };
-                let started = bc.start(false).is_ok();
-                if bc.dhcp(false).is_ok() {
-                    if let core::net::IpAddr::V4(v4) = bc.mode().station_ip() {
-                        if !v4.is_unspecified() {
-                            out.push(IfaceIp { ip: ip_str(v4.octets()), mask: String::new() });
+        match uefi::boot::find_handles::<BaseCode>() {
+            Ok(handles) => {
+                logln(format!("dhcp: PXE base code handles={}", handles.len()));
+                for (i, h) in handles.into_iter().enumerate() {
+                    // `start` pins the IP4 policy to static and destroys the IP4
+                    // children, so this open record may not survive to the drop.
+                    let mut bc = match protoguard::get::<BaseCode>(h) {
+                        Ok(bc) => bc,
+                        Err(e) => {
+                            logln(format!("dhcp: pxe{i} open ERR {e:?}"));
+                            continue;
                         }
+                    };
+                    if let Err(e) = bc.start(false) {
+                        logln(format!("dhcp: pxe{i} start ERR {e:?}"));
                     }
-                } else if started {
-                    // Release the stack, or the static policy `start` forced
-                    // outlives the failed attempt and blocks the next path.
-                    let _ = bc.stop();
+                    match bc.dhcp(false) {
+                        Ok(()) => {
+                            if let core::net::IpAddr::V4(v4) = bc.mode().station_ip() {
+                                logln(format!("dhcp: pxe{i} station={v4}"));
+                                if !v4.is_unspecified() {
+                                    out.push(IfaceIp {
+                                        ip: ip_str(v4.octets()),
+                                        mask: String::new(),
+                                    });
+                                }
+                            }
+                        }
+                        Err(e) => logln(format!("dhcp: pxe{i} dhcp ERR {e:?}")),
+                    }
                 }
             }
+            Err(e) => logln(format!("dhcp: no PXE base code ({e:?})")),
         }
         if out.iter().any(|i| i.ip != "0.0.0.0") {
             logln(format!("dhcp: PXE base code lease {}", out[0].ip));
@@ -1367,11 +1381,14 @@ fn run_dhcp() -> (Vec<IfaceIp>, Option<netraw::RawNet>, String) {
             );
             (out, Some(rn), status)
         }
-        Err(e) => (
-            out,
-            None,
-            format!("no IPv4 lease — {} (Ip4Config2 + PXE + raw SNP: {e})", net_stack_summary()),
-        ),
+        Err(e) => {
+            // The status line is overwritten and the step cell truncates to 21
+            // chars, so the only durable copy of the reason is the log.
+            let note =
+                format!("no IPv4 lease — {} (Ip4Config2 + PXE + raw SNP: {e})", net_stack_summary());
+            logln(format!("dhcp: FAILED - {note}"));
+            (out, None, note)
+        }
     }
 }
 

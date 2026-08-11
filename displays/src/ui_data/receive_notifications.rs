@@ -56,6 +56,17 @@ impl SharedContext {
                 Action::Create => {
                     if notification.notification_type.as_str() == "Admin" {
                         self.notification_modal = Some(notification.clone());
+                    } else if notification.notification_type.as_str() == "Approval" {
+                        // The blocking interruption is the sql_approval modal,
+                        // driven by that table's own live stream. Raising the
+                        // generic Admin modal here too would stack a second
+                        // dialog over it that cannot action anything, so this
+                        // only marks the centre unread as a backstop for a
+                        // Root operator whose live stream is down.
+                        if notification.user == user.get_id() {
+                            self.notification_center.read_notifications = false;
+                        }
+                        self.notification_center.apply_update(notification.clone());
                     } else if matches!(
                         notification.notification_type.as_str(),
                         "AI Attention" | "AI Followup"

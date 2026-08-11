@@ -168,8 +168,11 @@ fn build_dhcp(mac: [u8; 6], xid: u32, msg_type: u8, request_ip: Option<[u8; 4]>,
     build_udp_frame(mac, [0xFF; 6], [0; 4], [255; 4], 68, 67, &d)
 }
 
-/// Parse a DHCP reply frame: returns (msg_type, yiaddr, server_id, mask, gateway).
-fn parse_dhcp(frame: &[u8], xid: u32) -> Option<(u8, [u8; 4], [u8; 4], [u8; 4], [u8; 4])> {
+/// A DHCP reply's address fields: (yiaddr, server_id, mask, gateway).
+type ReplyAddrs = ([u8; 4], [u8; 4], [u8; 4], [u8; 4]);
+
+/// Parse a DHCP reply frame into its message type and address fields.
+fn parse_dhcp(frame: &[u8], xid: u32) -> Option<(u8, ReplyAddrs)> {
     if frame.len() < 14 + 20 + 8 + 240 {
         return None;
     }
@@ -224,67 +227,89 @@ fn parse_dhcp(frame: &[u8], xid: u32) -> Option<(u8, [u8; 4], [u8; 4], [u8; 4], 
         }
         i = val_start + len;
     }
-    Some((msg_type, yiaddr, server_id, mask, gateway))
+    Some((msg_type, (yiaddr, server_id, mask, gateway)))
+}
+
+/// Retransmit windows for one DORA step. A single send loses the exchange
+/// whenever the reply misses our receive window — the firmware's own MNP polls
+/// the same queue, so one-shot is not enough.
+const DORA_WINDOWS_MS: [u64; 3] = [2_000, 3_000, 5_000];
+
+/// Broadcast `frame` and wait for a `want`-typed DHCP reply, retransmitting per
+/// [`DORA_WINDOWS_MS`]. Logs the frame tally, which separates "nothing reaches
+/// us at all" from "traffic flows but the server never answered".
+fn await_reply(
+    snp: &SimpleNetwork,
+    frame: &[u8],
+    xid: u32,
+    want: u8,
+    label: &str,
+) -> Option<ReplyAddrs> {
+    let mut buf = [0u8; 2048];
+    let mut seen = 0usize;
+    for (try_n, window) in DORA_WINDOWS_MS.iter().enumerate() {
+        if let Err(e) = snp.transmit(0, frame, None, None, None) {
+            logln(format!("netraw: {label} tx{try_n} ERR {e:?}"));
+            continue;
+        }
+        let mut waited = 0u64;
+        while waited < *window {
+            let (got, spent) = recv_frame(snp, &mut buf, window - waited);
+            // 1ms floor bounds the loop when frames arrive with no wait.
+            waited += spent.max(1);
+            let Some(n) = got else { break };
+            seen += 1;
+            if let Some((mt, addrs)) = parse_dhcp(&buf[..n], xid)
+                && mt == want
+            {
+                logln(format!("netraw: {label} on try {try_n} ({seen} frames seen)"));
+                return Some(addrs);
+            }
+        }
+    }
+    logln(format!("netraw: {label} timeout after {} tries, {seen} frames seen", DORA_WINDOWS_MS.len()));
+    None
 }
 
 /// Acquire an IPv4 lease over raw SNP (DHCP DORA).
 pub fn dhcp() -> Result<RawNet, String> {
     let snp = open_snp()?;
-    let m = snp.mode().current_address.0;
+    let mode = snp.mode();
+    let m = mode.current_address.0;
     let mac = [m[0], m[1], m[2], m[3], m[4], m[5]];
+    logln(format!(
+        "netraw: snp state={:?} media={} mac={:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+        mode.state,
+        bool::from(mode.media_present),
+        mac[0],
+        mac[1],
+        mac[2],
+        mac[3],
+        mac[4],
+        mac[5]
+    ));
     let xid = u32::from_be_bytes([mac[2], mac[3], mac[4], mac[5]]);
-    let mut buf = [0u8; 2048];
 
-    // DISCOVER → OFFER
-    snp.transmit(0, &build_dhcp(mac, xid, 1, None, None), None, None, None)
-        .map_err(|e| format!("DISCOVER tx: {e:?}"))?;
-    let (mut yiaddr, mut server_id, mut mask, mut gateway) = ([0u8; 4], [0u8; 4], [0u8; 4], [0u8; 4]);
-    let mut got_offer = false;
-    let mut waited = 0u64;
-    while waited < 5000 {
-        let (got, spent) = recv_frame(&snp, &mut buf, 5000 - waited);
-        // 1ms floor bounds the loop when frames arrive with no wait.
-        waited += spent.max(1);
-        let Some(n) = got else { break };
-        if let Some((mt, yi, sid, mk, gw)) = parse_dhcp(&buf[..n], xid) {
-            if mt == 2 {
-                yiaddr = yi;
-                server_id = sid;
-                mask = mk;
-                gateway = gw;
-                got_offer = true;
-                break;
-            }
-        }
-    }
-    if !got_offer {
+    let discover = build_dhcp(mac, xid, 1, None, None);
+    let Some((yiaddr, server_id, mut mask, mut gateway)) =
+        await_reply(&snp, &discover, xid, 2, "OFFER")
+    else {
         return Err("no DHCP OFFER (raw SNP)".into());
-    }
+    };
     logln(format!("netraw: OFFER {} from server {}", ip_str(yiaddr), ip_str(server_id)));
 
-    // REQUEST → ACK
-    snp.transmit(0, &build_dhcp(mac, xid, 3, Some(yiaddr), Some(server_id)), None, None, None)
-        .map_err(|e| format!("REQUEST tx: {e:?}"))?;
-    let mut waited = 0u64;
-    while waited < 5000 {
-        let (got, spent) = recv_frame(&snp, &mut buf, 5000 - waited);
-        // 1ms floor bounds the loop when frames arrive with no wait.
-        waited += spent.max(1);
-        let Some(n) = got else { break };
-        if let Some((mt, _, _, mk, gw)) = parse_dhcp(&buf[..n], xid) {
-            if mt == 5 {
-                if mk != [0; 4] {
-                    mask = mk;
-                }
-                if gw != [0; 4] {
-                    gateway = gw;
-                }
-                logln(format!("netraw: ACK {} mask {} gw {}", ip_str(yiaddr), ip_str(mask), ip_str(gateway)));
-                return Ok(RawNet { mac, ip: yiaddr, mask, gateway });
-            }
-        }
+    let request = build_dhcp(mac, xid, 3, Some(yiaddr), Some(server_id));
+    let Some((_, _, mk, gw)) = await_reply(&snp, &request, xid, 5, "ACK") else {
+        return Err("no DHCP ACK (raw SNP)".into());
+    };
+    if mk != [0; 4] {
+        mask = mk;
     }
-    Err("no DHCP ACK (raw SNP)".into())
+    if gw != [0; 4] {
+        gateway = gw;
+    }
+    logln(format!("netraw: ACK {} mask {} gw {}", ip_str(yiaddr), ip_str(mask), ip_str(gateway)));
+    Ok(RawNet { mac, ip: yiaddr, mask, gateway })
 }
 
 fn build_arp_request(src_mac: [u8; 6], src_ip: [u8; 4], target_ip: [u8; 4]) -> Vec<u8> {
