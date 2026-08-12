@@ -7,6 +7,7 @@ use database::schema::User;
 use std::sync::Arc;
 
 use super::carl_dark::{paint_aesthetix_colors, Aesthetix, CarlDark};
+use super::galactic_glass;
 use super::mtech_glass::{glass_params_for_style, glassify, MtechGlass};
 use super::neon_glass::{self, NeonPalette};
 use super::soft_glass::{self, SoftPalette};
@@ -74,7 +75,7 @@ fn styles_visually_equal(a: &Style, b: &Style) -> bool {
 
 /// Recovers the preset a saved style was built from, so its semantic colors survive restart.
 fn preset_matching_style(style: &Style) -> Option<PresetStyles> {
-    const PRESETS: [PresetStyles; 25] = [
+    const PRESETS: [PresetStyles; 26] = [
         PresetStyles::ShippedClassic,
         PresetStyles::LegacyClassic,
         PresetStyles::DefaultEgui,
@@ -84,6 +85,7 @@ fn preset_matching_style(style: &Style) -> Option<PresetStyles> {
         PresetStyles::AuroraGlass,
         PresetStyles::SupernovaGlass,
         PresetStyles::EventHorizonGlass,
+        PresetStyles::GalacticGlass,
         PresetStyles::ObsidianGlass,
         PresetStyles::VelvetGlass,
         PresetStyles::TwilightGlass,
@@ -248,6 +250,7 @@ pub fn style_for_preset(preset: PresetStyles) -> Style {
         | PresetStyles::AuroraGlass
         | PresetStyles::SupernovaGlass
         | PresetStyles::EventHorizonGlass => neon_glass::neon_style(neon_palette_for_preset(preset)),
+        PresetStyles::GalacticGlass => galactic_glass::galactic_style(),
         PresetStyles::ObsidianGlass
         | PresetStyles::VelvetGlass
         | PresetStyles::TwilightGlass
@@ -291,6 +294,7 @@ pub fn semantic_colors_for_preset(preset: PresetStyles) -> (Color32, Color32) {
         | PresetStyles::EventHorizonGlass => {
             neon_glass::neon_semantic_colors(neon_palette_for_preset(preset))
         }
+        PresetStyles::GalacticGlass => galactic_glass::galactic_semantic_colors(),
         PresetStyles::ObsidianGlass
         | PresetStyles::VelvetGlass
         | PresetStyles::TwilightGlass
@@ -359,6 +363,7 @@ pub fn glass_params_for_preset(preset: PresetStyles) -> GlassParams {
         | PresetStyles::EventHorizonGlass => {
             neon_glass::neon_glass_params(neon_palette_for_preset(preset))
         }
+        PresetStyles::GalacticGlass => galactic_glass::galactic_glass_params(),
         PresetStyles::ObsidianGlass
         | PresetStyles::VelvetGlass
         | PresetStyles::TwilightGlass
@@ -511,6 +516,7 @@ impl ThemeConfig {
                     ui.selectable_value(&mut self.preset_style, PresetStyles::AuroraGlass, neon_glass::AURORA.name);
                     ui.selectable_value(&mut self.preset_style, PresetStyles::SupernovaGlass, neon_glass::SUPERNOVA.name);
                     ui.selectable_value(&mut self.preset_style, PresetStyles::EventHorizonGlass, neon_glass::EVENT_HORIZON.name);
+                    ui.selectable_value(&mut self.preset_style, PresetStyles::GalacticGlass, galactic_glass::NAME);
                     ui.separator();
                     ui.label("Soft glass · low chroma");
                     ui.selectable_value(&mut self.preset_style, PresetStyles::ObsidianGlass, soft_glass::OBSIDIAN.name);
@@ -1135,6 +1141,7 @@ pub enum PresetStyles {
     AuroraGlass,
     SupernovaGlass,
     EventHorizonGlass,
+    GalacticGlass,
     ObsidianGlass,
     VelvetGlass,
     TwilightGlass,
@@ -1172,6 +1179,7 @@ impl PresetStyles {
             PresetStyles::AuroraGlass => neon_glass::AURORA.name,
             PresetStyles::SupernovaGlass => neon_glass::SUPERNOVA.name,
             PresetStyles::EventHorizonGlass => neon_glass::EVENT_HORIZON.name,
+            PresetStyles::GalacticGlass => galactic_glass::NAME,
             PresetStyles::ObsidianGlass => soft_glass::OBSIDIAN.name,
             PresetStyles::VelvetGlass => soft_glass::VELVET.name,
             PresetStyles::TwilightGlass => soft_glass::TWILIGHT.name,
@@ -1203,6 +1211,7 @@ impl PresetStyles {
             "Aurora Glass" => Self::AuroraGlass,
             "Supernova Glass" => Self::SupernovaGlass,
             "Event Horizon Glass" => Self::EventHorizonGlass,
+            "Galactic Glass" => Self::GalacticGlass,
             "Obsidian Glass" => Self::ObsidianGlass,
             "Velvet Glass" => Self::VelvetGlass,
             "Twilight Glass" => Self::TwilightGlass,

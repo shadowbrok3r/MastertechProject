@@ -15,6 +15,7 @@ pub mod tokyo_dark;
 pub mod rerun_mtech;
 pub mod mtech_glass;
 pub mod neon_glass;
+pub mod galactic_glass;
 pub mod soft_glass;
 pub mod glass_backdrop;
 pub mod glass_card;
