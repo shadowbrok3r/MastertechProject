@@ -147,6 +147,7 @@ struct Config {
     ws_pong_timeout_secs: u64,
     tunnel_idle_secs: u64,
     ws_close_timeout_secs: u64,
+    ws_disconnect_grace_secs: u64,
 }
 
 impl Config {
@@ -171,7 +172,13 @@ impl Config {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(5);
-        Self { ws_activity_write_secs, tunnel_pending_ttl_secs, ws_pong_timeout_secs, tunnel_idle_secs, ws_close_timeout_secs }
+        // Covers the agent's room-socket recycle (immediate redial), its 60 s
+        // reconnect-backoff ceiling, and a Cloudflare cold upgrade (45 s).
+        let ws_disconnect_grace_secs = std::env::var("WS_DISCONNECT_GRACE_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(90);
+        Self { ws_activity_write_secs, tunnel_pending_ttl_secs, ws_pong_timeout_secs, tunnel_idle_secs, ws_close_timeout_secs, ws_disconnect_grace_secs }
     }
 }
 
@@ -762,15 +769,37 @@ impl ChatServer {
 
         // Best-effort DB write; a DB error must not skip the in-memory cleanup below.
         if role == "client" {
-            let result: Result<Option<ConnectedClient>, _> = db()
-                .query("UPDATE connected_client SET connected = false WHERE connection_string == $connection_id")
-                .bind(("connection_id", room_id.clone()))
-                .await
-                .and_then(|mut r| r.take(0));
-            match result {
-                Ok(client) => log::info!("Client role disconnected, DB updated: {client:?}"),
-                Err(e) => log::warn!("cleanup_session: connected=false write failed for room {room_id}: {e:?}"),
-            }
+            // Deferred write: agents recycle their room socket (~10 min cadence)
+            // and redial transient drops within seconds, so flag offline only if
+            // the client slot is still vacant after the grace window.
+            let rooms = Arc::clone(&self.rooms);
+            let room_id_db = room_id.clone();
+            tokio::spawn(async move {
+                let grace = config().ws_disconnect_grace_secs;
+                if grace > 0 {
+                    tokio::time::sleep(Duration::from_secs(grace)).await;
+                    let reclaimed = rooms
+                        .lock()
+                        .await
+                        .get(&room_id_db)
+                        .is_some_and(|r| r.client.is_some());
+                    if reclaimed {
+                        log::info!(
+                            "cleanup_session: client re-registered in room {room_id_db} within {grace}s grace; keeping connected"
+                        );
+                        return;
+                    }
+                }
+                let result: Result<Option<ConnectedClient>, _> = db()
+                    .query("UPDATE connected_client SET connected = false WHERE connection_string == $connection_id AND connected == true")
+                    .bind(("connection_id", room_id_db.clone()))
+                    .await
+                    .and_then(|mut r| r.take(0));
+                match result {
+                    Ok(client) => log::info!("Client role disconnected, DB updated: {client:?}"),
+                    Err(e) => log::warn!("cleanup_session: connected=false write failed for room {room_id_db}: {e:?}"),
+                }
+            });
         } else {
             log::info!("Master role disconnected from room {room_id}, DB not updated (client still connected)");
         }
@@ -800,8 +829,8 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     let cfg = config();
     info!(
-        "Config: ws_activity_write_secs={}, tunnel_pending_ttl_secs={}, ws_pong_timeout_secs={}, tunnel_idle_secs={}, ws_close_timeout_secs={}",
-        cfg.ws_activity_write_secs, cfg.tunnel_pending_ttl_secs, cfg.ws_pong_timeout_secs, cfg.tunnel_idle_secs, cfg.ws_close_timeout_secs
+        "Config: ws_activity_write_secs={}, tunnel_pending_ttl_secs={}, ws_pong_timeout_secs={}, tunnel_idle_secs={}, ws_close_timeout_secs={}, ws_disconnect_grace_secs={}",
+        cfg.ws_activity_write_secs, cfg.tunnel_pending_ttl_secs, cfg.ws_pong_timeout_secs, cfg.tunnel_idle_secs, cfg.ws_close_timeout_secs, cfg.ws_disconnect_grace_secs
     );
     match init_database().await {
         Ok(_) => log::info!("Initialized Database"),

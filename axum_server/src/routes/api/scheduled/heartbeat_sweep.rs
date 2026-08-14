@@ -1,11 +1,11 @@
 //! Heartbeat sweep cron job.
 //!
 //! Every minute, flip `connected = false` on any `connected_client` row
-//! whose `last_update` is older than the stale threshold (~3 minutes).
+//! whose `last_update` is older than the stale threshold (30 minutes).
 //! The agent heartbeat writer (in `Mastertech4.0/src/tcp_listener.rs`)
-//! bumps `last_update` every 60 s, so missing three consecutive writes
-//! is strong evidence the agent process is stuck, crashed without
-//! graceful shutdown, or its DB path is broken.
+//! bumps `last_update` every 15 minutes and the relay's activity stamp
+//! every 5, so a 30-minute gap is strong evidence the agent process is
+//! stuck, crashed without graceful shutdown, or its DB path is broken.
 //!
 //! This is the *catch-all* for stale-flag handling — the graceful-exit
 //! writer (`Mastertech4.0/src/main.rs::on_exit`) flips the flag within
@@ -14,8 +14,8 @@
 //! permanent "online" badge for crashed agents until the 2-day cleanup
 //! script (`database/src/schema/utilities.rs`) finally runs.
 //!
-//! The threshold (`3m`) is intentionally generous compared to the 60-s
-//! heartbeat cadence so a single slow DB write or transient network blip
+//! The threshold (`30m`) is intentionally generous compared to the 15-min
+//! heartbeat cadence so a single missed write or transient network blip
 //! doesn't flip a healthy agent offline. Tighten only if the false-
 //! positive rate is low and faster offline detection matters.
 

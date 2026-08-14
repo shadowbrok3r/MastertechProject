@@ -166,6 +166,11 @@ impl crate::app_state::SharedContext {
         // A fresh login starts the reconnect supervisor from a clean slate so
         // stale backoff/error state from a prior session can't carry over.
         if first_load {
+            // Root operators start on the fleet-wide view; non-root is clamped
+            // to MyClients by `ClientScope::effective` regardless.
+            if user.get_authorization() == database::schema::user::UserAuthorization::Root {
+                self.client_scope = ClientScope::AllClients;
+            }
             self.reconnect_attempts = 0;
             self.needs_reconnect = false;
             self.last_stream_error_at = None;

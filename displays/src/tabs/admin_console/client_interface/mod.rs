@@ -133,6 +133,8 @@ pub struct WebSocketClient {
     stop_rx: Receiver<()>,
     /// Track connection status and last pong time
     pub is_connected: bool,
+    /// True once this connection epoch wrote `connected = true` to the DB row.
+    row_connected_written: bool,
     /// True once the transport has opened at least once; suppresses duplicate
     /// "Connection opened" history entries on automatic redials.
     pub seen_first_open: bool,
@@ -345,6 +347,7 @@ Get-WmiObject")
             notifications: Default::default(),
             resource_monitor: ResourceMonitor::default(),
             is_connected: false,
+            row_connected_written: false,
             seen_first_open: false,
             last_pong_time: None,
             last_app_ping_sent: None,

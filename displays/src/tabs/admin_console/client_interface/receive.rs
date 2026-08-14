@@ -19,6 +19,35 @@ const TRANSFER_BAR_LINGER: std::time::Duration = std::time::Duration::from_milli
 const MAX_BUFFER_BYTES: usize = 256 * 1024;
 
 impl WebSocketClient {
+    /// One write per connection epoch: restores `connected = true` on the DB
+    /// row once the peer has answered, so a hash-connected client re-enters
+    /// the live-query scope and the sidepanel list. Conditional on the row
+    /// being `false` so healthy sessions produce no write or live fan-out.
+    fn mark_row_connected(&mut self) {
+        if self.row_connected_written {
+            return;
+        }
+        self.row_connected_written = true;
+        let cs = self.client.connection_string.clone();
+        if cs.trim().is_empty() {
+            return;
+        }
+        use crate::{PlatformSpawner, Spawner};
+        PlatformSpawner::spawn(async move {
+            let res = database::db()
+                .query(
+                    "UPDATE connected_client SET connected = true, last_update = time::now() \
+                     WHERE connection_string == $cs AND connected == false",
+                )
+                .bind(("cs", cs.clone()))
+                .await;
+            match res {
+                Ok(_) => log::debug!("mark_row_connected -> {cs}"),
+                Err(e) => log::warn!("mark_row_connected -> write failed for {cs}: {e}"),
+            }
+        });
+    }
+
     pub fn receive(&mut self, ctx: &Context) {
         #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
         if let Some(rx) = self.remote_egui_mcp_rx.as_ref() {
@@ -357,6 +386,7 @@ impl WebSocketClient {
                         WsMessage::Pong(_) => {
                             self.last_pong_time = Some(web_time::Instant::now());
                             self.is_connected = true;
+                            self.mark_row_connected();
                             self.connection_status = "Connected".to_string();
                         },
                         _ => {}
@@ -366,6 +396,9 @@ impl WebSocketClient {
                     let is_redial = self.seen_first_open;
                     self.seen_first_open = true;
                     self.is_connected = true;
+                    // Native transports emit Opened only after a first inbound
+                    // frame from the peer, so this is a verified response.
+                    self.mark_row_connected();
                     self.connection_status = "Connected".to_string();
                     if !is_redial {
                         self.history.push(History {
@@ -397,6 +430,7 @@ impl WebSocketClient {
                             .map(|t| web_time::Instant::now().duration_since(t)),
                     );
                     self.is_connected = false;
+                    self.row_connected_written = false;
                     self.connection_status = "Disconnected".to_string();
                     self.client_version = None;
                     self.cmd_protocol_mismatch = false;
@@ -422,11 +456,13 @@ impl WebSocketClient {
                         // report disconnected so liveness dots and the
                         // open_session gate stay honest.
                         self.is_connected = false;
+                        self.row_connected_written = false;
                         self.connection_status = "Reconnecting…".to_string();
                         self.client_version = None;
                         self.cmd_protocol_mismatch = false;
                     } else {
                         self.is_connected = false;
+                        self.row_connected_written = false;
                         self.connection_status = format!("Error: {err}");
                         self.client_version = None;
                         self.cmd_protocol_mismatch = false;
@@ -1241,6 +1277,7 @@ impl WebSocketClient {
             "CLIENT_CONNECTED" => {
                 log::info!("Client reconnected to room");
                 self.is_connected = true;
+                self.mark_row_connected();
                 self.connection_status = "Client Connected".to_string();
                 self.history.push(History {
                     from: "System".to_string(),
@@ -1252,6 +1289,7 @@ impl WebSocketClient {
             "CLIENT_DISCONNECTED" => {
                 log::info!("Client disconnected from room");
                 self.is_connected = false;
+                self.row_connected_written = false;
                 self.connection_status = "Client Disconnected".to_string();
                 self.client_version = None;
                 self.cmd_protocol_mismatch = false;

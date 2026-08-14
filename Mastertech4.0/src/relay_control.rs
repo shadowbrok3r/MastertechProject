@@ -66,6 +66,27 @@ const MAX_SOCKET_AGE: Duration = Duration::from_secs(600);
 /// Event-drain poll interval.
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
+/// Restores `connected = true` after a room (re)registration. The relay flips
+/// the flag false when a prior socket for this room dies; conditional so a
+/// row that is already `true` produces no write and no live-query fan-out.
+pub fn reassert_connected(connection_string: &str) {
+    let cs = connection_string.to_string();
+    tokio::spawn(async move {
+        let res = database::db()
+            .query(
+                "UPDATE connected_client SET connected = true, last_update = time::now() \
+                 WHERE connection_string == $cs AND connected == false",
+            )
+            .bind(("cs", cs.clone()))
+            .await
+            .and_then(|r| r.check());
+        match res {
+            Ok(_) => log::debug!("reassert_connected -> {cs}"),
+            Err(e) => log::debug!("reassert_connected -> write failed for {cs}: {e:?}"),
+        }
+    });
+}
+
 /// Spawn the relay room connection. Idempotent; safe to call every frame.
 pub fn spawn_relay_control_channel() {
     if STARTED.swap(true, Ordering::SeqCst) {
@@ -125,7 +146,7 @@ async fn run() {
             return;
         }
         match ewebsock::connect(url.clone(), ewebsock::Options::default()) {
-            Ok((sender, receiver)) => match serve_room_socket(sender, receiver).await {
+            Ok((sender, receiver)) => match serve_room_socket(sender, receiver, &connection_string).await {
                 SocketEnd::Recycled => {
                     backoff = MIN_BACKOFF;
                     continue;
@@ -159,6 +180,7 @@ async fn run() {
 async fn serve_room_socket(
     mut sender: ewebsock::WsSender,
     receiver: ewebsock::WsReceiver,
+    connection_string: &str,
 ) -> SocketEnd {
     let mut opened = false;
     let started = tokio::time::Instant::now();
@@ -177,6 +199,7 @@ async fn serve_room_socket(
                 WsEvent::Opened => {
                     opened = true;
                     clear_churn();
+                    reassert_connected(connection_string);
                     if OPENED_ONCE.swap(true, Ordering::SeqCst) {
                         log::debug!("relay_control -> room channel open");
                     } else {

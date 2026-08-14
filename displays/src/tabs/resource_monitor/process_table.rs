@@ -1,5 +1,6 @@
 use egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, DataTable, Renderer, RowViewer, UiAction};
 use eframe::egui::{Button, CentralPanel, ComboBox, Id, KeyboardShortcut, RichText, ScrollArea, Spinner, TextEdit, Ui, Vec2, Widget, scroll_area};
+use crate::ui_tools::icons;
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::Process;
 use egui_extras::Column;
@@ -88,21 +89,43 @@ impl ProcessTableViewer {
         }
     }
 
-    /// Set process data, but only if enough time has passed since last update
+    /// Set process data, but only if enough time has passed since last update.
+    /// Held while a row is selected so the selected process stays put.
     pub fn set_data(&mut self, data: Vec<Process>) {
+        if self.process_viewer.selected.is_some() {
+            return;
+        }
         let elapsed = self.last_update.elapsed().as_millis() as u64;
         if self.immediate_refresh || elapsed >= self.refresh_rate_ms {
             self.immediate_refresh = false;
-            self.process_table.replace(data);
+            self.merge_rows(data);
             self.last_update = Instant::now();
         }
     }
-    
+
     /// Force set data, ignoring the refresh rate
     pub fn force_set_data(&mut self, data: Vec<Process>) {
         self.immediate_refresh = false;
-        self.process_table.replace(data);
+        self.merge_rows(data);
         self.last_update = Instant::now();
+    }
+
+    /// Updates rows in place keyed by PID, so a process keeps its slot across
+    /// refreshes. Replacing the whole vec re-ordered every row each tick,
+    /// because the agent's process list arrives in hash-map order.
+    fn merge_rows(&mut self, incoming: Vec<Process>) {
+        let mut incoming: std::collections::HashMap<u32, Process> =
+            incoming.into_iter().map(|p| (p.id, p)).collect();
+        let rows: &mut Vec<Process> = &mut self.process_table;
+        rows.retain(|row| incoming.contains_key(&row.id));
+        for row in rows.iter_mut() {
+            if let Some(fresh) = incoming.remove(&row.id) {
+                *row = fresh;
+            }
+        }
+        let mut fresh: Vec<Process> = incoming.into_values().collect();
+        fresh.sort_by_key(|p| p.id);
+        rows.extend(fresh);
     }
     
     /// Try to receive a process action from the context menu
@@ -139,7 +162,7 @@ impl ProcessTableViewer {
                     });
                 
                 ui.add_space(10.);
-                
+
                 let label = if self.process_viewer.open_hotkeys {
                     " Hide Hotkeys "
                 } else {
@@ -147,6 +170,29 @@ impl ProcessTableViewer {
                 };
                 if Button::new(label).ui(ui).clicked() {
                     self.process_viewer.open_hotkeys = !self.process_viewer.open_hotkeys;
+                }
+
+                // Selecting a row holds the refresh so the selected process
+                // doesn't move out from under the pointer while it's read.
+                if let Some(held) = self.process_viewer.selected.clone() {
+                    ui.add_space(10.);
+                    ui.label(
+                        RichText::new(format!(
+                            "{} Paused on {} ({})",
+                            icons::PAUSE,
+                            held.name,
+                            held.id
+                        ))
+                        .color(ui.global_style().visuals.warn_fg_color),
+                    );
+                    let release = Button::new(format!("{} Resume", icons::PLAY))
+                        .ui(ui)
+                        .on_hover_text("Resume live refresh (Esc)")
+                        .clicked();
+                    if release || ui.input(|i| i.key_pressed(eframe::egui::Key::Escape)) {
+                        self.process_viewer.selected = None;
+                        self.immediate_refresh = true;
+                    }
                 }
             });
         });
@@ -407,14 +453,27 @@ impl RowViewer<Process> for ProcessRowViewer {
         row_r: &Process,
         column: usize,
     ) -> std::cmp::Ordering {
+        // Numeric columns compare as numbers; `to_string().cmp()` ordered them
+        // lexicographically, which ranked 95.21 above 70154.97.
+        use std::cmp::Ordering;
+        let num = |l: f32, r: f32| l.partial_cmp(&r).unwrap_or(Ordering::Equal);
         match column {
             0 => row_l.id.cmp(&row_r.id),
             1 => row_l.name.cmp(&row_r.name),
-            2 => row_l.cpu_usage.to_string().cmp(&row_r.cpu_usage.to_string()),
-            3 => row_l.memory.to_string().cmp(&row_r.memory.to_string()),
-            4 => row_l.process_disk_usage.total_read_bytes.to_string().cmp(&row_r.process_disk_usage.total_read_bytes.to_string()),
+            2 => num(row_l.cpu_usage, row_r.cpu_usage),
+            3 => num(row_l.memory, row_r.memory),
+            4 => num(
+                row_l.process_disk_usage.total_read_bytes,
+                row_r.process_disk_usage.total_read_bytes,
+            )
+            .then_with(|| {
+                num(
+                    row_l.process_disk_usage.total_written_bytes,
+                    row_r.process_disk_usage.total_written_bytes,
+                )
+            }),
             5 => row_l.cmd.cmp(&row_r.cmd),
-            _ => row_l.id.cmp(&row_r.id)
+            _ => row_l.id.cmp(&row_r.id),
         }
     }
 

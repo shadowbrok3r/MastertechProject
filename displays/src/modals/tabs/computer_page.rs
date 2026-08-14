@@ -1,4 +1,4 @@
-use eframe::egui::{Color32, ComboBox, Grid, RichText, ScrollArea, TextEdit, Ui, Vec2, Vec2b, Widget};
+use eframe::egui::{Button, Color32, ComboBox, Grid, RichText, ScrollArea, TextEdit, Ui, Vec2, Vec2b, Widget};
 use database::schema::{random_record_id, ComputerData, RecordIdExt, TicketData, COMPUTER_TABLE};
 
 use crate::{ui_tools::icons, PlatformSpawner, Spawner};
@@ -19,6 +19,50 @@ pub struct ComputerSearchData<'a> {
     /// Set by this widget to a customer computer the user wants to view in a
     /// separate modal, without changing the task's current computer.
     pub open_in_second_modal: &'a mut Option<ComputerData>,
+}
+
+/// Root-only delete for a computer row, used to clear placeholder records built
+/// from an order rather than from client hardware. The delete refuses while the
+/// row is still referenced by a client, diagnostic session, or service order.
+fn delete_computer_button(ui: &mut Ui, computer: &ComputerData) {
+    use crate::{get_toast_sender, ToastMessage};
+
+    let placeholder = database::schema::entity_link::is_placeholder_computer(computer);
+    let hint = if placeholder {
+        "Double click to delete this placeholder computer record.\n\
+         Refused if any client, diagnostic session, or service order still links to it."
+    } else {
+        "Double click to delete this computer record.\n\
+         Refused if any client, diagnostic session, or service order still links to it."
+    };
+    let response = Button::new(RichText::new(format!("{} Delete", icons::TRASH)).color(Color32::LIGHT_RED))
+        .ui(ui)
+        .on_hover_text(hint);
+
+    if !response.double_clicked() {
+        return;
+    }
+    let id = computer.id.clone();
+    let label = computer.id.key_string();
+    PlatformSpawner::spawn(async move {
+        let toast = get_toast_sender();
+        match database::schema::entity_link::delete_computer_if_unreferenced(&id).await {
+            Ok(true) => {
+                log::info!("Deleted computer record {label}");
+                let _ = toast.try_send(ToastMessage::Success(format!("Deleted computer {label}")));
+            }
+            Ok(false) => {
+                log::info!("Refused to delete computer {label}: still referenced");
+                let _ = toast.try_send(ToastMessage::Warning(format!(
+                    "Computer {label} is still linked to a client, diagnostic session, or service order"
+                )));
+            }
+            Err(e) => {
+                log::error!("Error deleting computer {label}: {e:?}");
+                let _ = toast.try_send(ToastMessage::Error(format!("Delete failed: {e}")));
+            }
+        }
+    });
 }
 
 /// Build the display label for a computer in the selector.
@@ -150,20 +194,25 @@ pub fn display_computer_page_with_search(
                 }
             }
             
-            if ui.button("Update").clicked() {
-                let computer_data: ComputerData = computer.clone();
-                let ticket_computer = ticket.computer.clone();
-                PlatformSpawner::spawn(async move {
-                    match computer_data.update_computer().await {
-                        Ok(pc) => log::info!("Updated computer: {pc:?}"),
-                        Err(e) => log::error!("Error creating computer: {e:?}"),
-                    }
-                    // Also update the ticket if computer was selected
-                    if ticket_computer.is_some() {
-                        // The ticket update will be handled separately
-                    }
-                });
-            }
+            ui.horizontal(|ui| {
+                if ui.button("Update").clicked() {
+                    let computer_data: ComputerData = computer.clone();
+                    let ticket_computer = ticket.computer.clone();
+                    PlatformSpawner::spawn(async move {
+                        match computer_data.update_computer().await {
+                            Ok(pc) => log::info!("Updated computer: {pc:?}"),
+                            Err(e) => log::error!("Error creating computer: {e:?}"),
+                        }
+                        // Also update the ticket if computer was selected
+                        if ticket_computer.is_some() {
+                            // The ticket update will be handled separately
+                        }
+                    });
+                }
+                if crate::tabs::admin_console::current_user_is_root() {
+                    delete_computer_button(ui, computer);
+                }
+            });
             ui.group(|ui| {
                 Grid::new(format!("{} grid", computer.cpu))
                 .max_col_width(avail_size.x / 2.14)

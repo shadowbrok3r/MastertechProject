@@ -34,6 +34,8 @@ pub enum ClientUiAction {
     /// Root-only: look up a client by `connection_string` or `client_hash` and
     /// open a session to it, bypassing the live query's user/store scope.
     ConnectByIdentifier(String),
+    /// Open a read-only detail window for a linked customer / computer record.
+    ViewRecord(super::RecordKind, database::schema::RecordId),
 }
 
 impl AdminConsole {
@@ -137,6 +139,9 @@ impl AdminConsole {
                 PlatformSpawner::spawn(async move {
                     let _ = tx.send(lookup_client_by_identifier(&query).await);
                 });
+            }
+            ClientUiAction::ViewRecord(kind, id) => {
+                self.record_viewer.open(kind, id);
             }
             ClientUiAction::RepairAssociations(client) => {
                 let cs = client.connection_string.clone();

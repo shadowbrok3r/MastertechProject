@@ -1,7 +1,5 @@
 use eframe::egui::{CentralPanel, Context, ViewportBuilder, ViewportCommand, ViewportId};
 use std::sync::{atomic::Ordering, Arc};
-use displays::tabs::admin_console::client_interface::TransportKind;
-use displays::tabs::admin_console::{AdminConsole, SessionLayout};
 use crate::app_state::MasterTechApp;
 
 impl MasterTechApp{
@@ -59,103 +57,9 @@ impl MasterTechApp{
         // operator-visible reconnect UI, so this whole viewport block
         // was removed.  See git history for the original implementation.
 
-        let layout = &mut self.context.shared_ctx.web_console_layout;
-        for client in self.context.shared_ctx.clients.clone() {
-            let is_floating = layout
-                .session_layout
-                .get(&client.connection_string)
-                .copied()
-                .unwrap_or_default()
-                == SessionLayout::Floating;
-
-            if !is_floating {
-                continue;
-            }
-
-            let client_hash = client.connection_string.clone();
-            let client_friendly_name = client.friendly_name.clone();
-            let viewport_id =
-                ViewportId::from_hash_of(format!("deferred_viewport_ws_connection {client_hash}"));
-            let viewport_builder = ViewportBuilder::default()
-                .with_title(format!(
-                    "{}",
-                    client_friendly_name.unwrap_or(client_hash.clone())
-                ))
-                .with_inner_size([400.0, 500.0]);
-
-            ctx.show_viewport_immediate(viewport_id, viewport_builder, |ctx, _class| {
-                #[allow(deprecated)]
-                CentralPanel::default().show(ctx, |ui| {
-                    let tx = layout.ui_actions_channel.0.clone();
-
-                    let is_ws_connected = layout
-                        .ws_clients
-                        .get(&client.connection_string)
-                        .map(|wsc| {
-                            if wsc.transport.kind() == TransportKind::Tcp {
-                                wsc.is_connected
-                            } else {
-                                wsc.is_connected && wsc.last_pong_time.is_some()
-                            }
-                        })
-                        .unwrap_or(false);
-
-                    let inventory = layout
-                        .security_inventory
-                        .get(&client.connection_string)
-                        .map(|v| v.as_slice());
-                    // Floating-viewport renderer has no access to
-                    // the SharedContext-side reachability cache.
-                    // Passing `None` is correct here — the
-                    // detached window doesn't need to show the
-                    // probe state (operators look at that in the
-                    // main admin console row).
-                    //
-                    // Same goes for `fk_health_tx`/`fk_health_cache`:
-                    // the detached viewport never owns a probe channel.
-                    // Pass an empty placeholder pair so the shared
-                    // `client_header` signature stays unified with the
-                    // primary admin-console caller (which feeds it real
-                    // `ws_client.fk_health_tx`/`fk_health_cache`).  The
-                    // viewport will render FK health as "unknown"; the
-                    // docked row stays the source of truth for it.
-                    let (fk_health_tx, _fk_health_rx) =
-                        crossbeam::channel::unbounded::<(String, bool, bool)>();
-                    let fk_health_cache: std::collections::HashMap<
-                        String,
-                        (bool, bool),
-                    > = std::collections::HashMap::new();
-                    let transport = layout
-                        .ws_clients
-                        .get(&client.connection_string)
-                        .map(|w| (w.transport.kind(), w.is_connected));
-                    ui.horizontal(|ui| {
-                        AdminConsole::client_header(
-                            ui,
-                            tx,
-                            &client,
-                            layout.session_layout.clone(),
-                            layout.focused_client.as_deref(),
-                            is_ws_connected,
-                            &fk_health_tx,
-                            &fk_health_cache,
-                            inventory,
-                            None,
-                            transport,
-                        );
-                    });
-                    if let Some(ws_client) = layout.ws_clients.get_mut(&client.connection_string) {
-                        ws_client.show(ui);
-                    }
-                });
-
-                if ctx.input(|i| i.viewport().close_requested()) {
-                    layout
-                        .session_layout
-                        .insert(client.connection_string.clone(), SessionLayout::Docked);
-                }
-            });
-        }
+        // Floating admin sessions render in `SharedContext::handle_viewports`
+        // (displays/src/viewports), which runs right after this. A second
+        // renderer here opened a duplicate OS window per undocked client.
 
         #[cfg(not(target_arch = "wasm32"))]
         for client in self.context.shared_ctx.clients.clone() {

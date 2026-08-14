@@ -22,10 +22,12 @@ pub mod client_interface;
 pub mod preboot_direct;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod preboot_viewer;
+pub mod record_viewer;
 pub mod relink_popup;
 pub mod sql_approval_popup;
 pub mod ui;
 
+pub use record_viewer::{RecordKind, RecordViewer};
 pub use relink_popup::RelinkClientPopup;
 pub use sql_approval_popup::SqlApprovalQueue;
 
@@ -269,6 +271,9 @@ pub struct AdminConsole {
     /// anyone else. See `sql_approval_popup.rs`.
     #[serde(skip)]
     pub sql_approvals: SqlApprovalQueue,
+    /// Detail windows for the customer / computer rows a client links to.
+    #[serde(skip)]
+    pub record_viewer: RecordViewer,
     /// `(customer_exists, computer_exists)` per `connection_string`.
     #[serde(skip)]
     pub fk_health_cache: HashMap<String, (bool, bool)>,
@@ -335,6 +340,7 @@ impl AdminConsole {
             ai_playground: EnhancedAiPlayground::default(),
             relink_popup: None,
             sql_approvals: SqlApprovalQueue::default(),
+            record_viewer: RecordViewer::default(),
             fk_health_cache: HashMap::new(),
             fk_health_tx,
             fk_health_rx,
@@ -1168,7 +1174,21 @@ impl SharedContext {
                                 .unwrap_or_else(|| "Unknown store".to_string());
                             by_store.entry(store).or_default().push(index);
                         }
-                        by_store.into_iter().map(|(s, v)| (Some(s), v)).collect()
+                        let mut groups: Vec<(Option<String>, Vec<usize>)> =
+                            by_store.into_iter().map(|(s, v)| (Some(s), v)).collect();
+                        // Signed-in user's store leads; the rest stay alphabetical.
+                        let my_store = crate::get_current_user_from_auth()
+                            .map(|u| u.get_store().as_str().to_string());
+                        if let Some(my_store) = my_store {
+                            if let Some(pos) = groups
+                                .iter()
+                                .position(|(s, _)| s.as_deref() == Some(my_store.as_str()))
+                            {
+                                let own = groups.remove(pos);
+                                groups.insert(0, own);
+                            }
+                        }
+                        groups
                     } else {
                         vec![(None, visible_indices.clone())]
                     };
@@ -1350,6 +1370,8 @@ impl SharedContext {
         // Pre-boot terminal viewer window (Ctrl+Shift+B), self-contained.
         #[cfg(not(target_arch = "wasm32"))]
         self.web_console_layout.preboot_window(ui.ctx());
+
+        self.web_console_layout.record_viewer.ui(ui.ctx());
 
         // ── Batch-action confirm dialog (slice 4) ─────────────────────
         //

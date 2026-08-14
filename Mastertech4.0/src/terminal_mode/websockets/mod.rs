@@ -1165,14 +1165,15 @@ impl TerminalWebsocketClient {
 
                     // Handle WebSocket events (e.g., READY or TerminalEvent from egui)
                     while let Some(event) = receiver.try_recv() {
-                        // log::info!("Received WebSocket event: {:?}", event);
-                        // update client to connected = false in db
                         last_event_at = Instant::now();
                         match event {
                             WsEvent::Opened => {
                                 log::info!("start_websocket_sender -> Connection Opened");
                                 opened = true;
                                 reconnect_attempts = 0;
+                                // Relay cleanup flips connected=false on socket churn;
+                                // restore it on every re-registration.
+                                crate::relay_control::reassert_connected(&self.client.connection_string);
                                 let _ = connection_state_tx.send((true, "Connected".to_string()));
                             },
                             WsEvent::Error(e) => { 

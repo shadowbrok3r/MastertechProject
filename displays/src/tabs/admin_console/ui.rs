@@ -737,11 +737,22 @@ fn client_details_grid(
                 .unwrap_or_else(|| "(none)".into());
             ui.label(RichText::new("Customer").small().color(theme::weak_text(ui)));
             ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(&cust_label)
-                        .small()
-                        .color(fk_color(ui, cust_ok, client.customer.is_some())),
-                );
+                let text = RichText::new(&cust_label)
+                    .small()
+                    .color(fk_color(ui, cust_ok, client.customer.is_some()));
+                match client.customer.as_ref() {
+                    Some(id) => {
+                        if ui.link(text).on_hover_text("Open the full customer record").clicked() {
+                            let _ = tx.try_send(ClientUiAction::ViewRecord(
+                                super::RecordKind::Customer,
+                                id.clone(),
+                            ));
+                        }
+                    }
+                    None => {
+                        ui.label(text);
+                    }
+                }
                 if !cust_ok {
                     if ui.small_button("Link").clicked() {
                         let _ = tx.try_send(ClientUiAction::LinkCustomer(client.clone()));
@@ -757,11 +768,22 @@ fn client_details_grid(
                 .unwrap_or_else(|| "(none)".into());
             ui.label(RichText::new("Computer").small().color(theme::weak_text(ui)));
             ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(&comp_label)
-                        .small()
-                        .color(fk_color(ui, comp_ok, client.computer.is_some())),
-                );
+                let text = RichText::new(&comp_label)
+                    .small()
+                    .color(fk_color(ui, comp_ok, client.computer.is_some()));
+                match client.computer.as_ref() {
+                    Some(id) => {
+                        if ui.link(text).on_hover_text("Open the full computer record").clicked() {
+                            let _ = tx.try_send(ClientUiAction::ViewRecord(
+                                super::RecordKind::Computer,
+                                id.clone(),
+                            ));
+                        }
+                    }
+                    None => {
+                        ui.label(text);
+                    }
+                }
                 if !comp_ok {
                     if ui.small_button("Link").clicked() {
                         let _ = tx.try_send(ClientUiAction::LinkComputer(client.clone()));
