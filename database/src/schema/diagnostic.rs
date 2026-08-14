@@ -143,6 +143,14 @@ pub struct DiagnosticSession {
     pub tech: Option<String>,
     pub started_at: Datetime,
     pub ended_at: Option<Datetime>,
+    /// Diagnosis-complete milestone; sessions stay open through remediation,
+    /// so this is distinct from `ended_at`. First stamp wins.
+    #[serde(default)]
+    #[surreal(default)]
+    pub diagnosed_at: Option<Datetime>,
+    #[serde(default)]
+    #[surreal(default)]
+    pub diagnosed_by: Option<String>,
     pub summary: Option<String>,
     pub status: String,
     pub tags: Vec<String>,
@@ -162,6 +170,8 @@ impl Default for DiagnosticSession {
             tech: None,
             started_at: chrono::Utc::now().into(),
             ended_at: None,
+            diagnosed_at: None,
+            diagnosed_by: None,
             summary: None,
             status: "open".to_string(),
             tags: Vec::new(),
@@ -275,6 +285,30 @@ impl DiagnosticSession {
         Ok(())
     }
 
+    /// Stamps the diagnosis-complete milestone; the first stamp wins.
+    /// Returns the session's diagnosed_at after the update.
+    pub async fn mark_diagnosed(session_id: &str, by: &str) -> anyhow::Result<Option<Datetime>> {
+        let sid = RecordId::new(super::DIAGNOSTIC_SESSION_TABLE, session_id);
+        let mut res = db()
+            .query(
+                "UPDATE $sid SET diagnosed_at = diagnosed_at ?? time::now(), \
+                 diagnosed_by = diagnosed_by ?? $by RETURN VALUE diagnosed_at",
+            )
+            .bind(("sid", sid))
+            .bind(("by", by.to_string()))
+            .await?;
+        let at: Option<Datetime> = res.take::<Vec<Datetime>>(0)?.into_iter().next();
+        Ok(at)
+    }
+
+    /// Marks a task as AI-worked; the first origin wins.
+    pub async fn stamp_task_origin_ai(task: &RecordId) -> anyhow::Result<()> {
+        db().query("UPDATE $task SET origin = origin ?? 'ai'")
+            .bind(("task", task.clone()))
+            .await?;
+        Ok(())
+    }
+
     /// Fetch one session row by key.
     pub async fn get(session_id: &str) -> anyhow::Result<Option<Self>> {
         let sid = RecordId::new(super::DIAGNOSTIC_SESSION_TABLE, session_id);
@@ -378,6 +412,11 @@ impl DiagnosticSession {
         if let Some(t) = task_ref { q = q.bind(("task", t.clone())); }
         if let Some(s) = service_order { q = q.bind(("svc", s.clone())); }
         q.await?;
+        if let Some(t) = task_ref {
+            if let Err(e) = Self::stamp_task_origin_ai(t).await {
+                log::warn!("link_to_task: origin stamp failed: {e}");
+            }
+        }
         Ok(())
     }
 

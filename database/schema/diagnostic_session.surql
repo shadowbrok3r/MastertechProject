@@ -9,6 +9,8 @@ DEFINE FIELD computer_id       ON diagnostic_session TYPE none | record<computer
 DEFINE FIELD connection_string ON diagnostic_session TYPE string                           PERMISSIONS FULL;
 DEFINE FIELD customer_id       ON diagnostic_session TYPE none | record<customer>          PERMISSIONS FULL;
 DEFINE FIELD customer_name     ON diagnostic_session TYPE none | string                    PERMISSIONS FULL;
+DEFINE FIELD diagnosed_at      ON diagnostic_session TYPE none | datetime                  PERMISSIONS FULL;
+DEFINE FIELD diagnosed_by      ON diagnostic_session TYPE none | string                    PERMISSIONS FULL;
 DEFINE FIELD ended_at          ON diagnostic_session TYPE none | datetime                  PERMISSIONS FULL;
 DEFINE FIELD hostname          ON diagnostic_session TYPE string                           PERMISSIONS FULL;
 DEFINE FIELD service_order     ON diagnostic_session TYPE none | record<service_order>     PERMISSIONS FULL;

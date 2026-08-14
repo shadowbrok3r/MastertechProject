@@ -437,6 +437,42 @@ impl SharedContext {
                         }
                     });
                 }
+                TaskUiActions::MarkDiagnosed { session_id, by } => {
+                    use database::schema::RecordIdExt;
+                    let key = session_id.key_string();
+                    PlatformSpawner::spawn(async move {
+                        // First stamp wins; a re-mark writes no duplicate entry.
+                        let already = database::schema::DiagnosticSession::get(&key)
+                            .await
+                            .ok()
+                            .flatten()
+                            .is_some_and(|s| s.diagnosed_at.is_some());
+                        if already {
+                            return;
+                        }
+                        match database::schema::DiagnosticSession::mark_diagnosed(&key, &by).await {
+                            Ok(_) => {
+                                let entry = database::schema::DiagnosticEntry {
+                                    session_ref: session_id.clone(),
+                                    category: database::schema::DiagnosticCategory::Finding,
+                                    title: "Milestone: diagnosis complete".to_string(),
+                                    detail: format!("Marked diagnosed by {by} from the task modal."),
+                                    data: Some(serde_json::json!({
+                                        "milestone": "diagnosed",
+                                        "by": by,
+                                    })),
+                                    ..Default::default()
+                                };
+                                if let Err(e) =
+                                    database::schema::DiagnosticEntry::create(&entry).await
+                                {
+                                    log::warn!("MarkDiagnosed milestone entry failed: {e:?}");
+                                }
+                            }
+                            Err(e) => log::error!("DiagnosticSession::mark_diagnosed: {e:?}"),
+                        }
+                    });
+                }
                 TaskUiActions::None => (),
             };
         }

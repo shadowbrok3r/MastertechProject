@@ -58,6 +58,10 @@ const SELF_INFLICTED_GRACE: Duration = Duration::from_secs(2);
 /// Consecutive surface-recreation failures tolerated after a lost surface.
 #[cfg(target_os = "windows")]
 const MAX_SURFACE_RECREATES: u32 = 5;
+/// Quiesce attempts for a fresh surface's first configure before the output
+/// is abandoned.
+#[cfg(target_os = "windows")]
+const INITIAL_CONFIGURE_ATTEMPTS: u32 = 3;
 /// Gap between `LiveKernelReports` scans.
 #[cfg(target_os = "windows")]
 const DUMP_SCAN_EVERY: Duration = Duration::from_secs(2);
@@ -217,9 +221,13 @@ mod windows_impl {
         /// Newest recoverable complaint from any output thread.
         warn: Mutex<Option<String>>,
         threads_live: AtomicU32,
-        /// Serializes `Surface::configure`, which waits for the whole shared
-        /// device to go idle — impossible while a sibling output thread is
-        /// still submitting frames to the same queue.
+        /// Threads currently inside their frame loop. Only these submit, so
+        /// only these must park for a configure; a thread still in setup
+        /// neither submits nor parks.
+        submitters: AtomicU32,
+        /// Serializes every `Surface::configure` — first-time and re-configure
+        /// alike. A configure creates or resizes a swapchain on the shared
+        /// device, which must not race a sibling's configure or submissions.
         configure_turn: Mutex<()>,
         /// Set while one thread configures; siblings park instead of submitting.
         configure_pause: AtomicBool,
@@ -227,6 +235,23 @@ mod windows_impl {
         parked: AtomicU32,
         /// Reconfigures skipped because the siblings never went quiet.
         quiesce_timeouts: AtomicU64,
+    }
+
+    /// Frame-loop membership marker for the quiesce handshake; the counter
+    /// drops with the guard on every exit path.
+    struct SubmitGuard<'a>(&'a AtomicU32);
+
+    impl<'a> SubmitGuard<'a> {
+        fn enter(counter: &'a AtomicU32) -> Self {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Self(counter)
+        }
+    }
+
+    impl Drop for SubmitGuard<'_> {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+        }
     }
 
     impl Shared {
@@ -256,17 +281,24 @@ mod windows_impl {
             self.outputs.iter().map(pick).sum()
         }
 
-        /// Runs `configure` with every sibling output thread parked so the
-        /// shared device can reach idle. Returns false when the siblings did
-        /// not go quiet in time and the caller should retry on a later frame.
-        fn with_quiesce<R>(&self, stop: &AtomicBool, configure: impl FnOnce() -> R) -> Option<R> {
-            // A lone output needs no handshake: this thread is the only submitter.
-            if self.threads_live.load(Ordering::SeqCst) <= 1 {
+        /// Runs `configure` with every presenting sibling parked so the shared
+        /// device can reach idle. `self_submits` says whether the caller is
+        /// itself inside its frame loop. Returns `None` when the siblings did
+        /// not go quiet in time and the caller should retry later.
+        fn with_quiesce<R>(
+            &self,
+            stop: &AtomicBool,
+            self_submits: bool,
+            configure: impl FnOnce() -> R,
+        ) -> Option<R> {
+            // Held across the whole configure: two swapchain builds on one
+            // device must not overlap even with every presenter parked.
+            let _turn = self.configure_turn.lock().ok()?;
+            if self.other_submitters(self_submits) == 0 {
                 return Some(configure());
             }
-            let _turn = self.configure_turn.lock().ok()?;
             self.configure_pause.store(true, Ordering::SeqCst);
-            let quiet = self.await_parked(stop);
+            let quiet = self.await_parked(stop, self_submits);
             let out = quiet.then(configure);
             self.configure_pause.store(false, Ordering::SeqCst);
             if out.is_none() {
@@ -275,16 +307,23 @@ mod windows_impl {
             out
         }
 
-        /// Waits until every other live thread is parked. Bounded, and reads
-        /// `threads_live` each pass so a thread that exits cannot strand us.
-        fn await_parked(&self, stop: &AtomicBool) -> bool {
+        /// Frame-loop threads other than the caller.
+        fn other_submitters(&self, self_submits: bool) -> u32 {
+            self.submitters
+                .load(Ordering::SeqCst)
+                .saturating_sub(self_submits as u32)
+        }
+
+        /// Waits until every other presenting thread is parked. Bounded, and
+        /// reads `submitters` each pass so a thread that exits its frame loop
+        /// cannot strand us.
+        fn await_parked(&self, stop: &AtomicBool, self_submits: bool) -> bool {
             let deadline = Instant::now() + QUIESCE_TIMEOUT;
             while Instant::now() < deadline {
                 if stop.load(Ordering::Relaxed) {
                     return false;
                 }
-                let live = self.threads_live.load(Ordering::SeqCst);
-                if self.parked.load(Ordering::SeqCst) + 1 >= live {
+                if self.parked.load(Ordering::SeqCst) >= self.other_submitters(self_submits) {
                     return true;
                 }
                 std::thread::sleep(QUIESCE_POLL);
@@ -633,7 +672,16 @@ mod windows_impl {
                 return;
             }
         };
-        surface.configure(&ctx.device, &config);
+        // The first configure creates the swapchain; presenting siblings park
+        // so the build cannot race their submissions.
+        if !configure_initial(&surface, ctx, &config, shared, stop) {
+            shared.latch_fatal(format!(
+                "gpu_display: inconclusive - the swapchain on {} could not be configured while \
+                 sibling outputs were presenting; that output's present path never ran",
+                output.device
+            ));
+            return;
+        }
 
         let module = ctx
             .device
@@ -693,6 +741,9 @@ mod windows_impl {
         let mut stall_reported = false;
         let mut present_mode_index = 0usize;
 
+        // Frame-loop membership for the quiesce handshake; setup never submits.
+        let _submit = SubmitGuard::enter(&shared.submitters);
+
         while !stop.load(Ordering::Relaxed) {
             window.pump();
             shared.park_if_paused(stop);
@@ -742,7 +793,7 @@ mod windows_impl {
                     }
                     // Left outdated when the siblings stay busy; retried next frame.
                     if shared
-                        .with_quiesce(stop, || surface.configure(&ctx.device, &config))
+                        .with_quiesce(stop, true, || surface.configure(&ctx.device, &config))
                         .is_some()
                     {
                         expect_outdated_until = Instant::now() + SELF_INFLICTED_GRACE;
@@ -759,7 +810,7 @@ mod windows_impl {
                             surface = fresh;
                             // A fresh surface stays unconfigured until the siblings
                             // go quiet; the next frame reports Outdated and retries.
-                            shared.with_quiesce(stop, || surface.configure(&ctx.device, &config));
+                            shared.with_quiesce(stop, true, || surface.configure(&ctx.device, &config));
                             expect_outdated_until = Instant::now() + SELF_INFLICTED_GRACE;
                             recreate_failures = 0;
                         }
@@ -851,7 +902,7 @@ mod windows_impl {
                             window.move_to(output.x, output.y, width, height);
                             config.width = width.max(1);
                             config.height = height.max(1);
-                            shared.with_quiesce(stop, || surface.configure(&ctx.device, &config));
+                            shared.with_quiesce(stop, true, || surface.configure(&ctx.device, &config));
                             expect_outdated_until = Instant::now() + SELF_INFLICTED_GRACE;
                         }
                         Err(e) => shared.set_warn(format!("gpu_display: {e}")),
@@ -881,6 +932,29 @@ mod windows_impl {
     ) -> Result<wgpu::Surface<'static>, String> {
         unsafe { ctx.instance.create_surface_unsafe(surface_target(raw_handle)) }
             .map_err(|e| e.to_string())
+    }
+
+    /// First configure of a fresh surface, serialized against sibling
+    /// configures and presents. Bounded retries; `false` when it never ran.
+    fn configure_initial(
+        surface: &wgpu::Surface<'static>,
+        ctx: &Arc<GpuContext>,
+        config: &wgpu::SurfaceConfiguration,
+        shared: &Shared,
+        stop: &AtomicBool,
+    ) -> bool {
+        for _ in 0..INITIAL_CONFIGURE_ATTEMPTS {
+            if stop.load(Ordering::Relaxed) {
+                return false;
+            }
+            if shared
+                .with_quiesce(stop, false, || surface.configure(&ctx.device, config))
+                .is_some()
+            {
+                return true;
+            }
+        }
+        false
     }
 
     fn draw_and_present(
@@ -922,11 +996,9 @@ mod windows_impl {
         ctx.queue.present(frame);
     }
 
-    /// Cycles present mode, frame latency, and the presented size. Rebuilding
-    /// the swapchain is the reconfiguration path a mode change also takes.
-    #[allow(clippy::too_many_arguments)]
-    /// Applies the next swapchain variation. Returns false when the siblings
-    /// never went quiet, leaving `config` updated for a later attempt.
+    /// Cycles present mode, frame latency, and the presented size — the
+    /// swapchain rebuild path a mode change also takes. Returns false when the
+    /// siblings never went quiet, leaving `config` updated for a later attempt.
     #[allow(clippy::too_many_arguments)]
     fn reconfigure(
         surface: &wgpu::Surface<'static>,
@@ -954,7 +1026,7 @@ mod windows_impl {
         config.width = width;
         config.height = height;
         shared
-            .with_quiesce(stop, || surface.configure(&ctx.device, config))
+            .with_quiesce(stop, true, || surface.configure(&ctx.device, config))
             .is_some()
     }
 
@@ -1010,6 +1082,323 @@ mod windows_impl {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        use super::super::super::gpu_common::GpuHealth;
+
+        /// Fake presenter for the quiesce handshake: enters the frame loop
+        /// and parks whenever a configure asks, without touching any GPU.
+        fn spawn_presenter(
+            shared: Arc<Shared>,
+            stop: Arc<AtomicBool>,
+        ) -> std::thread::JoinHandle<()> {
+            std::thread::Builder::new()
+                .name("test-presenter".into())
+                .spawn(move || {
+                    let _submit = SubmitGuard::enter(&shared.submitters);
+                    while !stop.load(Ordering::Relaxed) {
+                        shared.park_if_paused(&stop);
+                        std::thread::sleep(Duration::from_micros(50));
+                    }
+                })
+                .expect("spawn test presenter")
+        }
+
+        fn await_submitters(shared: &Shared, count: u32) {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while shared.submitters.load(Ordering::SeqCst) < count {
+                assert!(Instant::now() < deadline, "presenters never entered the loop");
+                std::thread::sleep(Duration::from_micros(50));
+            }
+        }
+
+        /// The dual-output crash shape: a first-time configure must not run
+        /// until every presenting sibling is parked.
+        #[test]
+        fn startup_configure_parks_every_presenting_sibling() {
+            let shared = Arc::new(Shared::default());
+            let stop = Arc::new(AtomicBool::new(false));
+            let a = spawn_presenter(shared.clone(), stop.clone());
+            let b = spawn_presenter(shared.clone(), stop.clone());
+            await_submitters(&shared, 2);
+
+            let parked_during =
+                shared.with_quiesce(&stop, false, || shared.parked.load(Ordering::SeqCst));
+            assert_eq!(
+                parked_during,
+                Some(2),
+                "configure ran without both presenting siblings parked"
+            );
+
+            stop.store(true, Ordering::SeqCst);
+            a.join().unwrap();
+            b.join().unwrap();
+            assert_eq!(shared.parked.load(Ordering::SeqCst), 0, "a park was leaked");
+        }
+
+        /// Threads still in setup neither submit nor park; a startup configure
+        /// must run immediately instead of waiting on them.
+        #[test]
+        fn startup_configure_ignores_threads_still_in_setup() {
+            let shared = Arc::new(Shared::default());
+            // Live threads that have not reached their frame loop.
+            shared.threads_live.store(3, Ordering::SeqCst);
+            let stop = AtomicBool::new(false);
+            let started = Instant::now();
+            assert_eq!(shared.with_quiesce(&stop, false, || true), Some(true));
+            assert!(
+                started.elapsed() < QUIESCE_TIMEOUT,
+                "configure waited on siblings that cannot park"
+            );
+        }
+
+        /// A caller inside its own frame loop counts itself out of the
+        /// handshake when it is the only presenter.
+        #[test]
+        fn lone_presenter_configures_directly() {
+            let shared = Arc::new(Shared::default());
+            let _submit = SubmitGuard::enter(&shared.submitters);
+            let stop = AtomicBool::new(false);
+            assert_eq!(shared.with_quiesce(&stop, true, || 7), Some(7));
+        }
+
+        /// A sibling that never parks bounds the configure instead of
+        /// wedging it, and the skip is counted.
+        #[test]
+        fn configure_skips_when_a_sibling_never_parks() {
+            let shared = Arc::new(Shared::default());
+            let stop = Arc::new(AtomicBool::new(false));
+            let hot = {
+                let shared = shared.clone();
+                let stop = stop.clone();
+                std::thread::spawn(move || {
+                    let _submit = SubmitGuard::enter(&shared.submitters);
+                    while !stop.load(Ordering::Relaxed) {
+                        std::thread::sleep(Duration::from_micros(50));
+                    }
+                })
+            };
+            await_submitters(&shared, 1);
+
+            assert_eq!(shared.with_quiesce(&stop, false, || ()), None);
+            assert_eq!(shared.quiesce_timeouts.load(Ordering::Relaxed), 1);
+
+            stop.store(true, Ordering::SeqCst);
+            hot.join().unwrap();
+        }
+
+        /// A small window standing in for one output; the race under test is
+        /// per-device, not per-monitor.
+        fn test_output(base: &Output, offset_x: i32, name: &str) -> Output {
+            Output {
+                device: name.to_string(),
+                x: base.x + offset_x,
+                y: base.y,
+                width: 320,
+                height: 200,
+                refresh_hz: base.refresh_hz,
+                primary: false,
+            }
+        }
+
+        fn present_clear_frame(ctx: &GpuContext, frame: wgpu::SurfaceTexture) {
+            let view = frame
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
+            let mut encoder = ctx
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            {
+                let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: None,
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+            }
+            ctx.queue.submit(std::iter::once(encoder.finish()));
+            ctx.queue.present(frame);
+        }
+
+        /// Regression pin for the dual-output startup crash (ntdll heap AV,
+        /// run `be8996be` on DESKTOP-NFOQK4J): the second swapchain's first
+        /// configure runs while the first presents flat out on the same
+        /// device. Serialized correctly, both outputs present and the device
+        /// reports no errors. Run it deliberately with
+        /// `cargo test -p stress-kit --lib -- --ignored two_swapchains`.
+        #[test]
+        #[ignore = "creates windows and drives real swapchains on whatever adapter answers"]
+        fn two_swapchains_share_one_device_from_startup() {
+            let Some(base) = enumerate_outputs().into_iter().next() else {
+                eprintln!("no attached outputs in this session");
+                return;
+            };
+
+            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                backends: wgpu::Backends::PRIMARY,
+                ..wgpu::InstanceDescriptor::new_without_display_handle()
+            });
+
+            // Window/surface B live on this thread; its surface anchors
+            // adapter selection before the presenter thread starts.
+            let out_b = test_output(&base, 340, r"\\.\TEST-B");
+            let window_b = OutputWindow::new(&out_b).expect("window B");
+            let surface_b = unsafe {
+                instance.create_surface_unsafe(surface_target(window_b.raw_handle().expect("raw B")))
+            }
+            .expect("surface B");
+
+            let adapter = pollster::block_on(instance.request_adapter(
+                &wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    compatible_surface: Some(&surface_b),
+                    force_fallback_adapter: false,
+                    apply_limit_buckets: false,
+                },
+            ))
+            .expect("adapter");
+            let (device, queue) = pollster::block_on(
+                adapter.request_device(&wgpu::DeviceDescriptor {
+                    label: Some("two swapchain test"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::default(),
+                    experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                    memory_hints: wgpu::MemoryHints::Performance,
+                    trace: wgpu::Trace::Off,
+                }),
+            )
+            .expect("device");
+
+            let uncaptured = Arc::new(AtomicU64::new(0));
+            let uncaptured_in_handler = uncaptured.clone();
+            device.on_uncaptured_error(Arc::new(move |e| {
+                eprintln!("uncaptured device error: {e}");
+                uncaptured_in_handler.fetch_add(1, Ordering::Relaxed);
+            }));
+
+            let info = adapter.get_info();
+            eprintln!("adapter: {} ({:?})", info.name, info.backend);
+            let ctx = Arc::new(GpuContext {
+                instance,
+                adapter,
+                device,
+                queue,
+                vendor_label: info.name,
+                backend_label: format!("{:?}", info.backend),
+                health: GpuHealth::default(),
+            });
+
+            let shared = Arc::new(Shared::default());
+            let stop = Arc::new(AtomicBool::new(false));
+            let presented_a = Arc::new(AtomicU64::new(0));
+
+            // Presenter A: own window on its own thread, hot present loop
+            // through the real handshake.
+            let a = {
+                let ctx = ctx.clone();
+                let shared = shared.clone();
+                let stop = stop.clone();
+                let presented = presented_a.clone();
+                let out_a = test_output(&base, 0, r"\\.\TEST-A");
+                std::thread::Builder::new()
+                    .name("test-presenter-a".into())
+                    .spawn(move || {
+                        let window = OutputWindow::new(&out_a).expect("window A");
+                        let surface =
+                            create_surface(&ctx, window.raw_handle().expect("raw A"))
+                                .expect("surface A");
+                        let config = surface
+                            .get_default_config(&ctx.adapter, out_a.width, out_a.height)
+                            .expect("config A");
+                        assert!(
+                            configure_initial(&surface, &ctx, &config, &shared, &stop),
+                            "first configure of surface A never ran"
+                        );
+                        let _submit = SubmitGuard::enter(&shared.submitters);
+                        while !stop.load(Ordering::Relaxed) {
+                            window.pump();
+                            shared.park_if_paused(&stop);
+                            match surface.get_current_texture() {
+                                wgpu::CurrentSurfaceTexture::Success(frame)
+                                | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                                    present_clear_frame(&ctx, frame);
+                                    presented.fetch_add(1, Ordering::Relaxed);
+                                }
+                                other => {
+                                    eprintln!("surface A skipped a frame: {other:?}");
+                                    std::thread::sleep(Duration::from_millis(5));
+                                }
+                            }
+                        }
+                    })
+                    .expect("spawn presenter A")
+            };
+
+            // B's first configure lands only after A is presenting flat out.
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while presented_a.load(Ordering::Relaxed) < 30 {
+                assert!(
+                    Instant::now() < deadline,
+                    "presenter A never got going on this adapter"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+
+            let config_b = surface_b
+                .get_default_config(&ctx.adapter, out_b.width, out_b.height)
+                .expect("config B");
+            assert!(
+                configure_initial(&surface_b, &ctx, &config_b, &shared, &stop),
+                "surface B's first configure never ran while A was presenting"
+            );
+
+            let mut presented_b = 0u64;
+            {
+                let _submit = SubmitGuard::enter(&shared.submitters);
+                let until = Instant::now() + Duration::from_secs(1);
+                while Instant::now() < until {
+                    window_b.pump();
+                    shared.park_if_paused(&stop);
+                    match surface_b.get_current_texture() {
+                        wgpu::CurrentSurfaceTexture::Success(frame)
+                        | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                            present_clear_frame(&ctx, frame);
+                            presented_b += 1;
+                        }
+                        other => {
+                            eprintln!("surface B skipped a frame: {other:?}");
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                    }
+                }
+            }
+
+            stop.store(true, Ordering::SeqCst);
+            a.join().expect("presenter A panicked");
+
+            let presented_a = presented_a.load(Ordering::Relaxed);
+            eprintln!(
+                "A presented {presented_a}, B presented {presented_b}, \
+                 {} quiesce timeout(s)",
+                shared.quiesce_timeouts.load(Ordering::Relaxed)
+            );
+            assert!(presented_a > 0, "surface A never presented");
+            assert!(presented_b > 0, "surface B never presented");
+            assert_eq!(
+                uncaptured.load(Ordering::Relaxed),
+                0,
+                "the device reported errors during concurrent swapchain bring-up"
+            );
+        }
 
         /// Presents to the primary output on whatever adapter answers,
         /// including a software rasterizer — this proves the window, the

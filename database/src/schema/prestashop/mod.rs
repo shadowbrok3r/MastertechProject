@@ -446,6 +446,65 @@ impl<'a> Prestashop<'a> {
         Ok(t)
     }
 
+    /// List-shaped variant of `find_resource_wasm`; a missing or non-array
+    /// resource key means zero rows, not an error.
+    pub async fn find_resources_wasm<T>(
+        &self,
+        resource_name: &str,
+        url_params: HashMap<&str, &str>,
+    ) -> anyhow::Result<Vec<T>, anyhow::Error>
+    where
+        T: for<'de> Deserialize<'de> + std::fmt::Debug + Send,
+    {
+        let response: Value = self
+            .client
+            .get(self.query_args_wasm(resource_name, url_params))
+            .send()
+            .await?
+            .json()
+            .await?;
+        match response.get(resource_name) {
+            Some(rows) if rows.is_array() => Ok(from_value(rows.clone())?),
+            _ => Ok(Vec::new()),
+        }
+    }
+
+    /// State-change rows for one order, oldest first.
+    pub async fn find_order_history(
+        &self,
+        id_order: &str,
+    ) -> anyhow::Result<Vec<OrderHistoryEntry>, anyhow::Error> {
+        let mut query = HashMap::new();
+        query.insert("filter[id_order]", id_order);
+        query.insert("output_format", "JSON");
+        let mut rows: Vec<OrderHistoryEntry> =
+            self.find_resources_wasm("order_histories", query).await?;
+        rows.sort_by(|a, b| a.date_add.cmp(&b.date_add));
+        Ok(rows)
+    }
+
+    /// Every order state as (id, name).
+    pub async fn find_order_states(&self) -> anyhow::Result<Vec<OrderStateRef>, anyhow::Error> {
+        let mut query = HashMap::new();
+        query.insert("output_format", "JSON");
+        self.find_resources_wasm("order_states", query).await
+    }
+
+    /// Employees matching the given ids ("[183|1194]" OR-filter form).
+    pub async fn find_employees_by_ids(
+        &self,
+        ids: &[String],
+    ) -> anyhow::Result<Vec<Employee>, anyhow::Error> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let filter = format!("[{}]", ids.join("|"));
+        let mut query = HashMap::new();
+        query.insert("filter[id]", filter.as_str());
+        query.insert("output_format", "JSON");
+        self.find_resources_wasm("employees", query).await
+    }
+
     pub async fn delete_resource_wasm(
         &self,
         resource_name: &str,
@@ -747,6 +806,28 @@ pub struct Customer {
     pub lastname: String,
     pub firstname: String,
     pub email: String,
+}
+
+/// One `order_histories` row: an order entering a state at a moment, by whom.
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
+pub struct OrderHistoryEntry {
+    #[serde(deserialize_with = "deserialize_to_string")]
+    pub id: String,
+    #[serde(default, deserialize_with = "deserialize_to_string")]
+    pub id_employee: String,
+    #[serde(deserialize_with = "deserialize_to_string")]
+    pub id_order_state: String,
+    #[serde(deserialize_with = "deserialize_to_string")]
+    pub id_order: String,
+    pub date_add: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
+pub struct OrderStateRef {
+    #[serde(deserialize_with = "deserialize_to_string")]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]

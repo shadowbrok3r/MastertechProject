@@ -1,0 +1,59 @@
+id = "20260813120000__roi_milestones"
+name = "roi_milestones"
+# Applied to surrealdb-dev 2026-08-13; verified with INFO FOR TABLE on all
+# three tables, not the step status. First start errored on the ai_usage
+# FLEXIBLE syntax; that step was applied by hand and the row closed manually.
+state = "completed"
+# Hash from `surrealkit rollout lint` (applies committed file state, so source == target).
+source_schema_hash = "6265c72710f9fca5c5b2249089212b662f1868be6781c280a138558eacbfa295"
+target_schema_hash = "6265c72710f9fca5c5b2249089212b662f1868be6781c280a138558eacbfa295"
+compatibility = "phased"
+renames = []
+
+# diagnosed_at marks the diagnosis-complete milestone, distinct from ended_at
+# (sessions stay open through remediation). origin marks tasks created by the
+# AI handoff path. All fields are additive with no DEFAULT, so pre-existing
+# rows read NONE and every consumer must coalesce.
+
+[[steps]]
+id = "add_diagnosed_fields"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE diagnosed_at ON diagnostic_session TYPE none | datetime PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE diagnosed_by ON diagnostic_session TYPE none | string PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "add_task_origin"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE origin ON task TYPE none | string ASSERT $value == NONE OR $value IN ['ai', 'tech'] PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "define_ai_usage"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE ai_usage TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE claude_session_id ON ai_usage TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE at ON ai_usage TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE session_refs ON ai_usage TYPE none | array<string> PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE session_refs.* ON ai_usage TYPE string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE cost_usd ON ai_usage TYPE none | number PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE models ON ai_usage TYPE none | object PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE source ON ai_usage TYPE none | string PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "remove_diagnosed_fields"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE FIELD IF EXISTS diagnosed_at ON diagnostic_session;
+REMOVE FIELD IF EXISTS diagnosed_by ON diagnostic_session;
+REMOVE FIELD IF EXISTS origin ON task;
+REMOVE TABLE IF EXISTS ai_usage;
+"""

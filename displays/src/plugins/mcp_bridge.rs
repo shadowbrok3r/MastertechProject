@@ -1711,6 +1711,18 @@ pub struct CloseDiagnosticSessionParams {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct MarkDiagnosedParams {
+    #[schemars(description = "Session ID to stamp")]
+    pub session_id: String,
+    #[schemars(description = "Who completed the diagnosis (defaults to the session tech)")]
+    #[serde(default)]
+    pub diagnosed_by: Option<String>,
+    #[schemars(description = "One-line root cause / verdict recorded in the session log")]
+    #[serde(default)]
+    pub finding: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct SearchDiagnosticsParams {
     #[schemars(description = "Free-text search across session summaries, hostnames, customer names, and tags")]
     pub query: String,
@@ -1768,6 +1780,18 @@ pub struct SearchPrestashopOrdersParams {
     pub query: String,
     #[schemars(description = "Max orders to return (default 25, max 100)")]
     pub limit: Option<u32>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct GetOrderHistoryParams {
+    #[schemars(description = "PrestaShop order id / service number (e.g. '2151936')")]
+    pub order_id: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct GetServiceMetricsParams {
+    #[schemars(description = "Service number to compute metrics for (e.g. '2151936')")]
+    pub service_number: String,
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
@@ -5521,6 +5545,11 @@ impl PluginToolProvider {
             .map_err(to_internal)?;
         let id_str = id.key_string();
         super::diagnostic_session_registry::register(&session.connection_string, &id_str);
+        if let Some(t) = &session.task_ref {
+            if let Err(e) = database::schema::DiagnosticSession::stamp_task_origin_ai(t).await {
+                log::warn!("create_diagnostic_session: origin stamp failed: {e}");
+            }
+        }
 
         // Reconcile sees the created id plus whatever task link resolves below.
         let mut created = session.clone();
@@ -6500,6 +6529,60 @@ impl PluginToolProvider {
                 "failure_kind": run.failure_kind,
             }),
         )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "mark_diagnosed",
+        description = "Stamp the diagnosis-complete milestone on a session the moment the root cause is established — BEFORE remediation, and independent of close_diagnostic_session (sessions stay open through repair). The first stamp wins; re-calls return the original timestamp. Pass finding to record the one-line verdict in the session log."
+    )]
+    async fn mark_diagnosed(
+        &self,
+        Parameters(p): Parameters<MarkDiagnosedParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        use database::schema::RecordIdExt;
+
+        let session_rid =
+            parse_record_id(&p.session_id, database::schema::DIAGNOSTIC_SESSION_TABLE);
+        let session_key = session_rid.key_string();
+        let session = database::schema::DiagnosticSession::get(&session_key)
+            .await
+            .map_err(to_internal)?
+            .ok_or_else(|| {
+                ErrorData::invalid_params(
+                    format!("diagnostic_session '{}' not found", p.session_id),
+                    None,
+                )
+            })?;
+
+        let already = session.diagnosed_at.is_some();
+        let by = p
+            .diagnosed_by
+            .or(session.tech.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+        let at = database::schema::DiagnosticSession::mark_diagnosed(&session_key, &by)
+            .await
+            .map_err(to_internal)?;
+
+        if !already {
+            let entry = database::schema::DiagnosticEntry {
+                session_ref: session_rid,
+                category: database::schema::DiagnosticCategory::Finding,
+                title: "Milestone: diagnosis complete".to_string(),
+                detail: p.finding.unwrap_or_else(|| "Diagnosis complete.".to_string()),
+                data: Some(serde_json::json!({ "milestone": "diagnosed", "by": by })),
+                ..Default::default()
+            };
+            if let Err(e) = database::schema::DiagnosticEntry::create(&entry).await {
+                log::warn!("mark_diagnosed: milestone entry failed: {e}");
+            }
+        }
+
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
+            "session_id": session_key,
+            "diagnosed_at": at.map(|d| d.to_string()),
+            "already_diagnosed": already,
+        }))
         .map_err(to_internal)?]))
     }
 
@@ -7885,6 +7968,126 @@ impl PluginToolProvider {
                 ContentBlock::text(format!("No computer found with ID '{}'", p.computer_id))
             ])),
         }
+    }
+
+    #[tool(
+        name = "get_service_metrics",
+        description = "Per-service activity metrics computed on demand from MasterTech records: \
+check-in time, diagnosis-complete milestone, first task completion (turnaround), tech vs AI \
+distinct-active-minutes, stress-run count, and measured AI cost from the ai_usage ledger. Active \
+minutes count only minutes containing a recorded event — a floor, never inflated by idle time."
+    )]
+    async fn get_service_metrics(
+        &self,
+        Parameters(p): Parameters<GetServiceMetricsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let m = database::schema::ServiceMetrics::compute(&p.service_number)
+            .await
+            .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![
+            ContentBlock::json(serde_json::to_value(&m).map_err(to_internal)?).map_err(to_internal)?,
+        ]))
+    }
+
+    #[tool(
+        name = "get_order_history",
+        description = "State-change history for a PrestaShop order: every status transition \
+(Check-in Shelf, In Repair, Done Shelf, ...) with timestamp, state name, employee attribution, \
+and dwell time since the previous state. This is the turnaround-time record for service orders. \
+Timestamps are shop-local PrestaShop time."
+    )]
+    async fn get_order_history(
+        &self,
+        Parameters(p): Parameters<GetOrderHistoryParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        use database::schema::prestashop::Prestashop;
+        use std::collections::HashMap;
+
+        let order_id = p.order_id.trim();
+        if order_id.is_empty() || !order_id.chars().all(|c| c.is_ascii_digit()) {
+            return Err(ErrorData::invalid_params(
+                format!("order_id '{}' must be a numeric PrestaShop order id", p.order_id),
+                None,
+            ));
+        }
+
+        let api = Prestashop::default();
+        let rows = api
+            .find_order_history(order_id)
+            .await
+            .map_err(|e| to_internal(format!("order_histories lookup failed: {e}")))?;
+        if rows.is_empty() {
+            return Ok(CallToolResult::success(vec![ContentBlock::json(
+                serde_json::json!({ "order_id": order_id, "count": 0, "transitions": [] }),
+            )
+            .map_err(to_internal)?]));
+        }
+
+        // Name lookups are best-effort; raw ids still tell the story.
+        let states: HashMap<String, String> = match api.find_order_states().await {
+            Ok(list) => list.into_iter().map(|s| (s.id, s.name)).collect(),
+            Err(e) => {
+                log::warn!("get_order_history: order_states lookup failed: {e}");
+                HashMap::new()
+            }
+        };
+        let mut employee_ids: Vec<String> = rows
+            .iter()
+            .map(|r| r.id_employee.clone())
+            .filter(|id| !id.is_empty() && id != "0")
+            .collect();
+        employee_ids.sort();
+        employee_ids.dedup();
+        let employees: HashMap<String, String> = match api
+            .find_employees_by_ids(&employee_ids)
+            .await
+        {
+            Ok(list) => list
+                .into_iter()
+                .map(|e| (e.id.clone(), format!("{} {}", e.firstname, e.lastname)))
+                .collect(),
+            Err(e) => {
+                log::warn!("get_order_history: employees lookup failed: {e}");
+                HashMap::new()
+            }
+        };
+
+        let parse = |s: &str| {
+            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok()
+        };
+        let mut prev: Option<chrono::NaiveDateTime> = None;
+        let transitions: Vec<serde_json::Value> = rows
+            .iter()
+            .map(|r| {
+                let at = parse(&r.date_add);
+                let dwell = match (prev, at) {
+                    (Some(p), Some(c)) => Some((c - p).num_seconds()),
+                    _ => None,
+                };
+                prev = at.or(prev);
+                serde_json::json!({
+                    "at": r.date_add,
+                    "state_id": r.id_order_state,
+                    "state": states.get(&r.id_order_state),
+                    "employee_id": (!r.id_employee.is_empty() && r.id_employee != "0")
+                        .then(|| r.id_employee.clone()),
+                    "employee": employees.get(&r.id_employee),
+                    "dwell_secs_from_prev": dwell,
+                })
+            })
+            .collect();
+        let span_secs = match (parse(&rows[0].date_add), parse(&rows[rows.len() - 1].date_add)) {
+            (Some(a), Some(b)) => Some((b - a).num_seconds()),
+            _ => None,
+        };
+
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
+            "order_id": order_id,
+            "count": rows.len(),
+            "transitions": transitions,
+            "span_secs": span_secs,
+        }))
+        .map_err(to_internal)?]))
     }
 
     #[tool(

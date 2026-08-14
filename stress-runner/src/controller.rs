@@ -664,6 +664,7 @@ fn worker(
         duration_secs,
         planned_secs,
         &spec.tool,
+        &spec.plan,
         outcomes,
     );
 
@@ -2097,6 +2098,7 @@ impl SummaryAccumulator {
         duration_secs: f64,
         planned_secs: Option<u64>,
         tool: &TestTool,
+        plan: &RunPlan,
         stage_outcomes: Vec<StageOutcome>,
     ) -> RunVerdict {
         let mut summary = self.into_summary();
@@ -2120,11 +2122,14 @@ impl SummaryAccumulator {
         let rules_failure = rules_failure_mode(&stage_outcomes, &mut summary);
 
         // Short of plan, or with no finished stage and no throughput: a run
-        // that collected no data logs no violation to fail on.
+        // that collected no data logs no violation to fail on. Concurrent
+        // plans roll no throughput into the run summary, so their evidence is
+        // judged per lane.
         let ended_short = ended_short_of_plan(planned_secs, duration_secs);
-        let uncertifiable = ended_short
-            .clone()
-            .or_else(|| missing_work_evidence(&stage_outcomes, &summary));
+        let uncertifiable = ended_short.clone().or_else(|| match plan {
+            RunPlan::Concurrent { .. } => concurrent_missing_evidence(&stage_outcomes),
+            _ => missing_work_evidence(&stage_outcomes, &summary),
+        });
 
         let cancelled = cancel.load(Ordering::Relaxed);
         let had_failure = rules_failure.is_some()
@@ -2258,6 +2263,51 @@ fn missing_work_evidence(
         );
     }
     None
+}
+
+/// Concurrent-plan analog of [`missing_work_evidence`]. Lanes report
+/// incomparable throughput units, so nothing rolls into the run-level
+/// summary; per-lane stage summaries carry the work evidence. A clean finish
+/// certifies pass only when a verifying lane measured work — load-only lanes
+/// prove the machine survived but check no results.
+fn concurrent_missing_evidence(stage_outcomes: &[StageOutcome]) -> Option<String> {
+    if stage_outcomes.is_empty() {
+        return Some(
+            "inconclusive - no lane reached its end, so no lane was graded and the run \
+             has no record of work completed"
+                .to_string(),
+        );
+    }
+    if !stage_outcomes.iter().any(|o| o.summary.peak_throughput.is_some()) {
+        return Some(
+            "inconclusive - no lane measured throughput, so the run has no evidence that \
+             any load ran"
+                .to_string(),
+        );
+    }
+    let verifying_lane_ran = stage_outcomes.iter().any(|o| {
+        o.summary.peak_throughput.is_some()
+            && Stressor::from_str(&o.summary.stressor).is_some_and(Stressor::detects_errors)
+    });
+    if !verifying_lane_ran {
+        return Some(format!(
+            "inconclusive - every lane only generated load; no verifying stressor ({}) \
+             measured work, so a clean finish checked no results and certifies nothing",
+            verifying_labels_csv(),
+        ));
+    }
+    None
+}
+
+/// Comma-separated verifying subset of the stressor vocabulary.
+fn verifying_labels_csv() -> String {
+    Stressor::all()
+        .iter()
+        .copied()
+        .filter(|s| s.detects_errors())
+        .map(Stressor::as_str)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Dominant `FailureMode` across failed stage verdicts, by severity:
@@ -2506,12 +2556,54 @@ mod tests {
         duration_secs: f64,
         planned_secs: Option<u64>,
     ) -> RunVerdict {
+        verdict_planned(acc, outcomes, duration_secs, planned_secs, &single_plan())
+    }
+
+    /// Run verdict under an explicit plan, for plan-shape-sensitive mappings.
+    fn verdict_planned(
+        acc: SummaryAccumulator,
+        outcomes: Vec<StageOutcome>,
+        duration_secs: f64,
+        planned_secs: Option<u64>,
+        plan: &RunPlan,
+    ) -> RunVerdict {
         let run_id = RecordId::new("stress_test_run", "verdict-test");
         let cancel = Arc::new(AtomicBool::new(false));
         let tool = TestTool::StressKit {
             stressor: "gpu_matmul".to_string(),
         };
-        acc.into_verdict(&run_id, &cancel, duration_secs, planned_secs, &tool, outcomes)
+        acc.into_verdict(&run_id, &cancel, duration_secs, planned_secs, &tool, plan, outcomes)
+    }
+
+    fn single_plan() -> RunPlan {
+        RunPlan::Single {
+            stressor: Stressor::GpuMatmul,
+            threads: 0,
+            duration_secs: Some(60),
+            memory_cap_mb: 256,
+            disk_file_mb: 16,
+        }
+    }
+
+    fn concurrent_plan(stressors: &[Stressor]) -> RunPlan {
+        RunPlan::Concurrent {
+            lanes: stressors.iter().map(|s| stage_spec(s.as_str(), *s)).collect(),
+            duration_secs: Some(600),
+        }
+    }
+
+    /// Finished concurrent lane: stage summary carrying the stressor label
+    /// and its measured peak throughput, no rules verdict.
+    fn lane_outcome(stressor: Stressor, peak_throughput: Option<f64>) -> StageOutcome {
+        StageOutcome {
+            summary: ScenarioStageSummary {
+                stressor: stressor.as_str().to_string(),
+                label: stressor.label().to_string(),
+                peak_throughput,
+                ..Default::default()
+            },
+            verdict: None,
+        }
     }
 
     /// One finished stage carrying only the supplied verdict.
@@ -3291,6 +3383,205 @@ mod tests {
         assert_eq!(verdict.failure_mode.kind(), "app_error");
     }
 
+    /// The live symptom (runs 46c312f2 / 77d3bbe0): a concurrent run whose
+    /// verifying lanes all completed with zero errors persisted
+    /// result='inconclusive'. The run-level rollup carries no throughput for
+    /// concurrent plans, so the lane summaries are the work evidence.
+    #[test]
+    fn clean_verifying_concurrent_run_passes() {
+        let lanes = [Stressor::CpuVerify, Stressor::MemTest, Stressor::GpuVram];
+        let outcomes = vec![
+            lane_outcome(Stressor::CpuVerify, Some(23_308.0)),
+            lane_outcome(Stressor::MemTest, Some(39_191.0)),
+            lane_outcome(Stressor::GpuVram, Some(223_178.0)),
+        ];
+        let verdict = verdict_planned(
+            SummaryAccumulator::default(),
+            outcomes,
+            598.0,
+            Some(600),
+            &concurrent_plan(&lanes),
+        );
+
+        assert_eq!(
+            verdict.result,
+            RunResult::Pass,
+            "clean verifying lanes reported {:?}: {:?}",
+            verdict.result,
+            verdict.failure_mode
+        );
+        assert_eq!(verdict.finish_reason, DbFinishReason::Completed);
+        assert_eq!(verdict.failure_mode, FailureMode::None);
+    }
+
+    /// Verify-under-load: one verifying lane among load lanes is the
+    /// certification evidence, the load lanes are the stress.
+    #[test]
+    fn mixed_concurrent_run_with_a_verifying_lane_passes() {
+        let lanes = [Stressor::Cpu, Stressor::Memory, Stressor::MemTest];
+        let outcomes = vec![
+            lane_outcome(Stressor::Cpu, Some(240.0)),
+            lane_outcome(Stressor::Memory, Some(11_800.0)),
+            lane_outcome(Stressor::MemTest, Some(39_000.0)),
+        ];
+        let verdict = verdict_planned(
+            SummaryAccumulator::default(),
+            outcomes,
+            600.0,
+            Some(600),
+            &concurrent_plan(&lanes),
+        );
+        assert_eq!(verdict.result, RunResult::Pass);
+        assert_eq!(verdict.failure_mode, FailureMode::None);
+    }
+
+    /// Load-only lanes prove the machine survived but verify nothing: a clean
+    /// finish stays inconclusive, and the message says why.
+    #[test]
+    fn clean_load_only_concurrent_run_stays_inconclusive() {
+        let lanes = [Stressor::Cpu, Stressor::Memory, Stressor::Gpu];
+        let outcomes = vec![
+            lane_outcome(Stressor::Cpu, Some(243.0)),
+            lane_outcome(Stressor::Memory, Some(11_826.0)),
+            lane_outcome(Stressor::Gpu, Some(27.0)),
+        ];
+        let verdict = verdict_planned(
+            SummaryAccumulator::default(),
+            outcomes,
+            597.0,
+            Some(600),
+            &concurrent_plan(&lanes),
+        );
+
+        assert_eq!(verdict.result, RunResult::Inconclusive);
+        assert_eq!(verdict.finish_reason, DbFinishReason::Completed);
+        match verdict.failure_mode {
+            FailureMode::AppError { ref message, .. } => {
+                assert!(message.contains("inconclusive -"), "marker missing: {message}");
+                assert!(message.contains("verifying"), "unexpected message: {message}");
+                assert!(
+                    !message.contains("no evidence that any load ran"),
+                    "lanes measured work; the no-work text misdescribes the run: {message}"
+                );
+            }
+            other => panic!("expected an inconclusive AppError, got {other:?}"),
+        }
+    }
+
+    /// Lane data errors drive the verdict: any lane error fails a concurrent
+    /// run regardless of the lanes' verifying classification.
+    #[test]
+    fn concurrent_lane_errors_fail_the_run() {
+        // drive_concurrent folds lane `Metrics.errors` here after the loop.
+        let acc = SummaryAccumulator {
+            completed_stage_errors: 3,
+            ..Default::default()
+        };
+        let lanes = [Stressor::CpuVerify, Stressor::MemTest];
+        let outcomes = vec![
+            lane_outcome(Stressor::CpuVerify, Some(23_308.0)),
+            lane_outcome(Stressor::MemTest, Some(39_191.0)),
+        ];
+        let verdict =
+            verdict_planned(acc, outcomes, 600.0, Some(600), &concurrent_plan(&lanes));
+
+        assert_eq!(verdict.result, RunResult::Fail);
+        assert_eq!(verdict.summary.test_errors, 3);
+        assert_eq!(verdict.failure_mode, FailureMode::DataMismatch { addresses: None });
+    }
+
+    /// A failing lane verdict (rules attached) fails the run the same way.
+    #[test]
+    fn concurrent_lane_verdict_violation_fails_the_run() {
+        let lanes = [Stressor::Cpu, Stressor::MemTest];
+        let failed = StageVerdict {
+            index: 1,
+            label: "memtest".to_string(),
+            pass: false,
+            violations: vec![RuleViolation::StressorErrors { count: 3 }],
+            warnings: Vec::new(),
+        };
+        let outcomes = vec![
+            lane_outcome(Stressor::Cpu, Some(240.0)),
+            outcome_with(failed),
+        ];
+        let verdict = verdict_planned(
+            SummaryAccumulator::default(),
+            outcomes,
+            600.0,
+            Some(600),
+            &concurrent_plan(&lanes),
+        );
+
+        assert_eq!(verdict.result, RunResult::Fail);
+        assert_eq!(verdict.failure_mode, FailureMode::DataMismatch { addresses: None });
+    }
+
+    /// Verifying lanes that never measured work certify nothing.
+    #[test]
+    fn concurrent_run_without_lane_throughput_is_inconclusive() {
+        let lanes = [Stressor::CpuVerify, Stressor::MemTest];
+        let outcomes = vec![
+            lane_outcome(Stressor::CpuVerify, None),
+            lane_outcome(Stressor::MemTest, None),
+        ];
+        let verdict = verdict_planned(
+            SummaryAccumulator::default(),
+            outcomes,
+            600.0,
+            Some(600),
+            &concurrent_plan(&lanes),
+        );
+
+        assert_eq!(verdict.result, RunResult::Inconclusive);
+        match verdict.failure_mode {
+            FailureMode::AppError { ref message, .. } => {
+                assert!(
+                    message.contains("no lane measured throughput"),
+                    "unexpected message: {message}"
+                );
+            }
+            other => panic!("expected an inconclusive AppError, got {other:?}"),
+        }
+    }
+
+    /// The short-run gate still outranks lane evidence: a concurrent run cut
+    /// off early is ungraded time, not a pass.
+    #[test]
+    fn short_concurrent_run_is_ended_early_not_a_pass() {
+        let lanes = [Stressor::CpuVerify, Stressor::MemTest];
+        let outcomes = vec![
+            lane_outcome(Stressor::CpuVerify, Some(23_308.0)),
+            lane_outcome(Stressor::MemTest, Some(39_191.0)),
+        ];
+        let verdict = verdict_planned(
+            SummaryAccumulator::default(),
+            outcomes,
+            113.0,
+            Some(600),
+            &concurrent_plan(&lanes),
+        );
+        assert_eq!(verdict.result, RunResult::Inconclusive);
+        assert_eq!(verdict.finish_reason, DbFinishReason::EndedEarly);
+    }
+
+    /// The lanes the QC verify preset runs are all classified verifying, so
+    /// the pass upgrade applies to them.
+    #[test]
+    fn qc_verify_lanes_are_classified_verifying() {
+        for s in [
+            Stressor::CpuVerify,
+            Stressor::MemTest,
+            Stressor::GpuVram,
+            Stressor::Linpack,
+        ] {
+            assert!(s.detects_errors(), "{s:?} must count as verifying");
+        }
+        assert!(!Stressor::Cpu.detects_errors());
+        assert!(!Stressor::Memory.detects_errors());
+        assert!(!Stressor::Gpu.detects_errors());
+    }
+
     /// Hardware evidence and an operator cancel both outrank the short-run gate:
     /// they name the run's end more precisely.
     #[test]
@@ -3314,6 +3605,7 @@ mod tests {
             113.0,
             Some(43_200),
             &tool,
+            &single_plan(),
             vec![finished_stage()],
         );
         assert_eq!(verdict.result, RunResult::Aborted);

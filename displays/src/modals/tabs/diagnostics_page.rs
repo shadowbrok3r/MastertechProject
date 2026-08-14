@@ -123,6 +123,17 @@ pub fn display_diagnostics_page(
                     return;
                 }
 
+                let mark_ctx: Option<(&Sender<TaskUiActions>, String)> =
+                    ai_ctx.as_ref().and_then(|ai| {
+                        ai.ui_actions_tx.map(|tx| {
+                            (
+                                tx,
+                                ai.current_user
+                                    .map(|u| u.get_name().to_string())
+                                    .unwrap_or_else(|| "operator".to_string()),
+                            )
+                        })
+                    });
                 ScrollArea::vertical()
                     .id_salt("diag_sessions_scroll")
                     .auto_shrink([false; 2])
@@ -132,7 +143,7 @@ pub fn display_diagnostics_page(
                             let is_selected = selected
                                 .as_ref()
                                 .is_some_and(|s| s == &view.session.id);
-                            render_session(ui, view, idx, is_selected, |id| {
+                            render_session(ui, view, idx, is_selected, mark_ctx.as_ref(), |id| {
                                 *selected = Some(id);
                             });
                             ui.add_space(6.0);
@@ -246,6 +257,7 @@ fn render_session(
     view: &DiagnosticSessionView,
     idx: usize,
     selected: bool,
+    mark_ctx: Option<&(&Sender<TaskUiActions>, String)>,
     mut on_select: impl FnMut(RecordId),
 ) {
     let session = &view.session;
@@ -293,6 +305,15 @@ fn render_session(
                         ui.label(name);
                         ui.end_row();
                     }
+                    if let Some(diag) = session.diagnosed_at.as_ref() {
+                        ui.label(RichText::new("Diagnosed").weak());
+                        ui.label(format!(
+                            "{} by {}",
+                            format_datetime(diag),
+                            session.diagnosed_by.as_deref().unwrap_or("unknown"),
+                        ));
+                        ui.end_row();
+                    }
                     if let Some(end) = session.ended_at.as_ref() {
                         ui.label(RichText::new("Ended").weak());
                         ui.label(format_datetime(end));
@@ -310,6 +331,25 @@ fn render_session(
                         ui.end_row();
                     }
                 });
+
+            if session.diagnosed_at.is_none() {
+                if let Some((tx, by)) = mark_ctx {
+                    if Button::new(icons::menu_item(icons::CHECK, "Mark diagnosed"))
+                        .small()
+                        .ui(ui)
+                        .on_hover_text(
+                            "Stamp the diagnosis-complete milestone now; remediation can \
+                             continue and the session stays open",
+                        )
+                        .clicked()
+                    {
+                        let _ = tx.try_send(TaskUiActions::MarkDiagnosed {
+                            session_id: session.id.clone(),
+                            by: by.clone(),
+                        });
+                    }
+                }
+            }
 
             if let Some(summary) = session.summary.as_deref() {
                 if !summary.trim().is_empty() {

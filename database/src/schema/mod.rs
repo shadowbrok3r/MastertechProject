@@ -47,6 +47,7 @@ pub mod crash_intel;
 pub mod driver_intel;
 pub mod ai_task;
 pub mod sql_approval;
+pub mod service_metrics;
 
 pub use task::*;
 pub use task_note::*;
@@ -65,6 +66,7 @@ pub use file_storage::*;
 pub use plugin_registry::*;
 pub use build_job::*;
 pub use diagnostic::*;
+pub use service_metrics::ServiceMetrics;
 pub use service_match::*;
 pub use entity_link::*;
 pub use customer_resolution::*;

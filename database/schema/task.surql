@@ -41,6 +41,7 @@ DEFINE FIELD created_at       ON task TYPE datetime              DEFAULT time::n
 DEFINE FIELD due_date         ON task TYPE datetime              DEFAULT time::now() PERMISSIONS FULL;
 DEFINE FIELD jobs             ON task TYPE none | array<record<job>>              PERMISSIONS FULL;
 DEFINE FIELD jobs.*           ON task TYPE record<job>                            PERMISSIONS FULL;
+DEFINE FIELD origin           ON task TYPE none | string ASSERT $value == NONE OR $value IN ['ai', 'tech'] PERMISSIONS FULL;
 DEFINE FIELD priority         ON task TYPE none | string                          PERMISSIONS FULL;
 DEFINE FIELD service_number   ON task TYPE none | string                          PERMISSIONS FULL;
 DEFINE FIELD service_ticket   ON task TYPE none | record<service_order>           PERMISSIONS FULL;

@@ -415,6 +415,11 @@ pub enum TaskUiActions {
     },
     /// Operator accepts the handback; closes the AI task + logs a summary entry.
     CloseAiTask(RecordId),
+    /// Stamp the diagnosis-complete milestone on a session (first stamp wins).
+    MarkDiagnosed {
+        session_id: RecordId,
+        by: String,
+    },
     None,
 }
 
