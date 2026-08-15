@@ -294,11 +294,12 @@ mod windows_impl {
             // Held across the whole configure: two swapchain builds on one
             // device must not overlap even with every presenter parked.
             let _turn = self.configure_turn.lock().ok()?;
-            if self.other_submitters(self_submits) == 0 {
-                return Some(configure());
-            }
+            // Raised before counting siblings: a thread that enters its frame
+            // loop mid-configure parks at its first frame instead of
+            // submitting into the build.
             self.configure_pause.store(true, Ordering::SeqCst);
-            let quiet = self.await_parked(stop, self_submits);
+            let quiet = self.other_submitters(self_submits) == 0
+                || self.await_parked(stop, self_submits);
             let out = quiet.then(configure);
             self.configure_pause.store(false, Ordering::SeqCst);
             if out.is_none() {
@@ -1184,6 +1185,75 @@ mod windows_impl {
 
             stop.store(true, Ordering::SeqCst);
             hot.join().unwrap();
+        }
+
+        /// The concurrent verify-mix crash shape (heap corruption on
+        /// DESKTOP-NFOQK4J, run `0fa3d84d`): a configure taken on the
+        /// zero-submitter fast path must still raise the pause, so a sibling
+        /// that reaches its frame loop mid-configure parks instead of
+        /// submitting into the swapchain build.
+        #[test]
+        fn thread_entering_frame_loop_mid_configure_parks_first() {
+            let shared = Arc::new(Shared::default());
+            let stop = Arc::new(AtomicBool::new(false));
+            let release = Arc::new(AtomicBool::new(false));
+            let submitted = Arc::new(AtomicBool::new(false));
+
+            // Sibling in setup: enters its frame loop only once released,
+            // then walks drive_output's per-frame order — park, then submit.
+            let entrant = {
+                let shared = shared.clone();
+                let stop = stop.clone();
+                let release = release.clone();
+                let submitted = submitted.clone();
+                std::thread::Builder::new()
+                    .name("test-entrant".into())
+                    .spawn(move || {
+                        while !release.load(Ordering::SeqCst) {
+                            std::thread::sleep(Duration::from_micros(20));
+                        }
+                        let _submit = SubmitGuard::enter(&shared.submitters);
+                        while !stop.load(Ordering::Relaxed) {
+                            shared.park_if_paused(&stop);
+                            submitted.store(true, Ordering::SeqCst);
+                            std::thread::sleep(Duration::from_micros(50));
+                        }
+                    })
+                    .expect("spawn test entrant")
+            };
+
+            // No submitters yet, so this configure takes the fast path. The
+            // sibling is released mid-configure and must park, not submit.
+            let submitted_mid_configure = shared.with_quiesce(&stop, false, || {
+                release.store(true, Ordering::SeqCst);
+                let deadline = Instant::now() + Duration::from_secs(5);
+                loop {
+                    if submitted.load(Ordering::SeqCst) {
+                        break true;
+                    }
+                    if shared.parked.load(Ordering::SeqCst) >= 1 {
+                        break false;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "entrant never reached its frame loop"
+                    );
+                    std::thread::sleep(Duration::from_micros(50));
+                }
+            });
+            assert_eq!(
+                submitted_mid_configure,
+                Some(false),
+                "a thread entering its frame loop submitted while a fast-path configure was in flight"
+            );
+
+            stop.store(true, Ordering::SeqCst);
+            entrant.join().unwrap();
+            assert!(
+                submitted.load(Ordering::SeqCst),
+                "entrant never submitted after the configure finished"
+            );
+            assert_eq!(shared.parked.load(Ordering::SeqCst), 0, "a park was leaked");
         }
 
         /// A small window standing in for one output; the race under test is
