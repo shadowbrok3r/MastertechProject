@@ -68,11 +68,11 @@ const DUMP_SCAN_EVERY: Duration = Duration::from_secs(2);
 /// Pause after a surface fault before the next acquire attempt.
 #[cfg(target_os = "windows")]
 const FAULT_BACKOFF: Duration = Duration::from_millis(100);
-/// Time before the driven-output count is treated as settled. Every output
-/// presents its first frame well inside this, so the coverage caveat cannot
-/// fire on a healthy multi-monitor run that is still starting up.
+/// Time before the driven-output count is treated as settled. Sized for a
+/// spin-up next to saturated CPU lanes in a concurrent run, where an output's
+/// first configure can take several quiesce rounds before its first frame.
 #[cfg(target_os = "windows")]
-const COVERAGE_WARMUP: Duration = Duration::from_secs(3);
+const COVERAGE_WARMUP: Duration = Duration::from_secs(10);
 /// Per-pixel iterations in the frame shader — enough that a frame is real work
 /// without turning the stage back into a compute test.
 #[cfg(target_os = "windows")]
@@ -235,6 +235,8 @@ mod windows_impl {
         parked: AtomicU32,
         /// Reconfigures skipped because the siblings never went quiet.
         quiesce_timeouts: AtomicU64,
+        /// A coverage complaint has been emitted and not yet resolved.
+        coverage_complained: AtomicBool,
     }
 
     /// Frame-loop membership marker for the quiesce handshake; the counter
@@ -563,14 +565,27 @@ mod windows_impl {
         dumps_available: bool,
         elapsed: Duration,
     ) -> Option<String> {
+        let driven = shared.driven();
+        // One-shot, ahead of any standing warn so nothing masks it: the
+        // runner clears its latched inconclusive on the `resolved -` marker.
+        if driven >= attached
+            && shared
+                .coverage_complained
+                .swap(false, Ordering::SeqCst)
+        {
+            return Some(format!(
+                "resolved - all {attached} attached output(s) are now driven; the earlier \
+                 coverage shortfall no longer applies"
+            ));
+        }
         if let Some(warn) = shared.warn() {
             return Some(warn);
         }
         // Held until the count settles; a starting run drives no output yet.
         // Any shortfall counts, not just a single output: driving 2 of 3 leaves
         // the third untested, so it cannot clear a multi-monitor fault either.
-        let driven = shared.driven();
         if elapsed >= COVERAGE_WARMUP && driven < attached {
+            shared.coverage_complained.store(true, Ordering::SeqCst);
             return Some(format!(
                 "gpu_display: inconclusive - only {driven} of {attached} attached output(s) were \
                  driven; the full multi-display present path was not exercised, so a pass here \
@@ -610,6 +625,15 @@ mod windows_impl {
         stop: &Arc<AtomicBool>,
         shared: &Arc<Shared>,
     ) {
+        // Present/park handshakes must answer within the quiesce window even
+        // next to saturated CPU lanes; this thread does milliseconds of CPU
+        // work per frame, so the boost costs the other lanes nothing.
+        unsafe {
+            use winapi::um::processthreadsapi::{GetCurrentThread, SetThreadPriority};
+            use winapi::um::winbase::THREAD_PRIORITY_ABOVE_NORMAL;
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL as i32);
+        }
+
         let stats = &shared.outputs[index];
         let window = match OutputWindow::new(&output) {
             Ok(w) => w,
@@ -1254,6 +1278,38 @@ mod windows_impl {
                 "entrant never submitted after the configure finished"
             );
             assert_eq!(shared.parked.load(Ordering::SeqCst), 0, "a park was leaked");
+        }
+
+        /// The coverage note's state machine: complaint while a shortfall
+        /// stands, a one-shot `resolved -` when every output drives (not
+        /// maskable by a standing warn), silence after.
+        #[test]
+        fn coverage_complaint_resolves_once_every_output_drives() {
+            let mut shared = Shared::default();
+            shared.outputs.resize_with(2, OutputStats::default);
+            let shared = Arc::new(shared);
+            let settled = COVERAGE_WARMUP + Duration::from_secs(1);
+
+            // Only output 0 presents: complaint.
+            shared.outputs[0].presented.store(1, Ordering::Relaxed);
+            let note = standing_note(&shared, 2, true, settled).expect("complaint expected");
+            assert!(note.contains("inconclusive -"), "{note}");
+            assert!(note.contains("1 of 2"), "{note}");
+
+            // Output 1 catches up: one resolution, then silence.
+            shared.outputs[1].presented.store(1, Ordering::Relaxed);
+            let resolved = standing_note(&shared, 2, true, settled).expect("resolution expected");
+            assert!(resolved.starts_with("resolved -"), "{resolved}");
+            assert_eq!(standing_note(&shared, 2, true, settled), None);
+
+            // Re-complain (state forced back), set a standing warn, resolve
+            // again: the resolution must outrank the warn, which then shows.
+            shared.coverage_complained.store(true, Ordering::SeqCst);
+            shared.set_warn("gpu_display: present timed out acquiring a frame on T".into());
+            let resolved = standing_note(&shared, 2, true, settled).expect("resolution expected");
+            assert!(resolved.starts_with("resolved -"), "{resolved}");
+            let warn = standing_note(&shared, 2, true, settled).expect("warn expected");
+            assert!(warn.contains("timed out"), "{warn}");
         }
 
         /// A small window standing in for one output; the race under test is

@@ -265,7 +265,10 @@ pub struct StageStats {
     /// Newest `Metrics.last_error` folded in this stage.
     pub last_error: Option<String>,
     /// First `inconclusive -` message folded this stage, device-loss text
-    /// excluded so it stays hardware-classified. Latched.
+    /// excluded so it stays hardware-classified. Latched until a `resolved -`
+    /// marker from the same lane clears it (a shortfall that healed, e.g.
+    /// gpu_display output coverage completing after a slow start); a fresh
+    /// inconclusive after that latches again.
     pub inconclusive_reason: Option<String>,
     /// A stressor reported `Metrics.fatal` at least once this stage. Latched:
     /// later clean ticks never clear it.
@@ -341,7 +344,9 @@ impl StageStats {
         }
         if let Some(msg) = &metrics.last_error {
             self.last_error = Some(msg.clone());
-            if self.inconclusive_reason.is_none()
+            if is_resolution_message(msg) {
+                self.inconclusive_reason = None;
+            } else if self.inconclusive_reason.is_none()
                 && is_inconclusive_message(msg)
                 && !is_device_loss_message(msg)
             {
@@ -608,6 +613,13 @@ pub(crate) fn is_device_loss_message(msg: &str) -> bool {
 /// it could not apply, so the stage proves nothing about any component.
 pub(crate) fn is_inconclusive_message(msg: &str) -> bool {
     msg.to_ascii_lowercase().contains("inconclusive -")
+}
+
+/// The `resolved -` marker a stressor emits once when a previously reported
+/// shortfall no longer stands. Clears the latched inconclusive; only a
+/// stressor that can prove the condition healed emits it.
+pub(crate) fn is_resolution_message(msg: &str) -> bool {
+    msg.to_ascii_lowercase().contains("resolved -")
 }
 
 /// Stressors whose tick throughput is bursty or pattern-phased by design;
@@ -1319,6 +1331,83 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The run-8f8697cd shape: a coverage complaint latched during a slow
+    /// spin-up is cleared by the stressor's `resolved -` marker, and the
+    /// full-duration clean stage passes.
+    #[test]
+    fn resolution_message_clears_a_latched_inconclusive() {
+        let complaint = "gpu_display: inconclusive - only 1 of 2 attached output(s) were driven";
+        let resolution = "resolved - all 2 attached output(s) are now driven";
+        for rules in [VerdictRules::certification(), VerdictRules::default()] {
+            let mut stats = StageStats::begin(
+                0,
+                "gpu_display",
+                Stressor::GpuDisplay,
+                &snapshot_with_gpu(50.0, 4000, 90.0, 50.0),
+            );
+            for _ in 0..5 {
+                stats.absorb_tick(
+                    &warn_metrics(100.0, complaint),
+                    &snapshot_with_gpu(70.0, 4000, 95.0, 60.0),
+                    &rules,
+                );
+            }
+            assert_eq!(stats.inconclusive_reason.as_deref(), Some(complaint));
+            stats.absorb_tick(
+                &warn_metrics(200.0, resolution),
+                &snapshot_with_gpu(70.0, 4000, 95.0, 60.0),
+                &rules,
+            );
+            assert!(stats.inconclusive_reason.is_none(), "resolution did not clear the latch");
+            for _ in 0..40 {
+                stats.absorb_tick(
+                    &metrics(200.0, 0),
+                    &snapshot_with_gpu(70.0, 4000, 95.0, 60.0),
+                    &rules,
+                );
+            }
+            stats.finish(&snapshot_with_gpu(70.0, 4000, 95.0, 60.0));
+            let verdict = evaluate_stage(&stats, &rules);
+            assert!(verdict.pass, "resolved stage failed: {:?}", verdict.violations);
+        }
+    }
+
+    /// A fresh shortfall after a resolution latches again — resolution is not
+    /// a permanent amnesty.
+    #[test]
+    fn inconclusive_after_a_resolution_latches_again() {
+        let rules = VerdictRules::default();
+        let complaint = "gpu_display: inconclusive - only 1 of 2 attached output(s) were driven";
+        let mut stats = StageStats::begin(
+            0,
+            "gpu_display",
+            Stressor::GpuDisplay,
+            &snapshot_with_gpu(50.0, 4000, 90.0, 50.0),
+        );
+        stats.absorb_tick(
+            &warn_metrics(100.0, complaint),
+            &snapshot_with_gpu(70.0, 4000, 95.0, 60.0),
+            &rules,
+        );
+        stats.absorb_tick(
+            &warn_metrics(100.0, "resolved - all 2 attached output(s) are now driven"),
+            &snapshot_with_gpu(70.0, 4000, 95.0, 60.0),
+            &rules,
+        );
+        stats.absorb_tick(
+            &warn_metrics(100.0, complaint),
+            &snapshot_with_gpu(70.0, 4000, 95.0, 60.0),
+            &rules,
+        );
+        stats.finish(&snapshot_with_gpu(70.0, 4000, 95.0, 60.0));
+        let verdict = evaluate_stage(&stats, &rules);
+        assert!(!verdict.pass, "re-latched shortfall reported pass");
+        assert!(verdict
+            .violations
+            .iter()
+            .any(|v| matches!(v, RuleViolation::Inconclusive { .. })));
     }
 
     /// Device-loss text stays hardware evidence: it is never filed as the

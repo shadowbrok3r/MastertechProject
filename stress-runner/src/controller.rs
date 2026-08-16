@@ -1579,6 +1579,24 @@ fn map_finish_reason(reason: SkFinishReason) -> DbFinishReason {
     }
 }
 
+/// Persist one event row on the shared runtime with bounded connection
+/// retries — verdict events grade the run, so a transient DB drop must not
+/// silently eat them. The row id is pre-generated, so an attempt that landed
+/// but lost its response surfaces as "already exists" on the retry: success.
+fn spawn_event_create(event: DbStressTestEvent, what: &'static str) {
+    runtime::spawn(async move {
+        match database::db_call_with_retry(|| async { DbStressTestEvent::create(&event).await })
+            .await
+        {
+            Ok(_) => {}
+            Err(err) if err.to_string().contains("already exists") => {}
+            Err(err) => {
+                log::error!("stress-runner: failed to persist {what} event after retries: {err}");
+            }
+        }
+    });
+}
+
 fn persist_event(
     run_ref: &RecordId,
     kind: DbEventKind,
@@ -1594,11 +1612,7 @@ fn persist_event(
     let _ = event.id; // suppress unused if we ever read it
     let _ = STRESS_TEST_EVENT_TABLE; // imported for callsite clarity
     let _ = random_record_id; // keeping import in scope for future callers
-    runtime::spawn(async move {
-        if let Err(err) = DbStressTestEvent::create(&event).await {
-            log::warn!("stress-runner: failed to persist event: {err}");
-        }
-    });
+    spawn_event_create(event, "scenario");
 }
 
 /// Persist a `stress_test_event` for newly observed test errors. Memory
@@ -1623,11 +1637,7 @@ fn persist_error_event(
         "stressor": stressor.label(),
         "new_errors": new_errors,
     }));
-    runtime::spawn(async move {
-        if let Err(err) = DbStressTestEvent::create(&event).await {
-            log::warn!("stress-runner: failed to persist error event: {err}");
-        }
-    });
+    spawn_event_create(event, "stressor-error");
 }
 
 /// Extended `ScenarioStageSummary` from per-stage stats + legacy tick fields.
@@ -1701,20 +1711,12 @@ fn persist_counter_events(
             "WHEA counter moved {whea_before} -> {}",
             acc.whea_delta_count
         );
-        runtime::spawn(async move {
-            if let Err(err) = DbStressTestEvent::create(&event).await {
-                log::warn!("stress-runner: failed to persist whea event: {err}");
-            }
-        });
+        spawn_event_create(event, "whea");
     }
     if acc.tdr_delta_count > tdr_before {
         let mut event = DbStressTestEvent::new(run_id.clone(), DbEventKind::Tdr, "telemetry");
         event.detail = format!("TDR counter moved {tdr_before} -> {}", acc.tdr_delta_count);
-        runtime::spawn(async move {
-            if let Err(err) = DbStressTestEvent::create(&event).await {
-                log::warn!("stress-runner: failed to persist tdr event: {err}");
-            }
-        });
+        spawn_event_create(event, "tdr");
     }
 }
 
@@ -1729,11 +1731,7 @@ fn persist_stage_verdict_events(run_id: &RecordId, verdict: &StageVerdict) {
         let mut event = DbStressTestEvent::new(run_id.clone(), DbEventKind::Custom, "verdict-rules");
         event.code = Some("warning".to_string());
         event.detail = format!("stage '{}': {warning}", verdict.label);
-        runtime::spawn(async move {
-            if let Err(err) = DbStressTestEvent::create(&event).await {
-                log::warn!("stress-runner: failed to persist stage warning event: {err}");
-            }
-        });
+        spawn_event_create(event, "stage-warning");
     }
 }
 
@@ -1747,11 +1745,7 @@ fn persist_stage_verdict_event(run_id: &RecordId, verdict: &StageVerdict) {
         verdict.violation_lines().join("; ")
     );
     event.data = serde_json::to_value(verdict).ok();
-    runtime::spawn(async move {
-        if let Err(err) = DbStressTestEvent::create(&event).await {
-            log::warn!("stress-runner: failed to persist stage verdict event: {err}");
-        }
-    });
+    spawn_event_create(event, "stage-verdict");
 }
 
 /// Running tally of telemetry samples that never reached the DB. Nothing here

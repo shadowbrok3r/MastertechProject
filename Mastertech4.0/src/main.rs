@@ -26,6 +26,13 @@ pub mod window_info;
 
 impl eframe::App for app_state::MasterTechApp {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // The swapchain only reconfigures during a repaint, so an idle window
+        // holds its last presented frame through gpu_display's mode-sets and
+        // scans out garbage until some event forces a redraw.
+        if stress_runner::is_stress_active() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+
         // One-time: register PluginManager bridge with egui
         if !self.context.plugin_manager_registered {
             self.context.plugin_manager_registered = true;
