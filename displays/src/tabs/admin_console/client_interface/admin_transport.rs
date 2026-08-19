@@ -277,10 +277,52 @@ impl AdminTransport {
         }
     }
 
+    /// Exchanges and checks the `Cmd` shape fingerprint on the relay's
+    /// WebSocket channel, which carries no frame-tag layer of its own.
+    ///
+    /// Ours goes out on open and again on `CLIENT_CONNECTED`, because the relay
+    /// forwards only to peers present at send time — whichever side joined the
+    /// room second would otherwise never see the other's fingerprint. An
+    /// inbound one becomes the same `__SHAPE_FP_MISMATCH__`/`__CLIENT_VERSION__`
+    /// sentinel the direct-TCP reader emits, so `receive.rs` handles every
+    /// transport through one path.
+    fn gate_ws_shape_fp(sender: &mut WsSender, ev: WsEvent) -> WsEvent {
+        let peer_joined = match &ev {
+            WsEvent::Opened => true,
+            WsEvent::Message(WsMessage::Text(t)) => t == "CLIENT_CONNECTED",
+            _ => false,
+        };
+        if peer_joined {
+            sender.send(WsMessage::Binary(crate::shape_fp::encode_ws_shape_fp(
+                tcp_protocol::SHAPE_FP_KIND_ADMIN,
+            )));
+            return ev;
+        }
+
+        if let WsEvent::Message(WsMessage::Binary(bin)) = &ev {
+            if let Some((peer_fp, peer_ver)) = crate::shape_fp::decode_ws_shape_fp(bin) {
+                let local = *crate::shape_fp::CMD_SHAPE_FP;
+                let local_ver = crate::shape_fp::BUILD_VERSION;
+                let sentinel = if peer_fp == local {
+                    format!("__CLIENT_VERSION__|{peer_ver}")
+                } else {
+                    format!(
+                        "__SHAPE_FP_MISMATCH__|{peer_fp:#018x}|{peer_ver}|{local:#018x}|{local_ver}"
+                    )
+                };
+                return WsEvent::Message(WsMessage::Text(sentinel));
+            }
+        }
+        ev
+    }
+
     /// Mirrors [`ewebsock::WsReceiver::try_recv`].
     pub fn try_recv(&mut self) -> Option<WsEvent> {
         match &mut self.inner {
-            AdminTransportInner::WebSocket { receiver, .. } => receiver.try_recv(),
+            AdminTransportInner::WebSocket { sender, receiver } => {
+                let ev = receiver.try_recv()?;
+                Some(Self::gate_ws_shape_fp(sender, ev))
+            }
             AdminTransportInner::Tcp { in_rx, closed, .. } => match in_rx.try_recv() {
                 Ok(ev) => {
                     if matches!(&ev, WsEvent::Closed) {

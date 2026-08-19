@@ -253,6 +253,7 @@ impl ConnectionManager {
                     );
                     self.state = ConnectionState::Connected;
                     self.last_pong_time = Some(Instant::now());
+                    self.send_shape_fp();
                 }
                 ewebsock::WsEvent::Closed => {
                     log::debug!(
@@ -283,6 +284,10 @@ impl ConnectionManager {
                     text_str.len(), 
                     if text_str.len() > 100 { &text_str[..100] } else { &text_str }
                 );
+                if text_str == "CLIENT_CONNECTED" {
+                    self.send_shape_fp();
+                }
+
                 self.message_buffer.push(text_str.clone());
                 
                 // Forward to shell output channel for display
@@ -298,7 +303,12 @@ impl ConnectionManager {
             }
             WsMessage::Binary(data) => {
                 log::debug!("ConnectionManager: Received BINARY message ({} bytes)", data.len());
-                
+
+                if let Some((peer_fp, peer_ver)) = crate::shape_fp::decode_ws_shape_fp(&data) {
+                    self.check_shape_fp(peer_fp, &peer_ver);
+                    return;
+                }
+
                 // Try to deserialize as command using bincode
                 if let Some(cmd) = deserialize_command(&data) {
                     log::debug!("ConnectionManager: Deserialized binary as Cmd: {}", crate::shape_fp::redacted(&cmd));
@@ -337,6 +347,40 @@ impl ConnectionManager {
             }
             _ => {}
         }
+    }
+
+    /// Sends this build's `Cmd` shape fingerprint to the client.
+    ///
+    /// Repeated on `CLIENT_CONNECTED` as well as on open: the relay forwards
+    /// only to peers present at send time, so whichever side joined the room
+    /// second would never see the other's fingerprint.
+    fn send_shape_fp(&self) {
+        if let Some(sender) = &self.ws_sender {
+            if let Ok(mut guard) = sender.lock() {
+                guard.send(WsMessage::Binary(
+                    crate::shape_fp::encode_ws_shape_fp(tcp_protocol::SHAPE_FP_KIND_ADMIN).into(),
+                ));
+            }
+        }
+    }
+
+    /// Surfaces whether the client's `Cmd` schema matches this build's.
+    ///
+    /// A mismatch means every `Cmd` sent from here decodes misaligned on the
+    /// client, so it reads as a dead session rather than an out-of-date build.
+    fn check_shape_fp(&mut self, peer_fp: u64, peer_ver: &str) {
+        let local = *crate::shape_fp::CMD_SHAPE_FP;
+        if peer_fp == local {
+            log::debug!("ConnectionManager: Cmd shape ok (client ver={peer_ver})");
+            return;
+        }
+        let msg = format!(
+            "Client build is out of date (Cmd protocol mismatch): client fp={peer_fp:#018x}              ver={peer_ver} vs console fp={local:#018x} ver={}. Push a self-update.",
+            crate::shape_fp::BUILD_VERSION
+        );
+        log::warn!("ConnectionManager: {msg}");
+        self.message_buffer.push(msg.clone());
+        let _ = self.shell_output_tx.send(msg);
     }
 
     /// Send pending commands to the client

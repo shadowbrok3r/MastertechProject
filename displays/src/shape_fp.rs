@@ -27,6 +27,26 @@ pub fn release_of(build: &str) -> &str {
 
 const MAX_DEPTH: usize = 12;
 
+/// This build's fingerprint as a [`crate::SHAPE_FP_WS_TAG`]-prefixed message for
+/// the relay's WebSocket channel. `kind` is a `tcp_protocol::SHAPE_FP_KIND_*`.
+pub fn encode_ws_shape_fp(kind: u8) -> Vec<u8> {
+    let payload = tcp_protocol::encode_shape_fp(kind, *CMD_SHAPE_FP, BUILD_VERSION);
+    let mut out = Vec::with_capacity(1 + payload.len());
+    out.push(crate::SHAPE_FP_WS_TAG);
+    out.extend_from_slice(&payload);
+    out
+}
+
+/// The peer's fingerprint and build from a tagged WebSocket shape-fp message.
+/// `None` when `bin` isn't one, so callers fall through to their other decoders.
+pub fn decode_ws_shape_fp(bin: &[u8]) -> Option<(u64, String)> {
+    if bin.first() != Some(&crate::SHAPE_FP_WS_TAG) {
+        return None;
+    }
+    let (_, peer_fp, peer_ver) = tcp_protocol::decode_shape_fp(&bin[1..])?;
+    Some((peer_fp, peer_ver))
+}
+
 /// `Cmd`'s variants in declaration order — which is bincode's encoding order.
 pub fn cmd_variant_names() -> Vec<&'static str> {
     match <crate::Cmd as Facet>::SHAPE.ty {
@@ -145,6 +165,7 @@ mod tests {
     use facet::Facet;
     use tcp_protocol::shape_fp::shape_fingerprint;
 
+    use super::{decode_ws_shape_fp, encode_ws_shape_fp};
     use crate::{try_deserialize_command, Cmd};
 
     /// A frame from a peer on a different `Cmd` schema decodes as misaligned
@@ -174,6 +195,39 @@ mod tests {
             }
         }
         assert!(rejected > 0, "no corruption was rejected; the sweep proves nothing");
+    }
+
+    /// The relay's WebSocket channel has no frame-tag envelope, so a
+    /// fingerprint message is told apart by its leading byte alone — which is
+    /// also where a bincode `Cmd` variant index sits. The tag must stay above
+    /// every variant index, and must never be `FRAME_TAG_SHAPE_FP` (0x0B),
+    /// which is a live variant on that channel.
+    #[test]
+    fn ws_shape_fp_tag_cannot_collide_with_a_cmd_variant() {
+        let variants = super::cmd_variant_names().len();
+        assert!(
+            variants <= crate::SHAPE_FP_WS_TAG as usize,
+            "Cmd grew to {variants} variants and now reaches SHAPE_FP_WS_TAG              (0x{:02x}); pick a higher tag",
+            crate::SHAPE_FP_WS_TAG
+        );
+        assert_ne!(crate::SHAPE_FP_WS_TAG, tcp_protocol::FRAME_TAG_SHAPE_FP);
+
+        // A tagged message must not be mistaken for a Cmd, and vice versa.
+        let tagged = encode_ws_shape_fp(tcp_protocol::SHAPE_FP_KIND_AGENT);
+        assert!(try_deserialize_command(&tagged).is_none());
+        let cmd = encode_to_vec(&Cmd::Quit, standard()).expect("Cmd encodes");
+        assert!(decode_ws_shape_fp(&cmd).is_none());
+    }
+
+    /// The fingerprint survives the tag round-trip on the WebSocket channel.
+    #[test]
+    fn ws_shape_fp_round_trips() {
+        let tagged = encode_ws_shape_fp(tcp_protocol::SHAPE_FP_KIND_ADMIN);
+        let (fp, ver) = decode_ws_shape_fp(&tagged).expect("round-trips");
+        assert_eq!(fp, *super::CMD_SHAPE_FP);
+        assert_eq!(ver, super::BUILD_VERSION);
+        assert!(decode_ws_shape_fp(&[]).is_none());
+        assert!(decode_ws_shape_fp(&[crate::SHAPE_FP_WS_TAG]).is_none());
     }
 
     /// A variant index past the end of the enum is what an older peer sees when

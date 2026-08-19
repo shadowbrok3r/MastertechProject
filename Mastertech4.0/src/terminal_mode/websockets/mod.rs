@@ -18,6 +18,29 @@ pub mod command;
 
 const FILE_CHUNK_SIZE: usize = 4 * 1024 * 1024;
 
+/// Sends this build's `Cmd` shape fingerprint on the room socket.
+///
+/// The relay forwards a message only to peers present at send time, so this
+/// runs on every open *and* on `MASTER_CONNECTED`; a duplicate is idempotent.
+fn send_ws_shape_fp(sender: &mut ClientTransport) {
+    sender.send(WsMessage::Binary(displays::shape_fp::encode_ws_shape_fp(
+        tcp_protocol::SHAPE_FP_KIND_AGENT,
+    )));
+}
+
+/// Logs whether the admin's `Cmd` schema matches this build's.
+fn compare_ws_shape_fp(peer_fp: u64, peer_ver: &str) {
+    let local = *displays::shape_fp::CMD_SHAPE_FP;
+    if peer_fp == local {
+        log::debug!("websockets -> Cmd shape ok (admin ver={peer_ver})");
+    } else {
+        log::warn!(
+            "websockets -> Cmd shape mismatch: admin fp=0x{peer_fp:016x} ver={peer_ver}              vs local fp=0x{local:016x} ver={}",
+            displays::shape_fp::BUILD_VERSION
+        );
+    }
+}
+
 /// Stream a file from disk to the master in `FILE_CHUNK_SIZE` chunks over the
 /// bounded file channel. Each `send().await` blocks when the channel is full,
 /// pacing reads to the socket so we never buffer the whole file in RAM.
@@ -1171,6 +1194,7 @@ impl TerminalWebsocketClient {
                                 log::info!("start_websocket_sender -> Connection Opened");
                                 opened = true;
                                 reconnect_attempts = 0;
+                                send_ws_shape_fp(&mut sender);
                                 // Relay cleanup flips connected=false on socket churn;
                                 // restore it on every re-registration.
                                 crate::relay_control::reassert_connected(&self.client.connection_string);
@@ -1201,6 +1225,7 @@ impl TerminalWebsocketClient {
                                         // Handle master presence notifications
                                         if txt == "MASTER_CONNECTED" {
                                             log::info!("Master connected - resuming data transmission");
+                                            send_ws_shape_fp(&mut sender);
                                             let _ = connection_state_tx.send((true, "Master Connected".to_string()));
                                             // If we were waiting for master, mark as ready
                                             if !*ready {
@@ -1270,6 +1295,12 @@ impl TerminalWebsocketClient {
                                         }
                                     },
                                     WsMessage::Binary(bin) => {
+                                        if let Some((peer_fp, peer_ver)) =
+                                            displays::shape_fp::decode_ws_shape_fp(&bin)
+                                        {
+                                            compare_ws_shape_fp(peer_fp, &peer_ver);
+                                            continue;
+                                        }
                                         if *ready {
                                             // Deserialize incoming TerminalEvent from egui and forward to rendering loop
                                             if let Ok(event) = serde_json::from_slice::<TerminalEvent>(&bin) {

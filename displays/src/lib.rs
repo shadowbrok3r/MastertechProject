@@ -1325,6 +1325,18 @@ pub const DESKTOP_FRAME_TAG: u8 = 0xED;
 /// Admin → client: serialized `remote_desktop::DesktopInputEvent` for full-desktop control.
 pub const DESKTOP_INPUT_TAG: u8 = 0xEC;
 
+/// Either direction: `Cmd` shape fingerprint on the relay's WebSocket channel,
+/// which has no frame-tag envelope and tells payloads apart by their leading
+/// byte instead.
+///
+/// Deliberately **not** [`tcp_protocol::FRAME_TAG_SHAPE_FP`] (0x0B): that tag
+/// lives inside the length-prefixed direct-TCP envelope, where it shares no
+/// namespace with anything. Here a bare leading byte is also a bincode `Cmd`
+/// variant index, and 0x0B is variant 11 — so a fingerprint frame would be
+/// indistinguishable from that command. Only this high range sits above every
+/// variant index, same as the frame/input tags above.
+pub const SHAPE_FP_WS_TAG: u8 = 0xEB;
+
 pub fn serialize_system_info(system_info: &SystemInformation) -> Vec<u8> {
     encode_to_vec(system_info, standard()).expect("Failed to serialize SystemInformation")
 }
