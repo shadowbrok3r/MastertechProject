@@ -52,6 +52,7 @@ pub mod outcome;
 pub mod business_calendar;
 pub mod roi;
 pub mod assist;
+pub mod waiting_services;
 
 pub use task::*;
 pub use task_note::*;
@@ -71,10 +72,14 @@ pub use plugin_registry::*;
 pub use build_job::*;
 pub use diagnostic::*;
 pub use service_metrics::ServiceMetrics;
-pub use outcome::{outcome_for_sessions, OutcomeBucket, OutcomeRollup, SessionOutcomeRow};
+pub use outcome::{
+    outcome_for_sessions, record_id_from_string, set_computer_internal, set_outcome_override,
+    OutcomeBucket, OutcomeOverride, OutcomeRollup, SessionOutcomeRow,
+};
 pub use business_calendar::{business_seconds, open_days_between, OPEN_SECS_PER_DAY};
-pub use roi::{DataGaps, RoiSummary, TurnaroundStats, TECH_RATE_HIGH, TECH_RATE_LOW};
+pub use roi::{DataGaps, RoiSummary, ShelfCandidate, TurnaroundStats, TECH_RATE_HIGH, TECH_RATE_LOW};
 pub use assist::{AssistRequest, ASSIST_REQUEST_TABLE};
+pub use waiting_services::WaitingService;
 pub use service_match::*;
 pub use entity_link::*;
 pub use customer_resolution::*;

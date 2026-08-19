@@ -163,6 +163,19 @@ pub struct DiagnosticSession {
     #[serde(default)]
     #[surreal(default)]
     pub driven_by: Option<String>,
+    /// Human verdict that supersedes the inferred outcome.
+    #[serde(default)]
+    #[surreal(default)]
+    pub outcome_override: Option<String>,
+    #[serde(default)]
+    #[surreal(default)]
+    pub outcome_override_reason: Option<String>,
+    #[serde(default)]
+    #[surreal(default)]
+    pub outcome_override_by: Option<String>,
+    #[serde(default)]
+    #[surreal(default)]
+    pub outcome_override_at: Option<Datetime>,
     pub summary: Option<String>,
     pub status: String,
     pub tags: Vec<String>,
@@ -187,6 +200,10 @@ impl Default for DiagnosticSession {
             requested_by: None,
             store: None,
             driven_by: None,
+            outcome_override: None,
+            outcome_override_reason: None,
+            outcome_override_by: None,
+            outcome_override_at: None,
             summary: None,
             status: "open".to_string(),
             tags: Vec::new(),

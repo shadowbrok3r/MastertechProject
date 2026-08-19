@@ -9,8 +9,11 @@
 use std::time::Duration;
 
 use crossbeam::channel::{Receiver, Sender};
-use database::schema::{RoiSummary, TurnaroundStats, TECH_RATE_HIGH, TECH_RATE_LOW};
-use eframe::egui::{Align, Layout, RichText, ScrollArea, Ui};
+use database::schema::{
+    OutcomeOverride, RoiSummary, SessionOutcomeRow, TurnaroundStats, TECH_RATE_HIGH,
+    TECH_RATE_LOW,
+};
+use eframe::egui::{Align, Button, Layout, RichText, ScrollArea, TextEdit, Ui};
 use egui_plot::{Bar, BarChart, Legend, Plot};
 use web_time::Instant;
 
@@ -20,6 +23,8 @@ use crate::{PlatformSpawner, Spawner};
 const LOOKBACKS: [u32; 4] = [30, 60, 90, 180];
 const WINDOWS: [u32; 3] = [30, 60, 90];
 const OPEN_HOURS_PER_DAY: f64 = 9.0;
+/// Sessions offered for correction, newest first; older ones nobody remembers.
+const CORRECTABLE_LIMIT: usize = 20;
 
 pub struct AiAnalytics {
     summary: Option<RoiSummary>,
@@ -30,11 +35,20 @@ pub struct AiAnalytics {
     last_poll: Option<Instant>,
     tx: Sender<Result<RoiSummary, String>>,
     rx: Receiver<Result<RoiSummary, String>>,
+    /// Session id whose correction editor is open.
+    editing: Option<String>,
+    draft_verdict: Option<OutcomeOverride>,
+    draft_reason: String,
+    write_busy: bool,
+    write_status: String,
+    write_tx: Sender<Result<String, String>>,
+    write_rx: Receiver<Result<String, String>>,
 }
 
 impl Default for AiAnalytics {
     fn default() -> Self {
         let (tx, rx) = crossbeam::channel::unbounded();
+        let (write_tx, write_rx) = crossbeam::channel::unbounded();
         Self {
             summary: None,
             lookback_days: 90,
@@ -44,8 +58,35 @@ impl Default for AiAnalytics {
             last_poll: None,
             tx,
             rx,
+            editing: None,
+            draft_verdict: None,
+            draft_reason: String::new(),
+            write_busy: false,
+            write_status: String::new(),
+            write_tx,
+            write_rx,
         }
     }
+}
+
+/// Elapsed time against the rollup's own clock, so the UI needs none.
+fn ago(now: i64, then: i64) -> String {
+    let secs = (now - then).max(0);
+    if secs < 3600 {
+        format!("{}m ago", secs / 60)
+    } else if secs < 86_400 {
+        format!("{}h ago", secs / 3600)
+    } else {
+        format!("{}d ago", secs / 86_400)
+    }
+}
+
+fn verdict_at(row: &SessionOutcomeRow, window: u32) -> &str {
+    row.per_window
+        .iter()
+        .find(|(w, _)| *w == window)
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("indeterminate")
 }
 
 fn hours(secs: i64) -> String {
@@ -76,7 +117,94 @@ impl AiAnalytics {
         });
     }
 
+    /// Runs a write off the UI thread and reports it on the write channel.
+    fn spawn_write(
+        &mut self,
+        done: String,
+        fut: impl std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
+    ) {
+        self.write_busy = true;
+        self.write_status = "writing...".to_string();
+        let tx = self.write_tx.clone();
+        PlatformSpawner::spawn(async move {
+            let _ = tx.send(fut.await.map(|()| done).map_err(|e| e.to_string()));
+        });
+    }
+
+    fn operator() -> String {
+        crate::get_current_user_from_auth()
+            .map(|u| u.get_email().to_string())
+            .filter(|e| !e.trim().is_empty())
+            .unwrap_or_else(|| "unknown operator".to_string())
+    }
+
+    fn apply_override(&mut self, row: &SessionOutcomeRow) {
+        let Some(id) = database::schema::record_id_from_string(
+            database::schema::DIAGNOSTIC_SESSION_TABLE,
+            &row.session_id,
+        ) else {
+            self.write_status = format!("unreadable session id {}", row.session_id);
+            return;
+        };
+        let verdict = self.draft_verdict;
+        let reason = self.draft_reason.trim().to_string();
+        let by = Self::operator();
+        let done = match verdict {
+            Some(v) => format!("{} recorded as {}", row.hostname, v.as_str()),
+            None => format!("{} left to inference", row.hostname),
+        };
+        self.editing = None;
+        self.draft_reason.clear();
+        self.draft_verdict = None;
+        self.spawn_write(done, async move {
+            database::schema::set_outcome_override(&id, verdict, Some(&reason), &by).await
+        });
+    }
+
+    fn clear_override(&mut self, row: &SessionOutcomeRow) {
+        let Some(id) = database::schema::record_id_from_string(
+            database::schema::DIAGNOSTIC_SESSION_TABLE,
+            &row.session_id,
+        ) else {
+            self.write_status = format!("unreadable session id {}", row.session_id);
+            return;
+        };
+        let done = format!("{} override cleared", row.hostname);
+        self.editing = None;
+        self.spawn_write(done, async move {
+            database::schema::set_outcome_override(&id, None, None, "").await
+        });
+    }
+
+    fn set_internal(&mut self, computer_key: &str, internal: bool) {
+        let Some(id) = database::schema::record_id_from_string(
+            database::schema::COMPUTER_TABLE,
+            computer_key,
+        ) else {
+            self.write_status = format!("unreadable computer id {computer_key}");
+            return;
+        };
+        let done = if internal {
+            format!("{computer_key} flagged as a staff machine")
+        } else {
+            format!("{computer_key} is a customer machine again")
+        };
+        self.spawn_write(done, async move {
+            database::schema::set_computer_internal(&id, internal).await
+        });
+    }
+
     fn drain(&mut self) {
+        while let Ok(msg) = self.write_rx.try_recv() {
+            self.write_busy = false;
+            match msg {
+                Ok(done) => {
+                    self.write_status = done;
+                    self.refresh();
+                },
+                Err(e) => self.write_status = format!("write failed: {e}"),
+            }
+        }
         while let Ok(msg) = self.rx.try_recv() {
             self.loading = false;
             match msg {
@@ -98,7 +226,7 @@ impl AiAnalytics {
         if self.last_poll.is_none() {
             self.refresh();
         }
-        if self.loading {
+        if self.loading || self.write_busy {
             ui.ctx().request_repaint_after(Duration::from_secs(1));
         }
 
@@ -145,10 +273,53 @@ impl AiAnalytics {
         };
 
         ScrollArea::vertical().id_salt("ai_analytics_body").show(ui, |ui| {
+            self.shelf_panel(ui, &summary);
             self.outcome_panel(ui, &summary);
+            self.corrections_panel(ui, &summary);
             self.cost_panel(ui, &summary);
             self.turnaround_panel(ui, &summary);
             self.gaps_panel(ui, &summary);
+        });
+    }
+
+    /// Triage verdicts from the twice-daily Check-in Shelf sweep.
+    fn shelf_panel(&self, ui: &mut Ui, summary: &RoiSummary) {
+        if summary.shelf_candidates.is_empty() {
+            return;
+        }
+        let stale = summary
+            .shelf_candidates
+            .iter()
+            .filter_map(|c| c.swept_age_secs)
+            .min()
+            .is_some_and(|age| age > 24 * 3600);
+        let subtitle = if stale {
+            "Last sweep was over a day ago - the shelf has moved since."
+        } else {
+            "Scored by the twice-daily sweep before anyone plugs the machine in. Score is a sort order for attention, not a measurement."
+        };
+        info_card::section_card(ui, icons::ROBOT, "Waiting on the shelf", Some(subtitle), |ui| {
+            for c in &summary.shelf_candidates {
+                ui.horizontal(|ui| {
+                    let color = if c.score >= 50 {
+                        theme::accent(ui)
+                    } else if c.score >= 25 {
+                        theme::warn(ui)
+                    } else {
+                        theme::weak_text(ui)
+                    };
+                    info_card::badge(ui, &format!("{}", c.score), color);
+                    ui.label(RichText::new(format!("#{}", c.service_number)).strong());
+                    if let Some(store) = &c.store {
+                        ui.label(RichText::new(store).weak());
+                    }
+                    if let Some(h) = c.waiting_open_hours {
+                        ui.label(RichText::new(format!("{h:.0}h open")).weak());
+                    }
+                });
+                ui.label(RichText::new(&c.reason).weak());
+                ui.add_space(4.0);
+            }
         });
     }
 
@@ -192,10 +363,22 @@ impl AiAnalytics {
                     ui,
                     "Excluded",
                     &format!(
-                        "{} staff/test machines, {} sessions with no computer link",
-                        summary.outcome.excluded_internal, summary.outcome.no_computer
+                        "{} staff/test machines, {} sessions with no computer link, {} set aside by hand",
+                        summary.outcome.excluded_internal,
+                        summary.outcome.no_computer,
+                        summary.outcome.excluded_override
                     ),
                 );
+                if b.overridden > 0 {
+                    info_card::kv_row(
+                        ui,
+                        "Human verdicts",
+                        &format!(
+                            "{} of {} came from a person, not from the orders",
+                            b.overridden, summary.outcome.sessions_considered
+                        ),
+                    );
+                }
 
                 ui.add_space(6.0);
                 let (fixed_color, comeback_color) = (theme::success(ui), theme::error(ui));
@@ -393,4 +576,207 @@ impl AiAnalytics {
             },
         );
     }
+
+    /// Ground-truth controls: inference only ever sees new service orders, so a
+    /// tech who knows the real result has to be able to say so.
+    fn corrections_panel(&mut self, ui: &mut Ui, summary: &RoiSummary) {
+        let Some(sessions) = summary.outcome.sessions.as_ref() else {
+            return;
+        };
+        let window = self.window_days;
+        let now = summary.outcome.computed_at_unix;
+        let mut recent: Vec<&SessionOutcomeRow> = sessions.iter().collect();
+        recent.sort_by_key(|r| std::cmp::Reverse(r.ended_at_unix.unwrap_or(0)));
+        let shown = recent.len().min(CORRECTABLE_LIMIT);
+        let empty: Vec<SessionOutcomeRow> = Vec::new();
+        let excluded = summary.outcome.excluded_sessions.as_ref().unwrap_or(&empty);
+
+        info_card::section_card(
+            ui,
+            icons::EDIT,
+            "Correct a verdict",
+            Some("A correction is recorded against your name with your reason, and the panel above counts how many verdicts came from people rather than from data."),
+            |ui| {
+                if !self.write_status.is_empty() {
+                    ui.label(RichText::new(&self.write_status).weak());
+                    ui.add_space(4.0);
+                }
+                ui.label(
+                    RichText::new(format!(
+                        "{shown} most recently ended of {} scored sessions",
+                        recent.len()
+                    ))
+                    .weak(),
+                );
+                ui.add_space(4.0);
+                for row in recent.into_iter().take(CORRECTABLE_LIMIT) {
+                    self.session_row(ui, row, window, now);
+                }
+
+                if !excluded.is_empty() {
+                    ui.add_space(6.0);
+                    ui.separator();
+                    ui.label(RichText::new("Set aside by hand").strong());
+                    for row in excluded {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(&row.hostname).strong());
+                            if let Some(by) = &row.override_by {
+                                ui.label(RichText::new(by.as_str()).weak());
+                            }
+                            if ui.button("Count it again").clicked() {
+                                self.clear_override(row);
+                            }
+                        });
+                        if let Some(reason) = &row.override_reason {
+                            ui.label(RichText::new(reason.as_str()).weak());
+                        }
+                    }
+                }
+
+                if summary.outcome.internal_computer_count > 0 {
+                    ui.add_space(6.0);
+                    ui.separator();
+                    ui.label(RichText::new("Staff and test machines").strong());
+                    ui.label(
+                        RichText::new(format!(
+                            "{} machines are flagged; every session on them is excluded, past and                              future. Only the {} that cost a session here are listed.",
+                            summary.outcome.internal_computer_count,
+                            summary.outcome.internal_computers.len()
+                        ))
+                        .weak(),
+                    );
+                    for key in &summary.outcome.internal_computers {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(key.as_str()).monospace());
+                            if ui.button("Treat as a customer machine").clicked() {
+                                self.set_internal(key, false);
+                            }
+                        });
+                    }
+                }
+            },
+        );
+    }
+
+    fn session_row(&mut self, ui: &mut Ui, row: &SessionOutcomeRow, window: u32, now: i64) {
+        let (success, error, weak, accent) =
+            (theme::success(ui), theme::error(ui), theme::weak_text(ui), theme::accent(ui));
+        let verdict = verdict_at(row, window);
+        let (label, color) = match verdict {
+            "confirmed_fixed" => ("fixed", success),
+            "comeback" => ("came back", error),
+            _ => ("undecided", weak),
+        };
+        let editing = self.editing.as_deref() == Some(row.session_id.as_str());
+        let mut toggle = false;
+        ui.horizontal(|ui| {
+            info_card::badge(ui, label, color);
+            ui.label(RichText::new(&row.hostname).strong());
+            ui.label(RichText::new(&row.status).weak());
+            if let Some(end) = row.ended_at_unix {
+                ui.label(RichText::new(ago(now, end)).weak());
+            }
+            if row.outcome_override.is_some() {
+                info_card::badge(ui, "by hand", accent);
+            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let text = if editing { "Close" } else { "Correct" };
+                if ui.button(format!("{} {text}", icons::EDIT)).clicked() {
+                    toggle = true;
+                }
+            });
+        });
+        if let Some(cb) = &row.comeback {
+            ui.label(
+                RichText::new(format!(
+                    "same computer returned on #{} after {} days",
+                    cb.service_number, cb.days_after_end
+                ))
+                .weak(),
+            );
+        }
+        if let (Some(by), Some(reason)) = (&row.override_by, &row.override_reason) {
+            ui.label(RichText::new(format!("{by}: {reason}")).weak());
+        }
+        if toggle {
+            self.editing = if editing { None } else { Some(row.session_id.clone()) };
+            self.draft_verdict = row.outcome_override;
+            self.draft_reason = row.override_reason.clone().unwrap_or_default();
+        }
+        if editing && !toggle {
+            self.editor(ui, row);
+        }
+        ui.add_space(4.0);
+    }
+
+    fn editor(&mut self, ui: &mut Ui, row: &SessionOutcomeRow) {
+        let busy = self.write_busy;
+        let has_override = row.outcome_override.is_some();
+        let computer = row.computer.clone();
+        let mut action: Option<Action> = None;
+        ui.indent("correction_editor", |ui| {
+            ui.horizontal_wrapped(|ui| {
+                if ui.selectable_label(self.draft_verdict.is_none(), "Leave it to the data").clicked()
+                {
+                    self.draft_verdict = None;
+                }
+                for v in OutcomeOverride::ALL {
+                    if ui.selectable_label(self.draft_verdict == Some(v), v.label()).clicked() {
+                        self.draft_verdict = Some(v);
+                    }
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Why:");
+                ui.add(
+                    TextEdit::singleline(&mut self.draft_reason)
+                        .desired_width(360.0)
+                        .hint_text("what you know that the service orders do not show"),
+                );
+            });
+            let needs_reason = self.draft_verdict.is_some() && self.draft_reason.trim().is_empty();
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(
+                        !busy && !needs_reason,
+                        Button::new(format!("{} Apply", icons::CHECK)),
+                    )
+                    .clicked()
+                {
+                    action = Some(Action::Apply);
+                }
+                if has_override && ui.add_enabled(!busy, Button::new("Clear override")).clicked() {
+                    action = Some(Action::Clear);
+                }
+                if let Some(key) = computer.as_deref() {
+                    if ui
+                        .add_enabled(
+                            !busy,
+                            Button::new(format!("{} This is a staff machine", icons::DESKTOP)),
+                        )
+                        .on_hover_text("Excludes every session on this computer, past and future")
+                        .clicked()
+                    {
+                        action = Some(Action::Internal(key.to_string()));
+                    }
+                }
+            });
+            if needs_reason {
+                ui.label(RichText::new("A correction needs a reason.").weak());
+            }
+        });
+        match action {
+            Some(Action::Apply) => self.apply_override(row),
+            Some(Action::Clear) => self.clear_override(row),
+            Some(Action::Internal(key)) => self.set_internal(&key, true),
+            None => {},
+        }
+    }
+}
+
+/// Deferred so a click can borrow the editor's own state first.
+enum Action {
+    Apply,
+    Clear,
+    Internal(String),
 }

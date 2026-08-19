@@ -81,6 +81,10 @@ pub struct MastertechContext {
     pub pending_activate_tab: Option<displays::tabs::TabId>,
     pub pending_tab_opens: Vec<displays::tabs::TabId>,
 
+    pub assist_offer_rx: Receiver<crate::tabs::tur_sheet::assist_prompt::PendingAssist>,
+    pub assist_offer_tx: Sender<crate::tabs::tur_sheet::assist_prompt::PendingAssist>,
+    /// Throttles the assist-offer poll.
+    pub last_offer_poll: Option<std::time::Instant>,
     pub prestashop_api_rx: Receiver<PrestashopPayload>,
     pub prestashop_api_tx: Sender<PrestashopPayload>,
 
@@ -176,6 +180,7 @@ impl MasterTechApp {
         let (tx, rx) = crossbeam::channel::bounded::<String>(1);
         let tx_scaffold = tx.clone();
         let (prestashop_api_tx, prestashop_api_rx) = crossbeam::channel::unbounded();
+        let (assist_offer_tx, assist_offer_rx) = crossbeam::channel::unbounded();
         let (cps_keys_tx, cps_keys_rx) = crossbeam::channel::unbounded::<Vec<GetKeysResponse>>();
         let (bytes_tx, bytes_rx) = crossbeam::channel::unbounded::<(u64, u64)>();
         let (copied_items_tx, copied_items_rx) = crossbeam::channel::unbounded();
@@ -303,6 +308,8 @@ impl MasterTechApp {
             pending_tab_opens: Vec::new(),
 
             prestashop_api_tx, prestashop_api_rx,
+            assist_offer_tx, assist_offer_rx,
+            last_offer_poll: None,
             bytes_tx, bytes_rx,
             cps_keys_tx, cps_keys_rx,
             copied_items_tx, copied_items_rx,

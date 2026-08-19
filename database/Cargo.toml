@@ -49,6 +49,7 @@ tokio = { workspace = true }
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 
 [dev-dependencies]
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
 surrealdb = { workspace = true, features = ["kv-mem"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tcp_protocol = { path = "../tcp_protocol", features = ["fingerprint"] }

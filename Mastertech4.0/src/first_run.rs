@@ -149,6 +149,7 @@ impl MasterTechApp {
         // extra.
 
         self.receive_prestashop(frame);
+        self.context.poll_assist_offer();
         self.receive_database(ctx, frame);
         self.receive_github(ctx);
         self.context.scripts_tab.process_mcp_requests();

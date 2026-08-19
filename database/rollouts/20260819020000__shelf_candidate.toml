@@ -1,0 +1,34 @@
+# Ranked AI-assist candidates written by the twice-daily Check-in Shelf triage
+# agent. Keyed by service number so a re-sweep overwrites its own verdict.
+id = "20260819020000__shelf_candidate"
+name = "shelf_candidate"
+state = "completed"
+source_schema_hash = "4946ab08d14695566947c88849287da7ac6690ed06bd101653dfd28364f495cb"
+target_schema_hash = "4946ab08d14695566947c88849287da7ac6690ed06bd101653dfd28364f495cb"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "define_shelf_candidate"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE shelf_candidate TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE service_number ON shelf_candidate TYPE string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE store          ON shelf_candidate TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE score          ON shelf_candidate TYPE int ASSERT $value >= 0 AND $value <= 100 PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE reason         ON shelf_candidate TYPE string ASSERT string::len($value) <= 600 PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE device         ON shelf_candidate TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE waiting_open_hours ON shelf_candidate TYPE none | number PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE swept_at       ON shelf_candidate TYPE datetime DEFAULT time::now() PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE notified       ON shelf_candidate TYPE bool DEFAULT false PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE shelf_candidate_swept_idx ON shelf_candidate FIELDS swept_at;
+"""
+
+[[steps]]
+id = "remove_shelf_candidate"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE TABLE IF EXISTS shelf_candidate;
+"""

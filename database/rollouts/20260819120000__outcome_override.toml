@@ -1,0 +1,41 @@
+# A tech's ground truth beats the inferred outcome: inference only ever sees new
+# service orders. `excluded` drops a session from the rollup entirely; the
+# reason and author are stored so a corrected number stays auditable.
+id = "20260819120000__outcome_override"
+name = "outcome_override"
+state = "completed"
+source_schema_hash = "1fc39cdafdf5af01e4f718fcc99e2dc46880894fbbdc60870ac4503d830bb931"
+target_schema_hash = "1fc39cdafdf5af01e4f718fcc99e2dc46880894fbbdc60870ac4503d830bb931"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "add_outcome_override"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE outcome_override ON diagnostic_session TYPE none | string ASSERT $value == NONE OR $value IN ['confirmed_fixed', 'comeback', 'excluded'] PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE outcome_override_at ON diagnostic_session TYPE none | datetime PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE outcome_override_by ON diagnostic_session TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE outcome_override_reason ON diagnostic_session TYPE none | string PERMISSIONS FULL;
+"""
+
+# Clearing runs before the fields go away, or the values outlive their definition.
+[[steps]]
+id = "clear_outcome_override"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+UPDATE diagnostic_session SET outcome_override = NONE, outcome_override_at = NONE, outcome_override_by = NONE, outcome_override_reason = NONE WHERE outcome_override != NONE;
+"""
+
+[[steps]]
+id = "remove_outcome_override"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE FIELD IF EXISTS outcome_override ON diagnostic_session;
+REMOVE FIELD IF EXISTS outcome_override_at ON diagnostic_session;
+REMOVE FIELD IF EXISTS outcome_override_by ON diagnostic_session;
+REMOVE FIELD IF EXISTS outcome_override_reason ON diagnostic_session;
+"""

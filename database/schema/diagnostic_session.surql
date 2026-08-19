@@ -14,6 +14,10 @@ DEFINE FIELD diagnosed_by      ON diagnostic_session TYPE none | string         
 DEFINE FIELD driven_by         ON diagnostic_session TYPE none | string                    PERMISSIONS FULL;
 DEFINE FIELD ended_at          ON diagnostic_session TYPE none | datetime                  PERMISSIONS FULL;
 DEFINE FIELD hostname          ON diagnostic_session TYPE string                           PERMISSIONS FULL;
+DEFINE FIELD outcome_override        ON diagnostic_session TYPE none | string ASSERT $value == NONE OR $value IN ['confirmed_fixed', 'comeback', 'excluded'] PERMISSIONS FULL;
+DEFINE FIELD outcome_override_at     ON diagnostic_session TYPE none | datetime PERMISSIONS FULL;
+DEFINE FIELD outcome_override_by     ON diagnostic_session TYPE none | string   PERMISSIONS FULL;
+DEFINE FIELD outcome_override_reason ON diagnostic_session TYPE none | string   PERMISSIONS FULL;
 DEFINE FIELD requested_by      ON diagnostic_session TYPE none | string                    PERMISSIONS FULL;
 DEFINE FIELD service_order     ON diagnostic_session TYPE none | record<service_order>     PERMISSIONS FULL;
 DEFINE FIELD started_at        ON diagnostic_session TYPE datetime DEFAULT time::now()      PERMISSIONS FULL;

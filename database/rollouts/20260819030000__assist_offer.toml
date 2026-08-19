@@ -1,0 +1,36 @@
+# Machine-resolved assist offers. The headless agent writes one when a connected
+# client matches an open service order; the client polls its own offers and the
+# tech accepts or declines. A row (not a Cmd) so the wire shape is untouched.
+id = "20260819030000__assist_offer"
+name = "assist_offer"
+state = "completed"
+source_schema_hash = "0445ae37e35a381a1fbae97af4db99a67265cad247f46ef390f904835c5b8575"
+target_schema_hash = "0445ae37e35a381a1fbae97af4db99a67265cad247f46ef390f904835c5b8575"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "define_assist_offer"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE assist_offer TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE answered_by       ON assist_offer TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE connection_string ON assist_offer TYPE string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE created_at        ON assist_offer TYPE datetime DEFAULT time::now() PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE customer_name     ON assist_offer TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE device            ON assist_offer TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE reason            ON assist_offer TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE service_number    ON assist_offer TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE service_order     ON assist_offer TYPE none | record<service_order> PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE status            ON assist_offer TYPE string DEFAULT 'offered' ASSERT $value IN ['offered', 'accepted', 'declined', 'expired'] PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE assist_offer_conn_idx ON assist_offer FIELDS connection_string;
+"""
+
+[[steps]]
+id = "remove_assist_offer"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE TABLE IF EXISTS assist_offer;
+"""

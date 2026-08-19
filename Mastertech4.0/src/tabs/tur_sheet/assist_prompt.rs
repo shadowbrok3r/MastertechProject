@@ -22,6 +22,87 @@ pub struct PendingAssist {
     pub order_device: String,
     pub order_serial: String,
     pub customer_name: String,
+    /// Check-in notes, shown when the agent resolved the match itself.
+    pub checkin_notes: String,
+    /// Set when the agent resolved this machine itself.
+    pub offer_id: Option<database::schema::RecordId>,
+}
+
+/// Seconds between offer polls; an offer is not urgent.
+const OFFER_POLL_SECS: u64 = 20;
+
+impl MastertechContext {
+    /// Picks up an assist offer the headless agent wrote for this machine.
+    pub fn poll_assist_offer(&mut self) {
+        while let Ok(pending) = self.assist_offer_rx.try_recv() {
+            if self.pending_assist.is_none() {
+                self.pending_assist = Some(pending);
+            }
+        }
+        if self.pending_assist.is_some() || self.shared_ctx.current_user.is_none() {
+            return;
+        }
+        let due = self
+            .last_offer_poll
+            .is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(OFFER_POLL_SECS));
+        if !due {
+            return;
+        }
+        self.last_offer_poll = Some(std::time::Instant::now());
+
+        let cs = self.client_title.clone();
+        let tx = self.assist_offer_tx.clone();
+        spawn(async move {
+            let sql = "SELECT id, service_number, customer_name, device, checkin_notes FROM assist_offer                        WHERE connection_string = $cs AND status = 'offered'                        AND created_at > time::now() - 4h LIMIT 1";
+            let Ok(mut res) = database::db().query(sql).bind(("cs", cs)).await else { return };
+            let rows: Vec<serde_json::Value> = res.take(0).unwrap_or_default();
+            let Some(row) = rows.first() else { return };
+            let Some(sn) = row.get("service_number").and_then(|v| v.as_str()) else { return };
+            let id = row
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(|s| {
+                    database::schema::RecordId::new(
+                        "assist_offer",
+                        s.trim_start_matches("assist_offer:").trim_matches('`'),
+                    )
+                });
+            let _ = tx.try_send(PendingAssist {
+                service_number: sn.to_string(),
+                order_device: row
+                    .get("device")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                order_serial: String::new(),
+                customer_name: row
+                    .get("customer_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                checkin_notes: row
+                    .get("checkin_notes")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                offer_id: id,
+            });
+        });
+    }
+
+    /// Closes out an offer the tech answered.
+    fn answer_offer(offer_id: Option<database::schema::RecordId>, status: &str, by: String) {
+        let Some(id) = offer_id else { return };
+        let status = status.to_string();
+        spawn(async move {
+            let _ = database::db()
+                .query("UPDATE $id SET status = $status, answered_by = $by")
+                .bind(("id", id))
+                .bind(("status", status))
+                .bind(("by", by))
+                .await;
+        });
+    }
 }
 
 impl MastertechContext {
@@ -38,6 +119,8 @@ impl MastertechContext {
                 .unwrap_or_default(),
             order_serial: device.map(|d| d.device_serial.clone()).unwrap_or_default(),
             customer_name,
+            checkin_notes: device.map(|d| d.check_in_notes.clone()).unwrap_or_default(),
+            offer_id: None,
         });
     }
 
@@ -65,10 +148,17 @@ impl MastertechContext {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new(icons::ROBOT).size(18.0));
                             ui.label(
-                                RichText::new(format!(
-                                    "Is service #{} for THIS computer?",
-                                    pending.service_number
-                                ))
+                                RichText::new(if pending.offer_id.is_some() {
+                                    format!(
+                                        "Found service #{} for this computer - want AI help?",
+                                        pending.service_number
+                                    )
+                                } else {
+                                    format!(
+                                        "Is service #{} for THIS computer?",
+                                        pending.service_number
+                                    )
+                                })
                                 .strong()
                                 .size(14.0),
                             );
@@ -80,6 +170,15 @@ impl MastertechContext {
                         );
                         if !pending.order_serial.is_empty() {
                             ui.label(RichText::new(format!("Order serial: {}", pending.order_serial)).weak());
+                        }
+                        if !pending.checkin_notes.is_empty() {
+                            ui.label(
+                                RichText::new(format!(
+                                    "Checked in for: {}",
+                                    pending.checkin_notes.chars().take(120).collect::<String>()
+                                ))
+                                .weak(),
+                            );
                         }
                         ui.label(RichText::new(format!("This machine: {}", self.client_title)).weak());
                         if !self.computer_data.product_serial.is_empty() {
@@ -111,6 +210,7 @@ impl MastertechContext {
             });
 
         if dismiss {
+            Self::answer_offer(pending.offer_id.clone(), "declined", user.get_email().to_string());
             self.pending_assist = None;
             return;
         }
@@ -118,6 +218,7 @@ impl MastertechContext {
             return;
         }
         self.pending_assist = None;
+        Self::answer_offer(pending.offer_id.clone(), "accepted", user.get_email().to_string());
 
         // The confirmation is the ground truth the auto-link event cannot infer.
         self.create_and_link_only();

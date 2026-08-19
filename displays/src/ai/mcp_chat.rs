@@ -40,10 +40,9 @@ pub fn zeroclaw_config_path() -> std::path::PathBuf {
     std::path::Path::new(&base).join("MasterTech").join("zeroclaw.json")
 }
 
-fn zeroclaw_from_file() -> Option<(String, String)> {
+fn zeroclaw_file() -> Option<serde_json::Value> {
     let raw = std::fs::read_to_string(zeroclaw_config_path()).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
-    normalize_gateway(v["url"].as_str()?, v["token"].as_str()?)
+    serde_json::from_str(&raw).ok()
 }
 
 /// Trims a gateway pair, returning `None` when either half is blank.
@@ -53,25 +52,29 @@ fn normalize_gateway(url: &str, token: &str) -> Option<(String, String)> {
     (!url.is_empty() && !token.is_empty()).then_some((url, token))
 }
 
-/// Values baked in at compile time from the repo-root `.env`, so a shipped
-/// build reaches the gateway with no per-machine setup.
-fn zeroclaw_from_build() -> Option<(String, String)> {
-    normalize_gateway(
-        database::ZEROCLAW_GATEWAY_URL,
-        database::ZEROCLAW_GATEWAY_TOKEN,
-    )
-}
-
-/// ZeroClaw gateway target, in precedence order: the `ZEROCLAW_GATEWAY_URL`/
-/// `ZEROCLAW_GATEWAY_TOKEN` process environment, then
-/// `<APPDATA|HOME>/MasterTech/zeroclaw.json`, then the compiled-in `.env` values.
+/// ZeroClaw gateway target. The URL resolves from the `ZEROCLAW_GATEWAY_URL`
+/// environment, then `<APPDATA|HOME>/MasterTech/zeroclaw.json`, then the value
+/// compiled in from the repo-root `.env`. The bearer token is never compiled in
+/// and comes from the environment or that same file.
 pub fn zeroclaw_gateway() -> Option<(String, String)> {
-    let env_pair = || {
-        let url = std::env::var("ZEROCLAW_GATEWAY_URL").ok()?;
-        let token = std::env::var("ZEROCLAW_GATEWAY_TOKEN").ok()?;
-        normalize_gateway(&url, &token)
+    let file = zeroclaw_file();
+    let from_file = |key: &str| {
+        file.as_ref()
+            .and_then(|v| v[key].as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
     };
-    env_pair().or_else(zeroclaw_from_file).or_else(zeroclaw_from_build)
+    let from_env = |key: &str| {
+        std::env::var(key)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+    let url = from_env("ZEROCLAW_GATEWAY_URL")
+        .or_else(|| from_file("url"))
+        .unwrap_or_else(|| database::ZEROCLAW_GATEWAY_URL.to_string());
+    let token = from_env("ZEROCLAW_GATEWAY_TOKEN").or_else(|| from_file("token"))?;
+    normalize_gateway(&url, &token)
 }
 
 /// Hostnames the BSOD autopilot needs a standing admin session to, from
@@ -133,8 +136,8 @@ pub fn zeroclaw_agent() -> String {
 pub async fn zeroclaw_diagnose(prompt: String, thread_id: String, response_tx: Sender<ChatMessage>) {
     let Some((url, token)) = zeroclaw_gateway() else {
         send(&response_tx, &thread_id, new_id(), SentFrom::Assistant, ChatMessageType::Error(
-            "ZeroClaw gateway not configured — set ZEROCLAW_GATEWAY_URL and ZEROCLAW_GATEWAY_TOKEN \
-             in the repo-root .env and rebuild, or write them to zeroclaw.json."
+            "ZeroClaw gateway not configured — set ZEROCLAW_GATEWAY_TOKEN in the environment, \
+             or write the url and token into MasterTech/zeroclaw.json."
                 .into(),
         ));
         send(&response_tx, &thread_id, new_id(), SentFrom::Assistant, ChatMessageType::Done);

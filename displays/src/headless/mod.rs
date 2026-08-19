@@ -16,6 +16,7 @@ use crate::tabs::admin_console::client_interface::{AdminTransport, SessionEvent}
 use crate::Cmd;
 
 mod assist;
+mod offer;
 
 pub use assist::spawn_assist_dispatcher;
 
@@ -206,6 +207,10 @@ pub async fn run_session_engine() {
                 }
                 if let Some(session) = Session::open(&client) {
                     sessions.insert(client.connection_string.clone(), session);
+                    let (cs, computer) = (client.connection_string.clone(), client.computer.clone());
+                    tokio::spawn(async move {
+                        offer::offer_for(&cs, computer.as_ref()).await;
+                    });
                 }
             }
         }

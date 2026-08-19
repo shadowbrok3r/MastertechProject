@@ -84,10 +84,9 @@ const ALL_INJECT_KEYS: &[&str] = &[
     // the XBM client at runtime.
     "XBM_API_URL",
     "XBM_API_KEY",
-    // ZeroClaw agent gateway. Either value empty disables the dispatcher,
-    // session viewer and event watcher at runtime.
+    // ZeroClaw agent gateway base. The bearer token is deliberately absent:
+    // it is read at runtime from the environment or `zeroclaw.json`.
     "ZEROCLAW_GATEWAY_URL",
-    "ZEROCLAW_GATEWAY_TOKEN",
 ];
 
 fn apply_defaults(map: &mut HashMap<String, String>) {
@@ -136,7 +135,6 @@ fn apply_defaults(map: &mut HashMap<String, String>) {
         "SHOPIFY_ADMIN_TOKEN",
         "XBM_API_KEY",
         "ZEROCLAW_GATEWAY_URL",
-        "ZEROCLAW_GATEWAY_TOKEN",
     ] {
         if map.get(key).is_none() {
             map.insert(key.into(), String::new());

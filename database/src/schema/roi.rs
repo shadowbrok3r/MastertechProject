@@ -38,6 +38,21 @@ pub struct DataGaps {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct ShelfCandidate {
+    pub service_number: String,
+    pub score: i64,
+    pub reason: String,
+    #[serde(default)]
+    pub store: Option<String>,
+    #[serde(default)]
+    pub device: Option<String>,
+    #[serde(default)]
+    pub waiting_open_hours: Option<f64>,
+    #[serde(default)]
+    pub swept_age_secs: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct RoiSummary {
     pub generated_unix: i64,
     /// Lookback for the cost, labor and turnaround panels.
@@ -51,6 +66,9 @@ pub struct RoiSummary {
     pub tech_labor_low_usd: f64,
     pub tech_labor_high_usd: f64,
     pub gaps: DataGaps,
+    /// Highest-scoring Check-in Shelf candidates from the triage sweep.
+    #[serde(default)]
+    pub shelf_candidates: Vec<ShelfCandidate>,
 }
 
 /// Projected rows arrive as raw values so one drifted row degrades alone.
@@ -184,13 +202,20 @@ impl RoiSummary {
                  WHERE status != 'open' AND diagnosed_at = NONE GROUP ALL",
             )
             .query("SELECT count() FROM service_order WHERE computer = NONE GROUP ALL")
+            .query(
+                "SELECT service_number, score, reason, store, device, waiting_open_hours,                  time::unix(time::now()) - time::unix(swept_at) AS swept_age_secs                  FROM shelf_candidate ORDER BY score DESC LIMIT 8",
+            )
             .await?;
+
+        // A ledger row holding -0.0 would otherwise render as "$-0.00".
+        let cost_total: f64 = costs.iter().sum();
+        let cost_total = if cost_total == 0.0 { 0.0 } else { cost_total };
 
         Ok(Self {
             generated_unix: Utc::now().timestamp(),
             window_days,
-            outcome: OutcomeRollup::compute(&[30, 60, 90], false).await?,
-            ai_cost_usd: costs.iter().sum(),
+            outcome: OutcomeRollup::compute(&[30, 60, 90], true).await?,
+            ai_cost_usd: cost_total,
             ai_usage_rows: costs.len(),
             ai_turnaround: stats(&ai_spans),
             tech_turnaround: stats(&tech_spans),
@@ -205,6 +230,22 @@ impl RoiSummary {
                 orders_without_computer: count_of(gaps.take(4).unwrap_or_default()),
                 tasks_without_origin: without_origin,
             },
+            shelf_candidates: gaps
+                .take::<Vec<serde_json::Value>>(5)
+                .unwrap_or_default()
+                .iter()
+                .map(|v| ShelfCandidate {
+                    service_number: text_at(v, "service_number").unwrap_or_default(),
+                    score: int_at(v, "score").unwrap_or(0),
+                    reason: text_at(v, "reason").unwrap_or_default(),
+                    store: text_at(v, "store"),
+                    device: text_at(v, "device"),
+                    waiting_open_hours: v
+                        .get("waiting_open_hours")
+                        .and_then(serde_json::Value::as_f64),
+                    swept_age_secs: int_at(v, "swept_age_secs"),
+                })
+                .collect(),
         })
     }
 }

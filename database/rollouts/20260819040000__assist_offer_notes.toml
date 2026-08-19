@@ -1,0 +1,25 @@
+# The resolver has the order's check-in notes; they belong in their own field
+# instead of riding in `device`, which carries the machine's make and model.
+id = "20260819040000__assist_offer_notes"
+name = "assist_offer_notes"
+state = "completed"
+source_schema_hash = "dd6a6008fc4ae2f561818a7f82c3993b15f0ccd7f345e9c3f910d5fa32e2fbdf"
+target_schema_hash = "dd6a6008fc4ae2f561818a7f82c3993b15f0ccd7f345e9c3f910d5fa32e2fbdf"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "add_checkin_notes"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE checkin_notes ON assist_offer TYPE none | string PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "remove_checkin_notes"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE FIELD IF EXISTS checkin_notes ON assist_offer;
+"""

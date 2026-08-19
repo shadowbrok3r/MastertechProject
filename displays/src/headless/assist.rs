@@ -23,7 +23,8 @@ fn gateway() -> Option<(String, String)> {
     let token = std::env::var("MTECH_ZC_TOKEN")
         .ok()
         .filter(|v| !v.trim().is_empty())
-        .or_else(|| non_empty(database::ZEROCLAW_GATEWAY_TOKEN))?;
+        .or_else(|| std::env::var("ZEROCLAW_GATEWAY_TOKEN").ok())
+        .filter(|v| !v.trim().is_empty())?;
     Some((url.trim_end_matches('/').to_string(), token))
 }
 

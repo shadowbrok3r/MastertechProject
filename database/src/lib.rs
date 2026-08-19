@@ -255,11 +255,10 @@ pub const XBM_API_URL: &str = env!("XBM_API_URL");
 /// runtime; reads then fall back to the Admin GraphQL path where available.
 pub const XBM_API_KEY: &str = env!("XBM_API_KEY");
 
-/// ZeroClaw agent gateway base (no trailing slash).
+/// ZeroClaw agent gateway base (no trailing slash). Empty disables the
+/// dispatcher, session viewer and event watcher at runtime. The matching
+/// bearer token is never compiled in; callers resolve it at runtime.
 pub const ZEROCLAW_GATEWAY_URL: &str = env!("ZEROCLAW_GATEWAY_URL");
-/// ZeroClaw `zc_` bearer token. Either value empty disables the dispatcher,
-/// session viewer and event watcher at runtime.
-pub const ZEROCLAW_GATEWAY_TOKEN: &str = env!("ZEROCLAW_GATEWAY_TOKEN");
 
 /// SurrealDB endpoint this process connects to, matching [`init_database`]:
 /// debug → [`DB_URL_LOCAL`], release → [`DB_URL_DEV`].

@@ -1801,6 +1801,32 @@ pub struct GetServiceMetricsParams {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct RecordShelfCandidateParams {
+    #[schemars(description = "Service number this verdict is about")]
+    pub service_number: String,
+    #[schemars(description = "0-100 suitability for an AI-assisted diagnostic; higher means better candidate")]
+    pub score: u32,
+    #[schemars(description = "One or two sentences of evidence for the score, drawn from check-in notes and prior history")]
+    pub reason: String,
+    #[schemars(description = "Store code (RIV, LTN, MUR, SAN, ORE)")]
+    pub store: Option<String>,
+    #[schemars(description = "Device description as shown on the order")]
+    pub device: Option<String>,
+    #[schemars(description = "Open-store hours the machine has been waiting")]
+    pub waiting_open_hours: Option<f64>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct ListWaitingServicesParams {
+    #[schemars(description = "PrestaShop status to list: 'checkin_shelf' (default), 'in_repair', or 'done_shelf'")]
+    pub status: Option<String>,
+    #[schemars(description = "Store code to scope to (RIV, LTN, MUR, SAN, ORE). Omit for all stores.")]
+    pub store: Option<String>,
+    #[schemars(description = "Max services to enrich and return (default 15, max 100)")]
+    pub limit: Option<u32>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct GetOutcomeRollupParams {
     #[schemars(description = "Comeback windows in days (default [30, 60, 90])")]
     pub window_days: Option<Vec<u32>>,
@@ -8024,13 +8050,112 @@ minutes count only minutes containing a recorded event — a floor, never inflat
     }
 
     #[tool(
+        name = "record_shelf_candidate",
+        description = "Record one Check-in Shelf triage verdict: how good a candidate a waiting service is for an AI-assisted diagnostic, and why. Keyed by service number, so re-running a sweep overwrites that service's earlier verdict instead of piling up rows. Score honestly - a machine needing only physical work scores low, and saying so is more useful than inflating the list."
+    )]
+    async fn record_shelf_candidate(
+        &self,
+        Parameters(p): Parameters<RecordShelfCandidateParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let sn = p.service_number.trim().to_string();
+        if sn.is_empty() {
+            return Err(ErrorData::invalid_params("service_number is required", None));
+        }
+        // type::thing is rejected by this build and a bound UPSERT target no-ops,
+        // so the record id is interpolated after a strict character check.
+        if !sn.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+            return Err(ErrorData::invalid_params(
+                "service_number must be alphanumeric (dashes and underscores allowed)",
+                None,
+            ));
+        }
+        let reason: String = p.reason.chars().take(600).collect();
+        database::db()
+            .query(format!(
+                "UPSERT shelf_candidate:`{sn}` SET service_number = $sn,                  score = $score, reason = $reason, store = $store, device = $device,                  waiting_open_hours = $hours, swept_at = time::now(), notified = false"
+            ))
+            .bind(("sn", sn.clone()))
+            .bind(("score", p.score.min(100) as i64))
+            .bind(("reason", reason))
+            .bind(("store", p.store))
+            .bind(("device", p.device))
+            .bind(("hours", p.waiting_open_hours))
+            .await
+            .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
+            "recorded": true,
+            "service_number": sn,
+            "score": p.score.min(100),
+        }))
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "list_waiting_services",
+        description = "Service orders parked in a PrestaShop status - by default Check-in Shelf, the machines waiting for a technician to start. Each row carries the device, serial, check-in notes, intake notes, physical-damage note, and how many OPEN-STORE hours it has been waiting (10-19 local, closed Sunday). Use this to triage what is on the shelf before a machine is plugged in: read the check-in notes, then cross-reference crash_intel_search / search_diagnostics for that customer or device to spot repeat problems. Read-only."
+    )]
+    async fn list_waiting_services(
+        &self,
+        Parameters(p): Parameters<ListWaitingServicesParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        use database::schema::prestashop::OrderState;
+
+        let state = match p.status.as_deref().unwrap_or("checkin_shelf") {
+            "in_repair" => OrderState::InRepair,
+            "done_shelf" => OrderState::DoneShelf,
+            "checkin_shelf" | "" => OrderState::CheckinShelf,
+            other => {
+                return Err(ErrorData::invalid_params(
+                    format!("unknown status '{other}'; use checkin_shelf, in_repair or done_shelf"),
+                    None,
+                ))
+            }
+        };
+        let store_id = match p.store.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(code) => match code.to_uppercase().as_str() {
+                "RIV" => Some("7".to_string()),
+                "LTN" => Some("8".to_string()),
+                "MUR" => Some("10".to_string()),
+                "SAN" => Some("12".to_string()),
+                "ORE" => Some("14".to_string()),
+                _ => {
+                    return Err(ErrorData::invalid_params(
+                        format!("unknown store '{code}'; use RIV, LTN, MUR, SAN or ORE"),
+                        None,
+                    ))
+                }
+            },
+            None => None,
+        };
+        let rows = database::schema::WaitingService::in_status(
+            state,
+            store_id.as_deref(),
+            p.limit.map(|l| l as usize),
+        )
+        .await
+        .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
+            "status": p.status.unwrap_or_else(|| "checkin_shelf".to_string()),
+            "count": rows.len(),
+            "services": rows,
+        }))
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
         name = "get_outcome_rollup",
         description = "Fleet-wide fix-vs-comeback rollup over resolved/escalated diagnostic \
 sessions. A session counts as confirmed_fixed when the same computer has NOT come back as a new \
 service order within the window; the first same-computer order after a 3-day same-visit grace is \
 the comeback. Staff/test machines (computer.is_internal) are excluded; sessions with no computer \
 link, no ended_at, or an unelapsed window count as indeterminate — never as fixed. Buckets are \
-reported overall and split by resolved vs escalated."
+reported overall and split by resolved vs escalated. A tech can override a verdict from the \
+MasterTech dashboard: an overridden session reports the human verdict on every window (including \
+unelapsed ones) and is counted in bucket.overridden, so a high overridden count means the number \
+is partly opinion. outcome_override='excluded' drops a session from every bucket into \
+excluded_override. Overrides are human-only by design; there is no tool to set one. \
+internal_computer_count is how many machines are flagged staff/test; internal_computers lists \
+only the ones that actually cost a session in this rollup."
     )]
     async fn get_outcome_rollup(
         &self,
