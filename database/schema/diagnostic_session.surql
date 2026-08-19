@@ -28,3 +28,5 @@ DEFINE FIELD tags              ON diagnostic_session TYPE array<string>         
 DEFINE FIELD tags.*            ON diagnostic_session TYPE string                           PERMISSIONS FULL;
 DEFINE FIELD task_ref          ON diagnostic_session TYPE none | record<task>              PERMISSIONS FULL;
 DEFINE FIELD tech              ON diagnostic_session TYPE none | string DEFAULT $auth.email PERMISSIONS FULL;
+-- zeroclaw session key for the technician conversation this came out of.
+DEFINE FIELD zeroclaw_session ON diagnostic_session TYPE none | string                    PERMISSIONS FULL;

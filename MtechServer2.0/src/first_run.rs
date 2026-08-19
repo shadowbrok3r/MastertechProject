@@ -578,6 +578,15 @@ impl MtechServer {
                     crossbeam::channel::unbounded::<(String, bool, bool)>();
                 let fk_health_cache: std::collections::HashMap<String, (bool, bool)> =
                     std::collections::HashMap::new();
+                // Same placeholder treatment for the client-task fetcher.
+                let (client_tasks_tx, _client_tasks_rx) = crossbeam::channel::unbounded::<(
+                    String,
+                    Option<Vec<database::schema::LiveTaskPayload>>,
+                )>();
+                let client_tasks_cache: std::collections::HashMap<
+                    String,
+                    Option<Vec<database::schema::LiveTaskPayload>>,
+                > = std::collections::HashMap::new();
                 Window::new(&client.connection_string)
                     .open(&mut is_open)
                     .frame(column_frame)
@@ -596,6 +605,8 @@ impl MtechServer {
                                     is_ws_connected,
                                     &fk_health_tx,
                                     &fk_health_cache,
+                                    &client_tasks_tx,
+                                    &client_tasks_cache,
                                     inventory.as_deref(),
                                     None,
                                     transport,

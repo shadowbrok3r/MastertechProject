@@ -31,8 +31,8 @@ impl <'a> ActionHandler for WebconsoleTab <'a> {
                         let tx = self.connected_clients_tx.clone();
                         tokio::spawn(async move {
                             match get_connected_clients(tx, database::schema::ClientScope::MyStore).await {
-                                Ok(_) => log::info!("web_console/mod.rs -> get_connected_clients ran ok"),
-                                Err(e) => log::warn!("web_console/mod.rs -> get_connected_clients error: {e:?}"),
+                                Ok(_) => log::info!("webconsole/action_handler.rs -> get_connected_clients ran ok"),
+                                Err(e) => log::warn!("webconsole/action_handler.rs -> get_connected_clients error: {e:?}"),
                             }
                         });
                     }

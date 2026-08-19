@@ -21,7 +21,6 @@ pub mod koth;
 pub mod presta_order;
 pub mod checkin_form;
 pub mod sales_tracker;
-pub mod web_console;
 pub mod fleet_dashboard;
 pub mod agent_audit;
 pub mod ai_analytics;
@@ -128,7 +127,6 @@ impl egui_dock::TabViewer for SharedContext {
             TabId::AgentSessions => {
                 ui.label("Agent Sessions is available in the native build.");
             }
-            TabId::WebConsole => self.web_console.ui(ui),
             #[cfg(not(target_arch = "wasm32"))]
             TabId::Ai => {
                 // Local self-diagnosis: chat about THIS machine via the

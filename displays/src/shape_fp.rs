@@ -37,14 +37,29 @@ pub fn encode_ws_shape_fp(kind: u8) -> Vec<u8> {
     out
 }
 
+/// True when `bin` carries a tagged WebSocket shape-fp message, whoever sent it.
+///
+/// Callers consume such a frame on this answer alone, so one addressed to the
+/// other role is still swallowed rather than falling through to the `Cmd`
+/// decoder and being logged as an undecodable frame.
+pub fn is_ws_shape_fp(bin: &[u8]) -> bool {
+    bin.first() == Some(&crate::SHAPE_FP_WS_TAG)
+}
+
 /// The peer's fingerprint and build from a tagged WebSocket shape-fp message.
-/// `None` when `bin` isn't one, so callers fall through to their other decoders.
-pub fn decode_ws_shape_fp(bin: &[u8]) -> Option<(u64, String)> {
-    if bin.first() != Some(&crate::SHAPE_FP_WS_TAG) {
+///
+/// `from_kind` is the `tcp_protocol::SHAPE_FP_KIND_*` the caller expects of its
+/// peer; any other kind — including the caller's own — yields `None`. The relay
+/// forwards strictly master↔client so a peer never sees its own frame, but
+/// checking keeps the gate from depending on that: comparing our own
+/// fingerprint against itself always matches, which would retire the gate while
+/// still looking like it passed.
+pub fn decode_ws_shape_fp(bin: &[u8], from_kind: u8) -> Option<(u64, String)> {
+    if !is_ws_shape_fp(bin) {
         return None;
     }
-    let (_, peer_fp, peer_ver) = tcp_protocol::decode_shape_fp(&bin[1..])?;
-    Some((peer_fp, peer_ver))
+    let (kind, peer_fp, peer_ver) = tcp_protocol::decode_shape_fp(&bin[1..])?;
+    (kind == from_kind).then_some((peer_fp, peer_ver))
 }
 
 /// `Cmd`'s variants in declaration order — which is bincode's encoding order.
@@ -165,7 +180,7 @@ mod tests {
     use facet::Facet;
     use tcp_protocol::shape_fp::shape_fingerprint;
 
-    use super::{decode_ws_shape_fp, encode_ws_shape_fp};
+    use super::{decode_ws_shape_fp, encode_ws_shape_fp, is_ws_shape_fp};
     use crate::{try_deserialize_command, Cmd};
 
     /// A frame from a peer on a different `Cmd` schema decodes as misaligned
@@ -216,18 +231,45 @@ mod tests {
         let tagged = encode_ws_shape_fp(tcp_protocol::SHAPE_FP_KIND_AGENT);
         assert!(try_deserialize_command(&tagged).is_none());
         let cmd = encode_to_vec(&Cmd::Quit, standard()).expect("Cmd encodes");
-        assert!(decode_ws_shape_fp(&cmd).is_none());
+        assert!(!is_ws_shape_fp(&cmd));
+        assert!(decode_ws_shape_fp(&cmd, tcp_protocol::SHAPE_FP_KIND_AGENT).is_none());
     }
 
     /// The fingerprint survives the tag round-trip on the WebSocket channel.
     #[test]
     fn ws_shape_fp_round_trips() {
         let tagged = encode_ws_shape_fp(tcp_protocol::SHAPE_FP_KIND_ADMIN);
-        let (fp, ver) = decode_ws_shape_fp(&tagged).expect("round-trips");
+        assert!(is_ws_shape_fp(&tagged));
+        let (fp, ver) = decode_ws_shape_fp(&tagged, tcp_protocol::SHAPE_FP_KIND_ADMIN)
+            .expect("round-trips");
         assert_eq!(fp, *super::CMD_SHAPE_FP);
         assert_eq!(ver, super::BUILD_VERSION);
-        assert!(decode_ws_shape_fp(&[]).is_none());
-        assert!(decode_ws_shape_fp(&[crate::SHAPE_FP_WS_TAG]).is_none());
+
+        assert!(!is_ws_shape_fp(&[]));
+        assert!(decode_ws_shape_fp(&[], tcp_protocol::SHAPE_FP_KIND_ADMIN).is_none());
+        assert!(decode_ws_shape_fp(
+            &[crate::SHAPE_FP_WS_TAG],
+            tcp_protocol::SHAPE_FP_KIND_ADMIN
+        )
+        .is_none());
+    }
+
+    /// Each side must ignore a fingerprint of its own kind. Comparing our own
+    /// against itself always matches, which would retire the gate while still
+    /// reporting a pass — so the kind check must not be a formality.
+    #[test]
+    fn ws_shape_fp_ignores_our_own_kind() {
+        for (sent, peer) in [
+            (tcp_protocol::SHAPE_FP_KIND_ADMIN, tcp_protocol::SHAPE_FP_KIND_AGENT),
+            (tcp_protocol::SHAPE_FP_KIND_AGENT, tcp_protocol::SHAPE_FP_KIND_ADMIN),
+        ] {
+            let tagged = encode_ws_shape_fp(sent);
+            // Still consumed, so it never reaches the Cmd decoder...
+            assert!(is_ws_shape_fp(&tagged));
+            // ...but not read as the peer's.
+            assert!(decode_ws_shape_fp(&tagged, peer).is_none());
+            assert!(decode_ws_shape_fp(&tagged, sent).is_some());
+        }
     }
 
     /// A variant index past the end of the enum is what an older peer sees when

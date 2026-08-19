@@ -165,6 +165,16 @@ impl AssistMessage {
         Ok(res.take(0).unwrap_or_default())
     }
 
+    /// Threads that already carry agent messages, so a restarted client keeps
+    /// routing them to the agent instead of to the chat endpoint.
+    pub async fn agent_thread_ids(limit: usize) -> anyhow::Result<Vec<String>> {
+        let mut res = db()
+            .query("SELECT VALUE thread FROM assist_message GROUP BY thread LIMIT $limit")
+            .bind(("limit", limit))
+            .await?;
+        Ok(res.take(0).unwrap_or_default())
+    }
+
     /// zeroclaw session key recorded for a room, if one is known.
     pub async fn session_key_for(room: &str) -> anyhow::Result<Option<String>> {
         let mut res = db()
@@ -184,6 +194,31 @@ impl AssistMessage {
             .bind(("key", key.to_string()))
             .await?;
         Ok(())
+    }
+
+    /// Points the diagnostic sessions this conversation produced at its agent
+    /// transcript. Scoped to the machine and to sessions started while the
+    /// conversation was live, so an unrelated older session is not claimed.
+    /// Two round trips on purpose: a LET occupies a result slot, and mis-indexing
+    /// it turns the UPDATE into a silent no-op.
+    pub async fn link_diagnostic_sessions(room: &str, key: &str) -> anyhow::Result<usize> {
+        let mut res = db()
+            .query(
+                "SELECT VALUE connection_string FROM assist_message                  WHERE room = $room AND connection_string != NONE LIMIT 1",
+            )
+            .bind(("room", room.to_string()))
+            .await?;
+        let Some(cs) = res.take::<Vec<String>>(0).unwrap_or_default().into_iter().next() else {
+            return Ok(0);
+        };
+        let mut res = db()
+            .query(
+                "UPDATE diagnostic_session SET zeroclaw_session = $key                  WHERE connection_string = $cs AND zeroclaw_session = NONE                  AND started_at > time::now() - 3h RETURN VALUE id",
+            )
+            .bind(("cs", cs))
+            .bind(("key", key.to_string()))
+            .await?;
+        Ok(res.take::<Vec<RecordId>>(0).unwrap_or_default().len())
     }
 
     /// Readable label for a conversation: the service number and machine it is about.

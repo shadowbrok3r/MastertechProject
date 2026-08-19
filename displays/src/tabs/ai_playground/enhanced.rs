@@ -53,6 +53,11 @@ pub struct EnhancedAiPlayground {
     pub agent_threads: std::collections::HashSet<String>,
     #[serde(skip)]
     last_agent_poll: Option<web_time::Instant>,
+    /// Threads the reply poller found transcript rows for.
+    #[serde(skip)]
+    agent_flag_tx: Sender<String>,
+    #[serde(skip)]
+    agent_flag_rx: Receiver<String>,
     /// Service number the conversation is about, when the host knows one; joins
     /// the transcript to a service order.
     #[serde(skip)]
@@ -80,6 +85,7 @@ impl Default for EnhancedAiPlayground {
     fn default() -> Self {
         let (response_tx, response_rx) = crossbeam::channel::unbounded::<ChatMessage>();
         let (load_tx, load_rx) = crossbeam::channel::unbounded::<Vec<LoadedThread>>();
+        let (agent_flag_tx, agent_flag_rx) = crossbeam::channel::unbounded::<String>();
         Self {
             selected_thread: String::new(),
             chat_title: HashMap::new(),
@@ -95,6 +101,8 @@ impl Default for EnhancedAiPlayground {
             self_diagnosis: false,
             agent_threads: std::collections::HashSet::new(),
             last_agent_poll: None,
+            agent_flag_tx,
+            agent_flag_rx,
             service_number: None,
             #[cfg(not(target_arch = "wasm32"))]
             claude: crate::ai::claude_code::ClaudeCodeSession::new(),
@@ -148,9 +156,8 @@ impl EnhancedAiPlayground {
             #[cfg(feature = "tokio")]
             {
                 if crate::ai::mcp_chat::zeroclaw_gateway().is_some() {
-                    let agent = crate::ai::mcp_chat::zeroclaw_agent();
                     self.thread_engine
-                        .insert(thread_id.clone(), format!("ZeroClaw \u{00B7} {agent}"));
+                        .insert(thread_id.clone(), "ZeroClaw agent".to_string());
                     let full = match &connection_string {
                         Some(cs) => format!("DIAGNOSE mode. Target client connection_string = {cs}. {prompt}"),
                         None => format!("DIAGNOSE mode, local host. {prompt}"),
@@ -654,6 +661,10 @@ impl EnhancedAiPlayground {
         }
 
         #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        while let Ok(thread) = self.agent_flag_rx.try_recv() {
+            self.agent_threads.insert(thread);
+        }
+        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
         self.poll_agent_replies(ui);
 
         while let Ok(response) = self.response_rx.try_recv() {
@@ -708,15 +719,13 @@ impl EnhancedAiPlayground {
     #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
     fn poll_agent_replies(&mut self, ui: &Ui) {
         use std::time::Duration;
-        if !self.agent_threads.contains(&self.selected_thread) {
-            return;
-        }
+        let gap = if self.agent_threads.contains(&self.selected_thread) { 2 } else { 8 };
         let now = web_time::Instant::now();
-        if self.last_agent_poll.is_some_and(|t| now.duration_since(t) < Duration::from_secs(2)) {
+        if self.last_agent_poll.is_some_and(|t| now.duration_since(t) < Duration::from_secs(gap)) {
             return;
         }
         self.last_agent_poll = Some(now);
-        ui.ctx().request_repaint_after(Duration::from_secs(2));
+        ui.ctx().request_repaint_after(Duration::from_secs(gap));
 
         let thread = self.selected_thread.clone();
         let seen: std::collections::HashSet<String> = self
@@ -725,10 +734,14 @@ impl EnhancedAiPlayground {
             .map(|t| t.messages.iter().map(|m| m.id.clone()).collect())
             .unwrap_or_default();
         let tx = self.response_tx.clone();
+        let flag_tx = self.agent_flag_tx.clone();
         PlatformSpawner::spawn(async move {
             use database::schema::RecordIdExt;
             let rows =
                 database::schema::AssistMessage::thread_history(&thread, 200).await.unwrap_or_default();
+            if !rows.is_empty() {
+                let _ = flag_tx.try_send(thread.clone());
+            }
             for row in rows {
                 let id = row.id.key_string();
                 if seen.contains(&id) {

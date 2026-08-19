@@ -129,6 +129,11 @@ async fn label_session(room: &str) {
     if let Err(e) = AssistMessage::set_session_key(room, &key).await {
         log::warn!("chat: could not record session key for {room}: {e}");
     }
+    match AssistMessage::link_diagnostic_sessions(room, &key).await {
+        Ok(0) => {},
+        Ok(n) => log::info!("chat: linked {n} diagnostic session(s) to {key}"),
+        Err(e) => log::warn!("chat: could not link diagnostic sessions for {room}: {e}"),
+    }
     let Some(label) = AssistMessage::room_label(room).await.unwrap_or(None) else {
         return;
     };

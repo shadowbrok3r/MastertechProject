@@ -125,7 +125,6 @@ impl TabViewer for MastertechContext {
                 .task_table_viewer(ui, self.shared_ctx.ui_actions_tx.clone()),
             TabId::Inventory => self.shared_ctx.stock_tables.ui(ui),
             TabId::SalesTracker => self.shared_ctx.sales_tracker.ui(ui),
-            TabId::WebConsole => self.shared_ctx.web_console.ui(ui),
             TabId::Logs => displays::ui_tools::egui_logger::logger_ui()
                 .log_levels([true, true, true, false, false])
                 .warn_color(Color32::from_rgb(94, 215, 221))

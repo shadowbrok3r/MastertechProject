@@ -55,6 +55,9 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tcp_protocol = { path = "../tcp_protocol", features = ["fingerprint"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+# surrealdb's ws engine calls tokio::join! on wasm too, and tokio only reaches
+# this target through surrealdb, which does not ask for `macros`.
+tokio = { version = "1", default-features = false, features = ["macros", "sync"] }
 wasm-bindgen-futures.workspace = true
 gloo-timers = { version = "0.3", features = ["futures"] }
 

@@ -3,6 +3,10 @@ use crate::{get_current_user_from_auth, get_toast_sender, ui_tools::autocomplete
 use eframe::egui::{Align, Button, Color32, ComboBox, Frame, RichText, Spinner, Stroke, TextEdit, Ui, Vec2, Widget, vec2};
 use database::schema::utilities::create_full_task_payload;
 use database::schema::{fetch_prestashop_order, OrderLookup};
+use database::schema::task_creation::{
+    apply_extracted_specs, apply_prestashop_payload, EntityDraft, PrestaMapMode,
+    PrestaMapOptions,
+};
 use super::{tabs::{display_ticket_page, display_computer_page}, task_modal::ModalAction};
 use database::schema::Datetime;
 use chrono::Utc;
@@ -485,64 +489,36 @@ impl CreateTaskModal {
                         match fetch_prestashop_order(OrderLookup::ServiceNumber(service_number.clone())).await {
                             Ok(presta_data) => {
                                 info!("Successfully fetched prestashop data for order {}", service_number);
-                                // Update payload with fetched data
-                                payload.customer_data.name = presta_data.customer.name.clone();
-                                payload.customer_data.email = presta_data.customer.email.clone();
-                                payload.customer_data.phone_number = presta_data.customer.phone_number.clone();
-                                payload.customer_data.cust_code = presta_data.customer.cust_code.clone();
-                                payload.customer_data.id = presta_data.customer.id.clone();
-                                
-                                // Update ticket data
-                                let sales_rep = presta_data.sales_rep.clone().unwrap_or_default();
-                                let split_rep = presta_data.split_rep.clone().unwrap_or_default();
-                                let email = database::schema::helper_traits::parse_email_user(&sales_rep.email).to_string();
-                                let email_split_rep = database::schema::helper_traits::parse_email_user(&split_rep.email).to_string();
-                                
-                                payload.ticket_data.salesman = email_split_rep;
-                                payload.ticket_data.sales_rep = email.clone();
-                                payload.ticket_data.tech = email.clone();
-                                payload.ticket_data.customer = Some(payload.customer_data.id.clone());
-                                payload.ticket_data.checkin_rep = email;
-                                payload.ticket_data.terms = presta_data.order.payment.clone();
-                                payload.ticket_data.ticket_total = presta_data.order.total_products_wt.clone();
-                                payload.ticket_data.doc_alias = presta_data.order.order_type.clone();
-                                
-                                if let Some(service) = presta_data.order.associations.order_service.first() {
-                                    payload.ticket_data.checkin_notes = service.check_in_notes.clone();
-                                }
-                                
-                                // Copy task notes
-                                for msg in presta_data.task_notes.iter() {
-                                    payload.task_notes.push(TaskNotePayload {
-                                        task_id: Some(payload.task_data.id.clone()),
-                                        ..msg.clone()
-                                    });
-                                }
-                                
-                                // Extract computer data using the Order's methods
-                                let model = presta_data.order.extract_model();
-                                if !model.is_empty() {
-                                    payload.computer_data.device_model = Some(model);
-                                }
-                                
-                                // Extract all specs including device serial and mfg
+                                // The shared mapper reassigns task.id and rebuilds notes
+                                // against it; the id captured before this spawn is the one
+                                // the create path uses, so it is restored afterward.
+                                let keep_task_id = payload.task_data.id.clone();
+                                let mut draft = EntityDraft {
+                                    customer: payload.customer_data.clone(),
+                                    ticket: payload.ticket_data.clone(),
+                                    computer: payload.computer_data.clone(),
+                                    task: payload.task_data.clone(),
+                                    task_notes: payload.task_notes.clone(),
+                                };
+                                apply_prestashop_payload(
+                                    &presta_data,
+                                    &mut draft,
+                                    &PrestaMapOptions {
+                                        mode: PrestaMapMode::Bench,
+                                        ..Default::default()
+                                    },
+                                );
                                 let specs = presta_data.order.extract_specs().await;
-                                if !specs.cpu.is_empty() {
-                                    payload.computer_data.cpu = specs.cpu;
+                                apply_extracted_specs(&mut draft, &specs);
+                                draft.task.id = keep_task_id.clone();
+                                for note in &mut draft.task_notes {
+                                    note.task_id = Some(keep_task_id.clone());
                                 }
-                                if !specs.gpu.is_empty() {
-                                    payload.computer_data.gpu = specs.gpu;
-                                }
-                                if !specs.ram.is_empty() {
-                                    payload.computer_data.ram = specs.ram;
-                                }
-                                if !specs.device_serial.is_empty() {
-                                    payload.computer_data.device_serial = Some(specs.device_serial);
-                                }
-                                if !specs.device_mfg.is_empty() {
-                                    payload.computer_data.device_mfg = Some(specs.device_mfg);
-                                }
-                                
+                                payload.customer_data = draft.customer;
+                                payload.ticket_data = draft.ticket;
+                                payload.computer_data = draft.computer;
+                                payload.task_notes = draft.task_notes;
+
                                 // Also update task status based on order type
                                 let order_type = OrderType::from_id_str(&presta_data.order.id_order_type);
                                 if order_type != OrderType::ServiceOrder {

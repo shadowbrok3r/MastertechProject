@@ -1,0 +1,33 @@
+# Links a diagnostic session back to the technician conversation that drove it,
+# so a service order can reach the agent transcript.
+id = "20260819200000__diagnostic_zeroclaw_session"
+name = "diagnostic_zeroclaw_session"
+state = "completed"
+source_schema_hash = "516d4fd2c44bfba2aa848e95aa7c89d727abca80638d8663185e5c198c998de4"
+target_schema_hash = "516d4fd2c44bfba2aa848e95aa7c89d727abca80638d8663185e5c198c998de4"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "add_zeroclaw_session"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE zeroclaw_session ON diagnostic_session TYPE none | string PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "clear_zeroclaw_session"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+UPDATE diagnostic_session SET zeroclaw_session = NONE WHERE zeroclaw_session != NONE;
+"""
+
+[[steps]]
+id = "remove_zeroclaw_session"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE FIELD IF EXISTS zeroclaw_session ON diagnostic_session;
+"""

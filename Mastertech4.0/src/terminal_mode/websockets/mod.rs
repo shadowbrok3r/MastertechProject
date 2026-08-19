@@ -1295,10 +1295,15 @@ impl TerminalWebsocketClient {
                                         }
                                     },
                                     WsMessage::Binary(bin) => {
-                                        if let Some((peer_fp, peer_ver)) =
-                                            displays::shape_fp::decode_ws_shape_fp(&bin)
-                                        {
-                                            compare_ws_shape_fp(peer_fp, &peer_ver);
+                                        if displays::shape_fp::is_ws_shape_fp(&bin) {
+                                            if let Some((peer_fp, peer_ver)) =
+                                                displays::shape_fp::decode_ws_shape_fp(
+                                                    &bin,
+                                                    tcp_protocol::SHAPE_FP_KIND_ADMIN,
+                                                )
+                                            {
+                                                compare_ws_shape_fp(peer_fp, &peer_ver);
+                                            }
                                             continue;
                                         }
                                         if *ready {

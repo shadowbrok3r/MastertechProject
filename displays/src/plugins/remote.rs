@@ -449,7 +449,7 @@ pub struct EguiFrameCapture {
     pub frame_rx: Receiver<EguiFrameMessage>,
     pub input_tx: Sender<EguiInputEvent>,
     pub input_rx: Receiver<EguiInputEvent>,
-    last_capture_time: std::time::Instant,
+    last_capture_time: web_time::Instant,
 }
 
 impl EguiFrameCapture {
@@ -465,7 +465,7 @@ impl EguiFrameCapture {
             frame_rx,
             input_tx,
             input_rx,
-            last_capture_time: std::time::Instant::now(),
+            last_capture_time: web_time::Instant::now(),
         }
     }
 }
@@ -663,7 +663,7 @@ impl MastertechPlugin for EguiFrameCapture {
         if self.last_capture_time.elapsed() < MIN_CAPTURE_INTERVAL {
             return;
         }
-        self.last_capture_time = std::time::Instant::now();
+        self.last_capture_time = web_time::Instant::now();
 
         self.frame_count += 1;
 
@@ -692,8 +692,8 @@ impl MastertechPlugin for EguiFrameCapture {
         let height = screen_rect.height();
         let screen_min_x = screen_rect.min.x;
         let screen_min_y = screen_rect.min.y;
-        let timestamp_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let timestamp_ms = web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis();
 
