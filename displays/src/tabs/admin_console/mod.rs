@@ -24,11 +24,13 @@ pub mod preboot_direct;
 pub mod preboot_viewer;
 pub mod record_viewer;
 pub mod relink_popup;
+pub mod rename_popup;
 pub mod sql_approval_popup;
 pub mod ui;
 
 pub use record_viewer::{RecordKind, RecordViewer};
 pub use relink_popup::RelinkClientPopup;
+pub use rename_popup::RenameClientPopup;
 pub use sql_approval_popup::SqlApprovalQueue;
 
 /// Controls whether a remote-client session is shown inline (docked in the
@@ -150,6 +152,8 @@ fn render_client_row(
     actions_tx: &Sender<ClientUiAction>,
     fk_health_tx: &crossbeam::channel::Sender<(String, bool, bool)>,
     fk_health_cache: &HashMap<String, (bool, bool)>,
+    client_tasks_tx: &crossbeam::channel::Sender<(String, Option<Vec<database::schema::LiveTaskPayload>>)>,
+    client_tasks_cache: &HashMap<String, Option<Vec<database::schema::LiveTaskPayload>>>,
     reachability: Option<&crate::ui_data::reachability::ReachabilityStatus>,
 ) {
     ui.add_space(4.);
@@ -168,6 +172,8 @@ fn render_client_row(
         is_ws_connected,
         fk_health_tx,
         fk_health_cache,
+        client_tasks_tx,
+        client_tasks_cache,
         inventory,
         reachability,
         transport,
@@ -274,6 +280,21 @@ pub struct AdminConsole {
     /// Detail windows for the customer / computer rows a client links to.
     #[serde(skip)]
     pub record_viewer: RecordViewer,
+    /// Open friendly-name rename popup, `None` when closed.
+    #[serde(skip)]
+    pub rename_popup: Option<RenameClientPopup>,
+    /// Forwards task-modal opens to `SharedContext`; set on the first
+    /// admin-console frame.
+    #[serde(skip)]
+    pub task_actions_tx: Option<Sender<crate::TaskUiActions>>,
+    /// Matched service tasks per `connection_string`; `None` while the
+    /// lookup is in flight.
+    #[serde(skip)]
+    pub client_tasks_cache: HashMap<String, Option<Vec<database::schema::LiveTaskPayload>>>,
+    #[serde(skip)]
+    pub client_tasks_tx: crossbeam::channel::Sender<(String, Option<Vec<database::schema::LiveTaskPayload>>)>,
+    #[serde(skip)]
+    pub client_tasks_rx: crossbeam::channel::Receiver<(String, Option<Vec<database::schema::LiveTaskPayload>>)>,
     /// `(customer_exists, computer_exists)` per `connection_string`.
     #[serde(skip)]
     pub fk_health_cache: HashMap<String, (bool, bool)>,
@@ -310,6 +331,7 @@ impl AdminConsole {
     pub fn new(client_map: BTreeMap<String, Vec<ConnectedClient>>, clients: Vec<ConnectedClient>) -> Self {
         let ui_actions_channel = ClientUiAction::create_unbounded_channel();
         let (fk_health_tx, fk_health_rx) = crossbeam::channel::unbounded();
+        let (client_tasks_tx, client_tasks_rx) = crossbeam::channel::unbounded();
         let (manual_connect_tx, manual_connect_rx) = crossbeam::channel::unbounded();
         Self {
             clients,
@@ -341,6 +363,11 @@ impl AdminConsole {
             relink_popup: None,
             sql_approvals: SqlApprovalQueue::default(),
             record_viewer: RecordViewer::default(),
+            rename_popup: None,
+            task_actions_tx: None,
+            client_tasks_cache: HashMap::new(),
+            client_tasks_tx,
+            client_tasks_rx,
             fk_health_cache: HashMap::new(),
             fk_health_tx,
             fk_health_rx,
@@ -498,6 +525,17 @@ impl AdminConsole {
         while let Ok((cs, cust_ok, comp_ok)) = self.fk_health_rx.try_recv() {
             self.fk_health_cache.insert(cs, (cust_ok, comp_ok));
         }
+        while let Ok((cs, tasks)) = self.client_tasks_rx.try_recv() {
+            match tasks {
+                // A pending marker never clobbers an arrived result.
+                None => {
+                    self.client_tasks_cache.entry(cs).or_insert(None);
+                }
+                some => {
+                    self.client_tasks_cache.insert(cs, some);
+                }
+            }
+        }
         while let Ok(result) = self.manual_connect_rx.try_recv() {
             self.manual_connect_busy = false;
             // Re-checked at the point of action: authorization may have changed
@@ -614,6 +652,13 @@ impl AdminConsole {
                 ctx.request_repaint();
             }
         }
+
+        if let Some(popup) = self.rename_popup.as_mut() {
+            if !popup.ui(ctx) {
+                self.rename_popup = None;
+                ctx.request_repaint();
+            }
+        }
     }
 
     /// Translate a `BatchAction` into a single `Cmd` value, ready
@@ -686,6 +731,9 @@ impl AdminConsole {
 
 impl SharedContext {
     pub fn admin_console(&mut self, ui: &mut Ui){
+        if self.web_console_layout.task_actions_tx.is_none() {
+            self.web_console_layout.task_actions_tx = Some(self.ui_actions_tx.clone());
+        }
         self.web_console_layout.receive(ui.ctx());
 
         // Keep the OpenAI/MCP endpoint+key override in sync with the logged-in
@@ -1215,6 +1263,8 @@ impl SharedContext {
                                                 &ws_client.ui_actions_channel.0,
                                                 &ws_client.fk_health_tx,
                                                 &ws_client.fk_health_cache,
+                                                &ws_client.client_tasks_tx,
+                                                &ws_client.client_tasks_cache,
                                                 reachability_snapshot
                                                     .get(&client.connection_string),
                                             );
@@ -1235,6 +1285,8 @@ impl SharedContext {
                                             &ws_client.ui_actions_channel.0,
                                             &ws_client.fk_health_tx,
                                             &ws_client.fk_health_cache,
+                                            &ws_client.client_tasks_tx,
+                                            &ws_client.client_tasks_cache,
                                             reachability_snapshot
                                                 .get(&client.connection_string),
                                         );

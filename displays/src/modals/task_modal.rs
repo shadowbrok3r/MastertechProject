@@ -208,7 +208,7 @@ pub enum ServiceHistoryMode {
     Computer,
 }
 
-#[derive(Debug, Clone, Serialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize, Default, PartialEq)]
 pub enum ModalAction {
     #[default]
     TicketInfoPage,

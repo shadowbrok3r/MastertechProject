@@ -14,6 +14,7 @@ pub mod get_ticket;
 pub mod submit_tur_mtech;
 pub mod scaffold;
 pub mod presta_api;
+pub mod assist_prompt;
 
 impl MastertechContext {
     pub fn tur_sheet(&mut self, ui: &mut Ui) {
@@ -25,6 +26,8 @@ impl MastertechContext {
         
         // Handle the merge modal if it's open
         self.handle_merge_modal(ui.ctx());
+
+        self.render_assist_prompt(ui.ctx());
         
         ui.style_mut().spacing.button_padding = (4.0, 7.0).into();
         ScrollArea::both()

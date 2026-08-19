@@ -394,6 +394,9 @@ pub struct SharedContext {
     /// ZeroClaw webhook-audit tool-call trail; fetched only while drawn.
     #[serde(skip)]
     pub agent_audit: crate::tabs::agent_audit::AgentAudit,
+    /// AI diagnostics ROI aggregates; fetched only while drawn.
+    #[serde(skip)]
+    pub ai_analytics: crate::tabs::ai_analytics::AiAnalytics,
     /// {Widgets / Modals / Ui for portions throughout the app}
     pub search_input: String,
     // Miscellaneous Fields
@@ -771,6 +774,7 @@ impl SharedContext {
             #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
             agent_sessions: Default::default(),
             agent_audit: Default::default(),
+            ai_analytics: Default::default(),
             notification_center: NotificationCenter::default(),
             user_settings: UserSettings::default(),
             update_settings: false,

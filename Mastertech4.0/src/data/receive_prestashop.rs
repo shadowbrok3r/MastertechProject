@@ -25,6 +25,10 @@ impl MasterTechApp {
                 },
             );
 
+            let customer_name = data.customer.name.clone();
+            self.context
+                .arm_assist_prompt(data.order.id.clone(), customer_name);
+
             tokio::spawn(async move {
                 if !customer_email.is_empty() {
                     log::warn!("Spawned thread, checking for CarboniteResponse");

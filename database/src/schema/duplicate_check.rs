@@ -395,6 +395,8 @@ pub fn merge_computer(existing: &ComputerData, new: &ComputerData, selections: &
         product_serial: if selections.use_new("product_serial") { new.product_serial.clone() } else { existing.product_serial.clone() },
         product_vendor: if selections.use_new("product_vendor") { new.product_vendor.clone() } else { existing.product_vendor.clone() },
         installed_programs: if selections.use_new("installed_programs") { new.installed_programs.clone() } else { existing.installed_programs.clone() },
+        // Operator-set flag; an incoming reading never clears it.
+        is_internal: existing.is_internal.or(new.is_internal),
     }
 }
 

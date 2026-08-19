@@ -9,11 +9,13 @@ DEFINE EVENT created ON service_order
     WHEN $event = 'CREATE'
     THEN {
         UPDATE $value.id SET created_at = time::now();
-        IF $value.computer.id == NONE AND $value.customer != NONE {
+        -- Auto-link only when the customer owns exactly one computer;
+        -- a set-but-dangling link is preserved for repair.
+        IF ($value.computer == NONE OR $value.computer == NULL) AND $value.customer != NONE {
             LET $cust = $value.customer;
-            LET $pc = (SELECT VALUE id FROM computer WHERE customer == $cust)[0];
-            IF $pc != NONE {
-                UPDATE $value.id SET computer = $pc;
+            LET $pcs = (SELECT VALUE id FROM computer WHERE customer == $cust LIMIT 2);
+            IF array::len($pcs) == 1 {
+                UPDATE $value.id SET computer = $pcs[0];
             };
         };
     };

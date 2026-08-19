@@ -160,13 +160,13 @@ windows = {version = "0.62", features = [
     "Win32_UI_HiDpi"
 ]}
 winapi = { version = "0.3", features = ["processthreadsapi"] }
-minidump-processor = { version = "0.26", features = ["http"] }
-breakpad-symbols = { version = "0.26" }
-minidump-common = { version = "0.26" }
-minidump = { version = "0.26" }
+minidump-processor = { version = "0.27", features = ["http"] }
+breakpad-symbols = { version = "0.27" }
+minidump-common = { version = "0.27" }
+minidump = { version = "0.27" }
 memmap2 = "0.9"
 windows_x86_64_msvc = "0.53"
-minidump-unwind = "0.26"
+minidump-unwind = "0.27"
 windows-registry = "0.6"
 # `#[implement(...)]` expands to `::windows_core::...`; needs this crate even when using `windows::core` in source.
 windows-core = "0.62"

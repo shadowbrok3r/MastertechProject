@@ -1,0 +1,53 @@
+# Auto-link a created service_order's computer only when the customer owns
+# exactly ONE computer; the old event picked the customer's first computer in
+# arbitrary index order and also fired on dangling links, mis-attributing
+# multi-machine customers. NONE/NULL-only guard preserves dangling links for
+# repair; LIMIT 2 keeps the index lookup O(1).
+# Mirrors database/schema/service_order.surql (source of truth).
+# Applied 2026-08-18.
+id = "20260818130000__service_order_single_computer_autolink"
+name = "service_order_single_computer_autolink"
+state = "completed"
+source_schema_hash = "bd259728c601d30bbee2c5f403c1504fb939cab6bd3007641f7366f77c073355"
+target_schema_hash = "bd259728c601d30bbee2c5f403c1504fb939cab6bd3007641f7366f77c073355"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "single_computer_autolink"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE EVENT OVERWRITE created ON service_order
+    WHEN $event = 'CREATE'
+    THEN {
+        UPDATE $value.id SET created_at = time::now();
+        IF ($value.computer == NONE OR $value.computer == NULL) AND $value.customer != NONE {
+            LET $cust = $value.customer;
+            LET $pcs = (SELECT VALUE id FROM computer WHERE customer == $cust LIMIT 2);
+            IF array::len($pcs) == 1 {
+                UPDATE $value.id SET computer = $pcs[0];
+            };
+        };
+    };
+"""
+
+# Restores the 20260707130000__service_order_created_scope event verbatim.
+[[steps]]
+id = "restore_first_computer_autolink"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+DEFINE EVENT OVERWRITE created ON service_order
+    WHEN $event = 'CREATE'
+    THEN {
+        UPDATE $value.id SET created_at = time::now();
+        IF $value.computer.id == NONE AND $value.customer != NONE {
+            LET $cust = $value.customer;
+            LET $pc = (SELECT VALUE id FROM computer WHERE customer == $cust)[0];
+            IF $pc != NONE {
+                UPDATE $value.id SET computer = $pc;
+            };
+        };
+    };
+"""

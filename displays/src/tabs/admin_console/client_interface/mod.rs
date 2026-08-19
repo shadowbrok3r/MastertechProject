@@ -14,7 +14,6 @@ use installed_programs_viewer::InstalledProgramsViewer;
 use registry_editor::RegistryEditor;
 use startup_apps_viewer::StartupAppsViewer;
 use remote_scripts_viewer::RemoteScriptsViewer;
-use service_record_viewer::ServiceRecordViewer;
 use tabs::mcp_tool_log_viewer::McpToolLogViewer;
 use tabs::home_page::HomePage;
 use serde::{Deserialize, Serialize};
@@ -48,7 +47,6 @@ pub mod installed_programs_viewer;
 pub mod registry_editor;
 pub mod startup_apps_viewer;
 pub mod remote_scripts_viewer;
-pub mod service_record_viewer;
 
 pub use admin_transport::{AdminTransport, SessionEvent, TransportKind};
 
@@ -200,9 +198,6 @@ pub struct WebSocketClient {
     /// Crash Dumps page: this machine's crash history, signatures, and verdicts.
     #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
     pub crash_dumps: tabs::crash_dump_viewer::CrashDumpViewer,
-    /// "Service Record" page: the matched task's full modal (ticket,
-    /// notes, recommendations, diagnostics, history) for this client.
-    pub service_record: ServiceRecordViewer,
     pub home_page: HomePage,
     /// Whether the remote egui frame capture is actively streaming.
     pub egui_viewer_active: bool,
@@ -400,7 +395,6 @@ Get-WmiObject")
             fleet_intel: tabs::fleet_intel_viewer::FleetIntelViewer::new(),
             #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
             crash_dumps: tabs::crash_dump_viewer::CrashDumpViewer::new(),
-            service_record: ServiceRecordViewer::new(),
             home_page: HomePage::new(),
             egui_viewer_active: false,
             file_transfer_progress: None,

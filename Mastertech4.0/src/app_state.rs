@@ -65,6 +65,8 @@ pub struct MastertechContext {
     pub task_notes: Vec<TaskNotePayload>,
     pub service_details: Vec<database::schema::prestashop_schema::ServiceOrder>,
 
+    /// Armed by a PrestaShop pull; cleared by the tech's answer.
+    pub pending_assist: Option<crate::tabs::tur_sheet::assist_prompt::PendingAssist>,
     pub client_uuid: RecordId,
     pub disks: Value,
     pub disk_num: usize,
@@ -218,6 +220,7 @@ impl MasterTechApp {
         };
 
         let mastertech_context = MastertechContext {
+            pending_assist: None,
             shared_ctx: SharedContext::new(cc),
             // terminal: Terminal::new(backend).unwrap(),
             // terminal_frontend: None,

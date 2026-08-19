@@ -1,0 +1,70 @@
+# requested_by/store/driven_by attribute who asked, where, and which surface
+# drove a diagnostic session. zeroclaw_health is the single-row gateway
+# heartbeat UPSERTed by the box probe (a stale checked_at reads as down).
+# computer.is_internal excludes staff/test machines from outcome rollups.
+# All additive, no DEFAULTs — consumers coalesce NONE.
+# Applied 2026-08-18. Supplementary hand UPDATE after apply: bread-* boxes
+# carry hostname 'unknown', so they were flagged by record key
+# (WHERE string::lowercase(record::id(id)) CONTAINS 'bread-').
+id = "20260818120000__attribution_health_internal"
+name = "attribution_health_internal"
+state = "completed"
+source_schema_hash = "bd259728c601d30bbee2c5f403c1504fb939cab6bd3007641f7366f77c073355"
+target_schema_hash = "bd259728c601d30bbee2c5f403c1504fb939cab6bd3007641f7366f77c073355"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "add_attribution_fields"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE driven_by    ON diagnostic_session TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE requested_by ON diagnostic_session TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE store        ON diagnostic_session TYPE none | string PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "define_zeroclaw_health"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE zeroclaw_health TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE checked_at  ON zeroclaw_health TYPE datetime PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE cron_errors ON zeroclaw_health TYPE int PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE detail      ON zeroclaw_health TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE gateway_ok  ON zeroclaw_health TYPE bool PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE status      ON zeroclaw_health TYPE string ASSERT $value IN ['ok', 'error'] PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "add_computer_is_internal"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE is_internal ON computer TYPE none | bool PERMISSIONS FULL;
+"""
+
+# Runs after the DEFINE above — an UPDATE touching an undefined field
+# silently fails the whole statement.
+[[steps]]
+id = "mark_staff_internal"
+phase = "start"
+kind = "run_sql"
+sql = """
+UPDATE computer SET is_internal = true WHERE string::lowercase(hostname) IN ['bread-work', 'owner-pc'] OR string::lowercase(record::id(id)) CONTAINS 'bread-';
+"""
+
+# Rollback clears data while the field is still defined, then removes it.
+[[steps]]
+id = "remove_all"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE FIELD IF EXISTS driven_by ON diagnostic_session;
+REMOVE FIELD IF EXISTS requested_by ON diagnostic_session;
+REMOVE FIELD IF EXISTS store ON diagnostic_session;
+REMOVE TABLE IF EXISTS zeroclaw_health;
+UPDATE computer SET is_internal = NONE WHERE is_internal != NONE;
+REMOVE FIELD IF EXISTS is_internal ON computer;
+"""

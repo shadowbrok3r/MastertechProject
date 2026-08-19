@@ -36,9 +36,23 @@ pub enum ClientUiAction {
     ConnectByIdentifier(String),
     /// Open a read-only detail window for a linked customer / computer record.
     ViewRecord(super::RecordKind, database::schema::RecordId),
+    /// Open the matched service task's modal on the given page.
+    OpenClientTask {
+        task: database::schema::LiveTaskPayload,
+        page: crate::modals::task_modal::ModalAction,
+    },
+    /// Open the friendly-name rename popup for this client.
+    RenameClient(ConnectedClient),
 }
 
 impl AdminConsole {
+    /// Drops the FK-health and matched-task cache entries for a client whose
+    /// linkage is about to change, so the next expanded frame re-fetches.
+    fn invalidate_link_caches(&mut self, connection_string: &str) {
+        self.fk_health_cache.remove(connection_string);
+        self.client_tasks_cache.remove(connection_string);
+    }
+
     pub fn handle_action(&mut self, action: ClientUiAction) {
         match action {
             ClientUiAction::ToggleClientFloat(connection_string) => {
@@ -101,9 +115,11 @@ impl AdminConsole {
                 }
             },
             ClientUiAction::RelinkCustomer(client) => {
+                self.invalidate_link_caches(&client.connection_string);
                 self.relink_popup = Some(super::RelinkClientPopup::new(client));
             },
             ClientUiAction::LinkComputer(client) => {
+                self.invalidate_link_caches(&client.connection_string);
                 // Fire a fresh hardware-spec request through the active session
                 // so open_service_suggestions is populated before the modal polls.
                 if let Some(ws) = self.ws_clients.get(&client.connection_string) {
@@ -112,6 +128,7 @@ impl AdminConsole {
                 submit_admin_entity_link(&client, "computer");
             }
             ClientUiAction::LinkCustomer(client) => {
+                self.invalidate_link_caches(&client.connection_string);
                 submit_admin_entity_link(&client, "customer");
             }
             ClientUiAction::ConnectByIdentifier(query) => {
@@ -143,7 +160,16 @@ impl AdminConsole {
             ClientUiAction::ViewRecord(kind, id) => {
                 self.record_viewer.open(kind, id);
             }
+            ClientUiAction::OpenClientTask { task, page } => {
+                if let Some(tx) = self.task_actions_tx.as_ref() {
+                    let _ = tx.try_send(crate::TaskUiActions::OpenTaskModalAtPage { task, page });
+                }
+            }
+            ClientUiAction::RenameClient(client) => {
+                self.rename_popup = Some(super::RenameClientPopup::new(&client));
+            }
             ClientUiAction::RepairAssociations(client) => {
+                self.invalidate_link_caches(&client.connection_string);
                 let cs = client.connection_string.clone();
                 crate::PlatformSpawner::spawn(async move {
                     match database::schema::entity_link::repair_connection_links(&cs).await {

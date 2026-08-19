@@ -1,0 +1,13 @@
+[package]
+name = "admin-agent"
+version = "4.8.0"
+edition = "2024"
+
+[dependencies]
+database = { workspace = true, features = ["desktop"] }
+displays = { path = "../displays", features = ["tokio", "native-telemetry"] }
+tokio = { workspace = true, features = ["full"] }
+anyhow = { workspace = true }
+log = { workspace = true }
+env_logger = "*"
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }

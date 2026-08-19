@@ -3,7 +3,7 @@ use eframe::egui::{
     collapsing_header::CollapsingState, text::LayoutJob, Align, Button, Color32, FontFamily,
     FontId, Frame, Grid, Layout, Margin, RichText, TextFormat, Ui, Vec2, Widget, WidgetText,
 };
-use database::schema::{ConnectedClient, RecordIdExt};
+use database::schema::{ConnectedClient, LiveTaskPayload, RecordIdExt};
 use std::collections::HashMap;
 use crossbeam::channel::Sender;
 use chrono::{DateTime, Local, Utc};
@@ -147,6 +147,8 @@ impl AdminConsole {
         is_ws_connected: bool,
         fk_health_tx: &crossbeam::channel::Sender<(String, bool, bool)>,
         fk_health_cache: &HashMap<String, (bool, bool)>,
+        client_tasks_tx: &crossbeam::channel::Sender<(String, Option<Vec<LiveTaskPayload>>)>,
+        client_tasks_cache: &HashMap<String, Option<Vec<LiveTaskPayload>>>,
         // Slice 2: latest gathered security inventory for this
         // client, or `None` if none has arrived (yet) this session.
         // Rendered as an extra section in the expanded body.
@@ -167,8 +169,12 @@ impl AdminConsole {
         let mut collapse = CollapsingState::load_with_default_open(ui.ctx(), row_id, false);
         if collapse.is_open() {
             queue_fk_health_check(fk_health_tx, fk_health_cache, client);
+            queue_client_tasks_fetch(client_tasks_tx, client_tasks_cache, client);
         }
         let fk_health = fk_health_cache.get(&client.connection_string).copied();
+        let client_tasks = client_tasks_cache
+            .get(&client.connection_string)
+            .and_then(|t| t.as_deref());
 
         // Pre-compute the fields the details grid needs, so the body
         // closure doesn't need to re-parse on every frame.
@@ -340,6 +346,7 @@ impl AdminConsole {
                             is_ws_connected,
                             reachability,
                             fk_health,
+                            client_tasks,
                         );
 
                         if let Some(products) = security_inventory {
@@ -419,6 +426,14 @@ impl AdminConsole {
                                     let _ = tx.try_send(ClientUiAction::ToggleClientFloat(
                                         client.connection_string.clone(),
                                     ));
+                                }
+                                if row_icon_action(
+                                    ui,
+                                    icons::EDIT,
+                                    plain,
+                                    "Rename: edit this client's friendly name",
+                                ) {
+                                    let _ = tx.try_send(ClientUiAction::RenameClient(client.clone()));
                                 }
                                 if row_icon_action(ui, icons::RELINK, relink_color, relink_tip) {
                                     let _ = tx.try_send(ClientUiAction::RelinkCustomer(client.clone()));
@@ -652,6 +667,7 @@ fn client_details_grid(
     is_ws_connected: bool,
     reachability: Option<&crate::ui_data::reachability::ReachabilityStatus>,
     fk_health: Option<(bool, bool)>,
+    client_tasks: Option<&[LiveTaskPayload]>,
 ) {
     let value_max_w = CLIENT_DETAILS_VALUE_W;
     ui.set_max_width(CLIENT_ROW_CONTENT_W);
@@ -730,6 +746,8 @@ fn client_details_grid(
             }
 
             let (cust_ok, comp_ok) = fk_health.unwrap_or((false, false));
+            // Newest matched task; customer/computer links open its modal.
+            let primary_task = client_tasks.and_then(|t| t.first());
             let cust_label = client
                 .customer
                 .as_ref()
@@ -742,11 +760,22 @@ fn client_details_grid(
                     .color(fk_color(ui, cust_ok, client.customer.is_some()));
                 match client.customer.as_ref() {
                     Some(id) => {
-                        if ui.link(text).on_hover_text("Open the full customer record").clicked() {
-                            let _ = tx.try_send(ClientUiAction::ViewRecord(
-                                super::RecordKind::Customer,
-                                id.clone(),
-                            ));
+                        let tip = if primary_task.is_some() {
+                            "Open the service task modal (ticket & customer info)"
+                        } else {
+                            "Open the full customer record"
+                        };
+                        if ui.link(text).on_hover_text(tip).clicked() {
+                            let _ = tx.try_send(match primary_task {
+                                Some(task) => ClientUiAction::OpenClientTask {
+                                    task: task.clone(),
+                                    page: crate::modals::task_modal::ModalAction::TicketInfoPage,
+                                },
+                                None => ClientUiAction::ViewRecord(
+                                    super::RecordKind::Customer,
+                                    id.clone(),
+                                ),
+                            });
                         }
                     }
                     None => {
@@ -773,11 +802,22 @@ fn client_details_grid(
                     .color(fk_color(ui, comp_ok, client.computer.is_some()));
                 match client.computer.as_ref() {
                     Some(id) => {
-                        if ui.link(text).on_hover_text("Open the full computer record").clicked() {
-                            let _ = tx.try_send(ClientUiAction::ViewRecord(
-                                super::RecordKind::Computer,
-                                id.clone(),
-                            ));
+                        let tip = if primary_task.is_some() {
+                            "Open the service task modal on the computer page"
+                        } else {
+                            "Open the full computer record"
+                        };
+                        if ui.link(text).on_hover_text(tip).clicked() {
+                            let _ = tx.try_send(match primary_task {
+                                Some(task) => ClientUiAction::OpenClientTask {
+                                    task: task.clone(),
+                                    page: crate::modals::task_modal::ModalAction::ComputerInfoPage,
+                                },
+                                None => ClientUiAction::ViewRecord(
+                                    super::RecordKind::Computer,
+                                    id.clone(),
+                                ),
+                            });
                         }
                     }
                     None => {
@@ -787,6 +827,52 @@ fn client_details_grid(
                 if !comp_ok {
                     if ui.small_button("Link").clicked() {
                         let _ = tx.try_send(ClientUiAction::LinkComputer(client.clone()));
+                    }
+                }
+            });
+            ui.end_row();
+
+            ui.label(RichText::new("Task").small().color(theme::weak_text(ui)));
+            ui.scope(|ui| {
+                ui.set_max_width(value_max_w);
+                match client_tasks {
+                    None => {
+                        ui.label(
+                            RichText::new("(looking up…)")
+                                .small()
+                                .color(theme::faint_text(ui)),
+                        );
+                    }
+                    Some([]) => {
+                        ui.label(
+                            RichText::new("(none)").small().color(theme::weak_text(ui)),
+                        );
+                    }
+                    Some(tasks) => {
+                        ui.vertical(|ui| {
+                            for task in tasks.iter().take(5) {
+                                let text = RichText::new(client_task_label(task))
+                                    .small()
+                                    .color(theme::info(ui));
+                                if ui
+                                    .link(text)
+                                    .on_hover_text("Open the service task modal")
+                                    .clicked()
+                                {
+                                    let _ = tx.try_send(ClientUiAction::OpenClientTask {
+                                        task: task.clone(),
+                                        page: crate::modals::task_modal::ModalAction::TicketInfoPage,
+                                    });
+                                }
+                            }
+                            if tasks.len() > 5 {
+                                ui.label(
+                                    RichText::new(format!("(+{} more)", tasks.len() - 5))
+                                        .small()
+                                        .color(theme::faint_text(ui)),
+                                );
+                            }
+                        });
                     }
                 }
             });
@@ -815,6 +901,51 @@ fn fk_color(ui: &Ui, exists: bool, has_fk: bool) -> Color32 {
     } else {
         theme::warn(ui)
     }
+}
+
+/// One-line label for a matched task link: `name — #service (status)`.
+fn client_task_label(t: &LiveTaskPayload) -> String {
+    match &t.service_number {
+        Some(sn) if !sn.is_empty() => format!("{} — #{} ({})", t.task_name, sn, t.status.as_str()),
+        _ => format!("{} ({})", t.task_name, t.status.as_str()),
+    }
+}
+
+/// Queue the matched-task lookup for an expanded row. Sends a pending marker
+/// immediately so the fetch fires once, then resolves by linked computer
+/// RecordId with a hostname fallback.
+fn queue_client_tasks_fetch(
+    tx: &crossbeam::channel::Sender<(String, Option<Vec<LiveTaskPayload>>)>,
+    cache: &HashMap<String, Option<Vec<LiveTaskPayload>>>,
+    client: &ConnectedClient,
+) {
+    if cache.contains_key(&client.connection_string) {
+        return;
+    }
+    let cs = client.connection_string.clone();
+    let _ = tx.try_send((cs.clone(), None));
+    let computer = client.computer.clone();
+    let hostname = cs
+        .split_once(':')
+        .map(|(h, _)| h.to_string())
+        .unwrap_or_else(|| cs.clone());
+    let tx = tx.clone();
+    crate::PlatformSpawner::spawn(async move {
+        let mut tasks: Vec<LiveTaskPayload> = Vec::new();
+        if let Some(comp_id) = computer {
+            match LiveTaskPayload::get_tasks_by_computer_id(&comp_id).await {
+                Ok(found) => tasks = found,
+                Err(e) => log::error!("client tasks: tasks-by-computer failed: {e:?}"),
+            }
+        }
+        if tasks.is_empty() && !hostname.is_empty() {
+            match LiveTaskPayload::get_tasks_by_hostname(&hostname).await {
+                Ok(found) => tasks = found,
+                Err(e) => log::error!("client tasks: tasks-by-hostname failed: {e:?}"),
+            }
+        }
+        let _ = tx.try_send((cs, Some(tasks)));
+    });
 }
 
 fn queue_fk_health_check(

@@ -1,0 +1,46 @@
+# ai_usage.at becomes a real datetime; hooks write d'...' literals. Existing
+# rows carried ISO strings — a transitional union type lets the cast UPDATE
+# run before the field narrows (a coercion failure would silently kill the
+# whole UPDATE).
+id = "20260818140000__ai_usage_at_datetime"
+# Applied 2026-08-18.
+name = "ai_usage_at_datetime"
+state = "completed"
+source_schema_hash = "e5492bc1b81d85a14c99a6808d4cd7f5470742252ab920696c6978a8e3100b78"
+target_schema_hash = "e5492bc1b81d85a14c99a6808d4cd7f5470742252ab920696c6978a8e3100b78"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "widen_at"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE at ON ai_usage TYPE none | datetime | string PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "cast_existing_rows"
+phase = "start"
+kind = "run_sql"
+sql = """
+UPDATE ai_usage SET at = <datetime> at WHERE at != NONE;
+"""
+
+[[steps]]
+id = "narrow_at_to_datetime"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE at ON ai_usage TYPE none | datetime PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "restore_string_at"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE at ON ai_usage TYPE none | datetime | string PERMISSIONS FULL;
+UPDATE ai_usage SET at = <string> at WHERE at != NONE;
+DEFINE FIELD OVERWRITE at ON ai_usage TYPE none | string PERMISSIONS FULL;
+"""

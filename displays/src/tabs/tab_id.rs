@@ -38,6 +38,7 @@ pub enum TabId {
     ServerConsole,
     AgentSessions,
     AgentAudit,
+    AiAnalytics,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -124,6 +125,7 @@ const MT_NATIVE: &[TabId] = &[
     TabId::ServerConsole,
     TabId::AgentSessions,
     TabId::AgentAudit,
+    TabId::AiAnalytics,
 ];
 
 const WH_WASM: &[TabId] = &[
@@ -186,6 +188,7 @@ impl TabId {
             Self::ServerConsole => "server_console",
             Self::AgentSessions => "agent_sessions",
             Self::AgentAudit => "agent_audit",
+            Self::AiAnalytics => "ai_analytics",
         }
     }
 
@@ -234,6 +237,7 @@ impl TabId {
             Self::ServerConsole => "Server Console",
             Self::AgentSessions => "Agent Sessions",
             Self::AgentAudit => "Agent Audit",
+            Self::AiAnalytics => "AI Analytics",
         }
     }
 
@@ -296,6 +300,7 @@ impl TabId {
             "Server Console" => Some(Self::ServerConsole),
             "Agent Sessions" => Some(Self::AgentSessions),
             "Agent Audit" => Some(Self::AgentAudit),
+            "AI Analytics" => Some(Self::AiAnalytics),
             _ => None,
         }
     }
@@ -338,6 +343,7 @@ impl TabId {
             "server_console" => Some(Self::ServerConsole),
             "agent_sessions" => Some(Self::AgentSessions),
             "agent_audit" => Some(Self::AgentAudit),
+            "ai_analytics" => Some(Self::AiAnalytics),
             _ => None,
         }
     }

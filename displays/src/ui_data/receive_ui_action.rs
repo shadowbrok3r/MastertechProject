@@ -37,6 +37,31 @@ impl SharedContext {
                             .or_insert(ModalType::TaskModal(task_modal));
                     }
                 }
+                TaskUiActions::OpenTaskModalAtPage { task, page } => {
+                    self.last_read_notes.insert(task.id.clone(), chrono::Utc::now());
+                    let read_task_id = task.id.clone();
+                    PlatformSpawner::spawn(async move {
+                        if let Err(e) = TaskNoteRead::mark_read(read_task_id).await {
+                            log::error!("receive_ui_action -> TaskNoteRead::mark_read failed: {e:?}");
+                        }
+                    });
+                    let title = task.task_name.clone();
+                    // Never toggle-close: focus the requested page in place.
+                    if let Some(ModalType::TaskModal(m)) = self.opened_modals.get_mut(&title) {
+                        m.current_page_state = page;
+                    } else {
+                        let mut task_modal = TaskModal::new(
+                            ChatView::new(
+                                self.store_users.clone(),
+                                task.id.clone(),
+                                task.service_number.clone(),
+                            ),
+                            task.clone(),
+                        );
+                        task_modal.current_page_state = page;
+                        self.opened_modals.insert(title, ModalType::TaskModal(task_modal));
+                    }
+                }
                 TaskUiActions::OpenChatModal((task_id, notes, service_number)) => {
                     log::debug!("receive_ui_action -> Got Chat action: {:?}", task_id);
                     // Mark notes as read for this task

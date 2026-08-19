@@ -23,6 +23,8 @@ DEFINE FIELD gpu               ON computer TYPE string DEFAULT '' PERMISSIONS FU
 DEFINE FIELD hostname          ON computer TYPE string DEFAULT '' PERMISSIONS FULL;
 DEFINE FIELD installed_programs   ON computer TYPE none | array<object> PERMISSIONS FULL;
 DEFINE FIELD installed_programs.* ON computer TYPE object        PERMISSIONS FULL;
+-- Staff/test machines; excluded from outcome rollups. NONE reads as false.
+DEFINE FIELD is_internal       ON computer TYPE none | bool      PERMISSIONS FULL;
 DEFINE FIELD motherboard_asset_tag ON computer TYPE none | string PERMISSIONS FULL;
 DEFINE FIELD motherboard_name  ON computer TYPE none | string    PERMISSIONS FULL;
 DEFINE FIELD motherboard_serial ON computer TYPE none | string   PERMISSIONS FULL;

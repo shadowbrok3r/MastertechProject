@@ -24,6 +24,7 @@ pub mod sales_tracker;
 pub mod web_console;
 pub mod fleet_dashboard;
 pub mod agent_audit;
+pub mod ai_analytics;
 pub mod server_console;
 pub mod stress_lab;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
@@ -120,6 +121,7 @@ impl egui_dock::TabViewer for SharedContext {
             TabId::AdminConsole => self.admin_console(ui),
             TabId::ServerConsole => self.server_console.ui(ui),
             TabId::AgentAudit => self.agent_audit.ui(ui),
+            TabId::AiAnalytics => self.ai_analytics.ui(ui),
             #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
             TabId::AgentSessions => self.agent_sessions.ui(ui),
             #[cfg(not(all(not(target_arch = "wasm32"), feature = "tokio")))]

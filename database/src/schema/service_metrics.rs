@@ -20,6 +20,9 @@ pub struct ServiceMetrics {
     pub first_completion_unix: Option<i64>,
     pub diagnosed_at_unix: Option<i64>,
     pub turnaround_secs: Option<i64>,
+    /// Turnaround counting only open-store hours (10-19 local, closed Sunday).
+    #[serde(default)]
+    pub turnaround_business_secs: Option<i64>,
     pub sessions: usize,
     pub stress_runs: usize,
     pub tech_events: usize,
@@ -27,6 +30,9 @@ pub struct ServiceMetrics {
     pub ai_events: usize,
     pub ai_active_minutes: usize,
     pub ai_cost_usd: f64,
+    /// Post-service outcome per session (comeback vs confirmed-fixed per window).
+    #[serde(default)]
+    pub outcome: Option<Vec<super::SessionOutcomeRow>>,
 }
 
 async fn unix_by_tasks(sql: &str, tasks: &[super::RecordId]) -> anyhow::Result<Vec<i64>> {
@@ -100,6 +106,15 @@ impl ServiceMetrics {
             (Some(a), Some(b)) if b >= a => Some(b - a),
             _ => None,
         };
+        out.turnaround_business_secs = match (out.checkin_at_unix, out.first_completion_unix) {
+            (Some(a), Some(b)) if b >= a => {
+                match (chrono::DateTime::from_timestamp(a, 0), chrono::DateTime::from_timestamp(b, 0)) {
+                    (Some(from), Some(to)) => Some(super::business_seconds(from, to)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
 
         if !sessions.is_empty() {
             out.diagnosed_at_unix = unix_by_sessions(
@@ -150,6 +165,8 @@ impl ServiceMetrics {
                 .take(0)
                 .unwrap_or_default();
             out.ai_cost_usd = costs.into_iter().sum();
+
+            out.outcome = super::outcome_for_sessions(&sessions, &[30, 60, 90]).await.ok();
         }
 
         Ok(out)

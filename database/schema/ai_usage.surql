@@ -8,7 +8,7 @@
 DEFINE TABLE ai_usage TYPE ANY SCHEMALESS PERMISSIONS FULL;
 
 DEFINE FIELD claude_session_id ON ai_usage TYPE none | string PERMISSIONS FULL;
-DEFINE FIELD at                ON ai_usage TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD at                ON ai_usage TYPE none | datetime PERMISSIONS FULL;
 DEFINE FIELD session_refs      ON ai_usage TYPE none | array<string> PERMISSIONS FULL;
 DEFINE FIELD session_refs.*    ON ai_usage TYPE string PERMISSIONS FULL;
 DEFINE FIELD cost_usd          ON ai_usage TYPE none | number PERMISSIONS FULL;

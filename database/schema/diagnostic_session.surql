@@ -11,11 +11,14 @@ DEFINE FIELD customer_id       ON diagnostic_session TYPE none | record<customer
 DEFINE FIELD customer_name     ON diagnostic_session TYPE none | string                    PERMISSIONS FULL;
 DEFINE FIELD diagnosed_at      ON diagnostic_session TYPE none | datetime                  PERMISSIONS FULL;
 DEFINE FIELD diagnosed_by      ON diagnostic_session TYPE none | string                    PERMISSIONS FULL;
+DEFINE FIELD driven_by         ON diagnostic_session TYPE none | string                    PERMISSIONS FULL;
 DEFINE FIELD ended_at          ON diagnostic_session TYPE none | datetime                  PERMISSIONS FULL;
 DEFINE FIELD hostname          ON diagnostic_session TYPE string                           PERMISSIONS FULL;
+DEFINE FIELD requested_by      ON diagnostic_session TYPE none | string                    PERMISSIONS FULL;
 DEFINE FIELD service_order     ON diagnostic_session TYPE none | record<service_order>     PERMISSIONS FULL;
 DEFINE FIELD started_at        ON diagnostic_session TYPE datetime DEFAULT time::now()      PERMISSIONS FULL;
 DEFINE FIELD status            ON diagnostic_session TYPE string ASSERT $value IN ['open', 'resolved', 'escalated'] PERMISSIONS FULL;
+DEFINE FIELD store             ON diagnostic_session TYPE none | string                    PERMISSIONS FULL;
 DEFINE FIELD summary           ON diagnostic_session TYPE none | string                    PERMISSIONS FULL;
 DEFINE FIELD tags              ON diagnostic_session TYPE array<string>                    PERMISSIONS FULL;
 DEFINE FIELD tags.*            ON diagnostic_session TYPE string                           PERMISSIONS FULL;

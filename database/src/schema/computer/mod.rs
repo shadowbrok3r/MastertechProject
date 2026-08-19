@@ -184,6 +184,10 @@ pub struct ComputerData {
     #[serde(default)]
     #[surreal(default)]
     pub oa3_key: Option<String>,
+    /// Staff/test machine; excluded from outcome rollups. NONE reads as false.
+    #[serde(default)]
+    #[surreal(default)]
+    pub is_internal: Option<bool>,
     pub installed_programs: Option<Value>
 }
 
@@ -212,6 +216,7 @@ impl Default for ComputerData {
             product_serial: Default::default(),
             product_vendor: Default::default(),
             oa3_key: Default::default(),
+            is_internal: Default::default(),
             installed_programs: Default::default(),
             current_antivirus: Default::default(),
             windows_active: Default::default(),

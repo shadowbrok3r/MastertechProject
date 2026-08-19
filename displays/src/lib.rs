@@ -36,6 +36,8 @@ pub mod mcp;
 
 pub mod plugins;
 
+#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+pub mod headless;
 pub mod remote_desktop;
 pub mod remote_exec;
 
@@ -361,6 +363,12 @@ pub fn get_database_users() -> Vec<User> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TaskUiActions {
     OpenTaskModal(LiveTaskPayload),
+    /// Open (or focus) the task modal on a specific page. Never toggle-closes
+    /// an already-open modal.
+    OpenTaskModalAtPage {
+        task: LiveTaskPayload,
+        page: crate::modals::task_modal::ModalAction,
+    },
     CreateTaskModal(Option<Tur>),
     OpenChatModal((RecordId, Vec<TaskNotePayload>, Option<String>)),
     OpenViewport(LiveTaskPayload),

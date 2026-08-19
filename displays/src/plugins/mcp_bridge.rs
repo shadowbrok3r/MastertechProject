@@ -1438,6 +1438,12 @@ pub struct CreateDiagnosticSessionParams {
     pub customer_name: Option<String>,
     #[schemars(description = "Technician performing the diagnosis")]
     pub tech: Option<String>,
+    #[schemars(description = "Who asked for this diagnostic — a tech's name, or 'customer' for walk-in work. Attribution only; pass it when known.")]
+    pub requested_by: Option<String>,
+    #[schemars(description = "PCL store code the machine belongs to (RIV, LTN, MUR, SAN, ORE).")]
+    pub store: Option<String>,
+    #[schemars(description = "Surface driving this session: 'desktop' for operator-driven Claude Desktop work, or the zeroclaw agent alias ('zeroclaw:diagnostician', 'zeroclaw:sweeper'). Outcome reporting segments on it.")]
+    pub driven_by: Option<String>,
     #[schemars(description = "Initial tags for categorizing this session")]
     #[serde(default, deserialize_with = "deserialize_optional_string_vec")]
     pub tags: Option<Vec<String>>,
@@ -1792,6 +1798,14 @@ pub struct GetOrderHistoryParams {
 pub struct GetServiceMetricsParams {
     #[schemars(description = "Service number to compute metrics for (e.g. '2151936')")]
     pub service_number: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct GetOutcomeRollupParams {
+    #[schemars(description = "Comeback windows in days (default [30, 60, 90])")]
+    pub window_days: Option<Vec<u32>>,
+    #[schemars(description = "Include per-session outcome rows (default false — aggregates only)")]
+    pub include_sessions: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
@@ -5537,6 +5551,9 @@ impl PluginToolProvider {
             task_ref,
             service_order,
             tech: p.tech,
+            requested_by: p.requested_by,
+            store: p.store,
+            driven_by: p.driven_by,
             tags: p.tags.unwrap_or_default(),
             ..Default::default()
         };
@@ -6776,6 +6793,21 @@ impl PluginToolProvider {
             );
         }
 
+        if status == "resolved" && session.diagnosed_at.is_none() {
+            warnings.push(
+                ToolWarning::warn(
+                    "not_marked_diagnosed",
+                    "Closing 'resolved' without the diagnosis-complete milestone — diagnosed_at \
+                     is unset, so turnaround metrics cannot see when the root cause was \
+                     established.",
+                )
+                .with_fix(format!(
+                    "mark_diagnosed {{ session_id: \"{session_key}\" }} the moment the verdict \
+                     lands, before remediation. The close proceeded."
+                )),
+            );
+        }
+
         database::schema::DiagnosticSession::close(
             &session_key,
             &status,
@@ -6797,6 +6829,7 @@ impl PluginToolProvider {
                     "unverdicted_signatures": unverdicted,
                     "has_ai_task": has_ai_task,
                     "has_driver_snapshot": has_driver_snapshot,
+                    "diagnosed": session.diagnosed_at.is_some(),
                 },
             }),
             warnings,
@@ -7974,7 +8007,8 @@ impl PluginToolProvider {
         name = "get_service_metrics",
         description = "Per-service activity metrics computed on demand from MasterTech records: \
 check-in time, diagnosis-complete milestone, first task completion (turnaround), tech vs AI \
-distinct-active-minutes, stress-run count, and measured AI cost from the ai_usage ledger. Active \
+distinct-active-minutes, stress-run count, measured AI cost from the ai_usage ledger, and \
+post-service outcome per session (comeback vs confirmed-fixed per 30/60/90d window). Active \
 minutes count only minutes containing a recorded event — a floor, never inflated by idle time."
     )]
     async fn get_service_metrics(
@@ -7987,6 +8021,30 @@ minutes count only minutes containing a recorded event — a floor, never inflat
         Ok(CallToolResult::success(vec![
             ContentBlock::json(serde_json::to_value(&m).map_err(to_internal)?).map_err(to_internal)?,
         ]))
+    }
+
+    #[tool(
+        name = "get_outcome_rollup",
+        description = "Fleet-wide fix-vs-comeback rollup over resolved/escalated diagnostic \
+sessions. A session counts as confirmed_fixed when the same computer has NOT come back as a new \
+service order within the window; the first same-computer order after a 3-day same-visit grace is \
+the comeback. Staff/test machines (computer.is_internal) are excluded; sessions with no computer \
+link, no ended_at, or an unelapsed window count as indeterminate — never as fixed. Buckets are \
+reported overall and split by resolved vs escalated."
+    )]
+    async fn get_outcome_rollup(
+        &self,
+        Parameters(p): Parameters<GetOutcomeRollupParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let windows = p.window_days.filter(|w| !w.is_empty()).unwrap_or_else(|| vec![30, 60, 90]);
+        let rollup =
+            database::schema::OutcomeRollup::compute(&windows, p.include_sessions.unwrap_or(false))
+                .await
+                .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(
+            serde_json::to_value(&rollup).map_err(to_internal)?,
+        )
+        .map_err(to_internal)?]))
     }
 
     #[tool(
@@ -9586,16 +9644,17 @@ pub const INSTRUCTIONS: &str = r#"Mastertech Plugin System MCP (MasterTech deskt
 === Diagnostic Flow (crash/hardware engagements — follow this ORDER) ===
 Open the session BEFORE running analyzers so every record links to it (analyzers that run first are recorded unlinked and only get claimed retroactively).
   1. remote_channel_health — confirm the client responds.
-  2. create_diagnostic_session — FIRST. Auto-resolves the service task and claims any pre-session orphan records. Everything after inherits its session/task link.
+  2. create_diagnostic_session — FIRST. Auto-resolves the service task and claims any pre-session orphan records. Everything after inherits its session/task link. Pass requested_by (who asked for the work), store (RIV/LTN/MUR/SAN/ORE), and driven_by ('desktop' when an operator drives you from Claude Desktop; zeroclaw agents pass 'zeroclaw:<alias>') — outcome reporting segments on them.
   3. driver_snapshot_take {label:'intake'} — baseline the driver inventory.
   4. minidump_analyze {connection_string} — triage all dumps; sightings auto-link to the open session. The result carries a fleet block (prior verdicts, known-bad hits) and warnings.
   5. Escalate to com.mastertech.dump-decode (cdb) only when triage blame is ambiguous.
   6. log_diagnostic_entry as you go — findings, actions, observations, and anything informational live HERE.
   7. crash_verdict_record / known_bad_driver_add — pass session_id or connection_string so the verdict links to the task.
-  8. Do the remediation YOURSELF. Driver installs/removals, application uninstalls, any Windows/power/registry setting, file deletion, Device Manager cleanup and reboots are all reachable via remote_exec_start (elevated), scripts_run_remote, remote_reboot_client, or a plugin — do them and log_diagnostic_entry the result.
-  9. create_ai_task — ONLY for what you physically cannot do: hands on hardware, plugging/unplugging, firmware flashing, BIOS-setup-only values, eyes/ears on a symptom, or a customer decision (see that tool's rules). Never for work you could have done, and never for logging.
- 10. driver_snapshot_take {label:'post_service'} after the fix, then driver_snapshot_diff.
- 11. close_diagnostic_session — a flight check: it gates status + escalation-handoff, runs a final link sweep, and returns completeness warnings. Resolve warnings that matter first.
+  8. mark_diagnosed {session_id} — stamp the diagnosis-complete milestone the moment the root cause is established, BEFORE remediation. close_diagnostic_session warns (not_marked_diagnosed) on any resolved close without it.
+  9. Do the remediation YOURSELF. Driver installs/removals, application uninstalls, any Windows/power/registry setting, file deletion, Device Manager cleanup and reboots are all reachable via remote_exec_start (elevated), scripts_run_remote, remote_reboot_client, or a plugin — do them and log_diagnostic_entry the result.
+ 10. create_ai_task — ONLY for what you physically cannot do: hands on hardware, plugging/unplugging, firmware flashing, BIOS-setup-only values, eyes/ears on a symptom, or a customer decision (see that tool's rules). Never for work you could have done, and never for logging.
+ 11. driver_snapshot_take {label:'post_service'} after the fix, then driver_snapshot_diff.
+ 12. close_diagnostic_session — a flight check: it gates status + escalation-handoff, runs a final link sweep, and returns completeness warnings. Resolve warnings that matter first.
 Tool results may include a `warnings` array ({code, severity, message, fix}) — each names the exact follow-up call. Act on warn-severity items; info items are advisory. intel_links_reap backfills links fleet-wide if ingest ran out of order.
 
 === Session (HTTP :9004/mcp) ===
@@ -10859,8 +10918,11 @@ pub async fn run_plugin_mcp_server_http(manager: Arc<RwLock<PluginManager>>) -> 
 
     ensure_script_run_drainer_spawned();
 
-    let addr = "127.0.0.1:9004";
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    // MTECH_MCP_HTTP_ADDR lets a second host (the headless agent) avoid the
+    // desktop tunnel already holding 9004.
+    let addr = std::env::var("MTECH_MCP_HTTP_ADDR")
+        .unwrap_or_else(|_| "127.0.0.1:9004".to_string());
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
     let mgr = manager.clone();
 
     // Idle keep-alive before a Streamable-HTTP MCP session is evicted (rmcp default 5min).

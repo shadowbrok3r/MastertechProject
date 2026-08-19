@@ -40,6 +40,8 @@ impl SharedContext {
                 is_ws_connected,
                 &ws_layout.fk_health_tx,
                 &ws_layout.fk_health_cache,
+                &ws_layout.client_tasks_tx,
+                &ws_layout.client_tasks_cache,
                 ws_layout.security_inventory.get(client_id).map(|v| v.as_slice()),
                 reachability.get(client_id),
                 session.map(|w| (w.transport.kind(), w.is_connected)),

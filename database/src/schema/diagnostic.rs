@@ -151,6 +151,18 @@ pub struct DiagnosticSession {
     #[serde(default)]
     #[surreal(default)]
     pub diagnosed_by: Option<String>,
+    /// Who asked for the diagnostic (tech name, or "customer").
+    #[serde(default)]
+    #[surreal(default)]
+    pub requested_by: Option<String>,
+    /// PCL store code the machine belongs to.
+    #[serde(default)]
+    #[surreal(default)]
+    pub store: Option<String>,
+    /// Surface driving the session: "desktop" or "zeroclaw:<alias>".
+    #[serde(default)]
+    #[surreal(default)]
+    pub driven_by: Option<String>,
     pub summary: Option<String>,
     pub status: String,
     pub tags: Vec<String>,
@@ -172,6 +184,9 @@ impl Default for DiagnosticSession {
             ended_at: None,
             diagnosed_at: None,
             diagnosed_by: None,
+            requested_by: None,
+            store: None,
+            driven_by: None,
             summary: None,
             status: "open".to_string(),
             tags: Vec::new(),
