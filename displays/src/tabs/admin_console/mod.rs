@@ -705,7 +705,7 @@ impl AdminConsole {
         let mut ok = 0usize;
         let mut err = 0usize;
         for (cs, ws) in self.ws_clients.iter() {
-            let cmd: Cmd = match bincode::serde::decode_from_slice(&template_bytes, bincode::config::standard()) {
+            let cmd: Cmd = match bincode::serde::decode_from_slice(&template_bytes, tcp_protocol::WIRE_DECODE) {
                 Ok((c, _)) => c,
                 Err(e) => {
                     log::error!("dispatch_batch_action: decode for {cs} failed: {e}");

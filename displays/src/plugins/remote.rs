@@ -765,7 +765,7 @@ impl EguiRemoteViewer {
         if let Ok(mesh_bytes) = decompress(&frame.meshes_data) {
             if let Ok((meshes, _)) = bincode::serde::decode_from_slice::<Vec<WireClippedMesh>, _>(
                 &mesh_bytes,
-                bincode::config::standard(),
+                tcp_protocol::WIRE_DECODE,
             ) {
                 self.cached_meshes = meshes;
             }
@@ -774,7 +774,7 @@ impl EguiRemoteViewer {
         if let Ok(tex_bytes) = decompress(&frame.textures_data) {
             if let Ok((delta, _)) = bincode::serde::decode_from_slice::<WireTexturesDelta, _>(
                 &tex_bytes,
-                bincode::config::standard(),
+                tcp_protocol::WIRE_DECODE,
             ) {
                 self.pending_textures = Some(delta);
             }

@@ -137,7 +137,7 @@ impl Session {
         if let Ok(frame) =
             bincode::serde::decode_from_slice::<crate::plugins::EguiFrameMessage, _>(
                 &bin[1..],
-                bincode::config::legacy(),
+                tcp_protocol::WIRE_DECODE,
             )
         {
             crate::plugins::remote_egui_control::hub()

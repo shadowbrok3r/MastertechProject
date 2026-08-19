@@ -246,6 +246,30 @@ fn stderr_logger() -> Box<dyn log::Log + 'static> {
     )
 }
 
+/// Wraps a logger so it emits nothing while the ratatui alternate screen is up.
+struct TuiAware(Box<dyn log::Log + 'static>);
+
+impl log::Log for TuiAware {
+    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+        !mtech_tui::panic_guard::tui_active() && self.0.enabled(metadata)
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if mtech_tui::panic_guard::tui_active() {
+            return;
+        }
+        self.0.log(record);
+    }
+
+    fn flush(&self) {
+        self.0.flush();
+    }
+}
+
+fn tui_aware(inner: Box<dyn log::Log + 'static>) -> Box<dyn log::Log + 'static> {
+    Box::new(TuiAware(inner))
+}
+
 fn file_logger() -> Box<dyn log::Log + 'static> {
     let log_path = output_log_path();
     Box::new(simplelog::WriteLogger::new(
@@ -288,10 +312,13 @@ fn tui_drain_logger() -> Box<dyn log::Log + 'static> {
 
 fn init_terminal_mode_logging(log_to_file: bool) {
     start_tui_logger_event_pump();
+    // Before any task spawns: a worker panic must reach the log, not stderr,
+    // which the ratatui alternate screen owns.
+    mtech_tui::panic_guard::install_hook();
     if log_to_file {
         attach_parent_console();
         multi_log::MultiLogger::init(
-            vec![tui_drain_logger(), stderr_logger(), file_logger()],
+            vec![tui_drain_logger(), tui_aware(stderr_logger()), file_logger()],
             log::Level::Info,
         )
         .expect("Error initializing multi_logger");
@@ -332,11 +359,13 @@ async fn run_gui(log_to_file: bool, force_cpu: bool) -> eframe::Result<()> {
             .build(),
     );
     start_tui_logger_event_pump();
+    // This path can fall back to terminal mode, so it needs the same guarantees.
+    mtech_tui::panic_guard::install_hook();
     let mut loggers: Vec<Box<dyn log::Log + 'static>> =
         vec![egui_logger, tui_drain_logger()];
     if log_to_file {
         attach_parent_console();
-        loggers.push(stderr_logger());
+        loggers.push(tui_aware(stderr_logger()));
         loggers.push(file_logger());
         eprintln!("Mastertech logging to {}", output_log_path().display());
     }

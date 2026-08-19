@@ -1817,6 +1817,12 @@ pub struct RecordShelfCandidateParams {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct EnsureOrderRecordsParams {
+    #[schemars(description = "Service number to materialize customer + service_order records for")]
+    pub service_number: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct ListWaitingServicesParams {
     #[schemars(description = "PrestaShop status to list: 'checkin_shelf' (default), 'in_repair', or 'done_shelf'")]
     pub status: Option<String>,
@@ -8086,6 +8092,30 @@ minutes count only minutes containing a recorded event — a floor, never inflat
             "recorded": true,
             "service_number": sn,
             "score": p.score.min(100),
+        }))
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "ensure_order_records",
+        description = "Create the customer and service_order records for a PrestaShop order that has no task yet, from the order data you already pulled. Idempotent: the service_order id is derived from the service number and an existing row is adopted, and a customer whose cust_code/email already exists resolves to that row, so re-running changes nothing and a technician creating the task later inherits these records. Deliberately writes NO computer row - the canonical computer key comes from the live machine (hostname:hash), so one invented here would become a duplicate for a machine that is not plugged in yet; the computer links itself on connect. Call this for a shelf candidate worth tracking, not for every row you glance at."
+    )]
+    async fn ensure_order_records(
+        &self,
+        Parameters(p): Parameters<EnsureOrderRecordsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let sn = p.service_number.trim().to_string();
+        if sn.is_empty() {
+            return Err(ErrorData::invalid_params("service_number is required", None));
+        }
+        let outcome = database::schema::ensure_order_records(&sn).await.map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
+            "service_number": outcome.service_number,
+            "customer": outcome.customer,
+            "service_order": outcome.service_order,
+            "reused_existing_order": outcome.reused_order,
+            "reused_existing_customer": outcome.reused_customer,
+            "computer": "not written; links on connect",
         }))
         .map_err(to_internal)?]))
     }

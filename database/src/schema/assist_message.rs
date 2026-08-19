@@ -124,6 +124,22 @@ impl AssistMessage {
         Ok(())
     }
 
+    /// Records an agent turn that produced no answer, flagged so the client can
+    /// show it as a dead end rather than as a reply.
+    pub async fn reply_empty(room: &str) -> anyhow::Result<()> {
+        db().query(
+            "CREATE assist_message CONTENT { thread: $room, room: $room, direction: 'out',              text: $text, status: 'delivered', error: 'no_visible_reply' }",
+        )
+        .bind(("room", room.to_string()))
+        .bind((
+            "text",
+            "The agent finished without an answer. Rephrase and send it again."
+                .to_string(),
+        ))
+        .await?;
+        Ok(())
+    }
+
     /// Inbound rows still waiting, oldest first; drains what LIVE missed.
     pub async fn pending_inbound(limit: usize) -> anyhow::Result<Vec<Self>> {
         let mut res = db()
@@ -147,6 +163,53 @@ impl AssistMessage {
             .bind(("limit", limit))
             .await?;
         Ok(res.take(0).unwrap_or_default())
+    }
+
+    /// zeroclaw session key recorded for a room, if one is known.
+    pub async fn session_key_for(room: &str) -> anyhow::Result<Option<String>> {
+        let mut res = db()
+            .query(
+                "SELECT VALUE session_key FROM assist_message \
+                 WHERE room = $room AND session_key != NONE LIMIT 1",
+            )
+            .bind(("room", room.to_string()))
+            .await?;
+        Ok(res.take::<Vec<String>>(0).unwrap_or_default().into_iter().next())
+    }
+
+    /// Stamps the session key on every message of a room.
+    pub async fn set_session_key(room: &str, key: &str) -> anyhow::Result<()> {
+        db().query("UPDATE assist_message SET session_key = $key WHERE room = $room")
+            .bind(("room", room.to_string()))
+            .bind(("key", key.to_string()))
+            .await?;
+        Ok(())
+    }
+
+    /// Readable label for a conversation: the service number and machine it is about.
+    pub async fn room_label(room: &str) -> anyhow::Result<Option<String>> {
+        let mut res = db()
+            .query(
+                "SELECT service_number, connection_string FROM assist_message \
+                 WHERE room = $room AND direction = 'in' LIMIT 1",
+            )
+            .bind(("room", room.to_string()))
+            .await?;
+        let rows: Vec<serde_json::Value> = res.take(0).unwrap_or_default();
+        let Some(row) = rows.first() else { return Ok(None) };
+        let sn = row.get("service_number").and_then(|v| v.as_str()).unwrap_or_default();
+        let host = row
+            .get("connection_string")
+            .and_then(|v| v.as_str())
+            .and_then(|cs| cs.split(':').next())
+            .unwrap_or_default();
+        let label = match (sn.is_empty(), host.is_empty()) {
+            (true, true) => return Ok(None),
+            (false, true) => format!("#{sn}"),
+            (true, false) => host.to_string(),
+            (false, false) => format!("#{sn} {host}"),
+        };
+        Ok(Some(label))
     }
 
     pub fn is_from_tech(&self) -> bool {

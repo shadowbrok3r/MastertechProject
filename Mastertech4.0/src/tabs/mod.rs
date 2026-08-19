@@ -98,7 +98,11 @@ impl TabViewer for MastertechContext {
             TabId::Ai => {
                 // Self-diagnosis chat about this machine via the in-process Mastertech MCP tools.
                 self.shared_ctx.enhanced_ai_playground.self_diagnosis = true;
-                self.shared_ctx.enhanced_ai_playground.focused_client = None;
+                self.shared_ctx.enhanced_ai_playground.focused_client =
+                    Some(crate::filesystem::get_client_hash().connection_string);
+                let pulled = self.ticket_data.service_number.trim();
+                self.shared_ctx.enhanced_ai_playground.service_number =
+                    (!pulled.is_empty()).then(|| pulled.to_string());
                 self.shared_ctx.enhanced_ai_playground.enhanced_ai_playground(ui);
                 let _ = self.shared_ctx.enhanced_ai_playground.take_close_request();
             }

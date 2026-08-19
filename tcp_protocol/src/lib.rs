@@ -79,6 +79,25 @@ pub const HANDSHAKE_VERSION_CURRENT: u8 = HANDSHAKE_VERSION_V2;
 /// allocate gigabytes by sending a giant length prefix.
 pub const MAX_FRAME_BYTES: u32 = 64 * 1024 * 1024; // 64 MiB
 
+/// Bincode decode config for anything read off the wire, bounded to
+/// [`MAX_FRAME_BYTES`].
+///
+/// `bincode::config::standard()` carries no limit, which makes
+/// `claim_container_read` a no-op and hands a decoded length prefix straight to
+/// the allocator. A frame from a peer on a different schema decodes misaligned,
+/// so that prefix can be any 64-bit value: bincode then requests an exabyte
+/// `Vec` and the process **aborts** on allocation failure — an abort no panic
+/// hook or `catch_unwind` can intercept. Bounding the decode turns the same
+/// input into `DecodeError::LimitExceeded`.
+///
+/// The frame layer already refuses anything over [`MAX_FRAME_BYTES`], so no
+/// legitimate payload can exceed this.
+pub const WIRE_DECODE: bincode::config::Configuration<
+    bincode::config::LittleEndian,
+    bincode::config::Varint,
+    bincode::config::Limit<{ MAX_FRAME_BYTES as usize }>,
+> = bincode::config::standard().with_limit::<{ MAX_FRAME_BYTES as usize }>();
+
 /// Length of the Ping/Pong payload: `u64 LE seq + u64 LE epoch_ms`.
 pub const PING_FRAME_LEN: usize = 16;
 

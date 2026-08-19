@@ -140,8 +140,70 @@ fn render_fields(
 
 #[cfg(test)]
 mod tests {
+    use bincode::config::standard;
+    use bincode::serde::encode_to_vec;
     use facet::Facet;
     use tcp_protocol::shape_fp::shape_fingerprint;
+
+    use crate::{try_deserialize_command, Cmd};
+
+    /// A frame from a peer on a different `Cmd` schema decodes as misaligned
+    /// bytes, so every corruption of a valid frame must return `None` rather
+    /// than panic — the production panic was `Invalid boolean value(253)` from
+    /// a varint byte landing on a `bool` field.
+    #[test]
+    fn corrupted_frames_never_panic() {
+        let valid = encode_to_vec(
+            &Cmd::SetDriverProtections { enable: false, request_id: None },
+            standard(),
+        )
+        .expect("Cmd encodes");
+        assert!(try_deserialize_command(&valid).is_some(), "baseline frame must decode");
+
+        let mut rejected = 0usize;
+        for i in 0..valid.len() {
+            for bad in [0x00u8, 0x01, 0x7F, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF] {
+                let mut frame = valid.clone();
+                frame[i] = bad;
+                if try_deserialize_command(&frame).is_none() {
+                    rejected += 1;
+                }
+            }
+            if try_deserialize_command(&valid[..i]).is_none() {
+                rejected += 1;
+            }
+        }
+        assert!(rejected > 0, "no corruption was rejected; the sweep proves nothing");
+    }
+
+    /// A variant index past the end of the enum is what an older peer sees when
+    /// the newer side appends variants. It must drop the frame, not panic.
+    #[test]
+    fn unknown_variant_index_is_dropped() {
+        let past_end = u8::try_from(super::cmd_variant_names().len())
+            .expect("Cmd has fewer than 256 variants");
+        assert!(past_end < 0xFB, "variant count reached bincode's varint markers");
+        assert!(try_deserialize_command(&[past_end]).is_none());
+    }
+
+    /// Arbitrary bytes reach the decoder from any peer on the wire.
+    #[test]
+    fn arbitrary_bytes_never_panic() {
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        for len in 0..64usize {
+            for _ in 0..64 {
+                let frame: Vec<u8> = (0..len)
+                    .map(|_| {
+                        state ^= state << 13;
+                        state ^= state >> 7;
+                        state ^= state << 17;
+                        (state >> 24) as u8
+                    })
+                    .collect();
+                let _ = try_deserialize_command(&frame);
+            }
+        }
+    }
 
     // bump deliberately when Cmd's wire shape changes; this is the drift review gate.
     // Bumped 2026-08-05: appended ReadClientLog, ClientLogResponse, ClipboardSync

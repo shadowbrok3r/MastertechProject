@@ -450,7 +450,7 @@ Get-WmiObject")
                                 crate::plugins::EguiFrameMessage, _,
                             >(
                                 &buffer_array[1..],
-                                bincode::config::standard(),
+                                tcp_protocol::WIRE_DECODE,
                             ) {
                                 #[cfg(feature = "tokio")]
                                 crate::plugins::remote_egui_control::hub()
@@ -462,7 +462,7 @@ Get-WmiObject")
                                 crate::remote_desktop::DesktopFrameMessage, _,
                             >(
                                 &buffer_array[1..],
-                                bincode::config::standard(),
+                                tcp_protocol::WIRE_DECODE,
                             ) {
                                 let _ = desktop_frame_tx.try_send(frame);
                             }
@@ -551,13 +551,13 @@ pub fn serialize_system_info(system_info: &SystemInformation) -> Option<Vec<u8>>
 }
 
 pub fn deserialize_system_info(bytes: &[u8]) -> Option<SystemInformation> {
-    if let Ok((data, _)) = decode_from_slice(bytes, standard()){
+    if let Ok((data, _)) = decode_from_slice(bytes, tcp_protocol::WIRE_DECODE){
         Some(data)
     } else { None }
 }
 
 pub fn deserializer<T: Serialize + for<'a> Deserialize<'a> + 'static >(bytes: &[u8]) -> Option<T> {
-    if let Ok((data, _)) = decode_from_slice(bytes, standard()){
+    if let Ok((data, _)) = decode_from_slice(bytes, tcp_protocol::WIRE_DECODE){
         Some(data)
     } else { None }
 }
@@ -565,7 +565,7 @@ pub fn deserializer<T: Serialize + for<'a> Deserialize<'a> + 'static >(bytes: &[
 /// Decode `T` only when the whole buffer is consumed, so a control-plane
 /// `Cmd` whose prefix happens to resemble `T` can't be misclassified.
 pub fn deserialize_exact<T: Serialize + for<'a> Deserialize<'a> + 'static>(bytes: &[u8]) -> Option<T> {
-    match decode_from_slice(bytes, standard()) {
+    match decode_from_slice(bytes, tcp_protocol::WIRE_DECODE) {
         Ok((data, read)) if read == bytes.len() => Some(data),
         _ => None,
     }
@@ -579,11 +579,11 @@ pub fn is_zstd_frame(bin: &[u8]) -> bool {
 }
 
 pub fn deserialize_command(bytes: &[u8]) -> Option<Cmd> {
-    if let Ok((cmd, _)) = decode_from_slice(bytes, standard()){
+    if let Ok((cmd, _)) = decode_from_slice(bytes, tcp_protocol::WIRE_DECODE){
         Some(cmd)
     }else{ None }
 }
 
 pub fn serialize_command(bytes: &Cmd) -> Vec<u8> {
-    encode_to_vec(bytes, standard()).expect("Failed to deserialize Cmd")
+    encode_to_vec(bytes, standard()).expect("Failed to serialize Cmd")
 }

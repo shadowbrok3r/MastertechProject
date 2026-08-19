@@ -1281,8 +1281,10 @@ impl TerminalWebsocketClient {
                                                 self.handle_command(cmd, &mut sender).await;
                                             } else {
                                                 log::warn!(
-                                                    "websockets -> dropping undecodable Cmd frame ({} bytes); peer likely newer build",
-                                                    bin.len()
+                                                    "websockets -> dropping undecodable Cmd frame ({} bytes);                                                      peer likely on a different Cmd schema (local fp=0x{:016x} ver={})",
+                                                    bin.len(),
+                                                    *displays::shape_fp::CMD_SHAPE_FP,
+                                                    displays::shape_fp::BUILD_VERSION
                                                 );
                                             }
                                         }

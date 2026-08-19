@@ -20,6 +20,19 @@ use serde::{Deserialize, Serialize};
 /// `Cmd` discriminant (those start at 0x00 and stay under ~0x80).
 pub const BUILDER_WIRE_TAG: u8 = 0xBB;
 
+/// Bounds an inbound decode to 64 MiB, matching `tcp_protocol::MAX_FRAME_BYTES`
+/// (duplicated rather than imported to keep this module dependency-free).
+///
+/// `bincode::config::standard()` carries no limit, so a length prefix read out
+/// of a frame from a peer on a different schema goes straight to the allocator
+/// and the process aborts on allocation failure. Bounding it yields
+/// `DecodeError::LimitExceeded` instead.
+const WIRE_DECODE: bincode::config::Configuration<
+    bincode::config::LittleEndian,
+    bincode::config::Varint,
+    bincode::config::Limit<{ 64 * 1024 * 1024 }>,
+> = bincode::config::standard().with_limit::<{ 64 * 1024 * 1024 }>();
+
 /// Cargo profile passed to the worker. String-typed on the wire so
 /// custom workspace profiles (`release-fast`, etc.) work without
 /// updating both sides in lockstep.
@@ -84,7 +97,7 @@ impl BuilderWire {
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, bincode::error::DecodeError> {
-        let (msg, _) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())?;
+        let (msg, _) = bincode::serde::decode_from_slice(bytes, WIRE_DECODE)?;
         Ok(msg)
     }
 

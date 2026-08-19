@@ -93,7 +93,7 @@ impl InlineEguiViewer {
             if let Ok((meshes, _)) =
                 bincode::serde::decode_from_slice::<Vec<WireClippedMesh>, _>(
                     &mesh_bytes,
-                    bincode::config::standard(),
+                    tcp_protocol::WIRE_DECODE,
                 )
             {
                 self.cached_meshes = meshes;
@@ -104,7 +104,7 @@ impl InlineEguiViewer {
             if let Ok((delta, _)) =
                 bincode::serde::decode_from_slice::<WireTexturesDelta, _>(
                     &tex_bytes,
-                    bincode::config::standard(),
+                    tcp_protocol::WIRE_DECODE,
                 )
             {
                 self.pending_textures = Some(delta);

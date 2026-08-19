@@ -33,9 +33,7 @@ async fn sign_in() -> anyhow::Result<()> {
     ) else {
         anyhow::bail!("MTECH_AGENT_USER / MTECH_AGENT_PASS not set");
     };
-    database::login(user, pass).await?;
-    if let Some(u) = database::get_current_user_from_auth() {
-        log::info!("admin-agent: signed in as {}", u.get_email());
-    }
+    database::signin_database_user(&user, &pass).await?;
+    log::info!("admin-agent: signed in as database user {user}");
     Ok(())
 }

@@ -553,7 +553,7 @@ async fn run_session_loop<R: AsyncRead + Unpin + Send + 'static>(
                                 if let Ok((ev, _)) = bincode::serde::decode_from_slice::<
                                     displays::plugins::EguiInputEvent,
                                     _,
-                                >(&bytes[1..], bincode::config::standard())
+                                >(&bytes[1..], tcp_protocol::WIRE_DECODE)
                                 {
                                     let _ = displays::plugins::egui_input_sender().try_send(ev);
                                 }
@@ -563,7 +563,7 @@ async fn run_session_loop<R: AsyncRead + Unpin + Send + 'static>(
                                 if let Ok((ev, _)) = bincode::serde::decode_from_slice::<
                                     displays::remote_desktop::DesktopInputEvent,
                                     _,
-                                >(&bytes[1..], bincode::config::standard())
+                                >(&bytes[1..], tcp_protocol::WIRE_DECODE)
                                 {
                                     let _ = crate::remote_desktop::desktop_input_sender().try_send(ev);
                                 }
@@ -588,8 +588,10 @@ async fn run_session_loop<R: AsyncRead + Unpin + Send + 'static>(
                                             }
                                         }
                                         None => log::warn!(
-                                            "tcp_listener -> dropping undecodable Cmd frame ({} bytes); peer likely newer build",
-                                            bytes.len()
+                                            "tcp_listener -> dropping undecodable Cmd frame ({} bytes);                                              peer likely on a different Cmd schema (local fp=0x{:016x} ver={})",
+                                            bytes.len(),
+                                            *displays::shape_fp::CMD_SHAPE_FP,
+                                            displays::shape_fp::BUILD_VERSION
                                         ),
                                     }
                                 }

@@ -18,6 +18,8 @@ const DEFAULT_REPLY_ADDR: &str = "127.0.0.1:9015";
 /// Sender used when a queued message carries no technician; keeps an
 /// unattributed conversation out of a real technician's session.
 const UNKNOWN_SENDER: &str = "unattributed@pclaptops.com";
+/// The channel substitutes this when a turn ends with no visible text.
+const EMPTY_TURN_MARKER: &str = "I couldn't produce a visible reply";
 
 fn env_value(key: &str) -> Option<String> {
     std::env::var(key).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
@@ -86,6 +88,66 @@ async fn forward(msg: AssistMessage) {
     }
 }
 
+/// Gateway base plus bearer token, for the session admin API.
+fn gateway() -> Option<(String, String)> {
+    let url = env_value("MTECH_ZC_GATEWAY")?;
+    let token = env_value("MTECH_ZC_TOKEN").or_else(|| env_value("ZEROCLAW_GATEWAY_TOKEN"))?;
+    Some((url.trim_end_matches('/').to_string(), token))
+}
+
+/// Finds the agent session for a room. The key embeds a sanitized sender, so it
+/// is matched by prefix rather than reconstructed.
+async fn session_key_for_room(room: &str) -> Option<String> {
+    let (url, token) = gateway()?;
+    let body: serde_json::Value = reqwest::Client::new()
+        .get(format!("{url}/api/sessions"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+    let prefix = format!("_{room}_");
+    body["sessions"]
+        .as_array()?
+        .iter()
+        .filter_map(|s| s["session_key"].as_str())
+        .find(|k| k.starts_with("webhook_") && k.contains(&prefix))
+        .map(str::to_string)
+}
+
+/// Gives the session a readable name and records its key on the transcript.
+async fn label_session(room: &str) {
+    if AssistMessage::session_key_for(room).await.unwrap_or(None).is_some() {
+        return;
+    }
+    let Some(key) = session_key_for_room(room).await else {
+        log::debug!("chat: no agent session found for room {room} yet");
+        return;
+    };
+    if let Err(e) = AssistMessage::set_session_key(room, &key).await {
+        log::warn!("chat: could not record session key for {room}: {e}");
+    }
+    let Some(label) = AssistMessage::room_label(room).await.unwrap_or(None) else {
+        return;
+    };
+    let Some((url, token)) = gateway() else { return };
+    let sent = reqwest::Client::new()
+        .put(format!("{url}/api/sessions/{key}"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "name": label }))
+        .send()
+        .await;
+    match sent {
+        Ok(resp) if resp.status().is_success() => {
+            log::info!("chat: named session {key} \"{label}\"");
+        },
+        Ok(resp) => log::warn!("chat: rename of {key} returned {}", resp.status()),
+        Err(e) => log::warn!("chat: rename of {key} failed: {e}"),
+    }
+}
+
 /// The channel's outbound payload.
 #[derive(serde::Deserialize)]
 struct ChannelReply {
@@ -126,9 +188,18 @@ async fn serve_replies() {
         if reply.content.trim().is_empty() {
             return StatusCode::BAD_REQUEST;
         }
-        match AssistMessage::reply(room.trim(), &reply.content, None).await {
+        let room = room.trim();
+        let filed = if reply.content.contains(EMPTY_TURN_MARKER) {
+            log::warn!("chat: empty agent turn for room {room}");
+            AssistMessage::reply_empty(room).await
+        } else {
+            AssistMessage::reply(room, &reply.content, None).await
+        };
+        match filed {
             Ok(()) => {
                 log::info!("chat: reply filed for room {room}");
+                let room = room.to_string();
+                tokio::spawn(async move { label_session(&room).await });
                 StatusCode::OK
             },
             Err(e) => {

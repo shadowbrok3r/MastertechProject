@@ -79,7 +79,7 @@ pub fn encode_buffer_with_timestamp(frame_count: u64, buffer: &Buffer) -> anyhow
 #[cfg(feature = "tokio")]
 pub fn decode_buffer(packet: &[u8]) -> anyhow::Result<BufferMessage> {
     let bincoded = zstd::decode_all(packet).context("zstd")?;
-    let (message, _) = decode_from_slice(&bincoded, standard()).context("bincode")?;
+    let (message, _) = decode_from_slice(&bincoded, tcp_protocol::WIRE_DECODE).context("bincode")?;
     Ok(message)
 }
 

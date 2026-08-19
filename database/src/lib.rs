@@ -1081,6 +1081,20 @@ struct Credentials {
     password: String,
 }
 
+/// Signs in a DB-level user (`DEFINE USER ... ON DATABASE`). Record-access
+/// [`login`] cannot authenticate one: it resolves `$auth.id` against the `user`
+/// table, which a system user has no row in.
+pub async fn signin_database_user(username: &str, password: &str) -> anyhow::Result<()> {
+    db().signin(surrealdb::opt::auth::Database {
+        namespace: NS.to_string(),
+        database: DB.to_string(),
+        username: username.to_string(),
+        password: password.to_string(),
+    })
+    .await?;
+    Ok(())
+}
+
 pub async fn login(email: String, password: String) -> anyhow::Result<Session> {
     let dbh = db();
     let jwt = dbh

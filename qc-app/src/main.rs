@@ -77,6 +77,9 @@ async fn main() -> eframe::Result<()> {
         .add_blacklist("wgpu_core")
         .add_blacklist("naga")
         .init();
+    // First, so the crash-report hook chains on top of it: the report is
+    // written, then the stderr write is dropped while a TUI owns the screen.
+    mtech_tui::panic_guard::install_hook();
     crate::crash_report::install_panic_hook();
     log::info!(
         "qc-app: starting v{} (pid={})",

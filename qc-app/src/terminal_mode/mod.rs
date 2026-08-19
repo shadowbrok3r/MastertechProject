@@ -16,13 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use ratatui::{
-    crossterm::{
-        event::{
-            DisableMouseCapture, EnableMouseCapture, KeyCode, KeyEvent, KeyModifiers, MouseEvent,
-        },
-        execute,
-        terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-    },
+    crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent},
     layout::{Constraint, Layout},
     prelude::{Backend, CrosstermBackend},
     style::Style,
@@ -446,22 +440,14 @@ impl Default for QcTerminalApp {
 /// Standalone entry point: take over the TTY, run the loop, restore on exit.
 pub async fn run_terminal_mode() -> anyhow::Result<()> {
     log::info!("qc-app: starting terminal mode");
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout);
+    // Restores raw mode and the alternate screen on drop, so an unwinding
+    // panic cannot leave the terminal in raw mode.
+    let _terminal_guard = mtech_tui::panic_guard::TerminalGuard::enter()?;
+    let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = QcTerminalApp::new();
     let res = app.run(&mut terminal).await;
-
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
 
     if let Err(ref e) = res {
         log::error!("qc-app: terminal mode error: {e:?}");

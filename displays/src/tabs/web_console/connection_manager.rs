@@ -397,8 +397,8 @@ impl ConnectionManager {
 
 /// Deserialize a command from binary data
 fn deserialize_command(bytes: &[u8]) -> Option<Cmd> {
-    use bincode::{config::standard, serde::decode_from_slice};
-    decode_from_slice(bytes, standard())
+    use bincode::serde::decode_from_slice;
+    decode_from_slice(bytes, tcp_protocol::WIRE_DECODE)
         .ok()
         .map(|(cmd, _)| cmd)
 }

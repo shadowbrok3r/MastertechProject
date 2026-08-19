@@ -93,10 +93,10 @@ impl Default for EnhancedAiPlayground {
             use_mcp_tools: true,
             focused_client: None,
             self_diagnosis: false,
-            #[cfg(not(target_arch = "wasm32"))]
             agent_threads: std::collections::HashSet::new(),
             last_agent_poll: None,
             service_number: None,
+            #[cfg(not(target_arch = "wasm32"))]
             claude: crate::ai::claude_code::ClaudeCodeSession::new(),
             #[cfg(not(target_arch = "wasm32"))]
             claude_thread: None,
@@ -734,7 +734,9 @@ impl EnhancedAiPlayground {
                 if seen.contains(&id) {
                     continue;
                 }
-                let content = if row.direction == "out" {
+                let content = if row.direction == "out" && row.error.is_some() {
+                    ChatMessageType::Error(row.text.clone())
+                } else if row.direction == "out" {
                     ChatMessageType::Text(row.text.clone())
                 } else if row.status == "failed" {
                     ChatMessageType::Error(format!(

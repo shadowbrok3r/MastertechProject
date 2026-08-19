@@ -54,6 +54,7 @@ dependencies = [
  "minidump-common",
  "minidump-processor",
  "minidump-unwind",
+ "mtech-tui",
  "mtech-ui",
  "multi_log",
  "num-format",

@@ -1329,16 +1329,18 @@ pub fn serialize_system_info(system_info: &SystemInformation) -> Vec<u8> {
     encode_to_vec(system_info, standard()).expect("Failed to serialize SystemInformation")
 }
 
-pub fn deserialize_command(bytes: &[u8]) -> Cmd {
-    let (cmd, _) = decode_from_slice(bytes, standard()).expect("Failed to deserialize Cmd");
-    cmd
-}
-
-/// Non-panicking [`deserialize_command`]: `None` on any decode failure, so a
-/// peer built with newer `Cmd` variants degrades to a dropped frame instead
-/// of killing the receiver's session loop.
+/// Decodes a `Cmd` frame, returning `None` on any decode failure.
+///
+/// `Cmd` rides a positional bincode encoding, so a peer whose `Cmd` schema
+/// differs produces misaligned reads rather than a clean rejection — a `bool`
+/// field lands on a varint byte and bincode reports e.g. `Invalid boolean
+/// value(253)`. There is deliberately no panicking counterpart: schema drift
+/// must degrade to a dropped frame, never kill the receiver's session loop.
+/// [`shape_fp::CMD_SHAPE_FP`] is what names the drift; this is what survives it.
 pub fn try_deserialize_command(bytes: &[u8]) -> Option<Cmd> {
-    decode_from_slice(bytes, standard()).ok().map(|(cmd, _)| cmd)
+    decode_from_slice(bytes, tcp_protocol::WIRE_DECODE)
+        .ok()
+        .map(|(cmd, _)| cmd)
 }
 
 use chrono::{DateTime, Datelike, Utc};

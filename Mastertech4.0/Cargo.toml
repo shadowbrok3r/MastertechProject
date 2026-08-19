@@ -94,6 +94,7 @@ dump-triage = { workspace = true }
 itertools.workspace = true
 stress-runner.workspace = true
 mtech-ui = { workspace = true, features = ["stress-ui"] }
+mtech-tui.workspace = true
 tcp_protocol = { workspace = true, features = ["tunnel"] }
 surrealdb.workspace = true
 ratatui = { workspace = true }

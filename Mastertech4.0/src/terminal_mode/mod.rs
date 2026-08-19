@@ -1,4 +1,4 @@
-use ratatui::{crossterm::{ event::{DisableMouseCapture, EnableMouseCapture}, execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},}, layout::{Constraint, Direction, Layout}};
+use ratatui::layout::{Constraint, Direction, Layout};
 use tabs::{assistant::AssistantTab, logger::Logger, login::LoginTab, menu_bar::Tab, service_form::ServiceFormTab, settings::SettingsTab, stress::StressTab, tasks::TasksTab, webconsole::WebconsoleTab, MenuBar, NcduTab, ScriptsTab, SysinfoTab};
 use systems::{communication_system::Message, data_system::DataSystem, notification_system::Notification, render_system::RenderSystem, widget_render_system::WidgetRenderer};
 use std::{cell::RefCell, io, rc::Rc, sync::{Arc, Mutex}, time::{Duration, Instant}};
@@ -56,16 +56,11 @@ pub struct TerminalApp<'a> {
 
 pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
     log::info!("STARTING TERM MODE");
-    enable_raw_mode()?;
-    log::info!("Hooking StdOut");
-    let mut stdout = io::stdout();
-    execute!(
-        stdout, 
-        EnterAlternateScreen, 
-        EnableMouseCapture
-    )?;
+    // Restores raw mode and the alternate screen on drop, so an unwinding
+    // panic cannot leave the terminal in raw mode.
+    let _terminal_guard = mtech_tui::panic_guard::TerminalGuard::enter()?;
     log::info!("Creating Crossterm backend");
-    let backend = CrosstermBackend::new(stdout);
+    let backend = CrosstermBackend::new(io::stdout());
     log::info!("Creating Terminal");
     let mut terminal = Terminal::new(backend)?;
 
@@ -78,16 +73,6 @@ pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
     log::info!("First Run Results: {first_run:?}");
 
     let res = app.ui(&mut terminal).await;
-    
-    disable_raw_mode()?;
-
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
-
-    terminal.show_cursor()?;
 
     if let Err(err) = res {
         log::error!("Err: {:?}", err);
