@@ -16,9 +16,11 @@ use crate::tabs::admin_console::client_interface::{AdminTransport, SessionEvent}
 use crate::Cmd;
 
 mod assist;
+mod chat;
 mod offer;
 
 pub use assist::spawn_assist_dispatcher;
+pub use chat::spawn_chat_bridge;
 
 /// Poll interval for the session pump.
 const PUMP_MS: u64 = 100;
@@ -232,6 +234,7 @@ pub async fn run(mcp_http: bool) -> anyhow::Result<()> {
 
     tokio::spawn(run_session_engine());
     spawn_assist_dispatcher();
+    spawn_chat_bridge();
 
     if mcp_http {
         crate::plugins::run_plugin_mcp_server_http(manager).await

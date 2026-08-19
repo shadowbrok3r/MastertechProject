@@ -47,6 +47,16 @@ pub struct EnhancedAiPlayground {
     #[cfg(not(target_arch = "wasm32"))]
     #[serde(skip)]
     pub claude: crate::ai::claude_code::ClaudeCodeSession,
+    /// Threads whose turns run on the ZeroClaw agent channel. Input in one of
+    /// these goes to the agent, never to the OpenAI-compatible endpoint.
+    #[serde(skip)]
+    pub agent_threads: std::collections::HashSet<String>,
+    #[serde(skip)]
+    last_agent_poll: Option<web_time::Instant>,
+    /// Service number the conversation is about, when the host knows one; joins
+    /// the transcript to a service order.
+    #[serde(skip)]
+    pub service_number: Option<String>,
     /// Thread the Claude Code session is bound to; input in that thread resumes it.
     #[cfg(not(target_arch = "wasm32"))]
     #[serde(skip)]
@@ -84,6 +94,9 @@ impl Default for EnhancedAiPlayground {
             focused_client: None,
             self_diagnosis: false,
             #[cfg(not(target_arch = "wasm32"))]
+            agent_threads: std::collections::HashSet::new(),
+            last_agent_poll: None,
+            service_number: None,
             claude: crate::ai::claude_code::ClaudeCodeSession::new(),
             #[cfg(not(target_arch = "wasm32"))]
             claude_thread: None,
@@ -130,22 +143,19 @@ impl EnhancedAiPlayground {
                     .to_string(),
                 None => "Run an initial diagnostic of this machine using the Mastertech tools.".to_string(),
             };
-            // ZeroClaw route: env-configured gateway dispatches the diagnostician agent.
+            // ZeroClaw route: the message is queued for the agent channel, which
+            // keeps conversation history and a per-technician session.
             #[cfg(feature = "tokio")]
             {
-                if let Some((url, _)) = crate::ai::mcp_chat::zeroclaw_gateway() {
+                if crate::ai::mcp_chat::zeroclaw_gateway().is_some() {
                     let agent = crate::ai::mcp_chat::zeroclaw_agent();
                     self.thread_engine
-                        .insert(thread_id.clone(), format!("ZeroClaw \u{00B7} {agent} @ {url}"));
+                        .insert(thread_id.clone(), format!("ZeroClaw \u{00B7} {agent}"));
                     let full = match &connection_string {
                         Some(cs) => format!("DIAGNOSE mode. Target client connection_string = {cs}. {prompt}"),
                         None => format!("DIAGNOSE mode, local host. {prompt}"),
                     };
-                    let tx = self.response_tx.clone();
-                    let tid = thread_id.clone();
-                    PlatformSpawner::spawn(async move {
-                        crate::ai::mcp_chat::zeroclaw_diagnose(full, tid, tx).await;
-                    });
+                    self.send_to_agent(thread_id.clone(), full, connection_string);
                     return;
                 }
             }
@@ -643,6 +653,9 @@ impl EnhancedAiPlayground {
             ui.ctx().request_repaint();
         }
 
+        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        self.poll_agent_replies(ui);
+
         while let Ok(response) = self.response_rx.try_recv() {
             ui.ctx().request_repaint();
             let id = response.id.clone();
@@ -659,6 +672,87 @@ impl EnhancedAiPlayground {
                 }
             }
         }
+    }
+
+    /// Queues one technician message for the agent and marks the thread agent-owned.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+    fn send_to_agent(
+        &mut self,
+        thread_id: String,
+        text: String,
+        connection_string: Option<String>,
+    ) {
+        self.agent_threads.insert(thread_id.clone());
+        let ctx = database::schema::AssistContext {
+            tech: crate::get_current_user_from_auth().map(|u| u.get_email().to_string()),
+            service_number: self.service_number.clone(),
+            connection_string: connection_string.or_else(|| self.focused_client.clone()),
+        };
+        let tx = self.response_tx.clone();
+        let tid = thread_id.clone();
+        PlatformSpawner::spawn(async move {
+            if let Err(e) = database::schema::AssistMessage::ask(&tid, &text, &ctx).await {
+                let _ = tx.try_send(ChatMessage {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    thread_id: tid,
+                    ts: crate::tabs::ai_playground::now_ts(),
+                    from: SentFrom::Assistant,
+                    content: ChatMessageType::Error(format!("could not reach the agent queue: {e}")),
+                });
+            }
+        });
+    }
+
+    /// Pulls agent replies for the open thread. Messages carry their row id, so
+    /// the thread's own contents are the dedupe set and no extra state is kept.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+    fn poll_agent_replies(&mut self, ui: &Ui) {
+        use std::time::Duration;
+        if !self.agent_threads.contains(&self.selected_thread) {
+            return;
+        }
+        let now = web_time::Instant::now();
+        if self.last_agent_poll.is_some_and(|t| now.duration_since(t) < Duration::from_secs(2)) {
+            return;
+        }
+        self.last_agent_poll = Some(now);
+        ui.ctx().request_repaint_after(Duration::from_secs(2));
+
+        let thread = self.selected_thread.clone();
+        let seen: std::collections::HashSet<String> = self
+            .threads
+            .get(&thread)
+            .map(|t| t.messages.iter().map(|m| m.id.clone()).collect())
+            .unwrap_or_default();
+        let tx = self.response_tx.clone();
+        PlatformSpawner::spawn(async move {
+            use database::schema::RecordIdExt;
+            let rows =
+                database::schema::AssistMessage::thread_history(&thread, 200).await.unwrap_or_default();
+            for row in rows {
+                let id = row.id.key_string();
+                if seen.contains(&id) {
+                    continue;
+                }
+                let content = if row.direction == "out" {
+                    ChatMessageType::Text(row.text.clone())
+                } else if row.status == "failed" {
+                    ChatMessageType::Error(format!(
+                        "the agent never received this: {}",
+                        row.error.clone().unwrap_or_else(|| "unknown error".into())
+                    ))
+                } else {
+                    continue;
+                };
+                let _ = tx.try_send(ChatMessage {
+                    id,
+                    thread_id: thread.clone(),
+                    ts: crate::tabs::ai_playground::now_ts(),
+                    from: SentFrom::Assistant,
+                    content,
+                });
+            }
+        });
     }
 
     fn create_new_chat_thread(&mut self) {
@@ -697,6 +791,15 @@ impl EnhancedAiPlayground {
             from: SentFrom::Me,
             content: ChatMessageType::Text(input.clone()),
         });
+
+        // Input in an agent thread continues that conversation. Without this the
+        // turn would silently fall through to the chat endpoint under a top bar
+        // still naming the agent.
+        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        if self.agent_threads.contains(&thread_id) {
+            self.send_to_agent(thread_id, input, None);
+            return;
+        }
 
         // Input in the Claude Code thread resumes that session instead of the OpenAI endpoint.
         #[cfg(not(target_arch = "wasm32"))]

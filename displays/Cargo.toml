@@ -97,6 +97,9 @@ ratatui = { workspace = true }
 dotenv = { version = "0.15" }
 rmcp = { workspace = true }
 axum = { workspace = true }
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
 wasmtime = { workspace = true, optional = true }
 wasmtime-wasi = { workspace = true, optional = true }
 wat = { workspace = true, optional = true }

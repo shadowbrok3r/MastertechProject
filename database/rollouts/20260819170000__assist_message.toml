@@ -1,0 +1,40 @@
+# Two-way tech<->agent transcript. Bench clients cannot reach the agent host, so
+# the client writes inbound rows here and the admin-agent forwards them to the
+# zeroclaw channel and writes replies back.
+id = "20260819170000__assist_message"
+name = "assist_message"
+state = "completed"
+source_schema_hash = "58be0f98203d44672506531c9f250a17c64392a601c6efb732946c3de1afaf10"
+target_schema_hash = "58be0f98203d44672506531c9f250a17c64392a601c6efb732946c3de1afaf10"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "create_assist_message"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE assist_message TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE connection_string ON assist_message TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE created_at ON assist_message TYPE datetime DEFAULT time::now() PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE direction ON assist_message TYPE string ASSERT $value IN ['in', 'out'] PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE error ON assist_message TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE room ON assist_message TYPE string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE sent_at ON assist_message TYPE none | datetime PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE service_number ON assist_message TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE session_key ON assist_message TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE status ON assist_message TYPE string DEFAULT 'pending' ASSERT $value IN ['pending', 'sent', 'failed', 'delivered'] PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE tech ON assist_message TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE text ON assist_message TYPE string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE thread ON assist_message TYPE string PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE assist_message_thread_idx ON assist_message FIELDS thread;
+DEFINE INDEX OVERWRITE assist_message_pending_idx ON assist_message FIELDS direction, status;
+"""
+
+[[steps]]
+id = "drop_assist_message"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE TABLE IF EXISTS assist_message;
+"""

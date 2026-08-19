@@ -48,6 +48,7 @@ pub mod driver_intel;
 pub mod ai_task;
 pub mod sql_approval;
 pub mod service_metrics;
+pub mod assist_message;
 pub mod outcome;
 pub mod business_calendar;
 pub mod roi;
@@ -72,6 +73,7 @@ pub use plugin_registry::*;
 pub use build_job::*;
 pub use diagnostic::*;
 pub use service_metrics::ServiceMetrics;
+pub use assist_message::{AssistContext, AssistMessage, ASSIST_MESSAGE_TABLE};
 pub use outcome::{
     outcome_for_sessions, record_id_from_string, set_computer_internal, set_outcome_override,
     OutcomeBucket, OutcomeOverride, OutcomeRollup, SessionOutcomeRow,
