@@ -1,0 +1,42 @@
+# 20260818120000 seeded is_internal by hostname, and 'owner-pc' is the PCL image
+# default rather than one dev box: it flagged 70 customer machines, which dropped
+# them from outcome reporting and then lost their customer link to the guard
+# backfill. Unflag them, then restore the link from the writers that still hold it.
+id = "20260820010000__unflag_default_hostname_machines"
+name = "unflag_default_hostname_machines"
+state = "pending"
+source_schema_hash = "f469e2b33c1bebcf937b4befada5a6e3a013a01d8e19216d2897d9ffbcef203b"
+target_schema_hash = "f469e2b33c1bebcf937b4befada5a6e3a013a01d8e19216d2897d9ffbcef203b"
+compatibility = "phased"
+renames = []
+
+# NONE, not false: these were never staff machines, so they should read the same
+# as a machine that was never flagged. Must run before the restores, or the
+# internal_machine_has_no_customer event strips each customer as it lands.
+[[steps]]
+id = "unflag_default_hostname_machines"
+phase = "start"
+kind = "run_sql"
+sql = """
+UPDATE computer SET is_internal = NONE WHERE is_internal = true AND string::lowercase(hostname ?? '') = 'owner-pc';
+"""
+
+# connected_client is written by the same path as computer.customer, so it is the
+# faithful source where it has a value.
+[[steps]]
+id = "restore_owner_from_connected_client"
+phase = "start"
+kind = "run_sql"
+sql = """
+FOR $row IN (SELECT computer, customer FROM connected_client WHERE customer != NONE AND computer != NONE AND string::lowercase(computer.hostname ?? '') = 'owner-pc') { UPDATE $row.computer SET customer = $row.customer; };
+"""
+
+# Ascending order so the most recent order is the last writer, matching the
+# last-write-wins the task path produced.
+[[steps]]
+id = "restore_owner_from_latest_order"
+phase = "start"
+kind = "run_sql"
+sql = """
+FOR $row IN (SELECT computer, customer, created_at FROM service_order WHERE customer != NONE AND computer != NONE AND computer.customer == NONE AND string::lowercase(computer.hostname ?? '') = 'owner-pc' ORDER BY created_at) { UPDATE $row.computer SET customer = $row.customer; };
+"""

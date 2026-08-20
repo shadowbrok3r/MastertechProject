@@ -150,8 +150,8 @@ fn render_client_row(
     session_layout: &HashMap<String, SessionLayout>,
     focused_client: Option<&str>,
     actions_tx: &Sender<ClientUiAction>,
-    fk_health_tx: &crossbeam::channel::Sender<(String, bool, bool)>,
-    fk_health_cache: &HashMap<String, (bool, bool)>,
+    fk_health_tx: &crossbeam::channel::Sender<(String, ClientLinkHealth)>,
+    fk_health_cache: &HashMap<String, ClientLinkHealth>,
     client_tasks_tx: &crossbeam::channel::Sender<(String, Option<Vec<database::schema::LiveTaskPayload>>)>,
     client_tasks_cache: &HashMap<String, Option<Vec<database::schema::LiveTaskPayload>>>,
     reachability: Option<&crate::ui_data::reachability::ReachabilityStatus>,
@@ -178,6 +178,15 @@ fn render_client_row(
         reachability,
         transport,
     );
+}
+
+/// Link facts for one client row, fetched together when the row expands.
+#[derive(Clone, Copy, Default)]
+pub struct ClientLinkHealth {
+    pub customer_exists: bool,
+    pub computer_exists: bool,
+    /// `computer.is_internal` on any row this client resolves to.
+    pub staff_machine: bool,
 }
 
 /// True only when the signed-in user's authorization is exactly `Root`.
@@ -295,13 +304,13 @@ pub struct AdminConsole {
     pub client_tasks_tx: crossbeam::channel::Sender<(String, Option<Vec<database::schema::LiveTaskPayload>>)>,
     #[serde(skip)]
     pub client_tasks_rx: crossbeam::channel::Receiver<(String, Option<Vec<database::schema::LiveTaskPayload>>)>,
-    /// `(customer_exists, computer_exists)` per `connection_string`.
+    /// Link facts per `connection_string`, fetched when a row expands.
     #[serde(skip)]
-    pub fk_health_cache: HashMap<String, (bool, bool)>,
+    pub fk_health_cache: HashMap<String, ClientLinkHealth>,
     #[serde(skip)]
-    pub fk_health_tx: crossbeam::channel::Sender<(String, bool, bool)>,
+    pub fk_health_tx: crossbeam::channel::Sender<(String, ClientLinkHealth)>,
     #[serde(skip)]
-    pub fk_health_rx: crossbeam::channel::Receiver<(String, bool, bool)>,
+    pub fk_health_rx: crossbeam::channel::Receiver<(String, ClientLinkHealth)>,
     /// Pre-boot terminal viewer (firmware TUI relayed over HTTP). Toggled with
     /// Ctrl+Shift+B; connects by machine serial to the axum relay. Native-only
     /// (RataguiBackend depends on ratatui, a non-wasm dependency).
@@ -522,8 +531,8 @@ impl AdminConsole {
             crate::plugins::mcp_bridge::set_preboot_hub(self.direct_hub.clone());
         }
         self.filesystem.receive();
-        while let Ok((cs, cust_ok, comp_ok)) = self.fk_health_rx.try_recv() {
-            self.fk_health_cache.insert(cs, (cust_ok, comp_ok));
+        while let Ok((cs, health)) = self.fk_health_rx.try_recv() {
+            self.fk_health_cache.insert(cs, health);
         }
         while let Ok((cs, tasks)) = self.client_tasks_rx.try_recv() {
             match tasks {

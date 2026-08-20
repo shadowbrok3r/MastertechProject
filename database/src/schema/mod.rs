@@ -77,8 +77,9 @@ pub use service_metrics::ServiceMetrics;
 pub use order_intake::{ensure_order_records, IntakeOutcome};
 pub use assist_message::{AssistContext, AssistMessage, ASSIST_MESSAGE_TABLE};
 pub use outcome::{
-    outcome_for_sessions, record_id_from_string, set_computer_internal, set_outcome_override,
-    OutcomeBucket, OutcomeOverride, OutcomeRollup, SessionOutcomeRow,
+    client_computer_ids, internal_computer_for_client, outcome_for_sessions, record_id_from_string,
+    set_client_internal, set_computer_internal, set_outcome_override, OutcomeBucket,
+    OutcomeOverride, OutcomeRollup, SessionOutcomeRow,
 };
 pub use business_calendar::{business_seconds, open_days_between, OPEN_SECS_PER_DAY};
 pub use roi::{DataGaps, RoiSummary, ShelfCandidate, TurnaroundStats, TECH_RATE_HIGH, TECH_RATE_LOW};

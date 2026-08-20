@@ -1,0 +1,26 @@
+# A technician's own workstation kept getting adopted into whichever customer
+# they were servicing, because the task-creation path sets computer.customer.
+# One choke point beats trusting every writer.
+id = "20260819230000__internal_machine_no_customer"
+name = "internal_machine_no_customer"
+state = "completed"
+source_schema_hash = "f469e2b33c1bebcf937b4befada5a6e3a013a01d8e19216d2897d9ffbcef203b"
+target_schema_hash = "f469e2b33c1bebcf937b4befada5a6e3a013a01d8e19216d2897d9ffbcef203b"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "add_internal_guard_event"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE EVENT OVERWRITE internal_machine_has_no_customer ON computer WHEN $value.is_internal = true AND $value.customer != NONE THEN { UPDATE $value.id SET customer = NONE; };
+"""
+
+[[steps]]
+id = "remove_internal_guard_event"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE EVENT IF EXISTS internal_machine_has_no_customer ON computer;
+"""

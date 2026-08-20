@@ -1,0 +1,17 @@
+# The guard event only fires on a write, so the machines flagged internal by an
+# earlier rollout's data step kept the customer they had been adopted into.
+id = "20260820000000__internal_machine_owner_backfill"
+name = "internal_machine_owner_backfill"
+state = "completed"
+source_schema_hash = "f469e2b33c1bebcf937b4befada5a6e3a013a01d8e19216d2897d9ffbcef203b"
+target_schema_hash = "f469e2b33c1bebcf937b4befada5a6e3a013a01d8e19216d2897d9ffbcef203b"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "clear_owners_on_internal_machines"
+phase = "start"
+kind = "run_sql"
+sql = """
+UPDATE computer SET customer = NONE WHERE is_internal = true AND customer != NONE;
+"""

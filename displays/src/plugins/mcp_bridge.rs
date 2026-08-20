@@ -5547,7 +5547,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "create_diagnostic_session",
-        description = "Start a new diagnostic session. Call at the beginning of any diagnostic engagement. customer_id and computer_id are REQUIRED — every diagnostic must belong to a known customer and computer. Resolve them first via find_customer_by_email/phone, get_computer_details, or by following connected_client.computer.customer; if you cannot resolve, ASK THE USER instead of fabricating. Returns a session_id to use with log_diagnostic_entry and close_diagnostic_session."
+        description = "Start a new diagnostic session. Call at the beginning of any diagnostic engagement. customer_id and computer_id are REQUIRED — every diagnostic must belong to a known customer and computer. Resolve them first via find_customer_by_email/phone, get_computer_details, or by following connected_client.computer.customer; if you cannot resolve, ASK THE USER instead of fabricating. EXCEPTION: on a machine flagged as a staff/bench box (computer.is_internal) there is no owner to find — pass customer_id: '' and the session opens against the flagged computer with no customer. Returns a session_id to use with log_diagnostic_entry and close_diagnostic_session."
     )]
     async fn create_diagnostic_session(
         &self,
@@ -5567,18 +5567,45 @@ impl PluginToolProvider {
             None => None,
         };
 
-        let (customer_id, computer_id) = resolve_entity_links_mcp(
-            Some(p.connection_string.clone()),
-            &p.customer_id,
-            &p.computer_id,
-        )
-        .await?;
+        // A staff machine owns no customer, so the customer half of the link
+        // gate can never be satisfied. Resolve the flagged computer alone and
+        // keep an explicit customer only when the caller supplied a real one.
+        let staff_computer = database::schema::internal_computer_for_client(&p.connection_string)
+            .await
+            .ok()
+            .flatten();
+        let (customer_id, computer_id) = match &staff_computer {
+            Some(computer) => {
+                let customer = match optional_record_id(
+                    &p.customer_id,
+                    database::schema::CUSTOMER_TABLE,
+                ) {
+                    Some(_) => database::schema::entity_link::resolve_record_id(
+                        &p.customer_id,
+                        database::schema::CUSTOMER_TABLE,
+                    )
+                    .await
+                    .ok(),
+                    None => None,
+                };
+                (customer, computer.clone())
+            }
+            None => {
+                let (customer, computer) = resolve_entity_links_mcp(
+                    Some(p.connection_string.clone()),
+                    &p.customer_id,
+                    &p.computer_id,
+                )
+                .await?;
+                (Some(customer), computer)
+            }
+        };
 
         let session = database::schema::DiagnosticSession {
             connection_string: p.connection_string,
             hostname: p.hostname,
             customer_name: p.customer_name,
-            customer_id: Some(customer_id),
+            customer_id,
             computer_id: Some(computer_id),
             task_ref,
             service_order,
@@ -5606,6 +5633,16 @@ impl PluginToolProvider {
         created.started_at = chrono::Utc::now().into();
 
         let mut warnings: Vec<ToolWarning> = Vec::new();
+        if staff_computer.is_some() {
+            warnings.push(ToolWarning::info(
+                "staff_machine",
+                format!(
+                    "{} is a flagged staff machine: opened with no customer link{}, and                      excluded from outcome reporting.",
+                    created.hostname,
+                    if created.customer_id.is_some() { " beyond the one you passed" } else { "" },
+                ),
+            ));
+        }
         if created.task_ref.is_none() {
             match created.resolve_open_service_task().await {
                 Ok(Some((task, so))) => {
@@ -8098,7 +8135,7 @@ minutes count only minutes containing a recorded event — a floor, never inflat
 
     #[tool(
         name = "ensure_order_records",
-        description = "Create the customer and service_order records for a PrestaShop order that has no task yet, from the order data you already pulled. Idempotent: the service_order id is derived from the service number and an existing row is adopted, and a customer whose cust_code/email already exists resolves to that row, so re-running changes nothing and a technician creating the task later inherits these records. Deliberately writes NO computer row - the canonical computer key comes from the live machine (hostname:hash), so one invented here would become a duplicate for a machine that is not plugged in yet; the computer links itself on connect. Call this for a shelf candidate worth tracking, not for every row you glance at."
+        description = "Create the customer and service_order records for a PrestaShop order that has no task yet, from the order data you already pulled. Idempotent: the service_order id derives from the service number and an existing row is adopted, and a known cust_code/email resolves to its existing customer, so re-running changes nothing and a technician creating the task later inherits these rows. Writes NO computer record on purpose - the canonical computer key comes from the live machine, so one invented here would duplicate it; the computer links itself on connect. Call it for a shelf candidate worth tracking, not for every row you glance at."
     )]
     async fn ensure_order_records(
         &self,
@@ -8174,18 +8211,7 @@ minutes count only minutes containing a recorded event — a floor, never inflat
 
     #[tool(
         name = "get_outcome_rollup",
-        description = "Fleet-wide fix-vs-comeback rollup over resolved/escalated diagnostic \
-sessions. A session counts as confirmed_fixed when the same computer has NOT come back as a new \
-service order within the window; the first same-computer order after a 3-day same-visit grace is \
-the comeback. Staff/test machines (computer.is_internal) are excluded; sessions with no computer \
-link, no ended_at, or an unelapsed window count as indeterminate — never as fixed. Buckets are \
-reported overall and split by resolved vs escalated. A tech can override a verdict from the \
-MasterTech dashboard: an overridden session reports the human verdict on every window (including \
-unelapsed ones) and is counted in bucket.overridden, so a high overridden count means the number \
-is partly opinion. outcome_override='excluded' drops a session from every bucket into \
-excluded_override. Overrides are human-only by design; there is no tool to set one. \
-internal_computer_count is how many machines are flagged staff/test; internal_computers lists \
-only the ones that actually cost a session in this rollup."
+        description = "Fleet-wide fix-vs-comeback rollup over resolved/escalated diagnostic sessions. A session counts as confirmed_fixed only when the same computer has NOT returned as a new service order inside the window; the first same-computer order after a 3-day same-visit grace is the comeback. Staff/test machines (computer.is_internal) are excluded; no computer link, no ended_at, or an unelapsed window all count as indeterminate, never as fixed. Buckets come overall and split by resolved vs escalated. A technician can override a verdict from the dashboard: an overridden session reports the human verdict on every window and is counted in bucket.overridden, so a high overridden count means the number is partly opinion. outcome_override='excluded' drops a session into excluded_override. Overrides are human-only; there is no tool to set one."
     )]
     async fn get_outcome_rollup(
         &self,
@@ -8436,14 +8462,7 @@ matched, and an error when the lookup itself failed."
 
     #[tool(
         name = "query_surrealdb",
-        description = "Run a read-only SurrealQL query against the Mastertech database. Only SELECT and RETURN statements are allowed. \
-This is SurrealDB 3.x, which rejects several patterns that are legal in SQL and in older SurrealDB — read these before writing a query: \
-(1) ORDER BY may only name fields the projection actually returns. `SELECT id, summary FROM x ORDER BY started_at` fails with 'Missing order idiom'; either add `started_at` to the projection or use `SELECT *`. Aliases count, so ORDER BY the alias you defined. \
-(2) SPLIT and GROUP BY are mutually exclusive, and SPLIT may only name a projected field. To count array members, use `SELECT field, count() FROM x GROUP BY field` over a projected array, or flatten in a subquery first. \
-(3) Aggregates do not nest: `math::sum(count())` is rejected. Aggregate in a subquery and aggregate its result in the outer query. \
-(4) NONE poisons arithmetic and casts. `time::now() - started_at` fails with \"Cannot perform subtraction with 'none' and 'datetime'\" the moment one row has no `started_at`, and `<datetime>` of NONE fails outright. Guard every optional field with `??` (`started_at ?? time::now()`) or filter with `WHERE started_at != NONE` before doing arithmetic on it. \
-(5) Queries are cut off at 45s. Add a LIMIT, narrow the WHERE, or aggregate server-side rather than pulling rows to count them. \
-A failed query returns the database error plus a hint naming which of these rules it hit."
+        description = "Read-only SurrealQL (SELECT/RETURN only) against the Mastertech database. SurrealDB 3.x rejects five patterns that are legal elsewhere: ORDER BY must name a projected field or alias; SPLIT and GROUP BY are mutually exclusive; aggregates do not nest; NONE poisons arithmetic and casts (guard with ?? or WHERE x != NONE); queries are cut off at 45s, so LIMIT or aggregate server-side. A failed query returns the database error plus a hint naming which rule it hit."
     )]
     async fn query_surrealdb(
         &self,
@@ -10000,6 +10019,10 @@ explicitly asks for diagnosis):
      - Try connected_client.computer (and computer.customer) first if you have a connection_string.
      - Fall back to find_customer_by_email / find_customer_by_phone, then get_computer_details.
      - If you still cannot resolve, ASK THE USER. Never fabricate ids.
+     - Staff/bench machines are the one exception: a machine flagged
+       `computer.is_internal` has no owner. Pass `customer_id: ''` and the session
+       opens against the flagged computer alone. Never invent an owner for one, and
+       never link_connected_client a staff machine to a customer.
   3. Call create_diagnostic_session with the resolved ids (and optional task_id / service_order_id if a check-in exists).
   4. Call log_diagnostic_entry for each finding, action taken, or resolution. Use the
      allowed category vocabulary: finding, action, note, error, system_info,

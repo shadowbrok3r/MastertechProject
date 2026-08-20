@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use crossbeam::channel::Sender;
 use chrono::{DateTime, Local, Utc};
 use super::ClientUiAction;
+use super::ClientLinkHealth;
 use super::SessionLayout;
 use crate::get_database_users;
 use crate::ui_tools::{glass_card, icons, theme};
@@ -145,8 +146,8 @@ impl AdminConsole {
         session_layout: HashMap<String, SessionLayout>,
         focused_client: Option<&str>,
         is_ws_connected: bool,
-        fk_health_tx: &crossbeam::channel::Sender<(String, bool, bool)>,
-        fk_health_cache: &HashMap<String, (bool, bool)>,
+        fk_health_tx: &crossbeam::channel::Sender<(String, ClientLinkHealth)>,
+        fk_health_cache: &HashMap<String, ClientLinkHealth>,
         client_tasks_tx: &crossbeam::channel::Sender<(String, Option<Vec<LiveTaskPayload>>)>,
         client_tasks_cache: &HashMap<String, Option<Vec<LiveTaskPayload>>>,
         // Slice 2: latest gathered security inventory for this
@@ -401,6 +402,21 @@ impl AdminConsole {
                                 "Autopilot on: eligible for unattended agent sweeps.\nClick to exclude this client.",
                             )
                         };
+                        let staff = fk_health.map(|h| h.staff_machine).unwrap_or(false);
+                        let (staff_color, staff_tip) = if staff {
+                            (
+                                theme::info(ui),
+                                "Staff machine: owns no customer and is excluded from
+                                 outcome reporting. Click to treat it as a customer machine.",
+                            )
+                        } else {
+                            (
+                                theme::weak_text(ui),
+                                "Customer machine. Click to mark it a staff machine:
+                                 clears its customer link, keeps future service orders
+                                 from adopting it, and drops it from outcome reporting.",
+                            )
+                        };
                         let relink_tip = if client.customer_locked {
                             "Re-link customer: locked (manually re-linked).\nClick to change linkage."
                         } else {
@@ -454,6 +470,12 @@ impl AdminConsole {
                                 ) {
                                     let _ =
                                         tx.try_send(ClientUiAction::RepairAssociations(client.clone()));
+                                }
+                                if row_icon_action(ui, icons::HOME, staff_color, staff_tip) {
+                                    let _ = tx.try_send(ClientUiAction::ToggleStaffMachine {
+                                        client: client.clone(),
+                                        staff,
+                                    });
                                 }
                                 if row_icon_action(ui, icons::AUTOPILOT, auto_color, auto_tip) {
                                     let _ = tx.try_send(ClientUiAction::ToggleAutopilotOptOut(
@@ -666,7 +688,7 @@ fn client_details_grid(
     assigned_user: &str,
     is_ws_connected: bool,
     reachability: Option<&crate::ui_data::reachability::ReachabilityStatus>,
-    fk_health: Option<(bool, bool)>,
+    fk_health: Option<ClientLinkHealth>,
     client_tasks: Option<&[LiveTaskPayload]>,
 ) {
     let value_max_w = CLIENT_DETAILS_VALUE_W;
@@ -745,19 +767,29 @@ fn client_details_grid(
                 }
             }
 
-            let (cust_ok, comp_ok) = fk_health.unwrap_or((false, false));
+            let ClientLinkHealth {
+                customer_exists: cust_ok,
+                computer_exists: comp_ok,
+                staff_machine,
+            } = fk_health.unwrap_or_default();
             // Newest matched task; customer/computer links open its modal.
             let primary_task = client_tasks.and_then(|t| t.first());
             let cust_label = client
                 .customer
                 .as_ref()
                 .map(|c| c.key_string().to_string())
-                .unwrap_or_else(|| "(none)".into());
+                .unwrap_or_else(|| {
+                    if staff_machine { "(staff machine)".into() } else { "(none)".into() }
+                });
             ui.label(RichText::new("Customer").small().color(theme::weak_text(ui)));
             ui.horizontal(|ui| {
                 let text = RichText::new(&cust_label)
                     .small()
-                    .color(fk_color(ui, cust_ok, client.customer.is_some()));
+                    .color(if staff_machine && client.customer.is_none() {
+                        theme::weak_text(ui)
+                    } else {
+                        fk_color(ui, cust_ok, client.customer.is_some())
+                    });
                 match client.customer.as_ref() {
                     Some(id) => {
                         let tip = if primary_task.is_some() {
@@ -949,8 +981,8 @@ fn queue_client_tasks_fetch(
 }
 
 fn queue_fk_health_check(
-    tx: &crossbeam::channel::Sender<(String, bool, bool)>,
-    cache: &HashMap<String, (bool, bool)>,
+    tx: &crossbeam::channel::Sender<(String, ClientLinkHealth)>,
+    cache: &HashMap<String, ClientLinkHealth>,
     client: &ConnectedClient,
 ) {
     if cache.contains_key(&client.connection_string) {
@@ -962,15 +994,23 @@ fn queue_fk_health_check(
     let tx = tx.clone();
     crate::PlatformSpawner::spawn(async move {
         use database::schema::utilities::record_exists;
-        let cust_ok = match cust {
+        let customer_exists = match cust {
             Some(id) => matches!(record_exists(id).await, Ok(Some(true))),
             None => false,
         };
-        let comp_ok = match comp {
+        let computer_exists = match comp {
             Some(id) => matches!(record_exists(id).await, Ok(Some(true))),
             None => false,
         };
-        let _ = tx.try_send((cs, cust_ok, comp_ok));
+        let staff_machine = database::schema::internal_computer_for_client(&cs)
+            .await
+            .ok()
+            .flatten()
+            .is_some();
+        let _ = tx.try_send((
+            cs,
+            ClientLinkHealth { customer_exists, computer_exists, staff_machine },
+        ));
     });
 }
 

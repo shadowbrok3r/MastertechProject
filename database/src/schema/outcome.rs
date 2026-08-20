@@ -497,6 +497,90 @@ pub async fn set_computer_internal(
     ensure_written(res.take(0).unwrap_or_default())
 }
 
+/// Every computer row a connected client can resolve to: the canonical
+/// `HOST:hash9` key first, then whatever `connected_client.computer` points at.
+/// Both matter because either can be the row a reader consults, and the two
+/// disagree whenever a client was linked before the canonical key existed.
+pub async fn client_computer_ids(connection_string: &str) -> anyhow::Result<Vec<super::RecordId>> {
+    use super::RecordIdExt;
+
+    let cs = connection_string.trim();
+    if cs.is_empty() {
+        anyhow::bail!("connection_string is required");
+    }
+    let mut res = db()
+        .query(
+            "SELECT VALUE computer FROM connected_client WHERE connection_string == $cs
+             AND computer != NONE",
+        )
+        .bind(("cs", cs.to_string()))
+        .await?;
+    let linked: Vec<super::RecordId> = res.take(0).unwrap_or_default();
+
+    let mut ids = vec![super::entity_link::canonical_computer_id(cs)];
+    for id in linked {
+        if !ids.iter().any(|i| i.key_string() == id.key_string()) {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
+}
+
+/// The staff-machine computer row for a connected client, canonical key first,
+/// or `None` when this client is not flagged internal.
+pub async fn internal_computer_for_client(
+    connection_string: &str,
+) -> anyhow::Result<Option<super::RecordId>> {
+    use super::RecordIdExt;
+
+    let ids = client_computer_ids(connection_string).await?;
+    let mut res = db()
+        .query("SELECT VALUE id FROM computer WHERE id IN $ids AND is_internal == true")
+        .bind(("ids", ids.clone()))
+        .await?;
+    let flagged: Vec<super::RecordId> = res.take(0).unwrap_or_default();
+    Ok(ids
+        .into_iter()
+        .find(|id| flagged.iter().any(|f| f.key_string() == id.key_string())))
+}
+
+/// Flags or clears every computer row a connected client resolves to, so the
+/// flag holds whichever row a reader lands on. Returns the keys written.
+///
+/// Flagging also mints the canonical row when it is absent: the task path
+/// upserts `computer:HOST:hash9` on its own, so leaving that key empty lets a
+/// later check-in create an unflagged row and adopt a customer onto it.
+pub async fn set_client_internal(
+    connection_string: &str,
+    internal: bool,
+) -> anyhow::Result<Vec<String>> {
+    use super::RecordIdExt;
+
+    let cs = connection_string.trim().to_string();
+    let ids = client_computer_ids(&cs).await?;
+    let canonical = super::entity_link::canonical_computer_id(&cs);
+
+    let mut res = db()
+        .query("UPDATE computer SET is_internal = $internal WHERE id IN $ids RETURN VALUE id")
+        .bind(("internal", internal))
+        .bind(("ids", ids))
+        .await?;
+    let mut written: Vec<String> = res
+        .take::<Vec<super::RecordId>>(0)
+        .unwrap_or_default()
+        .iter()
+        .map(RecordIdExt::key_string)
+        .collect();
+
+    if internal && !written.iter().any(|k| *k == canonical.key_string()) {
+        let hostname = cs.split_once(':').map(|(h, _)| h).unwrap_or(&cs);
+        super::entity_link::upsert_computer_record(&canonical, hostname, None, None).await?;
+        set_computer_internal(&canonical, true).await?;
+        written.push(canonical.key_string());
+    }
+    Ok(written)
+}
+
 /// An UPDATE that matched nothing is a silent no-op; surface it as an error.
 fn ensure_written(ids: Vec<super::RecordId>) -> anyhow::Result<()> {
     if ids.is_empty() {

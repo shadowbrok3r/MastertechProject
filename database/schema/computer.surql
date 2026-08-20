@@ -5,6 +5,15 @@
 
 DEFINE TABLE computer TYPE ANY SCHEMALESS PERMISSIONS FULL;
 
+-- A staff/test machine belongs to no customer. Techs run MasterTech on customer
+-- machines and on their own, so the task-creation path can otherwise adopt a
+-- technician's workstation into whatever customer they were servicing.
+DEFINE EVENT internal_machine_has_no_customer ON computer
+    WHEN $value.is_internal = true AND $value.customer != NONE
+    THEN {
+        UPDATE $value.id SET customer = NONE;
+    };
+
 DEFINE INDEX computer_customer_idx ON computer FIELDS customer;
 
 DEFINE FIELD cpu               ON computer TYPE string DEFAULT '' PERMISSIONS FULL;

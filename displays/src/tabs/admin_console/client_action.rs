@@ -31,6 +31,12 @@ pub enum ClientUiAction {
     /// Flip `autopilot_opt_out`, excluding or restoring this client for
     /// unattended agent sweeps.
     ToggleAutopilotOptOut(ConnectedClient),
+    /// Flip `computer.is_internal` for this client's machine, marking it a
+    /// staff box that belongs to no customer. `staff` is the current state.
+    ToggleStaffMachine {
+        client: ConnectedClient,
+        staff: bool,
+    },
     /// Root-only: look up a client by `connection_string` or `client_hash` and
     /// open a session to it, bypassing the live query's user/store scope.
     ConnectByIdentifier(String),
@@ -175,6 +181,19 @@ impl AdminConsole {
                     match database::schema::entity_link::repair_connection_links(&cs).await {
                         Ok(report) => log::info!("repair_connection_links({cs}): {report}"),
                         Err(e) => log::error!("repair_connection_links({cs}): {e}"),
+                    }
+                });
+            }
+            ClientUiAction::ToggleStaffMachine { client, staff } => {
+                // The row re-fetches its link facts once the cache entry is gone,
+                // which is also how the new flag state reaches the icon.
+                self.invalidate_link_caches(&client.connection_string);
+                let cs = client.connection_string.clone();
+                let next = !staff;
+                crate::PlatformSpawner::spawn(async move {
+                    match database::schema::set_client_internal(&cs, next).await {
+                        Ok(keys) => log::info!("staff_machine({cs}) -> {next} on {keys:?}"),
+                        Err(e) => log::error!("staff_machine({cs}) -> {next}: {e}"),
                     }
                 });
             }
