@@ -1,0 +1,28 @@
+# Four technician workstations confirmed by name. Each carries service orders for
+# dozens of distinct customers, so left unflagged every future session on one would
+# score a comeback against the next customer's order. Explicit record ids, never a
+# hostname match: 20260818120000 matched 'owner-pc' and caught 70 customer machines.
+# The internal_machine_has_no_customer event clears each adopted customer on write.
+id = "20260820020000__flag_confirmed_tech_machines"
+name = "flag_confirmed_tech_machines"
+state = "completed"
+source_schema_hash = "f469e2b33c1bebcf937b4befada5a6e3a013a01d8e19216d2897d9ffbcef203b"
+target_schema_hash = "f469e2b33c1bebcf937b4befada5a6e3a013a01d8e19216d2897d9ffbcef203b"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "flag_confirmed_tech_machines"
+phase = "start"
+kind = "run_sql"
+sql = """
+UPDATE [computer:`T-REX:9716c3e7d`, computer:`shadowbroker-x170kmg:2ea2e56dc`, computer:`JoshTechStation:b07d44ca5`, computer:`BRETT:22f96b098`] SET is_internal = true;
+"""
+
+[[steps]]
+id = "unflag_confirmed_tech_machines"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+UPDATE [computer:`T-REX:9716c3e7d`, computer:`shadowbroker-x170kmg:2ea2e56dc`, computer:`JoshTechStation:b07d44ca5`, computer:`BRETT:22f96b098`] SET is_internal = NONE;
+"""

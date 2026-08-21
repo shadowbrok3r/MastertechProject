@@ -1,0 +1,39 @@
+# Three more of Logan's own machines, confirmed by name. Two carry the
+# HOST-<customerid> key form, so a customer-import path minted them rather than a
+# client check-in. The internal_machine_has_no_customer event clears the adopted
+# customer on write.
+id = "20260820030000__flag_shadowbroker_tech_machines"
+name = "flag_shadowbroker_tech_machines"
+state = "completed"
+source_schema_hash = "f469e2b33c1bebcf937b4befada5a6e3a013a01d8e19216d2897d9ffbcef203b"
+target_schema_hash = "f469e2b33c1bebcf937b4befada5a6e3a013a01d8e19216d2897d9ffbcef203b"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "flag_shadowbroker_machines"
+phase = "start"
+kind = "run_sql"
+sql = """
+UPDATE [computer:`ShadowbrokerPC-32119588`, computer:`ShadowbrokerPC:bb6064d0d`, computer:`shadowbroker-manjaro-desktop-32162409`] SET is_internal = true;
+"""
+
+# shadowbroker-manjaro-desktop's live client points at a canonical key with no row
+# behind it, so the flag on the import-minted row above protects nothing: the next
+# check-in would mint this key unflagged and adopt whoever the tech was servicing.
+[[steps]]
+id = "mint_dangling_canonical_manjaro_desktop"
+phase = "start"
+kind = "run_sql"
+sql = """
+UPSERT computer:`shadowbroker-manjaro-desktop:fcfe13ab6` SET hostname = 'shadowbroker-manjaro-desktop', is_internal = true;
+"""
+
+[[steps]]
+id = "unflag_shadowbroker_machines"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+UPDATE [computer:`ShadowbrokerPC-32119588`, computer:`ShadowbrokerPC:bb6064d0d`, computer:`shadowbroker-manjaro-desktop-32162409`] SET is_internal = NONE;
+DELETE computer:`shadowbroker-manjaro-desktop:fcfe13ab6`;
+"""

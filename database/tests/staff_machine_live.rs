@@ -139,6 +139,24 @@ async fn staff_flag_covers_both_identities_and_strips_the_owner() {
                 id.key_string()
             );
         }
+
+        // Second table, same invariant: the client row must not keep an owner
+        // either, or the admin list shows one on a staff machine.
+        db().query("UPDATE connected_client:stafftest SET customer = $cust")
+            .bind(("cust", owner.clone()))
+            .await
+            .expect("write client owner");
+        let client_owner: Option<RecordId> = db()
+            .query("SELECT VALUE customer FROM connected_client:stafftest")
+            .await
+            .expect("read client owner")
+            .take::<Vec<RecordId>>(0)
+            .ok()
+            .and_then(|v| v.into_iter().next());
+        assert_eq!(
+            client_owner, None,
+            "connected_client kept an owner despite computer.is_internal"
+        );
     } else {
         eprintln!("staff_machine_live: no customer row to test the guard with - skipped");
     }

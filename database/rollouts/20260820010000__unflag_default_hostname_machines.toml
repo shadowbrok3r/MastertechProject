@@ -4,7 +4,7 @@
 # backfill. Unflag them, then restore the link from the writers that still hold it.
 id = "20260820010000__unflag_default_hostname_machines"
 name = "unflag_default_hostname_machines"
-state = "pending"
+state = "completed"
 source_schema_hash = "f469e2b33c1bebcf937b4befada5a6e3a013a01d8e19216d2897d9ffbcef203b"
 target_schema_hash = "f469e2b33c1bebcf937b4befada5a6e3a013a01d8e19216d2897d9ffbcef203b"
 compatibility = "phased"

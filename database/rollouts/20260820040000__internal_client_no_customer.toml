@@ -1,0 +1,36 @@
+# The computer-side guard left connected_client.customer untouched, so a staff
+# machine could still show an owner in the admin client list and hand one back to
+# link_connected_client. Same invariant, second table.
+id = "20260820040000__internal_client_no_customer"
+name = "internal_client_no_customer"
+state = "completed"
+source_schema_hash = "f469e2b33c1bebcf937b4befada5a6e3a013a01d8e19216d2897d9ffbcef203b"
+target_schema_hash = "2da2bd892429d154a53efb65fe5c7f10e480f5aee5864b263b6e34060caee038"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "add_internal_client_guard_event"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE EVENT OVERWRITE internal_machine_client_has_no_customer ON connected_client WHEN $value.customer != NONE AND $value.computer != NONE THEN { IF $value.computer.is_internal == true { UPDATE $value.id SET customer = NONE; }; };
+"""
+
+# The event only fires on a write, so existing rows need the backfill in the same
+# rollout. 20260819230000 shipped without one and 72 rows sat stale for two days.
+[[steps]]
+id = "clear_owners_on_internal_machine_clients"
+phase = "start"
+kind = "run_sql"
+sql = """
+UPDATE connected_client SET customer = NONE WHERE computer != NONE AND computer.is_internal = true AND customer != NONE;
+"""
+
+[[steps]]
+id = "remove_internal_client_guard_event"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE EVENT IF EXISTS internal_machine_client_has_no_customer ON connected_client;
+"""

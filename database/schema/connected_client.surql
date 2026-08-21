@@ -11,6 +11,16 @@ DEFINE EVENT uid_event ON connected_client
         UPDATE $value.id SET created_at = time::now();
     };
 
+-- WHEN stays on plain field checks; the is_internal traversal costs a fetch, so it
+-- runs in THEN. Terminates because the write makes customer NONE.
+DEFINE EVENT internal_machine_client_has_no_customer ON connected_client
+    WHEN $value.customer != NONE AND $value.computer != NONE
+    THEN {
+        IF $value.computer.is_internal == true {
+            UPDATE $value.id SET customer = NONE;
+        };
+    };
+
 DEFINE EVENT `update` ON connected_client
     WHEN $event = 'UPDATE'
     THEN {
