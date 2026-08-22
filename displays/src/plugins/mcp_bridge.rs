@@ -5633,6 +5633,31 @@ impl PluginToolProvider {
         created.started_at = chrono::Utc::now().into();
 
         let mut warnings: Vec<ToolWarning> = Vec::new();
+        // The registry keys on connection_string and the last writer wins, so a
+        // second session silently captures every later auto-resolved tool call.
+        if let Ok(others) = database::schema::DiagnosticSession::other_open_for_client(
+            &created.connection_string,
+            &id,
+        )
+        .await
+        {
+            if !others.is_empty() {
+                warnings.push(
+                    ToolWarning::warn(
+                        "concurrent_open_session",
+                        format!(
+                            "{} other session(s) already open on {}: {}. Tools that resolve                              the session by connection_string will now land on THIS one.",
+                            others.len(),
+                            created.connection_string,
+                            others.join(", ")
+                        ),
+                    )
+                    .with_fix(
+                        "Close the stale session, or pass session_id explicitly on every                          call so findings cannot attach to the wrong one.",
+                    ),
+                );
+            }
+        }
         if staff_computer.is_some() {
             warnings.push(ToolWarning::info(
                 "staff_machine",

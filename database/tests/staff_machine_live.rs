@@ -104,6 +104,20 @@ async fn staff_flag_covers_both_identities_and_strips_the_owner() {
         "unflagged client must not report a staff computer"
     );
 
+    let owner: Option<RecordId> = db()
+        .query("SELECT VALUE id FROM customer LIMIT 1")
+        .await
+        .expect("pick a customer")
+        .take::<Vec<RecordId>>(0)
+        .ok()
+        .and_then(|v| v.into_iter().next());
+    if let Some(owner) = &owner {
+        db().query("UPDATE connected_client:stafftest SET customer = $cust")
+            .bind(("cust", owner.clone()))
+            .await
+            .expect("seed client owner");
+    }
+
     // Flagging: the canonical row does not exist yet, so it gets minted.
     let written = set_client_internal(CS, true).await.expect("flag");
     eprintln!("flagged: {written:?}");
@@ -117,14 +131,21 @@ async fn staff_flag_covers_both_identities_and_strips_the_owner() {
     let reported = internal_computer_for_client(CS).await.expect("read").map(|i| i.key_string());
     assert_eq!(reported.as_deref(), Some(CS), "must report the canonical row");
 
-    // The DB event has to survive a writer that sets an owner anyway.
-    let owner: Option<RecordId> = db()
-        .query("SELECT VALUE id FROM customer LIMIT 1")
+    // Flagging must clear the client row too: its guard only fires on a
+    // connected_client write, which flagging the computer is not.
+    let client_owner_after_flag: Option<RecordId> = db()
+        .query("SELECT VALUE customer FROM connected_client:stafftest")
         .await
-        .expect("pick a customer")
+        .expect("read client owner")
         .take::<Vec<RecordId>>(0)
         .ok()
         .and_then(|v| v.into_iter().next());
+    assert_eq!(
+        client_owner_after_flag, None,
+        "set_client_internal left an owner on the client row"
+    );
+
+    // The DB event has to survive a writer that sets an owner anyway.
     if let Some(owner) = owner {
         for id in [&canonical, &alt] {
             db().query("UPDATE $id SET customer = $cust")

@@ -1,22 +1,29 @@
 //! Triage-dump (DumpType 4) driver-list extraction.
 //!
 //! Layout per Microsoft's `ntiodump.h` (`TRIAGE_DUMP64`, `DUMP_DRIVER_ENTRY64`,
-//! `DUMP_STRING`), cross-checked against Volatility/Rekall vtypes and the
-//! dumplib 010 template. Key facts:
+//! `DUMP_STRING`), cross-checked against Volatility/Rekall vtypes and verified
+//! byte-for-byte against Win11 build 26100 triage dumps. Key facts:
 //! - `TRIAGE_DUMP64` starts at file offset 0x2000 (right after `DMP_HEADER64`).
 //! - Every `*Offset` field is an ABSOLUTE file offset.
-//! - `DUMP_DRIVER_ENTRY64` stride is version-dependent (0x98 pre-Win8, 0xA8
-//!   Win8+) but `DriverNameOffset`(+0x00), `DllBase`(+0x38) and
-//!   `SizeOfImage`(+0x48) are version-stable.
+//! - `DUMP_DRIVER_ENTRY64` embeds a `KLDR_DATA_TABLE_ENTRY` at +0x08, putting
+//!   `DllBase` at +0x38, `SizeOfImage` at +0x48 and `BaseDllName` at +0x60.
+//!   The stride is version-dependent — 144 on Win11 24H2+, 0x98/0xA8 on older
+//!   builds — so it is derived from the list/pool gap, never assumed.
 //! - `DUMP_STRING` is `u32 Length` (UTF-16 CODE UNITS, excl. NUL) then those
 //!   units little-endian. Volatility's `_DUMP_STRING` and Rekall's
 //!   `length=lambda x: x.Length*2` agree; reading `Length` as a byte count
-//!   halves every name.
+//!   halves every name. Records are padded to an 8-byte boundary.
+//! - `BaseDllName.Buffer` is a kernel VA that does not map into the file, so
+//!   names come from the pool: via `DriverNameOffset` (+0x00) when that field
+//!   is usable, else by pool order, which runs parallel to the driver list.
 //!
 //! Every name is resolved through the string pool and validated as a module
 //! name, and every entry's `DllBase`/`SizeOfImage` must look like a loaded
 //! image, so an uninitialized `DUMP_DRIVER_ENTRY64` cannot contribute a
-//! plausible-looking driver.
+//! plausible-looking driver. A parse that survives all that is still checked
+//! against the header before it is allowed to name a culprit: entry 0 must be
+//! the kernel image and its address range must contain the header's
+//! `KdDebuggerDataBlock` and `PsLoadedModuleList`.
 
 use crate::{is_plausible_module_name, DriverEntry};
 
@@ -38,8 +45,17 @@ const TRIAGE_OPTION_OVERFLOWED: u32 = 0x0100;
 
 const DE_DLLBASE: usize = 0x38;
 const DE_SIZEOFIMAGE: usize = 0x48;
-/// Known `DUMP_DRIVER_ENTRY64` strides: pre-Win8 and Win8+.
-const KNOWN_STRIDES: [usize; 2] = [0x98, 0xA8];
+/// `BaseDllName.Length`, in bytes — the cross-check on a resolved name.
+const DE_BASE_NAME_LEN: usize = 0x60;
+/// Strides to try when the list/pool gap does not yield a usable one:
+/// pre-Win8 and Win8+.
+const FALLBACK_STRIDES: [usize; 2] = [0x98, 0xA8];
+/// A stride must at least span the embedded `KLDR_DATA_TABLE_ENTRY`.
+const MIN_STRIDE: usize = DE_BASE_NAME_LEN + 0x10;
+const MAX_STRIDE: usize = 0x400;
+
+/// `DUMP_STRING` records are padded up to this boundary.
+const POOL_RECORD_ALIGN: usize = 8;
 
 /// Sanity cap on a single driver-name `DUMP_STRING`, in UTF-16 code units.
 const MAX_NAME_CHARS: u32 = 512;
@@ -57,6 +73,7 @@ const MIN_RESOLVE_PCT_TRUNCATED: usize = 20;
 /// Absolute floor, clamped to the entry count.
 const MIN_RESOLVED: usize = 2;
 
+#[derive(Debug)]
 pub struct TriageDrivers {
     pub drivers: Vec<DriverEntry>,
     pub broken_driver: Option<String>,
@@ -88,6 +105,10 @@ impl StringPool {
     }
 }
 
+fn u16_at(buf: &[u8], off: usize) -> Option<u16> {
+    buf.get(off..off + 2).map(|b| u16::from_le_bytes(b.try_into().unwrap()))
+}
+
 fn u32_at(buf: &[u8], off: usize) -> Option<u32> {
     buf.get(off..off + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()))
 }
@@ -108,10 +129,17 @@ fn decode_utf16_at(data: &[u8], off: usize, len_bytes: usize) -> Option<String> 
     (!s.is_empty()).then_some(s)
 }
 
+/// A `DUMP_STRING` decoded out of the pool.
+struct PoolString {
+    text: String,
+    /// Bytes the record occupies, padded — how far to step for the next one.
+    record_len: usize,
+}
+
 /// Read a `DUMP_STRING` that must live inside `pool` and name a module.
 /// `Length` is a code-unit count; the byte-count reading is tried as a
 /// fallback for any producer that wrote one.
-fn dump_string_at(data: &[u8], off: usize, pool: &StringPool) -> Option<String> {
+fn dump_string_at(data: &[u8], off: usize, pool: &StringPool) -> Option<PoolString> {
     if off % 2 != 0 || !pool.holds(off, 4) {
         return None;
     }
@@ -122,8 +150,83 @@ fn dump_string_at(data: &[u8], off: usize, pool: &StringPool) -> Option<String> 
     [units as usize * 2, units as usize]
         .into_iter()
         .filter(|len| *len % 2 == 0 && pool.holds(off, 4 + *len))
-        .filter_map(|len| decode_utf16_at(data, off, len))
-        .find(|s| is_plausible_module_name(s))
+        .find_map(|len| {
+            let text = decode_utf16_at(data, off, len)?;
+            is_plausible_module_name(&text).then(|| PoolString {
+                text,
+                record_len: (4 + len + 2).next_multiple_of(POOL_RECORD_ALIGN),
+            })
+        })
+}
+
+/// Name of each entry taken from its `DriverNameOffset` (+0x00), the absolute
+/// pool offset the kernel writes per entry.
+fn names_by_offset(
+    data: &[u8],
+    list: usize,
+    count: usize,
+    stride: usize,
+    pool: &StringPool,
+) -> Vec<Option<String>> {
+    (0..count)
+        .map(|i| {
+            let name_off = u32_at(data, list + i * stride)? as usize;
+            dump_string_at(data, name_off, pool).map(|s| s.text)
+        })
+        .collect()
+}
+
+/// Name of each entry taken from pool order: the pool holds one record per
+/// driver in driver-list order, so record `i` belongs to entry `i`. Used when
+/// `DriverNameOffset` is unusable, and only once `BaseDllName.Length`
+/// corroborates the alignment.
+fn names_by_pool_order(data: &[u8], count: usize, pool: &StringPool) -> Vec<Option<String>> {
+    let mut out = Vec::with_capacity(count);
+    let mut cur = pool.off;
+    while out.len() < count {
+        match dump_string_at(data, cur, pool) {
+            Some(s) => {
+                cur += s.record_len;
+                out.push(Some(s.text));
+            }
+            None => break,
+        }
+    }
+    out.resize(count, None);
+    out
+}
+
+/// How many resolved names agree with the entry's own `BaseDllName.Length`,
+/// as `(checked, agreed)`. Entries with no length field recorded are not
+/// counted either way.
+fn corroborate_names(
+    data: &[u8],
+    list: usize,
+    count: usize,
+    stride: usize,
+    names: &[Option<String>],
+) -> (usize, usize) {
+    let mut checked = 0;
+    let mut agreed = 0;
+    for i in 0..count {
+        let Some(name) = names.get(i).and_then(Option::as_ref) else { continue };
+        let Some(len) = u16_at(data, list + i * stride + DE_BASE_NAME_LEN) else { continue };
+        if len == 0 {
+            continue;
+        }
+        checked += 1;
+        // BaseDllName counts the basename only.
+        let base_units: usize = name
+            .rsplit(['\\', '/'])
+            .next()
+            .unwrap_or(name)
+            .encode_utf16()
+            .count();
+        if len as usize == base_units * 2 {
+            agreed += 1;
+        }
+    }
+    (checked, agreed)
 }
 
 /// Basename of an NT path, lowercased.
@@ -140,34 +243,101 @@ fn plausible_image(base: u64, size: u64) -> bool {
         && size % PAGE == 0
 }
 
-/// Entries at `stride` whose name resolves in `pool` and whose image bounds
-/// are plausible. Used both to score a candidate stride and to emit.
+/// Entries at `stride` paired with `names`, keeping the driver-list index so
+/// the header cross-check can find entry 0 after unresolvable rows drop out.
+/// Used both to score a candidate stride and to emit.
 fn resolve_entries(
     data: &[u8],
     list: usize,
     count: usize,
     stride: usize,
-    pool: &StringPool,
-) -> Vec<DriverEntry> {
+    names: &[Option<String>],
+) -> Vec<(usize, DriverEntry)> {
     let mut out = Vec::new();
     for i in 0..count {
         let entry = list + i * stride;
-        let Some(name_off) = u32_at(data, entry) else { break };
-        let Some(path) = dump_string_at(data, name_off as usize, pool) else { continue };
+        let Some(path) = names.get(i).and_then(Option::as_ref) else { continue };
         let base = u64_at(data, entry + DE_DLLBASE).unwrap_or(0);
         let size = u32_at(data, entry + DE_SIZEOFIMAGE).unwrap_or(0) as u64;
         if !plausible_image(base, size) {
             continue;
         }
-        out.push(DriverEntry {
-            name: nt_basename(&path),
-            path,
-            base,
-            size,
-            timestamp: None,
-        });
+        out.push((
+            i,
+            DriverEntry {
+                name: nt_basename(path),
+                path: path.clone(),
+                base,
+                size,
+                timestamp: None,
+            },
+        ));
     }
     out
+}
+
+/// Resolve the driver list at one candidate stride, preferring the per-entry
+/// `DriverNameOffset` and falling back to pool order only when the entries'
+/// own `BaseDllName.Length` fields corroborate that mapping.
+fn resolve_at_stride(
+    data: &[u8],
+    list: usize,
+    count: usize,
+    stride: usize,
+    pool: &StringPool,
+) -> Vec<(usize, DriverEntry)> {
+    let by_offset = names_by_offset(data, list, count, stride, pool);
+    let resolved = resolve_entries(data, list, count, stride, &by_offset);
+    if resolved.len() == count {
+        return resolved;
+    }
+
+    let by_order = names_by_pool_order(data, count, pool);
+    let (checked, agreed) = corroborate_names(data, list, count, stride, &by_order);
+    if checked == 0 || agreed != checked {
+        return resolved;
+    }
+    let positional = resolve_entries(data, list, count, stride, &by_order);
+    if positional.len() > resolved.len() {
+        positional
+    } else {
+        resolved
+    }
+}
+
+/// Reject a parse whose entry 0 is not the kernel image covering the header's
+/// `KdDebuggerDataBlock` / `PsLoadedModuleList`. Both anchors sit inside
+/// ntoskrnl, so a stride or field offset that is out of phase fails here
+/// instead of naming an innocent driver.
+fn validate_against_header(data: &[u8], entries: &[(usize, DriverEntry)]) -> Result<(), String> {
+    let Some((idx, nt)) = entries.first() else {
+        return Err("driver list resolved no entries".into());
+    };
+    if *idx != 0 {
+        return Err(format!(
+            "driver-list entry 0 did not resolve (first resolved index {idx}) — field offsets are wrong"
+        ));
+    }
+    if !crate::is_kernel_image(&nt.name) {
+        return Err(format!(
+            "driver-list entry 0 is {:?}, expected the kernel image — field offsets are wrong",
+            nt.name
+        ));
+    }
+    let span = nt.base..nt.base.saturating_add(nt.size);
+    for (label, va) in [
+        ("PsLoadedModuleList", u64_at(data, 0x20).unwrap_or(0)),
+        ("KdDebuggerDataBlock", u64_at(data, 0x80).unwrap_or(0)),
+    ] {
+        // Zero means the producer recorded no anchor.
+        if va != 0 && !span.contains(&va) {
+            return Err(format!(
+                "{label} {va:#x} lies outside {} {:#x}..{:#x} — field offsets are wrong",
+                nt.name, span.start, span.end
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Parse the serialized driver list of a triage dump. `data` must contain the
@@ -203,38 +373,39 @@ pub fn parse_triage_drivers(data: &[u8]) -> Result<TriageDrivers, String> {
     }
     let pool = StringPool::new(pool_off, pool_size);
 
-    // Stride varies by Windows version; prefer the value derived from the gap
-    // between list and pool, then take whichever candidate resolves the most
-    // entries outright.
-    let derived = (pool_off > list).then(|| (pool_off - list) / count);
-    let mut candidates: Vec<usize> = Vec::new();
-    if let Some(d) = derived {
-        if KNOWN_STRIDES.contains(&d) {
-            candidates.push(d);
-        }
-    }
-    for s in KNOWN_STRIDES {
+    // Measured from the list/pool gap, not matched against a table of strides.
+    let derived = (pool_off > list)
+        .then(|| (pool_off - list) / count)
+        .filter(|d| (MIN_STRIDE..=MAX_STRIDE).contains(d));
+    let mut candidates: Vec<usize> = derived.into_iter().collect();
+    for s in FALLBACK_STRIDES {
         if !candidates.contains(&s) {
             candidates.push(s);
         }
     }
 
-    let mut drivers: Vec<DriverEntry> = Vec::new();
+    let mut entries: Vec<(usize, DriverEntry)> = Vec::new();
     for stride in candidates {
-        let resolved = resolve_entries(data, list, count, stride, &pool);
-        if resolved.len() > drivers.len() {
-            drivers = resolved;
+        let resolved = resolve_at_stride(data, list, count, stride, &pool);
+        if resolved.len() > entries.len() {
+            entries = resolved;
+        }
+        if entries.len() == count {
+            break;
         }
     }
 
     let floor_pct = if truncated { MIN_RESOLVE_PCT_TRUNCATED } else { MIN_RESOLVE_PCT };
     let floor_count = MIN_RESOLVED.min(count);
-    if drivers.len() < floor_count || drivers.len() * 100 < count * floor_pct {
+    if entries.len() < floor_count || entries.len() * 100 < count * floor_pct {
         return Err(format!(
             "driver list did not resolve ({} of {count} entries, need {floor_pct}% and {floor_count})",
-            drivers.len()
+            entries.len()
         ));
     }
+    validate_against_header(data, &entries)?;
+
+    let mut drivers: Vec<DriverEntry> = entries.into_iter().map(|(_, d)| d).collect();
     drivers.sort_by(|a, b| a.base.cmp(&b.base));
 
     // BrokenDriverOffset points at a DUMP_DRIVER_ENTRY64 for the blamed driver.
@@ -242,7 +413,7 @@ pub fn parse_triage_drivers(data: &[u8]) -> Result<TriageDrivers, String> {
         .then(|| u32_at(data, broken_off))
         .flatten()
         .and_then(|name_off| dump_string_at(data, name_off as usize, &pool))
-        .map(|p| nt_basename(&p));
+        .map(|p| nt_basename(&p.text));
 
     // Crashing thread's saved kernel stack, for a scanned-frame backtrace.
     let call_stack = {
@@ -522,5 +693,262 @@ mod tests {
         put_u32(&mut buf, broken_entry, 0x3000);
         let t = parse_triage_drivers(&buf).unwrap();
         assert_eq!(t.broken_driver, None);
+    }
+
+    /// Win11 24H2+ (build 26100/26200) triage layout, reproduced from real
+    /// `C:\Windows\Minidump` dumps: 144-byte entries embedding a
+    /// `KLDR_DATA_TABLE_ENTRY` at +0x08, absolute offsets, and a string pool of
+    /// base-name `DUMP_STRING`s padded to 8 bytes.
+    mod build_26100 {
+        use super::*;
+
+        pub const STRIDE_26100: usize = 144;
+        pub const NT_BASE_26100: u64 = 0xFFFF_F807_9540_0000;
+        pub const NT_SIZE_26100: u64 = 0x0145_0000;
+        /// Both anchors sit inside ntoskrnl, as they do in a real dump.
+        pub const PS_LOADED_MODULE_LIST: u64 = NT_BASE_26100 + 0x00EF_51D0;
+        pub const KD_DEBUGGER_DATA_BLOCK: u64 = NT_BASE_26100 + 0x00E0_1040;
+        pub const CULPRIT: &str = "rcbottom.sys";
+        pub const CULPRIT_BASE: u64 = 0xFFFF_F807_A100_0000;
+        pub const CULPRIT_SIZE: u64 = 0x0001_2000;
+
+        pub fn modules() -> Vec<(&'static str, u64, u64)> {
+            vec![
+                ("ntoskrnl.exe", NT_BASE_26100, NT_SIZE_26100),
+                ("hal.dll", 0xFFFF_F807_96C0_0000, 0x6000),
+                ("kdcom.dll", 0xFFFF_F807_26E0_0000, 0xB000),
+                ("mcupdate.dll", 0xFFFF_F807_9700_0000, 0x9_0000),
+                ("Ntfs.sys", 0xFFFF_F807_9800_0000, 0x20_0000),
+                (CULPRIT, CULPRIT_BASE, CULPRIT_SIZE),
+            ]
+        }
+
+        /// Write a pool record: u32 code-unit count, the units, a NUL, padded
+        /// up to the 8-byte boundary the kernel aligns records to.
+        fn write_pool_record(buf: &mut [u8], cursor: &mut usize, s: &str) -> u32 {
+            let start = *cursor;
+            let units: Vec<u16> = s.encode_utf16().collect();
+            put_u32(buf, *cursor, units.len() as u32);
+            *cursor += 4;
+            for u in &units {
+                buf[*cursor..*cursor + 2].copy_from_slice(&u.to_le_bytes());
+                *cursor += 2;
+            }
+            *cursor += 2;
+            *cursor = start + (*cursor - start).next_multiple_of(8);
+            start as u32
+        }
+
+        /// Build a build-26100-shaped triage dump. `rip` lands wherever the
+        /// caller wants blame to fall.
+        pub fn fixture(rip: u64) -> Vec<u8> {
+            let mods = modules();
+            let mut buf = vec![0u8; 0x1_0000];
+            buf[..4].copy_from_slice(b"PAGE");
+            buf[4..8].copy_from_slice(b"DU64");
+            put_u64(&mut buf, 0x20, PS_LOADED_MODULE_LIST);
+            put_u32(&mut buf, 0x30, 0x8664);
+            put_u32(&mut buf, 0x38, 0xD1);
+            put_u64(&mut buf, 0x80, KD_DEBUGGER_DATA_BLOCK);
+            put_u64(&mut buf, 0x348 + 0xF8, rip);
+            put_u32(&mut buf, 0xF98, 4);
+
+            let list = 0x2100usize;
+            let count = mods.len();
+            let pool = list + count * STRIDE_26100;
+            let pool_size = 0x200usize;
+
+            let valid_off = 0x20F0usize;
+            put_u32(&mut buf, 0x2000 + T_VALID_OFFSET, valid_off as u32);
+            buf[valid_off..valid_off + 4].copy_from_slice(b"TRGD");
+            put_u32(&mut buf, 0x2000 + T_DRIVER_LIST_OFFSET, list as u32);
+            put_u32(&mut buf, 0x2000 + T_DRIVER_COUNT, count as u32);
+            put_u32(&mut buf, 0x2000 + T_STRING_POOL_OFFSET, pool as u32);
+            put_u32(&mut buf, 0x2000 + T_STRING_POOL_SIZE, pool_size as u32);
+
+            let mut cursor = pool;
+            for (i, (name, base, size)) in mods.iter().enumerate() {
+                let name_off = write_pool_record(&mut buf, &mut cursor, name);
+                let entry = list + i * STRIDE_26100;
+                put_u32(&mut buf, entry, name_off);
+                put_u64(&mut buf, entry + DE_DLLBASE, *base);
+                put_u64(&mut buf, entry + 0x40, *base); // EntryPoint
+                put_u32(&mut buf, entry + DE_SIZEOFIMAGE, *size as u32);
+                // BaseDllName UNICODE_STRING: byte lengths, then a kernel-VA Buffer.
+                let bytes = (name.encode_utf16().count() * 2) as u16;
+                buf[entry + DE_BASE_NAME_LEN..entry + DE_BASE_NAME_LEN + 2]
+                    .copy_from_slice(&bytes.to_le_bytes());
+                buf[entry + DE_BASE_NAME_LEN + 2..entry + DE_BASE_NAME_LEN + 4]
+                    .copy_from_slice(&bytes.to_le_bytes());
+                put_u64(&mut buf, entry + 0x68, 0xFFFF_9883_1069_FD80);
+            }
+            assert!(cursor - pool <= pool_size, "pool overflowed the declared size");
+            buf
+        }
+    }
+    use build_26100::*;
+
+    /// The shipped regression: a 144-byte stride was not in the stride table,
+    /// so every field landed out of phase and the driver list came back empty.
+    #[test]
+    fn parses_build_26100_triage_layout() {
+        let buf = fixture(CULPRIT_BASE + 0x1234);
+        let t = parse_triage_drivers(&buf).unwrap();
+        assert_eq!(t.drivers.len(), modules().len(), "every entry must resolve");
+        let names: Vec<&str> = t.drivers.iter().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"ntoskrnl.exe"), "{names:?}");
+        assert!(names.contains(&CULPRIT), "{names:?}");
+        let nt = t.drivers.iter().find(|d| d.name == "ntoskrnl.exe").unwrap();
+        assert_eq!(nt.base, NT_BASE_26100);
+        assert_eq!(nt.size, NT_SIZE_26100);
+    }
+
+    /// The stride is measured from the list/pool gap, so a value absent from
+    /// the fallback table still parses.
+    #[test]
+    fn stride_is_derived_not_matched_against_a_table() {
+        assert!(!FALLBACK_STRIDES.contains(&STRIDE_26100));
+        let buf = fixture(CULPRIT_BASE);
+        assert_eq!(parse_triage_drivers(&buf).unwrap().drivers.len(), modules().len());
+    }
+
+    /// End to end, a 0xD1 whose RIP is inside a third-party driver names it —
+    /// the case that previously reported no blame at all.
+    #[test]
+    fn build_26100_dump_blames_the_driver_at_rip() {
+        let triage = crate::analyze_prefix(&fixture(CULPRIT_BASE + 0x1234)).unwrap();
+        assert_eq!(triage.bugcheck_code, "0xd1");
+        assert_eq!(triage.rip_module.as_deref(), Some(CULPRIT));
+        assert_eq!(triage.blamed_module.as_deref(), Some(CULPRIT));
+        assert!(!triage.rip_in_kernel_image);
+        assert_eq!(triage.drivers.len(), modules().len());
+        assert!(triage.warnings.is_empty(), "{:?}", triage.warnings);
+    }
+
+    /// Guard: nt's range must contain the header's anchors. An out-of-phase
+    /// parse puts nt somewhere else, and blame from it would be fiction.
+    #[test]
+    fn anchors_outside_the_kernel_image_reject_the_parse() {
+        for anchor in [0x20usize, 0x80] {
+            let mut buf = fixture(CULPRIT_BASE);
+            put_u64(&mut buf, anchor, NT_BASE_26100 + NT_SIZE_26100 + 0x1000);
+            let err = parse_triage_drivers(&buf).unwrap_err();
+            assert!(
+                err.contains("field offsets are wrong"),
+                "anchor {anchor:#x} should be rejected, got {err:?}"
+            );
+        }
+    }
+
+    /// Guard: entry 0 of a triage driver list is always the kernel image.
+    #[test]
+    fn non_kernel_first_entry_rejects_the_parse() {
+        let mut buf = fixture(CULPRIT_BASE);
+        // Swap entry 0's name for a driver's, leaving the anchors alone.
+        let list = 0x2100usize;
+        let culprit_name_off = u32_at(&buf, list + 5 * STRIDE_26100).unwrap();
+        put_u32(&mut buf, list, culprit_name_off);
+        let err = parse_triage_drivers(&buf).unwrap_err();
+        assert!(err.contains("expected the kernel image"), "got {err:?}");
+    }
+
+    /// `BaseDllName.Buffer` is a kernel VA, so when `DriverNameOffset` is junk
+    /// the names come from pool order — accepted only because every entry's
+    /// `BaseDllName.Length` matches the record it is paired with.
+    #[test]
+    fn pool_order_resolves_names_when_offsets_are_unusable() {
+        let mut buf = fixture(CULPRIT_BASE + 0x1234);
+        let list = 0x2100usize;
+        for i in 0..modules().len() {
+            put_u32(&mut buf, list + i * STRIDE_26100, 0xDEAD_BEEF);
+        }
+        let t = parse_triage_drivers(&buf).unwrap();
+        assert_eq!(t.drivers.len(), modules().len());
+        let by_base: Vec<&str> = {
+            let mut v: Vec<&DriverEntry> = t.drivers.iter().collect();
+            v.sort_by_key(|d| d.base);
+            v.into_iter().map(|d| d.name.as_str()).collect()
+        };
+        assert!(by_base.contains(&CULPRIT), "{by_base:?}");
+    }
+
+    /// Pool order is not trusted on its own: with the corroborating
+    /// `BaseDllName.Length` fields cleared, junk offsets fail rather than
+    /// pairing names with whatever entry happens to sit at that index.
+    #[test]
+    fn pool_order_is_rejected_without_length_corroboration() {
+        let mut buf = fixture(CULPRIT_BASE);
+        let list = 0x2100usize;
+        for i in 0..modules().len() {
+            put_u32(&mut buf, list + i * STRIDE_26100, 0xDEAD_BEEF);
+            put_u32(&mut buf, list + i * STRIDE_26100 + DE_BASE_NAME_LEN, 0);
+        }
+        assert!(parse_triage_drivers(&buf).is_err());
+    }
+
+    /// A name paired with the wrong entry is caught by the length cross-check.
+    #[test]
+    fn length_cross_check_catches_an_off_by_one_pairing() {
+        let mut buf = fixture(CULPRIT_BASE);
+        let list = 0x2100usize;
+        let mods = modules();
+        for i in 0..mods.len() {
+            put_u32(&mut buf, list + i * STRIDE_26100, 0xDEAD_BEEF);
+            // Shift each entry's declared name length one slot along.
+            let wrong = (mods[(i + 1) % mods.len()].0.encode_utf16().count() * 2) as u16;
+            buf[list + i * STRIDE_26100 + DE_BASE_NAME_LEN
+                ..list + i * STRIDE_26100 + DE_BASE_NAME_LEN + 2]
+                .copy_from_slice(&wrong.to_le_bytes());
+        }
+        assert!(parse_triage_drivers(&buf).is_err());
+    }
+
+    /// An unreadable driver list must say so. An empty `drivers` with no
+    /// warning reads as "no third-party driver involved", which is how a
+    /// driver-caused BSOD got filed as unattributed.
+    #[test]
+    fn unreadable_driver_list_warns_instead_of_reporting_no_drivers() {
+        let mut buf = fixture(CULPRIT_BASE);
+        // Point the driver list at the PAGE padding the old parser read.
+        put_u32(&mut buf, 0x2000 + T_DRIVER_LIST_OFFSET, 0x1000);
+        let triage = crate::analyze_prefix(&buf).unwrap();
+        assert!(triage.drivers.is_empty());
+        assert_eq!(triage.blamed_module, None);
+        assert_eq!(triage.warnings.len(), 1, "{:?}", triage.warnings);
+        assert!(
+            triage.warnings[0].contains("not an absence of third-party drivers"),
+            "{:?}",
+            triage.warnings
+        );
+    }
+
+    /// Opt-in pass over real `C:\Windows\Minidump` dumps:
+    /// `DUMP_TRIAGE_TEST_DUMPS=<dir> cargo test -p dump-triage -- --ignored`
+    #[test]
+    #[ignore = "needs real dumps; set DUMP_TRIAGE_TEST_DUMPS"]
+    fn real_triage_dumps_resolve_their_driver_lists() {
+        let Ok(dir) = std::env::var("DUMP_TRIAGE_TEST_DUMPS") else {
+            panic!("set DUMP_TRIAGE_TEST_DUMPS to a directory of .dmp files");
+        };
+        let mut checked = 0;
+        for entry in std::fs::read_dir(&dir).expect("read dump dir") {
+            let path = entry.expect("dir entry").path();
+            if path.extension().is_none_or(|e| !e.eq_ignore_ascii_case("dmp")) {
+                continue;
+            }
+            let triage = crate::analyze_file(&path).expect("analyze");
+            if triage.dump_type != 4 {
+                continue;
+            }
+            checked += 1;
+            assert!(triage.warnings.is_empty(), "{path:?}: {:?}", triage.warnings);
+            assert!(!triage.drivers.is_empty(), "{path:?}: empty driver list");
+            assert!(
+                triage.drivers.iter().any(|d| crate::is_kernel_image(&d.name)),
+                "{path:?}: no kernel image in the driver list"
+            );
+            assert!(triage.rip_module.is_some(), "{path:?}: RIP matched no module");
+        }
+        assert!(checked > 0, "no DumpType 4 dumps found in {dir}");
     }
 }

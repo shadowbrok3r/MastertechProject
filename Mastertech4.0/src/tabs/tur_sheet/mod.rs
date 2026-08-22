@@ -14,6 +14,7 @@ pub mod get_ticket;
 pub mod submit_tur_mtech;
 pub mod scaffold;
 pub mod presta_api;
+pub mod assist_progress;
 pub mod assist_prompt;
 
 impl MastertechContext {

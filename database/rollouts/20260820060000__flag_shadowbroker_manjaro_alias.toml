@@ -1,0 +1,26 @@
+# Last of Logan's own identities. No computer row exists for this key, so it is
+# minted pre-flagged; an unflagged key is what lets the next check-in create the
+# row and adopt whichever customer the tech was servicing.
+id = "20260820060000__flag_shadowbroker_manjaro_alias"
+name = "flag_shadowbroker_manjaro_alias"
+state = "completed"
+source_schema_hash = "2da2bd892429d154a53efb65fe5c7f10e480f5aee5864b263b6e34060caee038"
+target_schema_hash = "2da2bd892429d154a53efb65fe5c7f10e480f5aee5864b263b6e34060caee038"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "mint_flagged_shadowbroker_manjaro_alias"
+phase = "start"
+kind = "run_sql"
+sql = """
+UPSERT computer:`shadowbrokerManjaro:d40e1e3a7` SET hostname = 'shadowbrokerManjaro', is_internal = true;
+"""
+
+[[steps]]
+id = "remove_flagged_shadowbroker_manjaro_alias"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+DELETE computer:`shadowbrokerManjaro:d40e1e3a7`;
+"""

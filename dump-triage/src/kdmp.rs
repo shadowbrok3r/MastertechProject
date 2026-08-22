@@ -80,6 +80,6 @@ pub fn crash_detail(
 
     Ok((
         modules,
-        KernelExtras { scanned_stack, rip_region, rsp_region },
+        KernelExtras { scanned_stack, rip_region, rsp_region, warnings: Vec::new() },
     ))
 }

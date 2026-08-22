@@ -27,6 +27,29 @@ impl MasterTechApp{
             });
         }
 
+        if self.context.show_assist_viewport.load(Ordering::Relaxed) {
+            // Immediate: AssistProgress owns crossbeam channels and is polled
+            // from the same context the tech's tab uses.
+            let viewport_id = ViewportId::from_hash_of("assist_progress_viewport");
+            let viewport_builder = ViewportBuilder::default()
+                .with_title("AI diagnostic")
+                .with_inner_size([520.0, 620.0]);
+            let show_assist_viewport = self.context.show_assist_viewport.clone();
+            ctx.show_viewport_immediate(viewport_id, viewport_builder, |ctx, _class| {
+                CentralPanel::default().show(ctx, |ui| {
+                    match self.context.assist_progress.as_mut() {
+                        Some(progress) => progress.ui(ui),
+                        None => {
+                            ui.label("No AI diagnostic is running.");
+                        }
+                    }
+                });
+                if ctx.input(|i| i.viewport().close_requested()) {
+                    show_assist_viewport.store(false, Ordering::Relaxed);
+                }
+            });
+        }
+
         if self.context.show_terminal_viewport.load(Ordering::Relaxed) {
             // EmbeddedTerminal holds Rc/RefCell state and is not Send, so it
             // renders through an immediate viewport rather than a deferred one.

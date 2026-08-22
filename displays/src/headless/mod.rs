@@ -179,9 +179,15 @@ fn mark_connected(connection_string: &str) {
     });
 }
 
+/// Newest-first so the session cap keeps the machines most likely to be live
+/// rather than an arbitrary subset. No staleness bound here on purpose: the
+/// heartbeat is every 15 minutes and axum_server's sweep already clears
+/// `connected` past 30, whose generosity is what stops one missed write from
+/// dropping a healthy agent.
 async fn roster() -> Vec<database::schema::ConnectedClient> {
-    let sql = "SELECT * FROM connected_client WHERE connected = true \
-               AND client_kind = 'machine' LIMIT $cap";
+    let sql = "SELECT * FROM connected_client \
+               WHERE connected = true AND client_kind = 'machine' \
+               ORDER BY last_update DESC LIMIT $cap";
     match database::db().query(sql).bind(("cap", max_sessions() as i64)).await {
         Ok(mut res) => res.take(0).unwrap_or_default(),
         Err(e) => {

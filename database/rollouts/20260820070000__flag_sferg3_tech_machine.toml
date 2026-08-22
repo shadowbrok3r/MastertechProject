@@ -1,0 +1,28 @@
+# SFERG3-SLC-DT confirmed a tech machine by Logan. Invisible to the
+# distinct-customers heuristic (1 order, 1 customer), so only local knowledge
+# finds this class. The computer-side guard fires on write; the client row needs
+# clearing explicitly because nothing writes to it here.
+id = "20260820070000__flag_sferg3_tech_machine"
+name = "flag_sferg3_tech_machine"
+state = "completed"
+source_schema_hash = "2da2bd892429d154a53efb65fe5c7f10e480f5aee5864b263b6e34060caee038"
+target_schema_hash = "2da2bd892429d154a53efb65fe5c7f10e480f5aee5864b263b6e34060caee038"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "flag_sferg3"
+phase = "start"
+kind = "run_sql"
+sql = """
+UPDATE computer:`SFERG3-SLC-DT:a12df6310` SET is_internal = true;
+UPDATE connected_client SET customer = NONE WHERE connection_string = 'SFERG3-SLC-DT:a12df6310' AND customer != NONE;
+"""
+
+[[steps]]
+id = "unflag_sferg3"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+UPDATE computer:`SFERG3-SLC-DT:a12df6310` SET is_internal = NONE;
+"""

@@ -297,6 +297,30 @@ impl DiagnosticSession {
         Ok(created.map(|c| c.id).unwrap_or(s.id))
     }
 
+    /// Other sessions still open on the same client, newest first.
+    pub async fn other_open_for_client(
+        connection_string: &str,
+        exclude: &RecordId,
+    ) -> anyhow::Result<Vec<String>> {
+        use super::RecordIdExt;
+
+        let mut res = db()
+            .query(
+                "SELECT id, started_at FROM diagnostic_session                  WHERE connection_string = $cs AND status = 'open' AND id != $exclude                  ORDER BY started_at DESC LIMIT 5",
+            )
+            .bind(("cs", connection_string.to_string()))
+            .bind(("exclude", exclude.clone()))
+            .await?;
+        let rows: Vec<serde_json::Value> = res.take(0).unwrap_or_default();
+        Ok(rows
+            .iter()
+            .filter_map(|r| r.get("id").and_then(serde_json::Value::as_str))
+            .map(|s| {
+                super::entity_link::parse_record_id(s, super::DIAGNOSTIC_SESSION_TABLE).key_string()
+            })
+            .collect())
+    }
+
     pub async fn close(session_id: &str, status: &str, summary: &str, tags: Option<&[String]>) -> anyhow::Result<()> {
         let sid = RecordId::new(super::DIAGNOSTIC_SESSION_TABLE, session_id);
         let mut query_str = String::from(

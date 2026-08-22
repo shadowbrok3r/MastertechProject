@@ -223,6 +223,17 @@ impl MastertechContext {
         // The confirmation is the ground truth the auto-link event cannot infer.
         self.create_and_link_only();
 
+        // Give the tech something to watch: the first run took seven minutes
+        // to open its session, with nothing on screen in the meantime.
+        self.assist_progress = Some(
+            crate::tabs::tur_sheet::assist_progress::AssistProgress::new(
+                self.client_title.clone(),
+                pending.service_number.clone(),
+            ),
+        );
+        self.show_assist_viewport
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+
         let connection_string = crate::filesystem::get_client_hash().connection_string;
         let computer = crate::filesystem::local_computer_record();
         let store = user.get_store();

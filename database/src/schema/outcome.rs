@@ -578,6 +578,18 @@ pub async fn set_client_internal(
         set_computer_internal(&canonical, true).await?;
         written.push(canonical.key_string());
     }
+
+    // The client-row guard fires on a connected_client write, and flagging the
+    // computer is not one, so the owner would survive there.
+    if internal {
+        db()
+            .query(
+                "UPDATE connected_client SET customer = NONE \
+                 WHERE connection_string = $cs AND customer != NONE",
+            )
+            .bind(("cs", cs.clone()))
+            .await?;
+    }
     Ok(written)
 }
 

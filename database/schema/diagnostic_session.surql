@@ -21,7 +21,7 @@ DEFINE FIELD outcome_override_reason ON diagnostic_session TYPE none | string   
 DEFINE FIELD requested_by      ON diagnostic_session TYPE none | string                    PERMISSIONS FULL;
 DEFINE FIELD service_order     ON diagnostic_session TYPE none | record<service_order>     PERMISSIONS FULL;
 DEFINE FIELD started_at        ON diagnostic_session TYPE datetime DEFAULT time::now()      PERMISSIONS FULL;
-DEFINE FIELD status            ON diagnostic_session TYPE string ASSERT $value IN ['open', 'resolved', 'escalated'] PERMISSIONS FULL;
+DEFINE FIELD status            ON diagnostic_session TYPE string ASSERT $value IN ['open', 'resolved', 'escalated', 'abandoned'] PERMISSIONS FULL;
 DEFINE FIELD store             ON diagnostic_session TYPE none | string                    PERMISSIONS FULL;
 DEFINE FIELD summary           ON diagnostic_session TYPE none | string                    PERMISSIONS FULL;
 DEFINE FIELD tags              ON diagnostic_session TYPE array<string>                    PERMISSIONS FULL;

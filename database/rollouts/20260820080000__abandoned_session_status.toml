@@ -1,0 +1,39 @@
+# Nothing closed a session whose agent turn died, so 38 of 101 sat open (oldest
+# ten days) and the outcome engine could not see any of them: it scores only
+# resolved and escalated. A guessed verdict would invent a fix nobody confirmed,
+# so this adds a terminal status the engine already ignores, then sweeps the
+# backlog. axum_server's stale_session_sweep keeps it swept hourly.
+id = "20260820080000__abandoned_session_status"
+name = "abandoned_session_status"
+state = "completed"
+source_schema_hash = "2da2bd892429d154a53efb65fe5c7f10e480f5aee5864b263b6e34060caee038"
+target_schema_hash = "855bfe87c3a6108787e4b78ad402cdc12a2d1a96e6be2d94305cea83fe7a0aeb"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "allow_abandoned_status"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE status ON diagnostic_session TYPE string ASSERT $value IN ['open', 'resolved', 'escalated', 'abandoned'] PERMISSIONS FULL;
+"""
+
+# Define before data: an UPDATE that violates the old ASSERT fails the whole
+# statement silently.
+[[steps]]
+id = "sweep_stale_open_sessions"
+phase = "start"
+kind = "run_sql"
+sql = """
+UPDATE diagnostic_session SET status = 'abandoned', ended_at = time::now() WHERE status = 'open' AND started_at < time::now() - 2d;
+"""
+
+[[steps]]
+id = "revert_abandoned_status"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+UPDATE diagnostic_session SET status = 'open', ended_at = NONE WHERE status = 'abandoned';
+DEFINE FIELD OVERWRITE status ON diagnostic_session TYPE string ASSERT $value IN ['open', 'resolved', 'escalated'] PERMISSIONS FULL;
+"""

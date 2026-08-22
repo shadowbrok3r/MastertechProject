@@ -485,7 +485,9 @@ mod tests {
     // bump deliberately when the dump-triage result contract changes.
     #[test]
     fn kernel_dump_triage_shape_fp_pin() {
-        assert_eq!(shape_fingerprint::<dump_triage::KernelDumpTriage>(), 0xb781_c1ff_bb63_6a2d);
+        // Bumped for the additive `warnings` field, which reports an
+        // unreadable triage driver list instead of an empty `drivers`.
+        assert_eq!(shape_fingerprint::<dump_triage::KernelDumpTriage>(), 0x1922_2958_e78a_0db3);
     }
 
     #[derive(Facet)]

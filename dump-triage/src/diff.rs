@@ -141,6 +141,7 @@ mod tests {
             scanned_stack: Vec::new(),
             rip_region: None,
             rsp_region: None,
+            warnings: Vec::new(),
         }
     }
 

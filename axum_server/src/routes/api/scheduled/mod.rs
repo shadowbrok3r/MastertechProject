@@ -12,6 +12,7 @@ use anyhow::Result;
 use tokio_cron_scheduler::JobScheduler;
 
 pub mod heartbeat_sweep;
+pub mod stale_session_sweep;
 
 /// Build and start a single [`JobScheduler`] with every cron registered.
 ///
@@ -21,7 +22,8 @@ pub mod heartbeat_sweep;
 pub async fn spawn_cron_scheduler() -> Result<JobScheduler> {
     let sched = JobScheduler::new().await?;
     heartbeat_sweep::register(&sched).await?;
+    stale_session_sweep::register(&sched).await?;
     sched.start().await?;
-    log::info!("axum_server -> cron scheduler started ({} job(s))", 1);
+    log::info!("axum_server -> cron scheduler started ({} job(s))", 2);
     Ok(sched)
 }

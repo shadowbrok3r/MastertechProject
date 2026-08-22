@@ -65,6 +65,8 @@ pub struct KernelExtras {
     pub scanned_stack: Vec<ScannedFrame>,
     pub rip_region: Option<HexRegion>,
     pub rsp_region: Option<HexRegion>,
+    /// Non-fatal parse failures to surface on the result.
+    pub warnings: Vec<String>,
 }
 
 /// Scan a little-endian buffer for 8-byte values that fall inside a module's
@@ -175,6 +177,11 @@ pub struct KernelDumpTriage {
     /// Raw bytes at RSP (full/BMP/live dumps only).
     #[serde(default)]
     pub rsp_region: Option<HexRegion>,
+    /// Parse failures that left the result incomplete. An empty `drivers` list
+    /// alongside a warning here means the list could not be read — not that no
+    /// third-party driver was involved.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 /// Extensions a Windows kernel module name may end in.
@@ -279,6 +286,7 @@ pub fn build_triage(
         scanned_stack,
         rip_region: extras.rip_region,
         rsp_region: extras.rsp_region,
+        warnings: extras.warnings,
     }
 }
 
@@ -288,7 +296,7 @@ pub fn build_triage(
 pub fn analyze_prefix(data: &[u8]) -> Result<KernelDumpTriage, String> {
     let header = parse_kernel_header(data)?;
     let (drivers, broken, extras) = if header.dump_type == 4 {
-        // Header-only result beats a hard failure on a corrupt driver list.
+        // Header-only result beats a hard failure, but the failure is reported.
         match triage::parse_triage_drivers(data) {
             Ok(t) => {
                 let scanned = t
@@ -298,7 +306,17 @@ pub fn analyze_prefix(data: &[u8]) -> Result<KernelDumpTriage, String> {
                     .unwrap_or_default();
                 (t.drivers, t.broken_driver, KernelExtras { scanned_stack: scanned, ..Default::default() })
             }
-            Err(_) => (Vec::new(), None, KernelExtras::default()),
+            Err(e) => (
+                Vec::new(),
+                None,
+                KernelExtras {
+                    warnings: vec![format!(
+                        "triage driver list unreadable: {e}. Blame is unavailable for this dump — \
+                         this is a parse failure, not an absence of third-party drivers."
+                    )],
+                    ..Default::default()
+                },
+            ),
         }
     } else {
         (Vec::new(), None, KernelExtras::default())

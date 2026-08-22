@@ -1,0 +1,31 @@
+# shadowbroker-manjaro-work confirmed by Logan, plus the second identity of two
+# machines already confirmed by hostname. None of these keys has a computer row, so
+# each is minted pre-flagged: an unflagged key is what lets the next check-in create
+# the row and adopt whichever customer the tech was servicing.
+id = "20260820050000__flag_shadowbroker_remaining_identities"
+name = "flag_shadowbroker_remaining_identities"
+state = "completed"
+source_schema_hash = "2da2bd892429d154a53efb65fe5c7f10e480f5aee5864b263b6e34060caee038"
+target_schema_hash = "2da2bd892429d154a53efb65fe5c7f10e480f5aee5864b263b6e34060caee038"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "mint_flagged_shadowbroker_identities"
+phase = "start"
+kind = "run_sql"
+sql = """
+UPSERT computer:`shadowbroker-manjaro-work:4d6fb0fae` SET hostname = 'shadowbroker-manjaro-work', is_internal = true;
+UPSERT computer:`ShadowbrokerPC:272169b80` SET hostname = 'ShadowbrokerPC', is_internal = true;
+UPSERT computer:`shadowbroker-manjaro-desktop:b2ed7de38` SET hostname = 'shadowbroker-manjaro-desktop', is_internal = true;
+"""
+
+[[steps]]
+id = "remove_minted_shadowbroker_identities"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+DELETE computer:`shadowbroker-manjaro-work:4d6fb0fae`;
+DELETE computer:`ShadowbrokerPC:272169b80`;
+DELETE computer:`shadowbroker-manjaro-desktop:b2ed7de38`;
+"""

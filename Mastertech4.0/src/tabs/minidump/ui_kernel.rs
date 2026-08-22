@@ -576,12 +576,21 @@ fn render_blame(ui: &mut Ui, triage: &KernelDumpTriage) {
                 );
             });
         }
+        None if !triage.warnings.is_empty() => {
+            ui.colored_label(
+                ui.style().visuals.error_fg_color,
+                "Blame unavailable — the dump's driver list could not be parsed.",
+            );
+        }
         None => {
             ui.colored_label(
                 ui.style().visuals.weak_text_color(),
                 "No module attribution available (RIP outside known module ranges).",
             );
         }
+    }
+    for warning in &triage.warnings {
+        ui.label(RichText::new(warning).italics().color(ui.style().visuals.warn_fg_color));
     }
     if triage.rip_in_kernel_image {
         ui.label(

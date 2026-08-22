@@ -32,6 +32,35 @@ fn non_empty(v: &str) -> Option<String> {
     (!v.trim().is_empty()).then(|| v.to_string())
 }
 
+/// The agent runs server-side, so a lost response does not mean a lost turn:
+/// measured, one kept working for 10+ minutes after the POST errored. A session
+/// opened for this machine since dispatch is proof the turn started, and is
+/// better evidence than the socket.
+async fn turn_started(connection_string: &str, elapsed_secs: u64) -> Option<String> {
+    use database::schema::RecordIdExt;
+
+    let sql = format!(
+        "SELECT VALUE id FROM diagnostic_session          WHERE connection_string = $cs AND started_at > time::now() - {elapsed_secs}s          LIMIT 1"
+    );
+    let mut res = database::db()
+        .query(sql)
+        .bind(("cs", connection_string.to_string()))
+        .await
+        .ok()?;
+    let ids: Vec<database::schema::RecordId> = res.take(0).unwrap_or_default();
+    ids.first().map(RecordIdExt::key_string)
+}
+
+/// Second gate on the gateway's `/webhook`, enforced only when zeroclaw has a
+/// webhook secret configured. Absent locally, so its absence must not block.
+fn webhook_secret() -> Option<String> {
+    ["MTECH_ZC_WEBHOOK_SECRET", "MTECH_ZC_CHANNEL_SECRET"]
+        .iter()
+        .filter_map(|key| std::env::var(key).ok())
+        .map(|v| v.trim().to_string())
+        .find(|v| !v.is_empty())
+}
+
 /// Typed fields only; the tech note is fenced so it cannot read as instructions.
 fn compose_prompt(req: &AssistRequest) -> String {
     let mut out = String::from(
@@ -95,14 +124,18 @@ async fn dispatch(req: AssistRequest) {
             return;
         }
     };
-    let sent = client
+    let mut post = client
         .post(format!("{url}/webhook"))
         .query(&[("agent", agent.as_str())])
         .bearer_auth(&token)
         .header("X-Idempotency-Key", req.id.key_string())
-        .json(&serde_json::json!({ "message": compose_prompt(&req) }))
-        .send()
-        .await;
+        .json(&serde_json::json!({ "message": compose_prompt(&req) }));
+    if let Some(secret) = webhook_secret() {
+        post = post.header("X-Webhook-Secret", secret);
+    }
+    let started = std::time::Instant::now();
+    let sent = post.send().await;
+    let elapsed = started.elapsed().as_secs().saturating_add(5);
 
     let (status, error) = match sent {
         Ok(resp) if resp.status().is_success() => ("completed", None),
@@ -111,7 +144,19 @@ async fn dispatch(req: AssistRequest) {
             let body = resp.text().await.unwrap_or_default();
             ("failed", Some(format!("gateway {code}: {}", body.chars().take(300).collect::<String>())))
         }
-        Err(e) => ("failed", Some(e.to_string())),
+        // Nothing was handed over, so nothing is running.
+        Err(e) if e.is_connect() => {
+            ("failed", Some(format!("never reached the gateway: {e}")))
+        }
+        Err(e) => match turn_started(&req.connection_string, elapsed).await {
+            Some(session) => (
+                "completed",
+                Some(format!(
+                    "response lost after {elapsed}s but the turn started (session {session});                      outcome lives on the session, not this row: {e}"
+                )),
+            ),
+            None => ("failed", Some(e.to_string())),
+        },
     };
     if let Some(err) = &error {
         log::warn!("assist: {} failed: {err}", req.id.key_string());
