@@ -148,6 +148,7 @@ impl MtechServer {
                         options: ToastOptions::default()
                             .show_progress(true)
                             .duration_in_seconds(6.0),
+                        ..Default::default()
                     };
                     toast.add(error_toast);
                 }else {
@@ -320,6 +321,7 @@ impl MtechServer {
             text: format!("Detected older crate version").into(),
             user_dismissed: false,
             options: ToastOptions::default().show_progress(true).duration_in_seconds(10.0),
+            ..Default::default()
         };
         toast.add(error_toast);
     }
@@ -394,6 +396,7 @@ impl MtechServer {
                                 options: ToastOptions::default()
                                     .show_progress(true)
                                     .duration_in_seconds(6.0),
+                                ..Default::default()
                             };
                             toast.add(auth_toast);
                         } else {
@@ -420,6 +423,7 @@ impl MtechServer {
                             options: ToastOptions::default()
                                 .show_progress(true)
                                 .duration_in_seconds(6.0),
+                            ..Default::default()
                         };
                         toast.add(auth_toast);
                         let _ = tx.try_send(AppState::NoAuth("Needs login".to_string()));

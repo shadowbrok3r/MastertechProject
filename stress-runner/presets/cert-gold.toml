@@ -13,7 +13,7 @@ whea_fails = true
 tdr_fails = true
 stressor_errors_fail = true
 max_cpu_temp_c = { limit_c = 95.0, consecutive_ticks = 5 }
-max_gpu_temp_c = { limit_c = 90.0, consecutive_ticks = 5 }
+max_gpu_temp_c = { limit_c = 90.0, consecutive_ticks = 5, on_missing = "warn" }
 clock_collapse = { below_pct_of_stage_max = 0.60, consecutive_ticks = 10, min_cpu_usage_pct = 50.0 }
 throughput_cv = { warmup_ticks = 10, max_cv = 0.20, min_samples = 30 }
 

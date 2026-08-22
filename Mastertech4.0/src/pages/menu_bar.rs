@@ -1,5 +1,5 @@
-use eframe::egui::{Button, Color32, ComboBox, FontId, Frame, Key, Layout, RichText, Separator, Stroke, TextEdit, Vec2, Widget, vec2};
-use database::{schema::{utilities::{get_store_users, get_tasks_for_store}, FilterLiveTasks, LiveTaskPayload, Store}, db};
+use eframe::egui::{Button, Color32, ComboBox, FontId, Frame, Layout, RichText, Separator, Stroke, Vec2, Widget, vec2};
+use database::{schema::{utilities::{get_store_users, get_tasks_for_store}, Store}, db};
 use egui::{PopupCloseBehavior, UiKind, containers::menu::{MenuButton, MenuConfig}, style::StyleModifier};
 use crate::{tabs::github::{get_github_releases, self_updater::run}};
 use displays::{app_state::{default_tree, AppState, MainPages}, pages::view_menu, plugins::push_widget_anchor, tabs::TabContext, ui_tools::theme, TaskUiActions};
@@ -57,56 +57,19 @@ impl MasterTechApp {
                     ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_additive_luminance(60));
                     ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_additive_luminance(120);
                     
-                    let result = TextEdit::singleline(&mut self.context.shared_ctx.search_input)
-                        .desired_width(165.0)
-                        .hint_text(" Search Tasks")
-                        .ui(ui);
-                    ui.add_space(5.);
-                    if ui.button("Clear").clicked() {
-                        self.context.shared_ctx.search_results = None;
-                        self.context.shared_ctx.search_input.clear();
-                    }
-                    let accepted_by_keyboard = ui.input_mut(|input| input.key_pressed(Key::Enter));
-                    
-                    if self.context.shared_ctx.search_input.is_empty() && result.has_focus() {
-                        self.context.shared_ctx.search_results = None;
-                    }
-                    
-                    if !self.context.shared_ctx.search_input.is_empty() {
-                        let search = self.context.shared_ctx.search_input.clone();
-                        // Perform fuzzy search using FilterTasks
-                        let filtered_tasks = self.context.shared_ctx
-                            .task_index
-                            .values()
-                            .cloned()
-                            .collect::<Vec<LiveTaskPayload>>()
-                            .filter_by_task_name(inputs.clone(), search.clone());
-                        
-                        self.context.shared_ctx.search_results = Some(filtered_tasks);
-                    } else if accepted_by_keyboard && self.context.shared_ctx.search_input.is_empty() {
-                        // Clear search results on Enter with empty input
-                        self.context.shared_ctx.search_results = None;
-                        self.context.shared_ctx.search_input.clear();
-                    } else if (result.secondary_clicked() || accepted_by_keyboard) && !self.context.shared_ctx.search_input.is_empty() {
-                        self.context.shared_ctx.search_results = None;
-                        let search = self.context.shared_ctx.search_input.clone();
-                        self.context.shared_ctx.search_input.clear();
-                        if let Some(input) = inputs.get(&search) {
-                            let task = self.context.shared_ctx.tasks.iter().find(|&x| {
-                                x.task_name == *input
-                                    || format!("{}", x.service_number.clone().unwrap_or_default())
-                                        == format!("{}", *input)
-                            });
-                            
-                            if let Some(task) = task {
-                                let _ = self.context.shared_ctx.ui_actions_tx.try_send(TaskUiActions::OpenTaskModal(task.clone()));
-                            }
-                        }
-                    }
-                    
-                    if result.lost_focus() && self.context.shared_ctx.search_input.is_empty() {
-                        self.context.shared_ctx.search_results = None;
-                    }
+                    displays::ui_data::task_search::search_bar(
+                        ui,
+                        displays::ui_data::task_search::TaskSearchCtx {
+                            state: &mut self.context.shared_ctx.task_search,
+                            input: &mut self.context.shared_ctx.search_input,
+                            results: &mut self.context.shared_ctx.search_results,
+                            index: &mut self.context.shared_ctx.task_index,
+                            tasks: &mut self.context.shared_ctx.tasks,
+                            store_users: &self.context.shared_ctx.store_users,
+                            store_selection: self.context.shared_ctx.store_selection,
+                            actions: &self.context.shared_ctx.ui_actions_tx,
+                        },
+                    );
                     
                     ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
                         ui.add_space(8.0);

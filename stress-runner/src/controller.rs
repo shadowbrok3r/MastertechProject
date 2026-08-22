@@ -34,8 +34,8 @@ use stress_kit::{
 
 use crate::mapping::{default_target_kind, metric_from_snapshot};
 use crate::rules::{
-    evaluate_stage, is_device_loss_message, is_inconclusive_message, RuleViolation, StageStats,
-    StageVerdict, VerdictRules,
+    evaluate_stage, is_device_loss_message, is_inconclusive_message, MissingSensor, RuleViolation,
+    StageStats, StageVerdict, VerdictRules,
 };
 use crate::runtime;
 
@@ -246,6 +246,9 @@ pub enum RunUpdate {
         label: String,
         pass: bool,
         violations: Vec<String>,
+        /// Rules whose sensor never reported. Not breaches: a stage can carry
+        /// `pass: true` with entries here.
+        unevaluated: Vec<String>,
         peak_throughput: Option<f64>,
     },
     /// Final update.  After this, `is_running` returns false.
@@ -272,6 +275,14 @@ pub struct RunVerdict {
     pub summary: RunSummary,
     pub duration_secs: f64,
     pub stage_outcomes: Vec<StageOutcome>,
+}
+
+impl RunVerdict {
+    /// Every rule the run could not grade, advisory ones included, each named
+    /// by its stage. Empty on a fully-monitored run.
+    pub fn ungraded_rule_lines(&self) -> Vec<String> {
+        ungraded_lines(&self.stage_outcomes, false)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -656,6 +667,9 @@ fn worker(
 
     // ---- 4. Finalize ----
     let duration_secs = started_at.elapsed().as_secs_f64();
+    if let Some(message) = thermally_blind_warning(&outcomes) {
+        send(&update_tx, RunUpdate::Warning { message });
+    }
     let stages: Vec<ScenarioStageSummary> =
         outcomes.iter().map(|o| o.summary.clone()).collect();
     let verdict = acc.into_verdict(
@@ -897,6 +911,7 @@ fn drive_single(
         }
         latest_metrics = m;
     }
+    flush_stage_errors(run_id, acc, &latest_metrics, stressor);
     stage_stats.absorb_final(&latest_metrics);
     if stage_stats.fatal_abort && !fatal_reported {
         send(
@@ -1143,6 +1158,12 @@ fn drive_concurrent(
         }
         stats[i].absorb_final(&latest[i]);
         stats[i].finish(&final_snapshot);
+        // Emits are tick-gated; the lane's trailing window has none yet.
+        if latest[i].errors > seen_errors[i] {
+            let new_errors = latest[i].errors - seen_errors[i];
+            seen_errors[i] = latest[i].errors;
+            persist_error_event(run_id, lane.stressor, new_errors, latest[i].last_error.clone());
+        }
         total_test_errors = total_test_errors.saturating_add(stats[i].errors);
         // Messages that landed after the last tick, fatal or not.
         acc.route_lane_error(&mut classified[i], last_error[i].as_deref(), stats[i].errors);
@@ -1398,6 +1419,7 @@ fn drive_scenario(
                             &telemetry.snapshot(),
                         )
                     });
+                    flush_stage_errors(run_id, acc, &latest_metrics, stressor);
                     stats.absorb_final(&latest_metrics);
                     stats.finish(&telemetry.snapshot());
                     let verdict = stage_verdict_for(&stats, rules, &effective_rules);
@@ -1615,6 +1637,22 @@ fn persist_event(
     spawn_event_create(event, "scenario");
 }
 
+/// Absorb and persist any errors a stage accrued since the last tick. Emits
+/// are tick-gated, so without this the trailing window of every stage is
+/// counted into the stage summary but never reaches the run rollup or the
+/// event log.
+fn flush_stage_errors(
+    run_id: &RecordId,
+    acc: &mut SummaryAccumulator,
+    metrics: &Metrics,
+    stressor: Stressor,
+) {
+    let new_errors = acc.absorb_errors(metrics);
+    if new_errors > 0 {
+        persist_error_event(run_id, stressor, new_errors, metrics.last_error.clone());
+    }
+}
+
 /// Persist a `stress_test_event` for newly observed test errors. Memory
 /// stressors map to `memory_error`; everything else lands as `custom`
 /// with a `data_mismatch` code.
@@ -1624,15 +1662,20 @@ fn persist_error_event(
     new_errors: u64,
     detail: Option<String>,
 ) {
-    let kind = match stressor {
-        Stressor::MemTest | Stressor::Memory | Stressor::GpuVram => DbEventKind::MemoryError,
-        _ => DbEventKind::Custom,
+    let kind = if stressor.tests_memory() {
+        DbEventKind::MemoryError
+    } else {
+        DbEventKind::Custom
     };
     let mut event = DbStressTestEvent::new(run_ref.clone(), kind, "stress-kit");
     event.code = Some("data_mismatch".to_string());
-    event.detail = detail.unwrap_or_else(|| {
-        format!("{} reported {new_errors} new error(s)", stressor.label())
-    });
+    // One row covers every mismatch since the last tick, and `last_error` keeps
+    // only the newest address, so the count is stated whenever it exceeds one.
+    event.detail = match (detail, new_errors) {
+        (Some(d), 1) => d,
+        (Some(d), n) => format!("{d} (+{} earlier mismatch(es) this tick, addresses not retained)", n - 1),
+        (None, n) => format!("{} reported {n} new error(s)", stressor.label()),
+    };
     event.data = Some(serde_json::json!({
         "stressor": stressor.label(),
         "new_errors": new_errors,
@@ -1667,8 +1710,9 @@ fn stage_summary_from_stats(
         throughput_unit: unit.to_string(),
         had_error,
         last_error,
-        result: verdict.map(|v| if v.pass { "pass" } else { "fail" }.to_string()),
+        result: verdict.map(|v| v.result_token().to_string()),
         violations: verdict.map(|v| v.violation_lines()).unwrap_or_default(),
+        unevaluated: verdict.map(|v| v.unevaluated_lines()).unwrap_or_default(),
         max_temp_c: stats.max_cpu_temp_c,
         avg_temp_c: stats.avg_cpu_temp_c(),
         max_gpu_temp_c: stats.max_gpu_temp_c,
@@ -1679,6 +1723,16 @@ fn stage_summary_from_stats(
         tdr_delta: stats.tdr_delta,
         throughput_cv: stats.throughput_cv(),
         clock_collapse_ticks: stats.worst_collapse_run,
+    }
+}
+
+/// Operator-facing token for a `RunUpdate::StageVerdict`. A stage that cleared
+/// every rule it could grade is not a plain pass when some rule went ungraded.
+pub fn stage_verdict_token(pass: bool, unevaluated: &[String]) -> &'static str {
+    match (pass, unevaluated.is_empty()) {
+        (false, _) => "FAIL",
+        (true, true) => "PASS",
+        (true, false) => "PASS (rules ungraded)",
     }
 }
 
@@ -1693,6 +1747,7 @@ fn emit_stage_verdict(tx: &Sender<RunUpdate>, outcome: Option<&StageOutcome>) {
             label: v.label.clone(),
             pass: v.pass,
             violations: v.violation_lines(),
+            unevaluated: v.unevaluated_lines(),
             peak_throughput: outcome.summary.peak_throughput,
         },
     );
@@ -1725,6 +1780,14 @@ fn persist_counter_events(
 fn persist_stage_verdict_events(run_id: &RecordId, verdict: &StageVerdict) {
     if !verdict.pass {
         persist_stage_verdict_event(run_id, verdict);
+    }
+    for gap in verdict.unevaluated.iter().filter(|u| u.blocks_certification()) {
+        let detail = gap.describe();
+        log::warn!("stress-runner: stage '{}' — {detail}", verdict.label);
+        let mut event = DbStressTestEvent::new(run_id.clone(), DbEventKind::Custom, "verdict-rules");
+        event.code = Some("rule_unevaluated".to_string());
+        event.detail = format!("stage '{}': {detail}", verdict.label);
+        spawn_event_create(event, "stage-unevaluated");
     }
     for warning in &verdict.warnings {
         log::warn!("stress-runner: stage '{}' — {warning}", verdict.label);
@@ -1935,26 +1998,11 @@ impl SummaryAccumulator {
         *classified = Some(msg.to_string());
     }
 
-    /// Fold one tick into the rollup. Returns how many new test errors this
-    /// tick revealed so the caller can persist a `stress_test_event`.
-    fn absorb(
-        &mut self,
-        metrics: &Metrics,
-        snapshot: &TelemetrySnapshot,
-        unit: &'static str,
-    ) -> u64 {
-        // throughput
-        if metrics.throughput > 0.0 {
-            self.peak_throughput = Some(
-                self.peak_throughput
-                    .map(|p| p.max(metrics.throughput))
-                    .unwrap_or(metrics.throughput),
-            );
-            self.sum_throughput += metrics.throughput;
-            self.throughput_samples = self.throughput_samples.saturating_add(1);
-            self.last_throughput_unit = Some(unit.to_string());
-        }
-
+    /// Fold a metrics sample's error state into the rollup, ignoring its
+    /// telemetry. Returns how many new test errors the sample revealed so the
+    /// caller can persist a `stress_test_event`. Idempotent for a sample whose
+    /// counter has already been absorbed.
+    fn absorb_errors(&mut self, metrics: &Metrics) -> u64 {
         // `Metrics.errors` is cumulative per stressor; a drop means a new
         // stage started with a fresh counter.
         let mut new_errors = 0u64;
@@ -1976,6 +2024,31 @@ impl SummaryAccumulator {
             }
             self.last_error = Some(err.clone());
         }
+
+        new_errors
+    }
+
+    /// Fold one tick into the rollup. Returns how many new test errors this
+    /// tick revealed so the caller can persist a `stress_test_event`.
+    fn absorb(
+        &mut self,
+        metrics: &Metrics,
+        snapshot: &TelemetrySnapshot,
+        unit: &'static str,
+    ) -> u64 {
+        // throughput
+        if metrics.throughput > 0.0 {
+            self.peak_throughput = Some(
+                self.peak_throughput
+                    .map(|p| p.max(metrics.throughput))
+                    .unwrap_or(metrics.throughput),
+            );
+            self.sum_throughput += metrics.throughput;
+            self.throughput_samples = self.throughput_samples.saturating_add(1);
+            self.last_throughput_unit = Some(unit.to_string());
+        }
+
+        let new_errors = self.absorb_errors(metrics);
 
         // temp / clock / usage from cores
         for c in &snapshot.cores {
@@ -2102,14 +2175,7 @@ impl SummaryAccumulator {
         if self.gpu_leg_planned && summary.gpu_adapter_name.is_none() {
             self.classify_error(MISSING_ADAPTER_EVIDENCE);
         }
-        // Memtest mismatches also count as memory errors for the
-        // HCI/TM5-shaped rubric fields.
-        if matches!(
-            tool,
-            TestTool::StressKit { stressor } if stressor == "memtest"
-        ) {
-            summary.memory_errors = summary.test_errors;
-        }
+        summary.memory_errors = memory_error_total(tool, &stage_outcomes, &summary);
 
         // Not gated on `rules`: stages without a policy still carry a verdict
         // when the stressor aborted.
@@ -2120,10 +2186,15 @@ impl SummaryAccumulator {
         // plans roll no throughput into the run summary, so their evidence is
         // judged per lane.
         let ended_short = ended_short_of_plan(planned_secs, duration_secs);
-        let uncertifiable = ended_short.clone().or_else(|| match plan {
-            RunPlan::Concurrent { .. } => concurrent_missing_evidence(&stage_outcomes),
-            _ => missing_work_evidence(&stage_outcomes, &summary),
-        });
+        let uncertifiable = ended_short
+            .clone()
+            .or_else(|| match plan {
+                RunPlan::Concurrent { .. } => concurrent_missing_evidence(&stage_outcomes),
+                _ => missing_work_evidence(&stage_outcomes, &summary),
+            })
+            // Ranked last: a rule nobody could grade says less about the run
+            // than a load that never ran.
+            .or_else(|| ungraded_rules_evidence(&stage_outcomes));
 
         let cancelled = cancel.load(Ordering::Relaxed);
         let had_failure = rules_failure.is_some()
@@ -2213,6 +2284,34 @@ impl SummaryAccumulator {
     }
 }
 
+/// Mismatches attributable to memory-class stressors. Every plan shape grades
+/// its work into `stage_outcomes` — one entry for a single stressor, one per
+/// lane for a concurrent plan, one per stage for a scenario — so the memory
+/// share of `test_errors` is the sum over those entries. Falls back to the
+/// whole error count for a memory-stressor run that ended before any stage
+/// was graded.
+fn memory_error_total(
+    tool: &TestTool,
+    stage_outcomes: &[StageOutcome],
+    summary: &RunSummary,
+) -> u32 {
+    let is_memory = |label: &str| Stressor::from_str(label).is_some_and(Stressor::tests_memory);
+    let staged: u64 = stage_outcomes
+        .iter()
+        .filter(|o| is_memory(&o.summary.stressor))
+        .map(|o| o.summary.errors)
+        .sum();
+    if staged > 0 {
+        return staged.min(u32::MAX as u64) as u32;
+    }
+    if stage_outcomes.is_empty()
+        && matches!(tool, TestTool::StressKit { stressor } if is_memory(stressor))
+    {
+        return summary.test_errors;
+    }
+    0
+}
+
 /// Share of the planned duration a run may miss and still certify.
 const SHORT_RUN_TOLERANCE_PCT: f64 = 0.03;
 
@@ -2291,6 +2390,61 @@ fn concurrent_missing_evidence(stage_outcomes: &[StageOutcome]) -> Option<String
         ));
     }
     None
+}
+
+/// One deduplicated line per rule no stage could grade, each named by its
+/// stage. `blocking_only` keeps the gaps that hold up certification.
+fn ungraded_lines(stage_outcomes: &[StageOutcome], blocking_only: bool) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for outcome in stage_outcomes {
+        let Some(verdict) = &outcome.verdict else { continue };
+        for gap in &verdict.unevaluated {
+            if blocking_only && !gap.blocks_certification() {
+                continue;
+            }
+            let line = format!("stage '{}': {}", verdict.label, gap.describe());
+            if !lines.contains(&line) {
+                lines.push(line);
+            }
+        }
+    }
+    lines
+}
+
+/// Warning for a thermal policy that graded no stage: a burn-in whose point is
+/// thermal validation ran with its entire thermal check silently absent.
+fn thermally_blind_warning(stage_outcomes: &[StageOutcome]) -> Option<String> {
+    let asked_for_cpu_temp = stage_outcomes
+        .iter()
+        .filter_map(|o| o.verdict.as_ref())
+        .any(|v| v.unevaluated.iter().any(|u| u.sensor == MissingSensor::CpuDieTemp));
+    if !asked_for_cpu_temp {
+        return None;
+    }
+    if stage_outcomes.iter().any(|o| o.summary.max_temp_c.is_some()) {
+        return None;
+    }
+    Some(
+        "no CPU temperature was measured in any stage, so this run's thermal limits were \
+         never checked; the low-level sensor backend did not answer"
+            .to_string(),
+    )
+}
+
+/// Message for a run whose policy named rules the sensors could not answer.
+/// The limits were never tested, so the run neither certifies nor condemns the
+/// part — distinct from a breach, which is a measured failure.
+fn ungraded_rules_evidence(stage_outcomes: &[StageOutcome]) -> Option<String> {
+    let lines = ungraded_lines(stage_outcomes, true);
+    if lines.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "inconclusive - {} configured rule(s) were never graded because their sensor \
+         never reported, so the run proves nothing about them: {}",
+        lines.len(),
+        lines.join("; ")
+    ))
 }
 
 /// Comma-separated verifying subset of the stressor vocabulary.
@@ -2394,29 +2548,6 @@ fn rules_failure_mode(
                         message: reason.clone(),
                     });
                 }
-                // A configured limit that was never evaluable cannot certify the
-                // part; it is not evidence against the hardware either.
-                RuleViolation::GpuTelemetryMissing { rule, ticks } => {
-                    unproven.get_or_insert(FailureMode::AppError {
-                        exit_code: None,
-                        message: format!(
-                            "stage '{}': inconclusive - {rule} could not be evaluated, no GPU \
-                             telemetry in {ticks} tick(s); the GPU was not graded",
-                            verdict.label
-                        ),
-                    });
-                }
-                RuleViolation::CpuTelemetryMissing { rule, ticks } => {
-                    unproven.get_or_insert(FailureMode::AppError {
-                        exit_code: None,
-                        message: format!(
-                            "stage '{}': inconclusive - {rule} could not be evaluated, no CPU die \
-                             temperature in {ticks} tick(s); check the sensor backend, the CPU was \
-                             not graded thermally",
-                            verdict.label
-                        ),
-                    });
-                }
             }
         }
     }
@@ -2432,6 +2563,7 @@ fn rules_failure_mode(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rules::{MissingSensorPolicy, UnevaluatedRule};
 
     #[test]
     fn dropped_metrics_are_counted_and_never_abort() {
@@ -2664,6 +2796,188 @@ mod tests {
             duration_secs: Some(60),
         };
         assert!(!concurrent.has_gpu_leg());
+    }
+
+    /// A stage that finished with `errors` on a memory-class stressor.
+    fn error_stage(stressor: Stressor, errors: u64) -> StageOutcome {
+        StageOutcome {
+            summary: ScenarioStageSummary {
+                stressor: stressor.as_str().to_string(),
+                label: stressor.label().to_string(),
+                errors,
+                had_error: errors > 0,
+                ..Default::default()
+            },
+            verdict: None,
+        }
+    }
+
+    /// The gap that made the most error-dense memory test on record read as
+    /// `memory_errors: 0`: a memtest scenario stage is not a memtest *tool*, so
+    /// gating the rollup on the tool never fired for a scenario or a lane.
+    #[test]
+    fn memtest_scenario_stage_rolls_up_memory_errors() {
+        let scenario = RunPlan::Scenario {
+            stages: vec![
+                stage_spec("memtest", Stressor::MemTest),
+                stage_spec("memcpy", Stressor::Memcpy),
+            ],
+            total_wall_secs: None,
+            repeat_until_total: false,
+        };
+        let mut acc = SummaryAccumulator::default();
+        acc.absorb(
+            &Metrics {
+                elapsed_secs: 1.0,
+                throughput: 100.0,
+                last_error: None,
+                fatal: false,
+                errors: 10,
+            },
+            &TelemetrySnapshot::default(),
+            "MiB/s",
+        );
+        let verdict = verdict_planned(
+            acc,
+            vec![
+                error_stage(Stressor::MemTest, 10),
+                error_stage(Stressor::Memcpy, 0),
+            ],
+            60.0,
+            Some(60),
+            &scenario,
+        );
+
+        assert_eq!(verdict.summary.test_errors, 10);
+        assert_eq!(
+            verdict.summary.memory_errors, 10,
+            "memory mismatches did not reach the memory rubric field"
+        );
+        assert_eq!(verdict.result, RunResult::Fail);
+        assert_eq!(verdict.failure_mode.kind(), "data_mismatch");
+    }
+
+    /// Only the memory-class share of `test_errors` is memory: a mixed scenario
+    /// must not file its CPU-verify divergences as memory mismatches.
+    #[test]
+    fn non_memory_stage_errors_stay_out_of_the_memory_field() {
+        let verdict = verdict_with(
+            acc_with_work(),
+            vec![
+                error_stage(Stressor::CpuVerify, 7),
+                error_stage(Stressor::MemTest, 3),
+            ],
+        );
+        assert_eq!(verdict.summary.memory_errors, 3);
+    }
+
+    /// Concurrent lanes grade per lane; the memory lane's mismatches are the
+    /// run's memory errors.
+    #[test]
+    fn concurrent_memory_lane_rolls_up_memory_errors() {
+        let plan = concurrent_plan(&[Stressor::Cpu, Stressor::MemTest]);
+        let verdict = verdict_planned(
+            acc_with_work(),
+            vec![
+                lane_outcome(Stressor::Cpu, Some(100.0)),
+                error_stage(Stressor::MemTest, 4),
+            ],
+            600.0,
+            Some(600),
+            &plan,
+        );
+        assert_eq!(verdict.summary.memory_errors, 4);
+    }
+
+    /// A memtest run that died before its stage was graded still reports the
+    /// errors the accumulator saw.
+    #[test]
+    fn ungraded_memtest_run_still_reports_memory_errors() {
+        let run_id = RecordId::new("stress_test_run", "verdict-test");
+        let cancel = Arc::new(AtomicBool::new(false));
+        let tool = TestTool::StressKit {
+            stressor: "memtest".to_string(),
+        };
+        let plan = RunPlan::Single {
+            stressor: Stressor::MemTest,
+            threads: 0,
+            duration_secs: Some(60),
+            memory_cap_mb: 256,
+            disk_file_mb: 16,
+        };
+        let mut acc = SummaryAccumulator::default();
+        acc.absorb(
+            &Metrics {
+                elapsed_secs: 1.0,
+                throughput: 100.0,
+                last_error: None,
+                fatal: false,
+                errors: 5,
+            },
+            &TelemetrySnapshot::default(),
+            "MiB/s",
+        );
+        let verdict =
+            acc.into_verdict(&run_id, &cancel, 60.0, Some(60), &tool, &plan, Vec::new());
+        assert_eq!(verdict.summary.memory_errors, 5);
+    }
+
+    /// A clean run keeps the field at zero — the rollup must not read the
+    /// presence of a memory stage as evidence of a mismatch.
+    #[test]
+    fn clean_memory_stage_reports_no_memory_errors() {
+        let verdict = verdict_with(acc_with_work(), vec![error_stage(Stressor::MemTest, 0)]);
+        assert_eq!(verdict.summary.memory_errors, 0);
+        assert_eq!(verdict.result, RunResult::Pass);
+    }
+
+    /// Emits are tick-gated, so the errors a stage accrues after its last tick
+    /// reach the rollup only through the stage-close flush.
+    #[test]
+    fn errors_after_the_last_tick_are_absorbed_at_stage_close() {
+        let mut acc = SummaryAccumulator::default();
+        let tick = Metrics {
+            elapsed_secs: 1.0,
+            throughput: 100.0,
+            last_error: None,
+            fatal: false,
+            errors: 2,
+        };
+        assert_eq!(acc.absorb(&tick, &TelemetrySnapshot::default(), "MiB/s"), 2);
+
+        let trailing = Metrics { errors: 6, ..tick.clone() };
+        assert_eq!(
+            acc.absorb_errors(&trailing),
+            4,
+            "the trailing window was not counted"
+        );
+        assert_eq!(acc.total_test_errors(), 6);
+        // The flush runs once per stage close; a second pass must add nothing.
+        assert_eq!(acc.absorb_errors(&trailing), 0);
+        assert_eq!(acc.total_test_errors(), 6);
+    }
+
+    /// Every stressor whose mismatches are memory mismatches must also map to
+    /// the `memory_error` event kind, or the events and the rollup disagree.
+    #[test]
+    fn memory_stressors_agree_with_the_memory_event_kind() {
+        for stressor in Stressor::all() {
+            let kind = if stressor.tests_memory() {
+                DbEventKind::MemoryError
+            } else {
+                DbEventKind::Custom
+            };
+            assert_eq!(
+                stressor.tests_memory(),
+                kind == DbEventKind::MemoryError,
+                "{stressor:?} disagrees with its event kind"
+            );
+        }
+        assert!(Stressor::MemTest.tests_memory());
+        assert!(Stressor::Memory.tests_memory());
+        assert!(Stressor::GpuVram.tests_memory());
+        assert!(!Stressor::CpuVerify.tests_memory());
+        assert!(!Stressor::Disk.tests_memory());
     }
 
     /// The gap that let a psu_transient pass read as a CPU-only run after the
@@ -2936,6 +3250,7 @@ mod tests {
             violations: vec![RuleViolation::FatalAbort {
                 reason: Some(reason.to_string()),
             }],
+            unevaluated: Vec::new(),
             warnings: Vec::new(),
         })];
 
@@ -2966,6 +3281,7 @@ mod tests {
                 },
                 RuleViolation::Tdr { delta: 2 },
             ],
+            unevaluated: Vec::new(),
             warnings: Vec::new(),
         })];
         let mode = rules_failure_mode(&outcomes, &mut summary).expect("failure mode expected");
@@ -3190,6 +3506,7 @@ mod tests {
             violations: vec![RuleViolation::Inconclusive {
                 reason: msg.to_string(),
             }],
+            unevaluated: Vec::new(),
             warnings: Vec::new(),
         })];
         let mode = rules_failure_mode(&outcomes, &mut summary).expect("failure mode expected");
@@ -3202,6 +3519,118 @@ mod tests {
         );
         assert!(!summary.thermal_throttle_detected);
         assert!(!summary.vrm_throttle_detected);
+    }
+
+    /// Stage carrying nothing but an ungraded rule.
+    fn ungraded_cpu_temp_stage() -> StageOutcome {
+        let mut outcome = outcome_with(StageVerdict {
+            index: 0,
+            label: "cpu".to_string(),
+            pass: true,
+            violations: Vec::new(),
+            unevaluated: vec![UnevaluatedRule {
+                rule: "max_cpu_temp_c 95C".to_string(),
+                sensor: MissingSensor::CpuDieTemp,
+                ticks: 1607,
+                policy: MissingSensorPolicy::Inconclusive,
+            }],
+            warnings: Vec::new(),
+        });
+        outcome.summary.peak_throughput = Some(240.0);
+        outcome
+    }
+
+    /// The reported symptom: a full-duration cert with zero hardware errors
+    /// graded `fail`/`app_error` because a thermal rule could not be evaluated.
+    /// An ungraded rule is the absence of evidence, so the run is inconclusive.
+    #[test]
+    fn an_ungraded_rule_is_inconclusive_not_a_failure() {
+        let verdict = verdict_with(acc_with_work(), vec![ungraded_cpu_temp_stage()]);
+
+        assert_eq!(verdict.result, RunResult::Inconclusive, "an unread sensor failed the run");
+        assert_eq!(verdict.finish_reason, DbFinishReason::Completed);
+        let FailureMode::AppError { message, .. } = &verdict.failure_mode else {
+            panic!("expected an AppError, got {:?}", verdict.failure_mode);
+        };
+        assert!(message.contains("max_cpu_temp_c 95C"), "{message}");
+        assert!(message.contains("never graded"), "{message}");
+        assert!(!verdict.summary.thermal_throttle_detected);
+    }
+
+    /// The stage row must not read `fail` either, since that is what a tech sees.
+    #[test]
+    fn an_ungraded_rule_reads_inconclusive_in_the_stage_row() {
+        let verdict = ungraded_cpu_temp_stage().verdict.expect("verdict");
+        assert_eq!(verdict.result_token(), "inconclusive");
+        assert!(verdict.violation_lines().is_empty());
+        assert_eq!(verdict.unevaluated_lines().len(), 1);
+        assert!(verdict.unevaluated_lines()[0].contains("could not be evaluated"));
+    }
+
+    /// A `Warn` gap — the GPU rule on any non-NVIDIA card — must not hold up a
+    /// clean run at all.
+    #[test]
+    fn an_advisory_gap_still_passes_the_run() {
+        let mut outcome = outcome_with(StageVerdict {
+            index: 0,
+            label: "gpu".to_string(),
+            pass: true,
+            violations: Vec::new(),
+            unevaluated: vec![UnevaluatedRule {
+                rule: "max_gpu_temp_c 90C".to_string(),
+                sensor: MissingSensor::GpuTelemetry,
+                ticks: 829,
+                policy: MissingSensorPolicy::Warn,
+            }],
+            warnings: Vec::new(),
+        });
+        outcome.summary.peak_throughput = Some(240.0);
+
+        let verdict = verdict_with(acc_with_work(), vec![outcome]);
+        assert_eq!(verdict.result, RunResult::Pass);
+    }
+
+    /// A measured breach still outranks an ungraded rule.
+    #[test]
+    fn a_breach_alongside_an_ungraded_rule_still_fails() {
+        let mut outcome = outcome_with(StageVerdict {
+            index: 0,
+            label: "cpu".to_string(),
+            pass: false,
+            violations: vec![RuleViolation::Whea { corrected: 2, fatal: 0 }],
+            unevaluated: vec![UnevaluatedRule {
+                rule: "max_cpu_temp_c 95C".to_string(),
+                sensor: MissingSensor::CpuDieTemp,
+                ticks: 1607,
+                policy: MissingSensorPolicy::Inconclusive,
+            }],
+            warnings: Vec::new(),
+        });
+        outcome.summary.peak_throughput = Some(240.0);
+
+        let verdict = verdict_with(acc_with_work(), vec![outcome]);
+        assert_eq!(verdict.result, RunResult::Fail);
+        assert_eq!(verdict.failure_mode.kind(), "whea_error");
+    }
+
+    /// A thermal burn-in that measured no CPU temperature at all says so in the
+    /// run log, rather than leaving the missing check to the violation strings.
+    #[test]
+    fn a_thermally_blind_run_warns() {
+        let warning = thermally_blind_warning(&[ungraded_cpu_temp_stage()])
+            .expect("a run with no CPU temperature must warn");
+        assert!(warning.contains("no CPU temperature was measured"), "{warning}");
+
+        let mut measured = ungraded_cpu_temp_stage();
+        measured.summary.max_temp_c = Some(72.0);
+        assert!(
+            thermally_blind_warning(&[measured]).is_none(),
+            "a measured run warned about missing temperatures"
+        );
+        assert!(
+            thermally_blind_warning(&[finished_stage()]).is_none(),
+            "a run with no thermal policy warned"
+        );
     }
 
     /// A stressor that idles after latching a fatal gets its grace window to end
@@ -3493,6 +3922,7 @@ mod tests {
             label: "memtest".to_string(),
             pass: false,
             violations: vec![RuleViolation::StressorErrors { count: 3 }],
+            unevaluated: Vec::new(),
             warnings: Vec::new(),
         };
         let outcomes = vec![

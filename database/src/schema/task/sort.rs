@@ -14,6 +14,11 @@ pub trait Sortable <T> {
     fn default_sort(&mut self, sort_direction: SortDirection) -> &mut Vec<T>;
     fn sort_by_date(&mut self, sort_direction: SortDirection) -> &mut Vec<T>;
     fn sort_by_name(&mut self, sort_direction: SortDirection) -> &mut Vec<T>;
+    /// Orders by when the task was completed. Defaults to due-date order for
+    /// types carrying no completion stamp.
+    fn sort_by_completed(&mut self, sort_direction: SortDirection) -> &mut Vec<T> {
+        self.sort_by_date(sort_direction)
+    }
 }
 
 
@@ -86,8 +91,25 @@ impl Sortable<LiveTaskPayload> for Vec<LiveTaskPayload> {
     
         self
     }
-}
+    fn sort_by_completed(&mut self, sort_direction: SortDirection) -> &mut Vec<LiveTaskPayload> {
+        let key = |t: &LiveTaskPayload| -> DateTime<Utc> {
+            t.completed_at
+                .clone()
+                .unwrap_or_else(|| t.created_at.clone())
+                .into()
+        };
 
+        self.sort_by(|a, b| {
+            let ordering = key(a).cmp(&key(b));
+            match sort_direction {
+                SortDirection::Asc => ordering,
+                SortDirection::Desc => ordering.reverse(),
+            }
+        });
+
+        self
+    }
+}
 
 impl Sortable<TaskPayload> for Vec<TaskPayload> {
     fn default_sort(&mut self,  sort_direction: SortDirection) -> &mut Vec<TaskPayload> {

@@ -782,7 +782,9 @@ pub struct ScenarioStageSummary {
     pub throughput_unit: String,
     pub had_error: bool,
     pub last_error: Option<String>,
-    /// `"pass"` / `"fail"`; NONE when no verdict rules were attached.
+    /// `"pass"` / `"fail"` / `"inconclusive"`; NONE when no verdict rules were
+    /// attached. `"inconclusive"` means a configured rule could not be graded,
+    /// not that a limit was breached.
     #[serde(default)]
     #[surreal(default)]
     pub result: Option<String>,
@@ -790,6 +792,11 @@ pub struct ScenarioStageSummary {
     #[serde(default)]
     #[surreal(default)]
     pub violations: Vec<String>,
+    /// Rules whose sensor never reported, so the limit was never tested. Kept
+    /// apart from `violations`: nothing here is evidence against the hardware.
+    #[serde(default)]
+    #[surreal(default)]
+    pub unevaluated: Vec<String>,
     #[serde(default)]
     #[surreal(default)]
     pub max_temp_c: Option<f32>,
@@ -849,13 +856,16 @@ pub struct RunSummary {
     pub vrm_throttle_detected: bool,
     /// `WheaCounters.delta_since_program_start` at run end.
     pub whea_delta_count: u32,
-    /// Count of `stress_test_event` rows with `kind == "tdr"`.
+    /// `TdrCounters.delta_since_program_start` at run end. Reaped runs take it
+    /// from their `tdr` events instead.
     pub tdr_count: u32,
     pub bsod_detected: bool,
     pub bsod_code: Option<String>,
-    /// Count of `stress_test_event` rows with `kind == "disk_io_error"`.
+    /// `Metrics.last_error` messages routed to the disk bucket. Verifying disk
+    /// stressors count mismatches in `test_errors` instead.
     pub disk_io_errors: u32,
-    /// Count of memory data-mismatch events from HCI / TM5 / Karhu.
+    /// `Metrics.errors` from the run's memory-class stages — the memory share
+    /// of `test_errors`. Also covers HCI / TM5 / Karhu backfills.
     pub memory_errors: u32,
     /// Cumulative `Metrics.errors` from verifying stress-kit stressors
     /// (memtest mismatches, cpu_verify divergences, linpack residual

@@ -1,6 +1,6 @@
 #![allow(deprecated)]
 use crate::{app_state::{default_tree, default_tree_wasm, AppState, MainPages, SharedContext}, pages::view_menu, tabs::{github::get_github_releases, TabContext}, ui_tools::theme, PlatformSpawner, Spawner, TaskUiActions};
-use database::{schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, FilterLiveTasks, LiveTaskPayload, Notification, Store}, db};
+use database::{schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, Notification, Store}, db};
 use eframe::egui::{containers::menu::MenuConfig, *};
 
 impl SharedContext {
@@ -13,7 +13,6 @@ impl SharedContext {
             .ui(ui, |ui| {
                 if let Some(user) = self.current_user.as_mut() {
                     let tab_ctx = TabContext::for_user(user.is_warehouse());
-                    let mut inputs = std::collections::BTreeSet::new();
                     ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                         ui.add_space(1.0);
                         ui.menu_button(RichText::new("View").color(ui.global_style().visuals.error_fg_color).heading().underline(), |ui| {
@@ -36,64 +35,22 @@ impl SharedContext {
 
                         ui.add_space(20.0);
 
-                        // Populate inputs with task names and service numbers
-                        for task in self.task_index.values() {
-                            inputs.insert(task.task_name.clone());
-                            inputs.insert(format!("{}", task.service_number.clone().unwrap_or_default()));
-                        }
-
                         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, Color32::from_additive_luminance(60));
                         ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_additive_luminance(120);
 
-                        let result = TextEdit::singleline(&mut self.search_input).desired_width(165.0).hint_text(" Search Tasks").ui(ui);
-                        ui.add_space(5.);
-                        if ui.button("Clear").clicked() {
-                            self.search_results = None;
-                            self.search_input.clear();
-                        }
-                        let accepted_by_keyboard = ui.input_mut(|input| input.key_pressed(Key::Enter));
-
-                        if self.search_input.is_empty() && result.has_focus() {
-                            self.search_results = None;
-                        }
-
-                        if !self.search_input.is_empty() {
-                            // info!("Global search: {}", self.context.search_input);
-                            let search = self.search_input.clone();
-                            // Perform fuzzy search using FilterTasks
-                            let filtered_tasks = self
-                                .task_index
-                                .values()
-                                .cloned()
-                                .collect::<Vec<LiveTaskPayload>>()
-                                .filter_by_task_name(inputs.clone(), search.clone());
-                            
-                            self.search_results = Some(filtered_tasks);
-                        } else if accepted_by_keyboard && self.search_input.is_empty() {
-                            // Clear search results on Enter with empty input
-                            self.search_results = None;
-                            self.search_input.clear();
-                            // info!("Cleared global search");
-                        } else if ( result.secondary_clicked() || accepted_by_keyboard )&& !self.search_input.is_empty() {
-                            self.search_results = None;
-                            let search = self.search_input.clone();
-                            self.search_input.clear();
-                            if let Some(input) = inputs.get(&search) {
-                                let task = self.tasks.iter().find(|&x| {
-                                    x.task_name == *input
-                                        || format!("{}", x.service_number.clone().unwrap_or_default())
-                                            == format!("{}", *input)
-                                });
-
-                                if let Some(task) = task {
-                                    let _ = self.ui_actions_tx.try_send(TaskUiActions::OpenTaskModal(task.clone()));
-                                }
-                            }
-                        }
-
-                        if result.lost_focus() && self.search_input.is_empty() {
-                            self.search_results = None;
-                        }
+                        crate::ui_data::task_search::search_bar(
+                            ui,
+                            crate::ui_data::task_search::TaskSearchCtx {
+                                state: &mut self.task_search,
+                                input: &mut self.search_input,
+                                results: &mut self.search_results,
+                                index: &mut self.task_index,
+                                tasks: &mut self.tasks,
+                                store_users: &self.store_users,
+                                store_selection: self.store_selection,
+                                actions: &self.ui_actions_tx,
+                            },
+                        );
                     });
 
                     ui.add_space(ui.available_width() / 3.);
@@ -354,7 +311,10 @@ impl SharedContext {
 
                             Separator::default().shrink(20.0).ui(ui);
 
-                            self.notification_center.ui(ui, &inputs, self.ui_actions_tx.clone(), &self.tasks);
+                            // show_notification links a notification's text to a task by name.
+                            let task_names: std::collections::BTreeSet<String> =
+                                self.task_index.values().map(|t| t.task_name.clone()).collect();
+                            self.notification_center.ui(ui, &task_names, self.ui_actions_tx.clone(), &self.tasks);
                         });
 
                         ui.add_space(2.0);

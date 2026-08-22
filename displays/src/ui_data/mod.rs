@@ -17,6 +17,8 @@ pub mod receive_read_state;
 pub mod admin_notification;
 pub mod reachability;
 pub mod open_service_apply;
+pub mod pending_task_edits;
+pub mod task_search;
 // pub mod receive_database;
 
 /// Scope selector shared with the snapshot fetch in `database::schema`.
@@ -646,6 +648,7 @@ impl crate::app_state::SharedContext {
         self.receive_read_state();
         self.receive_users();
         self.receive_task();
+        self.tick_pending_task_edits();
         self.receive_ai_task();
         self.receive_notes();
         self.receive_notification(ctx);

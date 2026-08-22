@@ -9,9 +9,35 @@ use super::{random_record_id, ComputerData, CustomerData, Datetime, RecordId, Su
 pub mod update;
 pub mod sort;
 pub mod filter;
+pub mod search;
 
 pub use filter::*;
 pub use sort::*;
+pub use search::*;
+
+/// The task fields a card control can stage for a deferred batch write.
+/// Text fields are excluded: they save on focus loss, not on a timer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum TaskField {
+    Assignee,
+    Priority,
+    DueDate,
+    Status,
+    Completed,
+}
+
+impl TaskField {
+    /// Operator-facing name used in the undo toast summary.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Assignee => "assignee",
+            Self::Priority => "priority",
+            Self::DueDate => "due date",
+            Self::Status => "status",
+            Self::Completed => "completion",
+        }
+    }
+}
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Difference, SurrealValue)]
 pub struct TaskPayload {
@@ -66,7 +92,13 @@ pub struct LiveTaskPayload {
     pub completed: bool,
     pub status: Status,
     #[facet(opaque)]
-    pub created_at: Datetime
+    pub created_at: Datetime,
+    /// Stamped when `completed` flips to true, cleared when it flips back.
+    /// Absent on rows written before the field existed.
+    #[serde(default)]
+    #[surreal(default)]
+    #[facet(opaque)]
+    pub completed_at: Option<Datetime>
 }
 
 impl Default for LiveTaskPayload {
@@ -82,14 +114,16 @@ impl Default for LiveTaskPayload {
             priority: Priority::Normal,
             completed: false,
             status: Status::Todo,
-            created_at: Utc::now().into()
+            created_at: Utc::now().into(),
+            completed_at: None
         }
     }
 }
 
 impl LiveTaskPayload {
-    /// Fields never diffed: identity and immutable creation time.
-    const DIFF_IGNORE: &'static [&'static str] = &["id", "created_at"];
+    /// Fields never diffed: identity, immutable creation time, and the
+    /// completion stamp derived from `completed`.
+    const DIFF_IGNORE: &'static [&'static str] = &["id", "created_at", "completed_at"];
 
     /// Creates a JSON diff representation comparing this task to another.
     /// Format: { "field_name": { "old": "old_value", "new": "new_value" }, ... }
@@ -333,7 +367,8 @@ impl From<TaskPayload> for LiveTaskPayload {
             priority: task.priority,
             completed: task.completed,
             status: task.status,
-            created_at: task.created_at
+            created_at: task.created_at,
+            completed_at: None
         }
     }
 }

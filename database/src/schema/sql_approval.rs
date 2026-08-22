@@ -348,6 +348,72 @@ impl SqlApproval {
     }
 }
 
+/// Position of the target token, skipping the optional `FROM` / `INTO`.
+fn target_token_index(tokens: &[&str]) -> Option<usize> {
+    match tokens.first()?.to_ascii_uppercase().as_str() {
+        // CREATE <target> / UPDATE <target> / UPSERT <target> / DELETE [FROM] <target>
+        "CREATE" | "UPDATE" | "UPSERT" | "DELETE" => {
+            if tokens.get(1).map(|t| t.eq_ignore_ascii_case("FROM")) == Some(true) {
+                Some(2)
+            } else {
+                Some(1)
+            }
+        }
+        // INSERT INTO <target>
+        "INSERT" => {
+            if tokens.get(1).map(|t| t.eq_ignore_ascii_case("INTO")) == Some(true) {
+                Some(2)
+            } else {
+                Some(1)
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Splits on `;` outside any backtick- or quote-delimited span.
+fn top_level_statements(statement: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+    let mut delim: Option<u8> = None;
+    for (i, &b) in statement.as_bytes().iter().enumerate() {
+        match delim {
+            Some(d) if b == d => delim = None,
+            Some(_) => {}
+            None => match b {
+                b'`' | b'\'' | b'"' => delim = Some(b),
+                b';' => {
+                    let part = statement[start..i].trim();
+                    if !part.is_empty() {
+                        parts.push(part);
+                    }
+                    start = i + 1;
+                }
+                _ => {}
+            },
+        }
+    }
+    let tail = statement[start..].trim();
+    if !tail.is_empty() {
+        parts.push(tail);
+    }
+    parts
+}
+
+/// Record-id literal for the counting SELECT, with backticks left balanced.
+///
+/// `table:`key`` passes through as written. A whole id wrapped in backticks is
+/// an identifier, not a record id, so it is re-split into `table:`key``.
+/// Returns `None` when the token names a bare table rather than one record.
+fn record_id_literal(raw: &str) -> Option<String> {
+    let raw = raw.trim_end_matches(';');
+    if let Some(inner) = raw.strip_prefix('`').and_then(|r| r.strip_suffix('`')) {
+        let (table, key) = inner.split_once(':')?;
+        return (!table.is_empty() && !key.is_empty()).then(|| format!("{table}:`{key}`"));
+    }
+    raw.contains(':').then(|| raw.to_string())
+}
+
 /// Best-effort `FROM`/`INTO` target of a mutation, lowercased.
 ///
 /// Used for the modal's impact preview only — a miss costs the operator a
@@ -355,28 +421,7 @@ impl SqlApproval {
 /// than a parser.
 pub fn extract_target(statement: &str) -> Option<String> {
     let tokens: Vec<&str> = statement.split_whitespace().collect();
-    let head = tokens.first()?.to_ascii_uppercase();
-
-    let idx = match head.as_str() {
-        // CREATE <target> / UPDATE <target> / UPSERT <target> / DELETE <target>
-        "CREATE" | "UPDATE" | "UPSERT" | "DELETE" => {
-            // `DELETE FROM x` is also legal; skip the optional FROM.
-            if tokens.get(1).map(|t| t.eq_ignore_ascii_case("FROM")) == Some(true) {
-                2
-            } else {
-                1
-            }
-        }
-        // INSERT INTO <target>
-        "INSERT" => {
-            if tokens.get(1).map(|t| t.eq_ignore_ascii_case("INTO")) == Some(true) {
-                2
-            } else {
-                1
-            }
-        }
-        _ => return None,
-    };
+    let idx = target_token_index(&tokens)?;
 
     let raw = tokens.get(idx)?.trim_matches(|c| c == '`' || c == ';');
     if raw.is_empty() || raw.starts_with('$') {
@@ -399,6 +444,16 @@ pub fn extract_target(statement: &str) -> Option<String> {
 /// declines rather than guesses.
 pub fn impact_query(statement: &str) -> Result<String, String> {
     let kind = StatementKind::parse(statement).map_err(|e| e.to_string())?;
+
+    // A count for the first write would understate what the operator approves.
+    let parts = top_level_statements(statement);
+    if parts.len() > 1 {
+        return Err(format!(
+            "statement is a batch of {} writes — a single count cannot describe it, read the statement below",
+            parts.len()
+        ));
+    }
+
     let target = extract_target(statement)
         .ok_or_else(|| "target table could not be determined".to_string())?;
 
@@ -430,15 +485,15 @@ pub fn impact_query(statement: &str) -> Result<String, String> {
                 }
                 None => {
                     // No WHERE: either a record-targeted write or a whole-table sweep.
-                    let raw_target = statement
-                        .split_whitespace()
-                        .nth(1)
-                        .unwrap_or_default()
-                        .trim_matches(|c| c == '`' || c == ';');
-                    if raw_target.contains(':') {
-                        Ok(format!("SELECT count() AS n FROM {target} WHERE id = {raw_target} GROUP ALL"))
-                    } else {
-                        Ok(format!("SELECT count() AS n FROM {target} GROUP ALL"))
+                    let tokens: Vec<&str> = statement.split_whitespace().collect();
+                    let raw_target = target_token_index(&tokens)
+                        .and_then(|i| tokens.get(i).copied())
+                        .unwrap_or_default();
+                    match record_id_literal(raw_target) {
+                        Some(id) => Ok(format!(
+                            "SELECT count() AS n FROM {target} WHERE id = {id} GROUP ALL"
+                        )),
+                        None => Ok(format!("SELECT count() AS n FROM {target} GROUP ALL")),
                     }
                 }
             }
@@ -545,6 +600,65 @@ mod tests {
             q,
             "SELECT count() AS n FROM crash_verdict WHERE id = crash_verdict:abc GROUP ALL"
         );
+    }
+
+    #[test]
+    fn impact_query_keeps_backticked_record_ids_balanced() {
+        // Trimming backticks off both ends dropped only the closing one, so the
+        // preview asked SurrealDB to parse an unterminated identifier.
+        let q = impact_query(
+            "UPDATE stress_test_run:`f2e2b3db-02b5-4ee4-83d4-0913cdee7f21` SET summary.memory_errors = 331",
+        )
+        .unwrap();
+        assert_eq!(
+            q,
+            "SELECT count() AS n FROM stress_test_run \
+             WHERE id = stress_test_run:`f2e2b3db-02b5-4ee4-83d4-0913cdee7f21` GROUP ALL"
+        );
+        assert_eq!(q.matches('`').count() % 2, 0, "backticks must stay paired");
+    }
+
+    #[test]
+    fn impact_query_rewraps_a_fully_quoted_record_id() {
+        // `computer:HOST:hash` as one quoted span is an identifier, not a record id.
+        let q = impact_query("UPDATE `computer:DESKTOP-X:hash9` SET a = 1").unwrap();
+        assert_eq!(
+            q,
+            "SELECT count() AS n FROM computer WHERE id = computer:`DESKTOP-X:hash9` GROUP ALL"
+        );
+    }
+
+    #[test]
+    fn impact_query_skips_from_before_a_record_id() {
+        // Reading token 1 blindly saw "FROM", missed the id, and counted the whole table.
+        let q = impact_query("DELETE FROM task:abc").unwrap();
+        assert_eq!(
+            q,
+            "SELECT count() AS n FROM task WHERE id = task:abc GROUP ALL"
+        );
+    }
+
+    #[test]
+    fn impact_query_declines_a_batch_rather_than_counting_only_the_first() {
+        let err = impact_query(
+            "UPDATE stress_test_run:`a` SET x = 1; UPDATE stress_test_run:`b` SET y = 2;",
+        )
+        .unwrap_err();
+        assert!(err.contains("batch of 2"), "{err}");
+    }
+
+    #[test]
+    fn a_trailing_semicolon_is_not_a_batch() {
+        assert!(impact_query("DELETE notification;").is_ok());
+    }
+
+    #[test]
+    fn semicolons_inside_quoted_spans_do_not_split() {
+        assert_eq!(
+            top_level_statements("UPDATE t SET note = 'a; b' WHERE x = 1").len(),
+            1
+        );
+        assert_eq!(top_level_statements("UPDATE t:`a;b` SET x = 1").len(), 1);
     }
 
     #[test]

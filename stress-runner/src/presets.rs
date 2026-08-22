@@ -270,6 +270,34 @@ mod tests {
         }
     }
 
+    /// GPU temperature is NVML-only, so it reads nothing on AMD and Intel
+    /// discrete cards. A preset that let that gap gate the verdict would make
+    /// every cert on those vendors unsignable, which is what shipped before.
+    #[test]
+    fn no_preset_gates_on_the_nvidia_only_gpu_sensor() {
+        for name in CERT_PRESET_NAMES {
+            let preset = load_cert_preset(name).expect(name);
+            let gpu = preset
+                .rules
+                .max_gpu_temp_c
+                .unwrap_or_else(|| panic!("{name} configures no GPU temp rule"));
+            assert_eq!(
+                gpu.on_missing,
+                crate::rules::MissingSensorPolicy::Warn,
+                "{name} gates certification on an unreadable GPU sensor"
+            );
+            let cpu = preset
+                .rules
+                .max_cpu_temp_c
+                .unwrap_or_else(|| panic!("{name} configures no CPU temp rule"));
+            assert_eq!(
+                cpu.on_missing,
+                crate::rules::MissingSensorPolicy::Inconclusive,
+                "{name} would certify a machine whose CPU temperature was never read"
+            );
+        }
+    }
+
     #[test]
     fn tier_durations_match_bands() {
         let hours = |name: &str| load_cert_preset(name).unwrap().total_secs() as f64 / 3600.0;

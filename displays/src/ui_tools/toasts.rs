@@ -112,10 +112,11 @@ impl Toasts {
         // Collapse identical toasts (same kind + text) into one, accumulating an occurrence count.
         let mut deduped: Vec<Toast> = Vec::with_capacity(toasts.len());
         for toast in toasts {
-            if let Some(existing) = deduped
-                .iter_mut()
-                .find(|t| t.kind == toast.kind && t.text.text() == toast.text.text())
-            {
+            if let Some(existing) = deduped.iter_mut().find(|t| {
+                t.kind == toast.kind
+                    && t.text.text() == toast.text.text()
+                    && t.payload == toast.payload
+            }) {
                 existing.options.count = existing.options.count.saturating_add(toast.options.count.max(1));
                 existing.options.ttl_sec = existing.options.ttl_sec.max(toast.options.ttl_sec);
             } else {
@@ -296,6 +297,10 @@ pub struct Toast {
     pub style: ToastStyle,
     /// Set when the operator clicks the close button (not on TTL expiry).
     pub user_dismissed: bool,
+    /// Opaque key a custom renderer uses to find the state the toast acts on
+    /// (e.g. the task id behind an undo button). Also keys dedup, so two
+    /// toasts of the same kind and text but different payloads stay separate.
+    pub payload: Option<String>,
 }
 
 impl Toast {
@@ -321,6 +326,18 @@ impl Toast {
     pub fn style(mut self, style: ToastStyle) -> Self {
         self.style = style;
         self
+    }
+
+    pub fn payload(mut self, payload: impl Into<String>) -> Self {
+        self.payload = Some(payload.into());
+        self
+    }
+
+    /// Restarts the toast's lifetime, e.g. when the action it offers to undo
+    /// has been extended by a further edit.
+    pub fn refresh(&mut self, ttl: Duration) {
+        self.options.ttl_sec = ttl.as_secs_f64();
+        self.options.initial_ttl_sec = self.options.ttl_sec;
     }
 
     /// Close the toast immediately (operator dismiss).

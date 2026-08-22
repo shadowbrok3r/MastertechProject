@@ -10,8 +10,8 @@ DEFINE FIELD connection_string ON diagnostic_session TYPE string                
 DEFINE FIELD customer_id       ON diagnostic_session TYPE none | record<customer>          PERMISSIONS FULL;
 DEFINE FIELD customer_name     ON diagnostic_session TYPE none | string                    PERMISSIONS FULL;
 DEFINE FIELD diagnosed_at      ON diagnostic_session TYPE none | datetime                  PERMISSIONS FULL;
-DEFINE FIELD diagnosed_by      ON diagnostic_session TYPE none | string                    PERMISSIONS FULL;
-DEFINE FIELD driven_by         ON diagnostic_session TYPE none | string                    PERMISSIONS FULL;
+DEFINE FIELD diagnosed_by      ON diagnostic_session TYPE none | string ASSERT $value == NONE OR string::matches($value, '^(mcp|zeroclaw|cron|tech|legacy)/[a-z0-9][a-z0-9._-]*(@[a-z0-9][a-z0-9._:-]*)?(#[a-z0-9][a-z0-9._-]*)?$') PERMISSIONS FULL;
+DEFINE FIELD driven_by         ON diagnostic_session TYPE none | string ASSERT $value == NONE OR string::matches($value, '^(mcp|zeroclaw|cron|tech|legacy)/[a-z0-9][a-z0-9._-]*(@[a-z0-9][a-z0-9._:-]*)?(#[a-z0-9][a-z0-9._-]*)?$') PERMISSIONS FULL;
 DEFINE FIELD ended_at          ON diagnostic_session TYPE none | datetime                  PERMISSIONS FULL;
 DEFINE FIELD hostname          ON diagnostic_session TYPE string                           PERMISSIONS FULL;
 DEFINE FIELD outcome_override        ON diagnostic_session TYPE none | string ASSERT $value == NONE OR $value IN ['confirmed_fixed', 'comeback', 'excluded'] PERMISSIONS FULL;

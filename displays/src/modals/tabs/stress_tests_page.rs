@@ -86,6 +86,7 @@ fn render_run(
         "pass" => theme::result_pass(ui),
         "fail" => theme::result_fail(ui),
         "aborted" => theme::result_aborted(ui),
+        "inconclusive" => theme::result_inconclusive(ui),
         _ => theme::result_unknown(ui),
     };
 
@@ -164,6 +165,7 @@ fn render_run(
                     let stage_color = match stage.result.as_deref() {
                         Some("fail") => theme::result_fail(ui),
                         Some("pass") => theme::result_pass(ui),
+                        Some("inconclusive") => theme::result_inconclusive(ui),
                         _ => theme::result_unknown(ui),
                     };
                     ui.horizontal_wrapped(|ui| {
@@ -175,6 +177,9 @@ fn render_run(
                             if let Some(err) = stage.last_error.as_deref() {
                                 ui.colored_label(theme::result_fail(ui), err);
                             }
+                        }
+                        for gap in stage.unevaluated.iter() {
+                            ui.colored_label(theme::result_inconclusive(ui), gap);
                         }
                     });
                 }

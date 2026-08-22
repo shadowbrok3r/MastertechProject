@@ -298,6 +298,7 @@ impl StressLab {
                     "pass" => theme::result_pass(ui),
                     "fail" => theme::result_fail(ui),
                     "aborted" => theme::result_aborted(ui),
+                    "inconclusive" => theme::result_inconclusive(ui),
                     _ => theme::result_unknown(ui),
                 };
                 ui.horizontal(|ui| {

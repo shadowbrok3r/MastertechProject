@@ -29,6 +29,9 @@ members = [
     "backdrop-blur/crates/backdrop-blur-egui",
     "backdrop-blur/crates/backdrop-blur-wgpu",
     "backdrop-blur/examples/eframe-glow-panel",
+    # Vendored https://github.com/zakarumych/egui-snarl + egui-scale, ported to egui 0.36.
+    "vendor/egui-snarl",
+    "vendor/egui-scale",
 ]
 # Targets of bare `cargo build`/`check`/`test` and rust-analyzer. Excludes the
 # wasm-only MtechServer2.0 (cdylib) so native commands don't try to compile it;
@@ -58,6 +61,8 @@ default-members = [
     "backdrop-blur/crates/backdrop-blur-core",
     "backdrop-blur/crates/backdrop-blur-glow",
     "backdrop-blur/crates/backdrop-blur-egui",
+    "vendor/egui-snarl",
+    "vendor/egui-scale",
 ]
 # Standalone crates with their own toolchain/target; never part of this resolve.
 # uefi has its own [workspace] and builds standalone. MastertechMobile still
@@ -76,6 +81,9 @@ exclude = [
 version = "4.8.0"
 
 [workspace.dependencies]
+# Tracks eframe's egui so vendored snarl shares one egui type with displays.
+egui = { version = "0.36", default-features = false }
+egui-snarl = { path = "vendor/egui-snarl", features = ["serde"] }
 backdrop-blur-core = { path = "backdrop-blur/crates/backdrop-blur-core" }
 backdrop-blur-glow = { path = "backdrop-blur/crates/backdrop-blur-glow" }
 backdrop-blur-egui = { path = "backdrop-blur/crates/backdrop-blur-egui", default-features = false, features = ["grab-pass"] }

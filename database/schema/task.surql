@@ -37,6 +37,9 @@ DEFINE INDEX task_idx ON task FIELDS service_number, assignee, service_ticket, c
 
 DEFINE FIELD assignee         ON task TYPE record<user>          DEFAULT $auth.id PERMISSIONS FULL;
 DEFINE FIELD completed        ON task TYPE bool                  DEFAULT false    PERMISSIONS FULL;
+-- Stamped when `completed` flips true, cleared when it flips back. NONE on rows
+-- completed before the field existed; readers fall back to created_at.
+DEFINE FIELD completed_at     ON task TYPE none | datetime                        PERMISSIONS FULL;
 DEFINE FIELD created_at       ON task TYPE datetime              DEFAULT time::now() PERMISSIONS FULL;
 DEFINE FIELD due_date         ON task TYPE datetime              DEFAULT time::now() PERMISSIONS FULL;
 DEFINE FIELD jobs             ON task TYPE none | array<record<job>>              PERMISSIONS FULL;

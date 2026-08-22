@@ -770,12 +770,19 @@ impl EguiScriptsTab {
                     }
                 }
                 RunUpdate::StageFinished { .. } => {}
-                RunUpdate::StageVerdict { label, pass, violations, .. } => {
+                RunUpdate::StageVerdict { label, pass, violations, unevaluated, .. } => {
                     if !pass {
                         let _ = log_tx2.try_send(ScriptLogEntry::warning(
                             category2.clone(),
                             &script_name2,
                             format!("Stage {label} FAIL: {}", violations.join("; ")),
+                        ));
+                    }
+                    for gap in &unevaluated {
+                        let _ = log_tx2.try_send(ScriptLogEntry::warning(
+                            category2.clone(),
+                            &script_name2,
+                            format!("Stage {label} ungraded: {gap}"),
                         ));
                     }
                 }
@@ -922,12 +929,19 @@ impl EguiScriptsTab {
                     }
                 }
                 RunUpdate::StageFinished { .. } => {}
-                RunUpdate::StageVerdict { label, pass, violations, .. } => {
+                RunUpdate::StageVerdict { label, pass, violations, unevaluated, .. } => {
                     if !pass {
                         let _ = log_tx2.try_send(ScriptLogEntry::warning(
                             category2.clone(),
                             &script_name2,
                             format!("Stage {label} FAIL: {}", violations.join("; ")),
+                        ));
+                    }
+                    for gap in &unevaluated {
+                        let _ = log_tx2.try_send(ScriptLogEntry::warning(
+                            category2.clone(),
+                            &script_name2,
+                            format!("Stage {label} ungraded: {gap}"),
                         ));
                     }
                 }

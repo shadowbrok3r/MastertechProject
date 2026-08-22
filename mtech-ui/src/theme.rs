@@ -193,6 +193,12 @@ pub fn result_aborted(ui: &Ui) -> Color32 {
     warn(ui)
 }
 
+/// A run that neither certifies nor condemns: it needs operator review, so it
+/// reads as a warning rather than as an unrecognised state.
+pub fn result_inconclusive(ui: &Ui) -> Color32 {
+    warn(ui)
+}
+
 pub fn result_unknown(ui: &Ui) -> Color32 {
     weak_text(ui)
 }

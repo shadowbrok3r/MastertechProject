@@ -1,7 +1,40 @@
 use chrono::{DateTime, Utc};
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 
-use crate::schema::{LiveTaskPayload, Priority, RecordIdExt, Status, Store, TaskPayload, User};
+use crate::schema::{
+    LiveTaskPayload, Priority, RecordId, RecordIdExt, Status, Store, TaskPayload, TaskQuery, User,
+};
+
+/// Keeps the tasks `matches` accepts, ordered by fuzzy score of `name` against
+/// the raw query so the closest name lands first. Ties fall back to input
+/// order, which is already date-sorted upstream.
+fn rank<T: Clone>(
+    tasks: &[T],
+    query: &TaskQuery,
+    name: impl Fn(&T) -> &String,
+    assignee: impl Fn(&T) -> &RecordId,
+    matches: impl Fn(&T, Option<&str>) -> bool,
+    assignee_name: &dyn Fn(&RecordId) -> Option<String>,
+) -> Vec<T> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let matcher = SkimMatcherV2::default().ignore_case();
+    let mut scored: Vec<(i64, usize, T)> = tasks
+        .iter()
+        .enumerate()
+        .filter_map(|(i, task)| {
+            let resolved = assignee_name(assignee(task));
+            if !matches(task, resolved.as_deref()) {
+                return None;
+            }
+            let score = matcher.fuzzy_match(name(task), &query.raw).unwrap_or(0);
+            Some((score, i, task.clone()))
+        })
+        .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    scored.into_iter().map(|(_, _, task)| task).collect()
+}
 
 pub trait FilterTasks {
     fn filter_by_assignee(&self, assignee: &User) -> Vec<TaskPayload>;
@@ -10,17 +43,17 @@ pub trait FilterTasks {
     fn filter_by_priority(&self, priority: &Priority) -> Vec<TaskPayload>;
     fn filter_by_date(&self, date: DateTime<Utc>) -> Vec<TaskPayload>;
     fn filter_by_store(&self, assignee: &User, store: &Store) -> Vec<TaskPayload>;
-    /// Filters a list of tasks by their name based on a fuzzy search input.
-    /// # Parameters
-    /// - `search`: An iterator over items of type `S` where `S` can be referenced as a string slice.
-    /// - `search_input`: A string representing the search input to filter tasks by.
+    /// Tasks matching `query`, best fuzzy match first. Completion state is
+    /// decided by `query.scope` alone — an open match never hides a
+    /// completed one.
     ///
-    /// # Returns
-    /// A vector of `TaskPayload` containing the filtered tasks.
-    fn filter_by_task_name<T: IntoIterator<Item = S>, S: AsRef<str> + std::fmt::Debug>(
+    /// `assignee_name` resolves a task's assignee to a display name so
+    /// "assigned to <name>" can be answered locally; return `None` when
+    /// unknown.
+    fn filter_by_query(
         &self,
-        name: T,
-        search_input: String,
+        query: &TaskQuery,
+        assignee_name: &dyn Fn(&RecordId) -> Option<String>,
     ) -> Vec<TaskPayload>;
 }
 
@@ -31,17 +64,17 @@ pub trait FilterLiveTasks {
     fn filter_by_priority(&self, priority: &Priority) -> Vec<LiveTaskPayload>;
     fn filter_by_date(&self, date: DateTime<Utc>) -> Vec<LiveTaskPayload>;
     fn filter_by_store(&self, assignee: &User, store: &Store) -> Vec<LiveTaskPayload>;
-    /// Filters a list of tasks by their name based on a fuzzy search input.
-    /// # Parameters
-    /// - `search`: An iterator over items of type `S` where `S` can be referenced as a string slice.
-    /// - `search_input`: A string representing the search input to filter tasks by.
+    /// Tasks matching `query`, best fuzzy match first. Completion state is
+    /// decided by `query.scope` alone — an open match never hides a
+    /// completed one.
     ///
-    /// # Returns
-    /// A vector of `TaskPayload` containing the filtered tasks.
-    fn filter_by_task_name<T: IntoIterator<Item = S>, S: AsRef<str> + std::fmt::Debug> (
+    /// `assignee_name` resolves a task's assignee to a display name so
+    /// "assigned to <name>" can be answered locally; return `None` when
+    /// unknown.
+    fn filter_by_query(
         &self,
-        name: T,
-        search_input: String,
+        query: &TaskQuery,
+        assignee_name: &dyn Fn(&RecordId) -> Option<String>,
     ) -> Vec<LiveTaskPayload>;
 }
 
@@ -90,93 +123,19 @@ impl FilterLiveTasks for Vec<LiveTaskPayload> {
             .collect()
     }
 
-    fn filter_by_task_name<T: IntoIterator<Item = S>, S: AsRef<str> + std::fmt::Debug> (
+    fn filter_by_query(
         &self,
-        search: T,
-        search_input: String,
+        query: &TaskQuery,
+        assignee_name: &dyn Fn(&RecordId) -> Option<String>,
     ) -> Vec<LiveTaskPayload> {
-        // Create a fuzzy matcher with default settings, ignoring case
-        let matcher = SkimMatcherV2::default().ignore_case();
-
-        // If search input is empty, return no tasks
-        if search_input.trim().is_empty() {
-            return vec![];
-        }
-
-        // Pre-filter search to reduce fuzzy match calls
-        let search_input_lower = search_input.to_lowercase();
-        let match_results: Vec<_> = search
-            .into_iter()
-            .filter(|s| s.as_ref().to_lowercase().contains(&search_input_lower))
-            .filter_map(|s| {
-                let s_str = s.as_ref();
-                // Use fuzzy matching, with fallback for single-letter inputs
-                matcher.fuzzy_indices(s_str, &search_input).map(|(score, indices)| {
-                    let adjusted_score = if search_input.len() == 1 {
-                        score.max(1) // Ensure single-letter matches have a positive score
-                    } else {
-                        score
-                    };
-                    (s, adjusted_score, indices)
-                })
-            })
-            .collect();
-
-        // Create a map of task IDs to tasks for O(1) lookups
-        let task_map: std::collections::HashMap<_, _> = self
-            .iter()
-            .map(|task| (task.id.key_string(), task))
-            .collect();
-
-        // Helper function to collect matching tasks for a given filter
-        let collect_matching_tasks = |tasks: &[LiveTaskPayload], include_completed: bool| -> Vec<(String, i64)> {
-            let mut task_scores: Vec<(String, i64)> = vec![];
-            let mut seen_ids = std::collections::HashSet::with_capacity(tasks.len());
-
-            for (output, input_score, _) in &match_results {
-                let output_str = output.as_ref();
-                for task in tasks.iter() {
-                    // Skip completed tasks unless we're including them
-                    if task.completed && !include_completed {
-                        continue;
-                    }
-                    
-                    let task_id = task.id.key_string().clone();
-                    if seen_ids.contains(&task_id) {
-                        continue;
-                    }
-                    let task_name = task.task_name.as_str();
-                    // Compute fuzzy match score for task_name only
-                    if let Some((task_score, _)) = matcher.fuzzy_indices(task_name, output_str) {
-                        let combined_score = task_score.max(*input_score);
-                        task_scores.push((task_id.clone(), combined_score));
-                        seen_ids.insert(task_id);
-                    }
-                }
-            }
-
-            // Sort by score descending
-            task_scores.sort_by(|a, b| b.1.cmp(&a.1));
-            task_scores
-        };
-
-        // First, try to find matches in non-completed tasks only
-        let non_completed_scores = collect_matching_tasks(self, false);
-
-        // If we found non-completed matches, return those
-        // Otherwise, fall back to including completed tasks
-        let task_scores = if !non_completed_scores.is_empty() {
-            non_completed_scores
-        } else {
-            collect_matching_tasks(self, true)
-        };
-
-        // Collect unique tasks
-        task_scores
-            .into_iter()
-            .filter_map(|(task_id, _)| task_map.get(&task_id).map(|task| *task))
-            .cloned()
-            .collect::<Vec<LiveTaskPayload>>()
+        rank(
+            self,
+            query,
+            |t| &t.task_name,
+            |t| &t.assignee,
+            |t, name| query.matches_local(t, name),
+            assignee_name,
+        )
     }
 }
 
@@ -225,92 +184,18 @@ impl FilterTasks for Vec<TaskPayload> {
             .collect()
     }
 
-    fn filter_by_task_name<T: IntoIterator<Item = S>, S: AsRef<str> + std::fmt::Debug> (
+    fn filter_by_query(
         &self,
-        search: T,
-        search_input: String,
+        query: &TaskQuery,
+        assignee_name: &dyn Fn(&RecordId) -> Option<String>,
     ) -> Vec<TaskPayload> {
-        // Create a fuzzy matcher with default settings, ignoring case
-        let matcher = SkimMatcherV2::default().ignore_case();
-
-        // If search input is empty, return no tasks
-        if search_input.trim().is_empty() {
-            return vec![];
-        }
-
-        // Pre-filter search to reduce fuzzy match calls
-        let search_input_lower = search_input.to_lowercase();
-        let match_results: Vec<_> = search
-            .into_iter()
-            .filter(|s| s.as_ref().to_lowercase().contains(&search_input_lower))
-            .filter_map(|s| {
-                let s_str = s.as_ref();
-                // Use fuzzy matching, with fallback for single-letter inputs
-                matcher.fuzzy_indices(s_str, &search_input).map(|(score, indices)| {
-                    let adjusted_score = if search_input.len() == 1 {
-                        score.max(1) // Ensure single-letter matches have a positive score
-                    } else {
-                        score
-                    };
-                    (s, adjusted_score, indices)
-                })
-            })
-            .collect();
-
-        // Create a map of task IDs to tasks for O(1) lookups
-        let task_map: std::collections::HashMap<_, _> = self
-            .iter()
-            .map(|task| (task.id.key_string(), task))
-            .collect();
-
-        // Helper function to collect matching tasks for a given filter
-        let collect_matching_tasks = |tasks: &[TaskPayload], include_completed: bool| -> Vec<(String, i64)> {
-            let mut task_scores: Vec<(String, i64)> = vec![];
-            let mut seen_ids = std::collections::HashSet::with_capacity(tasks.len());
-
-            for (output, input_score, _) in &match_results {
-                let output_str = output.as_ref();
-                for task in tasks.iter() {
-                    // Skip completed tasks unless we're including them
-                    if task.completed && !include_completed {
-                        continue;
-                    }
-                    
-                    let task_id = task.id.key_string().clone();
-                    if seen_ids.contains(&task_id) {
-                        continue;
-                    }
-                    let task_name = task.task_name.as_str();
-                    // Compute fuzzy match score for task_name only
-                    if let Some((task_score, _)) = matcher.fuzzy_indices(task_name, output_str) {
-                        let combined_score = task_score.max(*input_score);
-                        task_scores.push((task_id.clone(), combined_score));
-                        seen_ids.insert(task_id);
-                    }
-                }
-            }
-
-            // Sort by score descending
-            task_scores.sort_by(|a, b| b.1.cmp(&a.1));
-            task_scores
-        };
-
-        // First, try to find matches in non-completed tasks only
-        let non_completed_scores = collect_matching_tasks(self, false);
-
-        // If we found non-completed matches, return those
-        // Otherwise, fall back to including completed tasks
-        let task_scores = if !non_completed_scores.is_empty() {
-            non_completed_scores
-        } else {
-            collect_matching_tasks(self, true)
-        };
-
-        // Collect unique tasks
-        task_scores
-            .into_iter()
-            .filter_map(|(task_id, _)| task_map.get(&task_id).map(|task| *task))
-            .cloned()
-            .collect::<Vec<TaskPayload>>()
+        rank(
+            self,
+            query,
+            |t| &t.task_name,
+            |t| &t.assignee,
+            |t, name| query.matches_local(&t.clone().into(), name),
+            assignee_name,
+        )
     }
 }

@@ -4,7 +4,8 @@ use crossbeam::channel::Sender;
 use chrono::{DateTime, Utc};
 use log::info;
 
-use crate::{Displayable, Interaction, PlatformSpawner, Spawner, TaskUiActions};
+use crate::tabs::tasks::pending;
+use crate::{Displayable, Interaction, TaskUiActions};
 use crate::ui_tools::theme;
 
 impl Displayable for LiveTaskPayload {
@@ -18,6 +19,10 @@ impl Displayable for LiveTaskPayload {
         last_read: Option<chrono::DateTime<chrono::Utc>>,
     ) {
         let style = ui.style().clone();
+
+        // Show staged edits while the write is held; column placement still
+        // uses the unstaged value, so the card keeps its position.
+        pending::apply_staged(self);
         
         let mut frame = Frame::default()
             .fill(style.visuals.extreme_bg_color) // (Color32::from_rgb(14, 14, 18))
@@ -124,18 +129,9 @@ impl Displayable for LiveTaskPayload {
                     let _ = tx.try_send(TaskUiActions::OpenViewport(self.to_owned()));
                 }
 
-                let complete_response = self.interact_completed(ui);
-                if complete_response.has_focus()
-                    || complete_response.changed()
-                    || complete_response.clicked()
-                {
-                    info!("Marked Task Complete / Incomplete ");
-                    let task = self.clone();
-                    PlatformSpawner::spawn(async move {
-                        let update = task.update_completed(!task.completed).await;
-                        info!("update_completed: {update:?}");
-                    });
-                }
+                // Two clicks to complete, one to reopen; the write is staged
+                // and batched, never issued here.
+                let _ = self.interact_completed(ui);
             });
 
             ui.separator();

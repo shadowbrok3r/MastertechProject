@@ -13,6 +13,8 @@ pub mod task_layout;
 pub mod interactable;
 pub mod client_cards;
 pub mod ai_task_cards;
+pub mod pending;
+pub mod complete_button;
 
 impl SharedContext {
     pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
@@ -183,19 +185,25 @@ impl SharedContext {
                         }
                     }
                 }
+
                 let total_count: usize = target_map.values().map(|v| v.len()).sum();
                 (target_map, target_ordered_keys, total_count)
             };
 
-            // Compute best page by precedence order
-            let pages = ["My Tasks", "Store Tasks", "Completed Tasks"];
+            // Stay put whenever this board has hits of its own: hopping to
+            // whichever board had the most would hide the other set entirely,
+            // and the menu-bar count hint already says where the rest are.
+            let (_, _, here) = build_for_page(page);
             let mut best_page: Option<(&str, BTreeMap<String, Vec<LiveTaskPayload>>, Vec<String>)> = None;
-            let mut best_count = 0usize;
-            for p in pages.iter() {
-                let (p_map, p_order, p_count) = build_for_page(p);
-                if p_count > 0 && (best_page.is_none() || p_count > best_count) {
-                    best_count = p_count;
-                    best_page = Some((p, p_map, p_order));
+            if here == 0 {
+                let pages = ["My Tasks", "Store Tasks", "Completed Tasks"];
+                let mut best_count = 0usize;
+                for p in pages.iter() {
+                    let (p_map, p_order, p_count) = build_for_page(p);
+                    if p_count > 0 && (best_page.is_none() || p_count > best_count) {
+                        best_count = p_count;
+                        best_page = Some((p, p_map, p_order));
+                    }
                 }
             }
 

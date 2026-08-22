@@ -192,8 +192,13 @@ pub struct RunVerdictDto {
 pub struct StageVerdictDto {
     pub index: usize,
     pub label: String,
+    /// `"pass"` / `"fail"` / `"inconclusive"`.
+    pub result: String,
     pub pass: bool,
     pub violations: Vec<String>,
+    /// Rules whose sensor never reported, so the limit was never tested. Not
+    /// breaches: a stage can be `pass: true` with entries here.
+    pub unevaluated: Vec<String>,
     pub peak_throughput: Option<f64>,
 }
 
@@ -222,8 +227,10 @@ impl From<&stress_runner::RunVerdict> for RunVerdictDto {
                     o.verdict.as_ref().map(|sv| StageVerdictDto {
                         index: sv.index as usize,
                         label: sv.label.clone(),
+                        result: sv.result_token().to_string(),
                         pass: sv.pass,
                         violations: sv.violation_lines(),
+                        unevaluated: sv.unevaluated_lines(),
                         peak_throughput: o.summary.peak_throughput,
                     })
                 })

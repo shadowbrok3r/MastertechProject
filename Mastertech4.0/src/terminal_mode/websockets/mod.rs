@@ -399,15 +399,21 @@ fn run_remote_stress_plan(
                     }
                 }
                 RunUpdate::StageFinished { .. } => {}
-                RunUpdate::StageVerdict { index, label, pass, violations, .. } => {
+                RunUpdate::StageVerdict { index, label, pass, violations, unevaluated, .. } => {
                     let _ = plan_tx.send(PlanMsg::Log(format!(
                         "stage {} '{label}': {}",
                         index + 1,
-                        if pass { "PASS" } else { "FAIL" }
+                        stress_runner::stage_verdict_token(pass, &unevaluated)
                     )));
                     for violation in violations {
                         let _ = plan_tx.send(PlanMsg::Log(format!(
                             "stage {} violation: {violation}",
+                            index + 1
+                        )));
+                    }
+                    for gap in unevaluated {
+                        let _ = plan_tx.send(PlanMsg::Log(format!(
+                            "stage {} ungraded: {gap}",
                             index + 1
                         )));
                     }
@@ -3785,15 +3791,21 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                                         }
                                     }
                                     RunUpdate::StageFinished { .. } => {}
-                                    RunUpdate::StageVerdict { index, label: stage_label, pass, violations, .. } => {
+                                    RunUpdate::StageVerdict { index, label: stage_label, pass, violations, unevaluated, .. } => {
                                         let _ = probe_tx.send(ProbeMsg::Log(format!(
                                             "{label} stage {} '{stage_label}': {}",
                                             index + 1,
-                                            if pass { "PASS" } else { "FAIL" }
+                                            stress_runner::stage_verdict_token(pass, &unevaluated)
                                         )));
                                         for violation in violations {
                                             let _ = probe_tx.send(ProbeMsg::Log(format!(
                                                 "{label} stage {} violation: {violation}",
+                                                index + 1
+                                            )));
+                                        }
+                                        for gap in unevaluated {
+                                            let _ = probe_tx.send(ProbeMsg::Log(format!(
+                                                "{label} stage {} ungraded: {gap}",
                                                 index + 1
                                             )));
                                         }

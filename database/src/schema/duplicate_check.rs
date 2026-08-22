@@ -328,6 +328,7 @@ pub fn merge_task(existing: &LiveTaskPayload, new: &LiveTaskPayload, selections:
         completed: if selections.use_new("completed") { new.completed } else { existing.completed },
         status: if selections.use_new("status") { new.status.clone() } else { existing.status.clone() },
         created_at: existing.created_at.clone(), // Always keep existing creation time
+        completed_at: if selections.use_new("completed") { new.completed_at.clone() } else { existing.completed_at.clone() },
     }
 }
 

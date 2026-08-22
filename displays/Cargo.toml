@@ -46,6 +46,7 @@ mime_guess.workspace = true
 crossbeam.workspace = true
 surrealdb.workspace = true
 egui_dock.workspace = true
+egui-snarl = { workspace = true }
 # No `stress-ui`: it pulls stress-runner's tokio/full (mio) into wasm and mobile.
 mtech-ui = { workspace = true }
 once_cell.workspace = true

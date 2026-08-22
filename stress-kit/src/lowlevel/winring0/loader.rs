@@ -3,6 +3,7 @@
 use std::ffi::{c_void, CString};
 use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
+use std::sync::Mutex;
 
 use winapi::um::winnt::{SERVICE_DEMAND_START, SERVICE_ERROR_NORMAL, SERVICE_KERNEL_DRIVER};
 use winapi::um::winsvc::{
@@ -148,9 +149,26 @@ pub fn open_device() -> Option<winnt::HANDLE> {
     }
 }
 
+/// Callers currently holding the driver loaded. Guards the stop-delete-rewrite
+/// sequence below, which would otherwise pull the driver out from under a
+/// handle another caller in this process is still using.
+static LOADS: Mutex<usize> = Mutex::new(0);
+
 /// Extracts the embedded driver and starts it as a kernel service. A stale
 /// service of the same name is removed first so our `.sys` is the one loaded.
+/// Reference-counted: a load while the driver is already up just takes a share.
 pub fn load_driver() -> Result<(), String> {
+    let mut loads = LOADS.lock().unwrap_or_else(|e| e.into_inner());
+    if *loads > 0 {
+        *loads += 1;
+        return Ok(());
+    }
+    load_driver_uncounted()?;
+    *loads = 1;
+    Ok(())
+}
+
+fn load_driver_uncounted() -> Result<(), String> {
     let Some(path) = driver_path() else {
         return Err(
             "could not create a staging directory for the driver under \
@@ -254,7 +272,13 @@ fn write_driver_with_retry(path: &PathBuf) -> Result<(), String> {
     Err(classify("write driver", last))
 }
 
+/// Releases one share; the last one out stops the service and removes the image.
 pub fn unload_driver() {
+    let mut loads = LOADS.lock().unwrap_or_else(|e| e.into_inner());
+    *loads = loads.saturating_sub(1);
+    if *loads > 0 {
+        return;
+    }
     unsafe {
         let scm = OpenSCManagerW(null(), null(), SC_MANAGER_ALL_ACCESS);
         if !scm.is_null() {

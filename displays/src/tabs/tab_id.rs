@@ -38,6 +38,7 @@ pub enum TabId {
     AgentSessions,
     AgentAudit,
     AiAnalytics,
+    SessionBoard,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,6 +124,7 @@ const MT_NATIVE: &[TabId] = &[
     TabId::AgentSessions,
     TabId::AgentAudit,
     TabId::AiAnalytics,
+    TabId::SessionBoard,
 ];
 
 const WH_WASM: &[TabId] = &[
@@ -149,6 +151,7 @@ pub const WAREHOUSE_DEFAULT_OPEN: &[TabId] = &[TabId::FleetDashboard, TabId::Adm
 impl TabId {
     pub fn slug(self) -> &'static str {
         match self {
+            Self::SessionBoard => "session_board",
             Self::TurSheet => "tur_sheet",
             Self::PartOrder => "part_order",
             Self::Koth => "koth",
@@ -194,6 +197,7 @@ impl TabId {
 
     pub fn title(self, ctx: TabContext) -> &'static str {
         match self {
+            Self::SessionBoard => "Session Board",
             Self::TurSheet => "TUR Sheet",
             Self::PartOrder => "Part Order",
             Self::Koth => "KOTH",

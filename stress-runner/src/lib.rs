@@ -93,7 +93,8 @@ pub use benchmark::{
     BenchmarkStatus, DEFAULT_BENCH_SECS, NO_SAMPLES_NOTE,
 };
 pub use controller::{
-    RunController, RunPlan, RunSpec, RunStage, RunUpdate, RunVerdict, StageOutcome,
+    stage_verdict_token, RunController, RunPlan, RunSpec, RunStage, RunUpdate, RunVerdict,
+    StageOutcome,
 };
 pub use drive::drive_blocking;
 pub use presets::{
@@ -105,8 +106,9 @@ pub use report::{
     TimelineRow,
 };
 pub use rules::{
-    evaluate_stage, ClockCollapseRule, RailDroopRule, RuleViolation, StageStats, StageVerdict,
-    TempRule, ThroughputCvRule, VerdictRules,
+    evaluate_stage, ClockCollapseRule, MissingSensor, MissingSensorPolicy, RailDroopRule,
+    RuleViolation, StageStats, StageVerdict, TempRule, ThroughputCvRule, UnevaluatedRule,
+    VerdictRules,
 };
 pub use gpu_probe::{gpu_probe_spec, gpu_probe_stages, GPU_PROBE_PRESET};
 pub use panel_config::{

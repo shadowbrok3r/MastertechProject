@@ -1,0 +1,46 @@
+# Twelve spellings of "Claude driven by Logan" accumulated because every caller
+# free-texted its own identity. Canonical form is <harness>/<actor>[@<model>][#<node>],
+# matching database::schema::Provenance exactly so the type and the DB agree.
+# Normalize first: once the ASSERT exists, a later write to a non-conforming row fails.
+id = "20260822000000__provenance_stamp_format"
+name = "provenance_stamp_format"
+state = "completed"
+source_schema_hash = "855bfe87c3a6108787e4b78ad402cdc12a2d1a96e6be2d94305cea83fe7a0aeb"
+target_schema_hash = "0a20b52e2500459763d80df5f9e06d8009141923e98605b3e440f13358cec287"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "normalize_existing_provenance"
+phase = "start"
+kind = "run_sql"
+sql = """
+UPDATE diagnostic_session SET driven_by = 'mcp/unknown' WHERE driven_by = 'desktop';
+UPDATE diagnostic_session SET driven_by = 'zeroclaw/sweeper' WHERE driven_by = 'zeroclaw:sweeper';
+UPDATE diagnostic_session SET driven_by = 'zeroclaw/diagnostician' WHERE driven_by = 'zeroclaw:diagnostician';
+UPDATE diagnostic_session SET diagnosed_by = 'zeroclaw/sweeper' WHERE diagnosed_by = 'Sweeper (autopilot)';
+UPDATE diagnostic_session SET diagnosed_by = 'zeroclaw/sweeper' WHERE diagnosed_by = 'zeroclaw:sweeper';
+UPDATE diagnostic_session SET diagnosed_by = 'tech/logan.lees' WHERE diagnosed_by = 'logan.lees';
+UPDATE diagnostic_session SET diagnosed_by = 'mcp/logan.lees' WHERE diagnosed_by = 'logan.lees (AI-assisted)';
+UPDATE diagnostic_session SET diagnosed_by = 'legacy/unknown' WHERE diagnosed_by = 'unknown';
+UPDATE diagnostic_session SET driven_by = 'legacy/unknown' WHERE driven_by != NONE AND !string::matches(driven_by, '^(mcp|zeroclaw|cron|tech|legacy)/[a-z0-9][a-z0-9._-]*(@[a-z0-9][a-z0-9._:-]*)?(#[a-z0-9][a-z0-9._-]*)?$');
+UPDATE diagnostic_session SET diagnosed_by = 'legacy/unknown' WHERE diagnosed_by != NONE AND !string::matches(diagnosed_by, '^(mcp|zeroclaw|cron|tech|legacy)/[a-z0-9][a-z0-9._-]*(@[a-z0-9][a-z0-9._:-]*)?(#[a-z0-9][a-z0-9._-]*)?$');
+"""
+
+[[steps]]
+id = "assert_provenance_format"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE driven_by ON diagnostic_session TYPE none | string ASSERT $value == NONE OR string::matches($value, '^(mcp|zeroclaw|cron|tech|legacy)/[a-z0-9][a-z0-9._-]*(@[a-z0-9][a-z0-9._:-]*)?(#[a-z0-9][a-z0-9._-]*)?$') PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE diagnosed_by ON diagnostic_session TYPE none | string ASSERT $value == NONE OR string::matches($value, '^(mcp|zeroclaw|cron|tech|legacy)/[a-z0-9][a-z0-9._-]*(@[a-z0-9][a-z0-9._:-]*)?(#[a-z0-9][a-z0-9._-]*)?$') PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "drop_provenance_assert"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE driven_by ON diagnostic_session TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE diagnosed_by ON diagnostic_session TYPE none | string PERMISSIONS FULL;
+"""

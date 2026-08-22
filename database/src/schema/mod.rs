@@ -51,6 +51,7 @@ pub mod service_metrics;
 pub mod assist_message;
 pub mod order_intake;
 pub mod outcome;
+pub mod provenance;
 pub mod business_calendar;
 pub mod roi;
 pub mod assist;
@@ -81,6 +82,7 @@ pub use outcome::{
     set_client_internal, set_computer_internal, set_outcome_override, OutcomeBucket,
     OutcomeOverride, OutcomeRollup, SessionOutcomeRow,
 };
+pub use provenance::{Harness, Provenance, UNKNOWN_ACTOR};
 pub use business_calendar::{business_seconds, open_days_between, OPEN_SECS_PER_DAY};
 pub use roi::{DataGaps, RoiSummary, ShelfCandidate, TurnaroundStats, TECH_RATE_HIGH, TECH_RATE_LOW};
 pub use assist::{AssistRequest, ASSIST_REQUEST_TABLE};

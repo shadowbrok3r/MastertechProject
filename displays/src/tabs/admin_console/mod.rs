@@ -1120,8 +1120,11 @@ impl SharedContext {
                 let direction = &sort_by.direction;
                 match sort_by.field {
                     SortField::Default => clients.default_sort(direction.clone()),
-                    SortField::Date => clients.sort_by_date(direction.clone()),
                     SortField::Name => clients.sort_by_name(direction.clone()),
+                    // Clients have no completion stamp; last-seen order stands in.
+                    SortField::Date | SortField::Completed => {
+                        clients.sort_by_date(direction.clone())
+                    }
                 };
                 let my_key = crate::get_current_user_from_auth().map(|me| me.get_id().key_string());
                 pin_live_clients_to_top(clients, &live_clients, my_key.as_deref());

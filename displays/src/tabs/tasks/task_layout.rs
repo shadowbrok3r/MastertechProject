@@ -91,9 +91,21 @@ pub enum SortField {
     Default,
     Date,
     Name,
+    /// When the task was completed; the default on the Completed Tasks board.
+    Completed,
 }
 
 impl TaskLayout { 
+    /// Starting sort for a board's columns. Completed Tasks opens on most
+    /// recently finished; the active boards stay on priority order.
+    pub fn default_sort_for(page: &str) -> SortOptions {
+        if page == "Completed Tasks" {
+            SortOptions { field: SortField::Completed, direction: SortDirection::Desc }
+        } else {
+            SortOptions::default()
+        }
+    }
+
     const COL_W: f32 = 450.0;
     const HEADER_H: f32 = 48.0;
     const SPACER_W: f32 = 6.0;
@@ -553,12 +565,17 @@ impl TaskLayout {
                         }
                         
                         ui.vertical(|col_ui| {
-                            let sort_by = self.sort_by.entry(name.clone()).or_default();
+                            let default_sort = Self::default_sort_for(&self.page);
+                            let sort_by = self
+                                .sort_by
+                                .entry(name.clone())
+                                .or_insert_with(|| default_sort.clone());
                             let direction = &sort_by.direction;
                             match sort_by.field {
                                 SortField::Default => tasks.default_sort(direction.clone()),
                                 SortField::Date => tasks.sort_by_date(direction.clone()),
                                 SortField::Name => tasks.sort_by_name(direction.clone()),
+                                SortField::Completed => tasks.sort_by_completed(direction.clone()),
                             };
                             
                             for task in tasks.iter(){
@@ -692,7 +709,10 @@ impl TaskLayout {
                                     
                                     ui.with_layout(Layout::right_to_left(Align::Max), |ui|
                                     {
-                                        let selected = self.sort_by.entry(name.clone()).or_default();
+                                        let selected = self
+                                            .sort_by
+                                            .entry(name.clone())
+                                            .or_insert_with(|| Self::default_sort_for(&self.page));
                                         let txt = match selected.direction {
                                             SortDirection::Asc => ("↗", ui.style().visuals.warn_fg_color),
                                             SortDirection::Desc => ("↘", ui.style().visuals.error_fg_color),
@@ -701,6 +721,7 @@ impl TaskLayout {
                                             SortField::Default => RichText::new(format!("Priority {}", txt.0)).color(txt.1).small(),
                                             SortField::Date => RichText::new(format!("Date {}", txt.0)).color(txt.1).small(),
                                             SortField::Name => RichText::new(format!("Name {}", txt.0)).color(txt.1).small(),
+                                            SortField::Completed => RichText::new(format!("Completed {}", txt.0)).color(txt.1).small(),
                                         };
                                         
                                         ComboBox::new(format!("SortBy for {name:?}-{i}"), "")
@@ -758,6 +779,21 @@ impl TaskLayout {
                                                     }
                                                     // Update the last selected field
                                                     self.last_sort_field = Some(SortField::Date);
+                                                }
+                                                if ui.selectable_value(
+                                                    &mut selected.field,
+                                                    SortField::Completed,
+                                                    RichText::new(format!("Completed {}", txt.0)).color(txt.1).small())
+                                                .clicked() {
+                                                    if let Some(last_field) = self.last_sort_field.clone() {
+                                                        if last_field == SortField::Completed {
+                                                            selected.direction = match selected.direction {
+                                                                SortDirection::Asc => SortDirection::Desc,
+                                                                SortDirection::Desc => SortDirection::Asc,
+                                                            };
+                                                        }
+                                                    }
+                                                    self.last_sort_field = Some(SortField::Completed);
                                                 }
                                         });
                                     });

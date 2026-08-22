@@ -30,6 +30,7 @@ pub mod stress_lab;
 pub mod agent_sessions;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod plugins_tab;
+pub mod session_board;
 
 pub use dock_session::{default_dock_session_native, default_dock_session_wasm, DockSession};
 pub use tab_id::{TabContext, TabId, WAREHOUSE_DEFAULT_OPEN};
@@ -68,6 +69,10 @@ impl SharedContext {
             self.store_users.clear();
             self.tasks.clear();
             self.layout_configs = None;
+            // Staged edits belong to the board being left; never let them land
+            // against the incoming store.
+            self.reset_pending_task_edits();
+            self.clear_task_search();
             info!("Switching to store: {:?}", store_selection.as_str());
             PlatformSpawner::spawn(async move {
                 let store_tasks = get_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
@@ -152,6 +157,15 @@ impl egui_dock::TabViewer for SharedContext {
             TabId::Koth => self.koth.ui(ui),
             TabId::CreatePrestashopOrder => self.prestashop_order_form.ui(ui),
             TabId::StressLab => self.stress_lab.ui(ui),
+            #[cfg(not(target_arch = "wasm32"))]
+            TabId::SessionBoard => self.session_board.ui(ui),
+            #[cfg(target_arch = "wasm32")]
+            TabId::SessionBoard => {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(40.0);
+                    ui.label("The session board reads local Claude Code state; desktop only.");
+                });
+            }
             TabId::ResourceMonitor => self.resource_mon.display(ui),
             TabId::Scripts => {
                 ui.vertical_centered(|ui| {

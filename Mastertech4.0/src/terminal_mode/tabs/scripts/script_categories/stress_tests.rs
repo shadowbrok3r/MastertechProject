@@ -198,14 +198,17 @@ impl<'a> ScriptsTab<'a> {
                     }
                 }
                 RunUpdate::StageFinished { .. } => {}
-                RunUpdate::StageVerdict { index, label: stage_label, pass, violations, .. } => {
+                RunUpdate::StageVerdict { index, label: stage_label, pass, violations, unevaluated, .. } => {
                     let _ = log_tx.try_send(format!(
                         "{label} stage {} '{stage_label}': {}",
                         index + 1,
-                        if pass { "PASS" } else { "FAIL" }
+                        stress_runner::stage_verdict_token(pass, &unevaluated)
                     ));
                     for violation in violations {
                         let _ = log_tx.try_send(format!("{label} stage {} violation: {violation}", index + 1));
+                    }
+                    for gap in unevaluated {
+                        let _ = log_tx.try_send(format!("{label} stage {} ungraded: {gap}", index + 1));
                     }
                 }
                 RunUpdate::Finished(v) => {

@@ -1,0 +1,24 @@
+[package]
+name = "egui-snarl"
+version = "0.11.0"
+edition = "2024"
+rust-version = "1.92"
+license = "MIT OR Apache-2.0"
+documentation = "https://docs.rs/egui-snarl"
+repository = "https://github.com/zakarumych/egui-snarl"
+description = "Node-graphs for egui"
+readme = "README.md"
+keywords = ["egui", "node", "graph", "ui", "node-graph"]
+categories = ["gui", "visualization"]
+
+[features]
+serde = ["dep:serde", "egui/serde", "slab/serde"]
+
+[dependencies]
+ahash = { version = "0.8.12", default-features = false }
+egui = { workspace = true }
+slab = { version = "0.4" }
+serde = { workspace = true, features = ["derive"], optional = true }
+smallvec = { version = "1.15", features = ["const_new"] }
+
+egui-scale = { path = "../egui-scale" }

@@ -140,6 +140,10 @@ pub const CARET_DOWN: &str = p::CARET_DOWN;
 pub const ARROW_RIGHT: &str = p::ARROW_RIGHT;
 pub const ARROW_DOWN: &str = p::ARROW_DOWN;
 pub const CHECK: &str = p::CHECK;
+pub const UNDO: &str = p::ARROW_COUNTER_CLOCKWISE;
+pub const ARCHIVE: &str = p::ARCHIVE;
+pub const TAG: &str = p::TAG;
+pub const GRAPH: &str = p::GRAPH;
 
 pub fn folder_shortcut_icon(path: &str) -> &'static str {
     match path {

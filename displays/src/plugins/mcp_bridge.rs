@@ -1079,6 +1079,21 @@ pub struct ScenarioStageParam {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct StressSummariesBackfillParams {
+    #[schemars(description = "Recompute only this run (key or full record id). Omit to sweep the table.")]
+    pub run_id: Option<String>,
+    #[schemars(description = "Only sweep runs for this hostname.")]
+    pub hostname: Option<String>,
+    #[schemars(description = "Maximum runs to examine in one pass (default 1000).")]
+    pub limit: Option<u32>,
+    #[schemars(description = "Also upgrade result/failure_kind on runs whose evidence contradicts a non-fail grade. Never downgrades a fail. Default false: counters only.")]
+    #[serde(default)]
+    pub regrade: bool,
+    #[schemars(description = "Preview without writing (default TRUE — pass false to apply).")]
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct StressRunsReapParams {
     #[schemars(description = "Reap runs whose started_at is older than now minus this many seconds (default 3600, min 600).")]
     pub grace_secs: Option<u64>,
@@ -1730,8 +1745,8 @@ pub struct MarkDiagnosedParams {
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct SearchDiagnosticsParams {
-    #[schemars(description = "Free-text search across session summaries, hostnames, customer names, and tags")]
-    pub query: String,
+    #[schemars(description = "Optional free-text narrowing across session summaries, hostnames, customer names, and tags. OMIT it to get every session for the hostname/connection_string filter — a term here can hide real history.")]
+    pub query: Option<String>,
     #[schemars(description = "Filter by exact hostname")]
     pub hostname: Option<String>,
     #[schemars(description = "Filter by customer name (fuzzy)")]
@@ -6480,7 +6495,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "record_stress_test_run",
-        description = "Persist a completed stress_test_run row plus optional stress_test_event timeline entries. REQUIRED backfill when scripts_run_remote GPU Probe times out or hangs and stress_test_persistence.verified is false. Also use for third-party bench results. Creates stress_test_run + stress_test_event rows; does not write stress_test_metric samples."
+        description = "Persist a completed stress_test_run row plus optional stress_test_event timeline entries. summary counters are DERIVED from the events you pass (memory_error -> memory_errors + test_errors, tdr -> tdr_count, whea_hit -> whea_delta_count, disk_io_error -> disk_io_errors, bsod -> bsod_detected), so pass one event per observed fault and the run becomes discoverable by counter search. REQUIRED backfill when scripts_run_remote GPU Probe times out or hangs and stress_test_persistence.verified is false. Also use for third-party bench results. Creates stress_test_run + stress_test_event rows; does not write stress_test_metric samples."
     )]
     async fn record_stress_test_run(
         &self,
@@ -6599,7 +6614,6 @@ impl PluginToolProvider {
         run.result = result;
         run.finish_reason = Some(FinishReason::Crashed);
         run.set_failure_mode(failure_mode);
-        run.summary = RunSummary::default();
 
         let mut events: Vec<StressTestEvent> = Vec::new();
         for ev in &p.events {
@@ -6610,6 +6624,9 @@ impl PluginToolProvider {
                 "tdr" => EventKind::Tdr,
                 "bsod" => EventKind::Bsod,
                 "whea_hit" => EventKind::WheaHit,
+                "memory_error" => EventKind::MemoryError,
+                "disk_io_error" => EventKind::DiskIoError,
+                "thermal_throttle" => EventKind::ThermalThrottle,
                 "operator_note" => EventKind::OperatorNote,
                 "custom" => EventKind::Custom,
                 other => {
@@ -6627,6 +6644,23 @@ impl PluginToolProvider {
             row.detail = ev.detail.clone();
             events.push(row);
         }
+
+        // Counters come from the events the caller supplied; zeroing the summary
+        // here is what left every backfilled run invisible to a counter search.
+        let of_kind = |k: EventKind| -> u32 {
+            events.iter().filter(|e| e.kind == k).count().min(u32::MAX as usize) as u32
+        };
+        let memory_errors = of_kind(EventKind::MemoryError);
+        run.summary = RunSummary {
+            memory_errors,
+            test_errors: memory_errors,
+            tdr_count: of_kind(EventKind::Tdr),
+            whea_delta_count: of_kind(EventKind::WheaHit),
+            disk_io_errors: of_kind(EventKind::DiskIoError),
+            bsod_detected: of_kind(EventKind::Bsod) > 0,
+            thermal_throttle_detected: of_kind(EventKind::ThermalThrottle) > 0,
+            ..RunSummary::default()
+        };
 
         let run_id = StressTestRun::create_completed(&run, &events)
             .await
@@ -6933,14 +6967,14 @@ impl PluginToolProvider {
 
     #[tool(
         name = "search_diagnostics",
-        description = "Search past diagnostic sessions by hostname, customer name, tags, or free text. Use to check if a machine/customer has been diagnosed before."
+        description = "Search past diagnostic sessions by hostname, customer name, tags, or free text. Use to check if a machine/customer has been diagnosed before. Pass hostname alone and omit query for a machine's full history; includes 'abandoned' sessions, whose findings live in their entries rather than a summary."
     )]
     async fn search_diagnostics(
         &self,
         Parameters(p): Parameters<SearchDiagnosticsParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let sessions = database::schema::DiagnosticSession::search(
-            &p.query,
+            p.query.as_deref(),
             p.hostname.as_deref(),
             p.customer_name.as_deref(),
             p.connection_string.as_deref(),
@@ -8932,13 +8966,19 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
                     }
                 }
                 RunUpdate::StageFinished { .. } => {}
-                RunUpdate::StageVerdict { label, pass, violations, .. } => {
-                    if pass {
-                        logs.push(format!("Stage verdict: {label} PASS"));
-                    } else {
+                RunUpdate::StageVerdict { label, pass, violations, unevaluated, .. } => {
+                    if !pass {
                         logs.push(format!(
                             "Stage verdict: {label} FAIL ({})",
                             violations.join("; ")
+                        ));
+                    } else if unevaluated.is_empty() {
+                        logs.push(format!("Stage verdict: {label} PASS"));
+                    } else {
+                        logs.push(format!(
+                            "Stage verdict: {label} PASS, {} rule(s) ungraded ({})",
+                            unevaluated.len(),
+                            unevaluated.join("; ")
                         ));
                     }
                 }
@@ -8971,6 +9011,7 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
                 "failure_mode": serde_json::to_value(&v.failure_mode).unwrap_or_default(),
                 "summary": serde_json::to_value(&v.summary).unwrap_or_default(),
                 "duration_secs": v.duration_secs,
+                "ungraded_rules": v.ungraded_rule_lines(),
             })
         });
 
@@ -9078,11 +9119,17 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
                     }
                 }
                 RunUpdate::StageFinished { .. } => {}
-                RunUpdate::StageVerdict { label, pass, violations, .. } => {
-                    if pass {
+                RunUpdate::StageVerdict { label, pass, violations, unevaluated, .. } => {
+                    if !pass {
+                        logs.push(format!("Lane verdict: {label} FAIL ({})", violations.join("; ")));
+                    } else if unevaluated.is_empty() {
                         logs.push(format!("Lane verdict: {label} PASS"));
                     } else {
-                        logs.push(format!("Lane verdict: {label} FAIL ({})", violations.join("; ")));
+                        logs.push(format!(
+                            "Lane verdict: {label} PASS, {} rule(s) ungraded ({})",
+                            unevaluated.len(),
+                            unevaluated.join("; ")
+                        ));
                     }
                 }
                 RunUpdate::Warning { message } => logs.push(format!("warning: {message}")),
@@ -9113,6 +9160,7 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
                 "failure_mode": serde_json::to_value(&v.failure_mode).unwrap_or_default(),
                 "summary": serde_json::to_value(&v.summary).unwrap_or_default(),
                 "duration_secs": v.duration_secs,
+                "ungraded_rules": v.ungraded_rule_lines(),
             })
         });
 
@@ -9128,30 +9176,525 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
 
     #[tool(
         name = "stress_runs_reap",
-        description = "Finalize zombie stress_test_run rows stuck at result='in_progress' past their window (client hang/reboot prevented finalize). Marks them aborted with ended_at=now and a reap note appended. Use dry_run:true to preview. Returns the affected run ids."
+        description = "Finalize zombie stress_test_run rows stuck at result='in_progress' past their window (client hang/reboot prevented finalize). Each candidate is graded from its own stress_test_event rows: a run with failure-class events (bsod, unexpected_shutdown, whea_hit, tdr, memory_error, disk_io_error) is closed result='fail' with the matching failure_kind and its summary counters backfilled from those events; only a run with no such evidence is closed 'aborted'. ended_at is the last event timestamp — the last moment the run is PROVEN to have been alive, which is a LOWER BOUND on its real end, not the end itself; duration_actual_secs derived from it is a floor, never an exact runtime. Use dry_run:true to preview the grade. Returns the affected run ids with the evidence each was graded on."
     )]
     async fn stress_runs_reap(
         &self,
         Parameters(p): Parameters<StressRunsReapParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        const REAP_SELECT: &str = "SELECT id, hostname, preset_label, started_at FROM stress_test_run WHERE result = 'in_progress' AND started_at < <datetime>$cutoff AND ($hostname IS NONE OR hostname = $hostname);";
-        const REAP_UPDATE: &str = "UPDATE stress_test_run SET result = 'aborted', ended_at = time::now(), notes = string::concat(notes ?? '', ' [reaped: stale in_progress past planned window]') WHERE result = 'in_progress' AND started_at < <datetime>$cutoff AND ($hostname IS NONE OR hostname = $hostname) RETURN id, hostname, preset_label, started_at;";
+        use database::schema::{Datetime, FailureMode, RecordId, RecordIdExt};
+
+        const REAP_SELECT: &str = "SELECT <string> id AS id, hostname, preset_label, started_at, summary FROM stress_test_run WHERE result = 'in_progress' AND started_at < <datetime>$cutoff AND ($hostname IS NONE OR hostname = $hostname);";
+        // `data.new_errors` batches every mismatch since the last tick into one
+        // row, so the row count understates the mismatches; sum it instead.
+        const EVIDENCE_SELECT: &str = "SELECT <string> run_ref AS run_ref, kind, count() AS rows, math::sum(data.new_errors ?? 1) AS units, <string> time::max(at) AS last_at FROM stress_test_event WHERE run_ref IN $ids GROUP BY run_ref, kind;";
+        const REAP_NOTE: &str = " [reaped: stale in_progress past planned window]";
 
         let grace = p.grace_secs.unwrap_or(3600).max(600);
         let cutoff = (chrono::Utc::now() - chrono::Duration::seconds(grace as i64)).to_rfc3339();
-        let rows: Vec<serde_json::Value> = database::db()
-            .query(if p.dry_run { REAP_SELECT } else { REAP_UPDATE })
+
+        let candidates: Vec<serde_json::Value> = database::db()
+            .query(REAP_SELECT)
             .bind(("cutoff", cutoff))
             .bind(("hostname", p.hostname.clone()))
             .await
             .map_err(to_internal)?
             .take(0)
             .map_err(to_internal)?;
+        if candidates.is_empty() {
+            return Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
+                "dry_run": p.dry_run,
+                "grace_secs": grace,
+                "affected": 0,
+                "runs": [],
+            }))
+            .map_err(to_internal)?]));
+        }
+
+        // Ids come off the candidate rows themselves; pairing them with a
+        // separate id query would rely on both returning the same order.
+        let ids: Vec<RecordId> = candidates
+            .iter()
+            .filter_map(|r| r.get("id").and_then(|v| v.as_str()))
+            .map(|s| parse_record_id(s, database::schema::STRESS_TEST_RUN_TABLE))
+            .collect();
+        if ids.len() != candidates.len() {
+            return Err(to_internal(format!(
+                "{} of {} stale run(s) returned no readable id; refusing to grade a partial set",
+                candidates.len() - ids.len(),
+                candidates.len()
+            )));
+        }
+        let evidence: Vec<serde_json::Value> = database::db()
+            .query(EVIDENCE_SELECT)
+            .bind(("ids", ids.clone()))
+            .await
+            .map_err(to_internal)?
+            .take(0)
+            .map_err(to_internal)?;
+
+        // `run_ref` comes back stringified; normalizing both sides through the
+        // same parser keeps the match exact rather than a substring test.
+        let evidence: Vec<(RecordId, &serde_json::Value)> = evidence
+            .iter()
+            .filter_map(|e| {
+                let r = e.get("run_ref").and_then(|r| r.as_str())?;
+                Some((
+                    parse_record_id(r, database::schema::STRESS_TEST_RUN_TABLE),
+                    e,
+                ))
+            })
+            .collect();
+
+        let mut out: Vec<serde_json::Value> = Vec::new();
+        for (id, row) in ids.iter().zip(candidates.iter()) {
+            let key = id.key_string();
+            let mine: Vec<&serde_json::Value> = evidence
+                .iter()
+                .filter(|(run_ref, _)| run_ref == id)
+                .map(|(_, e)| *e)
+                .collect();
+            let units = |kind: &str| -> u32 {
+                mine.iter()
+                    .filter(|e| e.get("kind").and_then(|k| k.as_str()) == Some(kind))
+                    .filter_map(|e| e.get("units").and_then(|u| u.as_u64()))
+                    .sum::<u64>()
+                    .min(u32::MAX as u64) as u32
+            };
+            let last_at = mine
+                .iter()
+                .filter_map(|e| e.get("last_at").and_then(|a| a.as_str()))
+                .max()
+                .map(str::to_string);
+
+            let bsod = units("bsod") > 0;
+            let reboot = units("unexpected_shutdown") > 0;
+
+            // Only counters the events evidence are raised, and never below a
+            // value the run already recorded.
+            let existing = |field: &str| -> u32 {
+                row.get("summary")
+                    .and_then(|s| s.get(field))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
+                    .min(u32::MAX as u64) as u32
+            };
+            let mem = units("memory_error").max(existing("memory_errors"));
+            let whea = units("whea_hit").max(existing("whea_delta_count"));
+            let tdr = units("tdr").max(existing("tdr_count"));
+            let disk = units("disk_io_error").max(existing("disk_io_errors"));
+            // Memory mismatches are test errors; the memory field is the subset.
+            let test_errors = mem.max(existing("test_errors"));
+
+            // Strongest evidence first: a bugcheck or reboot names how the run
+            // ended; the counters below name a component. Blind spot: a run with
+            // both tdr and memory_error events grades tdr, and on an APU a
+            // gpu_vram mismatch is a system-RAM symptom, so the memory evidence
+            // is still in `summary.memory_errors` but not in `failure_kind`.
+            let failure = if bsod {
+                Some(FailureMode::Bsod { code: None, bugcheck_args: None })
+            } else if reboot {
+                Some(FailureMode::Reboot)
+            } else if whea > 0 {
+                Some(FailureMode::WheaError { count: whea })
+            } else if tdr > 0 {
+                Some(FailureMode::Tdr { count: tdr })
+            } else if mem > 0 {
+                Some(FailureMode::DataMismatch { addresses: None })
+            } else if disk > 0 {
+                Some(FailureMode::DiskIoError { message: String::new() })
+            } else {
+                None
+            };
+
+            let result = if failure.is_some() { "fail" } else { "aborted" };
+            let failure_kind = failure
+                .as_ref()
+                .unwrap_or(&FailureMode::None)
+                .kind()
+                .to_string();
+            let event_rows: u64 = mine
+                .iter()
+                .filter_map(|e| e.get("rows").and_then(|r| r.as_u64()))
+                .sum();
+            let graded = serde_json::json!({
+                "id": key,
+                "hostname": row.get("hostname").cloned().unwrap_or(serde_json::Value::Null),
+                "preset_label": row.get("preset_label").cloned().unwrap_or(serde_json::Value::Null),
+                "started_at": row.get("started_at").cloned().unwrap_or(serde_json::Value::Null),
+                "result": result,
+                "failure_kind": failure_kind.clone(),
+                "ended_at": last_at.clone(),
+                "evidence": mine.iter().map(|e| serde_json::json!({
+                    "kind": e.get("kind").cloned().unwrap_or(serde_json::Value::Null),
+                    "rows": e.get("rows").cloned().unwrap_or(serde_json::Value::Null),
+                    "units": e.get("units").cloned().unwrap_or(serde_json::Value::Null),
+                })).collect::<Vec<_>>(),
+                "summary": {
+                    "memory_errors": mem,
+                    "test_errors": test_errors,
+                    "whea_delta_count": whea,
+                    "tdr_count": tdr,
+                    "disk_io_errors": disk,
+                    "bsod_detected": bsod,
+                },
+            });
+
+            if !p.dry_run {
+                // `ended_at` is the last event, so `duration_actual_secs` is a
+                // floor: the window the run is evidenced to have been alive, not
+                // its true runtime and not the window up to the reap.
+                let sql = "UPDATE $id SET \
+                        result = $result, \
+                        failure_mode = $failure, \
+                        failure_kind = $failure_kind, \
+                        ended_at = ($last_at ?? time::now()), \
+                        duration_actual_secs = <float> duration::secs(($last_at ?? time::now()) - started_at), \
+                        summary.memory_errors = $mem, \
+                        summary.test_errors = $test_errors, \
+                        summary.whea_delta_count = $whea, \
+                        summary.tdr_count = $tdr, \
+                        summary.disk_io_errors = $disk, \
+                        summary.bsod_detected = ($bsod OR (summary.bsod_detected ?? false)), \
+                        notes = string::concat(notes ?? '', $note) \
+                        WHERE result = 'in_progress'";
+                let note = match &failure {
+                    Some(f) => format!(
+                        "{REAP_NOTE} [graded fail/{} from {event_rows} linked event(s)]",
+                        f.kind()
+                    ),
+                    None => REAP_NOTE.to_string(),
+                };
+                let last_at_dt: Option<Datetime> = last_at
+                    .as_deref()
+                    .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok())
+                    .map(Into::into);
+                database::db()
+                    .query(sql)
+                    .bind(("id", id.clone()))
+                    .bind(("result", result.to_string()))
+                    .bind(("failure", failure.clone().unwrap_or(FailureMode::None)))
+                    .bind(("failure_kind", failure_kind))
+                    .bind(("last_at", last_at_dt))
+                    .bind(("mem", mem))
+                    .bind(("test_errors", test_errors))
+                    .bind(("whea", whea))
+                    .bind(("tdr", tdr))
+                    .bind(("disk", disk))
+                    .bind(("bsod", bsod))
+                    .bind(("note", note))
+                    .await
+                    .map_err(to_internal)?
+                    .check()
+                    .map_err(to_internal)?;
+            }
+            out.push(graded);
+        }
+
+        let failed = out
+            .iter()
+            .filter(|r| r.get("result").and_then(|v| v.as_str()) == Some("fail"))
+            .count();
         Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
             "dry_run": p.dry_run,
             "grace_secs": grace,
-            "affected": rows.len(),
-            "runs": rows,
+            "affected": out.len(),
+            "graded_fail": failed,
+            "graded_aborted": out.len() - failed,
+            "runs": out,
+        }))
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "stress_summaries_backfill",
+        description = "Recompute stress_test_run.summary counters from each run's own evidence — its scenario_stages error counts and its stress_test_event rows — and report every row whose stored summary disagrees. Fixes rows written before the memory_errors rollup was wired and rows whose summary was never populated. A counter is only ever RAISED, never lowered, so a pass cannot destroy a good value. Event units come from data.new_errors on code='data_mismatch' rows (one row batches every mismatch since the last tick); code='stage_verdict' rows are excluded — they are verdict records, not error counts. dry_run defaults to TRUE: run it, read the diff, then pass dry_run:false. Pass regrade:true to also upgrade result/failure_kind on runs whose evidence contradicts a non-fail grade."
+    )]
+    async fn stress_summaries_backfill(
+        &self,
+        Parameters(p): Parameters<StressSummariesBackfillParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        use database::schema::{FailureMode, RecordId, RecordIdExt};
+
+        // `code='data_mismatch'` marks a counted error and carries
+        // `data.new_errors`; `code='stage_verdict'` is a verdict record with no
+        // count and must not be read as one.
+        const EVIDENCE: &str = "SELECT <string> run_ref AS run_ref, \
+                math::sum(IF kind = 'memory_error' THEN (data.new_errors ?? 1) ELSE 0 END) AS mem_units, \
+                math::sum(IF code = 'data_mismatch' THEN (data.new_errors ?? 1) ELSE 0 END) AS err_units, \
+                count(kind = 'tdr') AS tdr_rows, \
+                count(kind = 'whea_hit') AS whea_rows, \
+                count(kind = 'disk_io_error') AS dio_rows, \
+                count(kind = 'bsod') AS bsod_rows, \
+                count(kind = 'unexpected_shutdown') AS shutdown_rows \
+                FROM stress_test_event \
+                WHERE run_ref IN $ids \
+                AND (code = 'data_mismatch' OR kind IN ['tdr','whea_hit','disk_io_error','bsod','unexpected_shutdown','memory_error']) \
+                GROUP BY run_ref;";
+
+        let dry_run = p.dry_run.unwrap_or(true);
+        let limit = p.limit.unwrap_or(1000).clamp(1, 5000);
+        let only = p
+            .run_id
+            .as_deref()
+            .map(|s| parse_record_id(s, database::schema::STRESS_TEST_RUN_TABLE));
+
+        let runs: Vec<serde_json::Value> = database::db()
+            .query(
+                "SELECT <string> id AS id, hostname, result, failure_kind, summary, \
+                 scenario_stages[*].stressor AS stage_stressors, \
+                 scenario_stages[*].errors AS stage_errors \
+                 FROM stress_test_run \
+                 WHERE ($only IS NONE OR id = $only) \
+                 AND ($hostname IS NONE OR hostname = $hostname) \
+                 LIMIT $limit;",
+            )
+            .bind(("only", only))
+            .bind(("hostname", p.hostname.clone()))
+            .bind(("limit", limit))
+            .await
+            .map_err(to_internal)?
+            .take(0)
+            .map_err(to_internal)?;
+
+        let ids: Vec<RecordId> = runs
+            .iter()
+            .filter_map(|r| r.get("id").and_then(|v| v.as_str()))
+            .map(|s| parse_record_id(s, database::schema::STRESS_TEST_RUN_TABLE))
+            .collect();
+        if ids.is_empty() {
+            return Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
+                "dry_run": dry_run,
+                "examined": 0,
+                "changed": 0,
+                "runs": [],
+            }))
+            .map_err(to_internal)?]));
+        }
+
+        let raw: Vec<serde_json::Value> = database::db()
+            .query(EVIDENCE)
+            .bind(("ids", ids.clone()))
+            .await
+            .map_err(to_internal)?
+            .take(0)
+            .map_err(to_internal)?;
+        let evidence: Vec<(RecordId, &serde_json::Value)> = raw
+            .iter()
+            .filter_map(|e| {
+                let r = e.get("run_ref").and_then(|r| r.as_str())?;
+                Some((parse_record_id(r, database::schema::STRESS_TEST_RUN_TABLE), e))
+            })
+            .collect();
+
+        let mut out: Vec<serde_json::Value> = Vec::new();
+        let mut failures: Vec<serde_json::Value> = Vec::new();
+        let mut changed = 0usize;
+
+        for (id, row) in ids.iter().zip(runs.iter()) {
+            let ev = evidence.iter().find(|(r, _)| r == id).map(|(_, e)| *e);
+            let ev_num = |field: &str| -> u32 {
+                ev.and_then(|e| e.get(field))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
+                    .min(u32::MAX as u64) as u32
+            };
+
+            // Stage errors are the runtime's own per-stage counts, and outlive an
+            // event that was never persisted.
+            let labels: Vec<&str> = row
+                .get("stage_stressors")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+                .unwrap_or_default();
+            let counts: Vec<u64> = row
+                .get("stage_errors")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().map(|v| v.as_u64().unwrap_or(0)).collect())
+                .unwrap_or_default();
+            let mut stage_total = 0u64;
+            let mut stage_memory = 0u64;
+            for (i, n) in counts.iter().enumerate() {
+                stage_total = stage_total.saturating_add(*n);
+                let memory_class = labels
+                    .get(i)
+                    .and_then(|l| stress_runner::Stressor::from_str(l))
+                    .is_some_and(|s| s.tests_memory());
+                if memory_class {
+                    stage_memory = stage_memory.saturating_add(*n);
+                }
+            }
+            let cap = |n: u64| n.min(u32::MAX as u64) as u32;
+
+            let stored = |field: &str| -> u32 {
+                row.get("summary")
+                    .and_then(|s| s.get(field))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
+                    .min(u32::MAX as u64) as u32
+            };
+            let stored_bsod = row
+                .get("summary")
+                .and_then(|s| s.get("bsod_detected"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            // A counter that is absent rather than zero makes the row fail a
+            // typed read, so materializing the zero is itself the repair.
+            let absent: Vec<&str> = [
+                "memory_errors",
+                "test_errors",
+                "tdr_count",
+                "whea_delta_count",
+                "disk_io_errors",
+                "bsod_detected",
+            ]
+            .into_iter()
+            .filter(|f| row.get("summary").and_then(|s| s.get(*f)).is_none())
+            .collect();
+
+            // Raise only. The stored value wins whenever it is already the
+            // largest, so a pass over correct rows is a no-op.
+            let mem = stored("memory_errors")
+                .max(cap(stage_memory))
+                .max(ev_num("mem_units"));
+            let test_errors = stored("test_errors")
+                .max(cap(stage_total))
+                .max(ev_num("err_units"))
+                .max(mem);
+            let tdr = stored("tdr_count").max(ev_num("tdr_rows"));
+            let whea = stored("whea_delta_count").max(ev_num("whea_rows"));
+            let dio = stored("disk_io_errors").max(ev_num("dio_rows"));
+            let bsod = stored_bsod || ev_num("bsod_rows") > 0;
+
+            let result = row.get("result").and_then(|v| v.as_str()).unwrap_or("");
+            let failure_kind = row.get("failure_kind").and_then(|v| v.as_str()).unwrap_or("");
+
+            // Same precedence as the reaper. Only consulted when regrading.
+            let regrade_to = if !p.regrade || result == "fail" || result == "in_progress" {
+                None
+            } else if bsod {
+                Some(FailureMode::Bsod { code: None, bugcheck_args: None })
+            } else if ev_num("shutdown_rows") > 0 {
+                Some(FailureMode::Reboot)
+            } else if whea > 0 {
+                Some(FailureMode::WheaError { count: whea })
+            } else if tdr > 0 {
+                Some(FailureMode::Tdr { count: tdr })
+            } else if mem > 0 || test_errors > 0 {
+                Some(FailureMode::DataMismatch { addresses: None })
+            } else if dio > 0 {
+                Some(FailureMode::DiskIoError { message: String::new() })
+            } else {
+                None
+            };
+
+            let mut deltas = serde_json::Map::new();
+            let note = |name: &str, from: u32, to: u32, map: &mut serde_json::Map<String, serde_json::Value>| {
+                if to != from {
+                    map.insert(name.into(), serde_json::json!({ "from": from, "to": to }));
+                }
+            };
+            note("memory_errors", stored("memory_errors"), mem, &mut deltas);
+            note("test_errors", stored("test_errors"), test_errors, &mut deltas);
+            note("tdr_count", stored("tdr_count"), tdr, &mut deltas);
+            note("whea_delta_count", stored("whea_delta_count"), whea, &mut deltas);
+            note("disk_io_errors", stored("disk_io_errors"), dio, &mut deltas);
+            if bsod != stored_bsod {
+                deltas.insert(
+                    "bsod_detected".into(),
+                    serde_json::json!({ "from": stored_bsod, "to": bsod }),
+                );
+            }
+            if let Some(mode) = &regrade_to {
+                deltas.insert(
+                    "result".into(),
+                    serde_json::json!({ "from": result, "to": "fail" }),
+                );
+                deltas.insert(
+                    "failure_kind".into(),
+                    serde_json::json!({ "from": failure_kind, "to": mode.kind() }),
+                );
+            }
+            if deltas.is_empty() && absent.is_empty() {
+                continue;
+            }
+            changed += 1;
+
+            let entry = serde_json::json!({
+                "id": id.key_string(),
+                "hostname": row.get("hostname").cloned().unwrap_or(serde_json::Value::Null),
+                "result": result,
+                "failure_kind": failure_kind,
+                "changes": serde_json::Value::Object(deltas),
+                "materialized_absent_fields": absent,
+                "evidence": {
+                    "stage_errors_total": stage_total,
+                    "stage_errors_memory_class": stage_memory,
+                    "event_mem_units": ev_num("mem_units"),
+                    "event_err_units": ev_num("err_units"),
+                    "event_tdr_rows": ev_num("tdr_rows"),
+                    "event_shutdown_rows": ev_num("shutdown_rows"),
+                },
+            });
+
+            if !dry_run {
+                let mut sql = String::from(
+                    "UPDATE $id SET \
+                     summary.memory_errors = $mem, \
+                     summary.test_errors = $test_errors, \
+                     summary.tdr_count = $tdr, \
+                     summary.whea_delta_count = $whea, \
+                     summary.disk_io_errors = $dio, \
+                     summary.bsod_detected = $bsod",
+                );
+                if regrade_to.is_some() {
+                    sql.push_str(", result = 'fail', failure_mode = $failure, failure_kind = $fk");
+                }
+                let res = database::db()
+                    .query(sql)
+                    .bind(("id", id.clone()))
+                    .bind(("mem", mem))
+                    .bind(("test_errors", test_errors))
+                    .bind(("tdr", tdr))
+                    .bind(("whea", whea))
+                    .bind(("dio", dio))
+                    .bind(("bsod", bsod))
+                    .bind((
+                        "failure",
+                        regrade_to.clone().unwrap_or(FailureMode::None),
+                    ))
+                    .bind((
+                        "fk",
+                        regrade_to
+                            .as_ref()
+                            .unwrap_or(&FailureMode::None)
+                            .kind()
+                            .to_string(),
+                    ))
+                    .await;
+                // One unwritable row must not abandon the rest of the pass.
+                match res.and_then(|r| r.check()) {
+                    Ok(_) => {}
+                    Err(err) => {
+                        failures.push(serde_json::json!({
+                            "id": id.key_string(),
+                            "error": err.to_string(),
+                        }));
+                        changed -= 1;
+                        continue;
+                    }
+                }
+            }
+            out.push(entry);
+        }
+
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
+            "dry_run": dry_run,
+            "regrade": p.regrade,
+            "examined": ids.len(),
+            "changed": changed,
+            "write_failures": failures,
+            "runs": out,
         }))
         .map_err(to_internal)?]))
     }
@@ -9942,6 +10485,9 @@ This reveals repeat-visit patterns, previous fixes that failed, and known issues
 Step 1 — Identify the customer from the computer:
   SELECT VALUE customer FROM computer WHERE hostname = '<HOSTNAME>'
   Then: get_customer_details with the returned customer ID.
+  Empty result does NOT mean no history: a staff/bench machine (computer.is_internal)
+  has no owner by design, and a customer link can be missing. Skip to Step 4 and
+  search by hostname — diagnostic history is keyed on hostname, not on the customer.
 
 Step 2 — Pull tasks (tech notes) for this customer's machines:
   First try by customer link:
@@ -9960,7 +10506,18 @@ Step 4 — Search previous diagnostic sessions:
   search_diagnostics with the hostname and/or customer name.
   If results found, get_diagnostic_session for full details + entries.
 
-Step 5 — Read prior findings before starting new diagnosis:
+Step 5 — Check for hands-on work already queued, and fleet crash intel:
+  get_ai_task_status with each session_id from Step 4. A sweep that escalates creates
+  an AI task with concrete steps; unchecked items are work already assigned to a tech.
+  Read them before acting — do not re-run, duplicate, or contradict them.
+  crash_intel_search (by hostname) and crash_intel_signature (by bugcheck) for the
+  fleet picture: prior verdicts and known-bad-driver hits. The sweep's primary work
+  product is crash intel, and the session summary alone does not carry it.
+  Sessions with status 'abandoned' are runs that died without closing — their summary
+  is usually empty, so read their entries with get_diagnostic_session rather than
+  concluding nothing was found.
+
+Step 6 — Read prior findings before starting new diagnosis:
   Review all returned tasks, diagnostic entries, and order notes.
   Identify: repeat visits, previously attempted fixes, escalation notes
   (e.g. "if he comes back we need to replace GPU"), and unresolved items.

@@ -1,6 +1,8 @@
 //! Runtime backend selection.
 
-use super::{BackendId, LowLevelAccess, LowLevelBackend, RejectedBackend};
+use std::sync::Mutex;
+
+use super::{BackendId, LowLevelAccess, LowLevelBackend, RejectedBackend, WeakAccess};
 
 /// Forces one backend for bench A/B comparison. An override that fails does not
 /// fall through, so a comparison never silently measures a different backend.
@@ -22,9 +24,41 @@ fn parse_override(raw: &str) -> Option<BackendId> {
     }
 }
 
+/// The one backend this process has open, while any caller still holds it.
+static SHARED: Mutex<Option<WeakAccess>> = Mutex::new(None);
+
+/// The process-wide backend, opening one on first use.
+///
+/// Every caller shares a single provider. Opening a second one is not merely
+/// wasteful: `WinRing0Backend::open` stops and deletes the running driver
+/// service before restarting it, and its `Drop` unloads the driver outright, so
+/// a second opener silently invalidates the device handle the first is still
+/// polling — the sampler behind a running stress test goes blind the moment
+/// anything else asks for telemetry.
+pub fn open() -> LowLevelAccess {
+    let mut cached = match SHARED.lock() {
+        Ok(guard) => guard,
+        // A panic mid-open left the slot mid-write; the value itself is a Weak.
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    // A handle whose provider died is never handed to a new caller: the loss
+    // latch is one-way, so reusing it would blind every sampler started after
+    // it for the life of the process.
+    if let Some(live) = cached
+        .as_ref()
+        .and_then(WeakAccess::upgrade)
+        .filter(|a| !a.is_lost())
+    {
+        return live;
+    }
+    let access = open_uncached();
+    *cached = Some(access.downgrade());
+    access
+}
+
 /// Opens the first backend that is compiled in and answers, recording why each
 /// earlier one was skipped.
-pub fn open() -> LowLevelAccess {
+fn open_uncached() -> LowLevelAccess {
     match std::env::var(OVERRIDE_ENV) {
         Ok(raw) => open_overridden(&raw),
         Err(_) => open_in_priority_order(),
@@ -133,5 +167,33 @@ mod tests {
         let access = open_overridden("none");
         assert_eq!(access.id(), BackendId::None);
         assert!(access.status().rejected.is_empty());
+    }
+
+    /// Concurrent callers must share one provider. A second open would stop the
+    /// driver service the first is still reading through, which is how a
+    /// running stress test lost its CPU die temperature the moment anything
+    /// else asked for telemetry.
+    #[test]
+    fn overlapping_callers_share_one_provider() {
+        let first = open();
+        let second = open();
+        assert!(
+            first.same_provider(&second),
+            "a second caller opened its own provider"
+        );
+
+        drop(first);
+        drop(second);
+        // Every share released, so the next caller opens fresh rather than
+        // holding the provider loaded for the life of the process.
+        assert!(
+            SHARED
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+                .and_then(WeakAccess::upgrade)
+                .is_none(),
+            "the cache kept the provider alive past its last holder"
+        );
     }
 }

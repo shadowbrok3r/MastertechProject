@@ -8,12 +8,27 @@ use serde::{Deserialize, Serialize};
 use stress_kit::telemetry::TelemetrySnapshot;
 use stress_kit::{Metrics, Stressor};
 
+/// What an unreadable sensor does to the verdict. A rule that was never
+/// evaluated is the absence of evidence, not a breach, so no variant fails.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MissingSensorPolicy {
+    /// Downgrades the run to inconclusive and names the ungraded rule.
+    #[default]
+    Inconclusive,
+    /// Advisory only; the stage still passes on its remaining rules.
+    Warn,
+}
+
 /// Sustained temperature breach: `limit_c` exceeded for `consecutive_ticks`+ ticks.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct TempRule {
     pub limit_c: f32,
     #[serde(default = "default_temp_ticks")]
     pub consecutive_ticks: u32,
+    /// Verdict effect when the sensor never reported.
+    #[serde(default)]
+    pub on_missing: MissingSensorPolicy,
 }
 
 fn default_temp_ticks() -> u32 {
@@ -112,10 +127,15 @@ impl VerdictRules {
             max_cpu_temp_c: Some(TempRule {
                 limit_c: 95.0,
                 consecutive_ticks: 5,
+                on_missing: MissingSensorPolicy::Inconclusive,
             }),
+            // NVML reads temperature on NVIDIA only, so no AMD or Intel
+            // discrete card can be graded thermally; gating on it would make
+            // every cert on those vendors unsignable.
             max_gpu_temp_c: Some(TempRule {
                 limit_c: 90.0,
                 consecutive_ticks: 5,
+                on_missing: MissingSensorPolicy::Warn,
             }),
             clock_collapse: Some(ClockCollapseRule {
                 below_pct_of_stage_max: 0.60,
@@ -151,13 +171,51 @@ pub enum RuleViolation {
     NoThroughput { ticks: u32 },
     /// The stressor named a load it could not apply.
     Inconclusive { reason: String },
-    /// A GPU rule was configured but no GPU telemetry was ever sampled, so the
-    /// limit could not be evaluated. An ungradeable limit is not a pass.
-    GpuTelemetryMissing { rule: String, ticks: u32 },
-    /// A CPU temperature rule was configured but no die reading was ever
-    /// sampled, so the limit could not be evaluated. An ungradeable limit is not
-    /// a pass.
-    CpuTelemetryMissing { rule: String, ticks: u32 },
+}
+
+/// The sensor class a rule needs before it can be graded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MissingSensor {
+    CpuDieTemp,
+    GpuTelemetry,
+}
+
+/// A configured rule whose sensor never reported, so its limit was never
+/// tested. Kept apart from [`RuleViolation`]: nothing here is evidence against
+/// the hardware, in either direction.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UnevaluatedRule {
+    /// The rule as configured, e.g. `max_cpu_temp_c 95C`.
+    pub rule: String,
+    pub sensor: MissingSensor,
+    /// Monitored ticks the stage ran without the sensor answering once.
+    pub ticks: u32,
+    pub policy: MissingSensorPolicy,
+}
+
+impl UnevaluatedRule {
+    pub fn describe(&self) -> String {
+        let (source, hint) = match self.sensor {
+            MissingSensor::CpuDieTemp => (
+                "no CPU die temperature",
+                "; the CPU was not graded thermally — check the low-level sensor backend",
+            ),
+            MissingSensor::GpuTelemetry => (
+                "no GPU telemetry",
+                "; the GPU was not graded thermally",
+            ),
+        };
+        format!(
+            "{} could not be evaluated: {source} in {} tick(s){hint}",
+            self.rule, self.ticks
+        )
+    }
+
+    /// `true` when this gap downgrades the run to inconclusive.
+    pub fn blocks_certification(&self) -> bool {
+        self.policy == MissingSensorPolicy::Inconclusive
+    }
 }
 
 impl RuleViolation {
@@ -178,12 +236,6 @@ impl RuleViolation {
             ),
             Self::GpuTemp { limit_c, peak_c, sustained_ticks } => format!(
                 "GPU over {limit_c:.0}C for {sustained_ticks}s (peak {peak_c:.1}C)"
-            ),
-            Self::GpuTelemetryMissing { rule, ticks } => format!(
-                "{rule} could not be evaluated: no GPU telemetry in {ticks} ticks"
-            ),
-            Self::CpuTelemetryMissing { rule, ticks } => format!(
-                "{rule} could not be evaluated: no CPU die temperature in {ticks} ticks"
             ),
             Self::ClockCollapse { below_pct, ticks } => format!(
                 "clock under {:.0}% of stage max for {ticks}s",
@@ -217,6 +269,10 @@ pub struct StageVerdict {
     pub label: String,
     pub pass: bool,
     pub violations: Vec<RuleViolation>,
+    /// Rules whose sensor never reported, so they were never tested. Never
+    /// fails the stage; the `Inconclusive`-policy entries downgrade the run.
+    #[serde(default)]
+    pub unevaluated: Vec<UnevaluatedRule>,
     /// Non-failing advisories (e.g. WHEA source unavailable) surfaced so a
     /// pass isn't mistaken for a fully-monitored run.
     #[serde(default)]
@@ -226,6 +282,27 @@ pub struct StageVerdict {
 impl StageVerdict {
     pub fn violation_lines(&self) -> Vec<String> {
         self.violations.iter().map(|v| v.describe()).collect()
+    }
+
+    pub fn unevaluated_lines(&self) -> Vec<String> {
+        self.unevaluated.iter().map(|u| u.describe()).collect()
+    }
+
+    /// A rule this stage needed but could not grade blocks certification.
+    pub fn has_blocking_gap(&self) -> bool {
+        self.unevaluated.iter().any(UnevaluatedRule::blocks_certification)
+    }
+
+    /// `"pass"` / `"fail"` / `"inconclusive"`. An ungraded rule is not a
+    /// breach, so it never reads as a fail.
+    pub fn result_token(&self) -> &'static str {
+        if !self.pass {
+            "fail"
+        } else if self.has_blocking_gap() {
+            "inconclusive"
+        } else {
+            "pass"
+        }
     }
 }
 
@@ -654,6 +731,7 @@ fn touches_gpu(stressor: Stressor) -> bool {
 /// Evaluate one finished stage against the rules.
 pub fn evaluate_stage(stats: &StageStats, rules: &VerdictRules) -> StageVerdict {
     let mut violations = Vec::new();
+    let mut unevaluated: Vec<UnevaluatedRule> = Vec::new();
     let mut warnings = Vec::new();
 
     // Rule-independent: a load that never ran cannot clear any policy.
@@ -708,9 +786,11 @@ pub fn evaluate_stage(stats: &StageStats, rules: &VerdictRules) -> StageVerdict 
         // silently records no violation and the stage certifies as thermally
         // sound on a machine whose CPU temperature was never measured.
         if stats.cpu_temp_samples == 0 && stats.ticks > 0 {
-            violations.push(RuleViolation::CpuTelemetryMissing {
+            unevaluated.push(UnevaluatedRule {
                 rule: format!("max_cpu_temp_c {:.0}C", rule.limit_c),
+                sensor: MissingSensor::CpuDieTemp,
                 ticks: stats.ticks,
+                policy: rule.on_missing,
             });
         } else if stats.worst_cpu_temp_over >= rule.consecutive_ticks {
             violations.push(RuleViolation::CpuTemp {
@@ -722,9 +802,11 @@ pub fn evaluate_stage(stats: &StageStats, rules: &VerdictRules) -> StageVerdict 
     }
     if let Some(rule) = &rules.max_gpu_temp_c {
         if stats.gpu_temp_samples == 0 && stats.ticks > 0 && touches_gpu(stats.stressor) {
-            violations.push(RuleViolation::GpuTelemetryMissing {
+            unevaluated.push(UnevaluatedRule {
                 rule: format!("max_gpu_temp_c {:.0}C", rule.limit_c),
+                sensor: MissingSensor::GpuTelemetry,
                 ticks: stats.ticks,
+                policy: rule.on_missing,
             });
         } else if stats.worst_gpu_temp_over >= rule.consecutive_ticks {
             violations.push(RuleViolation::GpuTemp {
@@ -765,11 +847,19 @@ pub fn evaluate_stage(stats: &StageStats, rules: &VerdictRules) -> StageVerdict 
         }
     }
 
+    warnings.extend(
+        unevaluated
+            .iter()
+            .filter(|u| !u.blocks_certification())
+            .map(UnevaluatedRule::describe),
+    );
+
     StageVerdict {
         index: stats.index,
         label: stats.label.clone(),
         pass: violations.is_empty(),
         violations,
+        unevaluated,
         warnings,
     }
 }
@@ -888,8 +978,9 @@ mod tests {
         ));
     }
 
-    /// A configured CPU temperature limit that was never measured must not
-    /// certify as a thermal pass — the same rule the GPU limit already follows.
+    /// A configured CPU temperature limit that was never measured is recorded
+    /// as ungraded, not as a breach: no violation, no fail, but the stage
+    /// cannot read as a clean thermal pass either.
     #[test]
     fn a_stage_with_no_die_reading_cannot_certify_its_temp_limit() {
         let rules = VerdictRules::certification();
@@ -905,14 +996,22 @@ mod tests {
 
         assert_eq!(stats.cpu_temp_samples, 0, "the fixture leaked a CPU temperature");
         let verdict = evaluate_stage(&stats, &rules);
-        assert!(!verdict.pass, "an unmeasured thermal limit reported a pass");
         assert!(
-            verdict
-                .violations
-                .iter()
-                .any(|v| matches!(v, RuleViolation::CpuTelemetryMissing { ticks: 30, .. })),
-            "violations: {:?}",
+            verdict.violations.is_empty(),
+            "an unread sensor was recorded as a breach: {:?}",
             verdict.violations
+        );
+        assert!(verdict.pass, "an unread sensor failed the stage");
+        assert_eq!(verdict.result_token(), "inconclusive");
+        assert!(verdict.has_blocking_gap());
+        assert!(
+            verdict.unevaluated.iter().any(|u| {
+                u.sensor == MissingSensor::CpuDieTemp
+                    && u.ticks == 30
+                    && u.policy == MissingSensorPolicy::Inconclusive
+            }),
+            "unevaluated: {:?}",
+            verdict.unevaluated
         );
     }
 
@@ -1425,8 +1524,11 @@ mod tests {
             .any(|v| matches!(v, RuleViolation::Inconclusive { .. })));
     }
 
+    /// NVML reads no AMD or Intel discrete card, so the cert's GPU temp rule is
+    /// unevaluable on entire vendors. It is recorded and warned about, never
+    /// gated on.
     #[test]
-    fn gpu_stage_without_gpu_telemetry_cannot_pass() {
+    fn gpu_stage_without_gpu_telemetry_warns_and_still_passes() {
         let cert = VerdictRules::certification();
         assert!(cert.max_gpu_temp_c.is_some(), "cert must configure a GPU temp rule");
 
@@ -1437,11 +1539,19 @@ mod tests {
         stats.finish(&snapshot(70.0, 4000, 95.0));
 
         let verdict = evaluate_stage(&stats, &cert);
-        assert!(!verdict.pass, "a GPU limit that was never evaluable must not pass");
+        assert!(verdict.violations.is_empty(), "{:?}", verdict.violations);
+        assert!(verdict.pass, "an unreadable GPU sensor failed a clean stage");
+        assert!(!verdict.has_blocking_gap(), "the GPU gap gated the run");
+        assert_eq!(verdict.result_token(), "pass");
         assert!(verdict
-            .violations
+            .unevaluated
             .iter()
-            .any(|v| matches!(v, RuleViolation::GpuTelemetryMissing { .. })));
+            .any(|u| u.sensor == MissingSensor::GpuTelemetry));
+        assert!(
+            verdict.warnings.iter().any(|w| w.contains("max_gpu_temp_c")),
+            "warnings: {:?}",
+            verdict.warnings
+        );
     }
 
     #[test]

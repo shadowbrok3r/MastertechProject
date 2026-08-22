@@ -560,19 +560,30 @@ impl DiagnosticSession {
         Ok(Some((task.id, service_order)))
     }
 
+    /// Sessions matching the filters, newest first. `query` narrows only when
+    /// supplied: ANDing it unconditionally hid history whenever a caller passed
+    /// a term that the stored summary happened not to contain.
     pub async fn search(
-        query: &str,
+        query: Option<&str>,
         hostname: Option<&str>,
         customer_name: Option<&str>,
         connection_string: Option<&str>,
     ) -> anyhow::Result<Vec<Self>> {
-        let q = query.to_lowercase();
-        let mut conditions = vec![
-            "(string::lowercase(summary ?? '') CONTAINS $q \
-             OR string::lowercase(hostname) CONTAINS $q \
-             OR string::lowercase(customer_name ?? '') CONTAINS $q \
-             OR string::lowercase(connection_string) CONTAINS $q)".to_string()
-        ];
+        let q = query
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_lowercase);
+
+        let mut conditions: Vec<String> = Vec::new();
+        if q.is_some() {
+            conditions.push(
+                "(string::lowercase(summary ?? '') CONTAINS $q \
+                 OR string::lowercase(hostname) CONTAINS $q \
+                 OR string::lowercase(customer_name ?? '') CONTAINS $q \
+                 OR string::lowercase(connection_string) CONTAINS $q)"
+                    .to_string(),
+            );
+        }
         if hostname.is_some() {
             conditions.push("hostname == $host".to_string());
         }
@@ -582,14 +593,18 @@ impl DiagnosticSession {
         if connection_string.is_some() {
             conditions.push("connection_string == $conn".to_string());
         }
-        let where_clause = conditions.join(" AND ");
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
         let sql = format!(
-            "SELECT * FROM diagnostic_session WHERE {where_clause} ORDER BY started_at DESC LIMIT 25"
+            "SELECT * FROM diagnostic_session {where_clause} ORDER BY started_at DESC LIMIT 50"
         );
 
         let sessions: Vec<Self> = db()
             .query(&sql)
-            .bind(("q", q))
+            .bind(("q", q.unwrap_or_default()))
             .bind(("host", hostname.unwrap_or("").to_string()))
             .bind(("cust", customer_name.unwrap_or("").to_lowercase()))
             .bind(("conn", connection_string.unwrap_or("").to_string()))

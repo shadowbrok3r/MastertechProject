@@ -664,12 +664,15 @@ impl<'a> ScriptsTab<'a> {
                         Some((metrics.throughput, throughput_unit));
                 }
                 RunUpdate::StageFinished { .. } => {}
-                RunUpdate::StageVerdict { label, pass, violations, .. } => {
+                RunUpdate::StageVerdict { label, pass, violations, unevaluated, .. } => {
                     if !pass {
                         self.log_message(format!(
                             "Stage {label} FAIL: {}",
                             violations.join("; ")
                         ));
+                    }
+                    for gap in unevaluated {
+                        self.log_message(format!("Stage {label} ungraded: {gap}"));
                     }
                 }
                 RunUpdate::Finished(verdict) => {

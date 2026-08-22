@@ -1,6 +1,7 @@
 
-use eframe::egui::{Align, Button, Color32, ComboBox, FontId, Id, Margin, Response, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
-use database::schema::{LiveTaskPayload, Priority, RecordIdExt, Status, User};
+use eframe::egui::{Align, Color32, ComboBox, FontId, Id, Margin, Response, RichText, Stroke, TextEdit, Ui, Widget};
+use database::schema::{LiveTaskPayload, Priority, RecordIdExt, Status, TaskField, User};
+use crate::ui_data::pending_task_edits::stage_edit;
 use crate::{Interaction, PlatformSpawner, Spawner, apply_jiff_date, to_jiff_date};
 use egui_extras::DatePickerButton;
 use log::info;
@@ -113,38 +114,25 @@ impl Interaction for LiveTaskPayload {
             .ui(ui);
 
         if date_picker.changed() {
-            self.due_date = apply_jiff_date(&self.due_date, &due_date).into();
-
-            let task = self.clone(); 
-            info!("new date: {due_date:?}"); 
-            PlatformSpawner::spawn(async move { 
-                let update = task.update_due_date().await;
-                info!("Update: {update:?}"); 
-            });
-            info!("date_widget changed: {:?}// {:?} ", self.task_name, due_date);
+            let mut edited = self.clone();
+            edited.due_date = apply_jiff_date(&self.due_date, &due_date).into();
+            stage_edit(self, &edited, TaskField::DueDate);
+            self.due_date = edited.due_date;
         }
 
         date_picker
     }
 
     fn interact_completed(&mut self, ui: &mut Ui) -> Response {
-        if self.completed {
-            let hover_txt = "✔";
-            let color_complete = Color32::from_rgba_premultiplied(51, 255, 189, 200);
-            let stroke = Stroke::new(0.7_f32, color_complete);
-            return Button::new(hover_txt)
-                .stroke(stroke)
-                .min_size(Vec2::new(25.0, 20.0))
-                .ui(ui);
-        } else {
-            let hover_txt = "✖";
-            let color_incomplete = Color32::from_rgba_premultiplied(255, 51, 153, 200);
-            let stroke = Stroke::new(0.7_f32, color_incomplete);
-            return Button::new(hover_txt)
-                .stroke(stroke)
-                .min_size(Vec2::new(25.0, 20.0))
-                .ui(ui);
+        let (response, requested) =
+            crate::tabs::tasks::complete_button::complete_button(ui, self);
+        if let Some(completed) = requested {
+            let mut edited = self.clone();
+            edited.completed = completed;
+            edited.status = if completed { Status::Complete } else { Status::InRepair };
+            stage_edit(self, &edited, TaskField::Completed);
         }
+        response
     }
 
     fn interact_status(&mut self, user: &User, ui: &mut Ui) -> Response {
@@ -159,16 +147,30 @@ impl Interaction for LiveTaskPayload {
                     Status::VALUES.to_vec().iter().filter(|s| !s.as_str().is_empty()).cloned().collect()
                 };
                 for status in statuses {
+                    let previous = self.status.clone();
                     if ui.selectable_value(
                         &mut self.status, 
                         status.to_owned(), 
                         status.as_str()
                     ).clicked() {
-                        let task = self.clone(); 
-                        PlatformSpawner::spawn(async move { 
-                            let update = task.update_status(status.clone()).await;
-                            info!("Update: {update:?}"); 
-                        });
+                        let mut edited = self.clone();
+                        edited.status = status.clone();
+                        // Only Todo/In Repair/Complete imply a completion
+                        // state; Sales, QC and custom statuses leave it alone.
+                        let implied = match status {
+                            Status::Complete => Some(true),
+                            Status::Todo | Status::InRepair => Some(false),
+                            _ => None,
+                        };
+                        self.status = previous;
+                        stage_edit(self, &edited, TaskField::Status);
+                        if let Some(completed) = implied {
+                            if completed != self.completed {
+                                edited.completed = completed;
+                                stage_edit(self, &edited, TaskField::Completed);
+                            }
+                        }
+                        self.status = edited.status;
                     }
                 }
             })
@@ -191,17 +193,18 @@ impl Interaction for LiveTaskPayload {
             .height(150.)
             .show_ui(ui, |ui| {
                 for priority in Priority::VALUES {
+                    let previous = self.priority.clone();
                     let priority_change = ui.selectable_value(
                         &mut self.priority,
                         priority.to_owned(),
                         priority.as_str(),
                     );
                     if priority_change.clicked() {
-                        let task = self.clone(); 
-                        PlatformSpawner::spawn(async move { 
-                            let update = task.update_priority(Some(priority.clone())).await;
-                            info!("Update: {update:?}"); 
-                        });
+                        let mut edited = self.clone();
+                        edited.priority = priority.clone();
+                        self.priority = previous;
+                        stage_edit(self, &edited, TaskField::Priority);
+                        self.priority = edited.priority;
                     }
                 }
             })
@@ -239,18 +242,18 @@ impl Interaction for LiveTaskPayload {
             .height(150.)
             .show_ui(ui, |ui| {
                 for user in sorted_users {
+                    let previous = self.assignee.clone();
                     let assignee_selection = ui.selectable_value(
                     &mut self.assignee,       // current_value: &mut RecordId
                     user.get_id(),    // selected_value: RecordId
                     user.get_username(),      // text: &str or String
                 );
                     if assignee_selection.clicked() {
-                        let task = self.clone(); 
-                        let new_assignee = user.get_id().clone();
-                        PlatformSpawner::spawn(async move { 
-                            let update = task.update_assignee(new_assignee).await;
-                            info!("Update: {update:?}"); 
-                        });
+                        let mut edited = self.clone();
+                        edited.assignee = user.get_id().clone();
+                        self.assignee = previous;
+                        stage_edit(self, &edited, TaskField::Assignee);
+                        self.assignee = edited.assignee;
                     }
                 }
             })

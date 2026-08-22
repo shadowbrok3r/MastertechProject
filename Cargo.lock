@@ -3253,6 +3253,7 @@ dependencies = [
  "eframe",
  "egui-data-table",
  "egui-phosphor",
+ "egui-snarl",
  "egui_dock",
  "egui_extras",
  "egui_inspection",
@@ -3601,6 +3602,25 @@ version = "0.12.0"
 source = "git+https://github.com/shadowbrok3r/egui-phosphor?branch=egui-036#c2ed27384e2c30671d41bbc95b9fcf719017b020"
 dependencies = [
  "egui",
+]
+
+[[package]]
+name = "egui-scale"
+version = "0.5.0"
+dependencies = [
+ "egui",
+]
+
+[[package]]
+name = "egui-snarl"
+version = "0.11.0"
+dependencies = [
+ "ahash 0.8.12",
+ "egui",
+ "egui-scale",
+ "serde",
+ "slab",
+ "smallvec 1.15.2",
 ]
 
 [[package]]
@@ -10971,6 +10991,9 @@ name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "slotmap"

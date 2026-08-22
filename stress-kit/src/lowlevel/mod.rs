@@ -16,7 +16,7 @@ pub mod select;
 #[cfg(all(target_os = "windows", feature = "backend-winring0"))]
 pub mod winring0;
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, Weak};
 
 use serde::{Deserialize, Serialize};
 
@@ -231,6 +231,16 @@ struct Inner {
 #[derive(Clone)]
 pub struct LowLevelAccess(Arc<Inner>);
 
+/// Non-owning reference to an open backend, so a cache can hand out clones
+/// without keeping the provider loaded past its last real holder.
+pub(crate) struct WeakAccess(Weak<Inner>);
+
+impl WeakAccess {
+    pub(crate) fn upgrade(&self) -> Option<LowLevelAccess> {
+        self.0.upgrade().map(LowLevelAccess)
+    }
+}
+
 impl LowLevelAccess {
     pub fn new(
         backend: Box<dyn LowLevelBackend>,
@@ -253,6 +263,21 @@ impl LowLevelAccess {
             rejected,
             lost: OnceLock::new(),
         }))
+    }
+
+    pub(crate) fn downgrade(&self) -> WeakAccess {
+        WeakAccess(Arc::downgrade(&self.0))
+    }
+
+    /// The provider was proven gone; this handle will never read again.
+    pub fn is_lost(&self) -> bool {
+        self.0.lost.get().is_some()
+    }
+
+    /// Both handles name the same open provider.
+    #[cfg(test)]
+    pub(crate) fn same_provider(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
     }
 
     fn live(&self) -> Option<&dyn LowLevelBackend> {

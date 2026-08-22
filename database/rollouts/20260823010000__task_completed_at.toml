@@ -1,0 +1,61 @@
+# Completed Tasks sorted "most recent first" had no timestamp to sort by: the
+# task row records `completed` but never when it flipped. Adds `completed_at`,
+# written by update_completed / update_fields from here on.
+#
+# Backfill is two-pass because only 250 of 4637 completed tasks have a
+# task_history row for their completion (the table postdates most of the data).
+# Pass 1 stamps created_at as a floor so every row sorts; pass 2 overwrites the
+# 250 with the real time. Ascending order means the latest completion wins for
+# tasks the has_focus() toggle bug completed several times over.
+#
+# The field is `none | datetime`, so existing rows stay writable with it unset —
+# no coercion failures on old rows.
+id = "20260823010000__task_completed_at"
+name = "task_completed_at"
+state = "completed"
+source_schema_hash = "589408bf541b1f11b76c365cc331afe0a98192473fe5724029d25989515899fa"
+target_schema_hash = "589408bf541b1f11b76c365cc331afe0a98192473fe5724029d25989515899fa"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "define_completed_at"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE completed_at ON task TYPE none | datetime PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "backfill_completed_at_floor"
+phase = "start"
+kind = "run_sql"
+sql = """
+UPDATE task SET completed_at = created_at WHERE completed = true AND completed_at = NONE;
+"""
+
+[[steps]]
+id = "backfill_completed_at_from_history"
+phase = "start"
+kind = "run_sql"
+sql = """
+FOR $h IN (SELECT task_id, created_at FROM task_history WHERE diff.completed.new = 'true' ORDER BY created_at ASC) {
+    UPDATE $h.task_id SET completed_at = $h.created_at WHERE completed = true;
+};
+"""
+
+[[steps]]
+id = "clear_completed_at_on_open_tasks"
+phase = "start"
+kind = "run_sql"
+sql = """
+UPDATE task SET completed_at = NONE WHERE completed = false AND completed_at != NONE;
+"""
+
+[[steps]]
+id = "drop_completed_at"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE FIELD IF EXISTS completed_at ON task;
+"""

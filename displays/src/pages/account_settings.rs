@@ -294,6 +294,7 @@ impl SharedContext {
                                                                 SortField::Default => RichText::new(format!("Priority {}", txt.0)).color(txt.1).small(),
                                                                 SortField::Date => RichText::new(format!("Date {}", txt.0)).color(txt.1).small(),
                                                                 SortField::Name => RichText::new(format!("Name {}", txt.0)).color(txt.1).small(),
+                                                                SortField::Completed => RichText::new(format!("Completed {}", txt.0)).color(txt.1).small(),
                                                             };
                                                             
                                                             ComboBox::new(format!("SortBy Settings"), "")

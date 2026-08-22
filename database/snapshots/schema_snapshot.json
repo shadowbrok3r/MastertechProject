@@ -139,7 +139,7 @@
     },
     {
       "path": "database/schema/task.surql",
-      "hash": "814faebf577c6666d4aaa4968b3a3b6971ef613c468f173fa479e9bcf368eaff"
+      "hash": "339d0017441d7331c70c175bec8c7e37b17c7b6b03a0e5aaf94af34aae520514"
     },
     {
       "path": "database/schema/task_history.surql",

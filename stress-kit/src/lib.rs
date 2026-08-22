@@ -274,6 +274,13 @@ impl Stressor {
         self.is_gpu() || matches!(self, Self::Psu | Self::PsuTransient | Self::Combined)
     }
 
+    /// Stressors whose [`Metrics::errors`] are memory data mismatches, so their
+    /// count rolls into the memory-error rubric field rather than only the
+    /// generic test-error count.
+    pub fn tests_memory(self) -> bool {
+        matches!(self, Self::MemTest | Self::Memory | Self::GpuVram)
+    }
+
     /// `true` when the stressor verifies results and counts mismatches in
     /// [`Metrics::errors`] rather than only generating load.
     pub fn detects_errors(self) -> bool {

@@ -326,6 +326,10 @@ pub struct SharedContext {
     /// Suppresses re-shows for the rest of the session.
     #[serde(skip)]
     pub dismissed_admin_tcp_targets: HashSet<String>,
+    /// Task ids that already have an undo toast on screen, so a batch that
+    /// keeps being extended never stacks a second notification.
+    #[serde(skip)]
+    pub undo_toasts_shown: HashSet<String>,
     #[serde(skip)]
     pub filesystem: FileSystem,
     #[serde(skip)]
@@ -356,6 +360,10 @@ pub struct SharedContext {
     #[serde(skip)]
     pub ai_popup_modal: Option<crate::modals::ai_attention_modal::AiAttentionModal>,
     pub search_results: Option<Vec<LiveTaskPayload>>, // Store global search results
+    /// Query text, debounce clock, and server-side hits behind the menu-bar
+    /// search box.
+    #[serde(skip)]
+    pub task_search: crate::ui_data::task_search::TaskSearch,
     pub account_mod: UserPreferences,
     #[serde(skip)]
     login: Login,
@@ -381,6 +389,10 @@ pub struct SharedContext {
     pub sales_tracker: SalesTracker,
     #[serde(skip)]
     pub stress_lab: StressLab,
+    /// Outstanding work from past Claude Code sessions, as a node graph.
+    #[serde(skip)]
+    #[cfg(not(target_arch = "wasm32"))]
+    pub session_board: crate::tabs::session_board::SessionBoard,
     /// Root-only view of the axum orchestrator's recorded requests.
     #[serde(skip)]
     pub server_console: ServerConsole,
@@ -685,7 +697,13 @@ impl SharedContext {
             store_users: Vec::new(),
             task_layouts: HashMap::new(),
             store_selection: 76,
-            toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 45.0)),
+            toasts: Toasts::new()
+                .anchor(Align2::RIGHT_TOP, (5.0, 45.0))
+                .custom_contents(
+                    crate::tabs::tasks::pending::UNDO_TOAST_KIND,
+                    crate::tabs::tasks::pending::undo_toast_contents,
+                ),
+            undo_toasts_shown: HashSet::new(),
             db_tx, db_rx,
             live_tasks_tx, live_tasks_rx,
             ui_actions_tx, ui_actions_rx,
@@ -742,6 +760,7 @@ impl SharedContext {
             opened_modals: HashMap::new(),
             new_note: false,
             search_results: None,
+            task_search: Default::default(),
             stock_tables: StockTable::default(),
 
             // Other Components
@@ -766,6 +785,8 @@ impl SharedContext {
             pending_store: None,
             sales_tracker: SalesTracker::default(),
             stress_lab: StressLab::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            session_board: Default::default(),
             server_console: ServerConsole::default(),
             #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
             agent_sessions: Default::default(),
