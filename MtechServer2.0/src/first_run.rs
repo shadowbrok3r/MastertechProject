@@ -578,9 +578,10 @@ impl MtechServer {
                 // No probes will ever queue here because nothing drains the
                 // receiver end; `fk_health_cache` is empty so the per-row
                 // FK health badge renders as "unknown".
+                type LinkHealth = displays::tabs::admin_console::ClientLinkHealth;
                 let (fk_health_tx, _fk_health_rx) =
-                    crossbeam::channel::unbounded::<(String, bool, bool)>();
-                let fk_health_cache: std::collections::HashMap<String, (bool, bool)> =
+                    crossbeam::channel::unbounded::<(String, LinkHealth)>();
+                let fk_health_cache: std::collections::HashMap<String, LinkHealth> =
                     std::collections::HashMap::new();
                 // Same placeholder treatment for the client-task fetcher.
                 let (client_tasks_tx, _client_tasks_rx) = crossbeam::channel::unbounded::<(

@@ -19,6 +19,18 @@ pub enum TaskScope {
 /// Service numbers are 7 digits, phone numbers 10.
 const MIN_IDENTIFIER_DIGITS: usize = 7;
 
+/// How much meaning to read into the query text.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum QueryMode {
+    /// Words are just words. Every token must appear somewhere in the task's
+    /// text or its customer's name; nothing is treated as an operator.
+    #[default]
+    Literal,
+    /// Recognizes "tasks for <name>", "assigned to <name>", "<name>'s tasks",
+    /// and open/completed scope words, and drops filler words.
+    Semantic,
+}
+
 /// A parsed search query. Free-text terms are ANDed; identifier
 /// interpretations (phone, service number) are ORed with each other.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -37,6 +49,20 @@ pub struct TaskQuery {
     pub scope: TaskScope,
 }
 
+/// Scope words and the completion filter each implies, longest first so
+/// "completed" wins over "complete".
+const SCOPE_WORDS: &[(&str, TaskScope)] = &[
+    ("completed", TaskScope::Completed),
+    ("complete", TaskScope::Completed),
+    ("finished", TaskScope::Completed),
+    ("closed", TaskScope::Completed),
+    ("done", TaskScope::Completed),
+    ("open", TaskScope::Open),
+    ("active", TaskScope::Open),
+    ("incomplete", TaskScope::Open),
+    ("outstanding", TaskScope::Open),
+];
+
 /// Words dropped from free-text terms; they carry intent, not content.
 const NOISE: &[&str] = &[
     "task", "tasks", "the", "a", "an", "of", "on", "with", "show", "me", "find", "all", "any",
@@ -52,33 +78,39 @@ const CUSTOMER_LEADS: &[&str] = &[
 const ASSIGNEE_LEADS: &[&str] = &["assigned to", "assignee", "belonging to"];
 
 impl TaskQuery {
+    /// Every token must match, with no words treated as operators.
+    pub fn literal(raw: &str) -> Self {
+        Self::parse_with(raw, QueryMode::Literal)
+    }
+
+    /// Full intent extraction. See [`QueryMode::Semantic`].
+    pub fn parse(raw: &str) -> Self {
+        Self::parse_with(raw, QueryMode::Semantic)
+    }
+
     /// Splits `raw` into intents. Never fails: anything unrecognized stays
     /// free text, so the query degrades to a plain name search.
-    pub fn parse(raw: &str) -> Self {
+    pub fn parse_with(raw: &str, mode: QueryMode) -> Self {
+        let semantic = mode == QueryMode::Semantic;
         let mut work = raw.trim().to_lowercase();
         let mut scope = TaskScope::Any;
 
         // Scope keywords are removed so they never survive as search terms.
-        for (needle, found) in [
-            ("completed", TaskScope::Completed),
-            ("complete", TaskScope::Completed),
-            ("finished", TaskScope::Completed),
-            ("closed", TaskScope::Completed),
-            ("done", TaskScope::Completed),
-            ("open", TaskScope::Open),
-            ("active", TaskScope::Open),
-            ("incomplete", TaskScope::Open),
-            ("outstanding", TaskScope::Open),
-        ] {
+        for (needle, found) in if semantic {
+            SCOPE_WORDS
+        } else {
+            &[] as &[(&str, TaskScope)]
+        } {
             if let Some(stripped) = remove_word(&work, needle) {
                 work = stripped;
-                scope = found;
+                scope = *found;
                 break;
             }
         }
 
         // "<name>'s tasks" reads as an assignee, not a customer.
         let mut assignee_term = None;
+        if semantic {
         if let Some(idx) = work.find("'s task") {
             let (owner, rest) = work.split_at(idx);
             let owner = owner.trim().to_string();
@@ -87,8 +119,9 @@ impl TaskQuery {
                 work = rest.trim_start_matches(|c: char| c != ' ').trim().to_string();
             }
         }
+        }
 
-        if assignee_term.is_none() {
+        if semantic && assignee_term.is_none() {
             if let Some((lead_end, _)) = find_lead(&work, ASSIGNEE_LEADS) {
                 let tail = work[lead_end..].trim().to_string();
                 if !tail.is_empty() {
@@ -102,11 +135,13 @@ impl TaskQuery {
 
         // An explicit customer lead narrows everything after it to the customer.
         let mut customer_terms = Vec::new();
-        if let Some((lead_end, lead_start)) = find_lead(&work, CUSTOMER_LEADS) {
-            let tail = work[lead_end..].trim().to_string();
-            if !tail.is_empty() {
-                customer_terms = tokenize(&tail);
-                work = work[..lead_start].trim().to_string();
+        if semantic {
+            if let Some((lead_end, lead_start)) = find_lead(&work, CUSTOMER_LEADS) {
+                let tail = work[lead_end..].trim().to_string();
+                if !tail.is_empty() {
+                    customer_terms = tokenize(&tail, semantic);
+                    work = work[..lead_start].trim().to_string();
+                }
             }
         }
 
@@ -127,7 +162,7 @@ impl TaskQuery {
 
         Self {
             raw: raw.trim().to_string(),
-            terms: tokenize(&work),
+            terms: tokenize(&work, semantic),
             customer_terms,
             phone_digits,
             service_number,
@@ -166,7 +201,7 @@ impl TaskQuery {
 
         if let Some(ref who) = self.assignee_term {
             let name = assignee_name.unwrap_or_default().to_lowercase();
-            if !tokenize(who).iter().all(|t| name.contains(t.as_str())) {
+            if !tokenize(who, true).iter().all(|t| name.contains(t.as_str())) {
                 return false;
             }
         }
@@ -232,7 +267,7 @@ impl TaskQuery {
         }
 
         if let Some(ref who) = self.assignee_term {
-            for (i, term) in tokenize(who).into_iter().enumerate() {
+            for (i, term) in tokenize(who, true).into_iter().enumerate() {
                 let p = format!("a{i}");
                 all_of.push(format!(
                     "(string::lowercase(assignee.name ?? '') CONTAINS ${p} \
@@ -306,12 +341,13 @@ fn local_haystack(task: &LiveTaskPayload) -> String {
     s
 }
 
-/// Lowercased words with noise and punctuation dropped.
-fn tokenize(s: &str) -> Vec<String> {
+/// Lowercased words split on punctuation. Filler words are only dropped in
+/// semantic mode; a literal search takes every word the operator typed.
+fn tokenize(s: &str, drop_noise: bool) -> Vec<String> {
     s.split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())
         .map(|w| w.to_lowercase())
-        .filter(|w| !NOISE.contains(&w.as_str()))
+        .filter(|w| !drop_noise || !NOISE.contains(&w.as_str()))
         .collect()
 }
 
@@ -463,6 +499,50 @@ mod tests {
         let q = TaskQuery::parse("801-510-1399");
         assert!(!q.matches_local(&task, None));
         assert!(q.needs_database());
+    }
+
+    #[test]
+    fn literal_mode_treats_operators_as_words() {
+        let q = TaskQuery::literal("tasks for josh");
+        assert!(q.customer_terms.is_empty(), "no lead extraction");
+        assert!(q.assignee_term.is_none());
+        // Filler words survive: the operator typed them, so they must match.
+        assert_eq!(q.terms, vec!["tasks", "for", "josh"]);
+    }
+
+    #[test]
+    fn literal_mode_ignores_scope_keywords() {
+        let q = TaskQuery::literal("completed smith");
+        assert_eq!(q.scope, TaskScope::Any);
+        assert_eq!(q.terms, vec!["completed", "smith"]);
+    }
+
+    #[test]
+    fn literal_mode_ignores_the_possessive_form() {
+        let q = TaskQuery::literal("josh's tasks");
+        assert!(q.assignee_term.is_none());
+        assert_eq!(q.terms, vec!["josh", "s", "tasks"]);
+    }
+
+    #[test]
+    fn literal_mode_still_recognizes_a_phone_number() {
+        // Field normalization, not language: both modes answer a phone number.
+        let q = TaskQuery::literal("801-510-1399");
+        assert_eq!(q.phone_digits.as_deref(), Some("8015101399"));
+        assert!(q.needs_database());
+    }
+
+    #[test]
+    fn literal_and_semantic_agree_on_a_plain_name() {
+        assert_eq!(
+            TaskQuery::literal("ross larue").terms,
+            TaskQuery::parse("ross larue").terms
+        );
+    }
+
+    #[test]
+    fn default_mode_is_literal() {
+        assert_eq!(QueryMode::default(), QueryMode::Literal);
     }
 
     #[test]

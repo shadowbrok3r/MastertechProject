@@ -10,6 +10,7 @@ use serde::Deserialize;
 
 const MAX_LINE: usize = 256 * 1024;
 const CONTEXT_CHARS: usize = 1400;
+const MAX_DETAIL: usize = 240;
 
 pub fn claude_home() -> PathBuf {
     std::env::var("USERPROFILE")
@@ -203,6 +204,11 @@ fn transcript_index() -> HashMap<String, PathBuf> {
     out
 }
 
+/// Whether a lane name is a session id, i.e. a one-off list rather than a shared lane.
+pub fn is_session_lane(s: &str) -> bool {
+    is_session_uuid(s)
+}
+
 fn is_session_uuid(s: &str) -> bool {
     s.len() == 36
         && s.as_bytes()
@@ -269,7 +275,7 @@ pub fn load() -> Board {
             kind,
             status,
             subject: row.subject.unwrap_or_default(),
-            detail: row.description.unwrap_or_default(),
+            detail: cap(&row.description.unwrap_or_default(), MAX_DETAIL),
             ts,
             task_file: None,
         });
@@ -370,7 +376,7 @@ fn load_task_lists(
                 kind: ItemKind::Task,
                 status,
                 subject: task.subject.unwrap_or_default(),
-                detail: task.description.unwrap_or_default(),
+                detail: cap(&task.description.unwrap_or_default(), MAX_DETAIL),
                 ts,
                 task_file: Some(path),
             });
@@ -430,6 +436,15 @@ fn message_text(v: &serde_json::Value) -> Option<String> {
         }
     }
     (!out.trim().is_empty()).then_some(out)
+}
+
+/// Trims a field to a node-sized length.
+fn cap(s: &str, n: usize) -> String {
+    let t = s.trim();
+    if t.chars().count() <= n {
+        return t.to_string();
+    }
+    t.chars().take(n).collect::<String>() + "…"
 }
 
 fn clip(s: &str) -> String {
@@ -518,5 +533,32 @@ mod tests {
                 println!("      - {} [{}]", i.subject, i.status.label());
             }
         }
+    }
+
+    /// A status write must change only `status`, preserving sibling keys.
+    #[test]
+    fn write_task_status_preserves_other_fields() {
+        let dir = std::env::temp_dir().join("mtech_board_test");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("1.json");
+        fs::write(
+            &path,
+            r#"{"id":"1","subject":"s","description":"d","status":"pending","blocks":[],"blockedBy":["2"]}"#,
+        )
+        .unwrap();
+
+        write_task_status(&path, ItemStatus::Archived).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["status"], "completed");
+        assert_eq!(v["subject"], "s");
+        assert_eq!(v["blockedBy"][0], "2");
+
+        write_task_status(&path, ItemStatus::Open).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["status"], "pending");
+        assert_eq!(v["description"], "d");
+        fs::remove_dir_all(&dir).ok();
     }
 }

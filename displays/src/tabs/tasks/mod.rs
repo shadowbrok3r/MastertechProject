@@ -16,6 +16,80 @@ pub mod ai_task_cards;
 pub mod pending;
 pub mod complete_button;
 
+/// Column key for completed tasks surfaced by a search on a board that
+/// otherwise only shows open work. Matches `Status::Complete.as_str()`.
+pub const COMPLETE_KEY: &str = "Complete";
+
+/// Completed tasks assigned to `user`, for the search-only Complete column.
+fn completed_for_assignee(
+    tasks: &[LiveTaskPayload],
+    user: &database::schema::User,
+) -> Vec<LiveTaskPayload> {
+    tasks
+        .to_vec()
+        .filter_by_assignee(user)
+        .into_iter()
+        .filter(|task| task.completed)
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use database::schema::User;
+
+    fn assigned(user: &User, completed: bool, name: &str) -> LiveTaskPayload {
+        let mut t = LiveTaskPayload::default();
+        t.task_name = name.to_string();
+        t.assignee = user.get_id();
+        t.completed = completed;
+        if completed {
+            t.status = Status::Complete;
+        }
+        t
+    }
+
+    /// The bug this column exists for: a customer with one open task and
+    /// several finished ones must not collapse to just the open one.
+    #[test]
+    fn completed_column_keeps_every_finished_task() {
+        let me = User::default();
+        let tasks = vec![
+            assigned(&me, false, "Jane Smith - 1"),
+            assigned(&me, true, "Jane Smith - 2"),
+            assigned(&me, true, "Jane Smith - 3"),
+        ];
+
+        let done = completed_for_assignee(&tasks, &me);
+        assert_eq!(done.len(), 2, "both finished tasks belong in the column");
+        assert!(done.iter().all(|t| t.completed));
+    }
+
+    #[test]
+    fn completed_column_excludes_other_peoples_work() {
+        let me = User::default();
+        let mut someone_else = User::default();
+        someone_else.id = database::schema::random_record_id("user");
+
+        let tasks = vec![
+            assigned(&me, true, "mine"),
+            assigned(&someone_else, true, "theirs"),
+        ];
+
+        let done = completed_for_assignee(&tasks, &me);
+        assert_eq!(done.len(), 1, "My Tasks stays scoped to the signed-in user");
+        assert_eq!(done[0].task_name, "mine");
+    }
+
+    #[test]
+    fn completed_column_is_empty_when_nothing_is_finished() {
+        let me = User::default();
+        let tasks = vec![assigned(&me, false, "open")];
+        // An empty column is skipped at render time, so no Complete column shows.
+        assert!(completed_for_assignee(&tasks, &me).is_empty());
+    }
+}
+
 impl SharedContext {
     pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
         ui.ctx().request_repaint();
@@ -83,6 +157,12 @@ impl SharedContext {
             self.task_index.values().cloned().collect::<Vec<LiveTaskPayload>>()
         });
 
+        // A search answers across the whole table, so the board's own
+        // completion rule is lifted for the duration: a customer with one open
+        // and twenty finished tasks has to show all twenty-one, not just the
+        // open one. Grouping still follows the board.
+        let searching = self.search_results.is_some();
+
         if page == "My Tasks" {
             if my_tasks_show_clients_column {
                 map.insert(CONNECTED_CLIENTS_KEY.to_string(), Vec::new());
@@ -103,13 +183,26 @@ impl SharedContext {
                 map.insert(status_str.clone(), filtered);
                 ordered_keys.push(status_str.clone());
             }
+
+            // valid_keys never contains Complete, so searched-up completed
+            // tasks need a column of their own. Empty columns don't render.
+            if searching {
+                let done = completed_for_assignee(&tasks_to_filter, &current_user);
+                map.insert(COMPLETE_KEY.to_string(), done);
+                ordered_keys.push(COMPLETE_KEY.to_string());
+            }
         } else {
             for user in self.store_users.iter() {
-                let filtered = tasks_to_filter
+                let by_user = tasks_to_filter
                     .clone()
-                    .filter_by_assignee(user)
-                    .filter_by_completion(page == "Completed Tasks")
-                    .filter_by_store(user, &store_selection);
+                    .filter_by_assignee(user);
+                let filtered = if searching {
+                    by_user.filter_by_store(user, &store_selection)
+                } else {
+                    by_user
+                        .filter_by_completion(page == "Completed Tasks")
+                        .filter_by_store(user, &store_selection)
+                };
 
                 if !filtered.is_empty() {
                     let username = user.get_username().to_string();
@@ -160,11 +253,17 @@ impl SharedContext {
                             }
                         }
                     }
+                    let done = completed_for_assignee(&tasks_to_filter, &current_user);
+                    if !done.is_empty() {
+                        temp_entries.push((COMPLETE_KEY.to_string(), done));
+                    }
                     temp_entries.sort_by(|(a, _), (b, _)| match (a.as_str(), b.as_str()) {
                         ("Todo", _) => std::cmp::Ordering::Less,
                         (_, "Todo") => std::cmp::Ordering::Greater,
                         ("In Repair", _) => std::cmp::Ordering::Less,
                         (_, "In Repair") => std::cmp::Ordering::Greater,
+                        (COMPLETE_KEY, _) => std::cmp::Ordering::Greater,
+                        (_, COMPLETE_KEY) => std::cmp::Ordering::Less,
                         _ => a.cmp(b),
                     });
                     for (status_str, filtered) in temp_entries {
@@ -176,7 +275,6 @@ impl SharedContext {
                         let filtered = tasks_to_filter
                             .clone()
                             .filter_by_assignee(user)
-                            .filter_by_completion(target_page == "Completed Tasks")
                             .filter_by_store(user, &store_selection);
                         if !filtered.is_empty() {
                             let username = user.get_username().to_string();

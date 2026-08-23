@@ -41,6 +41,20 @@ pub struct BoardViewer<'a> {
     pub actions: Vec<BoardAction>,
     /// Current graph zoom, fed back by `current_transform` for grid coarsening.
     pub scale: f32,
+    /// Wheel delta claimed by the board this frame, applied as zoom.
+    pub wheel: f32,
+    pub pointer: Option<eframe::egui::Pos2>,
+    /// Node rects in graph space. `draw_background` runs before the nodes lay out, so
+    /// the frost uses last frame's rects and a resize costs one frame of staleness.
+    pub node_rects: &'a mut Vec<(NodeId, eframe::egui::Rect)>,
+    /// Screen point graph (0,0) should sit at, when the layout just changed.
+    pub recenter: Option<eframe::egui::Pos2>,
+    /// Graph point to centre the view on, from a minimap click.
+    pub center_on: Option<eframe::egui::Pos2>,
+    /// Screen centre of the graph area, for `center_on`.
+    pub view_center: eframe::egui::Pos2,
+    /// The live graph transform, read back so the minimap can place the viewport box.
+    pub to_global: eframe::egui::emath::TSTransform,
 }
 
 fn status_color(status: ItemStatus) -> Color32 {
@@ -60,6 +74,9 @@ fn status_icon(status: ItemStatus) -> &'static str {
         ItemStatus::Filed => icons::STATUS_ON,
     }
 }
+
+/// Wheel units to e-fold of zoom; tuned so one notch is a comfortable step.
+const ZOOM_PER_WHEEL_UNIT: f32 = 0.0025;
 
 /// Node body width; without a bound, one long line stretches the whole graph.
 pub const NODE_W: f32 = 300.0;
@@ -140,7 +157,7 @@ impl SnarlViewer<BoardNode> for BoardViewer<'_> {
                         ItemKind::Task => "task",
                         ItemKind::Suggestion => "follow-up",
                     };
-                    ui.label(RichText::new(kind).small().color(ui.visuals().weak_text_color()));
+                    ui.label(RichText::new(kind).small().color(theme::AQUA));
                 });
             }
         }
@@ -181,6 +198,8 @@ impl SnarlViewer<BoardNode> for BoardViewer<'_> {
         painter: &eframe::egui::Painter,
         _snarl: &Snarl<BoardNode>,
     ) {
+        theme::ambience(painter, *viewport, 4);
+
         // Dot grid anchored in graph units so it scales 1:1 with the nodes; coarsened by
         // powers of two when zoomed out to bound the dot count.
         let mut spacing = theme::DOT_SPACING;
@@ -200,6 +219,8 @@ impl SnarlViewer<BoardNode> for BoardViewer<'_> {
                 painter.circle_filled(p, theme::DOT_RADIUS, theme::DOT_COLOR);
             }
         }
+
+        self.frost_nodes(painter, viewport);
     }
 
     fn current_transform(
@@ -207,7 +228,33 @@ impl SnarlViewer<BoardNode> for BoardViewer<'_> {
         to_global: &mut eframe::egui::emath::TSTransform,
         _snarl: &mut Snarl<BoardNode>,
     ) {
+        if let Some(anchor) = self.recenter {
+            *to_global = eframe::egui::emath::TSTransform::from_translation(anchor.to_vec2());
+        }
+        if let (true, Some(p)) = (self.wheel != 0.0, self.pointer) {
+            let factor = (self.wheel * ZOOM_PER_WHEEL_UNIT).exp();
+            let scaling = (to_global.scaling * factor).clamp(theme::MIN_SCALE, theme::MAX_SCALE);
+            let factor = scaling / to_global.scaling;
+            // Zoom about the cursor: graph -> screen, recentre on p, scale, put p back.
+            to_global.translation = (to_global.translation - p.to_vec2()) * factor + p.to_vec2();
+            to_global.scaling = scaling;
+        }
+        if let Some(g) = self.center_on {
+            to_global.translation =
+                self.view_center.to_vec2() - g.to_vec2() * to_global.scaling;
+        }
         self.scale = to_global.scaling;
+        self.to_global = *to_global;
+    }
+
+    fn final_node_rect(
+        &mut self,
+        node: NodeId,
+        rect: eframe::egui::Rect,
+        _ui: &mut Ui,
+        _snarl: &mut Snarl<BoardNode>,
+    ) {
+        self.node_rects.push((node, rect));
     }
 
     fn has_body(&mut self, _node: &BoardNode) -> bool {
@@ -270,6 +317,30 @@ impl SnarlViewer<BoardNode> for BoardViewer<'_> {
 }
 
 impl BoardViewer<'_> {
+    /// Blurs the lit canvas behind each node body, so the glass has something to reveal.
+    fn frost_nodes(&mut self, painter: &eframe::egui::Painter, viewport: &eframe::egui::Rect) {
+        let rects = std::mem::take(self.node_rects);
+        if self.scale < theme::MIN_FROST_SCALE || rects.is_empty() {
+            return;
+        }
+        // A Ui on the snarl layer, so egui applies the graph transform to the callback rect.
+        let ui = Ui::new(
+            painter.ctx().clone(),
+            eframe::egui::Id::new("session-board-frost"),
+            eframe::egui::UiBuilder::new()
+                .layer_id(painter.layer_id())
+                .max_rect(*viewport),
+        );
+        let mut ui = ui;
+        ui.set_clip_rect(*viewport);
+        let mut params = theme::node_glass();
+        // Corner radius is in screen points and the transform does not scale it.
+        params.corner_radius = theme::NODE_CORNER * self.scale;
+        for (_, rect) in rects.iter().take(theme::MAX_FROST_PANES) {
+            crate::ui_tools::glass_backdrop::frost_with(&ui, *rect, params);
+        }
+    }
+
     fn group_header(&mut self, g: &GroupNode, ui: &mut Ui) {
         ui.horizontal(|ui| {
             let icon = match g.kind {
@@ -277,7 +348,7 @@ impl BoardViewer<'_> {
                 GroupKind::Lane => icons::LIST,
             };
             ui.label(RichText::new(icon).color(ui.visuals().weak_text_color()));
-            ui.label(RichText::new(&g.title).strong());
+            ui.label(RichText::new(&g.title).size(theme::TITLE_SIZE).strong());
             if g.open > 0 {
                 ui.label(
                     RichText::new(format!("{} open", g.open))
@@ -290,6 +361,10 @@ impl BoardViewer<'_> {
 
     fn group_body(&mut self, g: &GroupNode, ui: &mut Ui) {
         ui.set_width(NODE_W);
+        ui.vertical(|ui| self.group_rows(g, ui));
+    }
+
+    fn group_rows(&mut self, g: &GroupNode, ui: &mut Ui) {
         ui.horizontal_wrapped(|ui| {
             let weak = ui.visuals().weak_text_color();
             if !g.project.is_empty() {
@@ -348,7 +423,17 @@ impl BoardViewer<'_> {
 
     fn item_body(&mut self, i: &Item, ui: &mut Ui) {
         ui.set_width(NODE_W);
-        wrapped(ui, RichText::new(&i.subject));
+        ui.vertical(|ui| self.item_rows(i, ui));
+    }
+
+    fn item_rows(&mut self, i: &Item, ui: &mut Ui) {
+        wrapped(
+            ui,
+            RichText::new(&i.subject)
+                .size(theme::SUBJECT_SIZE)
+                .strong()
+                .color(theme::INK),
+        );
         if !i.detail.is_empty() && i.detail != i.subject {
             wrapped(
                 ui,
@@ -358,6 +443,20 @@ impl BoardViewer<'_> {
             );
         }
         ui.horizontal(|ui| {
+            if ui
+                .small_button(icons::COPY)
+                .on_hover_text("Copy this item's text")
+                .clicked()
+            {
+                let text = if i.detail.is_empty() || i.detail == i.subject {
+                    i.subject.clone()
+                } else {
+                    format!("{}
+
+{}", i.subject, i.detail)
+                };
+                ui.ctx().copy_text(text);
+            }
             if i.status == ItemStatus::Open {
                 if ui
                     .small_button(icons::CHECK)

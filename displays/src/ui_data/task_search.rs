@@ -12,7 +12,7 @@
 use crate::{PlatformSpawner, Spawner, TaskUiActions};
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::{
-    FilterLiveTasks, LiveTaskPayload, RecordId, RecordIdExt, Store, TaskQuery, User,
+    FilterLiveTasks, LiveTaskPayload, QueryMode, RecordId, RecordIdExt, Store, TaskQuery, User,
 };
 use std::collections::HashMap;
 use web_time::{Duration, Instant};
@@ -23,8 +23,14 @@ const DEBOUNCE: Duration = Duration::from_millis(250);
 const RESULT_LIMIT: usize = 200;
 const HINT: &str = " Search tasks, customers, phone";
 
-const HELP: &str = "Matches task name, service number, customer name and phone.\n\
-     Try: \"tasks for Jane Doe\", \"801-555-0123\", \"completed smith\", \"assigned to logan\"";
+const HELP: &str = "Matches task name, description, service number, customer name and phone.\n\
+     Every word has to appear somewhere. Tick Semantic to write it as a question.";
+
+const SEMANTIC_HELP: &str = "Read the query as a question instead of keywords:\n\
+     \"tasks for Jane Doe\" — that customer\n\
+     \"assigned to josh\" / \"josh's tasks\" — that tech\n\
+     \"completed smith\" / \"open smith\" — narrow by state\n\
+     Filler words are ignored. Off, every word is matched literally.";
 
 /// How many matches fall on each board, for the count hint by the search box.
 #[derive(Clone, Copy, Default, Debug, PartialEq)]
@@ -55,6 +61,9 @@ pub struct TaskSearch {
     /// Server-side hits, unioned with local matches each frame.
     pub db_hits: Vec<LiveTaskPayload>,
     pub counts: SearchCounts,
+    /// Operator opt-in to intent parsing. Off means every word is matched
+    /// literally, which is what most searches want.
+    pub semantic: bool,
     pub tx: Sender<(String, Vec<LiveTaskPayload>)>,
     pub rx: Receiver<(String, Vec<LiveTaskPayload>)>,
 }
@@ -68,6 +77,7 @@ impl Default for TaskSearch {
             typed_at: None,
             db_hits: Vec::new(),
             counts: SearchCounts::default(),
+            semantic: false,
             tx,
             rx,
         }
@@ -75,13 +85,22 @@ impl Default for TaskSearch {
 }
 
 impl TaskSearch {
-    /// Forgets the current query and its results.
+    /// Forgets the current query and its results. The mode is a preference,
+    /// so it survives.
     pub fn reset(&mut self) {
         self.raw.clear();
         self.requested.clear();
         self.typed_at = None;
         self.db_hits.clear();
         self.counts = SearchCounts::default();
+    }
+
+    pub fn mode(&self) -> QueryMode {
+        if self.semantic {
+            QueryMode::Semantic
+        } else {
+            QueryMode::Literal
+        }
     }
 }
 
@@ -111,6 +130,18 @@ pub fn search_bar(ui: &mut eframe::egui::Ui, mut ctx: TaskSearchCtx<'_>) {
     ui.add_space(5.);
     let cleared = ui.button("Clear").clicked();
 
+    ui.add_space(5.);
+    // Switching mode re-parses the same text, so the pending request is stale.
+    if ui
+        .checkbox(&mut ctx.state.semantic, "Semantic")
+        .on_hover_text(SEMANTIC_HELP)
+        .changed()
+    {
+        ctx.state.raw.clear();
+        ctx.state.requested.clear();
+        ctx.state.db_hits.clear();
+    }
+
     // Enter opens the single best hit rather than leaving the board filtered.
     let submitted = field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
 
@@ -130,7 +161,9 @@ pub fn search_bar(ui: &mut eframe::egui::Ui, mut ctx: TaskSearchCtx<'_>) {
         ui.add_space(6.0);
         ui.label(RichText::new(counts.label()).small().color(color))
             .on_hover_text(
-                "Completed matches live on the Completed Tasks tab; open ones on My/Store Tasks.",
+                "Totals across this store. While searching, each board shows both open \
+                 and completed matches — completed ones in a Complete column. My Tasks \
+                 still only counts work assigned to you; Store Tasks shows everyone's.",
             );
     }
 
@@ -153,7 +186,7 @@ pub fn update(ctx: &mut TaskSearchCtx<'_>) {
         return;
     }
 
-    let query = TaskQuery::parse(&raw);
+    let query = TaskQuery::parse_with(&raw, ctx.state.mode());
     if query.is_empty() {
         *ctx.results = Some(Vec::new());
         ctx.state.counts = SearchCounts::default();
@@ -339,12 +372,55 @@ mod tests {
     }
 
     #[test]
-    fn scope_keyword_restricts_results() {
+    fn scope_keyword_restricts_results_only_in_semantic_mode() {
+        let (actions, _rx) = crossbeam::channel::unbounded();
+        let mut results = None;
+        let mut tasks = Vec::new();
+
+        // Semantic: "completed" is a scope filter, so only the finished one.
+        let mut state = TaskSearch::default();
+        state.semantic = true;
+        let mut input = "completed smith".to_string();
+        let mut index = indexed(&["Jane Smith - 1", "Jane Smith - 2"], &[false, true]);
+        update(&mut ctx(
+            &mut state,
+            &mut input,
+            &mut results,
+            &mut index,
+            &mut tasks,
+            &actions,
+        ));
+        assert_eq!(state.counts.open, 0);
+        assert_eq!(state.counts.completed, 1);
+
+        // Literal (the default): "completed" is a word neither name contains.
+        let mut state = TaskSearch::default();
+        assert!(!state.semantic, "literal is the default");
+        let mut input = "completed smith".to_string();
+        let mut index = indexed(&["Jane Smith - 1", "Jane Smith - 2"], &[false, true]);
+        update(&mut ctx(
+            &mut state,
+            &mut input,
+            &mut results,
+            &mut index,
+            &mut tasks,
+            &actions,
+        ));
+        assert_eq!(state.counts.open, 0);
+        assert_eq!(state.counts.completed, 0);
+    }
+
+    #[test]
+    fn literal_mode_still_finds_both_states_for_a_customer() {
+        // The reported bug: one open task must not hide the finished ones.
         let (actions, _rx) = crossbeam::channel::unbounded();
         let mut state = TaskSearch::default();
-        let mut input = "completed smith".to_string();
+        let mut input = "smith".to_string();
         let mut results = None;
-        let mut index = indexed(&["Jane Smith - 1", "Jane Smith - 2"], &[false, true]);
+        let mut index = indexed(
+            &["Jane Smith - 1", "Jane Smith - 2", "Jane Smith - 3"],
+            &[false, true, true],
+        );
         let mut tasks = Vec::new();
 
         update(&mut ctx(
@@ -356,7 +432,7 @@ mod tests {
             &actions,
         ));
 
-        assert_eq!(state.counts.open, 0);
-        assert_eq!(state.counts.completed, 1);
+        assert_eq!(state.counts.open, 1);
+        assert_eq!(state.counts.completed, 2);
     }
 }

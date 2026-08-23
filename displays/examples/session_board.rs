@@ -17,6 +17,10 @@ fn main() -> eframe::Result<()> {
             displays::ui_tools::icons::install_fonts(&mut fonts);
             cc.egui_ctx.set_fonts(fonts);
             cc.egui_ctx.set_visuals(eframe::egui::Visuals::dark());
+            // Without the grab-pass backend every frost is a no-op and the nodes fall
+            // back to their translucent fill.
+            let glass = displays::ui_tools::glass_backdrop::install(cc);
+            eprintln!("backdrop-blur available: {glass}");
             Ok(Box::new(Demo::default()))
         }),
     )
