@@ -1114,9 +1114,9 @@ impl EguiScriptsTab {
 
                         #[cfg(target_os = "windows")]
                         match install_sas(key.superanti_key, client, install_progress_tx2).await {
-                            Ok(_) => {
+                            Ok(proof) => {
                                 let _ = log_tx.try_send(ScriptLogEntry::success(
-                                    category.clone(), &script_name, "SuperAntiSpyware installed successfully"
+                                    category.clone(), &script_name, format!("SuperAntiSpyware installed and activated: {proof}")
                                 ));
                             },
                             Err(e) => {

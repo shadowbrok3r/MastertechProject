@@ -441,6 +441,9 @@ async fn main() -> eframe::Result<()> {
         }
         // Delete the one-shot logon relaunch task so it does not fire on every logon.
         utilities::windows::reboot::clear_relaunch_task();
+        utilities::windows::power::ensure_awake("startup");
+        // Without a WER LocalDumps key an AppCrash keeps metadata only and no .mdmp.
+        tokio::spawn(utilities::windows::crash_dumps::apply_policy_when_ready());
     }
 
     let matches = clap::Command::new("Mastertech")

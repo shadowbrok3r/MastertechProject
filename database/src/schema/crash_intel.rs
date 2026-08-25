@@ -871,6 +871,10 @@ impl CrashSignature {
             .await?;
         let sighting_id = created.map(|s| s.id).unwrap_or(sighting.id);
 
+        if let Some(session) = ctx.session_ref.as_ref() {
+            super::DiagnosticSession::touch(session).await;
+        }
+
         let verdicts = Self::verdicts(&signature.id, 5).await?;
 
         Ok(CrashIngest {

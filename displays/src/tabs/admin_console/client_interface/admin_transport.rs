@@ -26,10 +26,12 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::Spawner;
-use crossbeam::channel::{Receiver as XReceiver, Sender as XSender, TryRecvError};
+use crossbeam::channel::TryRecvError;
+#[cfg(target_arch = "wasm32")]
+use crossbeam::channel::Sender as XSender;
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use std::sync::{
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     Arc,
 };
 #[cfg(not(target_arch = "wasm32"))]
@@ -81,7 +83,7 @@ enum AdminTransportInner {
     /// arrive on `in_rx`.
     Tcp {
         out_tx: OutTx,
-        in_rx: XReceiver<WsEvent>,
+        in_rx: InboundReceiver,
         /// Set to `true` when we've sent a `WsEvent::Closed` so further
         /// `send()` calls become no-ops instead of leaking unbounded-channel
         /// growth on a dead connection.
@@ -114,6 +116,183 @@ pub enum TcpFrame {
     Binary(Vec<u8>),
     Text(String),
     Shutdown,
+}
+
+/// Non-viewer inbound frames held for the UI thread before the oldest are dropped.
+pub const MAX_INBOUND_FRAMES: usize = 4_096;
+
+/// Non-viewer inbound bytes held for the UI thread before the oldest are dropped.
+pub const MAX_INBOUND_BYTES: usize = 64 * 1024 * 1024;
+
+/// zstd frame magic; terminal-mode clients send remote-viewer buffers with it.
+const ZSTD_MAGIC: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
+
+/// True for frames the viewer only ever renders the newest of.
+pub fn is_viewer_frame(bin: &[u8]) -> bool {
+    bin.first() == Some(&crate::EGUI_FRAME_TAG)
+        || bin.first() == Some(&crate::DESKTOP_FRAME_TAG)
+        || (bin.len() >= 4 && bin[..4] == ZSTD_MAGIC)
+}
+
+fn event_bytes(ev: &WsEvent) -> usize {
+    match ev {
+        WsEvent::Message(WsMessage::Binary(b)) => b.len(),
+        WsEvent::Message(WsMessage::Ping(b)) | WsEvent::Message(WsMessage::Pong(b)) => b.len(),
+        WsEvent::Message(WsMessage::Text(s)) | WsEvent::Message(WsMessage::Unknown(s)) => s.len(),
+        WsEvent::Error(s) => s.len(),
+        _ => 0,
+    }
+}
+
+fn event_is_viewer_frame(ev: &WsEvent) -> bool {
+    matches!(ev, WsEvent::Message(WsMessage::Binary(b)) if is_viewer_frame(b))
+}
+
+#[derive(Default)]
+struct FramedQueue {
+    items: std::collections::VecDeque<(WsEvent, usize)>,
+    bytes: usize,
+}
+
+/// Inbound frames the socket reader has produced but the UI has not consumed.
+///
+/// The reader is a background task; the consumer is `WebSocketClient::receive`,
+/// which only runs while egui paints. Both halves are bounded so a minimised,
+/// wedged or otherwise non-painting UI cannot grow this without limit.
+///
+/// Drop policy: viewer frames are newest-wins in a single slot; every other
+/// frame is FIFO up to [`MAX_INBOUND_FRAMES`] / [`MAX_INBOUND_BYTES`], past
+/// which the oldest is dropped. Every drop is counted in the buffer census.
+struct InboundQueue {
+    framed: std::sync::Mutex<FramedQueue>,
+    viewer: std::sync::Mutex<Option<(WsEvent, usize)>>,
+    senders: AtomicUsize,
+    stats: Arc<crate::buffer_census::QueueStats>,
+}
+
+impl InboundQueue {
+    fn publish(&self) {
+        let framed = self.framed.lock().unwrap_or_else(|e| e.into_inner());
+        let viewer = self.viewer.lock().unwrap_or_else(|e| e.into_inner());
+        let (viewer_depth, viewer_bytes) = match viewer.as_ref() {
+            Some((_, n)) => (1, *n),
+            None => (0, 0),
+        };
+        self.stats
+            .set_occupancy(framed.items.len() + viewer_depth, framed.bytes + viewer_bytes);
+    }
+}
+
+/// Producer handle for an [`InboundQueue`]. Mirrors `crossbeam::Sender::send`.
+pub struct InboundSink {
+    queue: Arc<InboundQueue>,
+}
+
+impl Clone for InboundSink {
+    fn clone(&self) -> Self {
+        self.queue.senders.fetch_add(1, Ordering::AcqRel);
+        Self {
+            queue: self.queue.clone(),
+        }
+    }
+}
+
+impl Drop for InboundSink {
+    fn drop(&mut self) {
+        self.queue.senders.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+impl InboundSink {
+    /// Enqueues one event, applying the queue's drop policy. Never blocks.
+    pub fn send(&self, ev: WsEvent) -> Result<(), WsEvent> {
+        let bytes = event_bytes(&ev);
+        if event_is_viewer_frame(&ev) {
+            let mut slot = self.queue.viewer.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some((_, stale)) = slot.replace((ev, bytes)) {
+                self.queue.stats.record_drop(stale);
+            }
+        } else {
+            let mut framed = self.queue.framed.lock().unwrap_or_else(|e| e.into_inner());
+            framed.items.push_back((ev, bytes));
+            framed.bytes += bytes;
+            while framed.items.len() > MAX_INBOUND_FRAMES || framed.bytes > MAX_INBOUND_BYTES {
+                let Some((_, dropped)) = framed.items.pop_front() else {
+                    break;
+                };
+                framed.bytes = framed.bytes.saturating_sub(dropped);
+                self.queue.stats.record_drop(dropped);
+            }
+        }
+        self.queue.publish();
+        Ok(())
+    }
+}
+
+/// Consumer handle for an [`InboundQueue`]. Mirrors `crossbeam::Receiver::try_recv`.
+pub struct InboundReceiver {
+    queue: Arc<InboundQueue>,
+}
+
+impl InboundReceiver {
+    /// Pops the next framed event, then the pending viewer frame.
+    pub fn try_recv(&self) -> Result<WsEvent, TryRecvError> {
+        let popped = {
+            let mut framed = self.queue.framed.lock().unwrap_or_else(|e| e.into_inner());
+            match framed.items.pop_front() {
+                Some((ev, bytes)) => {
+                    framed.bytes = framed.bytes.saturating_sub(bytes);
+                    Some(ev)
+                }
+                None => None,
+            }
+        }
+        .or_else(|| {
+            let mut slot = self.queue.viewer.lock().unwrap_or_else(|e| e.into_inner());
+            slot.take().map(|(ev, _)| ev)
+        });
+
+        match popped {
+            Some(ev) => {
+                self.queue.publish();
+                Ok(ev)
+            }
+            None if self.queue.senders.load(Ordering::Acquire) == 0 => {
+                Err(TryRecvError::Disconnected)
+            }
+            None => Err(TryRecvError::Empty),
+        }
+    }
+
+    /// Frames and bytes currently queued.
+    pub fn occupancy(&self) -> (usize, usize) {
+        (self.queue.stats.depth(), self.queue.stats.bytes())
+    }
+
+    /// Frames dropped by the queue's cap since it was created.
+    pub fn dropped(&self) -> u64 {
+        self.queue.stats.dropped()
+    }
+}
+
+/// Builds a bounded inbound queue registered in the buffer census under `label`.
+pub fn inbound_channel(label: impl Into<String>) -> (InboundSink, InboundReceiver) {
+    let queue = Arc::new(InboundQueue {
+        framed: std::sync::Mutex::new(FramedQueue::default()),
+        viewer: std::sync::Mutex::new(None),
+        senders: AtomicUsize::new(1),
+        stats: crate::buffer_census::QueueStats::register(
+            label,
+            MAX_INBOUND_FRAMES,
+            MAX_INBOUND_BYTES,
+        ),
+    });
+    (
+        InboundSink {
+            queue: queue.clone(),
+        },
+        InboundReceiver { queue },
+    )
 }
 
 impl Drop for AdminTransport {
@@ -165,10 +344,8 @@ impl AdminTransport {
     /// mode.
     #[cfg(not(target_arch = "wasm32"))]
     fn spawn_session(initial_target: Option<String>, connection_string: String) -> Self {
-        use crossbeam::channel::unbounded;
-
         let (out_tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<TcpFrame>();
-        let (in_tx, in_rx) = unbounded::<WsEvent>();
+        let (in_tx, in_rx) = inbound_channel(format!("admin_transport.inbound[{connection_string}]"));
 
         // Shared shutdown signal — `close()` flips it from the UI thread;
         // `run_session` polls it at every retry sleep and before every dial
@@ -396,7 +573,7 @@ async fn run_session(
     initial_target: Option<String>,
     connection_string: String,
     out_rx: tokio::sync::mpsc::UnboundedReceiver<TcpFrame>,
-    in_tx: XSender<WsEvent>,
+    in_tx: InboundSink,
     shutdown: Arc<AtomicBool>,
     relaunch_grace_until_ms: Arc<AtomicU64>,
     tunnel_active: Arc<AtomicBool>,
@@ -555,7 +732,7 @@ async fn attempt_tcp(
     target: &str,
     connection_string: &str,
     out_rx: &OutRx,
-    in_tx: &XSender<WsEvent>,
+    in_tx: &InboundSink,
     shutdown: &Arc<AtomicBool>,
     relaunch_grace_until_ms: &Arc<AtomicU64>,
     read_idle: Duration,
@@ -622,7 +799,7 @@ async fn attempt_tunnel(
     master_base: &str,
     connection_string: &str,
     out_rx: &OutRx,
-    in_tx: &XSender<WsEvent>,
+    in_tx: &InboundSink,
     shutdown: &Arc<AtomicBool>,
     relaunch_grace_until_ms: &Arc<AtomicU64>,
     read_idle: Duration,
@@ -717,7 +894,7 @@ async fn run_connection_phase<R, W>(
     mut write_half: W,
     connection_string: &str,
     out_rx: &OutRx,
-    in_tx: &XSender<WsEvent>,
+    in_tx: &InboundSink,
     shutdown: &Arc<AtomicBool>,
     relaunch_grace_until_ms: &Arc<AtomicU64>,
     read_idle: Duration,
@@ -1186,5 +1363,126 @@ impl AdminTransport {
             WsEvent::Message(WsMessage::Text(t)) => Some(SessionEvent::Text(t.into())),
             WsEvent::Message(_) => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod inbound_queue_tests {
+    use super::*;
+
+    /// A frame the viewer coalesces.
+    fn viewer_frame(bytes: usize) -> WsEvent {
+        let mut payload = vec![0u8; bytes.max(1)];
+        payload[0] = crate::EGUI_FRAME_TAG;
+        WsEvent::Message(WsMessage::Binary(payload))
+    }
+
+    /// A frame the control plane must queue in order.
+    fn control_frame(bytes: usize) -> WsEvent {
+        WsEvent::Message(WsMessage::Binary(vec![0x42; bytes.max(1)]))
+    }
+
+    #[test]
+    fn classifier_separates_viewer_frames_from_control_frames() {
+        assert!(is_viewer_frame(&[crate::EGUI_FRAME_TAG, 1, 2, 3]));
+        assert!(is_viewer_frame(&[crate::DESKTOP_FRAME_TAG, 1, 2, 3]));
+        assert!(is_viewer_frame(&ZSTD_MAGIC));
+        assert!(!is_viewer_frame(&[0x42; 64]));
+        assert!(!is_viewer_frame(&[]));
+    }
+
+    #[test]
+    fn viewer_frames_never_queue_more_than_one() {
+        let (tx, rx) = inbound_channel("test.inbound.viewer_coalesce");
+        for _ in 0..1_000 {
+            let _ = tx.send(viewer_frame(256 * 1024));
+        }
+
+        let (depth, bytes) = rx.occupancy();
+        assert_eq!(depth, 1, "only the newest viewer frame is retained");
+        assert!(bytes <= 256 * 1024, "retained {bytes} bytes");
+        assert_eq!(rx.dropped(), 999, "every superseded frame is counted");
+    }
+
+    #[test]
+    fn control_frames_stop_at_the_frame_cap() {
+        let (tx, rx) = inbound_channel("test.inbound.frame_cap");
+        let overshoot = 500;
+        for _ in 0..(MAX_INBOUND_FRAMES + overshoot) {
+            let _ = tx.send(control_frame(16));
+        }
+
+        let (depth, _) = rx.occupancy();
+        assert_eq!(depth, MAX_INBOUND_FRAMES);
+        assert_eq!(rx.dropped(), overshoot as u64);
+    }
+
+    #[test]
+    fn control_frames_stop_at_the_byte_cap() {
+        let (tx, rx) = inbound_channel("test.inbound.byte_cap");
+        let frame_bytes = 1024 * 1024;
+        let frames = (MAX_INBOUND_BYTES / frame_bytes) + 32;
+        for _ in 0..frames {
+            let _ = tx.send(control_frame(frame_bytes));
+        }
+
+        let (_, bytes) = rx.occupancy();
+        assert!(
+            bytes <= MAX_INBOUND_BYTES,
+            "queued {bytes} bytes over a {MAX_INBOUND_BYTES} cap"
+        );
+        assert!(rx.dropped() > 0);
+    }
+
+    /// The reported failure mode: the socket reader keeps producing while the
+    /// UI never paints, so `try_recv` is never called.
+    #[test]
+    fn a_producer_with_no_consumer_stays_bounded() {
+        let (tx, rx) = inbound_channel("test.inbound.no_consumer");
+        let frame_bytes = 256 * 1024;
+        let produced_bytes = 512 * 1024 * 1024;
+        let frames = produced_bytes / frame_bytes;
+
+        for i in 0..frames {
+            let _ = tx.send(if i % 4 == 0 {
+                control_frame(frame_bytes)
+            } else {
+                viewer_frame(frame_bytes)
+            });
+        }
+
+        let (_, bytes) = rx.occupancy();
+        assert!(
+            bytes <= MAX_INBOUND_BYTES + frame_bytes,
+            "{produced_bytes} bytes produced with no consumer left {bytes} queued"
+        );
+    }
+
+    #[test]
+    fn try_recv_drains_framed_traffic_then_the_viewer_slot() {
+        let (tx, rx) = inbound_channel("test.inbound.drain_order");
+        let _ = tx.send(control_frame(8));
+        let _ = tx.send(viewer_frame(8));
+        let _ = tx.send(control_frame(8));
+
+        assert!(matches!(rx.try_recv(), Ok(ev) if !event_is_viewer_frame(&ev)));
+        assert!(matches!(rx.try_recv(), Ok(ev) if !event_is_viewer_frame(&ev)));
+        assert!(matches!(rx.try_recv(), Ok(ev) if event_is_viewer_frame(&ev)));
+        assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
+        assert_eq!(rx.occupancy(), (0, 0));
+    }
+
+    #[test]
+    fn receiver_reports_disconnected_once_every_sender_is_gone() {
+        let (tx, rx) = inbound_channel("test.inbound.disconnect");
+        let tx2 = tx.clone();
+        let _ = tx.send(control_frame(8));
+
+        drop(tx);
+        assert!(rx.try_recv().is_ok(), "queued frames outlive one sender");
+        assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
+
+        drop(tx2);
+        assert!(matches!(rx.try_recv(), Err(TryRecvError::Disconnected)));
     }
 }

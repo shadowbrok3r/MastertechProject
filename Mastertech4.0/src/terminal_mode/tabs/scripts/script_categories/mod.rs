@@ -209,40 +209,19 @@ pub fn check_windows_activation() -> anyhow::Result<LicenseStatus, anyhow::Error
     Ok(result)
 }
 
-/// Sets all sleep/display/hibernate timeouts to never and turns hibernation
-/// off. powercfg prints nothing on success, so success is judged by exit codes.
+/// Sets all sleep/display/hibernate timeouts to never, turns hibernation off,
+/// and clears Fast Startup.
 pub fn disable_hibernation_and_sleep() -> anyhow::Result<bool, anyhow::Error> {
-    let ps_script = r#"
-        $failures = @()
-        powercfg /change standby-timeout-ac 0 | Out-Null;   if ($LASTEXITCODE -ne 0) { $failures += 'standby-timeout-ac' }
-        powercfg /change standby-timeout-dc 0 | Out-Null;   if ($LASTEXITCODE -ne 0) { $failures += 'standby-timeout-dc' }
-        powercfg /change monitor-timeout-ac 0 | Out-Null;   if ($LASTEXITCODE -ne 0) { $failures += 'monitor-timeout-ac' }
-        powercfg /change monitor-timeout-dc 0 | Out-Null;   if ($LASTEXITCODE -ne 0) { $failures += 'monitor-timeout-dc' }
-        powercfg /change hibernate-timeout-ac 0 | Out-Null; if ($LASTEXITCODE -ne 0) { $failures += 'hibernate-timeout-ac' }
-        powercfg /change hibernate-timeout-dc 0 | Out-Null; if ($LASTEXITCODE -ne 0) { $failures += 'hibernate-timeout-dc' }
-        powercfg /hibernate off | Out-Null;                 if ($LASTEXITCODE -ne 0) { $failures += 'hibernate-off' }
-        if ($failures.Count -eq 0) { 'ALL_OK' } else { "FAILED: $($failures -join ', ')" }
-    "#;
+    use crate::utilities::windows::power;
 
-    let output = PsScriptBuilder::new()
-        .no_profile(true)
-        .non_interactive(true)
-        .hidden(true)
-        .print_commands(false)
-        .build()
-        .run(ps_script)?;
+    let mut failures = power::disable_sleep_states();
+    failures.extend(power::disable_display_timeout());
 
-    let stdout = output.stdout().unwrap_or_default();
-    let stdout = stdout.trim();
-    log::info!("disable_hibernation_and_sleep -> {stdout:?}");
-
-    if stdout.contains("ALL_OK") {
+    if failures.is_empty() {
+        log::info!("disable_hibernation_and_sleep -> all settings applied");
         Ok(true)
     } else {
-        Err(anyhow::anyhow!(
-            "powercfg reported: {stdout} (stderr: {:?})",
-            output.stderr().unwrap_or_default().trim()
-        ))
+        Err(anyhow::anyhow!("powercfg reported: {}", failures.join("; ")))
     }
 }
 

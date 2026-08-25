@@ -12,17 +12,25 @@
 //! through the table's CREATE event, which mints an `Approval` notification
 //! for every Root account — the same path the company-wide `Admin`
 //! notification uses.
+//!
+//! A decision is single-writer: the write is conditional on the row still
+//! being pending, so whichever console clicks first owns it and the others
+//! close on the live-query event (backed by a periodic resync in case that
+//! stream is down). A click that lost the race writes nothing and toasts what
+//! the row actually holds, so a stray Deny is never read as a real one.
 
 use crate::ui_tools::{icons, theme};
 use crate::{PlatformSpawner, Spawner};
 use crossbeam::channel::{unbounded, Receiver, Sender};
-use database::schema::sql_approval::{ApprovalStatus, SqlApproval};
+use database::schema::sql_approval::{ApprovalStatus, DecideOutcome, SqlApproval};
 use database::schema::{RecordId, RecordIdExt};
 use eframe::egui::{self, Align, Grid, Id, Layout, Modal, RichText, ScrollArea, TextEdit};
 
 /// Outcome of a decision write, surfaced back on the UI thread.
 pub enum DecisionResult {
     Done(RecordId),
+    /// The request was already resolved elsewhere; the click changed nothing.
+    Stale(RecordId, String),
     Failed(RecordId, String),
 }
 
@@ -33,6 +41,11 @@ pub struct SqlApprovalQueue {
     deny_reason: String,
     /// Requests with a decision write in flight; buttons stay disabled.
     in_flight: Vec<RecordId>,
+    /// Ids known to have left `pending`, so a snapshot already in flight when
+    /// they were removed cannot put them back.
+    resolved: Vec<RecordId>,
+    /// egui time of the last backstop resync, in seconds.
+    last_resync: Option<f64>,
     tx: Sender<DecisionResult>,
     rx: Receiver<DecisionResult>,
     last_error: Option<String>,
@@ -45,6 +58,8 @@ impl Default for SqlApprovalQueue {
             pending: Vec::new(),
             deny_reason: String::new(),
             in_flight: Vec::new(),
+            resolved: Vec::new(),
+            last_resync: None,
             tx,
             rx,
             last_error: None,
@@ -66,6 +81,7 @@ impl SqlApprovalQueue {
         self.pending = rows
             .into_iter()
             .filter(|r| r.status_enum() == ApprovalStatus::Pending)
+            .filter(|r| !self.resolved.contains(&r.id))
             .collect();
         self.pending.sort_by(|a, b| a.created_at.cmp(&b.created_at));
     }
@@ -98,6 +114,36 @@ impl SqlApprovalQueue {
         }
         self.pending.retain(|r| &r.id != id);
         self.in_flight.retain(|p| p != id);
+        if !self.resolved.contains(id) {
+            self.resolved.push(id.clone());
+            // Only has to outlive a snapshot in flight; a longer tail is waste.
+            if self.resolved.len() > 64 {
+                self.resolved.remove(0);
+            }
+        }
+    }
+
+    /// Refetches the pending set while the modal is up.
+    ///
+    /// The live stream is the primary close signal; this is the backstop for a
+    /// stream that died, so a decision taken on another console still clears
+    /// this modal. Overlapping fetches are harmless — the later snapshot wins —
+    /// so the interval is the only guard.
+    fn maybe_resync(&mut self, now: f64) {
+        const RESYNC_SECS: f64 = 5.0;
+        if self.last_resync.is_some_and(|t| now - t < RESYNC_SECS) {
+            return;
+        }
+        self.last_resync = Some(now);
+        let tx = crate::get_sql_approval_snapshot_sender();
+        PlatformSpawner::spawn(async move {
+            match SqlApproval::list_pending().await {
+                Ok(rows) => {
+                    let _ = tx.try_send(rows);
+                }
+                Err(e) => log::warn!("sql_approval resync failed: {e:?}"),
+            }
+        });
     }
 
     /// Drains decision results so a failed write re-enables the buttons
@@ -107,6 +153,13 @@ impl SqlApprovalQueue {
             match result {
                 DecisionResult::Done(id) => {
                     self.remove(&id);
+                }
+                DecisionResult::Stale(id, what) => {
+                    let key = id.key_string();
+                    self.remove(&id);
+                    let _ = crate::get_toast_sender().try_send(crate::ToastMessage::Warning(
+                        format!("SurrealQL request {key} was {what}."),
+                    ));
                 }
                 DecisionResult::Failed(id, err) => {
                     self.in_flight.retain(|p| p != &id);
@@ -121,10 +174,21 @@ impl SqlApprovalQueue {
         self.last_error = None;
         let tx = self.tx.clone();
         let decided_by = crate::get_current_user_from_auth().map(|u| u.get_id());
+        let verb = if approved { "Approve" } else { "Deny" };
         PlatformSpawner::spawn(async move {
             let outcome = SqlApproval::decide(&id, approved, decided_by, deny_reason).await;
             let msg = match outcome {
-                Ok(()) => DecisionResult::Done(id),
+                Ok(DecideOutcome::Recorded) => DecisionResult::Done(id),
+                Ok(DecideOutcome::AlreadyResolved { status, decided_by }) => {
+                    let who = decided_by.map(|n| format!(" by {n}")).unwrap_or_default();
+                    DecisionResult::Stale(
+                        id,
+                        format!("already {}{who} — your {verb} did nothing", status.as_str()),
+                    )
+                }
+                Ok(DecideOutcome::Missing) => {
+                    DecisionResult::Stale(id, format!("gone — your {verb} did nothing"))
+                }
                 Err(e) => DecisionResult::Failed(id, e.to_string()),
             };
             let _ = tx.try_send(msg);
@@ -136,6 +200,8 @@ impl SqlApprovalQueue {
         if self.pending.is_empty() || !super::current_user_is_root() {
             return;
         }
+
+        self.maybe_resync(ctx.input(|i| i.time));
 
         // Expiry is enforced on read as well as by the sweeper, so a modal
         // left open overnight cannot be approved into a stale write.
@@ -367,5 +433,92 @@ impl SqlApprovalQueue {
 
         // Countdown has to keep ticking while the modal sits idle.
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use database::schema::random_record_id;
+
+    fn row(status: ApprovalStatus) -> SqlApproval {
+        SqlApproval {
+            id: random_record_id("sql_approval"),
+            status: status.as_str().to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_decision_elsewhere_drops_the_row() {
+        let mut q = SqlApprovalQueue::default();
+        let pending = row(ApprovalStatus::Pending);
+        q.set_pending(vec![pending.clone()]);
+        assert_eq!(q.len(), 1);
+
+        let mut approved = pending;
+        approved.status = ApprovalStatus::Approved.as_str().to_string();
+        q.apply_update(approved);
+        assert!(
+            q.is_empty(),
+            "an approved row must leave every console's queue"
+        );
+    }
+
+    #[test]
+    fn a_snapshot_in_flight_cannot_resurrect_a_decided_row() {
+        // The resync fires every 5s; one issued before the decision lands still
+        // reports the row as pending and would otherwise reopen the modal.
+        let mut q = SqlApprovalQueue::default();
+        let pending = row(ApprovalStatus::Pending);
+        q.set_pending(vec![pending.clone()]);
+
+        let mut approved = pending.clone();
+        approved.status = ApprovalStatus::Approved.as_str().to_string();
+        q.apply_update(approved);
+
+        q.set_pending(vec![pending]);
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    fn a_stale_click_reports_instead_of_removing_silently() {
+        let mut q = SqlApprovalQueue::default();
+        let pending = row(ApprovalStatus::Pending);
+        q.set_pending(vec![pending.clone()]);
+
+        q.tx
+            .try_send(DecisionResult::Stale(
+                pending.id.clone(),
+                "already approved by Logan Lees — your Deny did nothing".to_string(),
+            ))
+            .unwrap();
+        q.poll();
+
+        assert!(q.is_empty());
+        let toast = crate::get_toast_receiver()
+            .try_recv()
+            .expect("stale click must toast");
+        assert!(matches!(toast, crate::ToastMessage::Warning(t) if t.contains("did nothing")));
+    }
+
+    #[test]
+    fn a_failed_write_leaves_the_request_actionable() {
+        let mut q = SqlApprovalQueue::default();
+        let pending = row(ApprovalStatus::Pending);
+        q.set_pending(vec![pending.clone()]);
+        q.in_flight.push(pending.id.clone());
+
+        q.tx
+            .try_send(DecisionResult::Failed(
+                pending.id.clone(),
+                "boom".to_string(),
+            ))
+            .unwrap();
+        q.poll();
+
+        assert_eq!(q.len(), 1, "a failed decision must not drop the request");
+        assert!(q.in_flight.is_empty(), "buttons must re-enable");
+        assert_eq!(q.last_error.as_deref(), Some("boom"));
     }
 }

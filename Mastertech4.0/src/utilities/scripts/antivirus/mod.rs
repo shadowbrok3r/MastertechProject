@@ -38,6 +38,91 @@ pub fn kill_sas_processes() -> u32 {
     killed
 }
 
+/// Starts the SUPERAntiSpyware tray application.
+pub fn launch_sas_tray() -> anyhow::Result<()> {
+    use std::os::windows::process::CommandExt;
+
+    const SAS_EXE: &str = r"C:\Program Files\SUPERAntiSpyware\SUPERAntiSpyware.exe";
+    if !std::path::Path::new(SAS_EXE).exists() {
+        return Err(anyhow::anyhow!("SUPERAntiSpyware is not installed"));
+    }
+    std::process::Command::new(SAS_EXE)
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()?;
+    log::info!("Launched {SAS_EXE}");
+    Ok(())
+}
+
+/// Title of the top-level window SAS carries once a Professional key is bound,
+/// or `None` when no such window exists.
+///
+/// The window is not visible and `MainWindowTitle` reads empty, so this needs an
+/// enumeration rather than a process-property read. A string scan of
+/// SAS_ALLUSER.DB3 is not usable instead: it is a single-page SQLite file that
+/// retains superseded pages, so it reports `InstallType FREE` alongside a valid
+/// `RegCodeEx` even when the product is fully activated.
+fn sas_pro_window_title() -> Option<String> {
+    use windows::core::BOOL;
+    use windows::Win32::Foundation::{HWND, LPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowTextLengthW, GetWindowTextW,
+    };
+
+    unsafe extern "system" fn scan(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let found = unsafe { &mut *(lparam.0 as *mut Option<String>) };
+        let len = unsafe { GetWindowTextLengthW(hwnd) };
+        if len > 0 {
+            let mut buf = vec![0u16; len as usize + 1];
+            let n = unsafe { GetWindowTextW(hwnd, &mut buf) };
+            let title = String::from_utf16_lossy(&buf[..n.max(0) as usize]);
+            if title.to_lowercase().contains("superantispyware professional") {
+                *found = Some(title);
+                // Stop enumerating.
+                return BOOL(0);
+            }
+        }
+        BOOL(1)
+    }
+
+    let mut found: Option<String> = None;
+    let _ = unsafe {
+        EnumWindows(
+            Some(scan),
+            LPARAM(&mut found as *mut Option<String> as isize),
+        )
+    };
+    found
+}
+
+/// [`sas_pro_window_title`] off the runtime, since `GetWindowTextW` on another
+/// process's window blocks until that process's message loop answers.
+///
+/// A probe that fails reads as "not activated yet", so the caller times out with
+/// a real error rather than reporting an unproven success.
+async fn sas_pro_window_title_async() -> Option<String> {
+    tokio::task::spawn_blocking(sas_pro_window_title)
+        .await
+        .unwrap_or_default()
+}
+
+/// Kills `pid` and every descendant.
+///
+/// SAS's termination protection ignores a kill aimed at the
+/// SUPERAntiSpyware.exe child and ignores `WM_CLOSE`; a tree kill of the
+/// cmd.exe wrapper takes it.
+fn taskkill_tree(pid: u32) {
+    use std::os::windows::process::CommandExt;
+
+    let output = std::process::Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+    match output {
+        Ok(out) => log::info!("taskkill /PID {pid} /T /F: {:?}", out.status),
+        Err(e) => log::info!("taskkill /PID {pid} /T /F failed: {e}"),
+    }
+}
+
 /// Starts SAS's own Quick Scan scheduled task via `schtasks /Run`.
 /// Reads the QUICK_SCAN task GUID from SAS_CURRENTUSER.DB3, configuring the
 /// SAS settings + tasks first when none exist yet.
@@ -578,11 +663,81 @@ pub async fn install_webroot(
     })
 }
 
+/// Applies `activation_key` to an installed SAS and returns the window title
+/// that proves the Professional subscription took.
+///
+/// `SUPERAntiSpyware.exe /autoregister:` writes the registration within seconds
+/// and then stays resident as the tray application, so awaiting process exit
+/// never returns. This spawns it, polls for the subscription window, then kills
+/// the wrapper's process tree.
+async fn run_sas_autoregister(
+    sas_exe: &std::path::Path,
+    activation_key: &str,
+) -> anyhow::Result<String> {
+    const ACTIVATION_TIMEOUT: Duration = Duration::from_secs(90);
+    const POLL_INTERVAL: Duration = Duration::from_secs(2);
+
+    // A window left over from an earlier activation would read as this run's proof.
+    if let Some(stale) = sas_pro_window_title_async().await {
+        info!("Pre-existing SAS Professional window ({stale}); killing SAS first");
+        kill_sas_processes();
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        if let Some(stale) = sas_pro_window_title_async().await {
+            return Err(anyhow::anyhow!(
+                "A SUPERAntiSpyware Professional window ({stale}) survived a process kill, so \
+                 this activation cannot be verified. Reboot and re-run."
+            ));
+        }
+    }
+
+    info!("SAS EXE: cmd /c {sas_exe:?} /autoregister:{activation_key}");
+    let mut child = Command::new("cmd")
+        .arg("/C")
+        .arg(sas_exe.as_os_str())
+        .arg(format!("/autoregister:{activation_key}"))
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()?;
+
+    let deadline = tokio::time::Instant::now() + ACTIVATION_TIMEOUT;
+    let mut title = None;
+    let mut early_exit = None;
+    while title.is_none() && early_exit.is_none() && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(POLL_INTERVAL).await;
+        title = sas_pro_window_title_async().await;
+        if title.is_none() {
+            // cmd waits on the child, so an exited wrapper means SAS did not
+            // stay resident and no window is coming.
+            early_exit = child.try_wait().ok().flatten();
+        }
+    }
+
+    if let Some(pid) = child.id() {
+        taskkill_tree(pid);
+    }
+    let _ = tokio::time::timeout(Duration::from_secs(10), child.wait()).await;
+
+    if let Some(title) = title {
+        info!("SAS activated: {title}");
+        return Ok(title);
+    }
+    Err(match early_exit {
+        Some(status) => anyhow::anyhow!(
+            "SUPERAntiSpyware.exe /autoregister exited ({status:?}) without showing a \
+             Professional subscription window — the key did not bind."
+        ),
+        None => anyhow::anyhow!(
+            "SUPERAntiSpyware showed no Professional subscription window within {}s of \
+             /autoregister — the key did not bind.",
+            ACTIVATION_TIMEOUT.as_secs()
+        ),
+    })
+}
+
 pub async fn install_sas(
     activation_key: String,
     client: Client,
     progress_tx: Sender<(u64, u64)>,
-) -> anyhow::Result<(), anyhow::Error> {
+) -> anyhow::Result<String, anyhow::Error> {
     if activation_key.is_empty() {
         return Err(anyhow::anyhow!("Activation key is empty"));
     }
@@ -603,17 +758,7 @@ pub async fn install_sas(
                         kill_sas_processes();
                         tokio::time::sleep(Duration::from_secs(3)).await;
 
-                        info!("SAS EXE: cmd /c {sas_exe:?} /autoregister:{activation_key}");
-                        let output = Command::new("cmd")
-                            .arg("/C")
-                            .arg(sas_exe.as_os_str())
-                            .arg(format!("/autoregister:{activation_key}"))
-                            .creation_flags(CREATE_NO_WINDOW)
-                            .output()
-                            .await?;
-
-                        info!("autoregister exit status: {:?}", output.status);
-                        return Ok(());
+                        return run_sas_autoregister(&sas_exe, &activation_key).await;
                     } else {
                         info!("Install location not found: {sas_exe:?}");
                     }
@@ -695,19 +840,19 @@ pub async fn install_sas(
         tokio::time::sleep(Duration::from_secs(3)).await;
 
         let sas_exe = PathBuf::from(r"C:\Program Files\SUPERAntiSpyware\SUPERAntiSpyware.exe");
-        if sas_exe.exists() {
-            info!("Running autoregister after fresh install");
-            let reg_output = Command::new("cmd")
-                .arg("/C")
-                .arg(sas_exe.as_os_str())
-                .arg(format!("/autoregister:{activation_key}"))
-                .creation_flags(CREATE_NO_WINDOW)
-                .output()
-                .await?;
-            info!("autoregister exit status: {:?}", reg_output.status);
+        if !sas_exe.exists() {
+            return Err(anyhow::anyhow!(
+                "The SUPERAntiSpyware installer finished but {} does not exist, so nothing was \
+                 activated.",
+                sas_exe.display()
+            ));
         }
+        info!("Running autoregister after fresh install");
+        return run_sas_autoregister(&sas_exe, &activation_key).await;
     }
-    Ok(())
+
+    #[cfg(not(target_os = "windows"))]
+    Err(anyhow::anyhow!("SUPERAntiSpyware is Windows-only"))
 }
 
 

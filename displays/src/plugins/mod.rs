@@ -102,10 +102,32 @@ pub fn remote_tool_result_receiver() -> Receiver<RemoteToolResponse> {
 // it every frame; the TCP listener (and WS path) send into it when they see
 // `EGUI_INPUT_TAG` (0xEE) on an inbound binary frame.
 
+/// Remote input events held before `input_hook` runs; `input_hook` only runs
+/// while frame capture is enabled, so this is bounded rather than unbounded.
+pub const MAX_PENDING_EGUI_INPUTS: usize = 512;
+
 static EGUI_INPUT_CHANNEL: Lazy<(
     Sender<EguiInputEvent>,
     Receiver<EguiInputEvent>,
-)> = Lazy::new(|| crossbeam::channel::unbounded());
+)> = Lazy::new(|| crossbeam::channel::bounded(MAX_PENDING_EGUI_INPUTS));
+
+static EGUI_INPUT_GAUGE: Lazy<std::sync::Arc<crate::buffer_census::QueueStats>> = Lazy::new(|| {
+    crate::buffer_census::QueueStats::register(
+        "plugins.egui_input",
+        MAX_PENDING_EGUI_INPUTS,
+        MAX_PENDING_EGUI_INPUTS * std::mem::size_of::<EguiInputEvent>(),
+    )
+});
+
+/// Queues one remote input event, dropping it when the channel is full.
+pub fn send_egui_input(event: EguiInputEvent) {
+    if EGUI_INPUT_CHANNEL.0.try_send(event).is_err() {
+        EGUI_INPUT_GAUGE.record_drop(std::mem::size_of::<EguiInputEvent>());
+        return;
+    }
+    let depth = EGUI_INPUT_CHANNEL.1.len();
+    EGUI_INPUT_GAUGE.set_occupancy(depth, depth * std::mem::size_of::<EguiInputEvent>());
+}
 
 /// Returns a sender that routes `EguiInputEvent`s into the `EguiFrameCapture`
 /// plugin's `input_hook`.  Call this from any transport handler that receives
@@ -536,6 +558,10 @@ impl PluginManager {
             if let Some(p) = self.plugins.iter_mut().find(|p| p.id() == CAPTURE_ID) {
                 log::info!("SetFrameCapture: setting EguiFrameCapture enabled={enabled}");
                 p.set_enabled(enabled);
+            } else {
+                log::warn!(
+                    "SetFrameCapture({enabled}) ignored: {CAPTURE_ID} is not registered. Frame capture is egui-only; this client is running terminal mode. Use desktop_screenshot for a view of this machine."
+                );
             }
         }
     }

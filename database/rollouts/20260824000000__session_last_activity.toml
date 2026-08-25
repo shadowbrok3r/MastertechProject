@@ -1,0 +1,85 @@
+# The staleness sweep keyed on started_at, so a session actively being worked
+# was abandoned the moment its START passed 2d. Session 2ca82c42 (DESKTOP-9A0JLSE,
+# SO 2138336) was swept mid-stress-test on its third day with 30 entries on file.
+# Adds last_activity_at so the sweep can compare against real work instead, which
+# is a single indexed field rather than the correlated subquery the sweep's author
+# rejected at 4.7s. Also adds swept_at so a sweep-written row is distinguishable
+# from an operator's close.
+#
+# Backfill is three passes, each only moving the value forward. Pass 1 floors
+# every row at started_at so no row is left unset; passes 2 and 3 raise it to the
+# newest diagnostic_entry and the newest linked stress_test_run.
+#
+# Grouped aggregates, not correlated subqueries: `(SELECT ... WHERE session_ref =
+# $parent.id ...)` returns null against sessions that demonstrably have entries,
+# so it is wrong here and not merely slow. `time::max` is required — `math::max`
+# returns null on datetimes.
+#
+# Both aggregate passes filter `session_ref.id != NONE`: UPDATE on a record id
+# that no longer exists CREATES it, and dangling session_refs would otherwise
+# resurrect ghost sessions.
+#
+# The field is `none | datetime`, so existing rows stay writable with it unset —
+# no coercion failures on old rows between the DEFINE and the backfill.
+id = "20260824000000__session_last_activity"
+name = "session_last_activity"
+state = "completed"
+source_schema_hash = "1f165f0a1a1f1cfbc69f227365d5cd4e0f84f637f6f1afedf8fa6ee528548e35"
+target_schema_hash = "1f165f0a1a1f1cfbc69f227365d5cd4e0f84f637f6f1afedf8fa6ee528548e35"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "define_last_activity_at"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE last_activity_at ON diagnostic_session TYPE none | datetime PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE swept_at ON diagnostic_session TYPE none | datetime PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "backfill_activity_floor"
+phase = "start"
+kind = "run_sql"
+sql = """
+UPDATE diagnostic_session SET last_activity_at = started_at WHERE last_activity_at = NONE;
+"""
+
+[[steps]]
+id = "backfill_activity_from_entries"
+phase = "start"
+kind = "run_sql"
+sql = """
+FOR $g IN (SELECT session_ref, time::max(timestamp) AS newest FROM diagnostic_entry WHERE session_ref.id != NONE GROUP BY session_ref) {
+    UPDATE $g.session_ref SET last_activity_at = $g.newest WHERE last_activity_at < $g.newest;
+};
+"""
+
+[[steps]]
+id = "backfill_activity_from_stress_runs"
+phase = "start"
+kind = "run_sql"
+sql = """
+FOR $g IN (SELECT session_ref, time::max(started_at) AS newest FROM stress_test_run WHERE session_ref != NONE AND session_ref.id != NONE GROUP BY session_ref) {
+    UPDATE $g.session_ref SET last_activity_at = $g.newest WHERE last_activity_at < $g.newest;
+};
+"""
+
+[[steps]]
+id = "index_activity"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE INDEX OVERWRITE diagnostic_session_activity ON diagnostic_session FIELDS status, last_activity_at;
+"""
+
+[[steps]]
+id = "drop_last_activity_at"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE INDEX IF EXISTS diagnostic_session_activity ON diagnostic_session;
+REMOVE FIELD IF EXISTS last_activity_at ON diagnostic_session;
+REMOVE FIELD IF EXISTS swept_at ON diagnostic_session;
+"""

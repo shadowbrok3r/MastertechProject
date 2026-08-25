@@ -50,6 +50,9 @@ pub mod remote_scripts_viewer;
 
 pub use admin_transport::{AdminTransport, SessionEvent, TransportKind};
 
+/// Viewer frames held between `receive` and the buffer-routing task.
+const VIEWER_HANDOFF_DEPTH: usize = 8;
+
 pub enum ClientConnection{
     ClientUrl(String),
     Disconnect(String)
@@ -213,6 +216,8 @@ pub struct WebSocketClient {
     /// Channel receiving `MastertechSelfUpdateChunk` Cmds for a remote self-update
     #[cfg(not(target_arch = "wasm32"))]
     pub self_update_rx: Option<Receiver<Cmd>>,
+    /// Transcript occupancy and drop counters for the buffer census.
+    transcript_gauge: std::sync::Arc<crate::buffer_census::QueueStats>,
     /// True when the client reported a mismatched `Cmd` shape fingerprint.
     pub cmd_protocol_mismatch: bool,
     /// MasterTech build version the client reported in its shape-fp frame;
@@ -243,9 +248,12 @@ impl WebSocketClient {
         let (send_cmd_tx, send_cmd_rx) = crossbeam::channel::unbounded();
         let (receive_cmd_tx, receive_cmd_rx) = crossbeam::channel::unbounded();
         let (msg_to_client_tx, msg_to_client_rx) = crossbeam::channel::unbounded::<WsMessage>();
-        let (msg_from_client_tx, msg_from_client_rx) = crossbeam::channel::unbounded::<WsMessage>();
+        // Newest-wins hand-off to the viewer task; `receive` forwards only the latest frame.
+        let (msg_from_client_tx, msg_from_client_rx) =
+            crossbeam::channel::bounded::<WsMessage>(VIEWER_HANDOFF_DEPTH);
         #[cfg(not(target_arch="wasm32"))]
         let (diagnostic_tx, diagnostic_rx) = crossbeam::channel::unbounded();
+        let client_cs = client.connection_string.clone();
         let helper_delegate = WebSocketHelperDelegate::new(send_cmd_tx.clone());
         let mut explorer = FileSystem::new();
         explorer.helper_delegate = Some(Box::new(helper_delegate.clone()));
@@ -403,6 +411,11 @@ Get-WmiObject")
             file_transfer_rx: None,
             #[cfg(not(target_arch = "wasm32"))]
             self_update_rx: None,
+            transcript_gauge: crate::buffer_census::QueueStats::register(
+                format!("client_interface.transcript[{}]", client_cs),
+                receive::MAX_HISTORY,
+                receive::MAX_HISTORY_BYTES,
+            ),
             cmd_protocol_mismatch: false,
             client_version: None,
         }

@@ -518,6 +518,7 @@ impl AdminConsole {
         for ws in self.ws_clients.values_mut() {
             ws.receive(ctx);
         }
+        crate::buffer_census::log_notable_throttled();
     }
 
     pub fn receive(&mut self, ctx: &Context) {

@@ -285,6 +285,7 @@ impl <'a>TerminalApp<'a> {
                 // *manual_start = start;
             }
 
+            // Runs every pass: the consent stamp inside `render_frame` admits remote work.
             terminal.draw(|f: &mut Frame<'_>| {
                 let area = f.area();
                 // Apply consistent dark background across the entire frame
@@ -369,16 +370,18 @@ impl <'a>TerminalApp<'a> {
         let area = f.area();
         f.buffer_mut().set_style(area, Style::new().bg(THEME.bg));
 
+        // Reserved before the tab prologue: painting it is what admits RemoteExec jobs.
+        let (banner_area, area) = crate::remote_exec::banner_tui::split(area);
+        if let Some(banner_area) = banner_area {
+            crate::remote_exec::banner_tui::render(f, banner_area);
+        }
+
         if let Ok(mut menu) = self.menu_bar.try_borrow_mut() {
             menu.check_active_tab();
         }
         self.event_manager.process_events();
-        self.tasks_tab.borrow_mut().check_tasks();
-
-        // Reserved above everything else: painting it is what admits RemoteExec jobs.
-        let (banner_area, area) = crate::remote_exec::banner_tui::split(area);
-        if let Some(banner_area) = banner_area {
-            crate::remote_exec::banner_tui::render(f, banner_area);
+        if let Ok(mut tasks) = self.tasks_tab.try_borrow_mut() {
+            tasks.check_tasks();
         }
 
         let layout = Layout::default()

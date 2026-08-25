@@ -1,8 +1,22 @@
 # Nothing closed a session whose agent turn died, so 38 of 101 sat open (oldest
 # ten days) and the outcome engine could not see any of them: it scores only
 # resolved and escalated. A guessed verdict would invent a fix nobody confirmed,
-# so this adds a terminal status the engine already ignores, then sweeps the
-# backlog. axum_server's stale_session_sweep keeps it swept hourly.
+# so this adds a terminal status the engine already ignores.
+# axum_server's stale_session_sweep keeps it swept hourly.
+#
+# THE ONE-TIME BATCH SWEEP WAS REMOVED FROM THIS MANIFEST. As written it ran
+# `UPDATE ... SET status = 'abandoned' WHERE status = 'open' AND started_at <
+# time::now() - 2d`, which produced the mass batch of ~32 rows at
+# 2026-08-22T00:59:11Z. Keying on started_at rather than activity abandons
+# sessions that are actively being worked, so any re-run — a replay on a fresh
+# DB, or a rollback followed by a reapply — would re-inflict that on whatever is
+# open and older than 2d at the time, including sessions legitimately worked for
+# days. The predicate cannot distinguish those, so there is no safe way to
+# re-fire it. Backfilling staleness is now the hourly sweep's job, which keys on
+# diagnostic_session.last_activity_at (rollout 20260824000000) and refuses
+# sessions holding an open ai_task or a diagnosis without a summary.
+#
+# The ASSERT widening below is idempotent and is all this manifest still does.
 id = "20260820080000__abandoned_session_status"
 name = "abandoned_session_status"
 state = "completed"
@@ -19,21 +33,18 @@ sql = """
 DEFINE FIELD OVERWRITE status ON diagnostic_session TYPE string ASSERT $value IN ['open', 'resolved', 'escalated', 'abandoned'] PERMISSIONS FULL;
 """
 
-# Define before data: an UPDATE that violates the old ASSERT fails the whole
-# statement silently.
-[[steps]]
-id = "sweep_stale_open_sessions"
-phase = "start"
-kind = "run_sql"
-sql = """
-UPDATE diagnostic_session SET status = 'abandoned', ended_at = time::now() WHERE status = 'open' AND started_at < time::now() - 2d;
-"""
-
+# Scoped to rows the sweep itself wrote (swept_at set) and never operator-closed
+# ones: the original `WHERE status = 'abandoned'` reopened every abandoned
+# session regardless of who abandoned it or when, and wiped ended_at along with
+# it. The ASSERT deliberately stays wide rather than dropping 'abandoned' —
+# operators close sessions as abandoned by hand, and narrowing it while any row
+# still holds that value makes every subsequent write to those rows fail
+# coercion.
 [[steps]]
 id = "revert_abandoned_status"
 phase = "rollback"
 kind = "run_sql"
 sql = """
-UPDATE diagnostic_session SET status = 'open', ended_at = NONE WHERE status = 'abandoned';
-DEFINE FIELD OVERWRITE status ON diagnostic_session TYPE string ASSERT $value IN ['open', 'resolved', 'escalated'] PERMISSIONS FULL;
+UPDATE diagnostic_session SET status = 'open', ended_at = NONE, swept_at = NONE WHERE status = 'abandoned' AND swept_at != NONE;
+DEFINE FIELD OVERWRITE status ON diagnostic_session TYPE string ASSERT $value IN ['open', 'resolved', 'escalated', 'abandoned'] PERMISSIONS FULL;
 """

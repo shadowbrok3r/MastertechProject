@@ -1132,6 +1132,10 @@ impl StressTestRun {
 
         Self::confirm_created(&run.id).await?;
 
+        if let Some(session) = run.session_ref.as_ref() {
+            super::DiagnosticSession::touch(session).await;
+        }
+
         Ok(run.id.clone())
     }
 
@@ -1213,9 +1217,10 @@ impl StressTestRun {
                 summary = $summary, \
                 scenario_stages = $stages, \
                 ended_at = $ended_at, \
-                duration_actual_secs = <float> duration::secs(($ended_at ?? time::now()) - started_at)";
+                duration_actual_secs = <float> duration::secs(($ended_at ?? time::now()) - started_at) \
+                RETURN VALUE session_ref";
         let failure_kind = failure_mode.kind().to_string();
-        db()
+        let mut res = db()
             .query(sql)
             .bind(("id", run_id.clone()))
             .bind(("result", result.as_str().to_string()))
@@ -1226,6 +1231,17 @@ impl StressTestRun {
             .bind(("stages", stages))
             .bind(("ended_at", ended_at.unwrap_or_else(|| chrono::Utc::now().into())))
             .await?;
+        // A long soak's only activity stamp is its start, so push the session
+        // forward when it lands too.
+        if let Some(session) = res
+            .take::<Vec<Option<RecordId>>>(0)
+            .unwrap_or_default()
+            .into_iter()
+            .flatten()
+            .next()
+        {
+            super::DiagnosticSession::touch(&session).await;
+        }
         Ok(())
     }
 

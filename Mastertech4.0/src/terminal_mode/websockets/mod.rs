@@ -1231,6 +1231,7 @@ impl TerminalWebsocketClient {
                                         // Handle master presence notifications
                                         if txt == "MASTER_CONNECTED" {
                                             log::info!("Master connected - resuming data transmission");
+                                            crate::utilities::windows::power::ensure_awake("admin session");
                                             send_ws_shape_fp(&mut sender);
                                             let _ = connection_state_tx.send((true, "Master Connected".to_string()));
                                             // If we were waiting for master, mark as ready
@@ -3101,8 +3102,8 @@ if (Test-Path $path) {{
                                     // install_sas activates via /REGCODE during silent install
                                     // (fresh) or /autoregister:KEY against the existing exe.
                                     match crate::utilities::scripts::antivirus::install_sas(key.superanti_key, client, progress_tx).await {
-                                        Ok(_) => {
-                                            send_log(&tx, "SAS installed and activated".into());
+                                        Ok(proof) => {
+                                            send_log(&tx, format!("SAS installed and activated: {proof}"));
                                             send_result(&tx, &script.name, RemoteScriptStatus::Success);
                                         }
                                         Err(e) => {
@@ -3282,6 +3283,10 @@ if (Test-Path $path) {{
                                 Ok((update_guid, scan_guid)) => {
                                     send_log(&tx, format!("SAS update task: {update_guid}"));
                                     send_log(&tx, format!("SAS scan task: {scan_guid}"));
+                                    match crate::utilities::scripts::antivirus::launch_sas_tray() {
+                                        Ok(()) => send_log(&tx, "Relaunched SUPERAntiSpyware".into()),
+                                        Err(e) => send_log(&tx, format!("Could not relaunch SUPERAntiSpyware: {e}")),
+                                    }
                                     send_result(&tx, &script.name, RemoteScriptStatus::Success);
                                 }
                                 Err(e) => {

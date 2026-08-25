@@ -51,7 +51,7 @@
     },
     {
       "path": "database/schema/diagnostic_session.surql",
-      "hash": "da81063fca92270612a58ad6df6ad93771394aa90d7d9ad45ab20654776f1c00"
+      "hash": "18c821244d08eae01f85796da145f41be7f6cf52d0bd643625f21a051c855dfa"
     },
     {
       "path": "database/schema/driver_intel.surql",

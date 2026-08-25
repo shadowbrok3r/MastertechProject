@@ -326,6 +326,7 @@ where
             log::info!(
                 "tcp_listener -> admin session established with {peer_label} (id={expected_id})"
             );
+            crate::utilities::windows::power::ensure_awake("admin session");
         }
         HandshakeOutcome::Probe => {
             // Peer connected, sent no bytes, and closed (TCP reachability probe).
@@ -555,7 +556,7 @@ async fn run_session_loop<R: AsyncRead + Unpin + Send + 'static>(
                                     _,
                                 >(&bytes[1..], tcp_protocol::WIRE_DECODE)
                                 {
-                                    let _ = displays::plugins::egui_input_sender().try_send(ev);
+                                    displays::plugins::send_egui_input(ev);
                                 }
                             }
                             Some(DESKTOP_INPUT_TAG) => {

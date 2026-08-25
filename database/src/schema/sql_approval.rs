@@ -132,6 +132,36 @@ impl ApprovalStatus {
     }
 }
 
+/// What a [`SqlApproval::decide`] write actually did.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DecideOutcome {
+    /// This caller won the race and the decision is recorded.
+    Recorded,
+    /// Another console decided it first, or it lapsed; nothing was written.
+    AlreadyResolved {
+        status: ApprovalStatus,
+        /// Name of the operator who decided it, when it resolves.
+        decided_by: Option<String>,
+    },
+    /// Row no longer exists.
+    Missing,
+}
+
+/// Display name behind a `decided_by` link, for the stale-click message.
+async fn decider_name(id: Option<&RecordId>) -> Option<String> {
+    let id = id?;
+    let name: Option<String> = db()
+        .query("SELECT VALUE name FROM $id")
+        .bind(("id", id.clone()))
+        .await
+        .ok()?
+        .check()
+        .ok()?
+        .take(0)
+        .ok()?;
+    name.filter(|n| !n.is_empty())
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, SurrealValue)]
 pub struct SqlApproval {
     pub id: RecordId,
@@ -274,29 +304,51 @@ impl SqlApproval {
     }
 
     /// Root decision. `approved = false` records a denial with an optional note.
+    ///
+    /// The write is conditional on the row still being pending and unexpired,
+    /// so a console rendering a stale queue cannot overwrite a decision another
+    /// console already recorded. The loser is told what the row actually holds
+    /// instead of reporting a success it did not cause.
     pub async fn decide(
         id: &RecordId,
         approved: bool,
         decided_by: Option<RecordId>,
         deny_reason: Option<String>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<DecideOutcome> {
         let status = if approved {
             ApprovalStatus::Approved
         } else {
             ApprovalStatus::Denied
         };
-        db()
+        let won: Option<Self> = db()
             .query(
                 "UPDATE $id SET status = $status, decided_by = $by, deny_reason = $why \
-                 WHERE status = 'pending'",
+                 WHERE status = 'pending' AND (expires_at = NONE OR expires_at > time::now()) \
+                 RETURN AFTER",
             )
             .bind(("id", id.clone()))
             .bind(("status", status.as_str().to_string()))
             .bind(("by", decided_by))
             .bind(("why", deny_reason))
             .await?
-            .check()?;
-        Ok(())
+            .check()?
+            .take(0)?;
+        if won.is_some() {
+            return Ok(DecideOutcome::Recorded);
+        }
+
+        let Some(row) = Self::fetch(id).await? else {
+            return Ok(DecideOutcome::Missing);
+        };
+        // A row still reading `pending` here was rejected by the expiry clause.
+        let held = match row.status_enum() {
+            ApprovalStatus::Pending => ApprovalStatus::Expired,
+            other => other,
+        };
+        Ok(DecideOutcome::AlreadyResolved {
+            status: held,
+            decided_by: decider_name(row.decided_by.as_ref()).await,
+        })
     }
 
     /// Records the outcome after the requester ran an approved statement.

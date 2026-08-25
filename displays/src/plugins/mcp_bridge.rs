@@ -6967,7 +6967,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "search_diagnostics",
-        description = "Search past diagnostic sessions by hostname, customer name, tags, or free text. Use to check if a machine/customer has been diagnosed before. Pass hostname alone and omit query for a machine's full history; includes 'abandoned' sessions, whose findings live in their entries rather than a summary."
+        description = "Search past diagnostic sessions by hostname, customer name, tags, or free text. Use to check if a machine/customer has been diagnosed before. Pass hostname alone and omit query for a machine's full history; includes 'abandoned' sessions, whose findings live in their entries — sessions abandoned before 2026-08-24 carry no summary at all, and ones swept after it carry only a synthesised entry roll-up, never a verdict."
     )]
     async fn search_diagnostics(
         &self,
@@ -10513,9 +10513,12 @@ Step 5 — Check for hands-on work already queued, and fleet crash intel:
   crash_intel_search (by hostname) and crash_intel_signature (by bugcheck) for the
   fleet picture: prior verdicts and known-bad-driver hits. The sweep's primary work
   product is crash intel, and the session summary alone does not carry it.
-  Sessions with status 'abandoned' are runs that died without closing — their summary
-  is usually empty, so read their entries with get_diagnostic_session rather than
-  concluding nothing was found.
+  Sessions with status 'abandoned' are runs that died without closing, or ones the
+  hourly staleness sweep closed after 2 days with no recorded activity. Their summary
+  is either empty or a synthesised entry roll-up, and never a verdict — read their
+  entries with get_diagnostic_session rather than concluding nothing was found. A
+  swept row is identifiable by swept_at being set; status and ended_at on those rows
+  were written by the sweep, not by an operator.
 
 Step 6 — Read prior findings before starting new diagnosis:
   Review all returned tasks, diagnostic entries, and order notes.

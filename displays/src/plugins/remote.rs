@@ -64,9 +64,44 @@ impl WidgetAnchor {
 /// Buffer filled during UI; drained into the outgoing frame in [`EguiFrameCapture::output_hook`].
 static WIDGET_ANCHORS_BUF: Mutex<Vec<WidgetAnchor>> = Mutex::new(Vec::new());
 
+/// Anchors retained for one capture; the oldest are dropped past this.
+pub const MAX_WIDGET_ANCHORS: usize = 4_096;
+
+/// True only while [`EguiFrameCapture`] is enabled and draining the buffer.
+static ANCHORS_WANTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+static ANCHOR_GAUGE: once_cell::sync::Lazy<std::sync::Arc<crate::buffer_census::QueueStats>> =
+    once_cell::sync::Lazy::new(|| {
+        crate::buffer_census::QueueStats::register(
+            "plugins.remote.widget_anchors",
+            MAX_WIDGET_ANCHORS,
+            MAX_WIDGET_ANCHORS * std::mem::size_of::<WidgetAnchor>(),
+        )
+    });
+
+/// Turns anchor collection on or off; disabling also clears what is queued.
+pub fn set_widget_anchors_wanted(wanted: bool) {
+    ANCHORS_WANTED.store(wanted, std::sync::atomic::Ordering::Relaxed);
+    if !wanted {
+        let mut g = WIDGET_ANCHORS_BUF.lock().unwrap_or_else(|e| e.into_inner());
+        g.clear();
+        g.shrink_to_fit();
+        ANCHOR_GAUGE.set_occupancy(0, 0);
+    }
+}
+
+/// True while anchors are being collected.
+pub fn widget_anchors_wanted() -> bool {
+    ANCHORS_WANTED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Record a widget rectangle for the current frame (call right after building a `TextEdit`, `Button`, etc.).
 /// Keys should be stable dotted paths, e.g. `tur.service_number`, for MCP `remote_egui_click_anchor`.
+/// No-op unless a frame capture is consuming them.
 pub fn push_widget_anchor(key: impl Into<String>, rect: egui::Rect) {
+    if !widget_anchors_wanted() {
+        return;
+    }
     let mut g = WIDGET_ANCHORS_BUF.lock().unwrap_or_else(|e| e.into_inner());
     g.push(WidgetAnchor {
         key: key.into(),
@@ -75,6 +110,14 @@ pub fn push_widget_anchor(key: impl Into<String>, rect: egui::Rect) {
         max_x: rect.max.x,
         max_y: rect.max.y,
     });
+    let overflow = g.len().saturating_sub(MAX_WIDGET_ANCHORS);
+    if overflow > 0 {
+        g.drain(..overflow);
+        for _ in 0..overflow {
+            ANCHOR_GAUGE.record_drop(std::mem::size_of::<WidgetAnchor>());
+        }
+    }
+    ANCHOR_GAUGE.set_occupancy(g.len(), g.len() * std::mem::size_of::<WidgetAnchor>());
 }
 
 /// A captured egui frame for transmission to a remote viewer.
@@ -455,7 +498,7 @@ pub struct EguiFrameCapture {
 impl EguiFrameCapture {
     pub fn new() -> Self {
         let (frame_tx, frame_rx) = crossbeam::channel::bounded(2);
-        let (input_tx, input_rx) = crossbeam::channel::unbounded();
+        let (input_tx, input_rx) = crossbeam::channel::bounded(super::MAX_PENDING_EGUI_INPUTS);
         Self {
             enabled: false,
             frame_count: 0,
@@ -499,6 +542,7 @@ impl MastertechPlugin for EguiFrameCapture {
 
     fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
+        set_widget_anchors_wanted(enabled);
     }
 
     fn on_load(&mut self, host: &PluginHost) {
@@ -685,6 +729,7 @@ impl MastertechPlugin for EguiFrameCapture {
             let mut g = WIDGET_ANCHORS_BUF.lock().unwrap_or_else(|e| e.into_inner());
             std::mem::take(&mut *g)
         };
+        ANCHOR_GAUGE.set_occupancy(0, 0);
 
         let frame_count = self.frame_count;
         let frame_tx = self.frame_tx.clone();
@@ -747,7 +792,7 @@ pub struct EguiRemoteViewer {
 impl EguiRemoteViewer {
     pub fn new() -> Self {
         let (frame_tx, frame_rx) = crossbeam::channel::bounded(2);
-        let (input_tx, input_rx) = crossbeam::channel::unbounded();
+        let (input_tx, input_rx) = crossbeam::channel::bounded(super::MAX_PENDING_EGUI_INPUTS);
         Self {
             enabled: false,
             frame_tx,
@@ -954,5 +999,41 @@ impl MastertechPlugin for EguiRemoteViewer {
                     }
                 }
             });
+    }
+}
+
+#[cfg(test)]
+mod widget_anchor_tests {
+    use super::*;
+
+    fn rect() -> egui::Rect {
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(10.0, 10.0))
+    }
+
+    fn queued() -> usize {
+        WIDGET_ANCHORS_BUF
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len()
+    }
+
+    /// The producer runs on every UI frame; the consumer only runs while a
+    /// frame capture is enabled, which it is not by default.
+    #[test]
+    fn anchors_are_bounded_whether_or_not_a_capture_consumes_them() {
+        set_widget_anchors_wanted(false);
+        for i in 0..50_000 {
+            push_widget_anchor(format!("test.off.{i}"), rect());
+        }
+        assert_eq!(queued(), 0, "no capture is running, so nothing is collected");
+
+        set_widget_anchors_wanted(true);
+        for i in 0..(MAX_WIDGET_ANCHORS * 3) {
+            push_widget_anchor(format!("test.on.{i}"), rect());
+        }
+        assert_eq!(queued(), MAX_WIDGET_ANCHORS, "collection stops at the cap");
+
+        set_widget_anchors_wanted(false);
+        assert_eq!(queued(), 0, "disabling clears what was queued");
     }
 }

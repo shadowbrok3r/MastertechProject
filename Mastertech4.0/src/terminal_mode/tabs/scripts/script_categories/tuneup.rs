@@ -147,7 +147,7 @@ impl <'a> ScriptsTab <'a> {
             // for fresh installs, /autoregister:KEY against the existing exe when
             // SAS is already present.
             let success = match install_sas(key.superanti_key, client, tx).await {
-                Ok(_) => { let _ = log_tx.try_send("SAS installed successfully".into()); true }
+                Ok(proof) => { let _ = log_tx.try_send(format!("SAS installed and activated: {proof}")); true }
                 Err(e) => { let _ = log_tx.try_send(format!("SAS install error: {e}")); false }
             };
 

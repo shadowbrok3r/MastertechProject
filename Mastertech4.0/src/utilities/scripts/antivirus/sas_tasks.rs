@@ -318,6 +318,68 @@ fn now_iso8601() -> String {
         .unwrap_or_else(|| "2026-01-01T14:00:00".to_string())
 }
 
+// ─── Task Scheduler folder ───────────────────────────────────────────────────
+
+const SAS_TASK_FOLDER: &str = r"\SUPERAntiSpyware\";
+const SAS_TASK_NAME_PREFIX: &str = r"\SUPERAntiSpyware\SUPERAntiSpyware Scheduled Task ";
+
+/// Full Windows task name for a SAS task GUID.
+fn sas_task_name(guid: &str) -> String {
+    format!("{SAS_TASK_NAME_PREFIX}{guid}")
+}
+
+/// Full names of every task under the SAS Task Scheduler folder.
+fn list_sas_scheduled_tasks() -> Vec<String> {
+    let out = match Command::new("schtasks")
+        .args(["/Query", "/TN", SAS_TASK_FOLDER, "/FO", "CSV", "/NH"])
+        .output()
+    {
+        Ok(out) => out,
+        Err(e) => {
+            log::warn!("Could not enumerate {SAS_TASK_FOLDER}: {e}");
+            return Vec::new();
+        }
+    };
+    if !out.status.success() {
+        // Non-zero also means the folder does not exist, which is not an error here.
+        log::debug!(
+            "schtasks /Query {SAS_TASK_FOLDER}: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix('"'))
+        .filter_map(|rest| rest.split_once('"'))
+        .map(|(name, _)| name.to_string())
+        .filter(|name| !name.is_empty())
+        .collect()
+}
+
+/// Unregister every `SUPERAntiSpyware Scheduled Task {guid}` task whose name is not in `keep`.
+fn prune_orphaned_sas_tasks(keep: &[String]) {
+    for name in list_sas_scheduled_tasks() {
+        if !name.starts_with(SAS_TASK_NAME_PREFIX) {
+            continue;
+        }
+        if keep.iter().any(|k| k.eq_ignore_ascii_case(&name)) {
+            continue;
+        }
+        match Command::new("schtasks")
+            .args(["/Delete", "/TN", &name, "/F"])
+            .output()
+        {
+            Ok(out) if out.status.success() => log::info!("Unregistered orphaned task: {name}"),
+            Ok(out) => log::error!(
+                "Failed to unregister {name}: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
+            Err(e) => log::error!("Failed to unregister {name}: {e}"),
+        }
+    }
+}
+
 // ─── Core settings + tasks writer ────────────────────────────────────────────
 
 /// Write SETTINGS + ScheduledTasks to SAS_CURRENTUSER.DB3 and add the
@@ -389,7 +451,16 @@ fn configure_sas_settings_and_tasks() -> anyhow::Result<(String, String)> {
     drop(conn);
 
     // Register tasks with Windows Task Scheduler
+    // Create-then-delete a throwaway task so the \SUPERAntiSpyware folder exists.
+    let _ = Command::new("schtasks")
+        .args(["/Create", "/TN", r"\SUPERAntiSpyware\placeholder", "/SC", "ONCE", "/ST", "00:00", "/TR", "cmd /c echo noop", "/F"])
+        .output();
+    let _ = Command::new("schtasks")
+        .args(["/Delete", "/TN", r"\SUPERAntiSpyware\placeholder", "/F"])
+        .output();
+
     let temp_dir = std::env::temp_dir();
+    let mut registered: Vec<String> = Vec::new();
     for task in &tasks {
         let xml = task
             .xml_template
@@ -404,27 +475,29 @@ fn configure_sas_settings_and_tasks() -> anyhow::Result<(String, String)> {
         }
         std::fs::write(&xml_path, &utf16)?;
 
-        let task_name = format!(
-            "\\SUPERAntiSpyware\\SUPERAntiSpyware Scheduled Task {}",
-            task.guid
-        );
-
-        let _ = Command::new("schtasks")
-            .args(["/Create", "/TN", "\\SUPERAntiSpyware\\placeholder", "/SC", "ONCE", "/ST", "00:00", "/TR", "cmd /c echo noop", "/F"])
-            .output();
-        let _ = Command::new("schtasks")
-            .args(["/Delete", "/TN", "\\SUPERAntiSpyware\\placeholder", "/F"])
-            .output();
+        let task_name = sas_task_name(&task.guid);
 
         let out = Command::new("schtasks")
             .args(["/Create", "/XML", &xml_path.to_string_lossy(), "/TN", &task_name, "/F"])
             .output()?;
         if out.status.success() {
             log::info!("Registered task: {task_name}");
+            registered.push(task_name);
         } else {
             log::error!("Failed to register {task_name}: {}", String::from_utf8_lossy(&out.stderr));
         }
         let _ = std::fs::remove_file(&xml_path);
+    }
+
+    // Prune only once both replacements are registered, so a failure never leaves zero SAS tasks.
+    if registered.len() == tasks.len() {
+        prune_orphaned_sas_tasks(&registered);
+    } else {
+        log::warn!(
+            "Registered {}/{} SAS tasks; skipping prune of pre-existing tasks",
+            registered.len(),
+            tasks.len()
+        );
     }
 
     // Ensure SAS launches at Windows login

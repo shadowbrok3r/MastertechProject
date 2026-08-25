@@ -10,13 +10,44 @@ use super::tabs::home_page::{
 use super::{deserialize_exact, deserializer, is_zstd_frame, ui::WsDisplayState, History, WebSocketClient};
 
 /// Transcript entries retained per session; the oldest are dropped past this.
-const MAX_HISTORY: usize = 2_000;
+pub(super) const MAX_HISTORY: usize = 2_000;
+/// Transcript bytes retained per session; the oldest entries are dropped past this.
+pub(super) const MAX_HISTORY_BYTES: usize = 8 * 1024 * 1024;
 
 /// How long a completed transfer bar stays up before clearing itself.
 #[cfg(not(target_arch = "wasm32"))]
 const TRANSFER_BAR_LINGER: std::time::Duration = std::time::Duration::from_millis(2_500);
 /// Unterminated client output held before it is flushed into the transcript.
 const MAX_BUFFER_BYTES: usize = 256 * 1024;
+
+fn entry_bytes(entry: &History) -> usize {
+    entry.from.len() + entry.message.len() + entry.timestamp.len()
+}
+
+/// Drops the oldest entries until both caps hold; returns (entries, bytes) dropped.
+fn trim_transcript(entries: &mut Vec<History>) -> (usize, usize) {
+    let mut dropped = 0;
+    let mut dropped_bytes = 0;
+
+    if entries.len() > MAX_HISTORY {
+        let excess = entries.len() - MAX_HISTORY;
+        dropped += excess;
+        dropped_bytes += entries.drain(..excess).map(|e| entry_bytes(&e)).sum::<usize>();
+    }
+
+    let mut total: usize = entries.iter().map(entry_bytes).sum();
+    if total <= MAX_HISTORY_BYTES {
+        return (dropped, dropped_bytes);
+    }
+    let mut cut = 0;
+    while total > MAX_HISTORY_BYTES && cut < entries.len() {
+        total -= entry_bytes(&entries[cut]);
+        cut += 1;
+    }
+    dropped += cut;
+    dropped_bytes += entries.drain(..cut).map(|e| entry_bytes(&e)).sum::<usize>();
+    (dropped, dropped_bytes)
+}
 
 impl WebSocketClient {
     /// One write per connection epoch: restores `connected = true` on the DB
@@ -509,16 +540,19 @@ impl WebSocketClient {
         self.trim_history();
     }
 
-    /// Drops the oldest transcript entries past [`MAX_HISTORY`].
+    /// Drops the oldest transcript entries past [`MAX_HISTORY`] or
+    /// [`MAX_HISTORY_BYTES`], counting what went.
     fn trim_history(&mut self) {
-        if self.history.len() > MAX_HISTORY {
-            let excess = self.history.len() - MAX_HISTORY;
-            self.history.drain(..excess);
+        let (dropped, dropped_bytes) = trim_transcript(&mut self.history);
+        let (mine, mine_bytes) = trim_transcript(&mut self.my_command_history);
+        for _ in 0..(dropped + mine) {
+            self.transcript_gauge
+                .record_drop((dropped_bytes + mine_bytes) / (dropped + mine).max(1));
         }
-        if self.my_command_history.len() > MAX_HISTORY {
-            let excess = self.my_command_history.len() - MAX_HISTORY;
-            self.my_command_history.drain(..excess);
-        }
+        self.transcript_gauge.set_occupancy(
+            self.history.len(),
+            self.history.iter().map(entry_bytes).sum(),
+        );
     }
     
     fn handle_command(&mut self, command: Cmd) {
@@ -1334,5 +1368,51 @@ impl WebSocketClient {
             self.history.push(history);
             self.notifications += 1;
         }
+    }
+}
+#[cfg(test)]
+mod transcript_tests {
+    use super::*;
+
+    fn entry(message_bytes: usize) -> History {
+        History {
+            from: "Client".to_string(),
+            message: "x".repeat(message_bytes),
+            timestamp: "2026-08-24T00:00:00-06:00".to_string(),
+        }
+    }
+
+    #[test]
+    fn entry_count_stops_at_the_cap() {
+        let overshoot = 250;
+        let mut log: Vec<History> = (0..MAX_HISTORY + overshoot).map(|_| entry(16)).collect();
+
+        let (dropped, dropped_bytes) = trim_transcript(&mut log);
+
+        assert_eq!(log.len(), MAX_HISTORY);
+        assert_eq!(dropped, overshoot);
+        assert!(dropped_bytes > 0, "dropped entries are counted, not discarded silently");
+    }
+
+    /// The count cap alone allows MAX_HISTORY x 256 KiB of client output.
+    #[test]
+    fn a_few_huge_entries_are_trimmed_by_bytes() {
+        let big = 512 * 1024;
+        let count = (MAX_HISTORY_BYTES / big) + 8;
+        let mut log: Vec<History> = (0..count).map(|_| entry(big)).collect();
+        assert!(log.len() < MAX_HISTORY, "the entry cap must not be what trims this");
+
+        let (dropped, dropped_bytes) = trim_transcript(&mut log);
+
+        let retained: usize = log.iter().map(entry_bytes).sum();
+        assert!(retained <= MAX_HISTORY_BYTES, "retained {retained} bytes");
+        assert!(dropped > 0 && dropped_bytes > 0);
+    }
+
+    #[test]
+    fn a_transcript_inside_both_caps_is_left_alone() {
+        let mut log: Vec<History> = (0..64).map(|_| entry(128)).collect();
+        assert_eq!(trim_transcript(&mut log), (0, 0));
+        assert_eq!(log.len(), 64);
     }
 }

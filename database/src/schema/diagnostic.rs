@@ -177,6 +177,16 @@ pub struct DiagnosticSession {
     #[surreal(default)]
     pub outcome_override_at: Option<Datetime>,
     pub summary: Option<String>,
+    /// Newest real work on the session; the staleness sweep keys on this rather
+    /// than `started_at`. `None` only on rows written before the backfill.
+    #[serde(default)]
+    #[surreal(default)]
+    pub last_activity_at: Option<Datetime>,
+    /// Set only by the staleness sweep, so a sweep-written `status`/`ended_at`
+    /// is distinguishable from an operator's close.
+    #[serde(default)]
+    #[surreal(default)]
+    pub swept_at: Option<Datetime>,
     pub status: String,
     pub tags: Vec<String>,
 }
@@ -205,6 +215,8 @@ impl Default for DiagnosticSession {
             outcome_override_by: None,
             outcome_override_at: None,
             summary: None,
+            last_activity_at: None,
+            swept_at: None,
             status: "open".to_string(),
             tags: Vec::new(),
         }
@@ -287,6 +299,8 @@ impl DiagnosticSession {
         let mut s = session.clone();
         s.id = super::random_record_id(super::DIAGNOSTIC_SESSION_TABLE);
         s.started_at = chrono::Utc::now().into();
+        s.last_activity_at = Some(s.started_at);
+        s.swept_at = None;
         s.status = "open".to_string();
 
         let created: Option<Self> = db()
@@ -321,10 +335,28 @@ impl DiagnosticSession {
             .collect())
     }
 
+    /// Bumps `last_activity_at` to now so the staleness sweep sees the session as
+    /// live. Never moves it backwards. Called from every path that records real
+    /// work against a session; failure is logged, not propagated, so an activity
+    /// stamp can never fail the work it is recording.
+    pub async fn touch(session: &RecordId) {
+        let res = db()
+            .query(
+                "UPDATE $sid SET last_activity_at = time::now() \
+                 WHERE last_activity_at = NONE OR last_activity_at < time::now()",
+            )
+            .bind(("sid", session.clone()))
+            .await;
+        if let Err(e) = res {
+            log::warn!("DiagnosticSession::touch({session:?}) failed: {e}");
+        }
+    }
+
     pub async fn close(session_id: &str, status: &str, summary: &str, tags: Option<&[String]>) -> anyhow::Result<()> {
         let sid = RecordId::new(super::DIAGNOSTIC_SESSION_TABLE, session_id);
         let mut query_str = String::from(
-            "UPDATE $sid SET status = $status, summary = $summary, ended_at = time::now()"
+            "UPDATE $sid SET status = $status, summary = $summary, ended_at = time::now(), \
+             last_activity_at = time::now(), swept_at = NONE"
         );
         if tags.is_some() {
             query_str.push_str(", tags = $tags");
@@ -348,7 +380,8 @@ impl DiagnosticSession {
         let mut res = db()
             .query(
                 "UPDATE $sid SET diagnosed_at = diagnosed_at ?? time::now(), \
-                 diagnosed_by = diagnosed_by ?? $by RETURN VALUE diagnosed_at",
+                 diagnosed_by = diagnosed_by ?? $by, last_activity_at = time::now() \
+                 RETURN VALUE diagnosed_at",
             )
             .bind(("sid", sid))
             .bind(("by", by.to_string()))
@@ -462,7 +495,7 @@ impl DiagnosticSession {
         if sets.is_empty() {
             return Ok(());
         }
-        let sql = format!("UPDATE $sid SET {}", sets.join(", "));
+        let sql = format!("UPDATE $sid SET {}, last_activity_at = time::now()", sets.join(", "));
         let dbh = db();
         let mut q = dbh.query(&sql).bind(("sid", session_id.clone()));
         if let Some(t) = task_ref { q = q.bind(("task", t.clone())); }
@@ -636,6 +669,7 @@ impl DiagnosticEntry {
     /// and the backfill picks it up) rather than a stale vector.
     pub async fn update_detail(entry_id: &RecordId, detail: &str) -> anyhow::Result<()> {
         let existing: Option<Self> = db().select(entry_id.clone()).await?;
+        let session_ref = existing.as_ref().map(|e| e.session_ref.clone());
         let title = existing.map(|e| e.title).unwrap_or_default();
         let source = format!("{} {}", title.trim(), detail.trim());
         let embedding = super::utilities::embed_text(&source).await.ok();
@@ -645,6 +679,9 @@ impl DiagnosticEntry {
             .bind(("detail", detail.to_string()))
             .bind(("embedding", embedding))
             .await?;
+        if let Some(sid) = session_ref {
+            DiagnosticSession::touch(&sid).await;
+        }
         Ok(())
     }
 
@@ -687,6 +724,8 @@ impl DiagnosticEntry {
             .bind(("plugins_used", e.plugins_used.clone()))
             .bind(("embedding", embedding))
             .await?;
+
+        DiagnosticSession::touch(&e.session_ref).await;
 
         Ok(e.id)
     }

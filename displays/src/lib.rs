@@ -17,6 +17,7 @@ pub mod markdown_editor;
 pub mod file_viewer;
 pub mod viewports;
 pub mod app_state;
+pub mod buffer_census;
 pub mod open_service_suggestions;
 pub mod mcp_tool_log;
 pub mod ui_tools;
