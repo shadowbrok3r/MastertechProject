@@ -32,6 +32,7 @@ pub mod dump_text;
 pub mod hex_json;
 pub mod icons;
 pub mod info_card;
+pub mod plots;
 pub mod selection_stats;
 
 pub use mtech_ui::{dock_style, egui_logger, theme};

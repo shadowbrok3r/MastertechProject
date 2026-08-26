@@ -3,7 +3,30 @@ use crate::{app_state::SharedContext, get_current_user_from_auth, PlatformSpawne
 
 impl SharedContext {
     pub fn receive_task(&mut self) {
-        if let Ok(mut tasks) = self.initial_tasks_rx.try_recv() {
+        // Promote the completed-task latch only once its fetch has come back
+        // clean; a failure clears the in-flight marker so the next tab click
+        // tries again.
+        while let Ok((store, ok)) = self.completed_load_rx.try_recv() {
+            if self.completed_pending_for == Some(store) {
+                self.completed_pending_for = None;
+            }
+            let current = Store::from_presta_store_id(&self.store_selection.to_string());
+            if ok && store == current {
+                // A result for a store the operator has already left says
+                // nothing about the one they are looking at.
+                self.completed_loaded_for = Some(store);
+            } else if !ok && self.completed_loaded_for == Some(store) {
+                self.completed_loaded_for = None;
+            }
+            // The tab-click path raises this spinner; the result is the only
+            // thing that can lower it, success or failure.
+            self.task_layouts
+                .iter_mut()
+                .filter(|(page, _)| *page == "Completed Tasks")
+                .for_each(|(_, layout)| layout.loading = false);
+        }
+
+        while let Ok(mut tasks) = self.initial_tasks_rx.try_recv() {
             // Initialize layout_configs if store_users is available
             self.init_layout_configs();
 
@@ -28,13 +51,31 @@ impl SharedContext {
             let store_selection = Store::from_presta_store_id(&self.store_selection.to_string());
             let layout_configs = self.layout_configs.as_ref();
 
+            // Positions are indexed once per payload. A reconnect re-delivers
+            // the whole snapshot — 4.4k rows on RIV — and scanning `self.tasks`
+            // per row is ten million string allocations in one frame.
+            let mut positions: std::collections::HashMap<String, usize> = self
+                .tasks
+                .iter()
+                .enumerate()
+                .map(|(index, task)| (task.id.key_string(), index))
+                .collect();
+
             tasks.drain(..).for_each(|new_task| {
-                // Check for duplicates using task ID
+                // A snapshot is newer than whatever the index holds, so it
+                // overwrites: skipping known ids left rows that went stale
+                // during a disconnect wrong until the process restarted.
                 let task_id = new_task.id.key_string();
-                if !self.task_index.contains_key(&task_id) {
-                    // Add to global tasks and index
+                if self.live_task_updates.contains(&task_id) {
+                    return;
+                }
+                let is_new = self
+                    .task_index
+                    .insert(task_id.clone(), new_task.clone())
+                    .is_none();
+                if is_new {
+                    positions.insert(task_id.clone(), self.tasks.len());
                     self.tasks.push(new_task.clone());
-                    self.task_index.insert(task_id.clone(), new_task.clone());
 
                     // Distribute to layouts if layout_configs is initialized
                     if let Some(layout_configs) = layout_configs {
@@ -81,6 +122,16 @@ impl SharedContext {
                             layout.has_run = false;
                         }
                     }
+                } else {
+                    match positions.get(&task_id).copied() {
+                        Some(pos) => self.tasks[pos] = new_task,
+                        // Indexed but missing from the list: push rather than
+                        // drop, or the divergence never heals.
+                        None => {
+                            positions.insert(task_id.clone(), self.tasks.len());
+                            self.tasks.push(new_task);
+                        }
+                    }
                 }
             });
 
@@ -119,6 +170,7 @@ impl SharedContext {
             match handle_live_data(new_task.to_owned(), &mut self.tasks) {
                 Ok(_) => {
                     // Update task_index
+                    self.live_task_updates.insert(task_id.clone());
                     self.task_index.insert(task_id.clone(), new_task.1.clone().into());
                     // Update self.tasks to maintain consistency
                     if let Some(pos) = self.tasks.iter().position(|t| t.id.key_string() == task_id) {

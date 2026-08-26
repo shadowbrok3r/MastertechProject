@@ -679,6 +679,16 @@ pub enum FailureMode {
         rail: String,
         min_v: f32,
     },
+    /// The stressor itself wedged: it stopped producing work and stopped making
+    /// progress, with no bugcheck, watchdog live dump, TDR or WHEA to go with
+    /// it. A tool defect, so the run is `Inconclusive` rather than `Fail` — it
+    /// is not evidence about the hardware in either direction. Kept as its own
+    /// variant because reading a hung tool as a machine fault has already cost
+    /// one wrong hardware conclusion. Appended last so existing variant indices
+    /// stay stable.
+    StressorHang {
+        message: String,
+    },
 }
 
 impl FailureMode {
@@ -701,6 +711,7 @@ impl FailureMode {
             Self::Timeout => "timeout",
             Self::OperatorOverride { .. } => "operator_override",
             Self::RailDroop { .. } => "rail_droop",
+            Self::StressorHang { .. } => "stressor_hang",
         }
     }
 }
@@ -1668,6 +1679,9 @@ pub struct HardwareTestBaseline {
     pub pass_count: u64,
     pub fail_count: u64,
     pub abort_count: u64,
+    #[serde(default)]
+    #[surreal(default)]
+    pub inconclusive_count: u64,
     pub avg_max_temp_c: Option<f32>,
     pub peak_max_temp_c: Option<f32>,
     pub avg_temp_c: Option<f32>,
@@ -1678,8 +1692,38 @@ pub struct HardwareTestBaseline {
     pub avg_whea_delta: Option<f64>,
     pub total_whea_delta: Option<u64>,
     pub total_disk_io_errors: Option<u64>,
+    #[serde(default)]
+    #[surreal(default)]
+    pub total_memory_errors: Option<u64>,
     pub throttle_count: Option<u64>,
+    #[serde(default)]
+    #[surreal(default)]
+    pub bsod_count: Option<u64>,
 }
+
+/// The view's `math::sum` columns accumulate in f64 and its `math::max` columns
+/// keep the element's own type, so a count arrives as `1.0` and a gauge as `0`.
+/// A typed read accepts only the exact number kind the field declares, and one
+/// bad row fails the whole `Vec` — hence a cast on every column.
+const BASELINE_PROJECTION: &str = "SELECT component, tool, run_count, \
+    <int> pass_count AS pass_count, \
+    <int> fail_count AS fail_count, \
+    <int> abort_count AS abort_count, \
+    <int> inconclusive_count AS inconclusive_count, \
+    <float> avg_max_temp_c AS avg_max_temp_c, \
+    <float> peak_max_temp_c AS peak_max_temp_c, \
+    <float> avg_temp_c AS avg_temp_c, \
+    <float> avg_max_clock_mhz AS avg_max_clock_mhz, \
+    <float> avg_clock_mhz AS avg_clock_mhz, \
+    <float> avg_max_power_w AS avg_max_power_w, \
+    <float> avg_peak_throughput AS avg_peak_throughput, \
+    <float> avg_whea_delta AS avg_whea_delta, \
+    <int> total_whea_delta AS total_whea_delta, \
+    <int> total_disk_io_errors AS total_disk_io_errors, \
+    <int> total_memory_errors AS total_memory_errors, \
+    <int> throttle_count AS throttle_count, \
+    <int> bsod_count AS bsod_count \
+    FROM hardware_test_baseline";
 
 impl HardwareTestBaseline {
     /// Population stats for one component across every tool we've run
@@ -1688,10 +1732,7 @@ impl HardwareTestBaseline {
         component: &RecordId,
     ) -> anyhow::Result<Vec<Self>> {
         let rows: Vec<Self> = db()
-            .query(
-                "SELECT * FROM hardware_test_baseline \
-                 WHERE component = $c",
-            )
+            .query(format!("{BASELINE_PROJECTION} WHERE component = $c"))
             .bind(("c", component.clone()))
             .await?
             .take(0)?;
@@ -1705,10 +1746,9 @@ impl HardwareTestBaseline {
         tool_label: &str,
     ) -> anyhow::Result<Option<Self>> {
         let rows: Vec<Self> = db()
-            .query(
-                "SELECT * FROM hardware_test_baseline \
-                 WHERE component = $c AND tool = $t LIMIT 1",
-            )
+            .query(format!(
+                "{BASELINE_PROJECTION} WHERE component = $c AND tool = $t LIMIT 1"
+            ))
             .bind(("c", component.clone()))
             .bind(("t", tool_label.to_string()))
             .await?

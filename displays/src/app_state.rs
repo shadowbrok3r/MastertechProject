@@ -345,6 +345,26 @@ pub struct SharedContext {
     pub layout_configs: Option<HashMap<String, LayoutConfig>>,
     pub user_chat: UserChat,
     pub pending_store: Option<Store>,
+    /// Store whose completed-task snapshot has landed. `None` means the
+    /// Completed Tasks board has never been loaded for the current store.
+    #[serde(skip)]
+    pub completed_loaded_for: Option<Store>,
+    /// Store whose completed-task fetch is in flight. Set at spawn so repeated
+    /// tab clicks don't stack fetches, and cleared by the result — a failed
+    /// pull has to leave the board retryable.
+    #[serde(skip)]
+    pub completed_pending_for: Option<Store>,
+    /// Task ids the live stream has applied since the last snapshot was
+    /// authoritative. A snapshot query issued before one of these events is by
+    /// definition older than it, so it must not overwrite them. Cleared on
+    /// reconnect and store switch, where the live stream missed events and the
+    /// snapshot becomes the truth again.
+    #[serde(skip)]
+    pub live_task_updates: std::collections::HashSet<String>,
+    #[serde(skip)]
+    pub completed_load_tx: Sender<(Store, bool)>,
+    #[serde(skip)]
+    pub completed_load_rx: Receiver<(Store, bool)>,
     pub task_index: HashMap<String, LiveTaskPayload>, // Index by task ID
     /// AI tasks + checklist items, live-query-fed; the single source of
     /// truth for card, column, and diagnostics-tab checklist rendering.
@@ -618,6 +638,7 @@ impl SharedContext {
         let (ui_actions_tx, ui_actions_rx) = crossbeam::channel::unbounded::<TaskUiActions>();
         let (db_tx, db_rx) = channel::unbounded();
         let (initial_tasks_tx, initial_tasks_rx) = channel::bounded::<Vec<LiveTaskPayload>>(2);
+        let (completed_load_tx, completed_load_rx) = channel::unbounded::<(Store, bool)>();
         let (store_users_tx, store_users_rx) = channel::unbounded::<Vec<User>>();
         let (tasks_tx, tasks_rx) = channel::unbounded::<(Action, LiveTaskPayload)>();
         let (live_tasks_tx, live_tasks_rx) = channel::unbounded::<(Action, LiveTaskPayload)>();
@@ -696,7 +717,7 @@ impl SharedContext {
             tasks: Vec::new(),
             store_users: Vec::new(),
             task_layouts: HashMap::new(),
-            store_selection: 76,
+            store_selection: Store::RIV.into_store_id() as u64,
             toasts: Toasts::new()
                 .anchor(Align2::RIGHT_TOP, (5.0, 45.0))
                 .custom_contents(
@@ -783,6 +804,11 @@ impl SharedContext {
             room_id: String::new(),
             user_chat: UserChat::default(),
             pending_store: None,
+            completed_loaded_for: None,
+            completed_pending_for: None,
+            live_task_updates: std::collections::HashSet::new(),
+            completed_load_tx,
+            completed_load_rx,
             sales_tracker: SalesTracker::default(),
             stress_lab: StressLab::default(),
             #[cfg(not(target_arch = "wasm32"))]

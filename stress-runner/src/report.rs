@@ -343,6 +343,7 @@ fn failure_detail(run: &StressTestRun) -> Option<String> {
         F::RailDroop { rail, min_v } => {
             format!("{rail} droop under load (min {min_v:.2}V, uncalibrated)")
         }
+        F::StressorHang { message } => format!("stressor hung (tool failure): {message}"),
     })
 }
 

@@ -1,5 +1,5 @@
 use eframe::egui::{Button, Color32, ComboBox, FontId, Frame, Layout, RichText, Separator, Stroke, Vec2, Widget, vec2};
-use database::{schema::{utilities::{get_store_users, get_tasks_for_store}, Store}, db};
+use database::{schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, Store}, db};
 use egui::{PopupCloseBehavior, UiKind, containers::menu::{MenuButton, MenuConfig}, style::StyleModifier};
 use crate::{tabs::github::{get_github_releases, self_updater::run}};
 use displays::{app_state::{default_tree, AppState, MainPages}, pages::view_menu, plugins::push_widget_anchor, tabs::TabContext, ui_tools::theme, TaskUiActions};
@@ -165,14 +165,11 @@ impl MasterTechApp {
                                 let selected = &mut self.context.shared_ctx.store_selection;
                                 let current = selected.clone();
                         
-                                let selected_text = match selected {
-                                    76 => Store::RIV.as_str(),
-                                    73 => Store::LTN.as_str(),
-                                    74 => Store::MUR.as_str(),
-                                    75 => Store::ORE.as_str(),
-                                    77 => Store::SAN.as_str(),
-                                    _ => Store::RIV.as_str(),
-                                };
+                                // `store_selection` holds a PrestaShop id; the Odoo
+                                // table this used to match against read RIV for
+                                // every store.
+                                let selected_store = Store::from_presta_store_id(&selected.to_string());
+                                let selected_text = selected_store.as_str();
                         
                                 ui.horizontal(|ui| {
                                     ui.add_space(ui.available_width()/2.5);
@@ -192,17 +189,25 @@ impl MasterTechApp {
                                         if *selected != current {
                                             self.context.shared_ctx.store_users.clear();
                                             self.context.shared_ctx.tasks.clear();
+                                            self.context.shared_ctx.task_index.clear();
+                                            self.context.shared_ctx.live_task_updates.clear();
                                             self.context.shared_ctx.task_layouts.clear();
                                             let tasks_tx = self.context.shared_ctx.initial_tasks_tx.clone();
                                             let store_users_tx = self.context.shared_ctx.store_users_tx.clone();
+                                            let done_tx = self.context.shared_ctx.completed_load_tx.clone();
                                             let store_selection = Store::from_presta_store_id(&selected.to_string());
-                                            
+                                            self.context.shared_ctx.completed_loaded_for = None;
+                                            self.context.shared_ctx.completed_pending_for = Some(store_selection);
+
                                             info!("Store: {store_selection:?}//{:?}", store_selection.clone().as_str().to_string());
                                             spawn(async move {
                                                 let store_tasks = get_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
+                                                let completed = get_completed_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
+                                                let _ = done_tx.try_send((store_selection, completed.is_ok()));
                                                 let get_store_users = get_store_users(store_users_tx, store_selection).await;
-                                
+
                                                 info!("get_tasks_for_store: {store_tasks:?}");
+                                                info!("get_completed_tasks_for_store: {completed:?}");
                                                 info!("get_store_users: {get_store_users:?}");
                                             });
                                         }

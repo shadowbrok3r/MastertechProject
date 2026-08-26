@@ -2540,6 +2540,29 @@ impl TerminalWebsocketClient {
             }
 
             // --- Registry ---
+            Cmd::GatherSecurityInventory => {
+                #[cfg(target_os = "windows")]
+                {
+                    let products =
+                        crate::utilities::windows::antivirus::gather_security_inventory().await;
+                    log::info!(
+                        "websockets -> security inventory: {} product(s)",
+                        products.len()
+                    );
+                    let response = Cmd::SecurityInventoryResponse(products);
+                    if let Ok(payload) = encode_to_vec(&response, standard()) {
+                        sender.send(WsMessage::Binary(payload));
+                    }
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    let response = Cmd::SecurityInventoryResponse(Vec::new());
+                    if let Ok(payload) = encode_to_vec(&response, standard()) {
+                        sender.send(WsMessage::Binary(payload));
+                    }
+                }
+            }
+
             Cmd::ListRegistryKeys(path) => {
                 log::info!("websockets -> Listing registry keys: {}", path);
 
@@ -4269,8 +4292,9 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
             // button); otherwise we serve from the in-memory cache.
             Cmd::RequestOpenServiceCandidates { refresh } => {
                 use crate::filesystem::customer_lookup::{
-                    get_open_service_cache, lookup_customer_and_open_orders,
-                    set_open_service_cache, CachedOpenServiceLookup,
+                    clear_lookup_misses, get_open_service_cache,
+                    lookup_customer_and_open_orders, set_open_service_cache,
+                    CachedOpenServiceLookup,
                 };
                 use crate::filesystem::oa_serial::{
                     get_oa_style_serial, to_oa3_13digit,
@@ -4294,6 +4318,9 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                         }
                     };
                     if !serial13.is_empty() {
+                        // An operator asking for a refresh outranks the miss
+                        // budget that suppresses the automatic lookups.
+                        clear_lookup_misses(&serial13);
                         match lookup_customer_and_open_orders(&serial13).await {
                             Ok((match_, candidates)) => {
                                 set_open_service_cache(CachedOpenServiceLookup {

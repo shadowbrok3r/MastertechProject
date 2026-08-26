@@ -7,6 +7,9 @@
 //! cannot reproduce a present/mode-set timeout (dxgkrnl `0x1b8`, `0x141`, AMD
 //! Crash Defender watchdog live dumps). This one drives that path instead.
 //!
+//! `STRESSKIT_DISPLAY_DEBUG_WEDGE=<output>[:<frames>]` wedges one output thread
+//! on purpose, for verifying the watchdog on real multi-output hardware.
+//!
 //! Desktop mode changes are controlled by `STRESSKIT_DISPLAY_MODESET`:
 //! `refresh` (default) cycles refresh rates at the native resolution, `full`
 //! also cycles resolutions, `off` leaves the desktop mode alone. Changes are
@@ -44,13 +47,42 @@ const MODE_SET_EVERY: Duration = Duration::from_secs(12);
 /// How long a configuring thread waits for its siblings to stop submitting.
 #[cfg(target_os = "windows")]
 const QUIESCE_TIMEOUT: Duration = Duration::from_secs(2);
-/// Upper bound on a parked thread's wait. Exceeds `QUIESCE_TIMEOUT` plus a
-/// configure so a sibling cannot resume submitting mid-reconfigure.
+/// Upper bound on a parked thread's wait. Deliberately longer than
+/// [`WATCHDOG_STALL`]: a configure that outlasts it is wedged, and the
+/// watchdog must end the stage rather than a parked sibling resuming into a
+/// half-built swapchain.
 #[cfg(target_os = "windows")]
-const QUIESCE_PARK_MAX: Duration = Duration::from_secs(8);
+const QUIESCE_PARK_MAX: Duration = Duration::from_secs(45);
 /// Spin gap while waiting on the quiesce handshake.
 #[cfg(target_os = "windows")]
 const QUIESCE_POLL: Duration = Duration::from_micros(200);
+/// Bound on waiting for the configure turn. A sibling that holds it longer is
+/// itself wedged, so the caller gives up and retries from its frame loop
+/// instead of blocking where no stall check can reach it.
+#[cfg(target_os = "windows")]
+const TURN_WAIT: Duration = Duration::from_secs(3);
+/// Unbroken starvation on the configure turn before this output declares the
+/// stage wedged. Under [`WATCHDOG_STALL`] so the thread that can name the
+/// phase its siblings are stuck in reports first.
+#[cfg(target_os = "windows")]
+const HANG_STARVED: Duration = Duration::from_secs(20);
+/// No presented frame and no frame-loop progress from any output for this long
+/// ends the stage as a tool failure. Normal runs dip to a couple of FPS during
+/// a mode change; none of them stop advancing their loops.
+#[cfg(target_os = "windows")]
+const WATCHDOG_STALL: Duration = Duration::from_secs(30);
+/// Grace before the watchdog arms, covering adapter bring-up and the first
+/// swapchain build on every output.
+#[cfg(target_os = "windows")]
+const WATCHDOG_WARMUP: Duration = Duration::from_secs(20);
+/// Bound on joining the output threads at teardown. A thread still running
+/// past it is the wedge the stage just reported, and is never waited on.
+#[cfg(target_os = "windows")]
+const JOIN_TIMEOUT: Duration = Duration::from_secs(5);
+/// Bound on the teardown mode restore, which runs off-thread because a wedged
+/// `ChangeDisplaySettingsExW` elsewhere in the process blocks a restore too.
+#[cfg(target_os = "windows")]
+const RESTORE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Window after a self-inflicted change during which `Outdated` is expected
 /// rather than evidence.
 #[cfg(target_os = "windows")]
@@ -146,11 +178,11 @@ pub(crate) fn run(
 mod windows_impl {
     use super::*;
 
-    use std::sync::atomic::AtomicU32;
+    use std::sync::atomic::{AtomicU32, AtomicU8};
     use std::sync::Mutex;
 
     use super::super::display_win::{
-        apply_mode, enumerate_outputs, refresh_modes_at, resolutions, ModeGuard, Output,
+        apply_mode, enumerate_outputs, refresh_modes_at, resolutions, restore_mode, Output,
         OutputWindow,
     };
     use super::super::gpu_common::GpuContext;
@@ -190,6 +222,52 @@ mod windows_impl {
         }
     }
 
+    /// Where an output thread is. Recorded on every transition so the watchdog
+    /// can say what each thread was doing when the stage stopped moving.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    enum Phase {
+        Starting = 0,
+        Pumping = 1,
+        AwaitingTurn = 2,
+        Configuring = 3,
+        Parked = 4,
+        Acquiring = 5,
+        Presenting = 6,
+        ModeSetting = 7,
+        Done = 8,
+    }
+
+    impl Phase {
+        fn label(self) -> &'static str {
+            match self {
+                Self::Starting => "starting",
+                Self::Pumping => "pumping messages",
+                Self::AwaitingTurn => "waiting for the configure turn",
+                Self::Configuring => "inside Surface::configure",
+                Self::Parked => "parked for a sibling configure",
+                Self::Acquiring => "inside get_current_texture",
+                Self::Presenting => "drawing and presenting",
+                Self::ModeSetting => "inside ChangeDisplaySettingsEx",
+                Self::Done => "finished",
+            }
+        }
+
+        fn from_u8(raw: u8) -> Self {
+            match raw {
+                1 => Self::Pumping,
+                2 => Self::AwaitingTurn,
+                3 => Self::Configuring,
+                4 => Self::Parked,
+                5 => Self::Acquiring,
+                6 => Self::Presenting,
+                7 => Self::ModeSetting,
+                8 => Self::Done,
+                _ => Self::Starting,
+            }
+        }
+    }
+
     #[derive(Default)]
     struct OutputStats {
         presented: AtomicU64,
@@ -202,6 +280,13 @@ mod windows_impl {
         reconfigures: AtomicU64,
         mode_sets: AtomicU64,
         stalled: AtomicBool,
+        /// Frame-loop iterations this output has completed. Separates a stalled
+        /// present (loop running, no frames leaving) from a wedged thread (loop
+        /// not running), which is the only way to tell a display-path fault
+        /// from the stressor blocking itself.
+        progress: AtomicU64,
+        /// Newest [`Phase`] discriminant.
+        phase: AtomicU8,
     }
 
     impl OutputStats {
@@ -211,6 +296,23 @@ mod windows_impl {
                 + self.unexpected_outdated.load(Ordering::Relaxed)
                 + self.validation.load(Ordering::Relaxed)
         }
+
+        fn set_phase(&self, phase: Phase) {
+            self.phase.store(phase as u8, Ordering::Relaxed);
+        }
+
+        fn phase(&self) -> Phase {
+            Phase::from_u8(self.phase.load(Ordering::Relaxed))
+        }
+    }
+
+    /// The per-output handles the shared handshake needs: where to record this
+    /// thread's phase, and how to keep its window pumping while it waits.
+    /// Waiting without pumping is what let one thread's mode change block on a
+    /// sibling that was itself blocked waiting for that mode change.
+    struct OutputCtx<'a> {
+        stats: &'a OutputStats,
+        pump: &'a dyn Fn(),
     }
 
     #[derive(Default)]
@@ -235,8 +337,20 @@ mod windows_impl {
         parked: AtomicU32,
         /// Reconfigures skipped because the siblings never went quiet.
         quiesce_timeouts: AtomicU64,
+        /// Configures skipped because a sibling held the turn past
+        /// [`TURN_WAIT`]. Distinct from `quiesce_timeouts`: a busy sibling is
+        /// normal, a sibling that will not let go of the turn is not.
+        turn_timeouts: AtomicU64,
         /// A coverage complaint has been emitted and not yet resolved.
         coverage_complained: AtomicBool,
+        /// Latched by whichever detector finds the stage wedged inside its own
+        /// handshake. Kept apart from `fatal`: that reports the display path,
+        /// this reports the tool.
+        hang: Mutex<Option<String>>,
+        /// Displays whose desktop mode this stage has changed. Owned by the
+        /// stage rather than by the output thread so a wedged thread cannot
+        /// strand a changed mode.
+        mode_touched: Mutex<Vec<String>>,
     }
 
     /// Frame-loop membership marker for the quiesce handshake; the counter
@@ -264,6 +378,27 @@ mod windows_impl {
             }
         }
 
+        fn latch_hang(&self, msg: String) {
+            log::error!("[stress-kit/gpu_display] {msg}");
+            if let Ok(mut g) = self.hang.lock() {
+                g.get_or_insert(msg);
+            }
+        }
+
+        fn hang(&self) -> Option<String> {
+            self.hang.lock().ok().and_then(|g| g.clone())
+        }
+
+        /// Records a display whose mode this stage changed, before the change
+        /// is applied: the call can wedge, and teardown still has to undo it.
+        fn touch_mode(&self, device: &str) {
+            if let Ok(mut g) = self.mode_touched.lock()
+                && !g.iter().any(|d| d == device)
+            {
+                g.push(device.to_string());
+            }
+        }
+
         fn set_warn(&self, msg: String) {
             log::warn!("[stress-kit/gpu_display] {msg}");
             if let Ok(mut g) = self.warn.lock() {
@@ -285,29 +420,66 @@ mod windows_impl {
 
         /// Runs `configure` with every presenting sibling parked so the shared
         /// device can reach idle. `self_submits` says whether the caller is
-        /// itself inside its frame loop. Returns `None` when the siblings did
-        /// not go quiet in time and the caller should retry later.
+        /// itself inside its frame loop. Returns `None` when the turn or the
+        /// quiet could not be had in time and the caller should retry later.
         fn with_quiesce<R>(
             &self,
+            ctx: &OutputCtx<'_>,
             stop: &AtomicBool,
             self_submits: bool,
             configure: impl FnOnce() -> R,
         ) -> Option<R> {
             // Held across the whole configure: two swapchain builds on one
             // device must not overlap even with every presenter parked.
-            let _turn = self.configure_turn.lock().ok()?;
+            let Some(_turn) = self.take_turn(ctx, stop) else {
+                self.turn_timeouts.fetch_add(1, Ordering::Relaxed);
+                return None;
+            };
             // Raised before counting siblings: a thread that enters its frame
             // loop mid-configure parks at its first frame instead of
             // submitting into the build.
             self.configure_pause.store(true, Ordering::SeqCst);
             let quiet = self.other_submitters(self_submits) == 0
-                || self.await_parked(stop, self_submits);
-            let out = quiet.then(configure);
+                || self.await_parked(ctx, stop, self_submits);
+            let out = if quiet {
+                ctx.stats.set_phase(Phase::Configuring);
+                Some(configure())
+            } else {
+                None
+            };
             self.configure_pause.store(false, Ordering::SeqCst);
             if out.is_none() {
                 self.quiesce_timeouts.fetch_add(1, Ordering::Relaxed);
             }
             out
+        }
+
+        /// Bounded acquisition of the configure turn. A blocking `lock()` here
+        /// is what turned one stalled `configure` into a wedged stage: every
+        /// sibling piled up on the mutex below the frame loop's stall check, so
+        /// nothing could ever report. `None` means a sibling has held it past
+        /// [`TURN_WAIT`] and the caller must go round its loop instead.
+        fn take_turn<'s>(
+            &'s self,
+            ctx: &OutputCtx<'_>,
+            stop: &AtomicBool,
+        ) -> Option<std::sync::MutexGuard<'s, ()>> {
+            ctx.stats.set_phase(Phase::AwaitingTurn);
+            let deadline = Instant::now() + TURN_WAIT;
+            loop {
+                match self.configure_turn.try_lock() {
+                    Ok(guard) => return Some(guard),
+                    // A configurer that panicked poisoned the turn; taking it
+                    // anyway beats never configuring again.
+                    Err(std::sync::TryLockError::Poisoned(e)) => return Some(e.into_inner()),
+                    Err(std::sync::TryLockError::WouldBlock) => {}
+                }
+                if stop.load(Ordering::Relaxed) || Instant::now() >= deadline {
+                    return None;
+                }
+                (ctx.pump)();
+                std::thread::sleep(QUIESCE_POLL);
+            }
         }
 
         /// Frame-loop threads other than the caller.
@@ -320,7 +492,12 @@ mod windows_impl {
         /// Waits until every other presenting thread is parked. Bounded, and
         /// reads `submitters` each pass so a thread that exits its frame loop
         /// cannot strand us.
-        fn await_parked(&self, stop: &AtomicBool, self_submits: bool) -> bool {
+        fn await_parked(
+            &self,
+            ctx: &OutputCtx<'_>,
+            stop: &AtomicBool,
+            self_submits: bool,
+        ) -> bool {
             let deadline = Instant::now() + QUIESCE_TIMEOUT;
             while Instant::now() < deadline {
                 if stop.load(Ordering::Relaxed) {
@@ -329,23 +506,29 @@ mod windows_impl {
                 if self.parked.load(Ordering::SeqCst) >= self.other_submitters(self_submits) {
                     return true;
                 }
+                (ctx.pump)();
                 std::thread::sleep(QUIESCE_POLL);
             }
             false
         }
 
         /// Parks this thread while a sibling configures. Called once per frame,
-        /// before anything is submitted.
-        fn park_if_paused(&self, stop: &AtomicBool) {
+        /// before anything is submitted. Keeps pumping: a sibling's desktop
+        /// mode change broadcasts to this window and does not return until the
+        /// message is dispatched, so a park that stops pumping deadlocks the
+        /// mode change it is parked for.
+        fn park_if_paused(&self, ctx: &OutputCtx<'_>, stop: &AtomicBool) {
             if !self.configure_pause.load(Ordering::SeqCst) {
                 return;
             }
+            ctx.stats.set_phase(Phase::Parked);
             self.parked.fetch_add(1, Ordering::SeqCst);
             let deadline = Instant::now() + QUIESCE_PARK_MAX;
             while self.configure_pause.load(Ordering::SeqCst)
                 && !stop.load(Ordering::Relaxed)
                 && Instant::now() < deadline
             {
+                (ctx.pump)();
                 std::thread::sleep(QUIESCE_POLL);
             }
             self.parked.fetch_sub(1, Ordering::SeqCst);
@@ -445,6 +628,7 @@ mod windows_impl {
             })
             .collect();
 
+        let devices: Vec<String> = outputs.iter().map(|o| o.device.clone()).collect();
         tick_loop(
             cancel,
             tx,
@@ -454,19 +638,38 @@ mod windows_impl {
             &mut dumps,
             dumps_available,
             attached,
+            &devices,
         );
 
         stop.store(true, Ordering::SeqCst);
-        for handle in handles {
-            let _ = handle.join();
+        let stuck = await_threads(&shared, JOIN_TIMEOUT);
+        if stuck == 0 {
+            for handle in handles {
+                let _ = handle.join();
+            }
+        } else {
+            // Never joined. Joining a wedged output thread is what turned a
+            // stalled stage into a stalled process: the stage could not report,
+            // the child could not exit, and an operator had to kill it. The
+            // handles are dropped instead, which detaches the threads.
+            log::error!(
+                "[stress-kit/gpu_display] {stuck} output thread(s) did not stop within {}s; \
+                 detaching them so the stage can report. Their windows and swapchains are \
+                 released when this process exits, and the desktop modes are app-owned \
+                 (CDS_FULLSCREEN) so Windows restores them at that point.",
+                JOIN_TIMEOUT.as_secs()
+            );
+            drop(handles);
         }
+        restore_touched_modes(&shared);
         log::info!(
             "[stress-kit/gpu_display] drove {} of {} attached output(s), {} frames presented, \
-             {} reconfigure(s) skipped for a busy sibling",
+             {} reconfigure(s) skipped for a busy sibling, {} for a held configure turn",
             shared.driven(),
             attached,
             shared.total(|o| o.presented.load(Ordering::Relaxed)),
-            shared.quiesce_timeouts.load(Ordering::Relaxed)
+            shared.quiesce_timeouts.load(Ordering::Relaxed),
+            shared.turn_timeouts.load(Ordering::Relaxed)
         );
         for (output, stats) in outputs.iter().zip(&shared.outputs) {
             log::info!(
@@ -484,6 +687,148 @@ mod windows_impl {
         }
     }
 
+    /// Waits for the output threads to leave `drive_output`, and returns how
+    /// many were still in it when the bound expired.
+    fn await_threads(shared: &Arc<Shared>, wait: Duration) -> u32 {
+        let deadline = Instant::now() + wait;
+        loop {
+            let live = shared.threads_live.load(Ordering::SeqCst);
+            if live == 0 || Instant::now() >= deadline {
+                return live;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// Restores every desktop mode this stage changed. Runs off-thread with a
+    /// bound: a wedged `ChangeDisplaySettingsEx` anywhere in the process blocks
+    /// a restore too, and teardown must not inherit that wait.
+    fn restore_touched_modes(shared: &Arc<Shared>) {
+        let devices = shared
+            .mode_touched
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        if devices.is_empty() {
+            return;
+        }
+        let done = Arc::new(AtomicBool::new(false));
+        let flag = done.clone();
+        let fallback = devices.clone();
+        let spawned = std::thread::Builder::new()
+            .name("stress-kit-display-restore".into())
+            .spawn(move || {
+                for device in &devices {
+                    restore_mode(device);
+                }
+                flag.store(true, Ordering::SeqCst);
+            });
+        if spawned.is_err() {
+            // Better a restore that might block than a display left on a
+            // stressor-chosen mode.
+            for device in &fallback {
+                restore_mode(device);
+            }
+            return;
+        }
+        let deadline = Instant::now() + RESTORE_TIMEOUT;
+        while !done.load(Ordering::SeqCst) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        if !done.load(Ordering::SeqCst) {
+            log::error!(
+                "[stress-kit/gpu_display] mode restore did not finish within {}s; the modes are \
+                 app-owned (CDS_FULLSCREEN) so Windows restores them when this process exits",
+                RESTORE_TIMEOUT.as_secs()
+            );
+        }
+    }
+
+    /// Tracks whether the stage is still moving at all. Read from the tick
+    /// thread, which is never inside a present, a configure or a mode change,
+    /// so it answers even when every output thread is blocked.
+    struct Watchdog {
+        presented: u64,
+        progress: u64,
+        moved_at: Instant,
+        stall: Duration,
+        warmup: Duration,
+    }
+
+    impl Watchdog {
+        fn new(now: Instant) -> Self {
+            Self::with_limits(now, WATCHDOG_STALL, WATCHDOG_WARMUP)
+        }
+
+        fn with_limits(now: Instant, stall: Duration, warmup: Duration) -> Self {
+            Self {
+                presented: 0,
+                progress: 0,
+                moved_at: now,
+                stall,
+                warmup,
+            }
+        }
+
+        /// Folds one sample. `true` once no frame has reached a screen and no
+        /// output thread has got round its loop for `stall`. A stage whose
+        /// loops are running but whose frames have stopped is a present stall,
+        /// not a wedge, and is left to the per-output stall check.
+        fn wedged(
+            &mut self,
+            presented: u64,
+            progress: u64,
+            now: Instant,
+            elapsed: Duration,
+        ) -> bool {
+            if presented > self.presented || progress > self.progress {
+                self.presented = presented;
+                self.progress = progress;
+                self.moved_at = now;
+                return false;
+            }
+            elapsed >= self.warmup && now.duration_since(self.moved_at) >= self.stall
+        }
+
+        fn stuck_for(&self, now: Instant) -> Duration {
+            now.duration_since(self.moved_at)
+        }
+    }
+
+    /// The report the watchdog files. Names the phase every output was stuck
+    /// in, and says plainly that this is the tool and not the machine, because
+    /// a reader six weeks later has only this string to go on.
+    fn hang_report(shared: &Shared, devices: &[String], stuck_for: Duration) -> String {
+        let phases: Vec<String> = shared
+            .outputs
+            .iter()
+            .enumerate()
+            .map(|(i, stats)| {
+                format!(
+                    "{} {} ({} frame(s) presented)",
+                    devices.get(i).map(String::as_str).unwrap_or("output"),
+                    stats.phase().label(),
+                    stats.presented.load(Ordering::Relaxed)
+                )
+            })
+            .collect();
+        format!(
+            "gpu_display: {marker} no output presented a frame and no output thread \
+             advanced its frame loop for {stuck}s, so the stage is wedged inside its own \
+             handshake rather than in the display path. Threads: {phases}. {quiesce} \
+             configure(s) skipped for a busy sibling, {turn} for a sibling that would not \
+             release the configure turn. Zero FPS with no watchdog live dump, no TDR and no \
+             WHEA on a responsive machine is a TOOL failure: the run grades INCONCLUSIVE and \
+             proves nothing about this hardware in either direction. Re-run the stage; do \
+             not read this as a display fault.",
+            marker = crate::STRESSOR_HANG_MARKER,
+            stuck = stuck_for.as_secs(),
+            phases = phases.join(", "),
+            quiesce = shared.quiesce_timeouts.load(Ordering::Relaxed),
+            turn = shared.turn_timeouts.load(Ordering::Relaxed),
+        )
+    }
+
     /// Aggregates the output threads into ticks and decides when the stage ends.
     #[allow(clippy::too_many_arguments)]
     fn tick_loop(
@@ -495,11 +840,13 @@ mod windows_impl {
         dumps: &mut LiveDumpWatcher,
         dumps_available: bool,
         attached: usize,
+        devices: &[String],
     ) {
         let mut last_tick = Instant::now();
         let mut last_scan = Instant::now();
         let mut last_presented: u64 = 0;
         let mut watchdog_dumps: u64 = 0;
+        let mut watchdog = Watchdog::new(Instant::now());
 
         while !cancel.load(Ordering::Relaxed) {
             std::thread::sleep(Duration::from_millis(50));
@@ -544,6 +891,20 @@ mod windows_impl {
                         .to_string(),
                     errors,
                 );
+                return;
+            }
+            // Ranked below every signal above: those name the machine, this
+            // names the tool, and the machine's word comes first.
+            if let Some(reason) = shared.hang() {
+                emit_fatal_tick(tx, started_at, reason, errors);
+                return;
+            }
+            let now = Instant::now();
+            let progress = shared.total(|o| o.progress.load(Ordering::Relaxed));
+            if watchdog.wedged(presented, progress, now, started_at.elapsed()) {
+                let reason = hang_report(shared, devices, watchdog.stuck_for(now));
+                log::error!("[stress-kit/gpu_display] {reason}");
+                emit_fatal_tick(tx, started_at, reason, errors);
                 return;
             }
 
@@ -635,6 +996,8 @@ mod windows_impl {
         }
 
         let stats = &shared.outputs[index];
+        stats.set_phase(Phase::Starting);
+        let _phase_done = PhaseDone(stats);
         let window = match OutputWindow::new(&output) {
             Ok(w) => w,
             Err(e) => {
@@ -656,6 +1019,11 @@ mod windows_impl {
                 return;
             }
         };
+        // Every bounded wait in the handshake pumps through this, so a thread
+        // that is waiting still answers the message broadcast a sibling's mode
+        // change is blocked on.
+        let pump = || window.pump();
+        let octx = OutputCtx { stats, pump: &pump };
 
         let mut surface = match create_surface(ctx, raw_handle) {
             Ok(s) => s,
@@ -699,7 +1067,7 @@ mod windows_impl {
         };
         // The first configure creates the swapchain; presenting siblings park
         // so the build cannot race their submissions.
-        if !configure_initial(&surface, ctx, &config, shared, stop) {
+        if !configure_initial(&surface, ctx, &config, shared, &octx, stop) {
             shared.latch_fatal(format!(
                 "gpu_display: inconclusive - the swapchain on {} could not be configured while \
                  sibling outputs were presenting; that output's present path never ran",
@@ -754,7 +1122,6 @@ mod windows_impl {
         });
 
         let mut modes = ModeCycle::new(&output, policy);
-        let mut guard = ModeGuard::new();
         let started = Instant::now();
         let mut last_present = Instant::now();
         let mut last_reconfigure = Instant::now();
@@ -765,13 +1132,42 @@ mod windows_impl {
         let mut recreate_failures: u32 = 0;
         let mut stall_reported = false;
         let mut present_mode_index = 0usize;
+        // Set when the handshake turns a configure away, cleared by any
+        // configure that runs or any frame that presents. Unbroken starvation
+        // means a sibling is wedged holding the turn, which is the stressor
+        // blocking itself and must never be filed as a present stall.
+        let mut starved_since: Option<Instant> = None;
+        // Whether the handshake got in the way at all since the last presented
+        // frame. Separate from `starved_since` so a starvation that alternates
+        // with the occasional successful configure — which keeps resetting that
+        // timer — still classifies the stall as the tool and not the display.
+        let mut starved_seen = false;
 
         // Frame-loop membership for the quiesce handshake; setup never submits.
         let _submit = SubmitGuard::enter(&shared.submitters);
+        let wedge_after = debug_wedge_frame(index);
 
         while !stop.load(Ordering::Relaxed) {
+            if let Some(frame) = wedge_after
+                && stats.presented.load(Ordering::Relaxed) >= frame
+            {
+                log::error!(
+                    "[stress-kit/gpu_display] STRESSKIT_DISPLAY_DEBUG_WEDGE: wedging {} on \
+                     purpose after {frame} frame(s); this thread stops advancing and stops \
+                     pumping, which is what the watchdog has to catch",
+                    output.device
+                );
+                loop {
+                    std::thread::sleep(Duration::from_secs(1));
+                }
+            }
+            // Bumped every pass, before anything that can block: the watchdog
+            // reads it to tell a present that stops returning frames from a
+            // thread that stops running at all.
+            stats.progress.fetch_add(1, Ordering::Relaxed);
+            stats.set_phase(Phase::Pumping);
             window.pump();
-            shared.park_if_paused(stop);
+            shared.park_if_paused(&octx, stop);
 
             let elapsed = started.elapsed().as_secs_f32();
             ctx.queue.write_buffer(
@@ -787,12 +1183,16 @@ mod windows_impl {
                 }),
             );
 
+            stats.set_phase(Phase::Acquiring);
             match surface.get_current_texture() {
                 wgpu::CurrentSurfaceTexture::Success(frame)
                 | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                    stats.set_phase(Phase::Presenting);
                     draw_and_present(ctx, &pipeline, &bind_group, frame);
                     stats.presented.fetch_add(1, Ordering::Relaxed);
                     last_present = Instant::now();
+                    starved_since = None;
+                    starved_seen = false;
                     if stall_reported {
                         stall_reported = false;
                         stats.stalled.store(false, Ordering::Relaxed);
@@ -818,10 +1218,16 @@ mod windows_impl {
                     }
                     // Left outdated when the siblings stay busy; retried next frame.
                     if shared
-                        .with_quiesce(stop, true, || surface.configure(&ctx.device, &config))
+                        .with_quiesce(&octx, stop, true, || {
+                            surface.configure(&ctx.device, &config)
+                        })
                         .is_some()
                     {
                         expect_outdated_until = Instant::now() + SELF_INFLICTED_GRACE;
+                        starved_since = None;
+                    } else {
+                        starved_since.get_or_insert_with(Instant::now);
+                        starved_seen = true;
                     }
                 }
                 wgpu::CurrentSurfaceTexture::Lost => {
@@ -835,7 +1241,9 @@ mod windows_impl {
                             surface = fresh;
                             // A fresh surface stays unconfigured until the siblings
                             // go quiet; the next frame reports Outdated and retries.
-                            shared.with_quiesce(stop, true, || surface.configure(&ctx.device, &config));
+                            shared.with_quiesce(&octx, stop, true, || {
+                                surface.configure(&ctx.device, &config)
+                            });
                             expect_outdated_until = Instant::now() + SELF_INFLICTED_GRACE;
                             recreate_failures = 0;
                         }
@@ -873,14 +1281,56 @@ mod windows_impl {
                 return;
             }
 
+            // Ahead of the stall check and on a shorter fuse: an output that
+            // cannot get the stage's own configure turn is being starved by a
+            // sibling, and reporting that as a stalled present queue is what
+            // made a tool bug read as a display fault.
+            if let Some(since) = starved_since {
+                let starved = since.elapsed();
+                if starved >= HANG_STARVED {
+                    let holder = shared
+                        .outputs
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| *i != index)
+                        .map(|(i, s)| format!("output {i} {}", s.phase().label()))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    shared.latch_hang(format!(
+                        "gpu_display: {} {} could not take the stage's configure turn for {}s; a \
+                         sibling output thread is holding it ({holder}). This is the stressor \
+                         blocking itself, so the run grades INCONCLUSIVE: it is not evidence \
+                         about the display path in either direction.",
+                        crate::STRESSOR_HANG_MARKER,
+                        output.device,
+                        starved.as_secs()
+                    ));
+                    return;
+                }
+            }
+
             let idle = last_present.elapsed();
             if idle >= STALL_FATAL {
-                shared.latch_fatal(format!(
-                    "gpu_display: no frame has been presented on {} for {}s; the present queue is \
-                     stalled",
-                    output.device,
-                    idle.as_secs()
-                ));
+                if starved_seen {
+                    // The stage's own handshake was in the way during this
+                    // stall, so the present queue is not what this proves.
+                    shared.latch_hang(format!(
+                        "gpu_display: {} no frame has been presented on {} for {}s, and the \
+                         stage's own configure handshake turned this output away during that \
+                         window. The stressor obstructed itself, so the run grades INCONCLUSIVE \
+                         rather than reporting a stalled present queue.",
+                        crate::STRESSOR_HANG_MARKER,
+                        output.device,
+                        idle.as_secs()
+                    ));
+                } else {
+                    shared.latch_fatal(format!(
+                        "gpu_display: no frame has been presented on {} for {}s; the present \
+                         queue is stalled",
+                        output.device,
+                        idle.as_secs()
+                    ));
+                }
                 return;
             }
             if idle >= STALL_WARN && !stall_reported {
@@ -905,18 +1355,27 @@ mod windows_impl {
                     &output,
                     &window,
                     shared,
+                    &octx,
                     stop,
                 );
                 if applied {
                     stats.reconfigures.fetch_add(1, Ordering::Relaxed);
                     expect_outdated_until = Instant::now() + SELF_INFLICTED_GRACE;
+                    starved_since = None;
+                } else {
+                    starved_since.get_or_insert_with(Instant::now);
+                    starved_seen = true;
                 }
             }
 
             if policy != ModeSetPolicy::Off && last_mode_set.elapsed() >= MODE_SET_EVERY {
                 last_mode_set = Instant::now();
                 if let Some((width, height, hz)) = modes.next_mode() {
-                    guard.track(&output.device);
+                    // Registered with the stage before the call, not after:
+                    // `ChangeDisplaySettingsEx` can wedge, and teardown still
+                    // has to put this display back.
+                    shared.touch_mode(&output.device);
+                    stats.set_phase(Phase::ModeSetting);
                     match apply_mode(&output.device, width, height, hz) {
                         Ok(()) => {
                             stats.mode_sets.fetch_add(1, Ordering::Relaxed);
@@ -927,7 +1386,9 @@ mod windows_impl {
                             window.move_to(output.x, output.y, width, height);
                             config.width = width.max(1);
                             config.height = height.max(1);
-                            shared.with_quiesce(stop, true, || surface.configure(&ctx.device, &config));
+                            shared.with_quiesce(&octx, stop, true, || {
+                                surface.configure(&ctx.device, &config)
+                            });
                             expect_outdated_until = Instant::now() + SELF_INFLICTED_GRACE;
                         }
                         Err(e) => shared.set_warn(format!("gpu_display: {e}")),
@@ -935,9 +1396,27 @@ mod windows_impl {
                 }
             }
         }
+    }
 
-        // `guard` drops before `window` and `surface`, restoring the mode
-        // first — on every return above as well.
+    /// Reads `STRESSKIT_DISPLAY_DEBUG_WEDGE=<output>[:<frames>]`, which wedges
+    /// one output thread on purpose so the watchdog, the terminal outcome and
+    /// the teardown can be verified on real multi-output hardware instead of
+    /// only when the bug recurs. `None` unless the variable names this output.
+    fn debug_wedge_frame(index: usize) -> Option<u64> {
+        let raw = std::env::var("STRESSKIT_DISPLAY_DEBUG_WEDGE").ok()?;
+        let (target, frames) = raw.split_once(':').unwrap_or((raw.as_str(), "30"));
+        (target.trim().parse::<usize>().ok()? == index)
+            .then(|| frames.trim().parse::<u64>().unwrap_or(30))
+    }
+
+    /// Marks an output finished on every exit path, so the watchdog never
+    /// reports a returned thread as stuck in whatever it was last doing.
+    struct PhaseDone<'a>(&'a OutputStats);
+
+    impl Drop for PhaseDone<'_> {
+        fn drop(&mut self) {
+            self.0.set_phase(Phase::Done);
+        }
     }
 
     /// The instance is built without a display handle, so the surface target
@@ -966,14 +1445,19 @@ mod windows_impl {
         ctx: &Arc<GpuContext>,
         config: &wgpu::SurfaceConfiguration,
         shared: &Shared,
+        octx: &OutputCtx<'_>,
         stop: &AtomicBool,
     ) -> bool {
         for _ in 0..INITIAL_CONFIGURE_ATTEMPTS {
             if stop.load(Ordering::Relaxed) {
                 return false;
             }
+            // Each attempt is progress: bring-up next to saturated CPU lanes
+            // can take several quiesce rounds, and a thread still working
+            // through them is not wedged.
+            octx.stats.progress.fetch_add(1, Ordering::Relaxed);
             if shared
-                .with_quiesce(stop, false, || surface.configure(&ctx.device, config))
+                .with_quiesce(octx, stop, false, || surface.configure(&ctx.device, config))
                 .is_some()
             {
                 return true;
@@ -1034,6 +1518,7 @@ mod windows_impl {
         output: &Output,
         window: &OutputWindow,
         shared: &Shared,
+        octx: &OutputCtx<'_>,
         stop: &AtomicBool,
     ) -> bool {
         if !present_modes.is_empty() {
@@ -1051,7 +1536,7 @@ mod windows_impl {
         config.width = width;
         config.height = height;
         shared
-            .with_quiesce(stop, true, || surface.configure(&ctx.device, config))
+            .with_quiesce(octx, stop, true, || surface.configure(&ctx.device, config))
             .is_some()
     }
 
@@ -1110,6 +1595,18 @@ mod windows_impl {
 
         use super::super::super::gpu_common::GpuHealth;
 
+        /// Nothing to pump in a test: no window is created, so the handshake's
+        /// keep-the-window-alive hook is a no-op.
+        const NO_PUMP: fn() = || {};
+
+        /// Handshake context for a test thread that owns no window.
+        fn test_ctx(stats: &OutputStats) -> OutputCtx<'_> {
+            OutputCtx {
+                stats,
+                pump: &NO_PUMP,
+            }
+        }
+
         /// Fake presenter for the quiesce handshake: enters the frame loop
         /// and parks whenever a configure asks, without touching any GPU.
         fn spawn_presenter(
@@ -1119,9 +1616,11 @@ mod windows_impl {
             std::thread::Builder::new()
                 .name("test-presenter".into())
                 .spawn(move || {
+                    let stats = OutputStats::default();
+                    let ctx = test_ctx(&stats);
                     let _submit = SubmitGuard::enter(&shared.submitters);
                     while !stop.load(Ordering::Relaxed) {
-                        shared.park_if_paused(&stop);
+                        shared.park_if_paused(&ctx, &stop);
                         std::thread::sleep(Duration::from_micros(50));
                     }
                 })
@@ -1146,8 +1645,11 @@ mod windows_impl {
             let b = spawn_presenter(shared.clone(), stop.clone());
             await_submitters(&shared, 2);
 
-            let parked_during =
-                shared.with_quiesce(&stop, false, || shared.parked.load(Ordering::SeqCst));
+            let stats = OutputStats::default();
+            let ctx = test_ctx(&stats);
+            let parked_during = shared.with_quiesce(&ctx, &stop, false, || {
+                shared.parked.load(Ordering::SeqCst)
+            });
             assert_eq!(
                 parked_during,
                 Some(2),
@@ -1168,8 +1670,10 @@ mod windows_impl {
             // Live threads that have not reached their frame loop.
             shared.threads_live.store(3, Ordering::SeqCst);
             let stop = AtomicBool::new(false);
+            let stats = OutputStats::default();
+            let ctx = test_ctx(&stats);
             let started = Instant::now();
-            assert_eq!(shared.with_quiesce(&stop, false, || true), Some(true));
+            assert_eq!(shared.with_quiesce(&ctx, &stop, false, || true), Some(true));
             assert!(
                 started.elapsed() < QUIESCE_TIMEOUT,
                 "configure waited on siblings that cannot park"
@@ -1183,7 +1687,9 @@ mod windows_impl {
             let shared = Arc::new(Shared::default());
             let _submit = SubmitGuard::enter(&shared.submitters);
             let stop = AtomicBool::new(false);
-            assert_eq!(shared.with_quiesce(&stop, true, || 7), Some(7));
+            let stats = OutputStats::default();
+            let ctx = test_ctx(&stats);
+            assert_eq!(shared.with_quiesce(&ctx, &stop, true, || 7), Some(7));
         }
 
         /// A sibling that never parks bounds the configure instead of
@@ -1204,8 +1710,15 @@ mod windows_impl {
             };
             await_submitters(&shared, 1);
 
-            assert_eq!(shared.with_quiesce(&stop, false, || ()), None);
+            let stats = OutputStats::default();
+            let ctx = test_ctx(&stats);
+            assert_eq!(shared.with_quiesce(&ctx, &stop, false, || ()), None);
             assert_eq!(shared.quiesce_timeouts.load(Ordering::Relaxed), 1);
+            assert_eq!(
+                shared.turn_timeouts.load(Ordering::Relaxed),
+                0,
+                "a busy sibling was misreported as a held configure turn"
+            );
 
             stop.store(true, Ordering::SeqCst);
             hot.join().unwrap();
@@ -1236,9 +1749,11 @@ mod windows_impl {
                         while !release.load(Ordering::SeqCst) {
                             std::thread::sleep(Duration::from_micros(20));
                         }
+                        let stats = OutputStats::default();
+                        let ctx = test_ctx(&stats);
                         let _submit = SubmitGuard::enter(&shared.submitters);
                         while !stop.load(Ordering::Relaxed) {
-                            shared.park_if_paused(&stop);
+                            shared.park_if_paused(&ctx, &stop);
                             submitted.store(true, Ordering::SeqCst);
                             std::thread::sleep(Duration::from_micros(50));
                         }
@@ -1248,7 +1763,9 @@ mod windows_impl {
 
             // No submitters yet, so this configure takes the fast path. The
             // sibling is released mid-configure and must park, not submit.
-            let submitted_mid_configure = shared.with_quiesce(&stop, false, || {
+            let stats = OutputStats::default();
+            let ctx = test_ctx(&stats);
+            let submitted_mid_configure = shared.with_quiesce(&ctx, &stop, false, || {
                 release.store(true, Ordering::SeqCst);
                 let deadline = Instant::now() + Duration::from_secs(5);
                 loop {
@@ -1278,6 +1795,220 @@ mod windows_impl {
                 "entrant never submitted after the configure finished"
             );
             assert_eq!(shared.parked.load(Ordering::SeqCst), 0, "a park was leaked");
+        }
+
+        /// The park bound must outlast the watchdog, or a sibling parked for a
+        /// wedged configure resumes and submits into a half-built swapchain in
+        /// the window between the two — the crash the handshake exists to stop.
+        #[test]
+        fn a_parked_sibling_never_outlives_the_watchdog() {
+            assert!(
+                QUIESCE_PARK_MAX > WATCHDOG_STALL,
+                "the watchdog must end a wedged stage before a parked sibling gives up"
+            );
+            assert!(
+                HANG_STARVED < WATCHDOG_STALL,
+                "the starved output should report before the aggregate watchdog, so the \
+                 message can name which sibling is holding the turn"
+            );
+            assert!(
+                TURN_WAIT < HANG_STARVED,
+                "a turn wait longer than the starvation fuse can never be observed as starvation"
+            );
+        }
+
+        /// The hang shape from service order 2151936: one output thread holds
+        /// the configure turn and never gives it back (a `Surface::configure`
+        /// that does not return), and every sibling needs it.
+        ///
+        /// Before the fix, `with_quiesce` took the turn with a blocking
+        /// `lock()`, so the siblings piled up on the mutex *below* their frame
+        /// loop's stall check: nothing could report, `run` blocked joining
+        /// them, and the child process outlived its own belt. The wait is now
+        /// bounded, so a starved sibling always comes back and can be graded.
+        #[test]
+        fn a_held_configure_turn_never_blocks_a_sibling_indefinitely() {
+            let shared = Arc::new(Shared::default());
+            let stop = Arc::new(AtomicBool::new(false));
+            let holding = Arc::new(AtomicBool::new(false));
+
+            // Stands in for the wedged configure: takes the turn, keeps it.
+            let wedged = {
+                let shared = shared.clone();
+                let stop = stop.clone();
+                let holding = holding.clone();
+                std::thread::Builder::new()
+                    .name("test-wedged-configure".into())
+                    .spawn(move || {
+                        let stats = OutputStats::default();
+                        let ctx = test_ctx(&stats);
+                        let _turn = shared.take_turn(&ctx, &stop).expect("turn was free");
+                        holding.store(true, Ordering::SeqCst);
+                        while !stop.load(Ordering::Relaxed) {
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                    })
+                    .expect("spawn wedged configurer")
+            };
+
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !holding.load(Ordering::SeqCst) {
+                assert!(Instant::now() < deadline, "the turn was never taken");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+
+            let stats = OutputStats::default();
+            let ctx = test_ctx(&stats);
+            let started = Instant::now();
+            let out = shared.with_quiesce(&ctx, &stop, true, || unreachable!());
+            let waited = started.elapsed();
+
+            assert_eq!(out, None, "a configure ran while the turn was held elsewhere");
+            assert!(
+                waited < TURN_WAIT + Duration::from_secs(2),
+                "the sibling waited {waited:?} on a held turn, so it never reaches its own \
+                 stall check"
+            );
+            assert_eq!(
+                shared.turn_timeouts.load(Ordering::Relaxed),
+                1,
+                "a held turn was not counted as one"
+            );
+
+            stop.store(true, Ordering::SeqCst);
+            wedged.join().unwrap();
+        }
+
+        /// Frozen frames with frozen frame loops on two outputs: the stage is
+        /// wedged in itself, so the watchdog fires and the report says so.
+        #[test]
+        fn watchdog_fires_when_two_outputs_stop_advancing() {
+            let mut shared = Shared::default();
+            shared.outputs.resize_with(2, OutputStats::default);
+            let shared = Arc::new(shared);
+            shared.outputs[0].set_phase(Phase::Configuring);
+            shared.outputs[1].set_phase(Phase::AwaitingTurn);
+            shared.turn_timeouts.store(4, Ordering::Relaxed);
+
+            let start = Instant::now();
+            let stall = Duration::from_millis(120);
+            let mut watchdog = Watchdog::with_limits(start, stall, Duration::from_millis(0));
+
+            // Both outputs presented, then stopped: frames and loops frozen.
+            assert!(!watchdog.wedged(20, 40, start, Duration::from_secs(60)));
+            let fired = watchdog.wedged(20, 40, start + stall, Duration::from_secs(60));
+            assert!(fired, "the watchdog never fired on a fully frozen stage");
+
+            let devices = [r"\\.\DISPLAY1".to_string(), r"\\.\DISPLAY2".to_string()];
+            let report = hang_report(&shared, &devices, stall);
+
+            assert!(
+                report.contains(crate::STRESSOR_HANG_MARKER),
+                "the report carries no stressor_hang marker: {report}"
+            );
+            assert!(
+                !report.to_ascii_lowercase().contains("inconclusive -"),
+                "the hang marker must not be shadowed by the generic inconclusive one: {report}"
+            );
+            assert!(report.contains("DISPLAY1"), "{report}");
+            assert!(report.contains("inside Surface::configure"), "{report}");
+            assert!(report.contains("waiting for the configure turn"), "{report}");
+            assert!(
+                report.contains("TOOL failure"),
+                "the report does not say whose fault this is: {report}"
+            );
+        }
+
+        /// The distinction the whole verdict rests on: loops still running with
+        /// no frames coming out is a present stall, which IS evidence about the
+        /// display path. The watchdog must stay out of it and leave that to the
+        /// per-output stall check.
+        #[test]
+        fn a_present_stall_with_live_threads_is_not_a_hang() {
+            let start = Instant::now();
+            let stall = Duration::from_millis(120);
+            let mut watchdog = Watchdog::with_limits(start, stall, Duration::from_millis(0));
+
+            assert!(!watchdog.wedged(20, 40, start, Duration::from_secs(60)));
+            // Frames frozen at 20, loops still turning.
+            for step in 1..8u32 {
+                let at = start + stall * step;
+                assert!(
+                    !watchdog.wedged(20, 40 + step as u64 * 100, at, Duration::from_secs(60)),
+                    "the watchdog claimed a hang while the frame loops were still advancing"
+                );
+            }
+        }
+
+        /// Warmup covers adapter bring-up and the first swapchain on every
+        /// output; a stage that has not started yet is not wedged.
+        #[test]
+        fn the_watchdog_stays_quiet_during_warmup() {
+            let start = Instant::now();
+            let stall = Duration::from_millis(50);
+            let warmup = Duration::from_secs(20);
+            let mut watchdog = Watchdog::with_limits(start, stall, warmup);
+
+            assert!(!watchdog.wedged(0, 0, start + stall * 4, Duration::from_secs(3)));
+            assert!(
+                watchdog.wedged(0, 0, start + stall * 8, warmup),
+                "the watchdog never armed after warmup"
+            );
+        }
+
+        /// An output starved of the configure turn must file a hang, not the
+        /// present-stall message: `no frame has been presented ... the present
+        /// queue is stalled` on a healthy machine is exactly what was read as a
+        /// hardware fault.
+        #[test]
+        fn starvation_latches_a_hang_and_names_the_holder() {
+            let mut shared = Shared::default();
+            shared.outputs.resize_with(2, OutputStats::default);
+            let shared = Arc::new(shared);
+            shared.outputs[1].set_phase(Phase::Configuring);
+
+            assert!(shared.hang().is_none());
+            shared.latch_hang(format!(
+                "gpu_display: {} {} could not take the stage's configure turn for {}s; a sibling \
+                 output thread is holding it (output 1 {}).",
+                crate::STRESSOR_HANG_MARKER,
+                r"\\.\DISPLAY1",
+                HANG_STARVED.as_secs(),
+                shared.outputs[1].phase().label()
+            ));
+
+            let latched = shared.hang().expect("a hang was not latched");
+            assert!(latched.contains(crate::STRESSOR_HANG_MARKER), "{latched}");
+            assert!(latched.contains("inside Surface::configure"), "{latched}");
+            assert!(
+                !latched.contains("present queue is stalled"),
+                "a starved output filed itself as a display-path stall: {latched}"
+            );
+            // A second detector must not overwrite the first report.
+            shared.latch_hang(format!(
+                "gpu_display: {} a later report",
+                crate::STRESSOR_HANG_MARKER
+            ));
+            assert_eq!(shared.hang().as_deref(), Some(latched.as_str()));
+        }
+
+        /// Teardown must not wait on the thread that is why teardown is
+        /// happening: the bounded join is what lets the stage report at all.
+        #[test]
+        fn teardown_gives_up_on_a_thread_that_will_not_stop() {
+            let shared = Arc::new(Shared::default());
+            shared.threads_live.store(2, Ordering::SeqCst);
+
+            let started = Instant::now();
+            let stuck = await_threads(&shared, Duration::from_millis(200));
+            assert_eq!(stuck, 2, "a wedged thread was reported as stopped");
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "teardown waited on threads that were never coming back"
+            );
+
+            shared.threads_live.store(0, Ordering::SeqCst);
+            assert_eq!(await_threads(&shared, Duration::from_secs(5)), 0);
         }
 
         /// The coverage note's state machine: complaint while a shortfall
@@ -1445,14 +2176,17 @@ mod windows_impl {
                         let config = surface
                             .get_default_config(&ctx.adapter, out_a.width, out_a.height)
                             .expect("config A");
+                        let stats = OutputStats::default();
+                        let pump = || window.pump();
+                        let octx = OutputCtx { stats: &stats, pump: &pump };
                         assert!(
-                            configure_initial(&surface, &ctx, &config, &shared, &stop),
+                            configure_initial(&surface, &ctx, &config, &shared, &octx, &stop),
                             "first configure of surface A never ran"
                         );
                         let _submit = SubmitGuard::enter(&shared.submitters);
                         while !stop.load(Ordering::Relaxed) {
                             window.pump();
-                            shared.park_if_paused(&stop);
+                            shared.park_if_paused(&octx, &stop);
                             match surface.get_current_texture() {
                                 wgpu::CurrentSurfaceTexture::Success(frame)
                                 | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
@@ -1482,8 +2216,11 @@ mod windows_impl {
             let config_b = surface_b
                 .get_default_config(&ctx.adapter, out_b.width, out_b.height)
                 .expect("config B");
+            let stats_b = OutputStats::default();
+            let pump_b = || window_b.pump();
+            let octx_b = OutputCtx { stats: &stats_b, pump: &pump_b };
             assert!(
-                configure_initial(&surface_b, &ctx, &config_b, &shared, &stop),
+                configure_initial(&surface_b, &ctx, &config_b, &shared, &octx_b, &stop),
                 "surface B's first configure never ran while A was presenting"
             );
 
@@ -1493,7 +2230,7 @@ mod windows_impl {
                 let until = Instant::now() + Duration::from_secs(1);
                 while Instant::now() < until {
                     window_b.pump();
-                    shared.park_if_paused(&stop);
+                    shared.park_if_paused(&octx_b, &stop);
                     match surface_b.get_current_texture() {
                         wgpu::CurrentSurfaceTexture::Success(frame)
                         | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {

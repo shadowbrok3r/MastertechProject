@@ -13,6 +13,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
+/// How long teardown gets after the belt fires before this process is ended
+/// the hard way. A wedged output thread cannot be joined, so a cooperative
+/// belt alone once left the child alive for an operator to kill by hand.
+/// Exceeds the stressor's own join and mode-restore bounds.
+const HARD_EXIT_GRACE: Duration = Duration::from_secs(20);
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--help" || a == "-h") {
@@ -48,12 +54,23 @@ fn main() {
         let (tx, rx) = mpsc::channel();
         let started_at = Instant::now();
 
-        // Self-terminate if the parent goes away without stopping us.
+        // Self-terminate if the parent goes away without stopping us, and end
+        // the process outright if the load will not unwind: exiting is what
+        // frees the fullscreen surfaces and returns the app-owned desktop modes.
         if let Some(secs) = max_secs {
             let belt = cancel.clone();
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_secs(secs));
                 belt.store(true, Ordering::SeqCst);
+                std::thread::sleep(HARD_EXIT_GRACE);
+                eprintln!(
+                    "stresskit-display: still running {}s after the belt fired; exiting hard",
+                    HARD_EXIT_GRACE.as_secs()
+                );
+                // Zero: the verdict travelled with the metrics stream, and a
+                // non-zero exit is read by the parent as a miniport reset that
+                // killed the presenting process — a hardware fault this is not.
+                std::process::exit(0);
             });
         }
 

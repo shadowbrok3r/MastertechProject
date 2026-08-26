@@ -378,6 +378,14 @@ fn variant_renames(shape: &'static facet::Shape) -> impl Iterator<Item = &'stati
     variants.iter().map(|v| v.rename.unwrap_or(v.name))
 }
 
+/// Marker a stressor stamps on a `Metrics.last_error` reporting that it wedged
+/// itself: no work, no progress, and no bugcheck, watchdog live dump, TDR or
+/// WHEA beside it. stress-runner matches on this to grade the run inconclusive
+/// instead of failing the machine for a tool defect, so both sides read it from
+/// here — a reworded message that dropped the marker would silently be graded
+/// as a hardware fault again.
+pub const STRESSOR_HANG_MARKER: &str = "stressor_hang -";
+
 /// Runs the display-path load on the calling thread, sending ticks to `tx`.
 ///
 /// This is the entry point the out-of-process host (`stresskit-display`) uses.

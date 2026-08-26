@@ -231,6 +231,31 @@ impl crate::app_state::SharedContext {
                 }
             });
 
+            // The browser build pulls the completed set in `MtechServer2.0`'s
+            // webworker; the desktop has no equivalent, so without this its only
+            // source is the tab-click fetch, which the live stream disables as
+            // soon as one task completes.
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let completed_tx = self.initial_tasks_tx.clone();
+                let done_tx = self.completed_load_tx.clone();
+                self.completed_pending_for = Some(store);
+                PlatformSpawner::spawn(async move {
+                    let result = database::schema::utilities::get_completed_tasks_for_store(
+                        completed_tx,
+                        store.as_str().to_string(),
+                    )
+                    .await;
+                    if let Err(e) = &result {
+                        log::error!("get_completed_tasks_for_store failed: {e:?}");
+                    }
+                    let _ = done_tx.try_send((store, result.is_ok()));
+                });
+            }
+            // Nothing is armed on wasm: the browser's webworker usually
+            // delivers the set, but it is skipped when there is no JWT, and the
+            // tab-click fetch is the only fallback.
+
             PlatformSpawner::spawn(async move {
                 if let Err(e) = get_qcs().await {
                     log::error!("get_qcs failed: {e:?}");
@@ -426,6 +451,9 @@ impl crate::app_state::SharedContext {
                 self.web_console_layout.clients.clear();
                 self.kill_live_streams();
                 self.force_data_refetch = true;
+                self.completed_loaded_for = None;
+                self.completed_pending_for = None;
+                self.live_task_updates.clear();
                 self.load_data(ctx, &user);
                 // The live stream only carries changes, so the list is filled
                 // by this snapshot under the new scope.
@@ -500,6 +528,9 @@ impl crate::app_state::SharedContext {
                         web_time::Duration::from_secs(300);
                     let now = web_time::Instant::now();
                     self.kill_live_streams();
+                    // The set only means "a live event beat the in-flight
+                    // snapshot"; killing the stream ends that guarantee.
+                    self.live_task_updates.clear();
                     let refetch_due = self
                         .last_force_refetch_at
                         .map(|t| now.duration_since(t) >= REFETCH_MIN_INTERVAL)
@@ -509,6 +540,9 @@ impl crate::app_state::SharedContext {
                     }
                     if socket_was_down || refetch_due {
                         self.force_data_refetch = true;
+                        self.completed_loaded_for = None;
+                        self.completed_pending_for = None;
+                        self.live_task_updates.clear();
                         self.last_force_refetch_at = Some(now);
                     }
                     if let Some(user) = self.current_user.clone() {
@@ -625,6 +659,19 @@ impl crate::app_state::SharedContext {
                 self.end_admin_sessions("signed out");
                 self.kill_live_streams();
                 self.current_user = None;
+                self.tasks.clear();
+                self.task_index.clear();
+                self.store_users.clear();
+                self.completed_loaded_for = None;
+                self.completed_pending_for = None;
+                self.live_task_updates.clear();
+                // Both are built once and keyed off the signed-out identity:
+                // `layout_configs` closures capture that user's statuses and
+                // column order, and each `TaskLayout` holds the `User` it was
+                // constructed with. Cleared here, both rebuild on the next
+                // frame from the new session.
+                self.task_layouts.clear();
+                self.layout_configs = None;
                 let toast = &mut self.toasts;
                 let error_toast = crate::ui_tools::toasts::Toast {
                     kind: crate::ui_tools::toasts::ToastKind::Error,

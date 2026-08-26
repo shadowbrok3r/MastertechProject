@@ -1,3 +1,6 @@
+// Release builds are GUI-subsystem; `console` reattaches a launching terminal or allocates one.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use displays::app_state::{AppState, MainPages};
 use log::{error, info};
 
@@ -7,6 +10,9 @@ extern crate winapi;
 mod terminal_mode;
 #[cfg(feature = "skia-render")]
 mod software_gui;
+pub mod console;
+pub mod logging;
+pub mod user_notice;
 pub mod app_state;
 mod filesystem;
 pub mod pages;
@@ -88,7 +94,8 @@ impl eframe::App for app_state::MasterTechApp {
 
         // Read-and-clear the previous frame's frost result; skipping frames lets a stale
         // Composited mask a later Failed.
-        displays::ui_tools::glass_backdrop::poll_outcome();
+        let frost = displays::ui_tools::glass_backdrop::poll_outcome();
+        log_frame_health(ctx, frost);
 
         self.receive_logic(ctx, frame);
 
@@ -220,24 +227,6 @@ fn env_logger_with_dependency_filters() -> env_logger::Builder {
     builder
 }
 
-fn output_log_path() -> std::path::PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("output.log")))
-        .unwrap_or_else(|| std::path::PathBuf::from("output.log"))
-}
-
-#[cfg(target_os = "windows")]
-fn attach_parent_console() {
-    use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
-    unsafe {
-        let _ = AttachConsole(ATTACH_PARENT_PROCESS);
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-fn attach_parent_console() {}
-
 fn stderr_logger() -> Box<dyn log::Log + 'static> {
     Box::new(
         env_logger_with_dependency_filters()
@@ -270,14 +259,65 @@ fn tui_aware(inner: Box<dyn log::Log + 'static>) -> Box<dyn log::Log + 'static> 
     Box::new(TuiAware(inner))
 }
 
-fn file_logger() -> Box<dyn log::Log + 'static> {
-    let log_path = output_log_path();
-    Box::new(simplelog::WriteLogger::new(
-        log::LevelFilter::Trace,
-        simplelog::Config::default(),
-        std::fs::File::create(&log_path)
-            .unwrap_or_else(|e| panic!("create {}: {e}", log_path.display())),
-    ))
+/// Record what the render loop is doing, so a window that shows nothing still leaves evidence.
+///
+/// Logged on the first frames and then at a slow heartbeat: the viewport egui is laying out into,
+/// and the previous frame's frost result. A blank client area with frames running and
+/// `frost=Failed` says the grab-pass is at fault; a degenerate `viewport_rect` says it is not.
+fn log_frame_health(
+    ctx: &egui::Context,
+    frost: Option<displays::ui_tools::glass_backdrop::FrostReport>,
+) {
+    use displays::ui_tools::glass_backdrop;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static FRAMES: AtomicU64 = AtomicU64::new(0);
+
+    let frame = FRAMES.fetch_add(1, Ordering::Relaxed);
+    if frame > 3 && frame % 1800 != 0 {
+        return;
+    }
+    let raw_rect = ctx.input(|i| i.raw.screen_rect);
+    log::info!(
+        "render loop: frame={frame} viewport_rect={:?} raw_screen_rect={raw_rect:?} ppp={} frost={frost:?} glass_available={} glass_disabled={}",
+        ctx.viewport_rect(),
+        ctx.pixels_per_point(),
+        glass_backdrop::is_available(),
+        glass_backdrop::is_disabled(),
+    );
+}
+
+/// What one launch resolved from the command line and the console it was started with.
+#[derive(Clone, Copy, Debug)]
+struct LaunchOptions {
+    /// A console is attached, so logs also go to stderr.
+    mirror_to_console: bool,
+    /// Skip the glow attempt and go straight to the software renderer.
+    force_cpu: bool,
+    /// Switch the glass backdrop-blur pass off for this run.
+    no_frost: bool,
+}
+
+/// Install every log sink for this launch. The file sink is unconditional; stderr is added only
+/// when a console exists, since a GUI-subsystem process without one has no valid stderr handle.
+fn init_logging(extra: Vec<Box<dyn log::Log + 'static>>, opts: LaunchOptions, mode: &str) {
+    let mut loggers = extra;
+    if opts.mirror_to_console {
+        loggers.push(tui_aware(stderr_logger()));
+    }
+    let file_sink = logging::file_logger();
+    let have_file = file_sink.is_some();
+    if let Some(file) = file_sink {
+        loggers.push(file);
+    }
+    multi_log::MultiLogger::init(loggers, log::Level::Info)
+        .expect("Error initializing multi_logger");
+    logging::log_process_banner(mode);
+    if !have_file {
+        log::error!("no writable log directory (MTECH_LOG_DIR, LOCALAPPDATA, exe dir, temp all failed); this run has no log file");
+    }
+    if opts.no_frost {
+        displays::ui_tools::glass_backdrop::disable("--no-frost on the command line");
+    }
 }
 
 fn start_tui_logger_event_pump() {
@@ -310,28 +350,12 @@ fn tui_drain_logger() -> Box<dyn log::Log + 'static> {
     )
 }
 
-fn init_terminal_mode_logging(log_to_file: bool) {
+fn init_terminal_mode_logging(opts: LaunchOptions) {
     start_tui_logger_event_pump();
     // Before any task spawns: a worker panic must reach the log, not stderr,
     // which the ratatui alternate screen owns.
     mtech_tui::panic_guard::install_hook();
-    if log_to_file {
-        attach_parent_console();
-        multi_log::MultiLogger::init(
-            vec![tui_drain_logger(), tui_aware(stderr_logger()), file_logger()],
-            log::Level::Info,
-        )
-        .expect("Error initializing multi_logger");
-    } else {
-        let drain = tui_logger::Drain::new();
-        env_logger_with_dependency_filters()
-            .format(move |_buf, record| {
-                terminal_mode::data::log_capture::capture_record(record);
-                Ok(drain.log(record))
-            })
-            .try_init()
-            .expect("Error initializing terminal mode logger");
-    }
+    init_logging(vec![tui_drain_logger()], opts, "terminal");
 }
 
 #[cfg(feature = "skia-render")]
@@ -347,11 +371,11 @@ fn try_software_gui() -> bool {
 
 #[cfg(not(feature = "skia-render"))]
 fn try_software_gui() -> bool {
-    error!("egui_skia software renderer not compiled into this build (enable the `skia-render` feature)");
+    error!("no software renderer in this build: the `skia-render` feature is off, so the GPU -> software -> terminal ladder has no middle rung (see Mastertech4.0/BUILD.md)");
     false
 }
 
-async fn run_gui(log_to_file: bool, force_cpu: bool) -> eframe::Result<()> {
+async fn run_gui(opts: LaunchOptions) -> eframe::Result<()> {
     let egui_logger = Box::new(
         displays::ui_tools::egui_logger::builder()
             .add_blacklist("evtx::evtx_chunk")
@@ -361,23 +385,18 @@ async fn run_gui(log_to_file: bool, force_cpu: bool) -> eframe::Result<()> {
     start_tui_logger_event_pump();
     // This path can fall back to terminal mode, so it needs the same guarantees.
     mtech_tui::panic_guard::install_hook();
-    let mut loggers: Vec<Box<dyn log::Log + 'static>> =
-        vec![egui_logger, tui_drain_logger()];
-    if log_to_file {
-        attach_parent_console();
-        loggers.push(tui_aware(stderr_logger()));
-        loggers.push(file_logger());
-        eprintln!("Mastertech logging to {}", output_log_path().display());
-    }
-    multi_log::MultiLogger::init(loggers, log::Level::Info)
-        .expect("Error initializing multi_logger");
+    init_logging(vec![egui_logger, tui_drain_logger()], opts, "gui");
 
     // A stale job the registry still calls running belongs to a dead process.
     remote_exec::recover_on_start();
 
     // GPU (glow) first, then the egui_skia software renderer, then terminal mode.
-    let gui_ok = if force_cpu {
-        log::info!("--cpu/--software set; forcing the egui_skia software renderer");
+    let gui_ok = if opts.force_cpu {
+        if cfg!(feature = "skia-render") {
+            log::info!("--cpu/--software set; forcing the egui_skia software renderer");
+        } else {
+            error!("--cpu/--software requested, but this build ships no software renderer");
+        }
         try_software_gui()
     } else {
         let eframe_app = eframe::run_native(
@@ -410,6 +429,16 @@ async fn run_gui(log_to_file: bool, force_cpu: bool) -> eframe::Result<()> {
         std::process::exit(0);
     } else {
         error!("no GUI could start; switching to terminal mode");
+        let detail = if cfg!(feature = "skia-render") {
+            "Neither the GPU nor the software renderer could start."
+        } else {
+            "The GPU renderer could not start and this build has no software renderer."
+        };
+        user_notice::gui_startup_failed(detail, logging::active_log_path());
+        // ratatui writes to `io::stdout()`, which is invalid until a console exists.
+        if !console::ensure_console() {
+            error!("terminal mode has no console to draw on; nothing further can be shown");
+        }
         if let Err(e) = terminal_mode::run_terminal_mode().await {
             error!("Error running terminal app: {e:?}");
         }
@@ -420,6 +449,10 @@ async fn run_gui(log_to_file: bool, force_cpu: bool) -> eframe::Result<()> {
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
+
+    // Adopt the launching terminal's console, if there is one. Never allocates, so a double-click
+    // opens no stray window; terminal mode allocates later when this found nothing.
+    let console_attached = console::attach_parent();
 
     // Correct a stale clock (Windows PE boots ~years in the past) before any TLS
     // handshake, or rustls rejects valid certs as "not valid yet".
@@ -460,7 +493,7 @@ async fn main() -> eframe::Result<()> {
             clap::Arg::new("log")
                 .short('l')
                 .long("log")
-                .help("Also write logs to output.log beside the exe, and mirror to cmd when launched from a console")
+                .help("Accepted for compatibility; file logging is always on (see --help for the path)")
                 .action(clap::ArgAction::SetTrue),
         )
         .arg(
@@ -483,13 +516,19 @@ async fn main() -> eframe::Result<()> {
                 .help("Force the egui_skia software (CPU) renderer, skipping the GPU attempt")
                 .action(clap::ArgAction::SetTrue),
         )
+        .arg(
+            clap::Arg::new("no-frost")
+                .long("no-frost")
+                .help("Disable the glass backdrop-blur pass (same as setting MTECH_NO_FROST=1)")
+                .action(clap::ArgAction::SetTrue),
+        )
         .get_matches();
 
-    let log_to_file = matches.get_flag("log");
-    if log_to_file {
-        attach_parent_console();
-        eprintln!("Mastertech logging to {}", output_log_path().display());
-    }
+    let opts = LaunchOptions {
+        mirror_to_console: console_attached,
+        force_cpu: matches.get_flag("cpu"),
+        no_frost: matches.get_flag("no-frost"),
+    };
 
     utilities::safe_swap::cleanup_update_leftovers();
 
@@ -505,9 +544,12 @@ async fn main() -> eframe::Result<()> {
     //     they're useless to Claude Desktop anyway.
     //   * No `process::exit(0)` race with eframe's drop path.
     if matches.get_flag("mcp-stdio") {
-        let _ = env_logger_with_dependency_filters()
-        .target(env_logger::Target::Stderr)
-        .try_init();
+        let mut loggers: Vec<Box<dyn log::Log + 'static>> = vec![stderr_logger()];
+        if let Some(file) = logging::file_logger() {
+            loggers.push(file);
+        }
+        let _ = multi_log::MultiLogger::init(loggers, log::Level::Info);
+        logging::log_process_banner("mcp-stdio");
 
         log::info!("Mastertech --mcp-stdio: starting plugin MCP server on stdio (no GUI)");
 
@@ -531,11 +573,16 @@ async fn main() -> eframe::Result<()> {
     }
 
     if matches.get_flag("term") {
-        init_terminal_mode_logging(log_to_file);
+        // ratatui writes to `io::stdout()`, which is invalid until a console exists.
+        let opts = LaunchOptions {
+            mirror_to_console: console::ensure_console(),
+            ..opts
+        };
+        init_terminal_mode_logging(opts);
         let res = terminal_mode::run_terminal_mode().await;
         log::info!("TERM MODE: {res:?}");
     } else {
-        run_gui(log_to_file, matches.get_flag("cpu")).await?;
+        run_gui(opts).await?;
     }
     
     Ok(())

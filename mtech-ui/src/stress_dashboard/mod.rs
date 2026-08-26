@@ -287,7 +287,10 @@ pub(crate) fn result_label(result: RunResult, failure_kind: Option<&str>) -> Str
             _ => "FAIL".to_string(),
         },
         RunResult::Aborted => "ABORTED".to_string(),
-        RunResult::Inconclusive => "INCONCLUSIVE".to_string(),
+        RunResult::Inconclusive => match failure_kind {
+            Some(k) if !k.is_empty() && k != "none" => format!("INCONCLUSIVE ({k})"),
+            _ => "INCONCLUSIVE".to_string(),
+        },
         RunResult::InProgress => "RUNNING".to_string(),
     }
 }

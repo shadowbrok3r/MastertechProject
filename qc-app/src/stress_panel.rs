@@ -926,6 +926,7 @@ impl VerdictPretty for RunVerdict {
             FailureMode::Timeout => "timeout",
             FailureMode::OperatorOverride { .. } => "operator override",
             FailureMode::RailDroop { .. } => "rail droop",
+            FailureMode::StressorHang { .. } => "stressor hung (tool)",
         }
     }
 }

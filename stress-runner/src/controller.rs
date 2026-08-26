@@ -34,7 +34,8 @@ use stress_kit::{
 
 use crate::mapping::{default_target_kind, metric_from_snapshot};
 use crate::rules::{
-    evaluate_stage, is_device_loss_message, is_inconclusive_message, MissingSensor, RuleViolation,
+    evaluate_stage, is_device_loss_message, is_inconclusive_message, is_stressor_hang_message,
+    MissingSensor, RuleViolation,
     StageStats, StageVerdict, VerdictRules,
 };
 use crate::runtime;
@@ -1945,6 +1946,9 @@ struct SummaryAccumulator {
     last_disk_error: Option<String>,
     /// Message of the latest counted inconclusive error.
     last_inconclusive_error: Option<String>,
+    /// First `stressor_hang -` message seen. Feeds no counter: a hung tool is
+    /// not a fault of any component, so it must not reach `had_failure`.
+    hang_reason: Option<String>,
     /// The plan contains a stage that binds a GPU adapter, so the run must end
     /// with adapter evidence in the summary.
     gpu_leg_planned: bool,
@@ -1963,7 +1967,12 @@ impl SummaryAccumulator {
             self.last_inconclusive_error = Some(UNNAMED_ERROR.to_string());
             return;
         }
-        if is_inconclusive_message(msg) && !is_device_loss_message(msg) {
+        // Ahead of every bucket: without this a hang message matches no
+        // component vocabulary and lands in `disk_io_errors`, failing the run
+        // on a disk that was never touched.
+        if is_stressor_hang_message(msg) && !is_device_loss_message(msg) {
+            self.hang_reason.get_or_insert_with(|| msg.to_string());
+        } else if is_inconclusive_message(msg) && !is_device_loss_message(msg) {
             self.inconclusive_errors = self.inconclusive_errors.saturating_add(1);
             self.last_inconclusive_error = Some(msg.to_string());
         } else if is_gpu_error_message(msg) {
@@ -2248,6 +2257,25 @@ impl SummaryAccumulator {
                 DbFinishReason::Cancelled,
                 FailureMode::None,
             )
+        } else if let Some(message) = self
+            .hang_reason
+            .clone()
+            .or_else(|| stage_hang_evidence(&stage_outcomes))
+        {
+            // Below every hardware signal above and below an operator cancel: a
+            // wedged stressor proves nothing, so it can never be the headline
+            // when the machine actually misbehaved. Above the generic
+            // uncertifiable text because it names exactly what went wrong.
+            let reason = if ended_short.is_some() {
+                DbFinishReason::EndedEarly
+            } else {
+                self.scenario_finish.unwrap_or(DbFinishReason::Completed)
+            };
+            (
+                RunResult::Inconclusive,
+                reason,
+                FailureMode::StressorHang { message },
+            )
         } else if let Some(message) = uncertifiable {
             // Ranked below a cancel and the hardware evidence above, which name
             // the run's end more precisely.
@@ -2363,6 +2391,20 @@ fn missing_work_evidence(
 /// summary; per-lane stage summaries carry the work evidence. A clean finish
 /// certifies pass only when a verifying lane measured work — load-only lanes
 /// prove the machine survived but check no results.
+/// The first `stressor_hang -` report any stage recorded. A backstop for the
+/// accumulator's own latch, which only sees a message on the tick that
+/// introduced it: the stage verdict keeps it regardless.
+fn stage_hang_evidence(stage_outcomes: &[StageOutcome]) -> Option<String> {
+    stage_outcomes
+        .iter()
+        .filter_map(|o| o.verdict.as_ref())
+        .flat_map(|v| v.violations.iter())
+        .find_map(|v| match v {
+            RuleViolation::StressorHang { reason } => Some(reason.clone()),
+            _ => None,
+        })
+}
+
 fn concurrent_missing_evidence(stage_outcomes: &[StageOutcome]) -> Option<String> {
     if stage_outcomes.is_empty() {
         return Some(
@@ -2548,6 +2590,10 @@ fn rules_failure_mode(
                         message: reason.clone(),
                     });
                 }
+                // Deliberately not a failure mode. This function's result feeds
+                // `had_failure`, and a hung stressor must grade inconclusive;
+                // the run verdict picks the hang up from `stage_hang_evidence`.
+                RuleViolation::StressorHang { .. } => {}
             }
         }
     }
@@ -3026,6 +3072,106 @@ mod tests {
         ] {
             assert!(is_gpu_error_message(msg), "should classify as GPU: {msg}");
         }
+    }
+
+    /// A hang report in the shape gpu_display emits, built from the marker
+    /// stress-kit exports so a reworded message cannot quietly stop matching.
+    fn hang_message() -> String {
+        format!(
+            "gpu_display: {} no output presented a frame and no output thread advanced its \
+             frame loop for 31s. Zero FPS with no watchdog live dump, no TDR and no WHEA on a \
+             responsive machine is a TOOL failure.",
+            stress_kit::STRESSOR_HANG_MARKER
+        )
+    }
+
+    /// A hang report must reach neither a hardware counter nor the generic
+    /// inconclusive counter. Before the marker existed it matched no component
+    /// vocabulary at all and fell through to `disk_io_errors`, failing the run
+    /// on a disk the stage never touched.
+    #[test]
+    fn a_hang_message_reaches_no_hardware_counter() {
+        let mut acc = SummaryAccumulator::default();
+        let hang = hang_message();
+        acc.classify_error(&hang);
+
+        assert_eq!(acc.hang_reason.as_deref(), Some(hang.as_str()));
+        assert_eq!(acc.disk_io_errors, 0, "a hung tool was filed as a disk fault");
+        assert_eq!(acc.gpu_device_errors, 0);
+        assert_eq!(
+            acc.inconclusive_errors, 0,
+            "a hang counted as a generic inconclusive, which grades the run fail"
+        );
+    }
+
+    /// The verdict the whole change exists for: a wedged stressor on a machine
+    /// with no watchdog dump, no TDR and no WHEA grades INCONCLUSIVE with its
+    /// own `failure_kind`, never `fail`.
+    #[test]
+    fn a_hung_stressor_grades_the_run_inconclusive() {
+        let mut acc = acc_with_work();
+        let hang = hang_message();
+        acc.classify_error(&hang);
+        let verdict = verdict_with(acc, vec![finished_stage()]);
+
+        assert_eq!(
+            verdict.result,
+            RunResult::Inconclusive,
+            "a tool hang failed the run"
+        );
+        assert_eq!(verdict.failure_mode.kind(), "stressor_hang");
+        match verdict.failure_mode {
+            FailureMode::StressorHang { ref message } => {
+                assert!(message.contains("stressor_hang -"), "{message}");
+            }
+            other => panic!("expected StressorHang, got {other:?}"),
+        }
+    }
+
+    /// The hang also reaches the run verdict from the stage it was recorded
+    /// against, so a report that arrived on a tick the accumulator skipped is
+    /// still graded.
+    #[test]
+    fn a_stage_recorded_hang_reaches_the_run_verdict() {
+        let outcomes = vec![outcome_with(StageVerdict {
+            index: 0,
+            label: "gpu_display".to_string(),
+            pass: false,
+            violations: vec![RuleViolation::StressorHang {
+                reason: hang_message(),
+            }],
+            unevaluated: Vec::new(),
+            warnings: Vec::new(),
+        })];
+
+        let mut run_summary = RunSummary::default();
+        assert!(
+            rules_failure_mode(&outcomes, &mut run_summary).is_none(),
+            "a hang became a rules failure, which forces the run to fail"
+        );
+        assert_eq!(
+            stage_hang_evidence(&outcomes).as_deref(),
+            Some(hang_message().as_str())
+        );
+
+        let verdict = verdict_with(acc_with_work(), outcomes);
+        assert_eq!(verdict.result, RunResult::Inconclusive);
+        assert_eq!(verdict.failure_mode.kind(), "stressor_hang");
+    }
+
+    /// Hardware evidence outranks the tool: the grading rule is that zero FPS
+    /// with NO dump, NO TDR and NO WHEA is a tool failure, not that a hang
+    /// buries a real fault that happened alongside it.
+    #[test]
+    fn whea_during_a_hang_still_fails_the_run() {
+        let mut acc = acc_with_work();
+        let hang = hang_message();
+        acc.classify_error(&hang);
+        acc.whea_delta_count = 3;
+        let verdict = verdict_with(acc, vec![finished_stage()]);
+
+        assert_eq!(verdict.result, RunResult::Fail);
+        assert_eq!(verdict.failure_mode.kind(), "whea_error");
     }
 
     /// Live stress-kit `inconclusive -` messages must land in the inconclusive

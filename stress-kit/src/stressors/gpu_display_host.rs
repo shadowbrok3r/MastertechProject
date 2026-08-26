@@ -14,7 +14,7 @@
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
@@ -28,6 +28,10 @@ const SUPERVISE_POLL: Duration = Duration::from_millis(200);
 const STARTUP_GRACE: Duration = Duration::from_secs(3);
 /// Slack added to the stage timeout before the child self-terminates.
 const CHILD_BELT_SLACK: Duration = Duration::from_secs(30);
+/// A live child that has emitted no tick for this long is wedged. The outermost
+/// belt: it holds even when the child's own watchdog is part of what is stuck.
+/// Longer than the child's watchdog so the child gets to name its own phases.
+const CHILD_SILENCE: Duration = Duration::from_secs(60);
 
 /// Runs the display load, isolated in a child process when one is available.
 pub(super) fn run(
@@ -112,6 +116,9 @@ fn run_isolated(
 
     let stdout = child.stdout.take().expect("stdout was piped");
     let forward_tx = tx.clone();
+    // Milliseconds since `started_at` of the newest tick the child produced.
+    let last_tick = Arc::new(AtomicU64::new(0));
+    let tick_clock = last_tick.clone();
     let pump = std::thread::Builder::new()
         .name("stress-kit-display-pump".into())
         .spawn(move || {
@@ -124,6 +131,10 @@ fn run_isolated(
                 match serde_json::from_str::<Metrics>(line) {
                     Ok(m) => {
                         ticks += 1;
+                        tick_clock.store(
+                            started_at.elapsed().as_millis() as u64,
+                            Ordering::Relaxed,
+                        );
                         if forward_tx.send(m).is_err() {
                             break;
                         }
@@ -143,11 +154,23 @@ fn run_isolated(
             }
         })?;
 
+    let mut silent = false;
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break status;
         }
         if cancel.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            break child.wait()?;
+        }
+        // Outermost belt. A child that stops streaming while still alive is
+        // wedged past anything its own watchdog caught, and waiting on it is
+        // what cost bench time and a manual process kill.
+        let since_tick = started_at
+            .elapsed()
+            .saturating_sub(Duration::from_millis(last_tick.load(Ordering::Relaxed)));
+        if since_tick >= CHILD_SILENCE {
+            silent = true;
             let _ = child.kill();
             break child.wait()?;
         }
@@ -157,6 +180,24 @@ fn run_isolated(
     let ticks = pump.join().unwrap_or(0);
     let ran = started_at.elapsed();
     let cancelled = cancel.load(Ordering::Relaxed);
+
+    if silent {
+        send_fatal(
+            tx,
+            started_at,
+            format!(
+                "gpu_display: {} the isolated display host stopped streaming ticks for {}s \
+                 while still running, so it was killed after {:.1}s having produced {ticks} \
+                 tick(s). The load wedged rather than the display path faulting: the run grades \
+                 INCONCLUSIVE and is not evidence about this hardware either way.",
+                crate::STRESSOR_HANG_MARKER,
+                CHILD_SILENCE.as_secs(),
+                ran.as_secs_f32()
+            ),
+            0,
+        );
+        return Ok(());
+    }
 
     if cancelled || status.success() {
         log::info!(

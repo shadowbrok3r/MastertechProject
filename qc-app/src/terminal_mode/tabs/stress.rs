@@ -850,6 +850,7 @@ fn failure_mode_label(v: &RunVerdict) -> &'static str {
         FailureMode::Timeout => "timeout",
         FailureMode::OperatorOverride { .. } => "operator override",
         FailureMode::RailDroop { .. } => "rail droop",
+        FailureMode::StressorHang { .. } => "stressor hung (tool)",
     }
 }
 

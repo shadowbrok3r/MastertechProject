@@ -199,23 +199,27 @@ impl TabViewer for MastertechContext {
         if response.clicked() {
             match *tab {
                 TabId::CompletedTasks => {
-                    if self
-                        .shared_ctx
-                        .tasks
-                        .filter_by_completion(true)
-                        .is_empty()
+                    // Gate on the store whose set was pulled, not on "do I hold
+                    // any completed task": one live completion event satisfied
+                    // the old test and disabled the fetch for good.
+                    let store = Store::from_presta_store_id(
+                        &self.shared_ctx.store_selection.to_string(),
+                    );
+                    if self.shared_ctx.completed_loaded_for != Some(store)
+                        && self.shared_ctx.completed_pending_for != Some(store)
                     {
                         let tasks_tx = self.shared_ctx.initial_tasks_tx.clone();
-                        let store_sel = self.shared_ctx.store_selection;
-                        let store_selection =
-                            std::convert::Into::<Store>::into(store_sel).as_str().to_string();
+                        let done_tx = self.shared_ctx.completed_load_tx.clone();
+                        let store_selection = store.as_str().to_string();
+                        self.shared_ctx.completed_pending_for = Some(store);
 
                         spawn(async move {
-                            if let Err(e) =
-                                get_completed_tasks_for_store(tasks_tx, store_selection).await
-                            {
+                            let result =
+                                get_completed_tasks_for_store(tasks_tx, store_selection).await;
+                            if let Err(e) = &result {
                                 error!("get_completed_tasks_for_store: {e:?}");
                             }
+                            let _ = done_tx.try_send((store, result.is_ok()));
                         });
                     }
                 }
@@ -227,9 +231,11 @@ impl TabViewer for MastertechContext {
                         .is_empty()
                     {
                         let tasks_tx = self.shared_ctx.initial_tasks_tx.clone();
-                        let store_sel = self.shared_ctx.store_selection;
-                        let store_selection =
-                            std::convert::Into::<Store>::into(store_sel).as_str().to_string();
+                        let store_selection = Store::from_presta_store_id(
+                            &self.shared_ctx.store_selection.to_string(),
+                        )
+                        .as_str()
+                        .to_string();
 
                         spawn(async move {
                             if let Err(e) = get_tasks_for_store(tasks_tx, store_selection).await {

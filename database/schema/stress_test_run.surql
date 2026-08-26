@@ -91,6 +91,9 @@ DEFINE FIELD driver_versions     ON stress_test_run TYPE none | object          
 -- `result` is one of: 'pass' | 'fail' | 'aborted' | 'inconclusive' | 'in_progress'.
 -- `failure_mode` is the structured FailureMode enum (externally tagged object);
 -- `failure_kind` is its lowercase tag mirrored for fast filtering.
+-- 'stressor_hang' is a tool failure, never a machine one: it pairs with
+-- result='inconclusive' and means the stressor wedged, so the run says nothing
+-- about the hardware. Exclude it when counting hardware faults.
 DEFINE FIELD result              ON stress_test_run TYPE string DEFAULT 'in_progress'              PERMISSIONS FULL;
 DEFINE FIELD finish_reason       ON stress_test_run TYPE none | string                              PERMISSIONS FULL;
 DEFINE FIELD failure_mode        ON stress_test_run TYPE object                                     PERMISSIONS FULL;

@@ -33,9 +33,18 @@ use eframe::egui::{
 };
 use serde::{Deserialize, Serialize};
 
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
 use crate::ui_tools::theme;
 
 const PARAMS_KEY: &str = "mtech.theme.glass_params";
+
+/// Consecutive failed frost frames that trip the kill switch.
+const FAILED_FRAMES_BEFORE_DISABLE: u32 = 3;
+
+static DISABLED: AtomicBool = AtomicBool::new(false);
+static CONSECUTIVE_FAILURES: AtomicU32 = AtomicU32::new(0);
 
 fn params_id() -> Id {
     Id::new(PARAMS_KEY)
@@ -92,10 +101,32 @@ pub fn params(ctx: &Context) -> GlassParams {
         .unwrap_or(GlassParams::OFF)
 }
 
-/// Whether the GPU backend is built and ready — false on an unsupported context, before
-/// [`install`], and on targets with no grab-pass backend.
+/// Whether `MTECH_NO_FROST` is set to anything other than an off value.
+fn env_disabled() -> bool {
+    static ENV: OnceLock<bool> = OnceLock::new();
+    *ENV.get_or_init(|| {
+        std::env::var("MTECH_NO_FROST")
+            .is_ok_and(|v| !matches!(v.trim(), "" | "0" | "false" | "off" | "no"))
+    })
+}
+
+/// Whether frosting is switched off — by `MTECH_NO_FROST`, by [`disable`], or by the guard in
+/// [`poll_outcome`]. Every frost is a no-op while this holds and glass degrades to flat fills.
+pub fn is_disabled() -> bool {
+    env_disabled() || DISABLED.load(Ordering::Relaxed)
+}
+
+/// Switch frosting off for the rest of the process. Idempotent; logs the first caller's reason.
+pub fn disable(reason: &str) {
+    if !DISABLED.swap(true, Ordering::Relaxed) {
+        log::warn!("backdrop blur disabled: {reason}");
+    }
+}
+
+/// Whether the GPU backend is built, ready, and not switched off — false on an unsupported
+/// context, before [`install`], and on targets with no grab-pass backend.
 pub fn is_available() -> bool {
-    backend::is_available()
+    !is_disabled() && backend::is_available()
 }
 
 /// Build the grab-pass backend from the host's GL context. Call once from the app's
@@ -123,7 +154,7 @@ pub fn frost(ui: &Ui, rect: Rect) -> bool {
 /// [`frost`] with an explicit material, for a surface that overrides the theme (a heavier scrim
 /// behind a modal, a tint carrying a status color).
 pub fn frost_with(ui: &Ui, rect: Rect, params: GlassParams) -> bool {
-    if !params.is_visible() || !rect.is_positive() {
+    if is_disabled() || !params.is_visible() || !rect.is_positive() {
         return false;
     }
     backend::frost(ui, rect, params)
@@ -304,8 +335,25 @@ pub fn preview(ui: &mut Ui, params: GlassParams) -> Response {
 
 /// Read and clear the strongest result any frost reached since the last call, logging a wiring
 /// warning once if frosts were enqueued but no callback ever ran. Call once per frame.
+///
+/// Repeated failures trip [`disable`]: a cosmetic effect that cannot run must cost the blur, not
+/// the frame it is enqueued in front of.
 pub fn poll_outcome() -> Option<FrostReport> {
-    backend::poll_outcome()
+    let report = backend::poll_outcome()?;
+    match report {
+        FrostReport::Failed => {
+            let failures = CONSECUTIVE_FAILURES.fetch_add(1, Ordering::Relaxed) + 1;
+            log::warn!("backdrop blur frost failed on {failures} consecutive frame(s)");
+            if failures >= FAILED_FRAMES_BEFORE_DISABLE {
+                disable("grab-pass frost failed repeatedly; surfaces now paint unfrosted");
+            }
+        }
+        FrostReport::Composited | FrostReport::ClippedEmpty => {
+            CONSECUTIVE_FAILURES.store(0, Ordering::Relaxed);
+        }
+        FrostReport::DidNotFire => {}
+    }
+    Some(report)
 }
 
 /// What the frosts of one frame achieved, mirroring `backdrop_blur_egui::FrostOutcome` without
@@ -360,6 +408,11 @@ mod backend {
             log::info!("backdrop blur unavailable: eframe is not running the glow backend");
             return false;
         };
+        log_gl_identity(gl);
+        if super::is_disabled() {
+            log::info!("backdrop blur not installed: frosting is switched off");
+            return false;
+        }
         match GrabPassRenderer::new(gl) {
             Ok(renderer) => {
                 match RENDERER.write() {
@@ -377,6 +430,19 @@ mod backend {
                 false
             }
         }
+    }
+
+    /// Record which driver and adapter eframe's GL context landed on.
+    fn log_gl_identity(gl: &backdrop_blur_egui::glow::Context) {
+        use backdrop_blur_egui::glow::{self, HasContext};
+        let read = |name: u32| unsafe { gl.get_parameter_string(name) };
+        log::info!(
+            "GL context: vendor={:?} renderer={:?} version={:?} glsl={:?}",
+            read(glow::VENDOR),
+            read(glow::RENDERER),
+            read(glow::VERSION),
+            read(glow::SHADING_LANGUAGE_VERSION),
+        );
     }
 
     pub(super) fn shutdown(gl: &backdrop_blur_egui::glow::Context) {

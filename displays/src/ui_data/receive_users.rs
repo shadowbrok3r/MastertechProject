@@ -80,7 +80,7 @@ impl SharedContext {
             };
 
             // Update layouts
-            let store_selection = std::convert::Into::<Store>::into(self.store_selection.clone());
+            let store_selection = Store::from_presta_store_id(&self.store_selection.to_string());
             let current_user = self.current_user.as_ref().cloned().unwrap_or_default();
 
             for (page, layout) in self.task_layouts.iter_mut() {

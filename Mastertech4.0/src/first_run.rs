@@ -348,8 +348,18 @@ impl MasterTechApp {
                             // PrestaShop fails (the Everest side doesn't
                             // expose an open-service queue we trust).
                             use crate::filesystem::customer_lookup::{
-                                lookup_customer_and_open_orders,
+                                lookup_customer_and_open_orders, lookup_exhausted,
                             };
+                            // A serial that was never sold through PrestaShop
+                            // fails identically every launch; the miss ledger
+                            // stops both calls after its budget is spent.
+                            if lookup_exhausted(&serial13) {
+                                log::debug!(
+                                    "first_run -> customer lookup already exhausted \
+                                     for {serial13}; skipping PrestaShop and Everest"
+                                );
+                                return;
+                            }
                             match lookup_customer_and_open_orders(&serial13).await {
                                 Ok((match_, candidates)) => {
                                     // Persist friendly_name so subsequent

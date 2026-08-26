@@ -58,6 +58,10 @@ jobs:
             bin: MasterTech
             artifact: Mastertech.exe
             runs_on: windows-latest
+            # The shipped exe carries the egui_skia software renderer, so the
+            # GPU -> software -> terminal fallback ladder has its middle rung on
+            # customer machines. Without it `--cpu` drops straight to terminal mode.
+            features: skia-render
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             bin: qc_app
@@ -110,6 +114,13 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # skia-bindings has no prebuilt binary for this feature set, so it compiles
+      # Skia from source via gn/ninja. ninja ships with neither Rust nor MSVC.
+      - name: Install ninja for skia-bindings
+        if: matrix.features == 'skia-render'
+        shell: pwsh
+        run: choco install ninja -y --no-progress
+
       # Cache must come BEFORE the build step that consumes it, otherwise it
       # never speeds anything up.
       - uses: Swatinem/rust-cache@v2
@@ -126,6 +137,7 @@ jobs:
         with:
           bin: ${{ matrix.bin }}
           target: ${{ matrix.target }}
+          features: ${{ matrix.features }}
           tar: none
           zip: none
           asset: target/${{ matrix.target }}/release/${{ matrix.bin }}

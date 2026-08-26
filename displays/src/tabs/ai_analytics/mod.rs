@@ -14,10 +14,10 @@ use database::schema::{
     TECH_RATE_LOW,
 };
 use eframe::egui::{Align, Button, Layout, RichText, ScrollArea, TextEdit, Ui};
-use egui_plot::{Bar, BarChart, Legend, Plot};
+use egui_plot::{Bar, BarChart, Legend};
 use web_time::Instant;
 
-use crate::ui_tools::{icons, info_card, theme};
+use crate::ui_tools::{icons, info_card, plots, theme};
 use crate::{PlatformSpawner, Spawner};
 
 const LOOKBACKS: [u32; 4] = [30, 60, 90, 180];
@@ -402,7 +402,7 @@ impl AiAnalytics {
                             .name(format!("{}d comeback", b.window_days))
                     })
                     .collect();
-                Plot::new("outcome_windows")
+                plots::pinned("outcome_windows")
                     .height(140.0)
                     .legend(Legend::default())
                     .show_axes([false, true])
@@ -509,7 +509,7 @@ impl AiAnalytics {
                     .collect();
                 let bar_color = theme::accent(ui);
                 if !bars.is_empty() {
-                    Plot::new("turnaround_by_origin")
+                    plots::pinned("turnaround_by_origin")
                         .height(130.0)
                         .legend(Legend::default())
                         .show_axes([false, true])

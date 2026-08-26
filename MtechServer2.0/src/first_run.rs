@@ -370,6 +370,14 @@ impl MtechServer {
                     }
                     
                     if let Some(token) = db.jwt.clone() {
+                        // The worker is this build's completed-task fetch, so it
+                        // arms the same latch the desktop bootstrap does — or a
+                        // tab click stacks a second full-table scan on top of it.
+                        self.shared_ctx.completed_pending_for = Some(
+                            database::schema::Store::from_presta_store_id(
+                                &self.shared_ctx.store_selection.to_string(),
+                            ),
+                        );
                         self
                         .bridge
                         .send(
@@ -496,9 +504,16 @@ impl MtechServer {
         // Getting responses from our webworker
         if let Some(items) = self.data_update.take() {
             let tx = self.shared_ctx.initial_tasks_tx.clone();
+            let done_tx = self.shared_ctx.completed_load_tx.clone();
+            let store = database::schema::Store::from_presta_store_id(
+                &self.shared_ctx.store_selection.to_string(),
+            );
             wasm_bindgen_futures::spawn_local(async move {
                 // log::info!("Got data update from webworker: {:?}", items.len());
-                let _ = tx.try_send(decode_task_payload(&items).unwrap_or_default());
+                let decoded = decode_task_payload(&items);
+                let ok = decoded.is_ok();
+                let _ = tx.try_send(decoded.unwrap_or_default());
+                let _ = done_tx.try_send((store, ok));
             });
             // *received_completed_tasks = true;
         }

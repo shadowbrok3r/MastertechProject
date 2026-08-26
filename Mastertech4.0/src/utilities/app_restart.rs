@@ -8,11 +8,13 @@ pub fn restart_in_terminal_mode() -> std::io::Result<()> {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
-        std::process::Command::new("cmd")
-            .arg("/C")
-            .arg(&current_exe)
+        // The child draws a ratatui TUI, so it needs a console of its own regardless of this
+        // process's subsystem. DETACHED_PROCESS gives it none; a `cmd /C` wrapper only worked
+        // while this binary was console-subsystem, and left the wrapper's window on screen.
+        const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+        std::process::Command::new(&current_exe)
             .arg("-t")
-            .creation_flags(0x00000008) // DETACHED_PROCESS
+            .creation_flags(CREATE_NEW_CONSOLE)
             .spawn()?;
     }
     #[cfg(not(target_os = "windows"))]

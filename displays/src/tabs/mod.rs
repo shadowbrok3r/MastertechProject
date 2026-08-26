@@ -63,11 +63,16 @@ impl SharedContext {
         if *selected != current {
             let tasks_tx = self.initial_tasks_tx.clone();
             let store_users_tx = self.store_users_tx.clone();
+            let done_tx = self.completed_load_tx.clone();
             let store_selection = Store::from_presta_store_id(&selected.to_string());
 
             self.pending_store = Some(store_selection.clone());
+            self.completed_loaded_for = None;
+            self.completed_pending_for = Some(store_selection);
             self.store_users.clear();
             self.tasks.clear();
+            self.task_index.clear();
+            self.live_task_updates.clear();
             self.layout_configs = None;
             // Staged edits belong to the board being left; never let them land
             // against the incoming store.
@@ -77,6 +82,7 @@ impl SharedContext {
             PlatformSpawner::spawn(async move {
                 let store_tasks = get_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
                 let tasks = get_completed_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
+                let _ = done_tx.try_send((store_selection, tasks.is_ok()));
                 let get_store_users = get_store_users(store_users_tx, store_selection).await;
                 info!("get_completed_tasks_for_store: {tasks:?}");
                 info!("get_tasks_for_store: {store_tasks:?}");
@@ -250,18 +256,23 @@ impl egui_dock::TabViewer for SharedContext {
         if response.clicked() {
             match *tab {
                 TabId::CompletedTasks => {
-                    if self.tasks.filter_by_completion(true).is_empty() {
+                    // Gate on the store whose set was pulled, not on "do I hold
+                    // any completed task": one live completion event satisfied
+                    // the old test and disabled the fetch for good.
+                    let store = Store::from_presta_store_id(&self.store_selection.to_string());
+                    if self.completed_loaded_for != Some(store)
+                        && self.completed_pending_for != Some(store)
+                    {
                         let tasks_tx = self.initial_tasks_tx.clone();
-                        let store_sel = self.store_selection;
-                        let store_selection =
-                            Store::from_presta_store_id(&store_sel.to_string())
-                                .as_str()
-                                .to_string();
+                        let done_tx = self.completed_load_tx.clone();
+                        let store_selection = store.as_str().to_string();
+                        self.completed_pending_for = Some(store);
                         log::info!("Pulling completed tasks for store: {store_selection}");
                         PlatformSpawner::spawn(async move {
-                            let get_completed_tasks_for_store =
+                            let result =
                                 get_completed_tasks_for_store(tasks_tx, store_selection).await;
-                            info!("get_completed_tasks_for_store: {get_completed_tasks_for_store:?}");
+                            info!("get_completed_tasks_for_store: {result:?}");
+                            let _ = done_tx.try_send((store, result.is_ok()));
                         });
                         self.task_layouts
                             .iter_mut()

@@ -171,6 +171,10 @@ pub enum RuleViolation {
     NoThroughput { ticks: u32 },
     /// The stressor named a load it could not apply.
     Inconclusive { reason: String },
+    /// The stressor wedged. Nothing about the hardware follows from it, in
+    /// either direction, so it is the one violation that does not read as a
+    /// stage failure.
+    StressorHang { reason: String },
 }
 
 /// The sensor class a rule needs before it can be graded.
@@ -258,6 +262,7 @@ impl RuleViolation {
                  the stage's load never ran"
             ),
             Self::Inconclusive { reason } => reason.clone(),
+            Self::StressorHang { reason } => reason.clone(),
         }
     }
 }
@@ -293,10 +298,22 @@ impl StageVerdict {
         self.unevaluated.iter().any(UnevaluatedRule::blocks_certification)
     }
 
+    /// `true` when the only thing recorded against this stage is the stressor
+    /// wedging, so nothing here is evidence about the hardware.
+    pub fn only_tool_failure(&self) -> bool {
+        !self.violations.is_empty()
+            && self
+                .violations
+                .iter()
+                .all(|v| matches!(v, RuleViolation::StressorHang { .. }))
+    }
+
     /// `"pass"` / `"fail"` / `"inconclusive"`. An ungraded rule is not a
-    /// breach, so it never reads as a fail.
+    /// breach, so it never reads as a fail; neither does a hung stressor.
     pub fn result_token(&self) -> &'static str {
-        if !self.pass {
+        if self.only_tool_failure() {
+            "inconclusive"
+        } else if !self.pass {
             "fail"
         } else if self.has_blocking_gap() {
             "inconclusive"
@@ -347,6 +364,10 @@ pub struct StageStats {
     /// gpu_display output coverage completing after a slow start); a fresh
     /// inconclusive after that latches again.
     pub inconclusive_reason: Option<String>,
+    /// First `stressor_hang -` message folded this stage. Latched, and kept
+    /// apart from `inconclusive_reason`: a wedged tool gets its own verdict so
+    /// the run reads inconclusive rather than failing the machine.
+    pub hang_reason: Option<String>,
     /// A stressor reported `Metrics.fatal` at least once this stage. Latched:
     /// later clean ticks never clear it.
     pub fatal_abort: bool,
@@ -396,6 +417,7 @@ impl StageStats {
             errors: 0,
             last_error: None,
             inconclusive_reason: None,
+            hang_reason: None,
             fatal_abort: false,
             fatal_reason: None,
             whea_baseline: whea_count(snapshot),
@@ -421,7 +443,9 @@ impl StageStats {
         }
         if let Some(msg) = &metrics.last_error {
             self.last_error = Some(msg.clone());
-            if is_resolution_message(msg) {
+            if is_stressor_hang_message(msg) && !is_device_loss_message(msg) {
+                self.hang_reason.get_or_insert_with(|| msg.clone());
+            } else if is_resolution_message(msg) {
                 self.inconclusive_reason = None;
             } else if self.inconclusive_reason.is_none()
                 && is_inconclusive_message(msg)
@@ -610,7 +634,10 @@ impl StageStats {
     /// `true` when something about this stage says its load did not run: the
     /// stressor aborted, named a load it could not apply, or measured nothing.
     pub fn load_unproven(&self) -> bool {
-        self.fatal_abort || self.inconclusive_reason.is_some() || self.produced_no_work()
+        self.fatal_abort
+            || self.inconclusive_reason.is_some()
+            || self.hang_reason.is_some()
+            || self.produced_no_work()
     }
 }
 
@@ -692,6 +719,15 @@ pub(crate) fn is_inconclusive_message(msg: &str) -> bool {
     msg.to_ascii_lowercase().contains("inconclusive -")
 }
 
+/// The `stressor_hang -` marker a stressor stamps when it wedged itself: no
+/// work, no progress, and no bugcheck, live dump, TDR or WHEA beside it.
+/// Ranked ahead of [`is_inconclusive_message`] because a hung tool needs its own
+/// verdict — a stressor that hangs indistinguishably from the fault it tests for
+/// is how a tool bug gets written up as a hardware fault.
+pub(crate) fn is_stressor_hang_message(msg: &str) -> bool {
+    msg.to_ascii_lowercase().contains("stressor_hang -")
+}
+
 /// The `resolved -` marker a stressor emits once when a previously reported
 /// shortfall no longer stands. Clears the latched inconclusive; only a
 /// stressor that can prove the condition healed emits it.
@@ -734,13 +770,21 @@ pub fn evaluate_stage(stats: &StageStats, rules: &VerdictRules) -> StageVerdict 
     let mut unevaluated: Vec<UnevaluatedRule> = Vec::new();
     let mut warnings = Vec::new();
 
-    // Rule-independent: a load that never ran cannot clear any policy.
-    if stats.fatal_abort {
+    // Rule-independent: a load that never ran cannot clear any policy. A hang
+    // subsumes the abort and the zero throughput it caused — restating them as
+    // separate violations is what made a wedged tool read as a stage failure.
+    let hung = stats.hang_reason.is_some();
+    if let Some(reason) = &stats.hang_reason {
+        violations.push(RuleViolation::StressorHang {
+            reason: reason.clone(),
+        });
+    }
+    if stats.fatal_abort && !hung {
         violations.push(RuleViolation::FatalAbort {
             reason: stats.fatal_reason.clone().or_else(|| stats.last_error.clone()),
         });
     }
-    if stats.produced_no_work() {
+    if stats.produced_no_work() && !hung {
         violations.push(RuleViolation::NoThroughput { ticks: stats.ticks });
     }
     if let Some(reason) = &stats.inconclusive_reason {
@@ -1388,6 +1432,82 @@ mod tests {
         assert!(stats.observed_throughput);
         assert!(!stats.produced_no_work());
         assert!(evaluate_stage(&stats, &rules).pass);
+    }
+
+    /// A hang report in the shape gpu_display emits, built from the marker
+    /// stress-kit exports so a reworded message cannot quietly stop matching.
+    fn hang_message() -> String {
+        format!(
+            "gpu_display: {} no output presented a frame and no output thread advanced its \
+             frame loop for 31s. Zero FPS with no watchdog live dump, no TDR and no WHEA on a \
+             responsive machine is a TOOL failure.",
+            stress_kit::STRESSOR_HANG_MARKER
+        )
+    }
+
+    /// The wedge from service order 2151936: three-output gpu_display stops
+    /// presenting and reports a hang. The stage must grade INCONCLUSIVE, and
+    /// the hang must be its ONLY violation — a stage that also logs
+    /// `FatalAbort` and `NoThroughput` reads as a fail, which is how the tool
+    /// bug got written up as a hardware fault.
+    #[test]
+    fn a_stressor_hang_grades_inconclusive_not_a_stage_failure() {
+        let hang = hang_message();
+        for rules in [VerdictRules::certification(), VerdictRules::default()] {
+            let mut stats = stats_for(&rules);
+            for _ in 0..NO_WORK_MIN_TICKS + 5 {
+                stats.absorb_tick(&metrics(0.0, 0), &snapshot(60.0, 4000, 90.0), &rules);
+            }
+            stats.absorb_final(&fatal_metrics(&hang));
+
+            assert_eq!(stats.hang_reason.as_deref(), Some(hang.as_str()));
+            assert!(
+                stats.inconclusive_reason.is_none(),
+                "a hang was also filed as a generic inconclusive"
+            );
+            assert!(stats.load_unproven(), "a hung stage cannot have proven its load");
+
+            let verdict = evaluate_stage(&stats, &rules);
+            assert_eq!(
+                verdict.result_token(),
+                "inconclusive",
+                "a hung stressor failed the stage: {:?}",
+                verdict.violation_lines()
+            );
+            assert!(verdict.only_tool_failure(), "{:?}", verdict.violations);
+            assert_eq!(
+                verdict.violations.len(),
+                1,
+                "the hang did not subsume the abort and the zero throughput it caused: {:?}",
+                verdict.violation_lines()
+            );
+            assert!(!verdict.pass, "a hung stage must never read as a pass");
+        }
+    }
+
+    /// Hardware evidence outranks the tool. WHEA during a hung stage keeps the
+    /// stage a fail: the grading rule is that zero FPS with NO dump, NO TDR and
+    /// NO WHEA is a tool failure, not that a hang excuses anything.
+    #[test]
+    fn hardware_evidence_alongside_a_hang_still_fails_the_stage() {
+        let rules = VerdictRules::certification();
+        let mut stats = stats_for(&rules);
+        let mut whea = snapshot(60.0, 4000, 90.0);
+        whea.whea = Some(stress_kit::telemetry::WheaCounters {
+            delta_since_program_start: 2,
+            corrected_delta: 2,
+            ..Default::default()
+        });
+        stats.absorb_tick(&metrics(0.0, 0), &whea, &rules);
+        stats.absorb_final(&fatal_metrics(&hang_message()));
+
+        let verdict = evaluate_stage(&stats, &rules);
+        assert!(
+            !verdict.only_tool_failure(),
+            "WHEA was written off as a tool failure: {:?}",
+            verdict.violation_lines()
+        );
+        assert_eq!(verdict.result_token(), "fail");
     }
 
     /// A non-fatal `inconclusive -` message means the load never ran: the stage

@@ -159,6 +159,78 @@ pub async fn lookup_customer_by_serial(serial13: &str) -> Result<String> {
     Err(anyhow!("Could not find customer for serial: {}", serial13))
 }
 
+// ============================================
+// Miss budget
+// ============================================
+
+/// Attempts allowed against one OA3 serial before the lookup is abandoned.
+pub const MAX_LOOKUP_ATTEMPTS: u32 = 2;
+
+/// Where the per-serial miss counts live. A machine whose OA3 serial was never
+/// sold through PrestaShop fails identically on every launch, so the count has
+/// to outlive the process to stop the calls.
+fn miss_file() -> std::path::PathBuf {
+    if let Ok(dir) = std::env::var("MASTERTECH_LOOKUP_MISS_DIR") {
+        return std::path::PathBuf::from(dir).join("customer_lookup_misses.json");
+    }
+    #[cfg(target_os = "windows")]
+    let dir = std::path::PathBuf::from(r"C:\ProgramData\Mastertech");
+    #[cfg(not(target_os = "windows"))]
+    let dir = std::env::temp_dir().join("mastertech");
+    dir.join("customer_lookup_misses.json")
+}
+
+fn read_misses() -> std::collections::BTreeMap<String, u32> {
+    std::fs::read_to_string(miss_file())
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
+}
+
+fn write_misses(misses: &std::collections::BTreeMap<String, u32>) {
+    let path = miss_file();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(raw) = serde_json::to_string(misses) {
+        if let Err(e) = std::fs::write(&path, raw) {
+            log::debug!("customer_lookup -> miss ledger write failed: {e}");
+        }
+    }
+}
+
+/// How many times `serial13` has already failed.
+pub fn lookup_misses(serial13: &str) -> u32 {
+    read_misses().get(serial13).copied().unwrap_or(0)
+}
+
+/// Whether the lookup for `serial13` has used up its attempts.
+pub fn lookup_exhausted(serial13: &str) -> bool {
+    lookup_misses(serial13) >= MAX_LOOKUP_ATTEMPTS
+}
+
+fn record_miss(serial13: &str) {
+    let mut misses = read_misses();
+    let count = misses.entry(serial13.to_string()).or_insert(0);
+    *count += 1;
+    let count = *count;
+    write_misses(&misses);
+    if count >= MAX_LOOKUP_ATTEMPTS {
+        log::info!(
+            "customer_lookup -> serial {serial13} has failed {count} times; no further lookups until an admin refreshes"
+        );
+    }
+}
+
+/// Clear the miss count for `serial13` so the next lookup runs. Called on
+/// success and by the admin's explicit refresh.
+pub fn clear_lookup_misses(serial13: &str) {
+    let mut misses = read_misses();
+    if misses.remove(serial13).is_some() {
+        write_misses(&misses);
+    }
+}
+
 /// Full PrestaShop lookup: resolves the customer by OA3 serial, then
 /// fetches the customer's *open* service orders (anything whose state
 /// is not `AcceptedByOdoo`) so the admin can pick which one — if any —
@@ -172,9 +244,23 @@ pub async fn lookup_customer_by_serial(serial13: &str) -> Result<String> {
 pub async fn lookup_customer_and_open_orders(
     serial13: &str,
 ) -> Result<(PrestashopCustomerMatch, Vec<OpenServiceCandidate>)> {
-    let m = request_prestashop(serial13)
+    if lookup_exhausted(serial13) {
+        return Err(anyhow!(
+            "PrestaShop lookup skipped: serial {serial13} already failed {MAX_LOOKUP_ATTEMPTS} times"
+        ));
+    }
+
+    let m = match request_prestashop(serial13)
         .await
-        .context("PrestaShop customer lookup failed")?;
+        .context("PrestaShop customer lookup failed")
+    {
+        Ok(m) => m,
+        Err(e) => {
+            record_miss(serial13);
+            return Err(e);
+        }
+    };
+    clear_lookup_misses(serial13);
 
     let candidates = lookup_open_service_orders_for_customer(&m.id_customer)
         .await
@@ -515,4 +601,55 @@ async fn get_order(client: &Client, email: &str, password: &str, docnum: &str) -
         .clone();
     let header: EverestOrderHeader = serde_json::from_value(header_val)?;
     Ok(header)
+}
+
+#[cfg(test)]
+mod miss_ledger_tests {
+    use super::*;
+
+    /// Serialised: the ledger is a process-wide file, so concurrent tests would
+    /// see each other's writes.
+    static LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_temp_ledger(test: impl FnOnce()) {
+        let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("mtech_miss_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        unsafe { std::env::set_var("MASTERTECH_LOOKUP_MISS_DIR", &dir) };
+        let _ = std::fs::remove_file(miss_file());
+        test();
+        let _ = std::fs::remove_file(miss_file());
+        unsafe { std::env::remove_var("MASTERTECH_LOOKUP_MISS_DIR") };
+    }
+
+    #[test]
+    fn misses_accumulate_until_the_budget_is_spent() {
+        with_temp_ledger(|| {
+            assert_eq!(lookup_misses("SERIAL-A"), 0);
+            assert!(!lookup_exhausted("SERIAL-A"));
+
+            record_miss("SERIAL-A");
+            assert_eq!(lookup_misses("SERIAL-A"), 1);
+            assert!(!lookup_exhausted("SERIAL-A"));
+
+            record_miss("SERIAL-A");
+            assert_eq!(lookup_misses("SERIAL-A"), MAX_LOOKUP_ATTEMPTS);
+            assert!(lookup_exhausted("SERIAL-A"));
+        });
+    }
+
+    #[test]
+    fn the_ledger_is_per_serial_and_clearable() {
+        with_temp_ledger(|| {
+            record_miss("SERIAL-B");
+            record_miss("SERIAL-B");
+            assert!(lookup_exhausted("SERIAL-B"));
+            // A different machine is unaffected by its neighbour's misses.
+            assert!(!lookup_exhausted("SERIAL-C"));
+
+            clear_lookup_misses("SERIAL-B");
+            assert_eq!(lookup_misses("SERIAL-B"), 0);
+            assert!(!lookup_exhausted("SERIAL-B"));
+        });
+    }
 }

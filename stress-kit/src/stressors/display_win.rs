@@ -5,7 +5,8 @@
 
 use std::marker::PhantomData;
 use std::num::NonZeroIsize;
-use std::sync::{Mutex, Once};
+use std::sync::{Mutex, MutexGuard, Once};
+use std::time::{Duration, Instant};
 
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -29,6 +30,31 @@ const CLASS_NAME: &str = "stress_kit_display_surface";
 /// Serializes desktop mode changes; concurrent changes across adapters wedge
 /// the display miniport rather than testing it.
 static MODE_SET_LOCK: Mutex<()> = Mutex::new(());
+
+/// How long a mode change waits its turn before giving up. Bounded because
+/// `ChangeDisplaySettingsExW` itself can block indefinitely, and a blocking
+/// `lock()` behind it made one wedged mode change wedge every later one —
+/// including the restore that teardown depends on.
+const MODE_LOCK_WAIT: Duration = Duration::from_secs(3);
+
+/// Bounded acquisition of [`MODE_SET_LOCK`]. `None` means a sibling mode change
+/// has held it past [`MODE_LOCK_WAIT`].
+fn try_mode_lock(wait: Duration) -> Option<MutexGuard<'static, ()>> {
+    let deadline = Instant::now() + wait;
+    loop {
+        match MODE_SET_LOCK.try_lock() {
+            Ok(guard) => return Some(guard),
+            // A panicking caller left it poisoned; the lock guards ordering,
+            // not data, so taking it is safe.
+            Err(std::sync::TryLockError::Poisoned(e)) => return Some(e.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) => {}
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -192,7 +218,14 @@ pub(super) fn resolutions(device: &str) -> Vec<(u32, u32)> {
 /// Applies a temporary mode change. `CDS_FULLSCREEN` marks it app-owned so
 /// Windows restores the desktop mode if this process dies mid-run.
 pub(super) fn apply_mode(device: &str, width: u32, height: u32, hz: u32) -> Result<(), String> {
-    let _guard = MODE_SET_LOCK.lock();
+    // Skipped rather than queued: concurrent mode changes wedge the miniport,
+    // so a caller that cannot get the turn must not proceed.
+    let Some(_guard) = try_mode_lock(MODE_LOCK_WAIT) else {
+        return Err(format!(
+            "{device}: skipped a mode change, another display has held the mode-set turn for {}s",
+            MODE_LOCK_WAIT.as_secs()
+        ));
+    };
     let name = wide(device);
     let Some(mut mode) = current_mode(device) else {
         return Err(format!("{device}: current mode unreadable"));
@@ -221,8 +254,18 @@ pub(super) fn apply_mode(device: &str, width: u32, height: u32, hz: u32) -> Resu
 }
 
 /// Drops the app-owned mode and returns the display to its registry setting.
+/// Proceeds without the turn if it cannot be had: leaving a display on a
+/// stressor-chosen mode is worse than overlapping one restore with a wedged
+/// change that is never going to finish.
 pub(super) fn restore_mode(device: &str) {
-    let _guard = MODE_SET_LOCK.lock();
+    let guard = try_mode_lock(MODE_LOCK_WAIT);
+    if guard.is_none() {
+        log::warn!(
+            "[stress-kit/gpu_display] {device}: restoring the mode without the mode-set turn; \
+             a sibling change has held it for {}s",
+            MODE_LOCK_WAIT.as_secs()
+        );
+    }
     let name = wide(device);
     let result =
         unsafe { ChangeDisplaySettingsExW(PCWSTR(name.as_ptr()), None, None, CDS_TYPE(0), None) };
@@ -231,32 +274,6 @@ pub(super) fn restore_mode(device: &str) {
             "[stress-kit/gpu_display] {device}: mode restore returned {}",
             result.0
         );
-    }
-}
-
-/// Restores every display it was handed, whether the stressor ends cleanly or
-/// unwinds.
-pub(super) struct ModeGuard {
-    devices: Vec<String>,
-}
-
-impl ModeGuard {
-    pub(super) fn new() -> Self {
-        Self { devices: Vec::new() }
-    }
-
-    pub(super) fn track(&mut self, device: &str) {
-        if !self.devices.iter().any(|d| d == device) {
-            self.devices.push(device.to_string());
-        }
-    }
-}
-
-impl Drop for ModeGuard {
-    fn drop(&mut self) {
-        for device in &self.devices {
-            restore_mode(device);
-        }
     }
 }
 

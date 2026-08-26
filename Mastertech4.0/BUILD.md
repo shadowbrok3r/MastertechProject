@@ -36,8 +36,14 @@ GPU GL stack) is behind the `skia-render` Cargo feature and **off by default**.
 
 - Normal dev loop — no skia, no ninja, no setup: `cargo run -p MasterTech` /
   `cargo build -p MasterTech`.
-- Need the skia-enabled build (matches what ships for Windows PE fallback): use
-  `skia-render`, which requires the setup below.
+- Need the skia-enabled build (matches what ships): use `skia-render`, which
+  requires the setup below.
+
+Release CI (`.github/workflows/release.yml`) passes `features: skia-render` for
+the Windows `MasterTech` binary, so the shipped exe has the middle rung of the
+`GPU -> software -> terminal` ladder. A build without it answers `--cpu` with an
+error and drops to terminal mode; it does not silently pretend to have a
+software renderer.
 
 ## Building with skia-render
 
@@ -96,3 +102,43 @@ Should show no `MSVCP140.dll` or `VCRUNTIME140.dll`.
 
 The from-source Skia compile takes ~8 minutes. It's cached per `CARGO_TARGET_DIR` —
 reuse the same one and later builds are incremental and fast.
+
+# Diagnosing a blank or missing window
+
+The client always writes a log, and the renderer can be degraded from the
+command line without a rebuild.
+
+## Where the log is
+
+`%LOCALAPPDATA%\Mastertech\logs\output.log`, rotated to `output.1.log` ..
+`output.5.log` on each launch. If that directory is not writable the app falls
+back to the exe's own directory and then to temp; the chosen path is printed in
+the third line of every log. Override with `MTECH_LOG_DIR`. File logging is
+unconditional — `--log` is accepted but no longer gates it.
+
+## What to read first
+
+Every launch writes a banner (version, pid, exe path, args, log path, renderer
+knobs), then `GL context: vendor=... renderer=... version=...` naming the driver
+and adapter the GL context actually landed on, then a `render loop:` heartbeat
+carrying the viewport rect, `pixels_per_point`, and the previous frame's frost
+result.
+
+- `render loop:` lines present, `frost=Failed` — the backdrop-blur grab pass is
+  failing. Three consecutive failures switch frosting off for the rest of the
+  process and surfaces paint unfrosted.
+- `render loop:` lines present with a degenerate `viewport_rect` — the window is
+  laying out into nothing; not a blur problem.
+- No `render loop:` lines at all — the frame loop never started; the eframe error
+  is above.
+
+## Turning the glass off
+
+`MTECH_NO_FROST=1` (or `--no-frost`) skips building the grab-pass backend
+entirely, so no paint callback is ever enqueued. If the UI draws with this set
+and not without it, the fault is in the backdrop-blur path.
+
+## Forcing the software renderer
+
+`--cpu` (alias `--software`) skips the GPU attempt. On a build without
+`skia-render` this logs an explicit error and falls through to terminal mode.

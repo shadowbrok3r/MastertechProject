@@ -14,7 +14,10 @@
 //! menu style overwrites the theme after it is applied. [`FramedSelectable`] and
 //! [`framed_menu_style`] hand both frames back to the theme.
 
-use eframe::egui::{Button, IntoAtoms, Response, Style, Ui, Vec2, Widget};
+use eframe::egui::{
+    AsIdSalt, Button, Frame, InnerResponse, IntoAtoms, Margin, Response, Sense, Style, Ui,
+    UiBuilder, Vec2, Widget,
+};
 
 /// Button padding inside a menu bar; egui's `menu_style` uses a tighter 2×0.
 const MENU_BAR_BUTTON_PADDING: Vec2 = Vec2::new(5.0, 1.0);
@@ -60,4 +63,42 @@ impl FramedSelectable for Ui {
         }
         response
     }
+}
+
+/// A full-width, framed, multi-line row that responds to a click anywhere inside it.
+///
+/// [`FramedSelectable::framed_selectable_label`] is a `Button`, so its content is
+/// one run of atoms; a list row that carries a heading, an id and a couple of
+/// metric lines needs a container. The scope senses the click itself, which is
+/// why every widget drawn inside must be non-interactive — a nested button would
+/// swallow the row's click.
+pub fn selectable_card<R>(
+    ui: &mut Ui,
+    id_salt: impl AsIdSalt,
+    selected: bool,
+    contents: impl FnOnce(&mut Ui) -> R,
+) -> InnerResponse<R> {
+    let InnerResponse { inner, response } = ui.scope_builder(
+        UiBuilder::new().id_salt(id_salt).sense(Sense::click()),
+        |ui| {
+            let visuals = ui.style().interact_selectable(&ui.response(), selected);
+            Frame::new()
+                .fill(visuals.weak_bg_fill)
+                .stroke(visuals.bg_stroke)
+                .corner_radius(visuals.corner_radius)
+                .inner_margin(Margin::symmetric(8, 6))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    let style = ui.style_mut();
+                    // `selectable_labels` gives every contained label a click
+                    // sense for text selection, which would consume the row's
+                    // own click before the scope sees it.
+                    style.interaction.selectable_labels = false;
+                    style.visuals.override_text_color = Some(visuals.text_color());
+                    contents(ui)
+                })
+                .inner
+        },
+    );
+    InnerResponse::new(inner, response)
 }

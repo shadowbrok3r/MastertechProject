@@ -6580,6 +6580,11 @@ impl PluginToolProvider {
                 exit_code: None,
                 message: p.notes.clone().unwrap_or_default(),
             },
+            // Pairs with result='inconclusive': the stressor wedged, so the run
+            // is not evidence about the hardware in either direction.
+            "stressor_hang" => FailureMode::StressorHang {
+                message: p.notes.clone().unwrap_or_default(),
+            },
             other => {
                 return Err(to_internal(format!(
                     "unknown failure_kind '{other}'"
