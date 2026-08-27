@@ -1965,90 +1965,21 @@ impl TerminalWebsocketClient {
             }
             Cmd::RequestThumbnail(path_str) => {
                 log::info!("websockets -> Thumbnail request for: {}", path_str);
-                
-                #[cfg(target_os = "windows")]
-                {
-                    use std::os::windows::ffi::OsStrExt;
-                    use windows::{
-                        Win32::{
-                            Foundation::SIZE,
-                            System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, IBindCtx},
-                            UI::Shell::{IShellItem, IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF},
-                            Graphics::Gdi::*,
-                        },
-                        core::{Interface, PCWSTR},
-                    };
-                    
-                    // Initialize COM
-                    unsafe {
-                        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-                    }
-                    
-                    let path = Path::new(&path_str);
-                    let result: Result<Vec<u8>, String> = (|| -> Result<Vec<u8>, String> {
-                        unsafe {
-                            let wide: Vec<u16> = path
-                                .as_os_str()
-                                .encode_wide()
-                                .chain(std::iter::once(0))
-                                .collect();
-                            
-                            let shell_item: IShellItem = SHCreateItemFromParsingName(PCWSTR(wide.as_ptr()), None::<&IBindCtx>)
-                                .map_err(|e| format!("SHCreateItemFromParsingName: {e}"))?;
-                            let factory: IShellItemImageFactory = shell_item
-                                .cast()
-                                .map_err(|e| format!("cast IShellItemImageFactory: {e}"))?;
-                            let hbmp: HBITMAP = factory
-                                .GetImage(SIZE { cx: 256, cy: 256 }, SIIGBF(0))
-                                .map_err(|e| format!("GetImage: {e}"))?;
-                            
-                            // Convert HBITMAP to PNG bytes
-                            hbitmap_to_png_bytes(hbmp)
-                        }
-                    })();
-                    
-                    match result {
-                        Ok(png_bytes) => {
-                            let response = Cmd::ThumbnailResponse(path_str, png_bytes);
-                            match encode_to_vec(&response, standard()) {
-                                Ok(payload) => {
-                                    sender.send(WsMessage::Binary(payload));
-                                    log::debug!("Sent thumbnail");
-                                }
-                                Err(e) => {
-                                    log::error!("Failed to serialize thumbnail: {}", e);
-                                    sender.send(WsMessage::Text(format!("Error: {}", e)));
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            log::error!("Failed to generate thumbnail: {}", e);
-                            // Empty response marks the failure so the admin's
-                            // stream pump can move on instead of stalling.
-                            let response = Cmd::ThumbnailResponse(path_str, Vec::new());
-                            if let Ok(payload) = encode_to_vec(&response, standard()) {
-                                sender.send(WsMessage::Binary(payload));
-                            }
-                        }
-                    }
-                }
-
-                #[cfg(not(target_os = "windows"))]
-                {
-                    // Use image crate as fallback
-                    let buf = image::open(&path_str)
-                        .ok()
-                        .and_then(|img| {
-                            let mut buf = Vec::new();
-                            img.thumbnail(256, 256)
-                                .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
-                                .ok()
-                                .map(|_| buf)
-                        })
-                        .unwrap_or_default();
-                    let response = Cmd::ThumbnailResponse(path_str, buf);
-                    if let Ok(payload) = encode_to_vec(&response, standard()) {
-                        sender.send(WsMessage::Binary(payload));
+                let for_task = path_str.clone();
+                let png = tokio::task::spawn_blocking(move || generate_thumbnail(&for_task))
+                    .await
+                    .unwrap_or_else(|e| {
+                        log::error!("Thumbnail task failed: {e}");
+                        Vec::new()
+                    });
+                // Empty marks the failure so the admin's stream pump moves on
+                // instead of stalling.
+                let response = Cmd::ThumbnailResponse(path_str, png);
+                match encode_to_vec(&response, standard()) {
+                    Ok(payload) => sender.send(WsMessage::Binary(payload)),
+                    Err(e) => {
+                        log::error!("Failed to serialize thumbnail: {}", e);
+                        sender.send(WsMessage::Text(format!("Error: {}", e)));
                     }
                 }
             }
@@ -4665,6 +4596,104 @@ fn cmd_variant_name(cmd: &Cmd) -> String {
         .next()
         .unwrap_or("unknown")
         .to_string()
+}
+
+/// Largest file the decoder fallback will read rather than skip.
+const MAX_THUMB_DECODE_BYTES: u64 = 128 * 1024 * 1024;
+
+/// 256px PNG thumbnail for `path`; empty when no source can produce one.
+#[cfg(target_os = "windows")]
+fn generate_thumbnail(path: &str) -> Vec<u8> {
+    match shell_thumbnail(path) {
+        Ok(png) => {
+            log::debug!("Thumbnail from shell for {path} ({} bytes)", png.len());
+            return png;
+        }
+        Err(e) => log::debug!("Shell thumbnail unavailable for {path}: {e}"),
+    }
+    match decode_thumbnail(path) {
+        Ok(png) => {
+            log::info!("Thumbnail decoded from file for {path} ({} bytes)", png.len());
+            png
+        }
+        Err(e) => {
+            log::warn!("No thumbnail for {path}: {e}");
+            Vec::new()
+        }
+    }
+}
+
+/// 256px PNG thumbnail for `path`; empty when the file can't be decoded.
+#[cfg(not(target_os = "windows"))]
+fn generate_thumbnail(path: &str) -> Vec<u8> {
+    match decode_thumbnail(path) {
+        Ok(png) => png,
+        Err(e) => {
+            log::warn!("No thumbnail for {path}: {e}");
+            Vec::new()
+        }
+    }
+}
+
+/// Shell thumbnail for `path`, erroring rather than substituting a file-type icon.
+#[cfg(target_os = "windows")]
+fn shell_thumbnail(path: &str) -> Result<Vec<u8>, String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::{
+        Win32::{
+            Foundation::SIZE,
+            Graphics::Gdi::HBITMAP,
+            System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, IBindCtx},
+            UI::Shell::{
+                IShellItem, IShellItemImageFactory, SHCreateItemFromParsingName,
+                SIIGBF_THUMBNAILONLY,
+            },
+        },
+        core::{Interface, PCWSTR},
+    };
+
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+
+        let wide: Vec<u16> = Path::new(path)
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        let shell_item: IShellItem =
+            SHCreateItemFromParsingName(PCWSTR(wide.as_ptr()), None::<&IBindCtx>)
+                .map_err(|e| format!("SHCreateItemFromParsingName: {e}"))?;
+        let factory: IShellItemImageFactory = shell_item
+            .cast()
+            .map_err(|e| format!("cast IShellItemImageFactory: {e}"))?;
+        let hbmp: HBITMAP = factory
+            .GetImage(SIZE { cx: 256, cy: 256 }, SIIGBF_THUMBNAILONLY)
+            .map_err(|e| format!("GetImage: {e}"))?;
+
+        hbitmap_to_png_bytes(hbmp)
+    }
+}
+
+/// 256px PNG thumbnail decoded from the file's own bytes.
+fn decode_thumbnail(path: &str) -> Result<Vec<u8>, String> {
+    let len = std::fs::metadata(path)
+        .map_err(|e| format!("metadata: {e}"))?
+        .len();
+    if len > MAX_THUMB_DECODE_BYTES {
+        return Err(format!("file too large to decode ({len} bytes)"));
+    }
+    let img = image::ImageReader::open(path)
+        .map_err(|e| format!("open: {e}"))?
+        .with_guessed_format()
+        .map_err(|e| format!("format sniff: {e}"))?
+        .decode()
+        .map_err(|e| format!("decode: {e}"))?;
+    let mut buf = Vec::new();
+    img.thumbnail(256, 256)
+        .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+        .map_err(|e| format!("encode png: {e}"))?;
+    Ok(buf)
 }
 
 /// Convert HBITMAP to PNG bytes (Windows only)
