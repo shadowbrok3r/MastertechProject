@@ -174,6 +174,10 @@ jobs:
       # `ORCHESTRATOR_URL` (prod) and `ORCHESTRATOR_URL_DEV` (dev) to enable.
       ORCHESTRATOR_URL: ${{ secrets.ORCHESTRATOR_URL }}
       ORCHESTRATOR_URL_DEV: ${{ secrets.ORCHESTRATOR_URL_DEV }}
+      # build_hash.rs prefers `git rev-parse`, which works here because
+      # actions/checkout leaves a real repo. This is the explicit belt-and-braces
+      # so the stamp survives even if the checkout ever becomes gitless.
+      BUILD_GIT_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust Toolchain
@@ -191,9 +195,38 @@ jobs:
       - name: Download and Install Trunk
         run: wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.22.0-beta.1/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf-
 
+      # `--locked` matches the Dockerfile, so this check and the image build
+      # resolve dependencies identically. If this starts failing, Cargo.lock is
+      # stale and needs committing — do not drop the flag.
+      #
+      # This job currently builds the WASM and uploads nothing, while the
+      # `docker` job below builds it again from scratch. Uploading `dist/` here
+      # and having `docker` consume it would remove that duplication and make
+      # the image build near-instant.
       - name: Build with Trunk
         working-directory: ./MtechServer2.0
-        run: ../trunk build --release --config Trunk.toml
+        run: ../trunk build --release --locked --config Trunk.toml
+
+      # Same script the Dockerfile's from-source stage runs, so both paths ship
+      # identical bytes.
+      - name: Pre-compress dist for nginx gzip_static
+        working-directory: ./MtechServer2.0
+        run: ../deploy/precompress.sh dist
+
+      # This job used to build the WASM and throw it away while the `docker` job
+      # rebuilt the identical thing from scratch. Publishing it here means the
+      # image build is a copy instead of a ~25 minute compile, and this job's
+      # warm Swatinem cache is what makes it fast.
+      - name: Upload dist for the image build
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtechserver-dist
+          path: MtechServer2.0/dist
+          retention-days: 1
+          if-no-files-found: error
+          # Contents are already gzip-compressed; re-zipping them at the default
+          # level burns minutes for no gain.
+          compression-level: 1
 
   docker:
     name: Build and Push Docker Image (:beta)
@@ -205,35 +238,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Materialise .env for Docker build context
-        run: |
-          cat > .env << 'ENVEOF'
-          USER_SCOPE=${{ secrets.USER_SCOPE }}
-          DB=${{ secrets.DB }}
-          NS=${{ secrets.NS }}
-          SCAFFOLD_URL=${{ secrets.SCAFFOLD_URL }}
-          SCAFFOLD_USER=${{ secrets.SCAFFOLD_USER }}
-          SCAFFOLD_PASS=${{ secrets.SCAFFOLD_PASS }}
-          DB_URL=${{ secrets.DB_URL }}
-          STORAGE_URL=${{ secrets.STORAGE_URL }}
-          REGION=${{ secrets.REGION }}
-          DB_URL_DEV=${{ secrets.DB_URL_DEV }}
-          DB_URL_BETA=${{ secrets.DB_URL_BETA }}
-          WS_CLIENT_URL=${{ secrets.WS_CLIENT_URL }}
-          WS_MASTER_URL=${{ secrets.WS_MASTER_URL }}
-          ODOO_API_KEY=${{ secrets.ODOO_API_KEY }}
-          ODOO_JSONRPC_URL=${{ secrets.ODOO_JSONRPC_URL }}
-          ODOO_DB=${{ secrets.ODOO_DB }}
-          ODOO_UID=${{ secrets.ODOO_UID }}
-          PRESTASHOP_API_URL=${{ secrets.PRESTASHOP_API_URL }}
-          PRESTASHOP_API_URL_WASM=${{ secrets.PRESTASHOP_API_URL_WASM }}
-          SURREAL_GUEST_PASSWORD=${{ secrets.SURREAL_GUEST_PASSWORD }}
-          XIDAX_ADMIN_URL=${{ secrets.XIDAX_ADMIN_URL }}
-          # Fleet orchestrator: empty values are valid ("fleet reporting disabled").
-          # Set the GitHub repo secrets when ready to enable.
-          ORCHESTRATOR_URL=${{ secrets.ORCHESTRATOR_URL }}
-          ORCHESTRATOR_URL_DEV=${{ secrets.ORCHESTRATOR_URL_DEV }}
-          ENVEOF
+      # Built by the `trunk` job above (this job already `needs:` it).
+      - name: Download prebuilt dist
+        uses: actions/download-artifact@v4
+        with:
+          name: mtechserver-dist
+          path: MtechServer2.0/dist
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -250,6 +260,17 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
+          # Copy the already-built dist rather than compiling in-image. A named
+          # build context is used so `.dockerignore` can keep excluding
+          # `**/dist/` for every other image built from this repo root.
+          target: prebuilt
+          build-contexts: |
+            dist=./MtechServer2.0/dist
+          # Only consumed by the from-source `runtime` target, which this job no
+          # longer selects — BUILD_HASH is stamped in the `trunk` job instead.
+          # Kept so a manual switch back to `runtime` still records the commit.
+          build-args: |
+            GIT_SHA=${{ github.sha }}
           push: true
           tags: |
             shadowbrok3r/mtechserver:beta
