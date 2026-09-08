@@ -68,6 +68,17 @@ fn compose_prompt(req: &AssistRequest) -> String {
          Run the DIAGNOSE path of the bsod-triage skill for it.\n",
     );
     out.push_str(&format!("connection_string: {}\n", req.connection_string));
+    // Without this the model fills customer_id with the only person it was
+    // given — the technician's email — and create_diagnostic_session rejects
+    // the turn with CustomerNotFound. The bsod_sweep prompt carries the same
+    // rule for the same reason.
+    out.push_str(
+        "Pass ONLY connection_string to create_diagnostic_session and let it resolve the \
+         customer and computer itself. NEVER pass customer_id, customer_name or computer_id: \
+         the identity fields below name the technician who asked, not the customer, and an \
+         invented id fails link validation. If it still reports a link problem, call \
+         validate_connection_links with the connection_string alone and report what it says.\n",
+    );
     if let Some(h) = &req.hostname {
         out.push_str(&format!("hostname: {h}\n"));
     }
