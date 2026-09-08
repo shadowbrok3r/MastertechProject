@@ -89,12 +89,14 @@ spec:
               name: zeroclaw-channel
               key: secret
               optional: true
+        # Required, not optional: the reply listener is reachable on the LAN
+        # through admin-agent-lan, and it accepts every request unauthenticated
+        # when this is unset.
         - name: MTECH_ZC_REPLY_TOKEN
           valueFrom:
             secretKeyRef:
               name: zeroclaw-channel
               key: reply_token
-              optional: true
         ports:
         - name: mcp
           containerPort: 9004
@@ -121,3 +123,64 @@ spec:
   - name: zc-reply
     port: 9015
     targetPort: 9015
+
+---
+
+# LAN route for zeroclaw: MCP tool calls in, channel replies back.
+#
+# `externalTrafficPolicy: Local` preserves the client source IP, which the
+# NetworkPolicy below matches on; the trade-off is that only the node running
+# the pod serves these ports, and the pod is pinned to `ubuntu-server`
+# (192.168.120.122) — the address zeroclaw already reaches.
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-agent-lan
+  namespace: rust
+spec:
+  type: NodePort
+  externalTrafficPolicy: Local
+  selector:
+    app: admin-agent
+  ports:
+  - name: mcp
+    port: 9004
+    targetPort: 9004
+    nodePort: 30904
+  - name: zc-reply
+    port: 9015
+    targetPort: 9015
+    nodePort: 30915
+
+---
+
+# Source restriction for the two LAN-exposed ports.
+#
+# The plugin MCP server on 9004 has no authentication of its own, so this is
+# the only thing between it and every other host on the shop LAN — which
+# includes live-infected intake machines. 9015 additionally checks
+# MTECH_ZC_REPLY_TOKEN.
+#
+# Ingress-only: `policyTypes` omits Egress, so the daemon still dials the
+# database, the gateway and connected clients. Nothing in-cluster calls this
+# pod, so no namespace or pod selectors are allowed in.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: admin-agent-lan-only
+  namespace: rust
+spec:
+  podSelector:
+    matchLabels:
+      app: admin-agent
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - ipBlock:
+        cidr: 192.168.22.7/32
+    ports:
+    - protocol: TCP
+      port: 9004
+    - protocol: TCP
+      port: 9015
