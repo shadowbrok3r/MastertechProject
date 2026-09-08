@@ -280,6 +280,9 @@ jobs:
           - name: websocket_server2
             image: shadowbrok3r/websocket_server
             dockerfile: ./websocket_server2/Dockerfile
+          - name: admin_agent
+            image: shadowbrok3r/admin_agent
+            dockerfile: ./admin-agent/Dockerfile
     steps:
       - uses: actions/checkout@v4
 

@@ -1,0 +1,123 @@
+# Kubernetes manifests for the admin-agent crate.
+#
+# Always-on headless MasterTech: holds admin sessions to connected clients,
+# hosts the plugin MCP server, and dispatches tech-confirmed assist requests
+# to the zeroclaw gateway. Mirrors the axum-server pattern: single replica
+# pinned to `ubuntu-server`.
+#
+# Deliberately NO Ingress. The plugin MCP server has no authentication (it is
+# built to listen on loopback), so a public hostname would expose remote
+# diagnostics on customer machines to anyone. The assist dispatcher only makes
+# outbound calls to the gateway, so it needs no inbound route. The Service
+# below is cluster-internal only.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: admin-agent
+  namespace: rust
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: admin-agent
+  strategy:
+    # Two dispatchers would both claim assist rows; the guarded claim makes that
+    # safe but pointless, and two session pumps would double-dial every client.
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: admin-agent
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: ubuntu-server
+      containers:
+      - name: admin-agent
+        image: shadowbrok3r/admin_agent:beta
+        imagePullPolicy: Always
+        env:
+        - name: PUID
+          value: "1000"
+        - name: PGID
+          value: "1000"
+        - name: TZ
+          value: "America/Denver"
+        - name: RUST_LOG
+          value: "admin_agent=info,displays=info,database=warn"
+        # Both listeners default to 127.0.0.1, which is unreachable from
+        # outside the pod.
+        - name: MTECH_MCP_HTTP_ADDR
+          value: "0.0.0.0:9004"
+        - name: MTECH_ZC_REPLY_ADDR
+          value: "0.0.0.0:9015"
+        # CI does not put ZEROCLAW_GATEWAY_URL in the build `.env`, so the
+        # compiled-in fallback is empty and this must be set explicitly.
+        - name: MTECH_ZC_GATEWAY
+          value: "https://zeroclaw.master-tech.app"
+        - name: MTECH_ZC_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: zeroclaw-gateway
+              key: token
+        # Signin failure is non-fatal — the daemon continues as guest — so these
+        # are optional. The assist tables are PERMISSIONS FULL, so guest works;
+        # set them to attribute the daemon's writes to a service account.
+        - name: MTECH_AGENT_USER
+          valueFrom:
+            secretKeyRef:
+              name: mtech-agent
+              key: user
+              optional: true
+        - name: MTECH_AGENT_PASS
+          valueFrom:
+            secretKeyRef:
+              name: mtech-agent
+              key: pass
+              optional: true
+        # Chat bridge only; the assist dispatcher runs without these. Absent
+        # channel config leaves assist_message rows pending rather than failing.
+        - name: MTECH_ZC_CHANNEL_URL
+          valueFrom:
+            secretKeyRef:
+              name: zeroclaw-channel
+              key: url
+              optional: true
+        - name: MTECH_ZC_CHANNEL_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: zeroclaw-channel
+              key: secret
+              optional: true
+        - name: MTECH_ZC_REPLY_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: zeroclaw-channel
+              key: reply_token
+              optional: true
+        ports:
+        - name: mcp
+          containerPort: 9004
+        - name: zc-reply
+          containerPort: 9015
+      imagePullSecrets:
+      - name: regcred
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-agent
+  namespace: rust
+spec:
+  type: ClusterIP
+  selector:
+    app: admin-agent
+  ports:
+  - name: mcp
+    port: 9004
+    targetPort: 9004
+  - name: zc-reply
+    port: 9015
+    targetPort: 9015
