@@ -76,12 +76,41 @@ fn attr<'a>(ev: &'a Value, key: &str) -> Option<&'a Value> {
     ev.get("attributes")?.get(key)
 }
 
+/// Rewrites codepoints the egui font has no glyph for into phosphor icons or
+/// ASCII. Model output carries fullwidth token delimiters and emoji, both of
+/// which render as tofu.
+fn renderable(s: &str) -> String {
+    use crate::ui_tools::icons;
+
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '✅' | '☑' => out.push_str(icons::CHECK),
+            '❌' | '✖' => out.push_str(icons::CLOSE),
+            '⚠' => out.push_str(icons::STATUS_WARN),
+            '→' => out.push_str(icons::ARROW_RIGHT),
+            '❓' => out.push('?'),
+            // JSON-structural once folded to ASCII, so these two stay put.
+            '＂' | '＼' => out.push(ch),
+            // Fullwidth forms sit a fixed offset above their ASCII twins;
+            // DeepSeek delimits tool-call tokens with U+FF5C.
+            '\u{ff01}'..='\u{ff5e}' => out.push((ch as u32 - 0xFEE0) as u8 as char),
+            // Variation selectors are zero-width and always tofu.
+            '\u{fe00}'..='\u{fe0f}' => {},
+            // Remaining dingbats, symbols and emoji have no glyph in the set.
+            '\u{2600}'..='\u{27bf}' | '\u{1f000}'..='\u{1faff}' => {},
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
 /// Attribute as text; non-string values render as compact JSON.
 fn attr_str(ev: &Value, key: &str) -> Option<String> {
     match attr(ev, key)? {
         Value::Null => None,
-        Value::String(s) => Some(s.clone()),
-        other => Some(other.to_string()),
+        Value::String(s) => Some(renderable(s)),
+        other => Some(renderable(&other.to_string())),
     }
 }
 
@@ -252,6 +281,28 @@ mod tests {
             log_ev("t1", "2026-08-07T16:00:01Z", "turn_final_response", json!({"text": "the answer"})),
         ]});
         assert_eq!(sessions_from(&logs, &HashMap::new())[0].outcome(), Some("the answer"));
+    }
+
+    #[test]
+    fn unrenderable_codepoints_are_folded() {
+        // U+FF5C delimiters fold to ASCII; the emoji becomes a phosphor glyph.
+        let logs = json!({"events": [log_ev("t1", "2026-08-07T16:00:00Z", "turn_final_response",
+            json!({"text": "<｜tool_search｜> done ✅\u{fe0f} then →"}))]});
+        let s = &sessions_from(&logs, &HashMap::new())[0];
+        let Entry::Final { text } = &s.entries[0].1 else { panic!("expected a final answer") };
+        assert!(text.starts_with("<|tool_search|>"), "fullwidth bars fold to ASCII: {text}");
+        assert!(!text.contains('\u{fe0f}'), "variation selector is dropped: {text}");
+        assert!(text.contains(crate::ui_tools::icons::CHECK), "check becomes a glyph: {text}");
+        assert!(text.contains(crate::ui_tools::icons::ARROW_RIGHT), "arrow becomes a glyph: {text}");
+    }
+
+    #[test]
+    fn quotes_and_backslashes_survive_so_json_still_parses() {
+        let logs = json!({"events": [log_ev("t1", "2026-08-07T16:00:00Z", "tool_call_start",
+            json!({"tool": "x", "arguments": "{\"k\": \"＂＼\"}"}))]});
+        let s = &sessions_from(&logs, &HashMap::new())[0];
+        let Entry::ToolCall { arguments, .. } = &s.entries[0].1 else { panic!("expected a tool call") };
+        assert!(serde_json::from_str::<serde_json::Value>(arguments).is_ok(), "still parses: {arguments}");
     }
 
     #[test]
