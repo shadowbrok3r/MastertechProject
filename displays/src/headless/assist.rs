@@ -85,7 +85,7 @@ fn compose_prompt(req: &AssistRequest) -> String {
     }
     if let Some(by) = &req.requested_by {
         out.push_str(&format!(
-            "Pass requested_by: \"{by}\", driven_by: \"zeroclaw:{}\" to create_diagnostic_session.\n",
+            "Pass requested_by: \"{by}\", driven_by: \"zeroclaw/{}\" to create_diagnostic_session.\n",
             req.agent.as_deref().unwrap_or(DEFAULT_AGENT)
         ));
     }
@@ -140,17 +140,20 @@ async fn dispatch(req: AssistRequest) {
     // webhook fallback below stays for hosts with no channel configured.
     if channel {
         let key = req.id.key_string();
-        let (status, error) = match open_conversation(&req).await {
+        match open_conversation(&req).await {
+            // Stays `dispatched`. The row records the handover only; the outcome
+            // lives on the conversation and the session it opens. `completed`
+            // here means "the turn returned" to the progress window, which then
+            // reports a healthy handover as an agent that finished without
+            // opening a session.
             Ok(()) => {
-                log::info!("assist: opened conversation {key} for {}", req.connection_string);
-                ("completed", None)
+                log::info!("assist: opened conversation {key} for {}", req.connection_string)
             }
             Err(e) => {
                 log::warn!("assist: could not open conversation {key}: {e}");
-                ("failed", Some(e.to_string()))
+                let _ = AssistRequest::finish(&req.id, "failed", Some(e.to_string())).await;
             }
-        };
-        let _ = AssistRequest::finish(&req.id, status, error).await;
+        }
         return;
     }
 
