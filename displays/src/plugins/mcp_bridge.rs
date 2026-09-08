@@ -10411,7 +10411,7 @@ pub const INSTRUCTIONS: &str = r#"Mastertech Plugin System MCP (MasterTech deskt
 === Diagnostic Flow (crash/hardware engagements — follow this ORDER) ===
 Open the session BEFORE running analyzers so every record links to it (analyzers that run first are recorded unlinked and only get claimed retroactively).
   1. remote_channel_health — confirm the client responds.
-  2. create_diagnostic_session — FIRST. Auto-resolves the service task and claims any pre-session orphan records. Everything after inherits its session/task link. Pass requested_by (who asked for the work), store (RIV/LTN/MUR/SAN/ORE), and driven_by ('desktop' when an operator drives you from Claude Desktop; zeroclaw agents pass 'zeroclaw:<alias>') — outcome reporting segments on them.
+  2. create_diagnostic_session — FIRST. Auto-resolves the service task and claims any pre-session orphan records. Everything after inherits its session/task link. Pass requested_by (who asked for the work), store (RIV/LTN/MUR/SAN/ORE), and driven_by (schema requires <source>/<name>: 'mcp/desktop' when an operator drives you from Claude Desktop, 'zeroclaw/<alias>' for a zeroclaw agent; a colon is rejected) — outcome reporting segments on them.
   3. driver_snapshot_take {label:'intake'} — baseline the driver inventory.
   4. minidump_analyze {connection_string} — triage all dumps; sightings auto-link to the open session. The result carries a fleet block (prior verdicts, known-bad hits) and warnings.
   5. Escalate to com.mastertech.dump-decode (cdb) only when triage blame is ambiguous.
