@@ -241,21 +241,45 @@ async fn fetch(connection_string: &str) -> Option<Snapshot> {
 
     let mut res = database::db()
         .query(
-            "SELECT id, status, dispatch_error, created_at, \
+            "SELECT id, status, dispatch_error, created_at, dispatched_at, \
              math::floor(time::unix(time::now()) - time::unix(dispatched_at ?? created_at)) \
              AS since_dispatch FROM assist_request \
              WHERE connection_string = $cs ORDER BY created_at DESC LIMIT 1",
         )
-        .query(
-            "SELECT id, status, summary, diagnosed_at, started_at FROM diagnostic_session \
-             WHERE connection_string = $cs ORDER BY started_at DESC LIMIT 1",
-        )
         .bind(("cs", connection_string.to_string()))
         .await
         .ok()?;
-
     let requests: Vec<serde_json::Value> = res.take(0).unwrap_or_default();
-    let sessions: Vec<serde_json::Value> = res.take(1).unwrap_or_default();
+
+    // Only sessions from THIS run. Keyed on connection_string alone, an
+    // abandoned session from an earlier request kept reading as "agent working
+    // on this machine" while the current turn was failing — the masking is
+    // worse than showing nothing, because it looks like progress.
+    let since = requests
+        .first()
+        .and_then(|r| {
+            r.get("dispatched_at")
+                .or_else(|| r.get("created_at"))
+                .and_then(serde_json::Value::as_str)
+        })
+        .unwrap_or("")
+        .to_string();
+    let sessions: Vec<serde_json::Value> = if since.is_empty() {
+        Vec::new()
+    } else {
+        database::db()
+            .query(
+                "SELECT id, status, summary, diagnosed_at, started_at FROM diagnostic_session \
+                 WHERE connection_string = $cs AND started_at >= type::datetime($since) \
+                 ORDER BY started_at DESC LIMIT 1",
+            )
+            .bind(("cs", connection_string.to_string()))
+            .bind(("since", since))
+            .await
+            .ok()
+            .and_then(|mut r| r.take(0).ok())
+            .unwrap_or_default()
+    };
 
     let str_at = |v: &serde_json::Value, k: &str| {
         v.get(k)
