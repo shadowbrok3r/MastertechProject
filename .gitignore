@@ -78,3 +78,10 @@ esp-image/*.img
 bioslove/
 **/bioslove/log/
 flash-*.jsonl
+
+# Env backups hold live tokens; the bare `.env` rule above misses suffixed copies.
+.env.*
+!.env.example
+
+# ESP-IDF installer config; machine-specific local toolchain paths.
+eim_config.toml

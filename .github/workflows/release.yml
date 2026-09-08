@@ -275,6 +275,11 @@ jobs:
           - name: plugin_builder
             image: shadowbrok3r/plugin_builder
             dockerfile: ./plugin_builder/Dockerfile
+          # Pushes `websocket_server`, not `websocket_server2`: that is the repo
+          # the `websocketserver-beta` deployment pulls from.
+          - name: websocket_server2
+            image: shadowbrok3r/websocket_server
+            dockerfile: ./websocket_server2/Dockerfile
     steps:
       - uses: actions/checkout@v4
 
