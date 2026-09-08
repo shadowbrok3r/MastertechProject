@@ -40,6 +40,125 @@ impl AssistThread {
     }
 }
 
+/// Folds newest-first rows into one entry per thread, then keeps only `tech`'s
+/// threads when a scope is given. Identity fields are carried up from older
+/// rows because agent replies leave them null.
+fn group_threads(rows: &[serde_json::Value], tech: Option<&str>) -> Vec<AssistThread> {
+    let mut out: Vec<AssistThread> = Vec::new();
+    for row in rows {
+        let Some(thread) = row.get("thread").and_then(|v| v.as_str()) else { continue };
+        let field = |k: &str| {
+            row.get(k).and_then(|v| v.as_str()).map(str::to_string).filter(|s| !s.is_empty())
+        };
+        match out.iter_mut().find(|t| t.thread == thread) {
+            // Rows arrive newest first, so the first one seen sets the head.
+            Some(existing) => {
+                existing.messages += 1;
+                existing.tech = existing.tech.take().or_else(|| field("tech"));
+                existing.service_number =
+                    existing.service_number.take().or_else(|| field("service_number"));
+                existing.connection_string =
+                    existing.connection_string.take().or_else(|| field("connection_string"));
+            },
+            None => out.push(AssistThread {
+                thread: thread.to_string(),
+                tech: field("tech"),
+                service_number: field("service_number"),
+                connection_string: field("connection_string"),
+                last_at: field("created_at").unwrap_or_default(),
+                awaiting_reply: field("direction").as_deref() == Some("in"),
+                messages: 1,
+            }),
+        }
+    }
+    if let Some(me) = tech {
+        out.retain(|t| t.tech.as_deref() == Some(me));
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Shapes taken from a live `/sql` read: agent replies carry a null `tech`,
+    /// which is what makes per-row scoping wrong.
+    fn live_rows() -> Vec<serde_json::Value> {
+        vec![
+            json!({"thread": "27517d89", "tech": "logan.lees@pclaptops.com", "service_number": null,
+                   "connection_string": "DESKTOP-EI5PV29:69cd8115b", "direction": "in",
+                   "created_at": "2026-09-08T20:17:56Z"}),
+            json!({"thread": "repair-diag", "tech": null, "service_number": null,
+                   "connection_string": null, "direction": "out",
+                   "created_at": "2026-08-19T23:41:18Z"}),
+            json!({"thread": "1f0c3af0", "tech": null, "service_number": null,
+                   "connection_string": null, "direction": "out",
+                   "created_at": "2026-08-19T19:11:34Z"}),
+            json!({"thread": "1f0c3af0", "tech": "logan.lees@pclaptops.com", "service_number": null,
+                   "connection_string": "DESKTOP-EI5PV29:69cd8115b", "direction": "in",
+                   "created_at": "2026-08-19T19:11:14Z"}),
+            json!({"thread": "1f0c3af0", "tech": null, "service_number": null,
+                   "connection_string": null, "direction": "out",
+                   "created_at": "2026-08-19T19:08:06Z"}),
+        ]
+    }
+
+    #[test]
+    fn root_sees_every_thread_with_counts_and_identity() {
+        let threads = group_threads(&live_rows(), None);
+        assert_eq!(threads.len(), 3, "one entry per thread");
+
+        let convo = threads.iter().find(|t| t.thread == "1f0c3af0").expect("thread present");
+        assert_eq!(convo.messages, 3, "counts replies, not just the tech's own");
+        // Newest row is an agent reply, so nothing is owed.
+        assert!(!convo.awaiting_reply);
+        // Newest row has a null tech; identity comes up from the older `in` row.
+        assert_eq!(convo.tech.as_deref(), Some("logan.lees@pclaptops.com"));
+        assert_eq!(convo.connection_string.as_deref(), Some("DESKTOP-EI5PV29:69cd8115b"));
+
+        let waiting = threads.iter().find(|t| t.thread == "27517d89").expect("thread present");
+        assert!(waiting.awaiting_reply, "newest row is from the tech");
+    }
+
+    #[test]
+    fn a_tech_sees_only_their_own_threads() {
+        let threads = group_threads(&live_rows(), Some("logan.lees@pclaptops.com"));
+        let ids: Vec<&str> = threads.iter().map(|t| t.thread.as_str()).collect();
+        assert!(ids.contains(&"1f0c3af0") && ids.contains(&"27517d89"));
+        // Owned by nobody, so it belongs to no technician's list.
+        assert!(!ids.contains(&"repair-diag"));
+    }
+
+    #[test]
+    fn scoping_does_not_break_reply_state() {
+        // The bug this guards: per-row scoping hid every `out` row, so a thread
+        // the agent had already answered still read as awaiting a reply.
+        let threads = group_threads(&live_rows(), Some("logan.lees@pclaptops.com"));
+        let convo = threads.iter().find(|t| t.thread == "1f0c3af0").expect("thread present");
+        assert!(!convo.awaiting_reply);
+        assert_eq!(convo.messages, 3);
+    }
+
+    #[test]
+    fn label_prefers_service_number_then_machine() {
+        let mut t = AssistThread {
+            thread: "abcdef123456".into(),
+            tech: None,
+            service_number: None,
+            connection_string: None,
+            last_at: String::new(),
+            awaiting_reply: false,
+            messages: 0,
+        };
+        assert_eq!(t.label(), "abcdef12");
+        t.connection_string = Some("DESKTOP-X:1".into());
+        assert_eq!(t.label(), "DESKTOP-X:1");
+        t.service_number = Some("2151936".into());
+        assert_eq!(t.label(), "#2151936");
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
 pub struct AssistMessage {
     pub id: RecordId,
@@ -195,51 +314,21 @@ impl AssistMessage {
         // Grouped in Rust rather than SurrealQL: 3.x forbids nested aggregates,
         // and the newest row per thread is needed for both `last_at` and
         // `awaiting_reply`, which one GROUP BY cannot give at once.
-        // The WHERE clause is chosen here rather than written as
-        // `$tech = NONE OR tech = $tech`: a bound NONE compared in SQL is the
-        // kind of 3.x edge this file should not depend on. `created_at` is
-        // projected so ORDER BY may name it.
-        const COLS: &str = "SELECT thread, tech, service_number, connection_string, \
-                            direction, created_at FROM assist_message";
-        let sql = match tech {
-            Some(_) => format!("{COLS} WHERE tech = $tech ORDER BY created_at DESC LIMIT $scan"),
-            None => format!("{COLS} ORDER BY created_at DESC LIMIT $scan"),
-        };
+        // Scoped per thread, not per row: only `in` rows carry `tech`, so a
+        // `WHERE tech = $tech` would hide every agent reply — undercounting the
+        // thread and leaving `awaiting_reply` stuck true forever. Rows are read
+        // whole and the grouped threads are filtered by owner below. `text` is
+        // never selected, so no message body is read for another tech's thread.
+        // `created_at` is projected so ORDER BY may name it.
         let mut res = db()
-            .query(sql)
-            .bind(("tech", tech.map(str::to_string)))
+            .query(
+                "SELECT thread, tech, service_number, connection_string, direction, created_at \
+                 FROM assist_message ORDER BY created_at DESC LIMIT $scan",
+            )
             .bind(("scan", scan))
             .await?;
         let rows: Vec<serde_json::Value> = res.take(0).unwrap_or_default();
-
-        let mut out: Vec<AssistThread> = Vec::new();
-        for row in rows {
-            let Some(thread) = row.get("thread").and_then(|v| v.as_str()) else { continue };
-            let field = |k: &str| {
-                row.get(k).and_then(|v| v.as_str()).map(str::to_string).filter(|s| !s.is_empty())
-            };
-            match out.iter_mut().find(|t| t.thread == thread) {
-                // Rows arrive newest first, so the first one seen sets the head.
-                Some(existing) => {
-                    existing.messages += 1;
-                    existing.tech = existing.tech.take().or_else(|| field("tech"));
-                    existing.service_number =
-                        existing.service_number.take().or_else(|| field("service_number"));
-                    existing.connection_string =
-                        existing.connection_string.take().or_else(|| field("connection_string"));
-                },
-                None => out.push(AssistThread {
-                    thread: thread.to_string(),
-                    tech: field("tech"),
-                    service_number: field("service_number"),
-                    connection_string: field("connection_string"),
-                    last_at: field("created_at").unwrap_or_default(),
-                    awaiting_reply: field("direction").as_deref() == Some("in"),
-                    messages: 1,
-                }),
-            }
-        }
-        Ok(out)
+        Ok(group_threads(&rows, tech))
     }
 
     /// Threads that already carry agent messages, so a restarted client keeps
