@@ -1735,7 +1735,11 @@ pub struct CloseDiagnosticSessionParams {
 pub struct MarkDiagnosedParams {
     #[schemars(description = "Session ID to stamp")]
     pub session_id: String,
-    #[schemars(description = "Who completed the diagnosis (defaults to the session tech)")]
+    #[schemars(
+        description = "Who completed the diagnosis, as <source>/<name> — 'tech/first.last', \
+                       'zeroclaw/<alias>', 'mcp/desktop'. Defaults to the session tech. \
+                       Anything else is coerced into that shape, which the field asserts."
+    )]
     #[serde(default)]
     pub diagnosed_by: Option<String>,
     #[schemars(description = "One-line root cause / verdict recorded in the session log")]
@@ -5627,7 +5631,12 @@ impl PluginToolProvider {
             tech: p.tech,
             requested_by: p.requested_by,
             store: p.store,
-            driven_by: p.driven_by,
+            // Coerced to <source>/<name>: agents pass a colon, which the field's
+            // ASSERT rejects, and the rejection reached nobody who could act on it.
+            driven_by: p
+                .driven_by
+                .as_deref()
+                .map(|by| database::schema::normalize_actor(by, "mcp")),
             tags: p.tags.unwrap_or_default(),
             ..Default::default()
         };

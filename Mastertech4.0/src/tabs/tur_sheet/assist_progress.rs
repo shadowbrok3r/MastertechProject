@@ -27,7 +27,19 @@ pub struct Snapshot {
     pub summary: Option<String>,
     /// `(category, title)`, oldest first.
     pub entries: Vec<(String, String)>,
+    /// Newest agent message on the conversation, which is what the AI tab shows.
+    pub agent_says: Option<String>,
+    /// Newest message came from the tech, so the agent has not answered yet.
+    pub awaiting_reply: bool,
+    pub conversation: usize,
+    /// Seconds since the request was handed over, for the stall check.
+    pub since_dispatch: Option<i64>,
 }
+
+/// How long a handed-over request may go without the agent saying anything or
+/// opening a session before the window stops calling it progress. A real turn
+/// is quiet for minutes, so this is deliberately past that.
+const STALL_SECS: i64 = 420;
 
 pub struct AssistProgress {
     connection_string: String,
@@ -77,12 +89,24 @@ impl AssistProgress {
         if s.diagnosed {
             return ("Root cause identified", StageKind::Done);
         }
+        // Quiet past the stall window with no session and nothing said is the
+        // shape every silent failure so far has taken: the handover succeeded
+        // and the turn then died somewhere the tech cannot see.
+        let stalled = s.session_status.is_none()
+            && s.agent_says.is_none()
+            && s.since_dispatch.is_some_and(|secs| secs > STALL_SECS);
+
         match (s.session_status.as_deref(), s.request_status.as_deref()) {
             (Some("resolved") | Some("escalated"), _) => ("Diagnostic closed", StageKind::Done),
             (Some(_), _) => ("Agent working on this machine", StageKind::Live),
             (None, Some("failed")) => ("Could not reach the agent", StageKind::Bad),
-            (None, Some("completed")) => ("Agent finished without opening a session", StageKind::Bad),
-            (None, Some("dispatched")) => ("Handed to the agent — starting up", StageKind::Live),
+            _ if stalled => ("No word from the agent — check the AI tab", StageKind::Bad),
+            // An answer with no session still means the agent is talking, which
+            // the tech can act on; it is not the dead end it used to read as.
+            (None, _) if s.agent_says.is_some() => ("Agent replied", StageKind::Done),
+            (None, Some("completed")) | (None, Some("dispatched")) => {
+                ("Handed to the agent — waiting on its first reply", StageKind::Live)
+            },
             (None, Some("pending")) => ("Queued", StageKind::Live),
             _ => ("Requesting…", StageKind::Live),
         }
@@ -137,6 +161,25 @@ impl AssistProgress {
         ui.add_space(6.);
         ui.separator();
         ui.add_space(4.);
+
+        // Mirrors the AI tab rather than only the session records, so the two
+        // never disagree about what the agent said.
+        if let Some(says) = self.snapshot.agent_says.clone() {
+            ui.label(
+                RichText::new(format!("Agent  ·  {} messages", self.snapshot.conversation))
+                    .small()
+                    .color(theme::weak_text(ui)),
+            );
+            ui.label(RichText::new(says.chars().take(1200).collect::<String>()));
+            ui.add_space(6.);
+        } else if self.snapshot.awaiting_reply {
+            ui.label(
+                RichText::new("The agent has not answered yet. Reply to it in the AI tab.")
+                    .small()
+                    .color(theme::weak_text(ui)),
+            );
+            ui.add_space(6.);
+        }
 
         if let Some(summary) = self.snapshot.summary.clone() {
             ui.label(RichText::new("Summary").small().color(theme::weak_text(ui)));
@@ -198,7 +241,9 @@ async fn fetch(connection_string: &str) -> Option<Snapshot> {
 
     let mut res = database::db()
         .query(
-            "SELECT status, dispatch_error, created_at FROM assist_request \
+            "SELECT id, status, dispatch_error, created_at, \
+             math::floor(time::unix(time::now()) - time::unix(dispatched_at ?? created_at)) \
+             AS since_dispatch FROM assist_request \
              WHERE connection_string = $cs ORDER BY created_at DESC LIMIT 1",
         )
         .query(
@@ -229,8 +274,31 @@ async fn fetch(connection_string: &str) -> Option<Snapshot> {
         diagnosed: session
             .and_then(|s| s.get("diagnosed_at"))
             .is_some_and(|v| !v.is_null()),
+        since_dispatch: request
+            .and_then(|r| r.get("since_dispatch"))
+            .and_then(serde_json::Value::as_i64),
         ..Default::default()
     };
+
+    // The conversation is what the AI tab shows. Reading it here is what stops
+    // this window disagreeing with the chat the tech can already see, and it is
+    // the only place an agent's own words reach them when no session opens.
+    if let Some(request_id) = request.and_then(|r| str_at(r, "id")) {
+        let thread = database::schema::entity_link::parse_record_id(
+            &request_id,
+            database::schema::ASSIST_REQUEST_TABLE,
+        )
+        .key_string();
+        if let Ok(rows) = database::schema::AssistMessage::thread_history(&thread, 200).await {
+            snap.conversation = rows.len();
+            snap.awaiting_reply = rows.last().is_some_and(|m| m.direction == "in");
+            snap.agent_says = rows
+                .iter()
+                .rev()
+                .find(|m| m.direction == "out")
+                .map(|m| m.text.clone());
+        }
+    }
 
     let Some(session_id) = session.and_then(|s| str_at(s, "id")) else {
         return Some(snap);

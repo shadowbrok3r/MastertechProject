@@ -159,7 +159,9 @@ pub struct DiagnosticSession {
     #[serde(default)]
     #[surreal(default)]
     pub store: Option<String>,
-    /// Surface driving the session: "desktop" or "zeroclaw:<alias>".
+    /// Surface driving the session, as `<source>/<name>`: "mcp/desktop",
+    /// "zeroclaw/<alias>". Normalise with `normalize_actor`; the field asserts
+    /// the shape and rejects a bare name or a colon.
     #[serde(default)]
     #[surreal(default)]
     pub driven_by: Option<String>,
@@ -284,6 +286,37 @@ pub struct DiagnosticSessionFull {
     pub entries: Vec<DiagnosticEntry>,
 }
 
+/// Sources `driven_by` and `diagnosed_by` accept, per the schema's ASSERT.
+const ACTOR_SOURCES: [&str; 5] = ["mcp", "zeroclaw", "cron", "tech", "legacy"];
+
+/// Coerces an actor string into the `<source>/<name>` shape those two fields
+/// assert on, so a caller cannot write a value the database will reject.
+///
+/// The assert takes no bare name, no email and no colon separator, and every
+/// caller so far has supplied one of the three: an agent guessed
+/// `zeroclaw:diagnostician`, and `mark_diagnosed` fell back through a bare
+/// email to the literal `unknown`. Rejections surfaced as a tool error the
+/// technician never saw, so this normalises instead of validating.
+pub fn normalize_actor(raw: &str, default_source: &str) -> String {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return format!("{default_source}/unknown");
+    }
+    // A colon where the schema wants a slash is the mistake agents make.
+    let raw = raw.replacen(':', "/", 1);
+    let (head, tail) = raw.split_once('/').unwrap_or(("", raw.as_str()));
+    let source = if ACTOR_SOURCES.contains(&head) { head } else { default_source };
+    // An email localises to its local part; the assert allows no `@` in `name`.
+    let name = tail.split('@').next().unwrap_or(tail);
+    let name: String = name
+        .to_ascii_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '-' })
+        .collect();
+    let name = name.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+    if name.is_empty() { format!("{source}/unknown") } else { format!("{source}/{name}") }
+}
+
 impl DiagnosticSession {
     /// Days open, for a still-open session past [`STALE_SESSION_DAYS`].
     pub fn stale_days(&self) -> Option<i64> {
@@ -405,7 +438,7 @@ impl DiagnosticSession {
                  RETURN VALUE diagnosed_at",
             )
             .bind(("sid", sid))
-            .bind(("by", by.to_string()))
+            .bind(("by", normalize_actor(by, "tech")))
             .await?;
         let at: Option<Datetime> = res.take::<Vec<Datetime>>(0)?.into_iter().next();
         Ok(at)
@@ -749,5 +782,75 @@ impl DiagnosticEntry {
         DiagnosticSession::touch(&e.session_ref).await;
 
         Ok(e.id)
+    }
+}
+
+#[cfg(test)]
+mod actor_tests {
+    use super::normalize_actor;
+
+    /// The ASSERT is read out of the schema so this test fails if the pattern
+    /// changes without the normaliser following it.
+    fn schema_pattern(field: &str) -> regex::Regex {
+        let surql = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/schema/diagnostic_session.surql"
+        ));
+        let line = surql
+            .lines()
+            .find(|l| l.contains("DEFINE FIELD") && l.contains(field) && l.contains("ASSERT"))
+            .unwrap_or_else(|| panic!("no ASSERT line for {field}"));
+        let start = line.find("string::matches($value, '").expect("matches call") + 24;
+        let rest = &line[start..];
+        let end = rest.find('\'').expect("closing quote");
+        regex::Regex::new(&rest[..end]).expect("schema pattern compiles")
+    }
+
+    #[test]
+    fn every_actor_the_callers_produce_satisfies_the_schema() {
+        let re = schema_pattern("driven_by");
+        // Each of these reached the database and was rejected, or would have been.
+        let cases = [
+            ("zeroclaw:diagnostician", "zeroclaw"),
+            ("joshua.adams@pclaptops.com", "tech"),
+            ("unknown", "tech"),
+            ("", "tech"),
+            ("desktop", "mcp"),
+            ("mcp/desktop", "mcp"),
+            ("tech/first.last", "tech"),
+            ("Tyler Naylor", "tech"),
+            ("cron:bsod_sweep", "cron"),
+            ("   ", "legacy"),
+            ("zeroclaw/sweeper", "mcp"),
+        ];
+        for (raw, default_source) in cases {
+            let got = normalize_actor(raw, default_source);
+            assert!(re.is_match(&got), "{raw:?} normalised to {got:?}, which the schema rejects");
+        }
+    }
+
+    #[test]
+    fn a_valid_actor_is_left_alone() {
+        assert_eq!(normalize_actor("zeroclaw/diagnostician", "mcp"), "zeroclaw/diagnostician");
+        assert_eq!(normalize_actor("tech/first.last", "mcp"), "tech/first.last");
+    }
+
+    #[test]
+    fn the_colon_agents_send_becomes_a_slash() {
+        assert_eq!(normalize_actor("zeroclaw:diagnostician", "mcp"), "zeroclaw/diagnostician");
+    }
+
+    #[test]
+    fn an_unknown_source_falls_back_rather_than_being_kept() {
+        // `desktop` is not a source, so it becomes the name under the default.
+        assert_eq!(normalize_actor("desktop", "mcp"), "mcp/desktop");
+        assert_eq!(normalize_actor("joshua.adams@pclaptops.com", "tech"), "tech/joshua.adams");
+    }
+
+    #[test]
+    fn diagnosed_by_shares_the_pattern() {
+        let re = schema_pattern("diagnosed_by");
+        assert!(re.is_match(&normalize_actor("unknown", "tech")));
+        assert!(re.is_match(&normalize_actor("Joshua Adams", "tech")));
     }
 }
