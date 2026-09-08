@@ -15,6 +15,31 @@ use crate::db;
 
 pub const ASSIST_MESSAGE_TABLE: &str = "assist_message";
 
+/// One agent conversation, as a thread list needs it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssistThread {
+    pub thread: String,
+    pub tech: Option<String>,
+    pub service_number: Option<String>,
+    pub connection_string: Option<String>,
+    /// Newest message in the thread.
+    pub last_at: String,
+    /// Newest message came from the tech, so the agent still owes a reply.
+    pub awaiting_reply: bool,
+    pub messages: usize,
+}
+
+impl AssistThread {
+    /// Service number when known, else the machine, else the raw thread id.
+    pub fn label(&self) -> String {
+        match (&self.service_number, &self.connection_string) {
+            (Some(sn), _) => format!("#{sn}"),
+            (None, Some(cs)) => cs.clone(),
+            (None, None) => self.thread.chars().take(8).collect(),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
 pub struct AssistMessage {
     pub id: RecordId,
@@ -163,6 +188,58 @@ impl AssistMessage {
             .bind(("limit", limit))
             .await?;
         Ok(res.take(0).unwrap_or_default())
+    }
+
+    /// One conversation, summarised for a thread list.
+    pub async fn thread_index(tech: Option<&str>, scan: usize) -> anyhow::Result<Vec<AssistThread>> {
+        // Grouped in Rust rather than SurrealQL: 3.x forbids nested aggregates,
+        // and the newest row per thread is needed for both `last_at` and
+        // `awaiting_reply`, which one GROUP BY cannot give at once.
+        // The WHERE clause is chosen here rather than written as
+        // `$tech = NONE OR tech = $tech`: a bound NONE compared in SQL is the
+        // kind of 3.x edge this file should not depend on. `created_at` is
+        // projected so ORDER BY may name it.
+        const COLS: &str = "SELECT thread, tech, service_number, connection_string, \
+                            direction, created_at FROM assist_message";
+        let sql = match tech {
+            Some(_) => format!("{COLS} WHERE tech = $tech ORDER BY created_at DESC LIMIT $scan"),
+            None => format!("{COLS} ORDER BY created_at DESC LIMIT $scan"),
+        };
+        let mut res = db()
+            .query(sql)
+            .bind(("tech", tech.map(str::to_string)))
+            .bind(("scan", scan))
+            .await?;
+        let rows: Vec<serde_json::Value> = res.take(0).unwrap_or_default();
+
+        let mut out: Vec<AssistThread> = Vec::new();
+        for row in rows {
+            let Some(thread) = row.get("thread").and_then(|v| v.as_str()) else { continue };
+            let field = |k: &str| {
+                row.get(k).and_then(|v| v.as_str()).map(str::to_string).filter(|s| !s.is_empty())
+            };
+            match out.iter_mut().find(|t| t.thread == thread) {
+                // Rows arrive newest first, so the first one seen sets the head.
+                Some(existing) => {
+                    existing.messages += 1;
+                    existing.tech = existing.tech.take().or_else(|| field("tech"));
+                    existing.service_number =
+                        existing.service_number.take().or_else(|| field("service_number"));
+                    existing.connection_string =
+                        existing.connection_string.take().or_else(|| field("connection_string"));
+                },
+                None => out.push(AssistThread {
+                    thread: thread.to_string(),
+                    tech: field("tech"),
+                    service_number: field("service_number"),
+                    connection_string: field("connection_string"),
+                    last_at: field("created_at").unwrap_or_default(),
+                    awaiting_reply: field("direction").as_deref() == Some("in"),
+                    messages: 1,
+                }),
+            }
+        }
+        Ok(out)
     }
 
     /// Threads that already carry agent messages, so a restarted client keeps

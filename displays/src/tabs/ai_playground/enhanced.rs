@@ -58,6 +58,19 @@ pub struct EnhancedAiPlayground {
     agent_flag_tx: Sender<String>,
     #[serde(skip)]
     agent_flag_rx: Receiver<String>,
+    /// Agent conversations this user may open: their own, or every one for root.
+    #[serde(skip)]
+    agent_index: Vec<database::schema::AssistThread>,
+    #[serde(skip)]
+    agent_index_tx: Sender<Vec<database::schema::AssistThread>>,
+    #[serde(skip)]
+    agent_index_rx: Receiver<Vec<database::schema::AssistThread>>,
+    #[serde(skip)]
+    last_index_poll: Option<web_time::Instant>,
+    /// Threads already backfilled from the database, so a thread opened from the
+    /// index renders both sides once without duplicating the author's own echo.
+    #[serde(skip)]
+    hydrated: std::collections::HashSet<String>,
     /// Service number the conversation is about, when the host knows one; joins
     /// the transcript to a service order.
     #[serde(skip)]
@@ -86,6 +99,8 @@ impl Default for EnhancedAiPlayground {
         let (response_tx, response_rx) = crossbeam::channel::unbounded::<ChatMessage>();
         let (load_tx, load_rx) = crossbeam::channel::unbounded::<Vec<LoadedThread>>();
         let (agent_flag_tx, agent_flag_rx) = crossbeam::channel::unbounded::<String>();
+        let (agent_index_tx, agent_index_rx) =
+            crossbeam::channel::unbounded::<Vec<database::schema::AssistThread>>();
         Self {
             selected_thread: String::new(),
             chat_title: HashMap::new(),
@@ -103,6 +118,11 @@ impl Default for EnhancedAiPlayground {
             last_agent_poll: None,
             agent_flag_tx,
             agent_flag_rx,
+            agent_index: Vec::new(),
+            agent_index_tx,
+            agent_index_rx,
+            last_index_poll: None,
+            hydrated: std::collections::HashSet::new(),
             service_number: None,
             #[cfg(not(target_arch = "wasm32"))]
             claude: crate::ai::claude_code::ClaudeCodeSession::new(),
@@ -274,7 +294,11 @@ impl EnhancedAiPlayground {
                 .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
                 .show(|ui| {
                     ui.set_min_width(220.);
-                    if self.threads.is_empty() {
+                    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+                    let agent_index = self.agent_index.clone();
+                    #[cfg(not(all(not(target_arch = "wasm32"), feature = "tokio")))]
+                    let agent_index: Vec<database::schema::AssistThread> = Vec::new();
+                    if self.threads.is_empty() && agent_index.is_empty() {
                         ui.label(RichText::new("No chats yet").weak());
                         return;
                     }
@@ -291,11 +315,36 @@ impl EnhancedAiPlayground {
                                 picked = Some(id);
                             }
                         }
+                        if agent_index.is_empty() {
+                            return;
+                        }
+                        ui.separator();
+                        ui.label(RichText::new("Agent conversations").weak().small());
+                        for t in &agent_index {
+                            // A conversation the agent still owes a reply to is
+                            // the one a tech is waiting on, so it is marked.
+                            let mark = if t.awaiting_reply { icons::STATUS_WAIT } else { icons::ROBOT };
+                            let who = t.tech.as_deref().unwrap_or("unattributed");
+                            let line = format!("{mark}  {}  ({} msg)", t.label(), t.messages);
+                            if ui
+                                .selectable_label(selected == t.thread, RichText::new(line))
+                                .on_hover_text(format!("{who}\nlast activity {}", t.last_at))
+                                .clicked()
+                            {
+                                picked = Some(t.thread.clone());
+                            }
+                        }
                     });
                 });
             let stored = popup.map(|r| r.response.rect).unwrap_or(eframe::egui::Rect::NOTHING);
             ui.memory_mut(|m| m.data.insert_temp(rect_id, stored));
             if let Some(id) = picked {
+                #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+                if !self.threads.contains_key(&id) {
+                    // Only an agent conversation can be picked without local
+                    // state; opening it backfills the transcript.
+                    self.open_agent_thread(id.clone());
+                }
                 self.selected_thread = id;
             }
 
@@ -687,7 +736,10 @@ impl EnhancedAiPlayground {
             self.agent_threads.insert(thread);
         }
         #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
-        self.poll_agent_replies(ui);
+        {
+            self.poll_agent_index(ui);
+            self.poll_agent_replies(ui);
+        }
 
         while let Ok(response) = self.response_rx.try_recv() {
             ui.ctx().request_repaint();
@@ -745,6 +797,63 @@ impl EnhancedAiPlayground {
         });
     }
 
+    /// Refreshes the list of agent conversations this user may open. A
+    /// technician sees only their own; root sees every one, which is the only
+    /// way to answer a conversation the tech who opened it has gone home on.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+    fn poll_agent_index(&mut self, ui: &Ui) {
+        use std::time::Duration;
+        const EVERY: Duration = Duration::from_secs(15);
+
+        while let Ok(index) = self.agent_index_rx.try_recv() {
+            self.agent_index = index;
+        }
+        let now = web_time::Instant::now();
+        if self.last_index_poll.is_some_and(|t| now.duration_since(t) < EVERY) {
+            return;
+        }
+        self.last_index_poll = Some(now);
+        ui.ctx().request_repaint_after(EVERY);
+
+        let tx = self.agent_index_tx.clone();
+        PlatformSpawner::spawn(async move {
+            use database::schema::{User, UserAuthorization};
+            // Scope is derived here, not passed in: a stale cached flag would
+            // widen what a technician can read.
+            let me = User::get_current_user_from_auth().await.ok().flatten();
+            let root = me
+                .as_ref()
+                .is_some_and(|u| u.get_authorization() == UserAuthorization::Root);
+            let scope = if root { None } else { me.as_ref().map(|u| u.get_email().to_string()) };
+            // A signed-out client scopes to nobody rather than to everybody.
+            if !root && scope.is_none() {
+                let _ = tx.try_send(Vec::new());
+                return;
+            }
+            match database::schema::AssistMessage::thread_index(scope.as_deref(), 500).await {
+                Ok(index) => {
+                    let _ = tx.try_send(index);
+                },
+                Err(e) => log::warn!("poll_agent_index: {e}"),
+            }
+        });
+    }
+
+    /// Opens a conversation from the index, backfilling both sides on first view.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+    fn open_agent_thread(&mut self, thread: String) {
+        self.agent_threads.insert(thread.clone());
+        self.threads.entry(thread.clone()).or_insert_with(|| ChatThread {
+            id: thread.clone(),
+            messages: Vec::new(),
+            images: Vec::new(),
+            input: String::new(),
+        });
+        self.selected_thread = thread;
+        // Force the next reply poll rather than waiting out the interval.
+        self.last_agent_poll = None;
+    }
+
     /// Pulls agent replies for the open thread. Messages carry their row id, so
     /// the thread's own contents are the dedupe set and no extra state is kept.
     #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
@@ -766,6 +875,13 @@ impl EnhancedAiPlayground {
             .unwrap_or_default();
         let tx = self.response_tx.clone();
         let flag_tx = self.agent_flag_tx.clone();
+        // A thread with nothing rendered yet is being read for the first time, so
+        // the tech's own side is backfilled too. Afterwards it is skipped, or the
+        // author's local echo would be duplicated by its database copy.
+        let hydrate = seen.is_empty() && !self.hydrated.contains(&thread);
+        if hydrate {
+            self.hydrated.insert(thread.clone());
+        }
         PlatformSpawner::spawn(async move {
             use database::schema::RecordIdExt;
             let rows =
@@ -778,15 +894,20 @@ impl EnhancedAiPlayground {
                 if seen.contains(&id) {
                     continue;
                 }
-                let content = if row.direction == "out" && row.error.is_some() {
-                    ChatMessageType::Error(row.text.clone())
+                let (from, content) = if row.direction == "out" && row.error.is_some() {
+                    (SentFrom::Assistant, ChatMessageType::Error(row.text.clone()))
                 } else if row.direction == "out" {
-                    ChatMessageType::Text(row.text.clone())
+                    (SentFrom::Assistant, ChatMessageType::Text(row.text.clone()))
                 } else if row.status == "failed" {
-                    ChatMessageType::Error(format!(
-                        "the agent never received this: {}",
-                        row.error.clone().unwrap_or_else(|| "unknown error".into())
-                    ))
+                    (
+                        SentFrom::Assistant,
+                        ChatMessageType::Error(format!(
+                            "the agent never received this: {}",
+                            row.error.clone().unwrap_or_else(|| "unknown error".into())
+                        )),
+                    )
+                } else if hydrate {
+                    (SentFrom::Me, ChatMessageType::Text(row.text.clone()))
                 } else {
                     continue;
                 };
@@ -794,7 +915,7 @@ impl EnhancedAiPlayground {
                     id,
                     thread_id: thread.clone(),
                     ts: crate::tabs::ai_playground::now_ts(),
-                    from: SentFrom::Assistant,
+                    from,
                     content,
                 });
             }

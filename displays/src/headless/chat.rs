@@ -26,7 +26,7 @@ fn env_value(key: &str) -> Option<String> {
 }
 
 /// Inbound URL plus the HMAC secret the channel verifies bodies against.
-fn channel() -> Option<(String, String)> {
+pub(super) fn channel() -> Option<(String, String)> {
     Some((env_value("MTECH_ZC_CHANNEL_URL")?, env_value("MTECH_ZC_CHANNEL_SECRET")?))
 }
 

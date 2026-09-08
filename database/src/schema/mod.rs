@@ -76,7 +76,7 @@ pub use build_job::*;
 pub use diagnostic::*;
 pub use service_metrics::ServiceMetrics;
 pub use order_intake::{ensure_order_records, IntakeOutcome};
-pub use assist_message::{AssistContext, AssistMessage, ASSIST_MESSAGE_TABLE};
+pub use assist_message::{AssistContext, AssistMessage, AssistThread, ASSIST_MESSAGE_TABLE};
 pub use outcome::{
     client_computer_ids, internal_computer_for_client, outcome_for_sessions, record_id_from_string,
     set_client_internal, set_computer_internal, set_outcome_override, OutcomeBucket,

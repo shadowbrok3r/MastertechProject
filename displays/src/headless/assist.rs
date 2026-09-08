@@ -98,11 +98,35 @@ fn compose_prompt(req: &AssistRequest) -> String {
     out
 }
 
-async fn dispatch(req: AssistRequest) {
-    let Some((url, token)) = gateway() else {
-        log::warn!("assist: no gateway configured; leaving {} pending", req.id.key_string());
-        return;
+/// Opens the request as a conversation instead of a one-shot POST, so the tech
+/// can read what the agent is doing and answer it. `chat`'s bridge owns delivery
+/// from here; the thread id is the request key so the two stay traceable.
+///
+/// Also sidesteps `/webhook`'s ceiling: the channel POST returns as soon as the
+/// message is accepted, rather than holding a connection open for the whole
+/// turn behind Cloudflare's proxy timeout.
+async fn open_conversation(req: &AssistRequest) -> anyhow::Result<()> {
+    let ctx = database::schema::AssistContext {
+        tech: req.requested_by.clone(),
+        service_number: req.service_number.clone(),
+        connection_string: Some(req.connection_string.clone()),
     };
+    database::schema::AssistMessage::ask(&req.id.key_string(), &compose_prompt(req), &ctx).await?;
+    Ok(())
+}
+
+async fn dispatch(req: AssistRequest) {
+    // Checked before the claim so an unconfigured host leaves the row pending
+    // rather than stranding it as dispatched.
+    let channel = super::chat::channel().is_some();
+    let webhook = gateway();
+    if !channel && webhook.is_none() {
+        log::warn!(
+            "assist: no channel or gateway configured; leaving {} pending",
+            req.id.key_string()
+        );
+        return;
+    }
     match AssistRequest::claim(&req.id).await {
         Ok(true) => {}
         Ok(false) => return,
@@ -111,6 +135,27 @@ async fn dispatch(req: AssistRequest) {
             return;
         }
     }
+
+    // A configured channel is the conversational path and the default; the
+    // webhook fallback below stays for hosts with no channel configured.
+    if channel {
+        let key = req.id.key_string();
+        let (status, error) = match open_conversation(&req).await {
+            Ok(()) => {
+                log::info!("assist: opened conversation {key} for {}", req.connection_string);
+                ("completed", None)
+            }
+            Err(e) => {
+                log::warn!("assist: could not open conversation {key}: {e}");
+                ("failed", Some(e.to_string()))
+            }
+        };
+        let _ = AssistRequest::finish(&req.id, status, error).await;
+        return;
+    }
+
+    // Non-None by the check above, which ran before the claim.
+    let Some((url, token)) = webhook else { return };
     let agent = req.agent.clone().unwrap_or_else(|| DEFAULT_AGENT.to_string());
     log::info!("assist: dispatching {} -> agent {agent}", req.id.key_string());
 
