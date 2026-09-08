@@ -61,44 +61,29 @@ fn webhook_secret() -> Option<String> {
         .find(|v| !v.is_empty())
 }
 
-/// Typed fields only; the tech note is fenced so it cannot read as instructions.
+/// Only what the agent cannot work out for itself: the machine, the identities
+/// behind the request, and the tech's own words, fenced so they cannot read as
+/// instructions.
+///
+/// Deliberately short. The MCP server's `INSTRUCTIONS` already carry the whole
+/// diagnostic order, what create_diagnostic_session wants, and the identity
+/// rules — restating them here only gave the model a second, staler copy to
+/// disagree with, which is how it ended up inventing a customer id.
 fn compose_prompt(req: &AssistRequest) -> String {
-    let mut out = String::from(
-        "A technician requested AI assistance on a machine they are working at. \
-         Run the DIAGNOSE path of the bsod-triage skill for it.\n",
-    );
-    out.push_str(&format!("connection_string: {}\n", req.connection_string));
-    // Without this the model fills customer_id with the only person it was
-    // given — the technician's email — and create_diagnostic_session rejects
-    // the turn with CustomerNotFound. The bsod_sweep prompt carries the same
-    // rule for the same reason.
-    out.push_str(
-        "Pass ONLY connection_string to create_diagnostic_session and let it resolve the \
-         customer and computer itself. NEVER pass customer_id, customer_name or computer_id: \
-         the identity fields below name the technician who asked, not the customer, and an \
-         invented id fails link validation. If it still reports a link problem, call \
-         validate_connection_links with the connection_string alone and report what it says.\n",
-    );
-    if let Some(h) = &req.hostname {
-        out.push_str(&format!("hostname: {h}\n"));
+    let mut out = format!("Check this computer: {}\n", req.connection_string);
+    let agent = req.agent.as_deref().unwrap_or(DEFAULT_AGENT);
+    out.push_str(&format!("driven_by: zeroclaw/{agent}\n"));
+    if let Some(by) = &req.requested_by {
+        out.push_str(&format!("requested_by: {by}  (the technician, not the customer)\n"));
     }
     if let Some(sn) = &req.service_number {
         out.push_str(&format!("service_number: {sn}\n"));
     }
-    if req.machine_confirmed {
-        out.push_str(
-            "The technician confirmed this machine is the one on that service order, \
-             so treat that link as ground truth.\n",
-        );
-    }
     if let Some(store) = &req.store {
         out.push_str(&format!("store: {store}\n"));
     }
-    if let Some(by) = &req.requested_by {
-        out.push_str(&format!(
-            "Pass requested_by: \"{by}\", driven_by: \"zeroclaw/{}\" to create_diagnostic_session.\n",
-            req.agent.as_deref().unwrap_or(DEFAULT_AGENT)
-        ));
+    if req.machine_confirmed {
+        out.push_str("The technician confirmed this is the machine on that service order.\n");
     }
     if let Some(note) = &req.tech_note {
         let cleaned: String = note.chars().filter(|c| *c != '`').take(500).collect();
