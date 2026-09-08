@@ -20,15 +20,7 @@ use crate::{XBM_API_KEY, XBM_API_URL};
 
 /// Process-wide reqwest client; cloning shares its connection pool + TLS cache.
 pub(crate) fn shared_http() -> reqwest::Client {
-    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
-    CLIENT
-        .get_or_init(|| {
-            reqwest::Client::builder()
-                .pool_idle_timeout(std::time::Duration::from_secs(90))
-                .build()
-                .unwrap_or_else(|_| reqwest::Client::new())
-        })
-        .clone()
+    crate::shared_http()
 }
 
 /// API error: transport, or a decoded `{code,message}` envelope error.

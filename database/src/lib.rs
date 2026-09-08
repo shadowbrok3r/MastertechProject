@@ -227,9 +227,26 @@ pub const PRESTASHOP_API_URL_WASM: &str = env!("PRESTASHOP_API_URL_WASM");
 /// Shared secret the `pcl-proxy` Worker requires as `X-Mtech-Key`. Empty = no proxy.
 pub const MTECH_PROXY_KEY: &str = env!("MTECH_PROXY_KEY");
 
+/// Pooled client shared by the PrestaShop and XBM callers.
+pub(crate) fn shared_http() -> reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            // Wasm reqwest keeps no connection pool, so `pool_idle_timeout` is native-only.
+            #[cfg(not(target_arch = "wasm32"))]
+            let built = reqwest::Client::builder()
+                .pool_idle_timeout(std::time::Duration::from_secs(90))
+                .build();
+            #[cfg(target_arch = "wasm32")]
+            let built = reqwest::Client::builder().build();
+            built.unwrap_or_else(|_| reqwest::Client::new())
+        })
+        .clone()
+}
+
 /// GET against `PRESTASHOP_API_URL_WASM`, adding `X-Mtech-Key` when one is set.
 pub fn prestashop_get(url: impl reqwest::IntoUrl) -> reqwest::RequestBuilder {
-    let req = crate::xbm::shared_http().get(url);
+    let req = shared_http().get(url);
     if MTECH_PROXY_KEY.is_empty() {
         req
     } else {
