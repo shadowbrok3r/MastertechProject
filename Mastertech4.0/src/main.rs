@@ -259,11 +259,15 @@ fn tui_aware(inner: Box<dyn log::Log + 'static>) -> Box<dyn log::Log + 'static> 
     Box::new(TuiAware(inner))
 }
 
+/// Whether `MTECH_FRAME_HEALTH` is set, read once per process.
+fn heartbeat_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("MTECH_FRAME_HEALTH").is_some())
+}
+
 /// Record what the render loop is doing, so a window that shows nothing still leaves evidence.
 ///
-/// Logged on the first frames and then at a slow heartbeat: the viewport egui is laying out into,
-/// and the previous frame's frost result. A blank client area with frames running and
-/// `frost=Failed` says the grab-pass is at fault; a degenerate `viewport_rect` says it is not.
+/// Logged on the first frames; `MTECH_FRAME_HEALTH` also keeps a slow heartbeat after them.
 fn log_frame_health(
     ctx: &egui::Context,
     frost: Option<displays::ui_tools::glass_backdrop::FrostReport>,
@@ -273,7 +277,7 @@ fn log_frame_health(
     static FRAMES: AtomicU64 = AtomicU64::new(0);
 
     let frame = FRAMES.fetch_add(1, Ordering::Relaxed);
-    if frame > 3 && frame % 1800 != 0 {
+    if frame > 3 && (frame % 1800 != 0 || !heartbeat_enabled()) {
         return;
     }
     let raw_rect = ctx.input(|i| i.raw.screen_rect);

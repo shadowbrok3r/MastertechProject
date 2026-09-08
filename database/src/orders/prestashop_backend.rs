@@ -8,9 +8,8 @@ use anyhow::{anyhow, Context};
 use serde_json::Value;
 
 use crate::schema::everest::request_everest_header_by_docnum;
-use crate::schema::prestashop::xml::{modify_xml, remove_xml_tag};
 use crate::schema::prestashop::{
-    CustomerMessage, CustomerThread, Employee, Order, OrderSerial, Prestashop,
+    CustomerMessage, CustomerThread, Employee, Order, OrderSerial, Prestashop, order_write,
 };
 use crate::{PRESTASHOP_API_URL_WASM, PRESTASHOP_AUTH_URL};
 
@@ -99,10 +98,17 @@ impl PrestashopBackend {
         let url = format!(
             "{PRESTASHOP_API_URL_WASM}/{resource}?output_format=JSON&display=full&filter[id_order]={id_order}"
         );
-        let response: Value = crate::xbm::shared_http()
-            .get(&url)
-            .send()
-            .await?
+        let response = crate::prestashop_get(&url).send().await?;
+        // Non-2xx keeps the body: the proxy reports failures as {"error","detail"}.
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow!(
+                "{resource} fetch for order {id_order} failed: HTTP {status} — {}",
+                body.chars().take(300).collect::<String>()
+            ));
+        }
+        let response: Value = response
             .json()
             .await
             .with_context(|| format!("{resource} fetch for order {id_order} returned non-JSON"))?;
@@ -223,6 +229,8 @@ impl OrderBackend for PrestashopBackend {
                 });
 
                 Ok(QcOrder {
+                    // PS fetches the whole order in one request.
+                    truncated: Vec::new(),
                     backend: Some(BackendKind::Prestashop),
                     key: Some(key.clone()),
                     id: order.id.clone(),
@@ -308,14 +316,16 @@ impl OrderBackend for PrestashopBackend {
     async fn advance_status(&self, order: &QcOrder, to_legacy_id: i64) -> anyhow::Result<()> {
         gate::update_allowed(order.status.legacy_id, to_legacy_id).map_err(|e| anyhow!(e))?;
 
-        let api = Prestashop::default();
-        let xml = api
-            .request_raw_resource_by_id("orders", &order.id)
-            .await
-            .with_context(|| format!("fetching order {} XML for status update", order.id))?;
-        let updated = modify_xml(&xml, "current_state", &to_legacy_id.to_string())?;
-        let final_xml = remove_xml_tag(&updated, "tax_exempt")?;
-        let response = api.modify_prestashop_order(&final_xml).await?;
+        // Through the locked helper: PrestaShop replaces the whole resource on
+        // PUT, and returns 500 for a current_state write that nonetheless
+        // commits. Doing this inline clobbered concurrent field edits and
+        // reported committed advances as failures.
+        let response = order_write::set_order_fields(
+            &order.id,
+            &[("current_state", &to_legacy_id.to_string())],
+        )
+        .await
+        .with_context(|| format!("advancing order {} to status {to_legacy_id}", order.id))?;
         if response.contains("<errors>") {
             return Err(anyhow!("PrestaShop rejected the status update: {response}"));
         }
@@ -340,6 +350,9 @@ impl OrderBackend for PrestashopBackend {
             name: report.tech.clone().unwrap_or_default(),
             email: String::new(),
             id_profile: None,
+            // PrestaShop authenticates with a password, not a staff token.
+            staff_token: None,
+            permissions: Vec::new(),
         };
         self.post_comment(order, &tech, &report.summary_text()).await?;
         Ok(())
@@ -393,6 +406,9 @@ impl OrderBackend for PrestashopBackend {
             name: format!("{} {}", employee.firstname, employee.lastname).trim().to_string(),
             email: employee.email,
             id_profile: Some(employee.id_profile).filter(|p| !p.is_empty() && p != "0"),
+            // PrestaShop authenticates with a password, not a staff token.
+            staff_token: None,
+            permissions: Vec::new(),
         })
     }
 

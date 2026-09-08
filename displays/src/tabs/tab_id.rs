@@ -25,7 +25,7 @@ pub enum TabId {
     ResourceMonitor,
     AdminConsole,
     QueryEditor,
-    CreatePrestashopOrder,
+    CreateOrder,
     Threads,
     Plugins,
     DatabaseEditor,
@@ -85,7 +85,7 @@ const MT_SERVER_WASM: &[TabId] = &[
     TabId::DatabaseEditor,
     TabId::QueryEditor,
     TabId::Koth,
-    TabId::CreatePrestashopOrder,
+    TabId::CreateOrder,
     TabId::StressLab,
     TabId::ServerConsole,
 ];
@@ -111,7 +111,7 @@ const MT_NATIVE: &[TabId] = &[
     TabId::ResourceMonitor,
     TabId::AdminConsole,
     TabId::QueryEditor,
-    TabId::CreatePrestashopOrder,
+    TabId::CreateOrder,
     TabId::ShopifyOrders,
     TabId::Threads,
     TabId::Plugins,
@@ -174,7 +174,7 @@ impl TabId {
             Self::ResourceMonitor => "resource_monitor",
             Self::AdminConsole => "admin_console",
             Self::QueryEditor => "query_editor",
-            Self::CreatePrestashopOrder => "create_prestashop_order",
+            Self::CreateOrder => "create_order",
             Self::Threads => "threads",
             Self::Plugins => "plugins",
             Self::DatabaseEditor => "database_editor",
@@ -223,7 +223,7 @@ impl TabId {
             Self::ResourceMonitor => "Resource Monitor",
             Self::AdminConsole => "Admin Console",
             Self::QueryEditor => "Query Editor",
-            Self::CreatePrestashopOrder => "Create Prestashop Order",
+            Self::CreateOrder => "Create Order",
             Self::Threads => "Threads",
             Self::Plugins => "Plugins",
             Self::DatabaseEditor => "Database Editor",
@@ -285,7 +285,9 @@ impl TabId {
             "Resource Monitor" => Some(Self::ResourceMonitor),
             "Admin Console" => Some(Self::AdminConsole),
             "Query Editor" => Some(Self::QueryEditor),
-            "Create Prestashop Order" => Some(Self::CreatePrestashopOrder),
+            // "Create Prestashop Order" is still in saved dock layouts.
+            "Create Order" | "Create Prestashop Order" => Some(Self::CreateOrder),
+            "Session Board" => Some(Self::SessionBoard),
             "Threads" => Some(Self::Threads),
             "Plugins" => Some(Self::Plugins),
             "Database Editor" | "Database" => Some(Self::DatabaseEditor),
@@ -327,11 +329,12 @@ impl TabId {
             "resource_monitor" => Some(Self::ResourceMonitor),
             "admin_console" => Some(Self::AdminConsole),
             "query_editor" => Some(Self::QueryEditor),
-            "create_prestashop_order" => Some(Self::CreatePrestashopOrder),
+            "create_order" | "create_prestashop_order" => Some(Self::CreateOrder),
             "threads" => Some(Self::Threads),
             "plugins" => Some(Self::Plugins),
             "database_editor" => Some(Self::DatabaseEditor),
             "fleet_dashboard" => Some(Self::FleetDashboard),
+            "session_board" => Some(Self::SessionBoard),
             "stress_lab" => Some(Self::StressLab),
             "stress_test" => Some(Self::StressTest),
             "terminal" => Some(Self::Terminal),
@@ -350,6 +353,51 @@ impl TabId {
             Self::StoreTasks => "Store Tasks",
             Self::CompletedTasks => "Completed Tasks",
             _ => self.title(TabContext::MastertechNative),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tab_id_tests {
+    use super::*;
+
+    /// The slug is stored in saved dock layouts, so retiring the old one has to
+    /// keep parsing it — otherwise every layout saved before the rename loses
+    /// this tab.
+    #[test]
+    fn the_renamed_tab_still_loads_old_layouts() {
+        assert_eq!(TabId::CreateOrder.slug(), "create_order");
+        assert_eq!(TabId::from_slug("create_order"), Some(TabId::CreateOrder));
+        assert_eq!(
+            TabId::from_slug("create_prestashop_order"),
+            Some(TabId::CreateOrder),
+            "layouts saved before the rename must still resolve"
+        );
+        assert_eq!(
+            TabId::from_legacy_title("Create Prestashop Order"),
+            Some(TabId::CreateOrder),
+            "the old display title is also persisted in some layouts"
+        );
+        assert_eq!(TabId::from_legacy_title("Create Order"), Some(TabId::CreateOrder));
+    }
+
+    /// A slug that round-trips is what keeps a layout stable across restarts.
+    #[test]
+    fn every_tab_slug_round_trips() {
+        for ctx in [
+            TabContext::MastertechNative,
+            TabContext::MtechServerWasm,
+            TabContext::WarehouseNative,
+            TabContext::WarehouseWasm,
+        ] {
+            for id in TabId::visible_for(ctx) {
+                assert_eq!(
+                    TabId::from_slug(id.slug()),
+                    Some(*id),
+                    "slug {:?} does not round-trip",
+                    id.slug()
+                );
+            }
         }
     }
 }

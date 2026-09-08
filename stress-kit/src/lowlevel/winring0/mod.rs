@@ -323,6 +323,7 @@ impl LowLevelBackend for WinRing0Backend {
             smn: true,
             lpc_config: true,
             lpc_window: true,
+            package_temp: false,
         }
     }
 

@@ -5,8 +5,15 @@
 //! throughput — are rule-independent and fail under every policy.
 
 use serde::{Deserialize, Serialize};
-use stress_kit::telemetry::TelemetrySnapshot;
+use stress_kit::telemetry::{AccessStatus, AccessTier, BackendId, TelemetrySnapshot};
 use stress_kit::{Metrics, Stressor};
+
+/// How far over its own thermal ceiling a part must sit before the ceiling
+/// reads as unheld. Zen 4 and Raptor Lake both run *at* their ceiling under
+/// sustained load and clock-throttle to stay there, so reaching it is correct
+/// behaviour; only overshooting it says the control loop failed. Covers sensor
+/// quantisation and the fraction of a degree a healthy part overshoots by.
+pub const OVER_CEILING_MARGIN_C: f32 = 3.0;
 
 /// What an unreadable sensor does to the verdict. A rule that was never
 /// evaluated is the absence of evidence, not a breach, so no variant fails.
@@ -20,7 +27,22 @@ pub enum MissingSensorPolicy {
     Warn,
 }
 
-/// Sustained temperature breach: `limit_c` exceeded for `consecutive_ticks`+ ticks.
+/// What `TempRule::limit_c` is measured against.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TempLimitBasis {
+    /// The part's own thermal ceiling plus [`OVER_CEILING_MARGIN_C`] when that
+    /// ceiling is known, and `limit_c` when it is not. A flat number fails
+    /// every healthy part whose ceiling sits at or below it — a Ryzen 7000
+    /// holding 95 C under an all-core load is the design point, not a fault.
+    #[default]
+    PartCeiling,
+    /// `limit_c` as written, whatever the part's ceiling is.
+    Absolute,
+}
+
+/// Sustained temperature breach: the effective limit exceeded for
+/// `consecutive_ticks`+ ticks.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct TempRule {
     pub limit_c: f32,
@@ -29,6 +51,18 @@ pub struct TempRule {
     /// Verdict effect when the sensor never reported.
     #[serde(default)]
     pub on_missing: MissingSensorPolicy,
+    #[serde(default)]
+    pub basis: TempLimitBasis,
+}
+
+impl TempRule {
+    /// Limit this rule actually grades against, given the part's ceiling.
+    pub fn effective_limit_c(&self, ceiling_c: Option<f32>) -> f32 {
+        match (self.basis, ceiling_c) {
+            (TempLimitBasis::PartCeiling, Some(c)) => c + OVER_CEILING_MARGIN_C,
+            _ => self.limit_c,
+        }
+    }
 }
 
 fn default_temp_ticks() -> u32 {
@@ -128,14 +162,18 @@ impl VerdictRules {
                 limit_c: 95.0,
                 consecutive_ticks: 5,
                 on_missing: MissingSensorPolicy::Inconclusive,
+                basis: TempLimitBasis::PartCeiling,
             }),
             // NVML reads temperature on NVIDIA only, so no AMD or Intel
             // discrete card can be graded thermally; gating on it would make
             // every cert on those vendors unsignable.
+            // No GPU vendor publishes a ceiling we can read, so this stays an
+            // absolute number whatever the basis default is.
             max_gpu_temp_c: Some(TempRule {
                 limit_c: 90.0,
                 consecutive_ticks: 5,
                 on_missing: MissingSensorPolicy::Warn,
+                basis: TempLimitBasis::Absolute,
             }),
             clock_collapse: Some(ClockCollapseRule {
                 below_pct_of_stage_max: 0.60,
@@ -159,7 +197,14 @@ pub enum RuleViolation {
     Whea { corrected: u32, fatal: u32 },
     Tdr { delta: u32 },
     StressorErrors { count: u64 },
-    CpuTemp { limit_c: f32, peak_c: f32, sustained_ticks: u32 },
+    CpuTemp {
+        limit_c: f32,
+        peak_c: f32,
+        sustained_ticks: u32,
+        /// The part's own ceiling when `limit_c` was derived from it.
+        #[serde(default)]
+        ceiling_c: Option<f32>,
+    },
     GpuTemp { limit_c: f32, peak_c: f32, sustained_ticks: u32 },
     ClockCollapse { below_pct: f32, ticks: u32 },
     ThroughputUnstable { cv: f64, max_cv: f64 },
@@ -196,6 +241,10 @@ pub struct UnevaluatedRule {
     /// Monitored ticks the stage ran without the sensor answering once.
     pub ticks: u32,
     pub policy: MissingSensorPolicy,
+    /// State of the sensor's backend at the end of the stage, so the gap names
+    /// its own cause instead of sending an operator to go look for one.
+    #[serde(default)]
+    pub detail: Option<String>,
 }
 
 impl UnevaluatedRule {
@@ -203,15 +252,16 @@ impl UnevaluatedRule {
         let (source, hint) = match self.sensor {
             MissingSensor::CpuDieTemp => (
                 "no CPU die temperature",
-                "; the CPU was not graded thermally — check the low-level sensor backend",
+                "the CPU was not graded thermally",
             ),
-            MissingSensor::GpuTelemetry => (
-                "no GPU telemetry",
-                "; the GPU was not graded thermally",
-            ),
+            MissingSensor::GpuTelemetry => ("no GPU telemetry", "the GPU was not graded thermally"),
         };
+        let cause = self
+            .detail
+            .clone()
+            .unwrap_or_else(|| "check the low-level sensor backend".to_string());
         format!(
-            "{} could not be evaluated: {source} in {} tick(s){hint}",
+            "{} could not be evaluated: {source} in {} tick(s); {hint} — {cause}",
             self.rule, self.ticks
         )
     }
@@ -235,9 +285,17 @@ impl RuleViolation {
             },
             Self::Tdr { delta } => format!("{delta} GPU driver reset(s) (TDR)"),
             Self::StressorErrors { count } => format!("{count} stressor data error(s)"),
-            Self::CpuTemp { limit_c, peak_c, sustained_ticks } => format!(
-                "CPU over {limit_c:.0}C for {sustained_ticks}s (peak {peak_c:.1}C)"
-            ),
+            Self::CpuTemp { limit_c, peak_c, sustained_ticks, ceiling_c } => match ceiling_c {
+                Some(c) => format!(
+                    "CPU over {limit_c:.0}C for {sustained_ticks}s (peak {peak_c:.1}C) — \
+                     {c:.0}C part ceiling plus a {OVER_CEILING_MARGIN_C:.0}C margin, so \
+                     the thermal limit was not being held"
+                ),
+                None => format!(
+                    "CPU over {limit_c:.0}C for {sustained_ticks}s (peak {peak_c:.1}C); this \
+                     part's own ceiling is unknown, so the configured limit graded it"
+                ),
+            },
             Self::GpuTemp { limit_c, peak_c, sustained_ticks } => format!(
                 "GPU over {limit_c:.0}C for {sustained_ticks}s (peak {peak_c:.1}C)"
             ),
@@ -333,6 +391,12 @@ pub struct StageStats {
     pub max_cpu_temp_c: Option<f32>,
     pub sum_cpu_temp: f64,
     pub cpu_temp_samples: u32,
+    /// The CPU's own thermal ceiling, latched from the first tick that carried
+    /// one. `None` on a part whose ceiling cannot be established.
+    pub cpu_ceiling_c: Option<f32>,
+    /// Newest low-level backend state seen this stage; names the cause when a
+    /// sensor rule could not be graded.
+    pub access: AccessStatus,
     pub max_gpu_temp_c: Option<f32>,
     /// Ticks that carried at least one GPU telemetry sample. Zero means every
     /// GPU rule below was unevaluable.
@@ -368,6 +432,10 @@ pub struct StageStats {
     /// apart from `inconclusive_reason`: a wedged tool gets its own verdict so
     /// the run reads inconclusive rather than failing the machine.
     pub hang_reason: Option<String>,
+    /// Distinct `stressor_limit -` messages folded this stage, device-loss text
+    /// excluded. The stressor limited its own coverage and kept running, so
+    /// none is a violation; each surfaces as a stage warning.
+    pub tool_limits: Vec<String>,
     /// A stressor reported `Metrics.fatal` at least once this stage. Latched:
     /// later clean ticks never clear it.
     pub fatal_abort: bool,
@@ -397,6 +465,8 @@ impl StageStats {
             max_cpu_temp_c: None,
             sum_cpu_temp: 0.0,
             cpu_temp_samples: 0,
+            cpu_ceiling_c: snapshot.cpu_ceiling.map(|c| c.limit_c),
+            access: snapshot.access.clone(),
             max_gpu_temp_c: None,
             gpu_temp_samples: 0,
             min_v12_v: None,
@@ -418,6 +488,7 @@ impl StageStats {
             last_error: None,
             inconclusive_reason: None,
             hang_reason: None,
+            tool_limits: Vec::new(),
             fatal_abort: false,
             fatal_reason: None,
             whea_baseline: whea_count(snapshot),
@@ -445,6 +516,10 @@ impl StageStats {
             self.last_error = Some(msg.clone());
             if is_stressor_hang_message(msg) && !is_device_loss_message(msg) {
                 self.hang_reason.get_or_insert_with(|| msg.clone());
+            } else if is_stressor_limit_message(msg) && !is_device_loss_message(msg) {
+                if self.tool_limits.len() < MAX_TOOL_LIMITS && !self.tool_limits.contains(msg) {
+                    self.tool_limits.push(msg.clone());
+                }
             } else if is_resolution_message(msg) {
                 self.inconclusive_reason = None;
             } else if self.inconclusive_reason.is_none()
@@ -488,6 +563,13 @@ impl StageStats {
         self.whea_unavailable |= snapshot.whea_unavailable;
         self.tdr_delta = tdr_count(snapshot).saturating_sub(self.tdr_baseline);
 
+        if self.cpu_ceiling_c.is_none() {
+            self.cpu_ceiling_c = snapshot.cpu_ceiling.map(|c| c.limit_c);
+        }
+        if self.access != snapshot.access {
+            self.access = snapshot.access.clone();
+        }
+
         let tick_max_cpu_temp = snapshot.cpu_package_temp_c().or_else(|| {
             snapshot
                 .cores
@@ -503,7 +585,7 @@ impl StageStats {
         if let Some(rule) = &rules.max_cpu_temp_c {
             track_over_run(
                 tick_max_cpu_temp,
-                rule.limit_c,
+                rule.effective_limit_c(self.cpu_ceiling_c),
                 &mut self.cpu_temp_over_run,
                 &mut self.worst_cpu_temp_over,
             );
@@ -639,6 +721,50 @@ impl StageStats {
             || self.hang_reason.is_some()
             || self.produced_no_work()
     }
+
+    /// `true` when the stressor reported limiting its own coverage. Never
+    /// fails the stage, but the notes must reach a verdict to be persisted.
+    pub fn has_tool_limits(&self) -> bool {
+        !self.tool_limits.is_empty()
+    }
+}
+
+/// Operator-facing tier name.
+fn tier_label(tier: AccessTier) -> &'static str {
+    match tier {
+        AccessTier::Full => "full",
+        AccessTier::DieOnly => "die only",
+        AccessTier::RailsOnly => "rails only",
+        AccessTier::None => "none",
+    }
+}
+
+/// One line naming what the low-level sensor backend was doing, so a rule that
+/// could not be graded carries its own cause.
+fn backend_state_line(access: &AccessStatus) -> String {
+    if let Some(lost) = &access.lost {
+        return format!(
+            "the {} backend answered and then stopped: {lost}",
+            access.backend_label
+        );
+    }
+    if access.backend == BackendId::None {
+        let tried: String = access
+            .rejected
+            .iter()
+            .map(|r| format!("{} ({})", r.backend.label(), r.reason))
+            .collect::<Vec<_>>()
+            .join("; ");
+        return match tried.is_empty() {
+            true => format!("no low-level sensor backend opened: {}", access.detail),
+            false => format!("no low-level sensor backend opened; tried {tried}"),
+        };
+    }
+    format!(
+        "the {} backend was live at tier '{}' but the sensor did not answer",
+        access.backend_label,
+        tier_label(access.tier)
+    )
 }
 
 /// Consecutive-breach run tracking for one temp reading against a limit.
@@ -735,6 +861,19 @@ pub(crate) fn is_resolution_message(msg: &str) -> bool {
     msg.to_ascii_lowercase().contains("resolved -")
 }
 
+/// The `stressor_limit -` marker a stressor stamps when it limited its own
+/// coverage and kept running — gpu_display losing or rebuilding one output
+/// because a `Surface::configure` of its own did not return. Neither a load
+/// that never ran nor a wedged stage: it is kept as a stage warning and fails
+/// nothing. Ranked with the hang marker, ahead of [`is_inconclusive_message`].
+pub(crate) fn is_stressor_limit_message(msg: &str) -> bool {
+    msg.to_ascii_lowercase().contains("stressor_limit -")
+}
+
+/// Distinct tool-limit notes kept per stage; a rebuild storm must not grow the
+/// verdict without bound.
+const MAX_TOOL_LIMITS: usize = 16;
+
 /// Stressors whose tick throughput is bursty or pattern-phased by design;
 /// CV never applies.
 fn cv_exempt(stressor: Stressor) -> bool {
@@ -826,21 +965,24 @@ pub fn evaluate_stage(stats: &StageStats, rules: &VerdictRules) -> StageVerdict 
         violations.push(RuleViolation::StressorErrors { count: stats.errors });
     }
     if let Some(rule) = &rules.max_cpu_temp_c {
+        let limit_c = rule.effective_limit_c(stats.cpu_ceiling_c);
         // No die reading means the limit was never tested; without this the rule
         // silently records no violation and the stage certifies as thermally
         // sound on a machine whose CPU temperature was never measured.
         if stats.cpu_temp_samples == 0 && stats.ticks > 0 {
             unevaluated.push(UnevaluatedRule {
-                rule: format!("max_cpu_temp_c {:.0}C", rule.limit_c),
+                rule: format!("max_cpu_temp_c {limit_c:.0}C"),
                 sensor: MissingSensor::CpuDieTemp,
                 ticks: stats.ticks,
                 policy: rule.on_missing,
+                detail: Some(backend_state_line(&stats.access)),
             });
         } else if stats.worst_cpu_temp_over >= rule.consecutive_ticks {
             violations.push(RuleViolation::CpuTemp {
-                limit_c: rule.limit_c,
-                peak_c: stats.max_cpu_temp_c.unwrap_or(rule.limit_c),
+                limit_c,
+                peak_c: stats.max_cpu_temp_c.unwrap_or(limit_c),
                 sustained_ticks: stats.worst_cpu_temp_over,
+                ceiling_c: stats.cpu_ceiling_c,
             });
         }
     }
@@ -851,6 +993,9 @@ pub fn evaluate_stage(stats: &StageStats, rules: &VerdictRules) -> StageVerdict 
                 sensor: MissingSensor::GpuTelemetry,
                 ticks: stats.ticks,
                 policy: rule.on_missing,
+                // GPU telemetry is NVML, not the kernel-mode backend, so the
+                // backend's state says nothing about this gap.
+                detail: None,
             });
         } else if stats.worst_gpu_temp_over >= rule.consecutive_ticks {
             violations.push(RuleViolation::GpuTemp {
@@ -897,6 +1042,8 @@ pub fn evaluate_stage(stats: &StageStats, rules: &VerdictRules) -> StageVerdict 
             .filter(|u| !u.blocks_certification())
             .map(UnevaluatedRule::describe),
     );
+    // Tool-limit notes ride along as warnings; none is a breach.
+    warnings.extend(stats.tool_limits.iter().cloned());
 
     StageVerdict {
         index: stats.index,
@@ -1020,6 +1167,110 @@ mod tests {
             verdict.violations[0],
             RuleViolation::CpuTemp { .. }
         ));
+    }
+
+    /// Snapshot from a part whose own thermal ceiling is known.
+    fn snapshot_at_ceiling(temp_c: f32, ceiling_c: f32) -> TelemetrySnapshot {
+        let mut snap = snapshot(temp_c, 4700, 95.0);
+        snap.cpu_ceiling = Some(stress_kit::telemetry::CpuThermalCeiling {
+            limit_c: ceiling_c,
+            source: stress_kit::telemetry::CpuCeilingSource::AmdModel,
+        });
+        snap
+    }
+
+    /// Snapshot whose low-level backend never opened, with the reason it gave.
+    fn snapshot_without_backend() -> TelemetrySnapshot {
+        let mut snap = snapshot(0.0, 4000, 95.0);
+        snap.cores[0].temp_c = None;
+        snap.access = AccessStatus {
+            backend: BackendId::None,
+            tier: AccessTier::None,
+            backend_label: "none".into(),
+            detail: "No low-level sensor backend is available".into(),
+            rejected: vec![stress_kit::telemetry::RejectedBackend {
+                backend: BackendId::WinRing0,
+                reason: "open driver device failed (err 32)".into(),
+            }],
+            lost: None,
+        };
+        snap
+    }
+
+    /// Ticket 2153882: a Ryzen 9 7900X held 95.5 C under Power Virus with the
+    /// throttle doing its job. Tjmax on Zen 4 IS 95 C, so grading a flat 95
+    /// condemned a part that was behaving exactly as designed.
+    #[test]
+    fn a_part_running_at_its_own_ceiling_is_not_a_thermal_failure() {
+        let rules = VerdictRules::certification();
+
+        let mut at_ceiling = stats_for(&rules);
+        for _ in 0..60 {
+            at_ceiling.absorb_tick(&metrics(100.0, 0), &snapshot_at_ceiling(95.5, 95.0), &rules);
+        }
+        let verdict = evaluate_stage(&at_ceiling, &rules);
+        assert!(verdict.pass, "violations: {:?}", verdict.violations);
+
+        // The same temperatures on a part whose ceiling we cannot establish
+        // still grade against the configured limit — the old, flat behaviour.
+        let mut unknown_part = stats_for(&rules);
+        for _ in 0..60 {
+            unknown_part.absorb_tick(&metrics(100.0, 0), &snapshot(95.5, 4700, 95.0), &rules);
+        }
+        assert!(!evaluate_stage(&unknown_part, &rules).pass);
+    }
+
+    /// A ceiling that is not being held is still a failure, and the line says
+    /// which ceiling it was measured against.
+    #[test]
+    fn overshooting_the_part_ceiling_still_fails() {
+        let rules = VerdictRules::certification();
+        let mut stats = stats_for(&rules);
+        for _ in 0..30 {
+            stats.absorb_tick(&metrics(100.0, 0), &snapshot_at_ceiling(99.5, 95.0), &rules);
+        }
+        let verdict = evaluate_stage(&stats, &rules);
+        assert!(!verdict.pass);
+        let RuleViolation::CpuTemp { limit_c, ceiling_c, .. } = verdict.violations[0] else {
+            panic!("expected a CPU temp breach, got {:?}", verdict.violations);
+        };
+        assert_eq!(ceiling_c, Some(95.0));
+        assert_eq!(limit_c, 95.0 + OVER_CEILING_MARGIN_C);
+        assert!(verdict.violation_lines()[0].contains("95C part ceiling"));
+    }
+
+    /// A rule that opts out of the ceiling grades the number as written.
+    #[test]
+    fn an_absolute_basis_ignores_the_part_ceiling() {
+        let mut rules = VerdictRules::certification();
+        rules.max_cpu_temp_c = Some(TempRule {
+            limit_c: 95.0,
+            consecutive_ticks: 5,
+            on_missing: MissingSensorPolicy::Inconclusive,
+            basis: TempLimitBasis::Absolute,
+        });
+        let mut stats = stats_for(&rules);
+        for _ in 0..30 {
+            stats.absorb_tick(&metrics(100.0, 0), &snapshot_at_ceiling(95.5, 95.0), &rules);
+        }
+        let verdict = evaluate_stage(&stats, &rules);
+        assert!(!verdict.pass, "an absolute limit must still grade as written");
+    }
+
+    /// The gap has to name its own cause. "check the low-level sensor backend"
+    /// sent a tech looking for a backend state the run already knew.
+    #[test]
+    fn an_ungraded_thermal_rule_names_the_backend_state() {
+        let rules = VerdictRules::certification();
+        let mut stats = StageStats::begin(0, "cpu", Stressor::Cpu, &snapshot_without_backend());
+        for _ in 0..30 {
+            stats.absorb_tick(&metrics(100.0, 0), &snapshot_without_backend(), &rules);
+        }
+        let verdict = evaluate_stage(&stats, &rules);
+        assert!(verdict.has_blocking_gap());
+        let line = verdict.unevaluated_lines().remove(0);
+        assert!(line.contains("no low-level sensor backend opened"), "{line}");
+        assert!(line.contains("err 32"), "{line}");
     }
 
     /// A configured CPU temperature limit that was never measured is recorded
@@ -1736,5 +1987,132 @@ mod tests {
             .violations
             .iter()
             .any(|v| matches!(v, RuleViolation::RailDroop { .. })));
+    }
+
+    /// A configure-hang note in the shape gpu_display emits, built from the
+    /// marker stress-kit exports so a reworded message cannot quietly stop
+    /// matching.
+    fn limit_message(device: &str) -> String {
+        format!(
+            "gpu_display: {} Surface::configure on {device} has not returned after 8s, so that \
+             output stopped presenting while the others carry on. Coverage limit imposed by the \
+             tool, not a hardware fault.",
+            stress_kit::STRESSOR_LIMIT_MARKER
+        )
+    }
+
+    /// The v67/v68/v73 shape from service order 2151936: a full-duration
+    /// gpu_display stage, one output lost to a configure that never returned,
+    /// zero hardware events. Filed as an inconclusive it graded `fail`; it is
+    /// the tool limiting its own coverage, so the stage passes and keeps the
+    /// note as a warning.
+    #[test]
+    fn a_stressor_limit_note_warns_without_failing_the_stage() {
+        let note = limit_message(r"\\.\DISPLAY3");
+        let snap = snapshot_with_gpu(70.0, 4000, 95.0, 60.0);
+        for rules in [VerdictRules::certification(), VerdictRules::default()] {
+            let mut stats = StageStats::begin(0, "gpu_display", Stressor::GpuDisplay, &snap);
+            for _ in 0..20 {
+                stats.absorb_tick(&metrics(130.0, 0), &snap, &rules);
+            }
+            for _ in 0..40 {
+                stats.absorb_tick(&warn_metrics(130.0, &note), &snap, &rules);
+            }
+            stats.finish(&snap);
+
+            assert_eq!(
+                stats.tool_limits,
+                vec![note.clone()],
+                "a repeated note was kept more than once"
+            );
+            assert!(
+                stats.inconclusive_reason.is_none(),
+                "a tool limit was filed as a load that never ran"
+            );
+            assert!(!stats.load_unproven(), "a tool limit made the load unproven");
+            assert!(stats.has_tool_limits());
+
+            let verdict = evaluate_stage(&stats, &rules);
+            assert!(
+                verdict.pass,
+                "a tool limit failed the stage: {:?}",
+                verdict.violation_lines()
+            );
+            assert_eq!(verdict.result_token(), "pass");
+            assert!(
+                verdict.warnings.iter().any(|w| w == &note),
+                "the limit was not kept as a warning: {:?}",
+                verdict.warnings
+            );
+        }
+    }
+
+    /// The v66/v72 shape: limit notes accumulate until the watchdog ends the
+    /// stage. The notes must not turn the hang's INCONCLUSIVE into a failure.
+    #[test]
+    fn a_limit_note_does_not_shadow_a_later_hang() {
+        let rules = VerdictRules::certification();
+        let snap = snapshot_with_gpu(70.0, 4000, 95.0, 60.0);
+        let mut stats = StageStats::begin(0, "gpu_display", Stressor::GpuDisplay, &snap);
+        for _ in 0..30 {
+            stats.absorb_tick(&warn_metrics(130.0, &limit_message(r"\\.\DISPLAY3")), &snap, &rules);
+        }
+        stats.absorb_tick(&warn_metrics(130.0, &limit_message(r"\\.\DISPLAY1")), &snap, &rules);
+        stats.absorb_final(&fatal_metrics(&hang_message()));
+        stats.finish(&snap);
+
+        assert_eq!(stats.tool_limits.len(), 2, "{:?}", stats.tool_limits);
+        let verdict = evaluate_stage(&stats, &rules);
+        assert!(verdict.only_tool_failure(), "{:?}", verdict.violation_lines());
+        assert_eq!(verdict.result_token(), "inconclusive");
+        assert_eq!(verdict.warnings.len(), 2, "{:?}", verdict.warnings);
+    }
+
+    /// Hardware evidence beside a limit note is still a failure: the note
+    /// excuses the tool, never the machine.
+    #[test]
+    fn hardware_evidence_beside_a_limit_note_still_fails_the_stage() {
+        let rules = VerdictRules::certification();
+        let mut stats = StageStats::begin(
+            0,
+            "gpu_display",
+            Stressor::GpuDisplay,
+            &snapshot_with_gpu(50.0, 4000, 90.0, 50.0),
+        );
+        let mut whea = snapshot_with_gpu(70.0, 4000, 95.0, 60.0);
+        whea.whea = Some(WheaCounters {
+            delta_since_program_start: 1,
+            corrected_delta: 1,
+            ..Default::default()
+        });
+        for _ in 0..10 {
+            stats.absorb_tick(&warn_metrics(130.0, &limit_message(r"\\.\DISPLAY3")), &whea, &rules);
+        }
+        stats.finish(&whea);
+
+        let verdict = evaluate_stage(&stats, &rules);
+        assert!(!verdict.pass);
+        assert_eq!(verdict.result_token(), "fail");
+        assert!(
+            verdict
+                .violations
+                .iter()
+                .any(|v| matches!(v, RuleViolation::Whea { .. })),
+            "{:?}",
+            verdict.violation_lines()
+        );
+    }
+
+    /// The note cap holds under a rebuild storm, and the cap fails nothing.
+    #[test]
+    fn tool_limit_notes_are_capped() {
+        let rules = VerdictRules::default();
+        let snap = snapshot_with_gpu(70.0, 4000, 95.0, 60.0);
+        let mut stats = StageStats::begin(0, "gpu_display", Stressor::GpuDisplay, &snap);
+        for i in 0..(MAX_TOOL_LIMITS + 10) {
+            stats.absorb_tick(&warn_metrics(130.0, &limit_message(&format!("D{i}"))), &snap, &rules);
+        }
+        assert_eq!(stats.tool_limits.len(), MAX_TOOL_LIMITS);
+        assert!(evaluate_stage(&stats, &rules).pass);
     }
 }

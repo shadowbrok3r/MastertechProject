@@ -853,6 +853,8 @@ impl<'a> OrderQcTab<'a> {
             machine_id: Some(machine.clone()),
             tech: Some(tech.name.clone()),
             tech_employee_id: Some(tech.id_employee.clone()),
+            // Sign-off token from the tech's credential exchange, when they used one.
+            staff_token: tech.staff_token.clone(),
             signoff_tech: self.signoff.as_ref().map(|t| t.name.clone()),
             signoff_employee_id: self.signoff.as_ref().map(|t| t.id_employee.clone()),
             duration_secs: last_verdict.map(|v| v.duration_secs).unwrap_or(0.0),

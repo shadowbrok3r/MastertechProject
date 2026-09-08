@@ -220,6 +220,7 @@ impl<'a> Prestashop<'a> {
         Ok(x)
     }
 
+    /// One resource by id, decoded from the `name` key of the response.
     pub async fn request_subresources_by_id_wasm<T>(
         &self,
         resource: &str,
@@ -235,21 +236,33 @@ impl<'a> Prestashop<'a> {
             format!("{PRESTASHOP_API_URL_WASM}/{resource}/{id}?output_format=JSON")
         };
 
-        let response: Value = self
+        let response = self
             .client
             .get(url.clone())
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/json")
             .send()
-            .await?
-            .json()
             .await?;
+        let status = response.status();
+        let body = response.text().await?;
 
-        log::debug!("prestashop_schema -> query:{url} response: {:?}", response[name]);
+        if !status.is_success() {
+            anyhow::bail!("GET {resource}/{id} -> HTTP {status}: {}", truncate_body(&body));
+        }
+        if let Some(error) = xml::first_prestashop_error(&body) {
+            anyhow::bail!("GET {resource}/{id} -> Prestashop error: {error}");
+        }
+        let value: Value = serde_json::from_str(&body).map_err(|e| {
+            anyhow::anyhow!("GET {resource}/{id} -> body is not JSON ({e}): {}", truncate_body(&body))
+        })?;
+        log::debug!("prestashop_schema -> query:{url} response: {:?}", value[name]);
 
-        let x: T = from_value(response[name].clone())?;
-        // info!("prestashop_schema -> x: {x:#?}");
-        Ok(x)
+        let row = value.get(name).filter(|v| !v.is_null()).ok_or_else(|| {
+            anyhow::anyhow!("GET {resource}/{id} -> no `{name}` in response: {}", truncate_body(&body))
+        })?;
+        from_value(row.clone()).map_err(|e| {
+            anyhow::anyhow!("GET {resource}/{id} -> unexpected `{name}` shape ({e}): {}", truncate_body(&row.to_string()))
+        })
     }
 
     // pub async fn request_resources<T>(
@@ -282,6 +295,20 @@ impl<'a> Prestashop<'a> {
     pub async fn request_resources_checked<T>(
         &self,
         resource_name: &str,
+        url_params: HashMap<&str, &str>,
+    ) -> anyhow::Result<Vec<T>, anyhow::Error>
+    where
+        T: for<'de> Deserialize<'de> + std::fmt::Debug + Send,
+    {
+        self.request_resources_checked_as(resource_name, resource_name, url_params).await
+    }
+
+    /// [`Self::request_resources_checked`] for the resources whose JSON key is
+    /// not their URL segment — `order_serial` answers under `order_serials`.
+    pub async fn request_resources_checked_as<T>(
+        &self,
+        resource_name: &str,
+        response_key: &str,
         url_params: HashMap<&str, &str>,
     ) -> anyhow::Result<Vec<T>, anyhow::Error>
     where
@@ -320,12 +347,25 @@ impl<'a> Prestashop<'a> {
             )
         })?;
 
-        match value.get(resource_name) {
-            None | Some(Value::Null) => Ok(vec![]),
+        match value.get(response_key) {
+            None | Some(Value::Null) => {
+                // A body that carries other keys did not match nothing — it
+                // answered under a name this call did not ask for, and
+                // returning an empty vec would read as "no such record".
+                if let Some(map) = value.as_object() {
+                    let present: Vec<&str> = map.keys().map(String::as_str).collect();
+                    if !present.is_empty() && !present.contains(&response_key) {
+                        log::warn!(
+                            "GET {url} -> no `{response_key}` key; body carries {present:?}"
+                        );
+                    }
+                }
+                Ok(vec![])
+            }
             Some(Value::String(s)) if s.trim().is_empty() => Ok(vec![]),
             Some(list) => from_value(list.clone()).map_err(|e| {
                 anyhow::anyhow!(
-                    "GET {url} -> unexpected `{resource_name}` shape ({e}): {}",
+                    "GET {url} -> unexpected `{response_key}` shape ({e}): {}",
                     truncate_body(&list.to_string())
                 )
             }),
@@ -416,6 +456,8 @@ impl<'a> Prestashop<'a> {
         self.request_resources_checked("orders", query).await
     }
 
+    /// First row of a filtered list query; a miss is an error naming the
+    /// resource and filters instead of a null decode.
     pub async fn find_resource_wasm<T>(
         &self,
         resource_name: &str,
@@ -424,26 +466,36 @@ impl<'a> Prestashop<'a> {
     where
         T: for<'de> Deserialize<'de> + std::fmt::Debug + Send,
     {
-        debug!(
-            "resource_name: {resource_name:#?}, {url_params:#?} URL: {:#?}",
-            self.query_args_wasm(resource_name, url_params.clone())
-        );
+        let filters = describe_params(&url_params);
+        let url = self.query_args_wasm(resource_name, url_params);
+        debug!("prestashop_schema -> GET {url}");
 
-        let response: Value = self
+        let response = self
             .client
-            .get(self.query_args_wasm(resource_name, url_params))
+            .get(&url)
+            .header(ACCEPT, "application/json")
             .send()
-            .await?
-            .json()
             .await?;
+        let status = response.status();
+        let body = response.text().await?;
 
-        debug!("prestashop_schema -> response: {:#?}", response);
-        let t: T = from_value(response[resource_name].get(0).cloned().unwrap_or_default())?;
-        debug!("prestashop_schema -> Value: {t:?}");
-        // let x: T = from_value(t.get(0).cloned().unwrap_or_default())?;
-        // info!("prestashop_schema -> x: {x:#?}");
-
-        Ok(t)
+        if !status.is_success() {
+            anyhow::bail!("GET {resource_name} {filters} -> HTTP {status}: {}", truncate_body(&body));
+        }
+        if let Some(error) = xml::first_prestashop_error(&body) {
+            anyhow::bail!("GET {resource_name} {filters} -> Prestashop error: {error}");
+        }
+        let value: Value = serde_json::from_str(&body).map_err(|e| {
+            anyhow::anyhow!("GET {resource_name} {filters} -> body is not JSON ({e}): {}", truncate_body(&body))
+        })?;
+        let row = value
+            .get(resource_name)
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.first())
+            .ok_or_else(|| anyhow::anyhow!("GET {resource_name} {filters} -> matched nothing: {}", truncate_body(&body)))?;
+        from_value(row.clone()).map_err(|e| {
+            anyhow::anyhow!("GET {resource_name} {filters} -> unexpected row shape ({e}): {}", truncate_body(&row.to_string()))
+        })
     }
 
     /// List-shaped variant of `find_resource_wasm`; a missing or non-array
@@ -700,7 +752,13 @@ impl<'a> Prestashop<'a> {
         })
     }
 
-    pub async fn modify_prestashop_order(
+    /// Raw whole-resource PUT. Crate-private on purpose: the PUT replaces the
+    /// entire order, so an unserialised caller silently reverts whatever another
+    /// writer changed between its own GET and PUT. Go through
+    /// [`order_write::set_order_fields`], which holds a per-order lock and
+    /// re-reads on the 500-but-committed responses PrestaShop returns for
+    /// `current_state` writes.
+    pub(crate) async fn modify_prestashop_order(
         &self,
         xml_payload: &str,
     ) -> anyhow::Result<String, anyhow::Error> {
@@ -733,6 +791,13 @@ fn truncate_body(body: &str) -> String {
         Some((idx, _)) => format!("{}… ({} bytes total)", &trimmed[..idx], trimmed.len()),
         None => trimmed.to_string(),
     }
+}
+
+/// Query parameters as a sorted `key=value` list for error messages.
+fn describe_params(params: &HashMap<&str, &str>) -> String {
+    let mut pairs: Vec<String> = params.iter().map(|(k, v)| format!("{k}={v}")).collect();
+    pairs.sort_unstable();
+    pairs.join(" ")
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
@@ -1067,9 +1132,14 @@ impl DesktopModel {
 pub enum OrderType {
     SalesOrder,
     ServiceOrder,
+    /// Legacy id 4, prefix `RP`, `isService: true`. Confirmed against the live
+    /// store; it was decoding as a sales order before.
+    RepairOrder,
     ReadyToRoll,
     Bsd,
     Rci,
+    /// A PrestaShop order-type id this table does not map. Never written back.
+    Unknown,
 }
 
 impl OrderType {
@@ -1077,9 +1147,13 @@ impl OrderType {
         match self {
             Self::SalesOrder => 1,
             Self::ServiceOrder => 2,
+            Self::RepairOrder => 4,
             Self::ReadyToRoll => 12,
             Self::Bsd => 13,
             Self::Rci => 14,
+            // No PrestaShop order type carries -1, so filters built from
+            // Unknown return an empty set instead of the wrong orders.
+            Self::Unknown => -1,
         }
     }
 
@@ -1087,38 +1161,54 @@ impl OrderType {
         match self {
             Self::SalesOrder => "1",
             Self::ServiceOrder => "2",
+            Self::RepairOrder => "4",
             Self::ReadyToRoll => "12",
             Self::Bsd => "13",
             Self::Rci => "14",
+            Self::Unknown => "-1",
         }
     }
 
-    pub fn from_id(id: i32) -> Self {
-        match id {
+    /// Decode a PrestaShop order-type id, or `None` if unmapped.
+    pub fn try_from_id(id: i32) -> Option<Self> {
+        Some(match id {
             1 => Self::SalesOrder,
             2 => Self::ServiceOrder,
+            4 => Self::RepairOrder,
             12 => Self::ReadyToRoll,
             13 => Self::Bsd,
             14 => Self::Rci,
-            _ => Self::SalesOrder
-        }
+            _ => return None,
+        })
     }
 
+    /// Decode a PrestaShop order-type id, or `None` if unmapped.
+    pub fn try_from_id_str(id_str: &str) -> Option<Self> {
+        id_str.trim().parse::<i32>().ok().and_then(Self::try_from_id)
+    }
+
+    /// Decode a PrestaShop order-type id, yielding [`Self::Unknown`] and a log
+    /// line for ids this table does not map.
+    pub fn from_id(id: i32) -> Self {
+        Self::try_from_id(id).unwrap_or_else(|| {
+            log::warn!("unmapped PrestaShop order type id {id} — treating as Unknown");
+            Self::Unknown
+        })
+    }
+
+    /// Decode a PrestaShop order-type id, yielding [`Self::Unknown`] and a log
+    /// line for ids this table does not map.
     pub fn from_id_str(id_str: &str) -> Self {
-        match id_str {
-            "1" => Self::SalesOrder,
-            "2" => Self::ServiceOrder,
-            "12" => Self::ReadyToRoll,
-            "13" => Self::Bsd,
-            "14" => Self::Rci,
-            _ => Self::SalesOrder
-        }
+        Self::try_from_id_str(id_str).unwrap_or_else(|| {
+            log::warn!("unmapped PrestaShop order type id {id_str:?} — treating as Unknown");
+            Self::Unknown
+        })
     }
 
     /// Order states applicable to this order type, in display order.
     pub fn applicable_states(&self) -> Vec<OrderState> {
         match self {
-            Self::ServiceOrder => vec![
+            Self::ServiceOrder | Self::RepairOrder => vec![
                 OrderState::CheckinShelf,
                 OrderState::InRepair,
                 OrderState::InRepairRemote,
@@ -1240,6 +1330,148 @@ mod tests {
         url.split_once('?')
             .map(|(_, query)| query.to_string())
             .unwrap_or_default()
+    }
+
+    /// Every id in `OrderState::VALUES` must exist in the live `/statuses`
+    /// capture, so the enum cannot drift away from the real status table.
+    #[test]
+    fn every_order_state_id_exists_on_the_live_store() {
+        let raw: serde_json::Value =
+            serde_json::from_str(include_str!("../../xbm/fixtures/statuses.json")).unwrap();
+        let statuses = raw
+            .pointer("/data/statuses")
+            .or_else(|| raw.pointer("/statuses"))
+            .and_then(|v| v.as_array())
+            .expect("statuses fixture shape");
+
+        let live: std::collections::HashMap<i64, &str> = statuses
+            .iter()
+            .filter_map(|s| {
+                Some((
+                    s.get("legacyId")?.as_i64()?,
+                    s.get("name")?.as_str()?,
+                ))
+            })
+            .collect();
+        assert!(live.len() > 100, "fixture only had {} statuses", live.len());
+
+        let missing: Vec<_> = OrderState::VALUES
+            .iter()
+            .filter(|s| !live.contains_key(&(s.to_id() as i64)))
+            .map(|s| format!("{s:?}={}", s.to_id()))
+            .collect();
+        assert!(missing.is_empty(), "ids absent from the live store: {missing:?}");
+    }
+
+    /// The six statuses that used to carry invented 9001-9006 ids.
+    #[test]
+    fn repair_statuses_use_their_real_prestashop_ids() {
+        for (id, state) in [
+            (31, OrderState::InRepairRemote),
+            (32, OrderState::PendingAcPortRepair),
+            (34, OrderState::PendingCustomerCallback),
+            (35, OrderState::ReplacementPartOrdered),
+            (36, OrderState::PendingSpoPayment),
+            (37, OrderState::PendingRma),
+        ] {
+            assert_eq!(state.to_id(), id, "{state:?}");
+            assert_eq!(OrderState::try_state_from_id_str(&id.to_string()), Some(state));
+        }
+        // The invented ids must no longer resolve to anything.
+        for fake in ["9001", "9002", "9003", "9004", "9005", "9006"] {
+            assert_eq!(OrderState::try_state_from_id_str(fake), None, "{fake}");
+        }
+    }
+
+    #[test]
+    fn known_order_types_round_trip() {
+        for t in [
+            OrderType::SalesOrder,
+            OrderType::ServiceOrder,
+            OrderType::ReadyToRoll,
+            OrderType::Bsd,
+            OrderType::Rci,
+        ] {
+            assert_eq!(OrderType::try_from_id(t.to_id()), Some(t.clone()));
+            assert_eq!(OrderType::try_from_id_str(t.to_id_str()), Some(t));
+        }
+    }
+
+    #[test]
+    fn repair_order_is_type_4() {
+        // Confirmed live: legacyId 4, prefix RP, isService true.
+        assert_eq!(OrderType::try_from_id(4), Some(OrderType::RepairOrder));
+        assert_eq!(OrderType::from_id_str("4"), OrderType::RepairOrder);
+        assert_eq!(OrderType::RepairOrder.to_id(), 4);
+        // Repairs use the service status list, not the sales one.
+        let states = OrderType::RepairOrder.applicable_states();
+        assert!(states.contains(&OrderState::CheckinShelf), "{states:?}");
+        assert!(!states.contains(&OrderState::PrePulled), "{states:?}");
+        assert_eq!(states, OrderType::ServiceOrder.applicable_states());
+    }
+
+    #[test]
+    fn unmapped_order_type_is_unknown_not_a_sale() {
+        // 5/6/12 are still unproven; they must not silently read as sales.
+        for id in ["5", "6", "99", "", "not-a-number"] {
+            assert_eq!(OrderType::try_from_id_str(id), None, "id {id:?}");
+            assert_eq!(OrderType::from_id_str(id), OrderType::Unknown, "id {id:?}");
+        }
+        assert_eq!(OrderType::from_id(99), OrderType::Unknown);
+    }
+
+    #[test]
+    fn unknown_order_type_has_no_applicable_states() {
+        assert!(OrderType::Unknown.applicable_states().is_empty());
+    }
+
+    #[test]
+    fn unknown_ids_never_collide_with_a_real_one() {
+        assert_eq!(OrderType::Unknown.to_id(), -1);
+        assert_eq!(OrderState::Unknown.to_id(), -1);
+        for t in [
+            OrderType::SalesOrder,
+            OrderType::ServiceOrder,
+            OrderType::ReadyToRoll,
+            OrderType::Bsd,
+            OrderType::Rci,
+        ] {
+            assert_ne!(t.to_id(), -1);
+        }
+        for s in OrderState::VALUES {
+            assert_ne!(s.to_id(), -1);
+        }
+    }
+
+    #[test]
+    fn known_order_states_round_trip() {
+        for s in OrderState::VALUES {
+            assert_eq!(OrderState::try_state_from_id_str(s.to_id_str()), Some(s.clone()));
+            assert!(
+                OrderState::try_name_from_id_str(s.to_id_str()).is_some(),
+                "no name for {s:?}"
+            );
+        }
+    }
+
+    // Pre-existing divergence, pinned rather than silently renamed: id 29
+    // renders as "Check-in Shelf" by id and "Checkin Shelf" by variant.
+    #[test]
+    fn checkin_shelf_name_diverges_by_lookup_path() {
+        assert_eq!(OrderState::try_name_from_id_str("29"), Some("Check-in Shelf"));
+        assert_eq!(OrderState::CheckinShelf.as_str(), "Checkin Shelf");
+    }
+
+    #[test]
+    fn unmapped_order_state_is_unknown_not_shipped() {
+        // 225 is a live "Ready to Build" id that gate.rs knows and this table
+        // does not; it used to read as 239 Accepted By Odoo, which is
+        // post-shipped and blocks later fulfilment writes.
+        for id in ["225", "60", "57", "98", "103", "26", "67", ""] {
+            assert_eq!(OrderState::try_state_from_id_str(id), None, "id {id:?}");
+            assert_eq!(OrderState::state_from_id_str(id), OrderState::Unknown, "id {id:?}");
+            assert_eq!(OrderState::from_id_str(id), "Unknown", "id {id:?}");
+        }
     }
 
     #[test]

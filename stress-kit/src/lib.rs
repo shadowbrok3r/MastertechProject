@@ -386,6 +386,15 @@ fn variant_renames(shape: &'static facet::Shape) -> impl Iterator<Item = &'stati
 /// as a hardware fault again.
 pub const STRESSOR_HANG_MARKER: &str = "stressor_hang -";
 
+/// Marker a stressor stamps on a `Metrics.last_error` reporting that it limited
+/// its own coverage and kept running: one output it stopped presenting to, or
+/// rebuilt, because a call of its own did not return, with no bugcheck,
+/// watchdog live dump, TDR or WHEA beside it. Neither a load that never ran nor
+/// a wedged stage, so stress-runner keeps it as a warning on the stage and
+/// grades the run on the rest of its evidence. Read from here on both sides
+/// for the same reason as [`STRESSOR_HANG_MARKER`].
+pub const STRESSOR_LIMIT_MARKER: &str = "stressor_limit -";
+
 /// Runs the display-path load on the calling thread, sending ticks to `tx`.
 ///
 /// This is the entry point the out-of-process host (`stresskit-display`) uses.

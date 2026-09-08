@@ -96,3 +96,34 @@ fn fields_match(order_xml: &str, fields: &[(&str, &str)]) -> bool {
         element_text(order_xml, field).is_some_and(|actual| actual.trim() == *expected)
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_field_list_is_refused() {
+        // An empty PUT would round-trip the order unchanged and still take the
+        // lock; refusing is cheaper than a no-op write.
+        let err = futures::executor::block_on(set_order_fields("212345", &[]))
+            .expect_err("empty write should be refused");
+        assert!(err.to_string().contains("no fields"), "{err}");
+    }
+
+    #[test]
+    fn fields_match_reads_the_written_values_back() {
+        let xml = "<order><current_state>71</current_state><id_customer>42</id_customer></order>";
+        assert!(fields_match(xml, &[("current_state", "71")]));
+        assert!(fields_match(xml, &[("current_state", "71"), ("id_customer", "42")]));
+        // The 500-recovery must not treat a stale value as applied.
+        assert!(!fields_match(xml, &[("current_state", "67")]));
+        // A field the order does not carry is not a match either.
+        assert!(!fields_match(xml, &[("id_address_invoice", "9")]));
+    }
+
+    #[test]
+    fn whitespace_around_a_value_still_matches() {
+        let xml = "<order><current_state> 71 </current_state></order>";
+        assert!(fields_match(xml, &[("current_state", "71")]));
+    }
+}

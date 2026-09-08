@@ -66,24 +66,32 @@ impl MastertechContext {
 
                     ui.add_space(305.);
 
-                    let get_presta_btn = ui.add_enabled(
+                    let pull_btn = ui.add_enabled(
                         enabled,
                         Button::new(
-                            RichText::new("Get PrestaShop Order")
-                                .color(style.visuals.warn_fg_color),
+                            RichText::new("Pull Order").color(style.visuals.warn_fg_color),
                         )
                         .stroke(style.visuals.window_stroke)
                         .min_size(Vec2::new(150.0, 25.0)),
+                    )
+                    .on_hover_text(
+                        "Loads the order into the sheet from whichever backend has it.",
                     );
-                    push_widget_anchor("tur.get_prestashop_order", get_presta_btn.rect);
-                    if get_presta_btn.clicked() {
+                    push_widget_anchor("tur.pull_order", pull_btn.rect);
+                    // Old key kept so existing MCP automation still hits the button.
+                    push_widget_anchor("tur.get_prestashop_order", pull_btn.rect);
+                    if pull_btn.clicked() {
                         let service_num = self.ticket_data.service_number.clone();
-                        self.presta_api();
+                        let phone = self.customer_data.phone_number.clone();
+                        self.pull_order();
                         self.ticket_data = TicketData::default();
                         self.task_data = LiveTaskPayload::default();
                         self.customer_data = CustomerData::default();
                         self.task_notes = Vec::new();
                         self.ticket_data.service_number = service_num;
+                        // A phone-only pull clears the field it searched on, so
+                        // the search term vanishes before the result lands.
+                        self.customer_data.phone_number = phone;
                     }
                 
                     ui.horizontal(|ui| {
@@ -208,9 +216,14 @@ impl MastertechContext {
 
             let accepted_by_keyboard = ui.input_mut(|input| input.key_pressed(Key::Enter));
 
-            if self.ticket_data.service_number.len() > 6 && accepted_by_keyboard && service_num.lost_focus() {
+            // Any non-blank reference, not 7+ characters: a Shopify order number
+            // is four digits, and the length gate meant Enter never fired for one.
+            if !self.ticket_data.service_number.trim().is_empty()
+                && accepted_by_keyboard
+                && service_num.lost_focus()
+            {
                 let service_num = self.ticket_data.service_number.clone();
-                self.presta_api();
+                self.pull_order();
                 self.ticket_data = TicketData::default();
                 self.task_data = LiveTaskPayload::default();
                 self.customer_data = CustomerData::default();

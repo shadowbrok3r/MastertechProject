@@ -30,10 +30,7 @@ const REQUIRED_NO_DEFAULT: &[&str] = &[
     "ODOO_JSONRPC_URL",
     "ODOO_DB",
     "ODOO_UID",
-    "PRESTASHOP_API_URL",
-    "PRESTASHOP_API_URL_WASM",
     "SURREAL_GUEST_PASSWORD",
-    "XIDAX_ADMIN_URL",
 ];
 
 /// Every key this crate's `env!()` macros may read (used when no `.env` to pull from `std::env`).
@@ -64,6 +61,7 @@ const ALL_INJECT_KEYS: &[&str] = &[
     "ODOO_UID",
     "PRESTASHOP_API_URL",
     "PRESTASHOP_API_URL_WASM",
+    "MTECH_PROXY_KEY",
     "XIDAX_ADMIN_URL",
     // Fleet orchestrator (axum_server) endpoints — qc-app posts heartbeats and
     // polls commands against these. Picked at runtime by
@@ -84,6 +82,7 @@ const ALL_INJECT_KEYS: &[&str] = &[
     // the XBM client at runtime.
     "XBM_API_URL",
     "XBM_API_KEY",
+    "XBM_SHOP",
     // ZeroClaw agent gateway base. The bearer token is deliberately absent:
     // it is read at runtime from the environment or `zeroclaw.json`.
     "ZEROCLAW_GATEWAY_URL",
@@ -130,10 +129,15 @@ fn apply_defaults(map: &mut HashMap<String, String>) {
     }
     // Empty string = feature disabled at runtime; never fails the build.
     for key in [
+        "PRESTASHOP_API_URL",
+        "PRESTASHOP_API_URL_WASM",
+        "MTECH_PROXY_KEY",
         "PRESTASHOP_AUTH_URL",
+        "XIDAX_ADMIN_URL",
         "SHOPIFY_STORE_URL",
         "SHOPIFY_ADMIN_TOKEN",
         "XBM_API_KEY",
+        "XBM_SHOP",
         "ZEROCLAW_GATEWAY_URL",
     ] {
         if map.get(key).is_none() {

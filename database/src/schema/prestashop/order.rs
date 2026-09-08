@@ -104,6 +104,11 @@ pub struct OrderDetail {
     pub product_name: String,
 }
 
+/// Statuses an order is still "open" in for a store stock search. Policy, not
+/// a name table — these are the shelves a machine can physically be on.
+/// Lives here rather than in `orders::gate` so wasm targets can read it too.
+pub const OPEN_ORDER_STATES: &[i64] = &[4, 238, 40, 73, 70, 224, 71, 236, 84, 30, 29];
+
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, SurrealValue)]
 pub enum OrderState {
     #[default]
@@ -121,13 +126,14 @@ pub enum OrderState {
     Returned,
     InRepair,
     CheckinShelf,
-    // Temporary placeholder ids; real Prestashop state ids unknown.
     PendingRma,
     PendingCustomerCallback,
     PendingAcPortRepair,
     PendingSpoPayment,
     ReplacementPartOrdered,
     InRepairRemote,
+    /// A PrestaShop status id this table does not map. Never written back.
+    Unknown,
 }
 
 impl OrderState {
@@ -153,10 +159,12 @@ impl OrderState {
             Self::PendingSpoPayment => "Pending SPO Payment",
             Self::ReplacementPartOrdered => "Replacement Part Ordered",
             Self::InRepairRemote => "In Repair Remote",
+            Self::Unknown => "Unknown",
         }
     }
 
-    pub fn from_id_str(id: &str) -> &str {
+    /// Display name for a PrestaShop status id, or `None` if unmapped.
+    pub fn try_name_from_id_str(id: &str) -> Option<&'static str> {
         match id {
             "239" => "Accepted By Odoo",
             "4" => "Shipped",
@@ -172,18 +180,29 @@ impl OrderState {
             "29" => "Check-in Shelf",
             "242" => "Odoo Pending Review",
             "58" => "Pending Review",
-            "9001" => "Pending RMA",
-            "9002" => "Pending Customer Callback",
-            "9003" => "Pending AC Port Repair",
-            "9004" => "Pending SPO Payment",
-            "9005" => "Replacement Part Ordered",
-            "9006" => "In Repair Remote",
-            _ => "Accepted By Odoo"
+            "37" => "Pending RMA",
+            "34" => "Pending Customer Callback",
+            "32" => "Pending AC Port Repair",
+            "36" => "Pending SPO Payment",
+            "35" => "Replacement Part Ordered",
+            "31" => "In Repair Remote",
+            _ => return None,
         }
+        .into()
     }
 
-    pub fn state_from_id_str(id: &str) -> Self {
-        match id {
+    /// Display name for a PrestaShop status id. Unmapped ids render as
+    /// "Unknown" and log; they must never render as a real status.
+    pub fn from_id_str(id: &str) -> &str {
+        Self::try_name_from_id_str(id).unwrap_or_else(|| {
+            log::warn!("unmapped PrestaShop order status id {id:?} — rendering as Unknown");
+            "Unknown"
+        })
+    }
+
+    /// Decode a PrestaShop status id, or `None` if unmapped.
+    pub fn try_state_from_id_str(id: &str) -> Option<Self> {
+        Some(match id {
             "239" => Self::AcceptedByOdoo,
             "4" => Self::Shipped,
             "238" => Self::DeliveredToStore,
@@ -198,14 +217,23 @@ impl OrderState {
             "30" => Self::InRepair,
             "29" => Self::CheckinShelf,
             "58" => Self::PendingReview,
-            "9001" => Self::PendingRma,
-            "9002" => Self::PendingCustomerCallback,
-            "9003" => Self::PendingAcPortRepair,
-            "9004" => Self::PendingSpoPayment,
-            "9005" => Self::ReplacementPartOrdered,
-            "9006" => Self::InRepairRemote,
-            _ => Self::AcceptedByOdoo
-        }
+            "37" => Self::PendingRma,
+            "34" => Self::PendingCustomerCallback,
+            "32" => Self::PendingAcPortRepair,
+            "36" => Self::PendingSpoPayment,
+            "35" => Self::ReplacementPartOrdered,
+            "31" => Self::InRepairRemote,
+            _ => return None,
+        })
+    }
+
+    /// Decode a PrestaShop status id, yielding [`Self::Unknown`] and a log line
+    /// for ids this table does not map.
+    pub fn state_from_id_str(id: &str) -> Self {
+        Self::try_state_from_id_str(id).unwrap_or_else(|| {
+            log::warn!("unmapped PrestaShop order status id {id:?} — treating as Unknown");
+            Self::Unknown
+        })
     }
 
     /*84=Returned, 30=In Repair, 239=Accepted by Odoo?, 29=CheckinShelf, 40=DoneShelf, 73=Order Placed, 70=PrePulled236=ShipToStore */
@@ -225,12 +253,15 @@ impl OrderState {
             Self::InRepair => 30,
             Self::CheckinShelf => 29,
             Self::PendingReview => 58,
-            Self::PendingRma => 9001,
-            Self::PendingCustomerCallback => 9002,
-            Self::PendingAcPortRepair => 9003,
-            Self::PendingSpoPayment => 9004,
-            Self::ReplacementPartOrdered => 9005,
-            Self::InRepairRemote => 9006,
+            Self::PendingRma => 37,
+            Self::PendingCustomerCallback => 34,
+            Self::PendingAcPortRepair => 32,
+            Self::PendingSpoPayment => 36,
+            Self::ReplacementPartOrdered => 35,
+            Self::InRepairRemote => 31,
+            // No PrestaShop status carries -1, so filters built from Unknown
+            // return an empty set instead of the wrong orders.
+            Self::Unknown => -1,
         }
     }
 
@@ -250,16 +281,17 @@ impl OrderState {
             Self::InRepair => "30",
             Self::CheckinShelf => "29",
             Self::PendingReview => "58",
-            Self::PendingRma => "9001",
-            Self::PendingCustomerCallback => "9002",
-            Self::PendingAcPortRepair => "9003",
-            Self::PendingSpoPayment => "9004",
-            Self::ReplacementPartOrdered => "9005",
-            Self::InRepairRemote => "9006",
+            Self::PendingRma => "37",
+            Self::PendingCustomerCallback => "34",
+            Self::PendingAcPortRepair => "32",
+            Self::PendingSpoPayment => "36",
+            Self::ReplacementPartOrdered => "35",
+            Self::InRepairRemote => "31",
+            Self::Unknown => "-1",
         }
     }
 
-    pub const VALUES: [Self; 14] = [
+    pub const VALUES: [Self; 20] = [
         Self::AcceptedByOdoo,
         Self::Shipped,
         Self::DeliveredToStore,
@@ -274,6 +306,12 @@ impl OrderState {
         Self::Returned,
         Self::InRepair,
         Self::CheckinShelf,
+        Self::PendingRma,
+        Self::PendingCustomerCallback,
+        Self::PendingAcPortRepair,
+        Self::PendingSpoPayment,
+        Self::ReplacementPartOrdered,
+        Self::InRepairRemote,
     ];
 }
 

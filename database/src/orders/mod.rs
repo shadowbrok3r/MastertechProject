@@ -8,12 +8,19 @@
 pub mod checklist;
 pub mod checklist_verify;
 pub mod gate;
+pub mod identity;
+pub mod parity;
 pub mod prestashop_backend;
+pub mod serial_lookup;
 pub mod shopify_backend;
 pub mod spec_check;
+pub mod status_catalog;
+pub mod tur_pull;
 
 pub use checklist::{ChecklistKind, ChecklistState, ItemStatus, QcFailure};
 pub use gate::{GateDecision, GateOutcome};
+pub use identity::{CustomerIdentity, OrderIdentity};
+pub use parity::{FieldDiff, ParityReport, Verdict};
 pub use prestashop_backend::PrestashopBackend;
 pub use shopify_backend::ShopifyBackend;
 pub use spec_check::{CheckStatus, DetectedDisk, DetectedHardware, SpecCheckReport, SpecCheckRow};
@@ -37,6 +44,77 @@ impl BackendKind {
             Self::Shopify => "shopify",
         }
     }
+}
+
+/// Which backend order lookups resolve to. `Auto` keeps the historical
+/// key-shape routing; the forced modes override it for every key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum RoutingMode {
+    #[default]
+    Auto,
+    Prestashop,
+    Shopify,
+}
+
+impl RoutingMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Prestashop => "prestashop",
+            Self::Shopify => "shopify",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "auto" | "" => Some(Self::Auto),
+            "prestashop" | "presta" | "ps" => Some(Self::Prestashop),
+            "shopify" => Some(Self::Shopify),
+            _ => None,
+        }
+    }
+
+    pub const VALUES: [Self; 3] = [Self::Auto, Self::Prestashop, Self::Shopify];
+
+    fn to_bits(self) -> u8 {
+        match self {
+            Self::Auto => 0,
+            Self::Prestashop => 1,
+            Self::Shopify => 2,
+        }
+    }
+
+    fn from_bits(bits: u8) -> Self {
+        match bits {
+            1 => Self::Prestashop,
+            2 => Self::Shopify,
+            _ => Self::Auto,
+        }
+    }
+}
+
+/// `u8::MAX` until the first read seeds it from the environment.
+static ROUTING_MODE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(u8::MAX);
+
+/// Active routing mode, seeded once from `MTECH_ORDER_BACKEND`.
+pub fn routing_mode() -> RoutingMode {
+    use std::sync::atomic::Ordering;
+    let bits = ROUTING_MODE.load(Ordering::Relaxed);
+    if bits != u8::MAX {
+        return RoutingMode::from_bits(bits);
+    }
+    let from_env = std::env::var("MTECH_ORDER_BACKEND")
+        .ok()
+        .and_then(|raw| RoutingMode::parse(&raw))
+        .unwrap_or_default();
+    ROUTING_MODE.store(from_env.to_bits(), Ordering::Relaxed);
+    from_env
+}
+
+/// Override the routing mode for the rest of the process.
+pub fn set_routing_mode(mode: RoutingMode) {
+    ROUTING_MODE.store(mode.to_bits(), std::sync::atomic::Ordering::Relaxed);
+    log::info!("order routing mode set to {}", mode.as_str());
 }
 
 /// Order lookup key. Shape decides the backend: PS ids start with `2`,
@@ -81,6 +159,28 @@ impl OrderKey {
             Self::Prestashop(_) | Self::Everest(_) => BackendKind::Prestashop,
             Self::ShopifyOrderNumber(_) | Self::BuildSerial(_) => BackendKind::Shopify,
         }
+    }
+
+    /// Backend after applying [`routing_mode`]. `Auto` falls back to the key
+    /// shape. A forced PrestaShop mode cannot claim `XBS-` build serials,
+    /// which exist only on Shopify.
+    pub fn resolved_backend(&self) -> BackendKind {
+        let shape = self.backend();
+        let resolved = match routing_mode() {
+            RoutingMode::Auto => shape,
+            RoutingMode::Prestashop if matches!(self, Self::BuildSerial(_)) => BackendKind::Shopify,
+            RoutingMode::Prestashop => BackendKind::Prestashop,
+            RoutingMode::Shopify => BackendKind::Shopify,
+        };
+        if resolved != shape {
+            log::debug!(
+                "order key {} routed to {} by mode override (shape said {})",
+                self.display(),
+                resolved.as_str(),
+                shape.as_str()
+            );
+        }
+        resolved
     }
 
     pub fn display(&self) -> &str {
@@ -184,6 +284,21 @@ pub struct QcOrder {
     pub raw_prestashop: Option<crate::schema::prestashop::Order>,
     /// Raw `xidax_order_config` metaobject nodes kept for spec extraction.
     pub shopify_configs: Option<serde_json::Value>,
+    /// Connections the backend paged past without fetching the remainder.
+    /// Non-empty means the order is incomplete and must not be QC'd.
+    pub truncated: Vec<String>,
+}
+
+impl QcOrder {
+    /// Human-readable reason the order cannot be QC'd, if it is incomplete.
+    pub fn truncation_reason(&self) -> Option<String> {
+        (!self.truncated.is_empty()).then(|| {
+            format!(
+                "spec truncated — do not QC: {} exceeded the fetch page and were not fully read",
+                self.truncated.join(", ")
+            )
+        })
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -232,6 +347,18 @@ pub struct TechIdentity {
     /// PrestaShop employee profile id (e.g. 26 Marketing / 15 Executive);
     /// gates the influencer sign-off. Empty on Shopify (no role equivalent).
     pub id_profile: Option<String>,
+    /// Short-lived Build Management staff token. Present only when a real
+    /// credential was exchanged; attributes writes to the tech instead of the
+    /// API key's system identity.
+    pub staff_token: Option<String>,
+    /// Permissions the token carries, e.g. `qc.perform`.
+    pub permissions: Vec<String>,
+}
+
+impl TechIdentity {
+    pub fn has_permission(&self, permission: &str) -> bool {
+        self.permissions.iter().any(|p| p == permission)
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -426,6 +553,10 @@ pub struct QcReportPayload {
     /// Per-stage stress results for the backing run.
     #[serde(default)]
     pub stages: Vec<QcStageBrief>,
+    /// Staff token from the signing tech's credential exchange. Required by
+    /// the Shopify backend, which refuses a QC sign-off attributed to a key.
+    #[serde(default)]
+    pub staff_token: Option<String>,
 }
 
 impl QcReportPayload {
@@ -584,10 +715,35 @@ impl QcBackend {
     }
 
     pub fn for_key(key: &OrderKey) -> Self {
-        match key.backend() {
+        Self::for_backend(key.resolved_backend())
+    }
+
+    fn for_backend(kind: BackendKind) -> Self {
+        match kind {
             BackendKind::Prestashop => Self::Prestashop(PrestashopBackend::new()),
             BackendKind::Shopify => Self::Shopify(ShopifyBackend::from_env()),
         }
+    }
+
+    /// Backend for `key`, preferring the stamp recorded in `order_identity`.
+    /// Falls back to [`OrderKey::resolved_backend`] when the order was never
+    /// stamped. A forced [`RoutingMode`] still wins, so a rollback does not
+    /// have to rewrite the table.
+    pub async fn for_key_resolved(key: &OrderKey) -> Self {
+        if routing_mode() == RoutingMode::Auto {
+            if let Some(stamped) = identity::resolve_backend(key).await {
+                if stamped != key.backend() {
+                    log::debug!(
+                        "order {} routed to {} by order_identity (shape said {})",
+                        key.display(),
+                        stamped.as_str(),
+                        key.backend().as_str()
+                    );
+                }
+                return Self::for_backend(stamped);
+            }
+        }
+        Self::for_key(key)
     }
 
     pub fn backend_kind(&self) -> BackendKind {
@@ -598,10 +754,14 @@ impl QcBackend {
     }
 
     pub async fn find_order(&self, key: &OrderKey) -> anyhow::Result<QcOrder> {
-        match self {
+        let found = match self {
             Self::Prestashop(b) => b.find_order(key).await,
             Self::Shopify(b) => b.find_order(key).await,
+        };
+        if let Ok(order) = found.as_ref() {
+            identity::stamp_from_order(key, order).await;
         }
+        found
     }
 
     pub async fn build_spec(&self, order: &QcOrder) -> anyhow::Result<BuildSpec> {
@@ -731,6 +891,40 @@ mod tests {
         assert_eq!(OrderKey::parse("5123"), Some(OrderKey::ShopifyOrderNumber("5123".into())));
         assert_eq!(OrderKey::parse("2042"), Some(OrderKey::ShopifyOrderNumber("2042".into())));
         assert_eq!(OrderKey::parse("#51234567"), Some(OrderKey::ShopifyOrderNumber("51234567".into())));
+    }
+
+    #[test]
+    fn routing_mode_parse_round_trip() {
+        for mode in RoutingMode::VALUES {
+            assert_eq!(RoutingMode::parse(mode.as_str()), Some(mode));
+        }
+        assert_eq!(RoutingMode::parse("PS"), Some(RoutingMode::Prestashop));
+        assert_eq!(RoutingMode::parse(""), Some(RoutingMode::Auto));
+        assert_eq!(RoutingMode::parse("odoo"), None);
+    }
+
+    // Mutates the process-global routing mode; the other tests in this module
+    // read only the shape-based `backend()`, which the override cannot reach.
+    #[test]
+    fn forced_mode_overrides_key_shape() {
+        let ps = OrderKey::parse("212345").unwrap();
+        let shopify = OrderKey::parse("1042").unwrap();
+        let serial = OrderKey::parse("XBS-1042").unwrap();
+
+        set_routing_mode(RoutingMode::Prestashop);
+        assert_eq!(shopify.resolved_backend(), BackendKind::Prestashop);
+        assert_eq!(ps.resolved_backend(), BackendKind::Prestashop);
+        // Build serials have no PrestaShop equivalent, so the force cannot claim them.
+        assert_eq!(serial.resolved_backend(), BackendKind::Shopify);
+
+        set_routing_mode(RoutingMode::Shopify);
+        assert_eq!(ps.resolved_backend(), BackendKind::Shopify);
+        assert_eq!(shopify.resolved_backend(), BackendKind::Shopify);
+
+        set_routing_mode(RoutingMode::Auto);
+        assert_eq!(ps.resolved_backend(), ps.backend());
+        assert_eq!(shopify.resolved_backend(), shopify.backend());
+        assert_eq!(serial.resolved_backend(), serial.backend());
     }
 
     #[test]

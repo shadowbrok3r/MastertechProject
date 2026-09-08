@@ -335,32 +335,8 @@ impl GpuContext {
         );
         let backend_label = format!("{:?}", info.backend);
 
-        // Default limits cap storage bindings at 128 MiB; lift buffer limits
-        // to what the adapter supports so VRAM tests can cover real footprints.
-        let adapter_limits = adapter.limits();
-        let mut limits = Limits::default();
-        limits.max_buffer_size = adapter_limits.max_buffer_size;
-        limits.max_storage_buffer_binding_size = adapter_limits.max_storage_buffer_binding_size;
-
-        let (device, queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor {
-            label: Some("stress-kit GPU stressor"),
-            required_features: Features::empty(),
-            required_limits: limits,
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-            memory_hints: wgpu::MemoryHints::Performance,
-            trace: wgpu::Trace::Off,
-        }))
-        .map_err(|e| format!("GPU device request failed: {e}"))?;
-
         let health = GpuHealth::default();
-        let health_err = health.clone();
-        device.on_uncaptured_error(Arc::new(move |err| {
-            health_err.note_error(&err);
-        }));
-        let health_lost = health.clone();
-        device.set_device_lost_callback(move |reason, message| {
-            health_lost.note_lost(format!("{reason:?}: {message}"));
-        });
+        let (device, queue) = request_device(&adapter, "stress-kit GPU stressor", &health)?;
 
         Ok(Self {
             instance,
@@ -372,6 +348,55 @@ impl GpuContext {
             health,
         })
     }
+
+    /// An additional logical device on this context's adapter, reporting into
+    /// the same [`GpuHealth`].
+    ///
+    /// `Surface::configure` waits for its device to go idle, the present queue
+    /// included — `wait_for_present_queue_idle` on DX12, `vkDeviceWaitIdle` on
+    /// Vulkan — and that queue is per device, not per surface. Surfaces that
+    /// reconfigure while other surfaces present must therefore not share one:
+    /// the rebuild waits on flips it is not draining.
+    pub(super) fn spawn_device(&self, label: &str) -> Result<(Device, Queue), String> {
+        request_device(&self.adapter, label, &self.health)
+    }
+}
+
+/// Requests a device with this crate's limits and health reporting wired in.
+fn request_device(
+    adapter: &Adapter,
+    label: &str,
+    health: &GpuHealth,
+) -> Result<(Device, Queue), String> {
+    // Default limits cap storage bindings at 128 MiB; lift buffer limits
+    // to what the adapter supports so VRAM tests can cover real footprints.
+    let adapter_limits = adapter.limits();
+    let limits = Limits {
+        max_buffer_size: adapter_limits.max_buffer_size,
+        max_storage_buffer_binding_size: adapter_limits.max_storage_buffer_binding_size,
+        ..Limits::default()
+    };
+
+    let (device, queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor {
+        label: Some(label),
+        required_features: Features::empty(),
+        required_limits: limits,
+        experimental_features: wgpu::ExperimentalFeatures::disabled(),
+        memory_hints: wgpu::MemoryHints::Performance,
+        trace: wgpu::Trace::Off,
+    }))
+    .map_err(|e| format!("GPU device request failed: {e}"))?;
+
+    let health_err = health.clone();
+    device.on_uncaptured_error(Arc::new(move |err| {
+        health_err.note_error(&err);
+    }));
+    let health_lost = health.clone();
+    device.set_device_lost_callback(move |reason, message| {
+        health_lost.note_lost(format!("{reason:?}: {message}"));
+    });
+
+    Ok((device, queue))
 }
 
 pub(super) fn emit_tick(

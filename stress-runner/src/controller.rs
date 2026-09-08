@@ -34,8 +34,8 @@ use stress_kit::{
 
 use crate::mapping::{default_target_kind, metric_from_snapshot};
 use crate::rules::{
-    evaluate_stage, is_device_loss_message, is_inconclusive_message, is_stressor_hang_message,
-    MissingSensor, RuleViolation,
+    evaluate_stage, is_device_loss_message, is_inconclusive_message, is_resolution_message,
+    is_stressor_hang_message, is_stressor_limit_message, MissingSensor, RuleViolation,
     StageStats, StageVerdict, VerdictRules,
 };
 use crate::runtime;
@@ -750,7 +750,8 @@ fn fatal_message(metrics: &Metrics) -> String {
 
 /// Stage verdict when the run carries rules, plus unconditionally when the
 /// stage's load is unproven — an abort, an inconclusive message, or no measured
-/// throughput must never leave a stage unjudged.
+/// throughput must never leave a stage unjudged — or when the stressor limited
+/// its own coverage, so the caveat is persisted with the pass.
 fn stage_verdict_for(
     stats: &StageStats,
     rules: &Option<VerdictRules>,
@@ -758,7 +759,9 @@ fn stage_verdict_for(
 ) -> Option<StageVerdict> {
     match rules {
         Some(r) => Some(evaluate_stage(stats, r)),
-        None if stats.load_unproven() => Some(evaluate_stage(stats, effective)),
+        None if stats.load_unproven() || stats.has_tool_limits() => {
+            Some(evaluate_stage(stats, effective))
+        }
         None => None,
     }
 }
@@ -1910,6 +1913,9 @@ const MISSING_ADAPTER_EVIDENCE: &str =
 
 #[derive(Default)]
 struct SummaryAccumulator {
+    /// Hottest CPU sensor reading of the run. Fed from the die block, not from
+    /// the per-core list: AMD Zen exposes no per-core sensor, so a per-core
+    /// rollup is permanently null on every Zen machine.
     max_temp_c: Option<f32>,
     sum_temp_c: f32,
     temp_samples: u32,
@@ -1972,6 +1978,14 @@ impl SummaryAccumulator {
         // on a disk that was never touched.
         if is_stressor_hang_message(msg) && !is_device_loss_message(msg) {
             self.hang_reason.get_or_insert_with(|| msg.to_string());
+        } else if is_stressor_limit_message(msg) && !is_device_loss_message(msg) {
+            // Kept as a stage warning by the stage rollup; nothing counted here.
+        } else if is_resolution_message(msg) {
+            // Releases the inconclusive it answers and counts as nothing.
+            self.inconclusive_errors = self.inconclusive_errors.saturating_sub(1);
+            if self.inconclusive_errors == 0 {
+                self.last_inconclusive_error = None;
+            }
         } else if is_inconclusive_message(msg) && !is_device_loss_message(msg) {
             self.inconclusive_errors = self.inconclusive_errors.saturating_add(1);
             self.last_inconclusive_error = Some(msg.to_string());
@@ -2059,13 +2073,24 @@ impl SummaryAccumulator {
 
         let new_errors = self.absorb_errors(metrics);
 
-        // temp / clock / usage from cores
+        // One CPU temperature per tick from the CPU's own sensor, falling back to
+        // the hottest per-core reading. Never an ACPI zone: a board zone runs
+        // tens of degrees under the die and must not stand in for it here.
+        let tick_cpu_temp = snapshot.cpu_die_temp_c().or_else(|| {
+            snapshot
+                .cores
+                .iter()
+                .filter_map(|c| c.temp_c)
+                .fold(None::<f32>, |acc, t| Some(acc.map_or(t, |m| m.max(t))))
+        });
+        if let Some(t) = tick_cpu_temp {
+            self.sum_temp_c += t;
+            self.temp_samples = self.temp_samples.saturating_add(1);
+            self.max_temp_c = Some(self.max_temp_c.map(|m| m.max(t)).unwrap_or(t));
+        }
+
+        // clock / usage from cores
         for c in &snapshot.cores {
-            if let Some(t) = c.temp_c {
-                self.sum_temp_c += t;
-                self.temp_samples = self.temp_samples.saturating_add(1);
-                self.max_temp_c = Some(self.max_temp_c.map(|m| m.max(t)).unwrap_or(t));
-            }
             let mhz = c.freq_mhz as u32;
             if mhz > 0 {
                 self.sum_clock_mhz = self.sum_clock_mhz.saturating_add(mhz as u64);
@@ -2803,6 +2828,57 @@ mod tests {
             "GFLOPS",
         );
         acc
+    }
+
+    /// AMD Zen has no per-core sensor, so a run summary fed from the per-core
+    /// list reported no CPU temperature at all on every Zen machine while the
+    /// metric rows underneath it carried a Tctl reading every tick.
+    #[test]
+    fn a_package_only_cpu_still_rolls_up_a_run_temperature() {
+        use stress_kit::telemetry::{CoreSample, CpuDieReader, CpuDieThermal};
+
+        let mut snap = TelemetrySnapshot {
+            cores: vec![CoreSample {
+                index: 0,
+                brand: "AMD Ryzen 9 7900X".into(),
+                usage_pct: 100.0,
+                freq_mhz: 4700,
+                temp_c: None,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let die = CpuDieThermal {
+            package_c: Some(90.5),
+            cores: Vec::new(),
+            reader: CpuDieReader::AmdTctl,
+        };
+        snap.thermals = die.to_thermal_readings();
+        snap.cpu_die = Some(die);
+
+        let mut acc = SummaryAccumulator::default();
+        acc.absorb(&work_tick(100.0, None), &snap, "GFLOPS");
+        let summary = acc.into_summary();
+
+        assert_eq!(summary.max_temp_c, Some(90.5), "package-only CPU rolled up no temperature");
+        assert_eq!(summary.avg_temp_c, Some(90.5));
+        assert_eq!(summary.max_cpu_temp_c, Some(90.5));
+    }
+
+    /// A board thermal zone runs far below the die and must never stand in for
+    /// a CPU temperature in the run summary.
+    #[test]
+    fn a_board_zone_is_not_rolled_up_as_a_cpu_temperature() {
+        use stress_kit::telemetry::ThermalReading;
+
+        let snap = TelemetrySnapshot {
+            thermals: vec![ThermalReading { label: "CPUZ_0".into(), temp_c: 44.0 }],
+            ..Default::default()
+        };
+        let mut acc = SummaryAccumulator::default();
+        acc.absorb(&work_tick(100.0, None), &snap, "GFLOPS");
+
+        assert_eq!(acc.into_summary().max_temp_c, None);
     }
 
     #[test]
@@ -3679,6 +3755,7 @@ mod tests {
                 sensor: MissingSensor::CpuDieTemp,
                 ticks: 1607,
                 policy: MissingSensorPolicy::Inconclusive,
+                detail: Some("no low-level sensor backend opened".to_string()),
             }],
             warnings: Vec::new(),
         });
@@ -3727,6 +3804,7 @@ mod tests {
                 sensor: MissingSensor::GpuTelemetry,
                 ticks: 829,
                 policy: MissingSensorPolicy::Warn,
+                detail: None,
             }],
             warnings: Vec::new(),
         });
@@ -3749,6 +3827,7 @@ mod tests {
                 sensor: MissingSensor::CpuDieTemp,
                 ticks: 1607,
                 policy: MissingSensorPolicy::Inconclusive,
+                detail: Some("no low-level sensor backend opened".to_string()),
             }],
             warnings: Vec::new(),
         });
@@ -4180,5 +4259,172 @@ mod tests {
         );
         assert_eq!(verdict.result, RunResult::Aborted);
         assert_eq!(verdict.finish_reason, DbFinishReason::Cancelled);
+    }
+
+    /// A configure-hang note in the shape gpu_display emits, built from the
+    /// marker stress-kit exports so a reworded message cannot quietly stop
+    /// matching.
+    fn limit_message() -> String {
+        format!(
+            "gpu_display: {} Surface::configure on \\\\.\\DISPLAY3 has not returned after 8s, so \
+             that output stopped presenting while the others carry on. Coverage limit imposed \
+             by the tool, not a hardware fault.",
+            stress_kit::STRESSOR_LIMIT_MARKER
+        )
+    }
+
+    /// The v67/v68/v73 shape from service order 2151936 at the run level: a
+    /// full-duration run, one output lost to a configure that never returned,
+    /// zero hardware events. Filed as an inconclusive it graded
+    /// `fail`/`app_error`; the tool limiting itself reaches no counter, so the
+    /// run passes and the note rides along as the stage's warning.
+    #[test]
+    fn a_limit_note_reaches_no_counter_and_the_run_passes() {
+        let mut acc = acc_with_work();
+        acc.classify_error(&limit_message());
+        assert_eq!(
+            acc.inconclusive_errors, 0,
+            "a tool limit counted as inconclusive, which grades the run fail"
+        );
+        assert_eq!(acc.disk_io_errors, 0, "a tool limit was filed as a disk fault");
+        assert_eq!(acc.gpu_device_errors, 0, "a tool limit was filed as a GPU fault");
+        assert!(acc.hang_reason.is_none(), "a tool limit was filed as a hang");
+
+        let stage = StageVerdict {
+            index: 0,
+            label: "gpu_display".to_string(),
+            pass: true,
+            violations: Vec::new(),
+            unevaluated: Vec::new(),
+            warnings: vec![limit_message()],
+        };
+        let verdict = verdict_at(acc, vec![outcome_with(stage)], 1800.0, Some(1800));
+        assert_eq!(verdict.result, RunResult::Pass, "{:?}", verdict.failure_mode);
+        assert_eq!(verdict.failure_mode.kind(), "none");
+        assert_eq!(verdict.finish_reason, DbFinishReason::Completed);
+    }
+
+    /// The v66/v72 shape: limit notes accumulate, then the stage starves and
+    /// the watchdog files a hang at minute 11 of 30. The earlier notes must
+    /// not shadow INCONCLUSIVE/stressor_hang with fail/app_error — the grading
+    /// the old whole-stage wedge already got right.
+    #[test]
+    fn a_limit_note_does_not_shadow_a_hang_at_the_run_level() {
+        let mut acc = acc_with_work();
+        acc.classify_error(&limit_message());
+        acc.classify_error(&hang_message());
+        let verdict = verdict_at(acc, vec![finished_stage()], 660.0, Some(1800));
+        assert_eq!(
+            verdict.result,
+            RunResult::Inconclusive,
+            "a hang behind a limit note failed the run: {:?}",
+            verdict.failure_mode
+        );
+        assert_eq!(verdict.failure_mode.kind(), "stressor_hang");
+        assert_eq!(verdict.finish_reason, DbFinishReason::EndedEarly);
+    }
+
+    /// A `resolved -` marker releases the inconclusive it answers and is
+    /// itself no error. Before this it matched no vocabulary and fell through
+    /// to `disk_io_errors`, failing the run on a disk it never touched, and
+    /// the complaint it resolved stayed counted, so a healed shortfall still
+    /// graded `fail` at the run level while its stage passed.
+    #[test]
+    fn a_resolution_releases_the_latched_inconclusive_at_the_run_level() {
+        let mut acc = acc_with_work();
+        acc.classify_error(
+            "gpu_display: inconclusive - only 2 of 3 attached output(s) were driven; the full \
+             multi-display present path was not exercised. Coverage limit, not a hardware fault.",
+        );
+        assert_eq!(acc.inconclusive_errors, 1);
+        acc.classify_error(
+            "resolved - all 3 attached output(s) are now driven; the earlier coverage shortfall \
+             no longer applies",
+        );
+        assert_eq!(acc.inconclusive_errors, 0, "the resolution left the complaint counted");
+        assert!(acc.last_inconclusive_error.is_none());
+        assert_eq!(acc.disk_io_errors, 0, "a resolution was filed as a disk fault");
+        assert_eq!(acc.gpu_device_errors, 0);
+
+        let verdict = verdict_with(acc, vec![finished_stage()]);
+        assert_eq!(verdict.result, RunResult::Pass, "{:?}", verdict.failure_mode);
+    }
+
+    /// A resolution answers one complaint, not every complaint: a second
+    /// standing inconclusive still fails the run.
+    #[test]
+    fn a_resolution_releases_only_one_inconclusive() {
+        let mut acc = acc_with_work();
+        acc.classify_error("gpu_display: inconclusive - only 2 of 3 attached output(s) were driven");
+        acc.classify_error(
+            "gpu_display: inconclusive - C:\\Windows\\LiveKernelReports is unreadable; re-run \
+             elevated",
+        );
+        acc.classify_error("resolved - all 3 attached output(s) are now driven");
+        assert_eq!(acc.inconclusive_errors, 1);
+        let verdict = verdict_with(acc, vec![finished_stage()]);
+        assert_eq!(verdict.result, RunResult::Fail);
+        assert_eq!(verdict.failure_mode.kind(), "app_error");
+    }
+
+    /// The hardware path is untouched: a watchdog live dump beside a limit
+    /// note still fails the run, and the stage verdict names the dump.
+    #[test]
+    fn a_watchdog_dump_beside_a_limit_note_still_fails_the_run() {
+        let rules = VerdictRules::certification();
+        let snapshot = TelemetrySnapshot::default();
+        let mut acc = acc_with_work();
+        let mut stats = StageStats::begin(0, "gpu_display", Stressor::GpuDisplay, &snapshot);
+        let note = limit_message();
+        for _ in 0..20 {
+            acc.absorb(&work_tick(130.0, Some(&note)), &snapshot, "FPS");
+            stats.absorb_tick(&work_tick(130.0, Some(&note)), &snapshot, &rules);
+        }
+        let dump = "gpu_display: display-path watchdog live dump appeared during the run \
+                    (WATCHDOG-20260901-1203.dmp); the display miniport was reset while presenting";
+        let fatal = Metrics {
+            elapsed_secs: 21.0,
+            throughput: 0.0,
+            last_error: Some(dump.to_string()),
+            fatal: true,
+            errors: 1,
+        };
+        acc.absorb(&fatal, &snapshot, "FPS");
+        stats.absorb_final(&fatal);
+        stats.finish(&snapshot);
+
+        let stage = stage_verdict_for(&stats, &Some(rules.clone()), &rules)
+            .expect("rules attached, verdict expected");
+        assert!(!stage.pass, "a watchdog dump left the stage passing");
+        assert!(
+            stage
+                .violation_lines()
+                .iter()
+                .any(|l| l.contains("WATCHDOG-20260901-1203.dmp")),
+            "the dump is not named: {:?}",
+            stage.violation_lines()
+        );
+
+        let verdict = verdict_at(acc, vec![outcome_with(stage)], 21.0, Some(1800));
+        assert_eq!(verdict.result, RunResult::Fail);
+        assert_ne!(verdict.failure_mode.kind(), "app_error", "{:?}", verdict.failure_mode);
+        assert_ne!(verdict.failure_mode.kind(), "stressor_hang", "{:?}", verdict.failure_mode);
+    }
+
+    /// A limit note is judged even with no rules attached, so the caveat is
+    /// persisted with the pass instead of vanishing with a `None` verdict.
+    #[test]
+    fn a_limit_note_is_judged_without_rules() {
+        let effective = VerdictRules::default();
+        let snapshot = TelemetrySnapshot::default();
+        let mut stats = StageStats::begin(0, "gpu_display", Stressor::GpuDisplay, &snapshot);
+        for _ in 0..30 {
+            stats.absorb_tick(&work_tick(130.0, Some(&limit_message())), &snapshot, &effective);
+        }
+        stats.finish(&snapshot);
+        let verdict = stage_verdict_for(&stats, &None, &effective)
+            .expect("a stage the stressor limited must be judged");
+        assert!(verdict.pass, "{:?}", verdict.violation_lines());
+        assert_eq!(verdict.warnings, vec![limit_message()]);
     }
 }

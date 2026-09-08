@@ -152,7 +152,7 @@ impl TabViewer for MastertechContext {
                     }
                 }
             }
-            TabId::CreatePrestashopOrder => self.shared_ctx.prestashop_order_form.ui(ui),
+            TabId::CreateOrder => self.shared_ctx.prestashop_order_form.ui(ui),
             TabId::ShopifyOrders => self.shopify_orders(ui),
             TabId::Threads => self.shared_ctx.user_chat.ui(ui),
             TabId::Plugins => {

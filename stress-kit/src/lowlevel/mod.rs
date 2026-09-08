@@ -1,10 +1,13 @@
-//! Pluggable kernel-mode access for sensors user mode cannot reach.
+//! Pluggable access for sensors ordinary user mode cannot reach.
 //!
 //! Backends vend one operation per hardware-bus transaction that must be atomic
 //! against other sensor tools ([`SmnAccess::read_smn`], not a PCI index/data
 //! pair), so a constrained signed driver can implement the same trait a raw
 //! port-IO driver does. Register decode, plausibility limits, and chip tables
 //! live in [`crate::telemetry`], never in a backend.
+//!
+//! Not every provider is a driver: [`PackageTempAccess`] covers a platform
+//! service that already resolved a sensor and vends degrees.
 
 pub mod protocol;
 
@@ -12,6 +15,9 @@ pub mod protocol;
 pub mod mock;
 
 pub mod select;
+
+#[cfg(all(target_os = "windows", feature = "backend-esif-wmi"))]
+pub mod esif_wmi;
 
 #[cfg(all(target_os = "windows", feature = "backend-winring0"))]
 pub mod winring0;
@@ -33,6 +39,8 @@ pub enum BackendId {
     Mtdrv,
     /// Legacy WinRing0 (CVE-2020-14979); loads only with driver protections off.
     WinRing0,
+    /// Intel DPTF/ESIF temperatures over WMI; no driver and no elevation.
+    EsifWmi,
     /// Scripted backend for tests.
     Mock,
 }
@@ -44,6 +52,7 @@ impl BackendId {
             Self::None => "none",
             Self::Mtdrv => "Mastertech sensor driver",
             Self::WinRing0 => "WinRing0 (legacy)",
+            Self::EsifWmi => "Intel DPTF (WMI)",
             Self::Mock => "mock",
         }
     }
@@ -60,12 +69,14 @@ pub struct Capabilities {
     pub lpc_config: bool,
     /// Byte access inside a hardware-monitor window the config space reported.
     pub lpc_window: bool,
+    /// Whole-degree CPU package temperature without a register read.
+    pub package_temp: bool,
 }
 
 impl Capabilities {
     /// Capabilities needed for a CPU die reading on either vendor.
     pub fn any_die(&self) -> bool {
-        self.msr || self.smn
+        self.msr || self.smn || self.package_temp
     }
 
     /// Capabilities needed to probe and sample a SuperIO hardware monitor.
@@ -146,6 +157,26 @@ pub trait SmnAccess {
     fn read_smn(&self, addr: u32) -> Option<u32>;
 }
 
+/// One CPU-side temperature domain, already in Celsius.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DomainTemp {
+    /// Domain index as the provider numbers it.
+    pub index: u32,
+    pub temp_c: f32,
+}
+
+/// Decoded CPU package temperatures from a provider that vends degrees rather
+/// than registers.
+///
+/// Unlike [`MsrAccess`] and [`SmnAccess`] there is no register to decode: the
+/// provider already resolved the sensor, so the caller only applies its
+/// plausibility limits and picks among the domains.
+pub trait PackageTempAccess {
+    /// Every domain of the CPU-side participant that reported a temperature.
+    /// Empty means nothing answered this call, not that the CPU is cold.
+    fn read_package_domains(&self) -> Vec<DomainTemp>;
+}
+
 /// LPC index-data slot a SuperIO answers on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LpcSlot {
@@ -216,6 +247,9 @@ pub trait LowLevelBackend: Send + Sync {
     fn lpc(&self) -> Option<&dyn LpcAccess> {
         None
     }
+    fn package_temp(&self) -> Option<&dyn PackageTempAccess> {
+        None
+    }
 }
 
 struct Inner {
@@ -274,6 +308,18 @@ impl LowLevelAccess {
         self.0.lost.get().is_some()
     }
 
+    /// No provider was ever attached, so every accessor returns `None`. Unlike
+    /// [`Self::is_lost`] this says nothing about the machine — the backend may
+    /// open on a later attempt.
+    pub fn is_absent(&self) -> bool {
+        self.0.backend.is_none()
+    }
+
+    /// This handle can serve no sensor, whether it never opened or died.
+    pub fn is_dead(&self) -> bool {
+        self.is_absent() || self.is_lost()
+    }
+
     /// Both handles name the same open provider.
     #[cfg(test)]
     pub(crate) fn same_provider(&self, other: &Self) -> bool {
@@ -309,6 +355,10 @@ impl LowLevelAccess {
 
     pub fn lpc(&self) -> Option<&dyn LpcAccess> {
         self.live()?.lpc()
+    }
+
+    pub fn package_temp(&self) -> Option<&dyn PackageTempAccess> {
+        self.live()?.package_temp()
     }
 
     /// Probes the provider; on failure latches the reason and returns `true`.

@@ -539,6 +539,33 @@ impl User {
         user.ok_or_else(|| anyhow::anyhow!("No user record for {full_email}"))
     }
 
+    /// Resolves a display name to a `user` record. Case- and
+    /// whitespace-insensitive, exact on the whole name.
+    ///
+    /// For the backends that identify a person by name and nothing else —
+    /// Shopify comment authors carry an author string and an XBM staff id, and
+    /// neither is an email. Returns `Err` on a miss and on an ambiguous name, so
+    /// `get_id()` is always a real `user` reference safe to persist.
+    pub async fn query_user_from_name(name: &str) -> anyhow::Result<Self, anyhow::Error> {
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            return Err(anyhow::anyhow!("No name to resolve"));
+        }
+        let users: Vec<Self> = db()
+            .query("SELECT * FROM user WHERE string::lowercase(string::trim(name)) == string::lowercase($name)")
+            .bind(("name", name.clone()))
+            .await?
+            .take(0)?;
+
+        match users.len() {
+            0 => Err(anyhow::anyhow!("No user record named {name}")),
+            1 => Ok(users.into_iter().next().expect("length checked")),
+            // Two people share the name: picking one would attribute a note to
+            // the wrong person, which is worse than not attributing it.
+            n => Err(anyhow::anyhow!("{n} users are named {name}; cannot attribute")),
+        }
+    }
+
     /// Resolves an email to a `user` record, falling back to a synthesized,
     /// non-persisted `User` built from the PrestaShop employee on a miss. The
     /// synthesized `id` is `user:<id_prestashop>` and does NOT exist in the

@@ -251,6 +251,11 @@ async fn entry_rollups(ids: &[RecordId]) -> Result<std::collections::HashMap<Rec
 /// Abandon one session. `ended_at` is derived from the last real activity and
 /// only filled when unset, so a value an operator wrote is never replaced and
 /// sweep time never masquerades as the end of the work.
+///
+/// The activity term is a compare-and-swap against the value the candidate scan
+/// read: the roll-up queries run between the two, so a session can take a write
+/// after being selected. Re-testing the threshold would still abandon it; only
+/// equality proves nothing landed in the gap.
 async fn abandon(c: &Candidate, summary: &str, activity: Datetime) -> Result<()> {
     database::db()
         .query(
@@ -258,7 +263,7 @@ async fn abandon(c: &Candidate, summary: &str, activity: Datetime) -> Result<()>
              ended_at = ended_at ?? $activity, \
              summary = $summary, \
              swept_at = time::now() \
-             WHERE status = 'open'",
+             WHERE status = 'open' AND (last_activity_at ?? started_at) = $activity",
         )
         .bind(("sid", c.id.clone()))
         .bind(("activity", activity))

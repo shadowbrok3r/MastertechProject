@@ -1,25 +1,33 @@
+use database::orders::tur_pull;
 use database::schema::{
-    EntityDraft, OrderLookup, PrestaMapOptions, fetch_prestashop_order, apply_prestashop_payload,
+    EntityDraft, OrderLookup, PrestaMapOptions, apply_prestashop_payload,
 };
 use crate::app_state::MastertechContext;
 
 impl MastertechContext {
-    pub fn presta_api(&self) {
-        let input = self.ticket_data.service_number.clone();
-        let phone = self.customer_data.phone_number.clone();
+    /// Pull the order named by the service-number field, or the customer's most
+    /// recent order when only a phone number is filled in.
+    ///
+    /// Routes through both backends: a Shopify order number and a PrestaShop
+    /// `id_order` both reach the sheet, and either outcome comes back on the
+    /// channel so a failure is visible instead of silent.
+    pub fn pull_order(&self) {
+        let input = self.ticket_data.service_number.trim().to_string();
+        let phone = self.customer_data.phone_number.trim().to_string();
         let tx = self.prestashop_api_tx.clone();
         let lookup = if !input.is_empty() {
-            Some(OrderLookup::ServiceNumber(input))
+            OrderLookup::ServiceNumber(input)
         } else if !phone.is_empty() {
-            Some(OrderLookup::Phone(phone))
+            OrderLookup::Phone(phone)
         } else {
-            None
+            let _ = tx.try_send(Err("Enter a service number or a phone number first".into()));
+            return;
         };
-        let Some(lookup) = lookup else { return };
         tokio::spawn(async move {
-            let prestashop_order = fetch_prestashop_order(lookup).await?;
-            tx.try_send(prestashop_order)?;
-            Ok::<(), anyhow::Error>(())
+            let outcome = tur_pull::pull_order(lookup).await.map_err(|e| format!("{e:#}"));
+            if let Err(e) = tx.try_send(outcome) {
+                log::error!("order pull result could not be delivered: {e}");
+            }
         });
     }
 

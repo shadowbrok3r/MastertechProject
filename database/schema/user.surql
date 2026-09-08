@@ -12,14 +12,11 @@ DEFINE TABLE user TYPE ANY SCHEMAFULL
         FOR select, create, update FULL,
         FOR delete WHERE $access = 'users' AND id = $auth.id;
 
-DEFINE INDEX presta_idx      ON user FIELDS id_prestashop UNIQUE;
-DEFINE INDEX userEmailIndex  ON user FIELDS email UNIQUE;
-
 DEFINE FIELD active            ON user TYPE bool   DEFAULT true                          PERMISSIONS FULL;
 DEFINE FIELD authorization     ON user TYPE string DEFAULT 'User'                        PERMISSIONS FULL;
 DEFINE FIELD email             ON user TYPE string ASSERT string::is_email($value)       PERMISSIONS FULL;
 DEFINE FIELD everest_initials  ON user TYPE string                                       PERMISSIONS FULL;
-DEFINE FIELD id_prestashop     ON user TYPE none | number DEFAULT 0                      PERMISSIONS FULL;
+DEFINE FIELD id_prestashop     ON user TYPE none | number DEFAULT NONE                   PERMISSIONS FULL;
 DEFINE FIELD id_store          ON user TYPE none | string DEFAULT ''                     PERMISSIONS FULL;
 DEFINE FIELD minio_access_key  ON user TYPE none | string DEFAULT NONE                   PERMISSIONS FULL;
 DEFINE FIELD minio_secret_key  ON user TYPE none | string DEFAULT NONE                   PERMISSIONS FULL;
@@ -45,3 +42,10 @@ DEFINE FIELD user_settings.ui_layout.mtechserver ON user TYPE none | object FLEX
 
 DEFINE FIELD user_statuses    ON user TYPE none | array<string> DEFAULT []               PERMISSIONS FULL;
 DEFINE FIELD user_statuses.*  ON user TYPE string                                        PERMISSIONS FULL;
+
+-- Indexes come after the fields they cover: a file is applied in order, and an
+-- index on a not-yet-defined field aborts the sync.
+-- UNIQUE permits many NONE rows but still rejects a duplicate real id, so
+-- staff without a PrestaShop id must store NONE and never 0.
+DEFINE INDEX presta_idx      ON user FIELDS id_prestashop UNIQUE;
+DEFINE INDEX userEmailIndex  ON user FIELDS email UNIQUE;

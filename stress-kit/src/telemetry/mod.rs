@@ -23,6 +23,7 @@ mod tdr_windows;
 pub mod live_dumps_windows;
 #[cfg(target_os = "windows")]
 mod thermal_windows;
+pub mod cpu_ceiling;
 #[cfg(feature = "lowlevel")]
 mod cpu_die;
 #[cfg(feature = "lowlevel")]
@@ -39,6 +40,8 @@ use serde::{Deserialize, Serialize};
 use sysinfo::{Components, CpuRefreshKind, Disks, MemoryRefreshKind, Networks, RefreshKind, System};
 
 pub use crate::lowlevel::{AccessStatus, AccessTier, BackendId, RejectedBackend};
+
+pub use self::cpu_ceiling::{CpuCeilingSource, CpuThermalCeiling, CpuVendor};
 
 pub use self::core::CoreSample;
 pub use self::core::{sample_cores, sample_cores_with_die};
@@ -103,10 +106,11 @@ pub struct TelemetrySnapshot {
     /// the verdict rules as a very low reading.
     #[serde(default)]
     pub voltages: Vec<VoltageReading>,
-    /// The CPU's own die sensor (Intel DTS MSRs / AMD Zen Tctl), kept out of
-    /// `thermals` so no ACPI zone can stand in for it. `None` when no die sensor
-    /// answered, including every run with no low-level backend. Its values are
-    /// also copied into `thermals` under their labels for chart continuity.
+    /// The CPU's own sensor (Intel DTS MSRs, AMD Zen Tctl, or the Intel DPTF
+    /// processor participant), kept out of `thermals` so no ACPI zone can stand
+    /// in for it. `None` when no CPU-side sensor answered, including every run
+    /// with no low-level backend. Its values are also copied into `thermals`
+    /// under their labels for chart continuity.
     #[serde(default)]
     pub cpu_die: Option<CpuDieThermal>,
     /// Which low-level backend carried `cpu_die` and `voltages`, what it could
@@ -114,6 +118,11 @@ pub struct TelemetrySnapshot {
     /// an absent sensor as a healthy one.
     #[serde(default)]
     pub access: AccessStatus,
+    /// The CPU's own thermal ceiling. A part sits here under sustained load by
+    /// design, so it is the temperature the firmware holds, not a fault line.
+    /// `None` when the part is not one whose ceiling we can establish.
+    #[serde(default)]
+    pub cpu_ceiling: Option<CpuThermalCeiling>,
 }
 
 /// One ACPI thermal-zone reading. Mirrors the lightweight shape we
@@ -155,10 +164,24 @@ pub enum CpuDieReader {
     IntelDts,
     /// AMD Zen SMU Tctl over SMN.
     AmdTctl,
+    /// Intel DPTF/ESIF processor participant over WMI.
+    DptfParticipant,
 }
 
-/// Readings from the CPU's own die sensor. A value here is a die measurement; an
-/// ACPI thermal zone can never appear in this struct.
+impl CpuDieReader {
+    /// Sensor class a caller grades this reader's values as.
+    pub fn temp_source(self) -> CpuTempSource {
+        match self {
+            Self::IntelDts | Self::AmdTctl => CpuTempSource::Die,
+            Self::DptfParticipant => CpuTempSource::DptfParticipant,
+        }
+    }
+}
+
+/// Readings from the CPU's own sensor. A value here came from the processor
+/// itself; an ACPI board thermal zone can never appear in this struct. `reader`
+/// says how it was read — grade it with [`CpuDieReader::temp_source`] rather
+/// than assuming every value is a die register.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CpuDieThermal {
     /// Package-level die reading; `None` when the part exposes no package sensor.
@@ -219,6 +242,7 @@ impl CpuDieThermal {
         match self.reader {
             CpuDieReader::IntelDts => "CPU Package",
             CpuDieReader::AmdTctl => "CPU (Tctl)",
+            CpuDieReader::DptfParticipant => "CPU Package (DPTF)",
         }
     }
 }
@@ -233,6 +257,9 @@ pub enum CpuTempSource {
     /// Only a firmware-named CPU thermal zone answered — a board-level reading
     /// that tracks the die loosely and can sit tens of degrees below it.
     AcpiZone,
+    /// The Intel DPTF processor participant answered: a CPU-side sensor, whole
+    /// degrees, and no per-core detail. Not a board zone.
+    DptfParticipant,
     /// The CPU's own die sensor answered.
     Die,
 }
@@ -281,16 +308,20 @@ impl TelemetrySnapshot {
     }
 
     /// The one CPU temperature this snapshot can report, with the class of sensor
-    /// it came from: the hottest die reading when a die sensor answered, else the
-    /// hottest firmware-named CPU zone, else nothing. A die reading outranks every
-    /// zone however the two values compare, and a bare `TZnn` board zone is never
-    /// a candidate. Single source of truth for "the CPU temperature".
+    /// it came from: the hottest CPU-side reading when one answered, else the
+    /// hottest firmware-named CPU zone, else nothing. A CPU-side reading outranks
+    /// every zone however the two values compare, and a bare `TZnn` board zone is
+    /// never a candidate. Single source of truth for "the CPU temperature".
     pub fn cpu_temp_reading(&self) -> Option<(ThermalReading, CpuTempSource)> {
+        let die_source = self
+            .cpu_die
+            .as_ref()
+            .map_or(CpuTempSource::Die, |d| d.reader.temp_source());
         self.cpu_die
             .as_ref()
             .and_then(CpuDieThermal::hottest_reading)
             .or_else(|| self.hottest_thermal(is_cpu_die_label).cloned())
-            .map(|r| (r, CpuTempSource::Die))
+            .map(|r| (r, die_source))
             .or_else(|| {
                 self.hottest_thermal(is_cpu_acpi_zone_label)
                     .cloned()
@@ -304,8 +335,9 @@ impl TelemetrySnapshot {
         self.cpu_temp_reading().map(|(r, _)| r.temp_c)
     }
 
-    /// Hottest reading from the CPU's own die sensor (Intel DTS / AMD Zen Tctl);
-    /// `None` when no die sensor answered, whatever ACPI zones exist.
+    /// Hottest reading from the CPU's own sensor (Intel DTS, AMD Zen Tctl, or the
+    /// DPTF processor participant); `None` when none answered, whatever ACPI
+    /// zones exist.
     pub fn cpu_die_temp_c(&self) -> Option<f32> {
         self.cpu_die.as_ref().and_then(CpuDieThermal::hottest_c)
     }
@@ -445,7 +477,8 @@ pub fn is_cpu_thermal_label(label: &str) -> bool {
     l.contains("package") || l.contains("cpu") || l.contains("tctl") || l.contains("tdie")
 }
 
-/// A label only the die-sensor reader emits: `CPU Package`, `CPU (Tctl)`, `CPU Core N`.
+/// A label only a CPU-side reader emits: `CPU Package`, `CPU Package (DPTF)`,
+/// `CPU (Tctl)`, `CPU Core N`.
 pub fn is_cpu_die_label(label: &str) -> bool {
     let l = label.to_lowercase();
     is_cpu_core_label(label) || l.contains("package") || l.contains("tctl") || l.contains("tdie")
@@ -553,6 +586,161 @@ fn capture_snapshot_blocking() -> TelemetrySnapshot {
         // No backend is opened on this path, so the tier is None rather than a
         // claim that one was tried and failed.
         access: AccessStatus::default(),
+        cpu_ceiling: cpu_ceiling::detect(None),
+    }
+}
+
+/// First delay before re-opening a low-level backend that cannot read, and the
+/// cap the delay doubles up to. A machine that can never load a driver must not
+/// be asked once a second for the length of an eight-hour run.
+#[cfg(feature = "lowlevel")]
+const REACQUIRE_FIRST: Duration = Duration::from_secs(30);
+#[cfg(feature = "lowlevel")]
+const REACQUIRE_MAX: Duration = Duration::from_secs(900);
+/// Attempts that open no provider at all before a sampler stops asking. Spans
+/// roughly the first seven minutes of a run, which covers another tool holding
+/// the driver across a restart; past that the machine has no loadable backend,
+/// and each attempt stages a driver file and asks the service manager to start
+/// it.
+#[cfg(feature = "lowlevel")]
+const MAX_EMPTY_ATTEMPTS: u32 = 5;
+
+/// The low-level readers plus the handle they share, re-opened when that handle
+/// stops being able to serve them.
+///
+/// Both the handle and the readers were previously acquired once per sampler
+/// and never retried, so a sampler that started while another tool held the
+/// driver — or whose provider was pulled out from under it — published no CPU
+/// die temperature and no board rails for the rest of its life. Nothing
+/// recovered it, because the process-wide handle cache hands a *new* caller a
+/// fresh backend while leaving the running sampler on the dead one.
+#[cfg(feature = "lowlevel")]
+struct LowLevelReaders {
+    access: crate::lowlevel::LowLevelAccess,
+    cpu_die: Option<cpu_die::CpuDieMonitor>,
+    superio: Option<superio::SuperIoMonitor>,
+    backoff: Duration,
+    next_attempt: Instant,
+    /// A provider answered at least once, so this machine can load one and a
+    /// dead handle stays worth retrying for the life of the sampler.
+    provider_seen: bool,
+    /// Consecutive attempts that opened no provider at all.
+    empty_attempts: u32,
+    /// This CPU has a die-sensor path on some backend. False on a vendor no
+    /// reader covers, where a fresh handle would read the same nothing.
+    die_vendor_supported: bool,
+}
+
+#[cfg(feature = "lowlevel")]
+impl LowLevelReaders {
+    fn open() -> Self {
+        // Both readers hold their own clone of the backend handle, so neither
+        // depends on the other opening and drop order between them does not
+        // matter.
+        let access = crate::lowlevel::select::open();
+        let cpu_die = cpu_die::CpuDieMonitor::open(access.clone());
+        let superio = superio::SuperIoMonitor::open(access.clone());
+        let empty = access.is_absent();
+        Self {
+            access,
+            cpu_die,
+            superio,
+            backoff: REACQUIRE_FIRST,
+            next_attempt: Instant::now() + REACQUIRE_FIRST,
+            provider_seen: !empty,
+            empty_attempts: u32::from(empty),
+            die_vendor_supported: cpu_ceiling::vendor() != CpuVendor::Other,
+        }
+    }
+
+    /// A reader the live backend could serve is missing, so a fresh handle
+    /// would change the answer. A reader this backend cannot reach at all is
+    /// not a gap: retrying the same provider would read the same nothing.
+    fn has_gap(&self) -> bool {
+        self.access.is_dead()
+            || (self.cpu_die.is_none()
+                && self.die_vendor_supported
+                && self.access.capabilities().any_die())
+    }
+
+    /// Whether another attempt can change the answer. A handle that once held a
+    /// provider always can — the driver demonstrably loads on this machine. A
+    /// run of attempts that opened nothing at all stops after
+    /// [`MAX_EMPTY_ATTEMPTS`]: driver policy does not change mid-run.
+    fn worth_retrying(&self) -> bool {
+        self.has_gap() && (self.provider_seen || self.empty_attempts < MAX_EMPTY_ATTEMPTS)
+    }
+
+    /// Re-opens the backend and both readers once the backoff has elapsed.
+    /// A no-op while the handle is healthy, and cheap when it is not: the
+    /// process-wide cache hands back the same provider unless it is dead.
+    fn reacquire_if_needed(&mut self) {
+        if !self.worth_retrying() || Instant::now() < self.next_attempt {
+            return;
+        }
+        self.access = crate::lowlevel::select::open();
+        if self.access.is_absent() {
+            self.empty_attempts = self.empty_attempts.saturating_add(1);
+        } else {
+            self.provider_seen = true;
+            self.empty_attempts = 0;
+        }
+        self.cpu_die = cpu_die::CpuDieMonitor::open(self.access.clone());
+        self.superio = superio::SuperIoMonitor::open(self.access.clone());
+        if self.has_gap() {
+            self.backoff = (self.backoff * 2).min(REACQUIRE_MAX);
+            if self.worth_retrying() {
+                log::debug!(
+                    "stress-kit/telemetry: low-level backend still unreadable ({}); retrying in \
+                     {:?}",
+                    self.access.status().detail,
+                    self.backoff
+                );
+            } else {
+                log::warn!(
+                    "stress-kit/telemetry: no low-level backend opened in {MAX_EMPTY_ATTEMPTS} \
+                     attempts ({}); CPU die temperature and board rails stay unavailable \
+                     for this sampler",
+                    self.access.status().detail
+                );
+            }
+        } else {
+            self.backoff = REACQUIRE_FIRST;
+            log::info!(
+                "stress-kit/telemetry: low-level backend re-acquired ({}); CPU die temperature \
+                 and board rails resume",
+                self.access.id().label()
+            );
+        }
+        self.next_attempt = Instant::now() + self.backoff;
+    }
+
+    fn poll_die(&mut self) -> Option<CpuDieThermal> {
+        self.cpu_die.as_mut().and_then(|c| c.poll())
+    }
+
+    /// Per-domain readings behind the last die poll; empty for every reader
+    /// whose sensor has no domains.
+    fn die_domains(&self) -> Vec<ThermalReading> {
+        self.cpu_die
+            .as_ref()
+            .map(cpu_die::CpuDieMonitor::domain_thermals)
+            .unwrap_or_default()
+    }
+
+    fn poll_rails(&mut self) -> Vec<VoltageReading> {
+        self.superio.as_mut().map(|s| s.poll()).unwrap_or_default()
+    }
+
+    fn ceiling(&self) -> Option<CpuThermalCeiling> {
+        self.cpu_die
+            .as_ref()
+            .and_then(cpu_die::CpuDieMonitor::ceiling)
+            .or_else(|| cpu_ceiling::detect(None))
+    }
+
+    fn status(&self) -> AccessStatus {
+        self.access.status()
     }
 }
 
@@ -587,14 +775,8 @@ fn sampler_loop(
     #[cfg(not(target_os = "windows"))]
     let thermal: Option<()> = None;
 
-    // Both readers hold their own clone of the backend handle, so neither
-    // depends on the other opening and drop order between them does not matter.
     #[cfg(feature = "lowlevel")]
-    let access = crate::lowlevel::select::open();
-    #[cfg(feature = "lowlevel")]
-    let mut cpu_die_monitor = cpu_die::CpuDieMonitor::open(access.clone());
-    #[cfg(feature = "lowlevel")]
-    let mut superio_monitor = superio::SuperIoMonitor::open(access.clone());
+    let mut readers = LowLevelReaders::open();
 
     #[cfg(target_os = "windows")]
     let mut storage_thermal = storage_thermal_windows::StorageThermalMonitor::open();
@@ -622,9 +804,13 @@ fn sampler_loop(
             .unwrap_or(0);
 
         #[cfg(feature = "lowlevel")]
-        let die = cpu_die_monitor.as_mut().and_then(|c| c.poll());
+        let (die, die_domains) = {
+            readers.reacquire_if_needed();
+            let die = readers.poll_die();
+            (die, readers.die_domains())
+        };
         #[cfg(not(feature = "lowlevel"))]
-        let die: Option<CpuDieThermal> = None;
+        let (die, die_domains): (Option<CpuDieThermal>, Vec<ThermalReading>) = (None, Vec::new());
 
         #[cfg(target_os = "windows")]
         let thermals = {
@@ -632,6 +818,7 @@ fn sampler_loop(
             if let Some(d) = die.as_ref() {
                 v.extend(d.to_thermal_readings());
             }
+            v.extend(die_domains);
             if let Some(s) = storage_thermal.as_mut() {
                 v.extend(s.poll());
             }
@@ -639,7 +826,7 @@ fn sampler_loop(
         };
         #[cfg(not(target_os = "windows"))]
         let thermals = {
-            let _ = thermal;
+            let _ = (thermal, die_domains);
             Vec::new()
         };
 
@@ -671,14 +858,18 @@ fn sampler_loop(
             },
             thermals,
             #[cfg(feature = "lowlevel")]
-            voltages: superio_monitor.as_mut().map(|s| s.poll()).unwrap_or_default(),
+            voltages: readers.poll_rails(),
             #[cfg(not(feature = "lowlevel"))]
             voltages: Vec::new(),
             cpu_die: die,
             #[cfg(feature = "lowlevel")]
-            access: access.status(),
+            access: readers.status(),
             #[cfg(not(feature = "lowlevel"))]
             access: AccessStatus::default(),
+            #[cfg(feature = "lowlevel")]
+            cpu_ceiling: readers.ceiling(),
+            #[cfg(not(feature = "lowlevel"))]
+            cpu_ceiling: None,
         };
 
         if let Ok(mut g) = snapshot.lock() {

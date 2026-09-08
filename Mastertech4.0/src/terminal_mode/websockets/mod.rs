@@ -4791,9 +4791,18 @@ fn cpu_temp_token(source: stress_kit::telemetry::CpuTempSource) -> &'static str 
     use stress_kit::telemetry::CpuTempSource;
     match source {
         CpuTempSource::Die => "cpu_die_sensor",
+        CpuTempSource::DptfParticipant => "dptf_participant",
         CpuTempSource::AcpiZone => "acpi_zone_only",
         CpuTempSource::None => "unavailable",
     }
+}
+
+/// True for a token naming a CPU-side sensor, so an ACPI board zone stays apart
+/// from both the die registers and the DPTF participant.
+fn is_cpu_sensor_token(token: &str) -> bool {
+    use stress_kit::telemetry::CpuTempSource;
+    token == cpu_temp_token(CpuTempSource::Die)
+        || token == cpu_temp_token(CpuTempSource::DptfParticipant)
 }
 
 /// Payload token for whether the WHEA log was readable.
@@ -4845,7 +4854,7 @@ fn sensor_gap_detail(
     whea_status: &str,
     access: &stress_kit::telemetry::AccessStatus,
 ) -> String {
-    let cpu_die = cpu_status == cpu_temp_token(stress_kit::telemetry::CpuTempSource::Die);
+    let cpu_die = is_cpu_sensor_token(cpu_status);
     let mut notes: Vec<String> = Vec::new();
     if cpu_status == cpu_temp_token(stress_kit::telemetry::CpuTempSource::AcpiZone) {
         notes.push(
@@ -4896,6 +4905,15 @@ fn backend_gate(
         return format!(
             "{} answered when sampling started and then stopped, so readings ended there: {lost}",
             access.backend_label
+        );
+    }
+    // The WMI path carries no rail at all, so its silence is not a channel gap.
+    if access.backend == BackendId::EsifWmi && rails_silent {
+        return format!(
+            "{} reads the CPU temperature over WMI only and has no board-rail path, so no voltage \
+             rail can be read through it.{}",
+            access.backend_label,
+            rejected_summary(access)
         );
     }
     if !cpu_die && rails_silent {
@@ -4979,6 +4997,8 @@ async fn remote_telemetry_json(warmup: Duration) -> serde_json::Value {
             "package_temp_c": package_temp_c,
             "package_temp_source": package_temp_source,
             "package_temp_kind": package_status,
+            "thermal_ceiling_c": snap.cpu_ceiling.map(|c| c.limit_c),
+            "thermal_ceiling_source": snap.cpu_ceiling.map(|c| c.source),
             "cores": snap.cores,
         },
         "memory": snap.memory,
@@ -5004,6 +5024,7 @@ async fn remote_telemetry_json(warmup: Duration) -> serde_json::Value {
             "detail": detail,
         },
         "voltage_caveat": "Nominal-divider scaling (calibrated=false): read as trend and droop under load, not absolute volts. '3VCC (chip)' is the sensor chip's own 3.3V supply, NOT the board's +3.3V PSU rail.",
+        "thermal_ceiling_caveat": "cpu.thermal_ceiling_c is the part's Tjmax — the temperature its firmware throttles to hold. Modern parts sit AT it under sustained all-core load by design, so package_temp_c at the ceiling with clocks up is correct behaviour, not a fault. null means this part's ceiling could not be established, not that it has none.",
     })
 }
 
@@ -5399,6 +5420,31 @@ mod telemetry_availability_tests {
         assert_eq!(cpu_temp_token(source), "cpu_die_sensor");
     }
 
+    /// The DPTF participant is a CPU-side sensor, so it is neither reported as a
+    /// board zone nor counted as an unmeasured CPU.
+    #[test]
+    fn a_dptf_reading_is_its_own_kind_and_counts_as_measured() {
+        use stress_kit::telemetry::{CpuDieReader, CpuDieThermal};
+        let s = TelemetrySnapshot {
+            cpu_die: Some(CpuDieThermal {
+                package_c: Some(45.0),
+                cores: Vec::new(),
+                reader: CpuDieReader::DptfParticipant,
+            }),
+            thermals: vec![thermal("CPUZ_0", 90.0)],
+            ..Default::default()
+        };
+        let (reading, source) = s.cpu_temp_reading().expect("participant reading");
+        assert_eq!(reading.label, "CPU Package (DPTF)");
+        assert_eq!(cpu_temp_token(source), "dptf_participant");
+        assert!(is_cpu_sensor_token("dptf_participant"));
+        assert!(!is_cpu_sensor_token("acpi_zone_only"));
+
+        let detail = sensor_gap_detail("dptf_participant", &[], true, "ok", &dptf_access());
+        assert!(!detail.contains("was not measured"));
+        assert!(detail.contains("no board-rail path"));
+    }
+
     #[test]
     fn no_cpu_thermal_yields_no_pick() {
         let s = snap(vec![thermal("NVMe Disk 0", 38.0)]);
@@ -5447,6 +5493,17 @@ mod telemetry_availability_tests {
             tier: AccessTier::Full,
             backend_label: BackendId::WinRing0.label().to_string(),
             detail: "WinRing0 (legacy) is live.".into(),
+            rejected: Vec::new(),
+            lost: None,
+        }
+    }
+
+    fn dptf_access() -> AccessStatus {
+        AccessStatus {
+            backend: BackendId::EsifWmi,
+            tier: AccessTier::DieOnly,
+            backend_label: BackendId::EsifWmi.label().to_string(),
+            detail: "Intel DPTF (WMI) is live.".into(),
             rejected: Vec::new(),
             lost: None,
         }

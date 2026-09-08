@@ -122,6 +122,13 @@ async fn main() -> eframe::Result<()> {
     // futures might never see WS responses.
     stress_runner::set_runtime_handle(tokio::runtime::Handle::current());
 
+    // Cache the real status table off the backends. Best-effort and off the
+    // startup path: every lookup falls back to the compiled table, which names
+    // 38 of the 126 statuses PrestaShop defines.
+    tokio::spawn(async {
+        database::orders::status_catalog::refresh().await;
+    });
+
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title(format!("Mastertech QC - {}", database::version_with_build!()))

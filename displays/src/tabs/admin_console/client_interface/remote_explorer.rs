@@ -42,6 +42,11 @@ const MAX_INFLIGHT_THUMBS: usize = 12;
 /// the client.
 const MAX_THUMBS_PER_FOLDER: usize = 1000;
 
+/// Gap between background `GetDrives` polls while the explorer is on screen.
+const DRIVE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(4);
+/// Delay after a poll before repainting to pick up the reply.
+const DRIVE_REPLY_WAKE: std::time::Duration = std::time::Duration::from_millis(300);
+
 /// File-list layout: classic detail rows or a thumbnail grid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExplorerViewMode {
@@ -282,6 +287,10 @@ pub struct RemoteExplorer {
     error: Option<String>,
     /// Available drives on the remote system
     pub drives: Vec<String>,
+    /// When the last drive-list request went out.
+    drives_last_poll: Option<web_time::Instant>,
+    /// Whether the drive list re-polls on `DRIVE_POLL_INTERVAL`.
+    pub drives_auto_refresh: bool,
     /// Common folder shortcuts
     pub shortcuts: Vec<FolderShortcut>,
     /// Whether left sidebar is visible
@@ -397,6 +406,8 @@ impl RemoteExplorer {
             path_input: "current".to_string(),
             error: None,
             drives: Vec::new(),
+            drives_last_poll: None,
+            drives_auto_refresh: true,
             shortcuts,
             sidebar_visible: true,
             pending_download: None,
@@ -444,7 +455,38 @@ impl RemoteExplorer {
     
     /// Set available drives
     pub fn set_drives(&mut self, drives: Vec<String>) {
-        self.drives = drives;
+        if self.drives != drives {
+            log::info!("Remote drive list changed: {:?} -> {:?}", self.drives, drives);
+            self.drives = drives;
+        }
+    }
+
+    /// Ask the client for its current drive list.
+    pub fn request_drives(&mut self, cmd_tx: &Sender<Cmd>) {
+        self.drives_last_poll = Some(web_time::Instant::now());
+        let _ = cmd_tx.try_send(Cmd::GetDrives);
+    }
+
+    /// Re-request the drive list once `DRIVE_POLL_INTERVAL` has elapsed.
+    fn pump_drives(&mut self, cmd_tx: &Sender<Cmd>, ctx: &egui::Context) {
+        if !self.drives_auto_refresh {
+            return;
+        }
+        // Two wakes per cycle: one to drain the reply, one for the next poll.
+        match self.drives_last_poll.map(|sent| sent.elapsed()) {
+            Some(since) if since < DRIVE_POLL_INTERVAL => {
+                let next = if since < DRIVE_REPLY_WAKE {
+                    DRIVE_REPLY_WAKE - since
+                } else {
+                    DRIVE_POLL_INTERVAL - since
+                };
+                ctx.request_repaint_after(next);
+            }
+            _ => {
+                self.request_drives(cmd_tx);
+                ctx.request_repaint_after(DRIVE_REPLY_WAKE);
+            }
+        }
     }
     
     /// Load My Tools from SurrealDB bucket
@@ -737,6 +779,7 @@ impl RemoteExplorer {
         self.loading = true;
         self.file_table.clear();
         let _ = cmd_tx.try_send(Cmd::ListDirectory(self.current_path.clone()));
+        self.request_drives(cmd_tx);
     }
     
     /// Copy a file to My Tools (upload to SurrealDB bucket)
@@ -1032,6 +1075,9 @@ impl RemoteExplorer {
         // Stream thumbnails for the current folder when in icon mode.
         self.pump_thumbnails(cmd_tx);
 
+        // Re-poll drives so removable media shows up without operator action.
+        self.pump_drives(cmd_tx, ui.ctx());
+
         // Load My Tools on first display if bucket is set and not yet initialized
         if !self.tools_initialized && !self.bucket_name.is_empty() {
             self.load_my_tools();
@@ -1190,6 +1236,22 @@ impl RemoteExplorer {
                                 self.auto_load_thumbs = !self.auto_load_thumbs;
                                 ui.close();
                             }
+                            if ui
+                                .add(
+                                    egui::Button::new("Auto-refresh drives")
+                                        .selected(self.drives_auto_refresh),
+                                )
+                                .on_hover_text(format!(
+                                    "Re-ask the client for its drive list every {}s so plugged-in \
+                                     media appears on its own. When off, use the sidebar's \
+                                     refresh button.",
+                                    DRIVE_POLL_INTERVAL.as_secs()
+                                ))
+                                .clicked()
+                            {
+                                self.drives_auto_refresh = !self.drives_auto_refresh;
+                                ui.close();
+                            }
                             ui.separator();
                             if ui
                                 .add(
@@ -1255,6 +1317,7 @@ impl RemoteExplorer {
             .max_size(260.)
             .show(ui, |ui| {
                 let mut navigate_to_path: Option<String> = None;
+                let mut refresh_drives = false;
 
                 ScrollArea::vertical().show(ui, |ui| {
                     let entry_w = ui.available_width();
@@ -1272,29 +1335,48 @@ impl RemoteExplorer {
                         }
                     }
 
-                    if !self.drives.is_empty() {
-                        ui.add_space(12.);
-                        // Plain "Drives" header (no supplementary-plane
-                        // emoji prefix that may fall back to a missing-
-                        // glyph box).
+                    ui.add_space(12.);
+                    // Plain "Drives" header (no supplementary-plane
+                    // emoji prefix that may fall back to a missing-
+                    // glyph box).
+                    ui.horizontal(|ui| {
                         ui.label(RichText::new("Drives").strong().color(theme::strong_text(ui)));
-                        ui.add_space(4.);
-
-                        for drive in &self.drives {
-                            let label = format!("{} {drive}", icons::HARD_DRIVE);
-                            if sidebar_row(ui, entry_w, ENTRY_H, false, label).clicked() {
-                                navigate_to_path = Some(drive.clone());
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            let hover = if self.drives_auto_refresh {
+                                format!(
+                                    "Refresh drive list (re-polls every {}s)",
+                                    DRIVE_POLL_INTERVAL.as_secs()
+                                )
+                            } else {
+                                "Refresh drive list (auto-refresh off)".to_string()
+                            };
+                            if ui.small_button(icons::REFRESH).on_hover_text(hover).clicked() {
+                                refresh_drives = true;
                             }
+                        });
+                    });
+                    ui.add_space(4.);
+
+                    if self.drives.is_empty() {
+                        ui.label(RichText::new("None reported").weak().italics());
+                    }
+                    for drive in &self.drives {
+                        let label = format!("{} {drive}", icons::HARD_DRIVE);
+                        if sidebar_row(ui, entry_w, ENTRY_H, false, label).clicked() {
+                            navigate_to_path = Some(drive.clone());
                         }
                     }
                 });
 
+                if refresh_drives {
+                    self.request_drives(cmd_tx);
+                }
                 if let Some(path) = navigate_to_path {
                     self.navigate_to(path, cmd_tx);
                 }
             });
     }
-    
+
     fn display_tools_sidebar(&mut self, ui: &mut Ui, cmd_tx: &Sender<Cmd>, stroke: Stroke, radius: CornerRadius) {
         let sidebar_frame = Frame::default()
             .fill(glass_card::card_fill(ui))

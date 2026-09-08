@@ -224,6 +224,19 @@ pub const ODOO_UID: &str = env!("ODOO_UID");
 pub const PRESTASHOP_API_URL: &str = env!("PRESTASHOP_API_URL");
 pub const PRESTASHOP_API_URL_WASM: &str = env!("PRESTASHOP_API_URL_WASM");
 
+/// Shared secret the `pcl-proxy` Worker requires as `X-Mtech-Key`. Empty = no proxy.
+pub const MTECH_PROXY_KEY: &str = env!("MTECH_PROXY_KEY");
+
+/// GET against `PRESTASHOP_API_URL_WASM`, adding `X-Mtech-Key` when one is set.
+pub fn prestashop_get(url: impl reqwest::IntoUrl) -> reqwest::RequestBuilder {
+    let req = crate::xbm::shared_http().get(url);
+    if MTECH_PROXY_KEY.is_empty() {
+        req
+    } else {
+        req.header("X-Mtech-Key", MTECH_PROXY_KEY)
+    }
+}
+
 /// Base URL for the Xidax admin (PrestaShop) backoffice. Use the helpers
 /// (`xidax_order_url`, `xidax_product_url`) instead of concatenating ad-hoc
 /// suffixes so URL paths stay defined in one place.
@@ -254,6 +267,10 @@ pub const XBM_API_URL: &str = env!("XBM_API_URL");
 /// Per-consumer `xbm_` bearer key. Empty string disables the XBM client at
 /// runtime; reads then fall back to the Admin GraphQL path where available.
 pub const XBM_API_KEY: &str = env!("XBM_API_KEY");
+/// Which Shopify store the Build Management API should answer for
+/// (`pclaptops` / `37rkv3-nc`). Empty uses the server's primary store, which
+/// is Xidax — so PC Laptops orders are invisible until this is set.
+pub const XBM_SHOP: &str = env!("XBM_SHOP");
 
 /// ZeroClaw agent gateway base (no trailing slash). Empty disables the
 /// dispatcher, session viewer and event watcher at runtime. The matching
@@ -287,6 +304,32 @@ pub fn orchestrator_url() -> &'static str {
     } else {
         ORCHESTRATOR_URL
     }
+}
+
+/// True when a PrestaShop webservice base URL is compiled in. Empty means the
+/// binary was built without PrestaShop; callers must skip the request instead
+/// of issuing one against a relative URL.
+#[inline]
+#[must_use]
+pub fn prestashop_configured() -> bool {
+    !PRESTASHOP_API_URL_WASM.is_empty() || !PRESTASHOP_API_URL.is_empty()
+}
+
+/// True when the Xidax backoffice base URL is compiled in. Deep-link helpers
+/// return relative paths otherwise, so callers should hide the link.
+#[inline]
+#[must_use]
+pub fn xidax_admin_configured() -> bool {
+    !XIDAX_ADMIN_URL.is_empty()
+}
+
+/// Standard error for a PrestaShop call attempted on a build with no
+/// PrestaShop configured.
+#[must_use]
+pub fn prestashop_unconfigured_err() -> anyhow::Error {
+    anyhow::anyhow!(
+        "PrestaShop is not configured in this build — set PRESTASHOP_API_URL and PRESTASHOP_API_URL_WASM in .env and rebuild to re-enable it."
+    )
 }
 
 /// Build a Xidax admin URL that opens an order detail page.

@@ -336,17 +336,38 @@ impl DiagnosticSession {
     }
 
     /// Bumps `last_activity_at` to now so the staleness sweep sees the session as
-    /// live. Never moves it backwards. Called from every path that records real
-    /// work against a session; failure is logged, not propagated, so an activity
-    /// stamp can never fail the work it is recording.
+    /// live, and reopens one the sweep already abandoned. Never moves the stamp
+    /// backwards. Called from every path that records real work against a
+    /// session; failure is logged, not propagated, so an activity stamp can
+    /// never fail the work it is recording.
+    ///
+    /// `abandoned` is not a verdict — the outcome engine scores only `resolved`
+    /// and `escalated` — so a write landing on one means the sweep was wrong and
+    /// the row is corrected rather than left to strand every later record. A
+    /// `resolved`/`escalated` row is an operator's close and is never reopened.
+    ///
+    /// Three statements, not one conditional SET: SurrealDB gives no ordering
+    /// guarantee between assignments in the same SET, so a clause reading
+    /// `status`/`swept_at` while another writes them is unsafe. Each statement
+    /// here has a constant SET and carries its whole condition in the WHERE.
+    /// `swept_at` present means the summary is the sweep's synthesised one, so
+    /// it goes; a row swept by the pre-2026-08-25 build has no `swept_at` and
+    /// keeps whatever summary it had.
     pub async fn touch(session: &RecordId) {
         let res = db()
             .query(
                 "UPDATE $sid SET last_activity_at = time::now() \
-                 WHERE last_activity_at = NONE OR last_activity_at < time::now()",
+                 WHERE status IN ['open', 'abandoned'] \
+                   AND (last_activity_at = NONE OR last_activity_at < time::now()); \
+                 UPDATE $sid SET status = 'open', ended_at = NONE, summary = NONE, \
+                   swept_at = NONE \
+                 WHERE status = 'abandoned' AND swept_at != NONE; \
+                 UPDATE $sid SET status = 'open', ended_at = NONE \
+                 WHERE status = 'abandoned' AND swept_at = NONE",
             )
             .bind(("sid", session.clone()))
-            .await;
+            .await
+            .and_then(|r| r.check());
         if let Err(e) = res {
             log::warn!("DiagnosticSession::touch({session:?}) failed: {e}");
         }

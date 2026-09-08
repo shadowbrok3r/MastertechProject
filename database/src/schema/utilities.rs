@@ -376,8 +376,8 @@ pub async fn get_store_users(tx: Sender<Vec<User>>, store: Store) -> Result<(), 
 }
 
 /// When duplicate `connected_client` rows exist for the same
-/// `connection_string`, keep the best candidate: online first, then
-/// newest `last_update`.
+/// `connection_string`, compared case-insensitively, keep the best
+/// candidate: online first, then newest `last_update`.
 fn dedupe_connected_clients_by_connection_string(
     clients: Vec<ConnectedClient>,
 ) -> Vec<ConnectedClient> {
@@ -388,7 +388,7 @@ fn dedupe_connected_clients_by_connection_string(
         if client.client_kind == ClientKind::BuildWorker {
             continue;
         }
-        let key = client.connection_string.trim().to_string();
+        let key = client.connection_string.trim().to_ascii_lowercase();
         if key.is_empty() {
             continue;
         }
@@ -1293,6 +1293,95 @@ impl Customer {
 
         Ok(customers.clone())
     }
+
+    /// Customers who own an order carrying `serial`, via `order_serial`.
+    ///
+    /// Sibling of [`Customer::find_customer_by_email`] and
+    /// [`Customer::find_customer_by_phone`], and the same chain the OA3
+    /// first-run lookup walks: serial to `id_order`, order to `id_customer`,
+    /// then the customer and their addresses. A serial installed on several
+    /// orders yields one entry per distinct customer.
+    pub async fn find_customer_by_serial(serial: &str) -> anyhow::Result<Vec<(Customer, Address)>, anyhow::Error> {
+        let serial = serial.trim();
+        if serial.is_empty() {
+            return Ok(vec![]);
+        }
+        let api_call = Prestashop::default();
+
+        // Bracketed filter value is Prestashop's exact-match list form.
+        let bracketed = format!("[{serial}]");
+        let mut query = HashMap::new();
+        query.insert("filter[serial_number]", bracketed.as_str());
+        query.insert("output_format", "JSON");
+        query.insert("display", "full");
+
+        // Prestashop answers /order_serial under the plural key.
+        let rows: Vec<OrderSerialRow> = api_call
+            .request_resources_checked_as("order_serial", "order_serials", query)
+            .await?;
+
+        let mut seen_orders: std::collections::BTreeSet<String> = Default::default();
+        let mut seen_customers: std::collections::BTreeSet<String> = Default::default();
+        let mut out = vec![];
+
+        for row in rows.iter() {
+            let id_order = row.id_order.trim();
+            if id_order.is_empty() || !seen_orders.insert(id_order.to_string()) {
+                continue;
+            }
+
+            let order: Order = match api_call
+                .request_subresources_by_id_wasm("orders", "order", id_order)
+                .await
+            {
+                Ok(o) => o,
+                Err(e) => {
+                    warn!("find_customer_by_serial -> order {id_order} unreadable: {e}");
+                    continue;
+                }
+            };
+            let id_customer = order.id_customer.trim().to_string();
+            if id_customer.is_empty() || !seen_customers.insert(id_customer.clone()) {
+                continue;
+            }
+
+            let cust: Customer = match api_call
+                .request_subresources_by_id_wasm("customers", "customer", &id_customer)
+                .await
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    warn!("find_customer_by_serial -> customer {id_customer} unreadable: {e}");
+                    continue;
+                }
+            };
+
+            let mut addr_query = HashMap::new();
+            addr_query.insert("filter[id_customer]", id_customer.as_str());
+            addr_query.insert("output_format", "JSON");
+            let addresses: Vec<Address> = api_call
+                .request_resources_checked("addresses", addr_query)
+                .await
+                .unwrap_or_default();
+
+            // A customer with no address row still matched the serial, so they
+            // are reported with a blank address rather than dropped.
+            match addresses.iter().find(|a| a.id_customer == id_customer) {
+                Some(addr) => out.push((cust, addr.clone())),
+                None => out.push((cust, Address::default())),
+            }
+        }
+
+        Ok(out)
+    }
+}
+
+/// One `order_serial` row. Only the field the serial lookup walks; Prestashop
+/// types ids as int or string depending on `display`.
+#[derive(Deserialize, Debug, Default, Clone)]
+struct OrderSerialRow {
+    #[serde(default, deserialize_with = "crate::schema::deserializer::deserialize_to_string")]
+    id_order: String,
 }
 
 pub fn format_us_phone_number(phone: &str) -> Vec<String> {
@@ -1583,27 +1672,17 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
         let order_id = order.id.clone();
         let id_addr = customer_address.id.clone();
 
-        let api = Prestashop::default();
-        match api.request_raw_resource_by_id("orders", &order_id).await {
-            Ok(xml) => {
-                match modify_xml(&xml, "id_address_invoice", &id_addr) {
-                    Ok(new_xml) => {
-                        log::debug!("NEW XML: {new_xml:#?}");
-                        match remove_xml_tag(&new_xml, "tax_exempt") {
-                            Ok(final_xml) => {
-                                log::debug!("Final XML: {final_xml:#?}");
-                                match api.modify_prestashop_order(&final_xml).await {
-                                    Ok(prestashop_response) => log::debug!("Prestashop Response XML: {prestashop_response:#?}"),
-                                    Err(e) => log::error!("Error modifying prestashop order: {e:?}"),
-                                }
-                            },
-                            Err(e) => log::error!("Error removing tax_exempt tag from XML: {e:?}"),
-                        }
-                    }
-                    Err(e) => log::error!("Error modifying XML: {e:?}")
-                }
-            },
-            Err(e) => log::error!("Error getting XML order: {e:?}"),
+        // Locked helper: a whole-resource PUT done inline reverts whatever
+        // another writer changed between this order's GET and PUT.
+        match crate::schema::prestashop::order_write::set_order_field(
+            &order_id,
+            "id_address_invoice",
+            &id_addr,
+        )
+        .await
+        {
+            Ok(_) => log::debug!("Order {order_id} invoice address set to {id_addr}"),
+            Err(e) => log::error!("Error setting id_address_invoice on order {order_id}: {e:?}"),
         }
     }
 

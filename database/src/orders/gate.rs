@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use super::OrderKind;
 
+pub use crate::schema::prestashop::OPEN_ORDER_STATES;
+
 /// Sales statuses a bench QC session may pull forward (QCWizard good-to-move).
 pub const SALES_GOOD_TO_MOVE: &[i64] = &[73, 60, 225, 224, 70, 57, 98, 103];
 
@@ -33,7 +35,8 @@ pub const XIDAX_BENCH_STATUSES: &[i64] = &[71];
 /// (The plan's 76 is absent on the live store.)
 pub const XIDAX_BENCH_TARGET: i64 = 67;
 
-/// Display names for the legacy ids this module references.
+/// Compiled fallback names for the legacy ids this module references. The
+/// live table is `status_catalog`; this covers only what was hand-maintained.
 pub fn status_name(legacy_id: i64) -> &'static str {
     match legacy_id {
         2 => "Payment Accepted",
@@ -84,6 +87,11 @@ pub fn status_name(legacy_id: i64) -> &'static str {
 pub fn status_display(legacy_id: i64, live_name: &str) -> String {
     if !live_name.is_empty() {
         return live_name.to_string();
+    }
+    // Runtime catalog first; the table below is a fallback for an unloaded
+    // catalog, and covers 37 of the 126 statuses PrestaShop actually defines.
+    if let Some(name) = super::status_catalog::name(legacy_id) {
+        return name;
     }
     let name = status_name(legacy_id);
     if !name.is_empty() {
@@ -207,6 +215,47 @@ pub fn update_allowed(from_legacy_id: i64, to_legacy_id: i64) -> Result<(), Stri
         return Err("Order is already in the requested state.".to_string());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod catalog_tests {
+    use super::*;
+    use crate::orders::status_catalog;
+
+    // Mutates the process-global catalog; kept in its own module so the gate
+    // policy tests never observe a half-installed table.
+    #[test]
+    fn catalog_beats_the_compiled_table_and_covers_its_gaps() {
+        status_catalog::clear();
+
+        // 217 "Preparing to Ship" is a real PrestaShop state the compiled
+        // table never knew — it used to render as "Status 217".
+        assert_eq!(status_display(217, ""), "Status 217");
+        // 40 is in the compiled table under an abbreviated name.
+        assert_eq!(status_display(40, ""), "Done Shelf");
+
+        status_catalog::install(std::collections::HashMap::from([
+            (217, "Preparing to Ship".to_string()),
+            (40, "Done Shelf (Ready for Pickup)".to_string()),
+        ]));
+
+        assert_eq!(status_display(217, ""), "Preparing to Ship");
+        assert_eq!(status_display(40, "Done Shelf (Ready for Pickup)"), "Done Shelf (Ready for Pickup)");
+        // An id in neither still degrades to the id, never to a wrong name.
+        assert_eq!(status_display(99999, ""), "Status 99999");
+        // A live name from the order itself outranks both.
+        assert_eq!(status_display(40, "Whatever The Order Said"), "Whatever The Order Said");
+
+        status_catalog::clear();
+        assert_eq!(status_display(217, ""), "Status 217");
+    }
+
+    #[test]
+    fn open_order_states_are_all_nameable() {
+        for id in OPEN_ORDER_STATES {
+            assert!(!status_name(*id).is_empty(), "no compiled name for open state {id}");
+        }
+    }
 }
 
 #[cfg(test)]

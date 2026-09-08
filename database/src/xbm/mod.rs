@@ -64,6 +64,9 @@ impl XbmError {
 pub struct XbmClient {
     base_url: String,
     key: String,
+    /// Target store. The API is multi-store and defaults to Xidax, so PC
+    /// Laptops orders return nothing unless this is set.
+    shop: String,
     http: reqwest::Client,
 }
 
@@ -80,13 +83,25 @@ impl XbmClient {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             key: key.into(),
+            shop: String::new(),
             http: shared_http(),
         }
     }
 
     /// Compile-time `.env` configuration (`XBM_API_URL`, `XBM_API_KEY`).
     pub fn from_env() -> Self {
-        Self::new(XBM_API_URL, XBM_API_KEY)
+        Self::new(XBM_API_URL, XBM_API_KEY).for_shop(crate::XBM_SHOP)
+    }
+
+    /// Target a specific store, e.g. `pclaptops`. An empty value leaves the
+    /// server's default (Xidax) in place.
+    pub fn for_shop(mut self, shop: &str) -> Self {
+        self.shop = shop.trim().to_string();
+        self
+    }
+
+    pub fn shop(&self) -> &str {
+        &self.shop
     }
 
     /// `false` until an `xbm_` key is configured; every call errors then.
@@ -107,6 +122,19 @@ impl XbmClient {
         query: &[(&str, String)],
         body: Option<&Value>,
     ) -> Result<T, XbmError> {
+        self.request_as(method, path, query, body, None).await
+    }
+
+    /// `staff_token` attributes the call to a technician instead of the API
+    /// key's system identity. Required by the QC and comment write routes.
+    async fn request_as<T: DeserializeOwned>(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        query: &[(&str, String)],
+        body: Option<&Value>,
+        staff_token: Option<&str>,
+    ) -> Result<T, XbmError> {
         if !self.configured() {
             return Err(XbmError::NotConfigured);
         }
@@ -116,6 +144,12 @@ impl XbmClient {
             .request(method, &url)
             .bearer_auth(&self.key)
             .query(query);
+        if !self.shop.is_empty() {
+            req = req.query(&[("shop", self.shop.as_str())]);
+        }
+        if let Some(token) = staff_token {
+            req = req.header("X-Staff-Token", token);
+        }
         if let Some(body) = body {
             req = req.json(body);
         }
@@ -155,6 +189,18 @@ impl XbmClient {
         self.request(reqwest::Method::GET, path, query, None).await
     }
 
+    /// Untyped GET, for the endpoints with no typed wrapper — the Odoo
+    /// passthroughs and the rest of the surface absent from
+    /// `/api/v1/openapi.json`.
+    pub async fn get_json(&self, path: &str, query: &[(&str, String)]) -> Result<Value, XbmError> {
+        self.get(path, query).await
+    }
+
+    /// Untyped POST. Same reason as [`Self::get_json`].
+    pub async fn post_json(&self, path: &str, body: Value) -> Result<Value, XbmError> {
+        self.post(path, body).await
+    }
+
     async fn post<T: DeserializeOwned>(&self, path: &str, body: Value) -> Result<T, XbmError> {
         self.request(reqwest::Method::POST, path, &[], Some(&body)).await
     }
@@ -168,6 +214,120 @@ impl XbmClient {
     }
 
     // ─── Orders ─────────────────────────────────────────────────────────────
+
+    /// `GET /orders/resolve?ref=`. The server tries every reading of `ref`
+    /// (order number, build-sheet pair, reference, legacy PrestaShop id,
+    /// serial) — pass what was scanned verbatim and never pre-parse it.
+    pub async fn resolve(&self, reference: &str) -> Result<ResolveResult, XbmError> {
+        self.get("/orders/resolve", &[("ref", reference.to_string())]).await
+    }
+
+    /// `GET /orders/{id}/comments`, newest first.
+    pub async fn comments(
+        &self,
+        order_id: &str,
+        config_gid: Option<&str>,
+        limit: Option<u32>,
+    ) -> Result<CommentsPayload, XbmError> {
+        let mut query: Vec<(&str, String)> = Vec::new();
+        if let Some(gid) = config_gid {
+            query.push(("configGid", gid.to_string()));
+        }
+        if let Some(limit) = limit {
+            query.push(("limit", limit.to_string()));
+        }
+        self.get(
+            &format!("/orders/{}/comments", Self::order_path_id(order_id)),
+            &query,
+        )
+        .await
+    }
+
+    /// `POST /orders/{id}/comments`. `actor_staff_id` must match the staff
+    /// token, and the API rejects the pair being half-supplied.
+    pub async fn post_comment(
+        &self,
+        order_id: &str,
+        body: &str,
+        staff_token: Option<&str>,
+        actor_staff_id: Option<&str>,
+    ) -> Result<XbmComment, XbmError> {
+        let mut payload = serde_json::json!({ "body": body, "type": "note" });
+        if let Some(actor) = actor_staff_id {
+            payload["actorStaffId"] = Value::String(actor.to_string());
+        }
+        let envelope: CommentEnvelope = self
+            .request_as(
+                reqwest::Method::POST,
+                &format!("/orders/{}/comments", Self::order_path_id(order_id)),
+                &[],
+                Some(&payload),
+                staff_token,
+            )
+            .await?;
+        Ok(envelope.comment)
+    }
+
+    /// `GET /orders/{id}/qc`. Null when no run has been started.
+    pub async fn qc_run(&self, order_id: &str) -> Result<Option<QcRunDoc>, XbmError> {
+        self.get(&format!("/orders/{}/qc", Self::order_path_id(order_id)), &[])
+            .await
+    }
+
+    /// `POST /orders/{id}/qc`. `items` is merged over what is stored, so a
+    /// partial map is safe. Requires a staff token held by `qc.perform`.
+    pub async fn merge_qc(
+        &self,
+        order_id: &str,
+        items: serde_json::Map<String, Value>,
+        status: Option<&str>,
+        notes: Option<&str>,
+        staff_token: &str,
+        actor_staff_id: &str,
+    ) -> Result<QcRunDoc, XbmError> {
+        let mut payload = serde_json::json!({
+            "items": items,
+            "actorStaffId": actor_staff_id,
+        });
+        if let Some(status) = status {
+            payload["status"] = Value::String(status.to_string());
+        }
+        if let Some(notes) = notes {
+            payload["notes"] = Value::String(notes.to_string());
+        }
+        self.request_as(
+            reqwest::Method::POST,
+            &format!("/orders/{}/qc", Self::order_path_id(order_id)),
+            &[],
+            Some(&payload),
+            Some(staff_token),
+        )
+        .await
+    }
+
+    /// `POST /staff/authenticate`. Exchanges a floor credential for a staff
+    /// token; `require_permission` turns an unauthorised tech away at login
+    /// rather than at their first write.
+    pub async fn authenticate_staff(
+        &self,
+        method: StaffAuthMethod<'_>,
+        require_permission: Option<&str>,
+    ) -> Result<StaffAuth, XbmError> {
+        let mut payload = match method {
+            StaffAuthMethod::Pin { staff_id, pin } => {
+                serde_json::json!({ "method": "pin", "staffId": staff_id, "pin": pin })
+            }
+            StaffAuthMethod::Qr { token } => serde_json::json!({ "method": "qr", "token": token }),
+            StaffAuthMethod::Nfc { nfc_id } => {
+                serde_json::json!({ "method": "nfc", "nfcId": nfc_id })
+            }
+        };
+        if let Some(permission) = require_permission {
+            payload["requirePermission"] = Value::String(permission.to_string());
+        }
+        self.post("/staff/authenticate", payload).await
+    }
+
 
     /// `GET /orders`. `buckets` empty = server default active-floor set.
     pub async fn orders(

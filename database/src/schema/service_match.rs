@@ -85,3 +85,49 @@ pub struct PrestaSpecsSnapshot {
     /// `Order::extract_drives()`.
     pub drives: Vec<(String, String)>,
 }
+
+/// A customer resolved from a hardware serial, from whichever backend answered.
+///
+/// Both id spaces are carried because a migrated order has a Shopify customer
+/// and a PrestaShop one, and neither side's create/attach path accepts the
+/// other's id. An empty string means that backend had no id for this customer —
+/// never that the id is zero or unknown-but-present.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, SurrealValue, Facet)]
+pub struct SerialCustomerMatch {
+    /// The serial as searched, not as the backend echoed it.
+    pub serial: String,
+    /// `"shopify" | "prestashop"` — which backend produced the match.
+    pub source: String,
+    pub name: String,
+    pub email: String,
+    pub phone: String,
+    /// Shopify customer GID (`gid://shopify/Customer/…`).
+    pub customer_gid: String,
+    /// PrestaShop `id_customer`.
+    pub id_customer: String,
+    /// Orders carrying this serial, newest first.
+    pub orders: Vec<SerialOrderRef>,
+}
+
+impl SerialCustomerMatch {
+    /// Whether anything can be attached to this match. A backend that answers
+    /// with a name but no id can be displayed and not acted on.
+    pub fn has_customer_id(&self) -> bool {
+        !self.customer_gid.trim().is_empty() || !self.id_customer.trim().is_empty()
+    }
+}
+
+/// One order a serial was found on.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, SurrealValue, Facet)]
+pub struct SerialOrderRef {
+    /// Display reference (`#3879`, `RP000003879`, or the PrestaShop id).
+    pub reference: String,
+    /// PrestaShop `id_order` when the order has a legacy ancestor.
+    pub legacy_order_id: String,
+    pub status_name: String,
+    pub status_id: i64,
+    pub date: String,
+    /// How the backend matched it — `resolve`'s `matchedBy`, or `serial` for a
+    /// serial-history hit. `"search"` means a fuzzy match, not an id match.
+    pub matched_by: String,
+}

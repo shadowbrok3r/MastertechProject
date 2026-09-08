@@ -11,13 +11,12 @@
 use anyhow::{anyhow, Context};
 use serde_json::{json, Value};
 
-use crate::xbm::{AdvanceRequest, BuildDetail, XbmClient, QUEUE_BUCKETS};
+use crate::xbm::{AdvanceRequest, BuildDetail, QUEUE_BUCKETS, ResolveResult, StaffAuthMethod, XbmClient};
 use crate::{SHOPIFY_ADMIN_TOKEN, SHOPIFY_API_VERSION, SHOPIFY_STORE_URL};
 
 use super::gate::{self, GateDecision};
 use super::{
-    BackendKind, BuildSpec, DriveSpec, OrderBackend, OrderComment, OrderKey, OrderKind,
-    PhotoCheck, QcOrder, QcOrderItem, QcReportPayload, SlotPick, StatusInfo, TechIdentity,
+    BackendKind, BuildSpec, ChecklistState, DriveSpec, OrderBackend, OrderComment, OrderKey, OrderKind, PhotoCheck, QcOrder, QcOrderItem, QcReportPayload, SlotPick, StatusInfo, TechIdentity,
 };
 
 #[derive(Clone, Default)]
@@ -49,6 +48,7 @@ query QcOrderLookup($q: String!) {
       customer { displayName }
       currentTotalPriceSet { shopMoney { amount currencyCode } }
       lineItems(first: 100) {
+        pageInfo { hasNextPage }
         nodes {
           id
           name
@@ -67,15 +67,142 @@ query QcOrderLookup($q: String!) {
       buildPhotos: metafield(namespace: "xidax_order", key: "build_photos") { value }
       legacyPs: metafield(namespace: "xidax_legacy", key: "id_order_prestashop") { value }
       configs: metafield(namespace: "xidax_order", key: "configs") {
-        references(first: 10) { nodes { ... on Metaobject { fields { key value } } } }
+        references(first: 10) { pageInfo { hasNextPage } nodes { ... on Metaobject { fields { key value } } } }
       }
       installedSerials: metafield(namespace: "xidax_order", key: "installed_serials") {
-        references(first: 100) { nodes { ... on Metaobject { fields { key value } } } }
+        references(first: 100) { pageInfo { hasNextPage } nodes { ... on Metaobject { fields { key value } } } }
       }
     }
   }
 }
 "#;
+
+/// Per-request ceiling; without one a hung connection blocks a bench QC run.
+const GRAPHQL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const GRAPHQL_MAX_RETRIES: u32 = 4;
+/// Comment page size; the API caps this at 200.
+const COMMENT_PAGE_SIZE: u32 = 100;
+
+/// First 300 characters of a response body, for error messages.
+fn snippet(body: &str) -> String {
+    let trimmed = body.trim();
+    if trimmed.chars().count() <= 300 {
+        return trimmed.to_string();
+    }
+    let cut: String = trimmed.chars().take(300).collect();
+    format!("{cut}…")
+}
+
+/// `2^attempt` seconds, capped at 16.
+fn backoff(attempt: u32) -> std::time::Duration {
+    std::time::Duration::from_secs(1u64 << attempt.min(4))
+}
+
+/// Delay before retrying a failed HTTP status, or `None` if it is not worth
+/// retrying. 429 and 5xx are transient; 4xx otherwise is not.
+fn retryable_status_delay(
+    status: reqwest::StatusCode,
+    retry_after: Option<std::time::Duration>,
+    attempt: u32,
+) -> Option<std::time::Duration> {
+    if attempt >= GRAPHQL_MAX_RETRIES {
+        return None;
+    }
+    let transient = status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error();
+    transient.then(|| retry_after.unwrap_or_else(|| backoff(attempt)))
+}
+
+/// True when any GraphQL error carries `extensions.code == "THROTTLED"`.
+fn is_throttled(errors: &[Value]) -> bool {
+    errors.iter().any(|e| {
+        e.pointer("/extensions/code")
+            .and_then(|c| c.as_str())
+            .is_some_and(|c| c.eq_ignore_ascii_case("THROTTLED"))
+    })
+}
+
+/// Seconds to wait for the query's cost to be restored, from
+/// `extensions.cost.throttleStatus`. Falls back to plain backoff.
+fn throttle_delay(response: &Value, attempt: u32) -> std::time::Duration {
+    let cost = response.pointer("/extensions/cost");
+    let requested = cost
+        .and_then(|c| c.get("requestedQueryCost"))
+        .and_then(|v| v.as_f64());
+    let available = cost
+        .and_then(|c| c.pointer("/throttleStatus/currentlyAvailable"))
+        .and_then(|v| v.as_f64());
+    let restore_rate = cost
+        .and_then(|c| c.pointer("/throttleStatus/restoreRate"))
+        .and_then(|v| v.as_f64())
+        .filter(|r| *r > 0.0);
+
+    match (requested, available, restore_rate) {
+        (Some(requested), Some(available), Some(rate)) if requested > available => {
+            let seconds = ((requested - available) / rate).clamp(0.5, 16.0);
+            std::time::Duration::from_secs_f64(seconds)
+        }
+        _ => backoff(attempt),
+    }
+}
+
+/// Flatten the section checklist into the `{itemKey: bool}` map the QC route
+/// merges. Unset and N/A items are omitted so a partial run does not record a
+/// pass for something nobody checked.
+fn checklist_to_items(state: &ChecklistState) -> serde_json::Map<String, Value> {
+    let mut items = serde_json::Map::new();
+    for section in &state.sections {
+        if !section.applicable {
+            continue;
+        }
+        for item in &section.items {
+            match item.status.as_str() {
+                "Pass" => {
+                    items.insert(item.key.clone(), Value::Bool(true));
+                }
+                "Fail" => {
+                    items.insert(item.key.clone(), Value::Bool(false));
+                }
+                _ => {}
+            }
+        }
+    }
+    items
+}
+
+/// Repair intake block from `serviceDetails`. Keys are the ported PrestaShop
+/// column names (snake_case), not the camelCase the rest of the API uses.
+fn service_info_from(details: Option<&Value>) -> Option<super::ServiceInfo> {
+    let obj = details?.as_object()?;
+    let field = |key: &str| {
+        obj.get(key)
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .trim()
+            .to_string()
+    };
+    let info = super::ServiceInfo {
+        device_name: field("device_name"),
+        device_mfg: field("device_mfg"),
+        device_model: field("device_model"),
+        device_serial: field("device_serial"),
+        physical_damage: field("physical_damage"),
+        check_in_notes: field("check_in_notes"),
+        intake_notes: field("intake_notes"),
+    };
+    // An all-blank block is the API's empty shell, not an intake record.
+    let empty = [
+        &info.device_name,
+        &info.device_mfg,
+        &info.device_model,
+        &info.device_serial,
+        &info.physical_damage,
+        &info.check_in_notes,
+        &info.intake_notes,
+    ]
+    .iter()
+    .all(|v| v.is_empty());
+    (!empty).then_some(info)
+}
 
 impl ShopifyBackend {
     pub fn from_env() -> Self {
@@ -86,6 +213,13 @@ impl ShopifyBackend {
             api_version: SHOPIFY_API_VERSION.to_string(),
             xbm: xbm.configured().then_some(xbm),
         }
+    }
+
+    /// Target a specific Shopify store, e.g. `pclaptops` or `37rkv3-nc`. The
+    /// Build Management API is multi-store and defaults to Xidax.
+    pub fn for_shop(mut self, shop: &str) -> Self {
+        self.xbm = self.xbm.map(|c| c.for_shop(shop));
+        self
     }
 
     pub fn configured(&self) -> bool {
@@ -112,29 +246,89 @@ impl ShopifyBackend {
         })
     }
 
+    /// Ask the Build Management API what a scanned string refers to. The
+    /// server tries every reading (order number, build-sheet pair, reference,
+    /// legacy PrestaShop id, component serial), so the input is passed
+    /// verbatim and never pre-parsed. `Ok(None)` means no Shopify order
+    /// matched, which is the caller's cue to try PrestaShop.
+    pub async fn resolve_ref(&self, reference: &str) -> anyhow::Result<Option<ResolveResult>> {
+        let xbm = self.xbm()?;
+        match xbm.resolve(reference).await {
+            Ok(result) => Ok(Some(result)),
+            Err(crate::xbm::XbmError::Api { status: 404, .. }) => Ok(None),
+            Err(e) => Err(anyhow!(e)).context("Build Management resolve failed"),
+        }
+    }
+
     async fn graphql(&self, query: &str, variables: Value) -> anyhow::Result<Value> {
         self.ensure_configured()?;
         let url = format!(
             "{}/admin/api/{}/graphql.json",
             self.store_url, self.api_version
         );
-        let response: Value = crate::xbm::shared_http()
-            .post(&url)
-            .header("X-Shopify-Access-Token", &self.token)
-            .json(&json!({ "query": query, "variables": variables }))
-            .send()
-            .await
-            .context("Shopify GraphQL request failed")?
-            .json()
-            .await
-            .context("Shopify GraphQL returned non-JSON")?;
+        let body = json!({ "query": query, "variables": variables });
 
-        if let Some(errors) = response.get("errors").and_then(|e| e.as_array()) {
-            if !errors.is_empty() {
-                return Err(anyhow!("Shopify GraphQL errors: {errors:?}"));
+        let mut attempt = 0u32;
+        loop {
+            let response = crate::xbm::shared_http()
+                .post(&url)
+                .header("X-Shopify-Access-Token", &self.token)
+                .timeout(GRAPHQL_TIMEOUT)
+                .json(&body)
+                .send()
+                .await
+                .context("Shopify GraphQL request failed")?;
+
+            let status = response.status();
+            let retry_after = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.trim().parse::<f64>().ok())
+                .map(std::time::Duration::from_secs_f64);
+            let text = response
+                .text()
+                .await
+                .context("Shopify GraphQL response body unreadable")?;
+
+            if !status.is_success() {
+                if let Some(delay) = retryable_status_delay(status, retry_after, attempt) {
+                    attempt += 1;
+                    log::warn!(
+                        "Shopify GraphQL {status}, retry {attempt}/{GRAPHQL_MAX_RETRIES} in {:.1}s",
+                        delay.as_secs_f64()
+                    );
+                    crate::sleep_compat(delay).await;
+                    continue;
+                }
+                // Status first: a 401/429 used to surface as "returned non-JSON".
+                return Err(anyhow!(
+                    "Shopify GraphQL HTTP {status}: {}",
+                    snippet(&text)
+                ));
             }
+
+            let response: Value = serde_json::from_str(&text).with_context(|| {
+                format!("Shopify GraphQL returned non-JSON: {}", snippet(&text))
+            })?;
+
+            if let Some(errors) = response.get("errors").and_then(|e| e.as_array()) {
+                if !errors.is_empty() {
+                    if is_throttled(errors) && attempt < GRAPHQL_MAX_RETRIES {
+                        let delay = throttle_delay(&response, attempt);
+                        attempt += 1;
+                        log::warn!(
+                            "Shopify GraphQL THROTTLED, retry {attempt}/{GRAPHQL_MAX_RETRIES} in {:.1}s",
+                            delay.as_secs_f64()
+                        );
+                        crate::sleep_compat(delay).await;
+                        continue;
+                    }
+                    return Err(anyhow!("Shopify GraphQL errors: {errors:?}"));
+                }
+            }
+            return Ok(response);
         }
-        Ok(response)
     }
 
     fn metaobject_fields(node: &Value) -> std::collections::HashMap<String, String> {
@@ -246,9 +440,27 @@ impl ShopifyBackend {
             })
             .unwrap_or_default();
 
+        let truncated = [
+            ("/lineItems/pageInfo/hasNextPage", "line items"),
+            ("/configs/references/pageInfo/hasNextPage", "build configs"),
+            ("/installedSerials/references/pageInfo/hasNextPage", "installed serials"),
+        ]
+        .into_iter()
+        .filter(|(ptr, _)| node.pointer(ptr).and_then(|v| v.as_bool()).unwrap_or(false))
+        .map(|(_, label)| label.to_string())
+        .collect::<Vec<_>>();
+        if !truncated.is_empty() {
+            log::warn!(
+                "Shopify order {} truncated: {}",
+                key.display(),
+                truncated.join(", ")
+            );
+        }
+
         QcOrder {
             backend: Some(BackendKind::Shopify),
             key: Some(key.clone()),
+            truncated,
             id: node
                 .get("legacyResourceId")
                 .and_then(|v| v.as_str())
@@ -388,38 +600,49 @@ impl ShopifyBackend {
     /// Queue match by order name (`#N`) or build serial, then full detail.
     async fn find_order_xbm(&self, key: &OrderKey) -> anyhow::Result<QcOrder> {
         let xbm = self.xbm()?;
-        let wanted_name = format!("#{}", Self::order_number_from_key(key)?);
+
+        // Resolve first: the queue holds only orders in the active build
+        // buckets, so a repair on the shelf or anything shipped is not in it.
+        // `resolve` reads every form of the reference server-side.
+        let gid = match xbm.resolve(key.display()).await {
+            Ok(result) => Some(result.order_gid),
+            Err(crate::xbm::XbmError::Api { status: 404, .. }) => None,
+            Err(e) => return Err(anyhow!(e)).context("Build Management resolve failed"),
+        };
+
+        // Queue scan stays as the fallback, and still supplies the build serial
+        // the detail payload usually leaves empty.
+        let wanted_name = format!("#{}", Self::order_number_from_key(key).unwrap_or_default());
         let wanted_serial = match key {
             OrderKey::BuildSerial(s) => Some(s.to_uppercase()),
             _ => None,
         };
-
-        let queue = xbm
-            .orders(QUEUE_BUCKETS, None, None)
-            .await
-            .context("Build Management queue fetch failed")?;
-        let hit = queue.orders.iter().find(|o| {
-            o.name.eq_ignore_ascii_case(&wanted_name)
-                || wanted_serial.as_deref().is_some_and(|s| {
-                    o.build_serial.as_deref().is_some_and(|b| b.eq_ignore_ascii_case(s))
-                })
+        let queue = xbm.orders(QUEUE_BUCKETS, None, None).await.ok();
+        let hit = queue.as_ref().and_then(|q| {
+            q.orders.iter().find(|o| {
+                o.name.eq_ignore_ascii_case(&wanted_name)
+                    || wanted_serial.as_deref().is_some_and(|s| {
+                        o.build_serial.as_deref().is_some_and(|b| b.eq_ignore_ascii_case(s))
+                    })
+            })
         });
-        let Some(hit) = hit else {
+
+        let Some(gid) = gid.or_else(|| hit.map(|h| h.id.clone())) else {
             return Err(anyhow!(
-                "No build-queue order matches {} (searched all workflow buckets).",
+                "No Shopify order matches {} (tried resolve and the build queue).",
                 key.display()
             ));
         };
 
         let detail = xbm
-            .order_detail(&hit.id)
+            .order_detail(&gid)
             .await
             .context("Build Management order detail fetch failed")?;
-        let mut order = Self::order_from_detail(&detail, key, &hit.id);
-        // Build detail's config.buildSerial is often empty; the queue payload
-        // carries it.
+        let mut order = Self::order_from_detail(&detail, key, &gid);
         if order.build_serial.as_deref().unwrap_or("").is_empty() {
-            order.build_serial = hit.build_serial.clone().filter(|s| !s.trim().is_empty());
+            order.build_serial = hit
+                .and_then(|h| h.build_serial.clone())
+                .filter(|s| !s.trim().is_empty());
         }
         Ok(order)
     }
@@ -459,6 +682,8 @@ impl ShopifyBackend {
             .collect();
 
         QcOrder {
+            // XBM detail returns the full build in one response.
+            truncated: Vec::new(),
             backend: Some(BackendKind::Shopify),
             key: Some(key.clone()),
             id: Self::gid_tail(gid).to_string(),
@@ -484,7 +709,7 @@ impl ShopifyBackend {
                 .and_then(|c| c.build_serial.clone())
                 .filter(|s| !s.trim().is_empty()),
             config: None,
-            service_info: None,
+            service_info: service_info_from(detail.service_details.as_ref()),
             note: order
                 .and_then(|o| o.note.clone())
                 .filter(|s| !s.trim().is_empty()),
@@ -623,6 +848,9 @@ impl OrderBackend for ShopifyBackend {
     }
 
     async fn build_spec(&self, order: &QcOrder) -> anyhow::Result<BuildSpec> {
+        if let Some(reason) = order.truncation_reason() {
+            return Err(anyhow!(reason));
+        }
         let mut spec = BuildSpec::default();
         match order.shopify_configs.as_ref() {
             // XBM detail config block: `{build_name, build_template, selection}`.
@@ -716,20 +944,46 @@ impl OrderBackend for ShopifyBackend {
         }
     }
 
-    async fn submit_qc(&self, _order: &QcOrder, _report: &QcReportPayload) -> anyhow::Result<()> {
-        Err(anyhow!(
-            "The Build Management API has no QC report endpoint yet — xidax_qc.bench submission needs a /qc route on build-mgmt (the report stays in SurrealDB meanwhile)."
-        ))
+    async fn submit_qc(&self, order: &QcOrder, report: &QcReportPayload) -> anyhow::Result<()> {
+        let xbm = self.xbm()?;
+        let key = order.gid.as_deref().unwrap_or(order.id.as_str());
+
+        // A QC result is a sign-off, so the route refuses an API key alone.
+        let staff_token = report.staff_token.as_deref().ok_or_else(|| {
+            anyhow!("QC submission needs a floor credential — sign in with a PIN before submitting.")
+        })?;
+        let actor = report
+            .tech_employee_id
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| anyhow!("QC submission needs the signing tech's staff id."))?;
+
+        let items = checklist_to_items(&report.checklist);
+        let status = match report.verdict.as_str() {
+            "passed" => "passed",
+            "failed" => "failed",
+            _ => "in_progress",
+        };
+        xbm.merge_qc(
+            key,
+            items,
+            Some(status),
+            Some(&report.summary_text()),
+            staff_token,
+            actor,
+        )
+        .await
+        .context("Build Management QC submission failed")?;
+        Ok(())
     }
 
-    async fn authenticate_tech(&self, name_or_email: &str, _pin: &str) -> anyhow::Result<TechIdentity> {
-        // Roster match only; the API exposes no PIN verification endpoint yet.
+    async fn authenticate_tech(&self, name_or_email: &str, pin: &str) -> anyhow::Result<TechIdentity> {
         let xbm = self.xbm()?;
+        let wanted = name_or_email.trim();
         let roster = xbm
             .staff(Some(true))
             .await
             .context("floor staff roster fetch failed")?;
-        let wanted = name_or_email.trim();
         let staff = roster
             .staff
             .iter()
@@ -737,17 +991,43 @@ impl OrderBackend for ShopifyBackend {
             .ok_or_else(|| {
                 anyhow!("No active floor staff named '{wanted}' — enter the name exactly as on the roster.")
             })?;
+
+        // A blank PIN is a roster match only: it names the tech but carries no
+        // token, so it cannot sign off QC or author a note.
+        if pin.trim().is_empty() {
+            return Ok(TechIdentity {
+                id_employee: staff.id.clone(),
+                name: staff.name.clone(),
+                email: String::new(),
+                id_profile: None,
+                staff_token: None,
+                permissions: Vec::new(),
+            });
+        }
+
+        let auth = xbm
+            .authenticate_staff(
+                StaffAuthMethod::Pin {
+                    staff_id: &staff.id,
+                    pin: pin.trim(),
+                },
+                None,
+            )
+            .await
+            .context("floor credential rejected")?;
         Ok(TechIdentity {
-            id_employee: staff.id.clone(),
-            name: staff.name.clone(),
+            id_employee: auth.staff_id,
+            name: auth.name,
             email: String::new(),
             id_profile: None,
+            staff_token: Some(auth.staff_token),
+            permissions: auth.permissions,
         })
     }
 
     async fn fetch_comments(&self, order: &QcOrder) -> anyhow::Result<Vec<OrderComment>> {
-        // Comments mapping is an open question; the order note is the only
-        // read surfaced for now. xidax_status_history rendering lands with W7.
+        // The order note is not part of the comment stream, so it is kept as a
+        // synthetic first entry.
         let mut comments = Vec::new();
         if let Some(note) = order.note.as_ref() {
             comments.push(OrderComment {
@@ -759,13 +1039,50 @@ impl OrderBackend for ShopifyBackend {
                 private: false,
             });
         }
+        if let Some(xbm) = self.xbm.as_ref() {
+            let key = order.gid.as_deref().unwrap_or(order.id.as_str());
+            let payload = xbm
+                .comments(key, None, Some(COMMENT_PAGE_SIZE))
+                .await
+                .context("Build Management comment fetch failed")?;
+            comments.extend(payload.comments.into_iter().map(|c| OrderComment {
+                id: c.id,
+                author: c.author,
+                author_employee_id: c.author_staff_id,
+                body: c.body,
+                created_at: c.created_at.unwrap_or_default(),
+                private: c.visibility != "customer",
+            }));
+        }
         Ok(comments)
     }
 
-    async fn post_comment(&self, _order: &QcOrder, _tech: &TechIdentity, _body: &str) -> anyhow::Result<OrderComment> {
-        Err(anyhow!(
-            "The Build Management API has no order-comment endpoint yet — bench notes ride along on status advances for now."
-        ))
+    async fn post_comment(
+        &self,
+        order: &QcOrder,
+        tech: &TechIdentity,
+        body: &str,
+    ) -> anyhow::Result<OrderComment> {
+        let xbm = self.xbm()?;
+        let key = order.gid.as_deref().unwrap_or(order.id.as_str());
+        // The API rejects actorStaffId without a matching staff token, so both
+        // travel together or neither does.
+        let (token, actor) = match tech.staff_token.as_deref() {
+            Some(token) => (Some(token), Some(tech.id_employee.as_str())),
+            None => (None, None),
+        };
+        let posted = xbm
+            .post_comment(key, body, token, actor)
+            .await
+            .context("Build Management comment post failed")?;
+        Ok(OrderComment {
+            id: posted.id,
+            author: posted.author,
+            author_employee_id: posted.author_staff_id,
+            body: posted.body,
+            created_at: posted.created_at.unwrap_or_default(),
+            private: posted.visibility != "customer",
+        })
     }
 
     async fn check_build_photos(&self, order: &QcOrder) -> anyhow::Result<PhotoCheck> {
@@ -854,6 +1171,229 @@ mod tests {
             "installedSerials": ["gid://shopify/Metaobject/77"]
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn auth_and_rate_failures_report_the_status_not_non_json() {
+        // 401 is terminal; 429 and 5xx are worth retrying.
+        assert!(retryable_status_delay(reqwest::StatusCode::UNAUTHORIZED, None, 0).is_none());
+        assert!(retryable_status_delay(reqwest::StatusCode::NOT_FOUND, None, 0).is_none());
+        assert!(retryable_status_delay(reqwest::StatusCode::TOO_MANY_REQUESTS, None, 0).is_some());
+        assert!(
+            retryable_status_delay(reqwest::StatusCode::INTERNAL_SERVER_ERROR, None, 0).is_some()
+        );
+    }
+
+    #[test]
+    fn retry_after_header_wins_over_backoff() {
+        let delay = retryable_status_delay(
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+            Some(std::time::Duration::from_secs(7)),
+            0,
+        );
+        assert_eq!(delay, Some(std::time::Duration::from_secs(7)));
+    }
+
+    #[test]
+    fn retries_stop_at_the_ceiling() {
+        assert!(
+            retryable_status_delay(
+                reqwest::StatusCode::TOO_MANY_REQUESTS,
+                None,
+                GRAPHQL_MAX_RETRIES
+            )
+            .is_none()
+        );
+        // Backoff is capped so a long retry chain cannot stall a bench run.
+        assert_eq!(backoff(99), std::time::Duration::from_secs(16));
+    }
+
+    #[test]
+    fn throttled_is_detected_from_the_extensions_code() {
+        let errors = vec![serde_json::json!({
+            "message": "Throttled",
+            "extensions": { "code": "THROTTLED" }
+        })];
+        assert!(is_throttled(&errors));
+
+        let other = vec![serde_json::json!({
+            "message": "Field does not exist",
+            "extensions": { "code": "undefinedField" }
+        })];
+        assert!(!is_throttled(&other));
+        assert!(!is_throttled(&[]));
+    }
+
+    #[test]
+    fn throttle_delay_comes_from_the_cost_envelope() {
+        // Needs 100, has 20, restores 50/s -> 1.6s.
+        let response = serde_json::json!({
+            "extensions": { "cost": {
+                "requestedQueryCost": 100,
+                "throttleStatus": { "maximumAvailable": 1000, "currentlyAvailable": 20, "restoreRate": 50 }
+            }}
+        });
+        let delay = throttle_delay(&response, 0);
+        assert!(
+            (delay.as_secs_f64() - 1.6).abs() < 0.01,
+            "got {delay:?}"
+        );
+
+        // No cost block -> plain backoff.
+        assert_eq!(throttle_delay(&serde_json::json!({}), 2), backoff(2));
+        // restoreRate 0 must not divide by zero.
+        let zero_rate = serde_json::json!({
+            "extensions": { "cost": {
+                "requestedQueryCost": 100,
+                "throttleStatus": { "currentlyAvailable": 0, "restoreRate": 0 }
+            }}
+        });
+        assert_eq!(throttle_delay(&zero_rate, 1), backoff(1));
+    }
+
+    #[test]
+    fn snippet_truncates_long_bodies() {
+        assert_eq!(snippet("  short  "), "short");
+        let long = "x".repeat(500);
+        let cut = snippet(&long);
+        assert_eq!(cut.chars().count(), 301);
+        assert!(cut.ends_with('…'));
+    }
+
+    /// Order lookup must not depend on build-queue membership. The queue is
+    /// `status:open` in the active buckets, so a repair on the shelf, a
+    /// cancelled order or anything shipped is absent from it — order 3879
+    /// became unfindable the moment it was cancelled.
+    #[test]
+    fn find_order_resolves_before_scanning_the_queue() {
+        let src = include_str!("shopify_backend.rs");
+        let body = src
+            .split("async fn find_order_xbm")
+            .nth(1)
+            .expect("find_order_xbm present");
+        let resolve_at = body.find("xbm.resolve(").expect("resolve is called");
+        let queue_at = body.find("xbm.orders(").expect("queue scan is present as a fallback");
+        assert!(
+            resolve_at < queue_at,
+            "resolve must run before the queue scan, or orders outside the active buckets are unfindable"
+        );
+    }
+
+    #[test]
+    fn service_details_parse_from_the_ported_column_names() {
+        // Shape captured from live repair order #3879.
+        let details = serde_json::json!({
+            "device_name": "Laptop",
+            "device_mfg": "PC Laptops PCL",
+            "device_model": "SM3",
+            "device_serial": " 1234 ",
+            "device_password": "1234",
+            "physical_damage": "",
+            "check_in_notes": "test checkin",
+            "intake_notes": "",
+            "data_transfer_status": false
+        });
+        let info = service_info_from(Some(&details)).expect("intake block parsed");
+        assert_eq!(info.device_name, "Laptop");
+        assert_eq!(info.device_mfg, "PC Laptops PCL");
+        assert_eq!(info.device_model, "SM3");
+        assert_eq!(info.device_serial, "1234", "value should be trimmed");
+        assert_eq!(info.check_in_notes, "test checkin");
+        assert!(info.intake_notes.is_empty());
+    }
+
+    #[test]
+    fn the_empty_service_shell_is_not_an_intake_record() {
+        // /service answers for every order, service or not; an all-blank block
+        // must not read as "this machine was checked in".
+        let blank = serde_json::json!({
+            "device_name": "", "device_mfg": "", "device_model": "",
+            "device_serial": "", "physical_damage": "", "check_in_notes": "",
+            "intake_notes": "", "data_transfer_status": false
+        });
+        assert!(service_info_from(Some(&blank)).is_none());
+        assert!(service_info_from(Some(&serde_json::json!({}))).is_none());
+        assert!(service_info_from(None).is_none());
+        // A non-object is not a record either.
+        assert!(service_info_from(Some(&serde_json::json!("nope"))).is_none());
+    }
+
+    #[test]
+    fn checklist_flattens_to_pass_fail_only() {
+        let state = ChecklistState {
+            kind: "BuildQC".into(),
+            sections: vec![
+                super::super::checklist::SectionState {
+                    number: 1,
+                    title: "Applicable".into(),
+                    applicable: true,
+                    items: vec![
+                        item("passed_item", "Pass"),
+                        item("failed_item", "Fail"),
+                        item("untouched_item", "Unset"),
+                        item("na_item", "NA"),
+                    ],
+                    ..Default::default()
+                },
+                super::super::checklist::SectionState {
+                    number: 2,
+                    title: "Skipped".into(),
+                    applicable: false,
+                    items: vec![item("in_skipped_section", "Pass")],
+                    ..Default::default()
+                },
+            ],
+        };
+
+        let items = checklist_to_items(&state);
+        assert_eq!(items.get("passed_item"), Some(&serde_json::Value::Bool(true)));
+        assert_eq!(items.get("failed_item"), Some(&serde_json::Value::Bool(false)));
+        // An unchecked box must never be reported as a pass.
+        assert!(!items.contains_key("untouched_item"));
+        assert!(!items.contains_key("na_item"));
+        // A non-applicable section contributes nothing.
+        assert!(!items.contains_key("in_skipped_section"));
+        assert_eq!(items.len(), 2);
+    }
+
+    fn item(key: &str, status: &str) -> super::super::checklist::ItemState {
+        super::super::checklist::ItemState {
+            key: key.into(),
+            status: status.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn truncated_connections_block_the_spec() {
+        let key = OrderKey::ShopifyOrderNumber("1020".into());
+        let node = serde_json::json!({
+            "id": "gid://shopify/Order/123",
+            "legacyResourceId": "123",
+            "name": "#1020",
+            "lineItems": { "pageInfo": { "hasNextPage": true }, "nodes": [] },
+            "installedSerials": {
+                "references": { "pageInfo": { "hasNextPage": true }, "nodes": [] }
+            }
+        });
+        let order = ShopifyBackend::from_env().parse_order_node(&node, &key);
+        assert_eq!(order.truncated, vec!["line items", "installed serials"]);
+        let reason = order.truncation_reason().expect("truncation reported");
+        assert!(reason.contains("do not QC"), "{reason}");
+    }
+
+    #[test]
+    fn complete_connections_leave_the_order_untruncated() {
+        let key = OrderKey::ShopifyOrderNumber("1020".into());
+        let node = serde_json::json!({
+            "id": "gid://shopify/Order/123",
+            "legacyResourceId": "123",
+            "name": "#1020",
+            "lineItems": { "pageInfo": { "hasNextPage": false }, "nodes": [] }
+        });
+        let order = ShopifyBackend::from_env().parse_order_node(&node, &key);
+        assert!(order.truncated.is_empty());
+        assert!(order.truncation_reason().is_none());
     }
 
     #[test]

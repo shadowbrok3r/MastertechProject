@@ -1,0 +1,51 @@
+# `id_prestashop` was `DEFAULT 0` under a UNIQUE index, so the first employee
+# created without a PrestaShop id took the `0` slot and every later one failed
+# the index. That slot is already held by the inactive `zz_livetest@internal.test`
+# row, so hiring anyone who is not in PrestaShop is blocked today.
+#
+# The UNIQUE index is NOT the bug and is kept. Verified against SurrealDB: a
+# UNIQUE index admits any number of NONE rows while still rejecting a duplicate
+# real value, which is exactly the constraint we want as staff stop having
+# PrestaShop ids.
+#
+# Only the DEFAULT changes; the declared type `none | number` is untouched, so
+# no existing row can fail coercion between the DEFINE and the backfill.
+#
+# The backfill moves the one `0` row to NONE. 0 is not a valid PrestaShop
+# employee id (they start at 1), so it always meant "no id" and never loses
+# information.
+#
+# The write path that produced the 0 is fixed alongside this in
+# `displays/src/pages/signup_page.rs` — an unparseable employee id was stored as
+# `Some(0)` via `unwrap_or_default()` and now stores NONE.
+id = "20260829000000__user_presta_id_optional"
+name = "user_presta_id_optional"
+state = "completed"
+source_schema_hash = "a6e49c11032eae543686c5e6ab58bcbee03104ae9e2343d60c25d03d155d493c"
+target_schema_hash = "a6e49c11032eae543686c5e6ab58bcbee03104ae9e2343d60c25d03d155d493c"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "default_presta_id_to_none"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE id_prestashop ON user TYPE none | number DEFAULT NONE PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "backfill_zero_to_none"
+phase = "start"
+kind = "run_sql"
+sql = """
+UPDATE user SET id_prestashop = NONE WHERE id_prestashop = 0;
+"""
+
+[[steps]]
+id = "restore_zero_default"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE id_prestashop ON user TYPE none | number DEFAULT 0 PERMISSIONS FULL;
+"""

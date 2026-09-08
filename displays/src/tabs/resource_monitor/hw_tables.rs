@@ -150,6 +150,9 @@ pub fn cpu_temp_tile(ui: &mut Ui, snapshot: &TelemetrySnapshot) {
     let value = Reading::new(reading.as_ref().map(|(r, _)| r.temp_c), Absent::NoSensor);
     let sub = match reading.as_ref() {
         Some((r, CpuTempSource::AcpiZone)) => format!("{} · ACPI zone, not the die", r.label),
+        Some((r, CpuTempSource::DptfParticipant)) => {
+            format!("{} · DPTF participant, whole degrees", r.label)
+        }
         Some((r, _)) => format!("{} · die sensor", r.label),
         None => String::new(),
     };

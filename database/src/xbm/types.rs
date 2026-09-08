@@ -57,6 +57,8 @@ pub struct QueueOrder {
     pub awaiting_parts: bool,
     /// `"corporate" | "prebuilt" | "custom" | "other"`.
     pub order_type: String,
+    /// Which brand's store the order belongs to — `"xidax"` or `"pcl"`.
+    pub entity: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -81,7 +83,9 @@ pub struct QueueRep {
     pub name: String,
 }
 
-/// Workflow buckets accepted by `GET /orders?bucket=`.
+/// Workflow buckets `GET /orders?bucket=` documents. The server ignores the
+/// parameter — verified 2026-08-29, an unknown bucket returns the full list
+/// unchanged — so callers must filter the response themselves.
 pub const QUEUE_BUCKETS: &[&str] = &[
     "to_pull",
     "building",
@@ -692,6 +696,16 @@ mod fixture_tests {
     }
 
     #[test]
+    fn live_serial_1234_parses() {
+        let raw: serde_json::Value =
+            serde_json::from_str(include_str!("fixtures/serial-1234-live.json")).unwrap();
+        let data = raw.get("data").cloned().unwrap();
+        if let Err(e) = serde_json::from_value::<SerialHistory>(data) {
+            panic!("SerialHistory decode failed: {e}");
+        }
+    }
+
+    #[test]
     fn live_orders_qc_fixture_parses() {
         let payload: QueuePayload =
             serde_json::from_value(data(include_str!("fixtures/orders-qc.json"))).unwrap();
@@ -768,6 +782,38 @@ mod fixture_tests {
         assert_eq!(payload.summary.len(), 3);
         assert!(payload.summary.iter().any(|m| m.model_sku == "x6-rtx5090-apex"));
         assert!(payload.summary[0].total_active >= payload.summary[0].available);
+    }
+}
+
+#[cfg(test)]
+mod comment_envelope_tests {
+    use super::*;
+
+    /// The created comment arrives wrapped. Every `XbmComment` field defaults,
+    /// so deserialising the envelope straight into it yields a blank comment
+    /// and no error — the shape has to be unwrapped explicitly.
+    #[test]
+    fn created_comment_is_unwrapped_from_its_envelope() {
+        let data = serde_json::json!({
+            "comment": {
+                "id": "cmtezqxyl000hfx84cbgvzuse",
+                "orderGid": "gid://shopify/Order/7280155787490",
+                "type": "note",
+                "body": "Mastertech write test",
+                "author": "api:mastertech",
+                "visibility": "internal",
+                "source": "api-key"
+            }
+        });
+
+        let envelope: CommentEnvelope = serde_json::from_value(data.clone()).unwrap();
+        assert_eq!(envelope.comment.id, "cmtezqxyl000hfx84cbgvzuse");
+        assert_eq!(envelope.comment.author, "api:mastertech");
+        assert_eq!(envelope.comment.kind, "note");
+
+        // The bug this guards: the wrong target type parses without error.
+        let flattened: XbmComment = serde_json::from_value(data).unwrap();
+        assert!(flattened.id.is_empty(), "envelope must not parse as a comment");
     }
 }
 
@@ -930,5 +976,116 @@ mod tests {
         assert!(history.found);
         assert_eq!(history.odoo.unwrap().lot_id, 9);
         assert_eq!(history.history[0].source, "shopify");
+    }
+}
+
+// ─── GET /orders/resolve ────────────────────────────────────────────────────
+
+/// One build on a resolved order.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ResolvedConfig {
+    pub gid: String,
+    pub config_id: String,
+    pub build_name: String,
+    pub legacy_config_id: Option<String>,
+    pub status: String,
+}
+
+/// `GET /orders/resolve`. The server decides which reading of the scanned
+/// string won; `matched_by` reports it, and `search` means a fuzzy fallback
+/// matched and the operator should confirm before loading.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ResolveResult {
+    pub order_gid: String,
+    pub name: String,
+    pub order_number: String,
+    /// PrestaShop `id_order`; null for orders born in Shopify.
+    pub legacy_order_id: Option<String>,
+    pub config_gid: Option<String>,
+    pub config_id: Option<String>,
+    pub configs: Vec<ResolvedConfig>,
+    pub matched_by: String,
+}
+
+impl ResolveResult {
+    /// True when the match came from the fuzzy fallback rather than an exact id.
+    pub fn is_fuzzy(&self) -> bool {
+        self.matched_by == "search"
+    }
+}
+
+// ─── /orders/{id}/comments ──────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct XbmComment {
+    pub id: String,
+    pub order_gid: String,
+    pub order_config_gid: Option<String>,
+    /// `note | qc | stress_fail | asset_tag | system`.
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub body: String,
+    pub author_staff_id: Option<String>,
+    pub author: String,
+    pub visibility: String,
+    pub source: Option<String>,
+    pub created_at: Option<String>,
+}
+
+/// `POST /orders/{id}/comments` wraps the created row in a `comment` key.
+/// Every field on `XbmComment` defaults, so deserialising the envelope
+/// straight into it silently yields a blank comment instead of an error.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CommentEnvelope {
+    pub comment: XbmComment,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CommentsPayload {
+    pub comments: Vec<XbmComment>,
+    pub next_before: Option<String>,
+}
+
+// ─── /orders/{id}/qc ────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct QcRunDoc {
+    pub items: std::collections::HashMap<String, bool>,
+    pub status: String,
+    pub notes: Option<String>,
+    pub tech_email: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+// ─── POST /staff/authenticate ───────────────────────────────────────────────
+
+/// Which floor credential is being exchanged.
+#[derive(Debug, Clone, Copy)]
+pub enum StaffAuthMethod<'a> {
+    Pin { staff_id: &'a str, pin: &'a str },
+    Qr { token: &'a str },
+    Nfc { nfc_id: &'a str },
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct StaffAuth {
+    pub staff_id: String,
+    pub name: String,
+    pub staff_token: String,
+    pub expires_at: Option<String>,
+    pub ttl_seconds: Option<u64>,
+    pub permissions: Vec<String>,
+}
+
+impl StaffAuth {
+    pub fn has_permission(&self, permission: &str) -> bool {
+        self.permissions.iter().any(|p| p == permission)
     }
 }

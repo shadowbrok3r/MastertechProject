@@ -25,11 +25,16 @@ pub struct PrestashopOrderForm {
     sales_rep: User,
     add_split_rep: bool,
     split_rep: User,
+    serial_search: String,
+    /// Why the last search returned nothing selectable. Empty when it did.
+    search_status: String,
 
     action_tx: Sender<UiAction>,
     action_rx: Receiver<UiAction>,
     search_results_tx: Sender<Vec<(Customer, Address)>>,
     search_results_rx: Receiver<Vec<(Customer, Address)>>,
+    status_tx: Sender<String>,
+    status_rx: Receiver<String>,
     odoo_search_tx: Sender<Vec<ExtraInventoryData>>,
     odoo_search_rx: Receiver<Vec<ExtraInventoryData>>,
 }
@@ -56,6 +61,7 @@ pub enum UiState {
 pub enum UiAction {
     SearchCustomerEmail(String),
     SearchCustomerPhone(String),
+    SearchCustomerSerial(String),
     SetSelectedCustomer((Customer, Address)),
     SearchProduct(String),
     AddProduct(ExtraInventoryData),
@@ -68,6 +74,7 @@ impl PrestashopOrderForm {
     pub fn new() -> Self {
         let (action_tx, action_rx) = crossbeam::channel::unbounded();
         let (search_results_tx, search_results_rx) = crossbeam::channel::unbounded();
+        let (status_tx, status_rx) = crossbeam::channel::unbounded();
         let (odoo_search_tx, odoo_search_rx) = crossbeam::channel::unbounded();
 
         Self {
@@ -86,9 +93,12 @@ impl PrestashopOrderForm {
             sales_rep: User::default(),
             split_rep: User::default(),
             add_split_rep: false,
+            serial_search: String::new(),
+            search_status: String::new(),
 
             action_tx, action_rx,
             search_results_tx, search_results_rx,
+            status_tx, status_rx,
             odoo_search_tx, odoo_search_rx,
             last_search_time: Instant::now(),
             store_users: vec![],
@@ -125,6 +135,27 @@ impl PrestashopOrderForm {
                         });
                     }
                 },
+                UiAction::SearchCustomerSerial(serial) => {
+                    let search_serial = serial.trim().to_string();
+                    let tx = self.search_results_tx.clone();
+                    let status_tx = self.status_tx.clone();
+                    if !search_serial.is_empty() {
+                        self.search_status = format!("Searching for serial {search_serial}...");
+                        PlatformSpawner::spawn(async move {
+                            match serial_customer_search(&search_serial).await {
+                                Ok((customers, status)) => {
+                                    let _ = status_tx.try_send(status);
+                                    let _ = tx.try_send(customers);
+                                },
+                                Err(e) => {
+                                    log::error!("Error looking up customer by serial: {e:?}");
+                                    let _ = status_tx.try_send(format!("Serial lookup failed: {e}"));
+                                    let _ = tx.try_send(vec![]);
+                                },
+                            }
+                        });
+                    }
+                },
                 UiAction::SetSelectedCustomer((customer, address)) => {
                     self.customer = customer;
                     self.address = address;
@@ -157,6 +188,11 @@ impl PrestashopOrderForm {
         if let Ok(data) = self.search_results_rx.try_recv() {
             ui.ctx().request_repaint();
             self.data = data;
+        }
+
+        if let Ok(status) = self.status_rx.try_recv() {
+            ui.ctx().request_repaint();
+            self.search_status = status;
         }
     }
 
@@ -208,10 +244,21 @@ impl PrestashopOrderForm {
 
                         ui.add_space(10.);
 
+                        TextEdit::singleline(&mut self.serial_search)
+                        .hint_text("Serial #")
+                        .ui(ui);
+
+                        ui.add_space(10.);
+
                         let search_btn = ui.button("Search");
 
+                        // Serial first: it is scanned, so it is the most specific
+                        // of the three and the least likely to be left over.
                         if search_btn.clicked() {
-                            if !self.customer.email.is_empty() {
+                            self.search_status.clear();
+                            if !self.serial_search.trim().is_empty() {
+                                let _ = self.action_tx.try_send(UiAction::SearchCustomerSerial(self.serial_search.clone()));
+                            } else if !self.customer.email.is_empty() {
                                 let _ = self.action_tx.try_send(UiAction::SearchCustomerEmail(self.customer.email.clone()));
                             } else if !self.address.phone.is_empty() {
                                 let _ = self.action_tx.try_send(UiAction::SearchCustomerPhone(self.address.phone.clone()));
@@ -240,6 +287,13 @@ impl PrestashopOrderForm {
     // 8013914625
     pub fn select_customer(&mut self, ui: &mut Ui) {
         ui.add_space(20.);
+
+        if !self.search_status.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                ui.colored_label(ui.style().visuals.warn_fg_color, &self.search_status);
+            });
+            ui.add_space(10.);
+        }
 
         ui.group(|ui| {
             Grid::new("Customer Selection Grid")
@@ -819,3 +873,50 @@ impl PrestashopOrderForm {
 }
 
 */
+/// Customers who own an order carrying `serial`, plus a line explaining an
+/// empty result.
+///
+/// Only PrestaShop customers are selectable here, because that is the only id
+/// space the create-order form writes. A Shopify-only serial therefore returns
+/// no rows — the status line names the order it did find so the search does not
+/// read as "unknown serial".
+async fn serial_customer_search(
+    serial: &str,
+) -> anyhow::Result<(Vec<(Customer, Address)>, String)> {
+    let presta = Customer::find_customer_by_serial(serial).await;
+    match &presta {
+        Ok(pairs) if !pairs.is_empty() => return Ok((pairs.clone(), String::new())),
+        _ => {}
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        match database::orders::serial_lookup::lookup(serial).await {
+            Ok(Some(hit)) => {
+                let order = hit
+                    .orders
+                    .first()
+                    .map(|o| o.reference.clone())
+                    .unwrap_or_else(|| "an order".into());
+                let who = if hit.name.trim().is_empty() { hit.email.clone() } else { hit.name.clone() };
+                return Ok((
+                    vec![],
+                    format!(
+                        "Serial {serial} is on {} order {order} for {who}. \
+                         This form writes PrestaShop customers, so it cannot be selected here yet.",
+                        hit.source
+                    ),
+                ));
+            }
+            Ok(None) => {}
+            Err(e) => log::warn!("serial_customer_search -> backend lookup failed: {e:#}"),
+        }
+    }
+
+    // A PrestaShop error and a PrestaShop miss are different answers, and only
+    // the miss means the serial is unknown.
+    match presta {
+        Ok(_) => Ok((vec![], format!("No order carries serial {serial}."))),
+        Err(e) => Err(e),
+    }
+}

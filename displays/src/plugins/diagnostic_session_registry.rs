@@ -55,6 +55,19 @@ pub async fn resolve_open_session(connection_string: &str) -> Option<DiagnosticS
     if let Some(sid) = get(cs) {
         match DiagnosticSession::get(&sid).await {
             Ok(Some(s)) if s.status == "open" => return Some(s),
+            // A pin surviving in this process means the operator is still on
+            // this session, so the sweep abandoning it was wrong: reopen rather
+            // than record everything after it unlinked. Only the pinned row —
+            // the DB fallback below stays `open`-only so a genuinely dead
+            // session is never resurrected by a passing snapshot.
+            Ok(Some(s)) if s.status == "abandoned" => {
+                log::info!("session registry: reviving abandoned pinned session {sid} for {cs}");
+                DiagnosticSession::touch(&s.id).await;
+                match DiagnosticSession::get(&sid).await {
+                    Ok(Some(s)) if s.status == "open" => return Some(s),
+                    _ => clear_connection(cs),
+                }
+            }
             // Pin names a closed or deleted row — drop it and re-resolve.
             Ok(_) => clear_connection(cs),
             Err(e) => log::warn!("session registry: pinned session {sid} unreadable: {e}"),

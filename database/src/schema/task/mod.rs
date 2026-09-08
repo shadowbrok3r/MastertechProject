@@ -491,15 +491,27 @@ impl Store {
         }
     }
 
-    pub fn from_presta_store_id(store_id: &str) -> Self {
-        match store_id {
+    /// Resolve a PrestaShop store id, or `None` if it is not one of ours.
+    /// Xidax and warehouse store ids are not mapped here yet, so they miss.
+    pub fn try_from_presta_store_id(store_id: &str) -> Option<Self> {
+        Some(match store_id {
             "7" => Self::RIV,
             "8" => Self::LTN,
             "10" => Self::MUR,
             "12" => Self::SAN,
             "14" => Self::ORE,
-            _ => Self::RIV,
-        }
+            _ => return None,
+        })
+    }
+
+    /// Resolve a PrestaShop store id, falling back to [`Self::RIV`] with a log
+    /// line. Prefer [`Self::try_from_presta_store_id`] anywhere the store
+    /// decides routing, scoping or which address gets emailed.
+    pub fn from_presta_store_id(store_id: &str) -> Self {
+        Self::try_from_presta_store_id(store_id).unwrap_or_else(|| {
+            log::warn!("unmapped PrestaShop store id {store_id:?} — defaulting to RIV");
+            Self::RIV
+        })
     }
 
     pub fn into_store_id(&self) -> i32 {
@@ -512,15 +524,24 @@ impl Store {
         }
     }
 
-    pub fn from_odoo_store_id(store_id: &str) -> Self {
-        match store_id {
+    /// Resolve an Odoo store id, or `None` if it is not one of ours.
+    pub fn try_from_odoo_store_id(store_id: &str) -> Option<Self> {
+        Some(match store_id {
             "76" => Self::RIV,
             "73" => Self::LTN,
             "74" => Self::MUR,
             "75" => Self::ORE,
             "77" => Self::SAN,
-            _ => Self::RIV,
-        }
+            _ => return None,
+        })
+    }
+
+    /// Resolve an Odoo store id, falling back to [`Self::RIV`] with a log line.
+    pub fn from_odoo_store_id(store_id: &str) -> Self {
+        Self::try_from_odoo_store_id(store_id).unwrap_or_else(|| {
+            log::warn!("unmapped Odoo store id {store_id:?} — defaulting to RIV");
+            Self::RIV
+        })
     }
 
     pub fn into_odoo_store_id(&self) -> i32 {
@@ -538,22 +559,16 @@ impl Store {
     /// `store_selection` field across views that bind to different schemes —
     /// callers can normalize via `Store::from_any_store_id(...).into_store_id()`
     /// or `.into_odoo_store_id()` before issuing a backend request.
+    pub fn try_from_any_store_id(store_id: &str) -> Option<Self> {
+        Self::try_from_presta_store_id(store_id)
+            .or_else(|| Self::try_from_odoo_store_id(store_id))
+    }
+
     pub fn from_any_store_id(store_id: &str) -> Self {
-        match store_id {
-            // PrestaShop
-            "7" => Self::RIV,
-            "8" => Self::LTN,
-            "10" => Self::MUR,
-            "12" => Self::SAN,
-            "14" => Self::ORE,
-            // Odoo
-            "73" => Self::LTN,
-            "74" => Self::MUR,
-            "75" => Self::ORE,
-            "76" => Self::RIV,
-            "77" => Self::SAN,
-            _ => Self::RIV,
-        }
+        Self::try_from_any_store_id(store_id).unwrap_or_else(|| {
+            log::warn!("unmapped store id {store_id:?} in either scheme — defaulting to RIV");
+            Self::RIV
+        })
     }
 
     pub const VALUES: [Self; 5] = [
@@ -637,5 +652,58 @@ impl TaskHistory {
             .await?
             .take(0)?;
         Ok(history)
+    }
+}
+
+#[cfg(test)]
+mod store_tests {
+    use super::Store;
+
+    #[test]
+    fn known_presta_ids_round_trip() {
+        for store in Store::VALUES {
+            let id = store.into_store_id().to_string();
+            assert_eq!(Store::try_from_presta_store_id(&id), Some(store));
+        }
+    }
+
+    #[test]
+    fn known_odoo_ids_round_trip() {
+        for store in Store::VALUES {
+            let id = store.into_odoo_store_id().to_string();
+            assert_eq!(Store::try_from_odoo_store_id(&id), Some(store));
+        }
+    }
+
+    #[test]
+    fn unmapped_store_id_misses_instead_of_filing_under_riverdale() {
+        // Xidax, warehouse, a new location, or a blank id_store.
+        for id in ["", "1", "15", "99", "not-a-number"] {
+            assert_eq!(Store::try_from_presta_store_id(id), None, "id {id:?}");
+            assert_eq!(Store::try_from_any_store_id(id), None, "id {id:?}");
+            assert_eq!(Store::from_presta_store_id(id), Store::RIV, "id {id:?}");
+        }
+    }
+
+    #[test]
+    fn the_two_id_schemes_do_not_overlap() {
+        for store in Store::VALUES {
+            let odoo = store.into_odoo_store_id().to_string();
+            assert_eq!(Store::try_from_presta_store_id(&odoo), None, "{odoo} hit both tables");
+        }
+    }
+
+    #[test]
+    fn from_any_resolves_both_schemes() {
+        for store in Store::VALUES {
+            assert_eq!(
+                Store::try_from_any_store_id(&store.into_store_id().to_string()),
+                Some(store)
+            );
+            assert_eq!(
+                Store::try_from_any_store_id(&store.into_odoo_store_id().to_string()),
+                Some(store)
+            );
+        }
     }
 }

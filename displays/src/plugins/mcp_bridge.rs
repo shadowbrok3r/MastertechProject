@@ -6738,7 +6738,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "close_diagnostic_session",
-        description = "Close a diagnostic session with a final status and AI-written summary. Status must be 'resolved', 'escalated', or 'open'. Closing as 'escalated' REQUIRES an AI-task handoff on the session (create_ai_task) — enforced, a summary is not a handoff. The close runs a final link-reconcile sweep and returns completeness warnings (unverdicted crash signatures, missing driver snapshot, open AI task); resolve them when they matter before closing. force: true bypasses only the escalation gate."
+        description = "Close a diagnostic session with a final status and AI-written summary. Status must be 'resolved', 'escalated', or 'open'. Closing as 'escalated' REQUIRES an AI-task handoff on the session (create_ai_task) — enforced, a summary is not a handoff. A session the staleness sweep marked 'abandoned' still closes normally — that status is a staleness marker, not a verdict, and the close rewrites ended_at; only an operator's own 'resolved'/'escalated' close refuses. The close runs a final link-reconcile sweep and returns completeness warnings (unverdicted crash signatures, missing driver snapshot, open AI task); resolve them when they matter before closing. force: true bypasses only the escalation gate."
     )]
     async fn close_diagnostic_session(
         &self,
@@ -6798,14 +6798,22 @@ impl PluginToolProvider {
             ))
             .map_err(to_internal)?]));
         };
-        if session.status != "open" {
-            return Err(ErrorData::invalid_params(
-                format!(
-                    "diagnostic_session '{session_key}' is already closed (status '{}')",
-                    session.status
-                ),
-                None,
-            ));
+        // `abandoned` is a staleness marker, not a close: the outcome engine
+        // scores only `resolved`/`escalated`, so refusing one blocked the
+        // summary from ever being written through a supported tool. An
+        // operator's own close still refuses.
+        let mut revived_from_abandoned = false;
+        match session.status.as_str() {
+            "open" => {}
+            "abandoned" => revived_from_abandoned = true,
+            other => {
+                return Err(ErrorData::invalid_params(
+                    format!(
+                        "diagnostic_session '{session_key}' is already closed (status '{other}')"
+                    ),
+                    None,
+                ))
+            }
         }
 
         // Escalated work is only handed off through a tracked AI-task checklist.
@@ -6837,6 +6845,17 @@ impl PluginToolProvider {
             });
 
         let mut warnings: Vec<ToolWarning> = Vec::new();
+        if revived_from_abandoned {
+            warnings.push(ToolWarning::info(
+                "revived_from_abandoned",
+                format!(
+                    "This session was 'abandoned' by the staleness sweep and has been closed \
+                     '{status}' anyway — abandoned is a staleness marker, not a verdict. \
+                     ended_at was rewritten to this close; the sweep's value described when the \
+                     sweep ran, not when the work stopped."
+                ),
+            ));
+        }
         if reconciled.total() > 0 {
             warnings.push(ToolWarning::info(
                 "orphans_claimed",
@@ -8780,10 +8799,11 @@ anything. Returns status pending / approved / denied / executed / failed / expir
         description = "Live hardware telemetry read from a REMOTE connected client, proxied over the admin session (admin → client's stress-kit TelemetryAgent → result back). Use THIS when diagnosing a customer machine; `telemetry_snapshot` samples the admin workstation only and tells you nothing about the remote hardware. \
 Returns: per-core usage/frequency/temperature, memory + page file, per-GPU temperature/power/power-limit/clocks/fan/throttle reasons, every labelled thermal zone in `thermals[]`, the SuperIO board voltage rails in `voltages[]` (each with `label`, `volts`, `calibrated`), and WHEA / GPU-TDR counters. \
 ABSENT MEANS NOT MEASURED: a null field, a rail absent from `voltages[]`, and `whea: null` all mean the reading was never taken — never read one as 0, as a cold CPU, as a dead rail, or as 'no errors'. `sensor_availability` grades every sensor; check it before quoting any number and keep investigating whatever it does not report as read. \
-CPU TEMPERATURE HAS TWO POSSIBLE SOURCES: `sensor_availability.cpu_package_temp` (repeated as `cpu.package_temp_kind`) is `cpu_die_sensor` = a real CPU sensor answered (`CPU Package`, `CPU (Tctl)`, or `CPU Core N` — a core is one core, not the package); `acpi_zone_only` = NO CPU sensor answered and `cpu.package_temp_c` is a firmware-named CPU ACPI zone (`CPUZ_0`, `TCPU`) that runs far below the die, so it must NOT be quoted as a CPU temperature; `unavailable` = no CPU-side thermal at all — including every machine whose only zones are bare board zones (`TZ00_0`), which are never reported as a CPU temperature. `cpu.package_temp_source` names the exact sensor the value came from, and a die sensor is always preferred over a hotter zone. `thermals[]` carries every labelled zone (including bare board zones and `NVMe Disk N` drive temps) so you can read them individually. \
+CPU TEMPERATURE HAS THREE POSSIBLE SOURCES: `sensor_availability.cpu_package_temp` (repeated as `cpu.package_temp_kind`) is `cpu_die_sensor` = the CPU's own die registers answered (`CPU Package`, `CPU (Tctl)`, or `CPU Core N` — a core is one core, not the package); `dptf_participant` = Intel's Dynamic Tuning processor participant answered over WMI (`CPU Package (DPTF)`), which IS a real CPU-side sensor and may be quoted as the CPU temperature, but is whole degrees, has no per-core detail, and is the hottest measuring domain of that participant (each domain is also in `thermals[]` as `DPTF Domain N`); `acpi_zone_only` = NO CPU sensor answered and `cpu.package_temp_c` is a firmware-named CPU ACPI zone (`CPUZ_0`, `TCPU`) that runs far below the die, so it must NOT be quoted as a CPU temperature; `unavailable` = no CPU-side thermal at all — including every machine whose only zones are bare board zones (`TZ00_0`), which are never reported as a CPU temperature. `cpu.package_temp_source` names the exact sensor the value came from, and a CPU-side sensor is always preferred over a hotter zone. `thermals[]` carries every labelled zone (including bare board zones and `NVMe Disk N` drive temps) so you can read them individually. \
+CPU TEMPERATURE IS JUDGED AGAINST THE PART, NOT A FLAT NUMBER: `cpu.thermal_ceiling_c` is the part's Tjmax — the temperature its firmware throttles to hold (Zen 4/5 desktop 95 C, Ryzen 7000 X3D 89 C, Zen 3 90 C, Intel from its own MSR). A part sitting AT its ceiling under sustained all-core load with clocks up and no WHEA is behaving as designed; only overshooting it says the thermal limit is not being held. `null` means the ceiling could not be established for this part, not that it has none — Intel's ceiling comes from an MSR, so it is null on every `dptf_participant` run, where no MSR was readable. \
 VOLTAGE RAILS ARE GRADED PER RAIL: `sensor_availability.voltage_rails` is `ok` (every expected rail read), `partial` (some read, some not), or `unavailable` (no rail answered). `sensor_availability.rails` gives `Vcore`, `+5V`, `3VCC (chip)`, `+12V`, `VBAT` each as `read` / `missing` / `unavailable`, and `rails_missing[]` lists the gaps. A `missing` rail was suppressed — unmapped channel, implausible read, or a collapse awaiting confirmation — so it is neither 0 V nor healthy: '+12V missing' NEVER means the +12V rail is fine. \
 WHEA: `sensor_availability.whea` is `ok` (counters read), `unavailable` (the WHEA event source could not be opened, so no count was taken — absence of evidence, NOT a clean result; never clear a machine of hardware errors on it), or `not_sampled` (no sampler tick yet). \
-WHY READINGS GO MISSING: the CPU die sensor and every entry in `voltages[]` need a kernel-mode access backend. `sensor_availability.backend` names the live one (`none` when nothing opened), `.backend_tier` says what it could reach (`full` / `die_only` / `rails_only` / `none`), `.backend_rejected[]` lists every backend that was tried and why it declined, and `.backend_lost` is set when a backend answered at first and then stopped — readings ended there rather than being replayed. `.detail` states all of this in one sentence; read it before concluding anything from an absent number. The two sensors reach the hardware independently, so one can read while the other does not. Memory Integrity (HVCI) and the Vulnerable Driver Blocklist only block the legacy `win_ring0` backend — `.hvci_enabled` / `.vulnerable_driver_blocklist_enabled` report them, and SetDriverProtections can turn them off (needs a reboot, and the customer's consent), but that will NOT help when the live backend is a signed one. \
+WHY READINGS GO MISSING: the CPU die registers and every entry in `voltages[]` need a kernel-mode access backend. `sensor_availability.backend` names the live one (`none` when nothing opened), `.backend_tier` says what it could reach (`full` / `die_only` / `rails_only` / `none`), `.backend_rejected[]` lists every backend that was tried and why it declined, and `.backend_lost` is set when a backend answered at first and then stopped — readings ended there rather than being replayed. `.detail` states all of this in one sentence; read it before concluding anything from an absent number. The two sensors reach the hardware independently, so one can read while the other does not. Backends are tried in order: `mtdrv`, then `win_ring0`, then `esif_wmi` (Intel DPTF), which needs no driver and no elevation and is why an Intel machine can report a CPU temperature with no driver loaded at all — it carries NO voltage rails, so `voltage_rails: unavailable` under it is the backend's shape, not a board fault. Memory Integrity (HVCI) and the Vulnerable Driver Blocklist only block the legacy `win_ring0` backend — `.hvci_enabled` / `.vulnerable_driver_blocklist_enabled` report them, and SetDriverProtections can turn them off (needs a reboot, and the customer's consent), but that will NOT help when the live backend is a signed one. \
 VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` means no per-board ratio is known), so read them as trend and droop under load, not as absolute volts. Never fail a board on an absolute number from this tool; compare idle vs loaded instead. `3VCC (chip)` is the sensor chip's OWN 3.3V supply, NOT the board's +3.3V PSU rail — there is no +3.3V PSU reading here."
     )]
     async fn telemetry_snapshot_remote(
@@ -10908,12 +10928,13 @@ Tools:
   SuperIO board voltage rails for a REMOTE client. Args: connection_string, optional warmup_ms.
   This is the ONLY way to see a customer machine's thermals from MCP — `telemetry_snapshot`
   reads the admin workstation. An absent reading means NOT MEASURED, never 0 and never healthy;
-  `sensor_availability` grades each sensor: `cpu_package_temp` = cpu_die_sensor / acpi_zone_only
-  (a firmware CPU zone, not a die temp) / unavailable, `rails` = per-rail read / missing / unavailable
-  with `rails_missing[]`, `whea` = ok / unavailable (event source unreadable, NOT 'no errors') /
-  not_sampled. CPU die temp and the rails need a kernel-mode backend; `backend`,
-  `backend_tier`, `backend_rejected[]` and `backend_lost` say which one is live and
-  why any sensor is unreachable. Voltages are
+  `sensor_availability` grades each sensor: `cpu_package_temp` = cpu_die_sensor / dptf_participant
+  (Intel's processor participant over WMI — a real CPU sensor, whole degrees, no per-core detail) /
+  acpi_zone_only (a firmware CPU zone, not a die temp) / unavailable, `rails` = per-rail read /
+  missing / unavailable with `rails_missing[]`, `whea` = ok / unavailable (event source unreadable,
+  NOT 'no errors') / not_sampled. The die temp and the rails need a kernel-mode backend, and the
+  DPTF path needs none; `backend`, `backend_tier`, `backend_rejected[]` and `backend_lost` say
+  which one is live and why any sensor is unreachable. Voltages are
   UNCALIBRATED nominal-divider values — judge droop under load, not absolute volts.
   Pair with a stress run: read it before, during, and after to catch thermal throttling
   and rail droop that a pass/fail verdict alone hides.
@@ -11022,12 +11043,12 @@ query_surrealdb is READ-ONLY and always will be. To write, use surrealql_execute
 Flow: remote_egui_list_targets → optional remote_egui_get_last_frame_meta → remote_egui_list_widget_anchors (see keys) → remote_egui_click_anchor and/or remote_egui_type, or remote_egui_perform_steps (click_anchor, text, sleep_ms, key_tap, etc.). Same binary path as inline viewer: EGUI_INPUT_TAG + EguiInputEvent.
 - nav.menu.view — click to open the View menu (top bar).
 - nav.tab.<slug> — tab row inside View menu. Slug = tab label lowercased with non-alphanumeric → '_', trim '_' (e.g. KOTH → nav.tab.koth; TUR Sheet → nav.tab.tur_sheet; File Browser 📂 → nav.tab.file_browser). Tab anchors exist only while View menu is open: click nav.menu.view, sleep ~400–500ms, then click nav.tab.* .
-- TUR Sheet widgets (when that tab is visible): tur.service_number, tur.customer_name, tur.phone_number, tur.customer_email, tur.salesman, tur.tech, tur.checkin_notes, tur.recommendations, tur.get_prestashop_order (button — loads order from PrestaShop into the rest of the form).
+- TUR Sheet widgets (when that tab is visible): tur.service_number, tur.customer_name, tur.phone_number, tur.customer_email, tur.salesman, tur.tech, tur.checkin_notes, tur.recommendations, tur.pull_order (button — loads the order into the rest of the form from whichever backend has it; the old key tur.get_prestashop_order still hits the same button).
 - **TUR remote typing — service # vs recommendations**: The service order number belongs **only** in `tur.service_number`. Before sending `Text` with digits that look like an SO#, you **must** focus that field: `ClickAnchor` on `tur.service_number` with **placement `top_left`** (clicks inside the text cell; `center` can miss the editable area in a tight grid), then `SleepMs` 200–400, then `Text`. Only after the SO# is correct should you click `tur.recommendations` and type sales copy. If digits appear in the wrong box, click `tur.service_number` again with `top_left`, sleep, re-type the SO#, then fix recommendations.
 
 === TUR sheets (Trade-In / Upgrade / Repair) — purpose for the AI ===
 - **What TUR is**: After diagnostics or bench work, the tech fills the **TUR Sheet** tab so **sales** can read specs + **Recommendations** and pitch **upgrades**, **trade-ins**, **parts for repair**, or a **new PC**. The recommendations block is the main handoff to sales — write for a salesperson, not for the customer ticket prose.
-- **Workflow**: (1) Enter **Service #** in `tur.service_number`. (2) Click **Get PrestaShop Order** (`tur.get_prestashop_order`) — that pulls PrestaShop + linked data into the sheet (customer, products, etc.). (3) Fill **Recommendations** (`tur.recommendations`) with concrete, actionable upsell angles. (4) Only click **Submit TUR** when the human operator has approved — never submit autonomously unless explicitly asked.
+- **Workflow**: (1) Enter **Service #** in `tur.service_number`. (2) Click **Pull Order** (`tur.pull_order`) — that pulls the order and its linked data into the sheet (customer, products, device intake, notes) from PrestaShop or Shopify, whichever holds it. (3) Fill **Recommendations** (`tur.recommendations`) with concrete, actionable upsell angles. (4) Only click **Submit TUR** when the human operator has approved — never submit autonomously unless explicitly asked.
 - **Odoo / stock**: Before recommending a specific part (e.g. larger NVMe, RAM kit), use **search_odoo_inventory** with part codes or product names. If no row is returned, say in the recommendation that live Odoo must be checked — do not invent SKU availability.
 - **Windows / lifecycle**: If the machine is still on **Windows 10**, recommend moving to **Windows 11** (when hardware qualifies). If already on Win11, do not push that angle.
 - **Storage angle**: If system drive is nearly full (e.g. high % used), recommend a larger SSD/NVMe **with** an Odoo-backed part code when possible.
@@ -11051,7 +11072,7 @@ Flow: remote_egui_list_targets → optional remote_egui_get_last_frame_meta → 
 - Web Console — In-app web/shell console.
 - Inventory — Stock / inventory tables.
 - Task Audit — History and audit of task changes.
-- Create Prestashop Order — PrestaShop order entry.
+- Create Order — order entry.
 - Plugins — Plugin list; MCP :9004; enable frame capture / remote viewer on the client being viewed.
 - Downloads — App releases / downloads.
 - Threads — Operator chat threads.

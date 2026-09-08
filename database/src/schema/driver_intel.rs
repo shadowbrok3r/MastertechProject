@@ -32,7 +32,7 @@ pub struct DriverRecord {
 }
 
 impl DriverRecord {
-    /// Diff/matching key: original INF stem, falling back to the published name.
+    /// Blocklist-matching key: original INF stem, falling back to the published name.
     pub fn key(&self) -> String {
         let primary = if self.original_name.is_empty() {
             &self.published_name
@@ -40,6 +40,15 @@ impl DriverRecord {
             &self.original_name
         };
         module_stem(primary)
+    }
+
+    /// Diff key: one installed package. Several packages can share an INF stem.
+    pub fn package_key(&self) -> String {
+        format!(
+            "{}|{}",
+            module_stem(&self.published_name),
+            module_stem(&self.original_name)
+        )
     }
 }
 
@@ -104,6 +113,7 @@ pub struct DriverDiff {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DriverChange {
     pub key: String,
+    pub published_name: String,
     pub provider: String,
     pub class_name: String,
     pub old_version: String,
@@ -211,38 +221,69 @@ pub fn parse_wmi_driver_payload(payload: &serde_json::Value) -> Vec<DriverRecord
         .collect()
 }
 
-/// Diff two inventories keyed by INF stem.
+/// Diff two inventories per installed package, pairing leftovers within a package as version changes.
 pub fn diff_driver_sets(older: &[DriverRecord], newer: &[DriverRecord]) -> DriverDiff {
-    use std::collections::HashMap;
-    let old_map: HashMap<String, &DriverRecord> = older.iter().map(|d| (d.key(), d)).collect();
-    let new_map: HashMap<String, &DriverRecord> = newer.iter().map(|d| (d.key(), d)).collect();
+    use std::collections::BTreeMap;
+
+    type Bucket<'a> = (Vec<&'a DriverRecord>, Vec<&'a DriverRecord>);
+    let mut buckets: BTreeMap<String, Bucket<'_>> = BTreeMap::new();
+    for d in older {
+        buckets.entry(d.package_key()).or_default().0.push(d);
+    }
+    for d in newer {
+        buckets.entry(d.package_key()).or_default().1.push(d);
+    }
 
     let mut diff = DriverDiff::default();
-    for (key, new_d) in &new_map {
-        match old_map.get(key) {
-            None => diff.added.push((*new_d).clone()),
-            Some(old_d) if old_d.driver_version != new_d.driver_version => {
-                diff.changed.push(DriverChange {
-                    key: key.clone(),
-                    provider: new_d.provider.clone(),
-                    class_name: new_d.class_name.clone(),
-                    old_version: old_d.driver_version.clone(),
-                    new_version: new_d.driver_version.clone(),
-                    old_date: old_d.driver_date.clone(),
-                    new_date: new_d.driver_date.clone(),
-                });
+    for (olds, news) in buckets.into_values() {
+        // Drop version matches pairwise, leaving only the drift on each side.
+        let mut new_left = news;
+        let mut old_left = Vec::new();
+        for old_d in olds {
+            match new_left
+                .iter()
+                .position(|n| n.driver_version == old_d.driver_version)
+            {
+                Some(i) => {
+                    new_left.remove(i);
+                }
+                None => old_left.push(old_d),
             }
-            _ => {}
         }
-    }
-    for (key, old_d) in &old_map {
-        if !new_map.contains_key(key) {
-            diff.removed.push((*old_d).clone());
+        old_left.sort_by(|a, b| a.driver_version.cmp(&b.driver_version));
+        new_left.sort_by(|a, b| a.driver_version.cmp(&b.driver_version));
+
+        for (old_d, new_d) in old_left.iter().zip(new_left.iter()) {
+            diff.changed.push(DriverChange {
+                key: new_d.key(),
+                published_name: new_d.published_name.clone(),
+                provider: new_d.provider.clone(),
+                class_name: new_d.class_name.clone(),
+                old_version: old_d.driver_version.clone(),
+                new_version: new_d.driver_version.clone(),
+                old_date: old_d.driver_date.clone(),
+                new_date: new_d.driver_date.clone(),
+            });
         }
+        let paired = old_left.len().min(new_left.len());
+        diff.removed
+            .extend(old_left[paired..].iter().map(|d| (*d).clone()));
+        diff.added
+            .extend(new_left[paired..].iter().map(|d| (*d).clone()));
     }
-    diff.added.sort_by(|a, b| a.key().cmp(&b.key()));
-    diff.removed.sort_by(|a, b| a.key().cmp(&b.key()));
-    diff.changed.sort_by(|a, b| a.key.cmp(&b.key));
+
+    let by_package = |a: &DriverRecord, b: &DriverRecord| {
+        a.package_key()
+            .cmp(&b.package_key())
+            .then_with(|| a.driver_version.cmp(&b.driver_version))
+    };
+    diff.added.sort_by(by_package);
+    diff.removed.sort_by(by_package);
+    diff.changed.sort_by(|a, b| {
+        a.key
+            .cmp(&b.key)
+            .then_with(|| a.published_name.cmp(&b.published_name))
+    });
     diff
 }
 
@@ -395,6 +436,21 @@ Signer Name:        Microsoft Windows Hardware Compatibility Publisher\n";
         }
     }
 
+    /// `(published_name, original_name, driver_version, driver_date)` fixture rows.
+    fn packages(rows: &[(&str, &str, &str, &str)]) -> Vec<DriverRecord> {
+        rows.iter()
+            .map(|(published, original, version, date)| DriverRecord {
+                published_name: published.to_string(),
+                original_name: original.to_string(),
+                provider: "Realtek".to_string(),
+                class_name: "Net".to_string(),
+                driver_version: version.to_string(),
+                driver_date: date.to_string(),
+                ..Default::default()
+            })
+            .collect()
+    }
+
     #[test]
     fn parses_pnputil_output() {
         let drivers = parse_pnputil_enum(PNPUTIL_TEXT);
@@ -416,6 +472,65 @@ Signer Name:        Microsoft Windows Hardware Compatibility Publisher\n";
         assert_eq!(diff.changed.len(), 1);
         assert_eq!(diff.changed[0].old_version, "6001.15.128.1029");
         assert_eq!(diff.changed[0].new_version, "6001.80.132.0");
+    }
+
+    #[test]
+    fn diffs_packages_sharing_an_inf_stem() {
+        let intake = packages(&[
+            ("oem35.inf", "rt640x64.inf", "10.7.107.2016", "01/07/2016"),
+            ("oem119.inf", "rt640x64.inf", "10.74.1128.2024", "11/28/2024"),
+            ("oem64.inf", "rt640x64.inf", "10.38.1118.2019", "11/18/2019"),
+        ]);
+        let post_service = packages(&[
+            ("oem35.inf", "rt640x64.inf", "10.7.107.2016", "01/07/2016"),
+            ("oem119.inf", "rt640x64.inf", "10.74.1128.2024", "11/28/2024"),
+            ("oem46.inf", "rt640x64.inf", "10.79.50.1003", "10/03/2025"),
+            ("oem64.inf", "rt640x64.inf", "10.38.1118.2019", "11/18/2019"),
+        ]);
+
+        let diff = diff_driver_sets(&intake, &post_service);
+        assert_eq!(diff.added.len(), 1);
+        assert_eq!(diff.added[0].published_name, "oem46.inf");
+        assert_eq!(diff.added[0].driver_version, "10.79.50.1003");
+        assert!(diff.removed.is_empty());
+        assert!(diff.changed.is_empty());
+    }
+
+    #[test]
+    fn version_bump_of_one_package_sharing_a_stem_is_a_change() {
+        let older = packages(&[
+            ("oem35.inf", "rt640x64.inf", "10.7.107.2016", "01/07/2016"),
+            ("oem119.inf", "rt640x64.inf", "10.74.1128.2024", "11/28/2024"),
+        ]);
+        let newer = packages(&[
+            ("oem35.inf", "rt640x64.inf", "10.7.107.2016", "01/07/2016"),
+            ("oem119.inf", "rt640x64.inf", "10.79.50.1003", "10/03/2025"),
+        ]);
+
+        let diff = diff_driver_sets(&older, &newer);
+        assert!(diff.added.is_empty());
+        assert!(diff.removed.is_empty());
+        assert_eq!(diff.changed.len(), 1);
+        assert_eq!(diff.changed[0].key, "rt640x64");
+        assert_eq!(diff.changed[0].published_name, "oem119.inf");
+        assert_eq!(diff.changed[0].old_version, "10.74.1128.2024");
+        assert_eq!(diff.changed[0].new_version, "10.79.50.1003");
+        assert_eq!(diff.changed[0].new_date, "10/03/2025");
+    }
+
+    #[test]
+    fn removes_one_package_of_a_shared_stem() {
+        let older = packages(&[
+            ("oem35.inf", "rt640x64.inf", "10.7.107.2016", "01/07/2016"),
+            ("oem64.inf", "rt640x64.inf", "10.38.1118.2019", "11/18/2019"),
+        ]);
+        let newer = packages(&[("oem35.inf", "rt640x64.inf", "10.7.107.2016", "01/07/2016")]);
+
+        let diff = diff_driver_sets(&older, &newer);
+        assert!(diff.added.is_empty());
+        assert!(diff.changed.is_empty());
+        assert_eq!(diff.removed.len(), 1);
+        assert_eq!(diff.removed[0].published_name, "oem64.inf");
     }
 
     #[test]

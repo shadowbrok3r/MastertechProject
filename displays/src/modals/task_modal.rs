@@ -1192,35 +1192,16 @@ impl TaskModal {
     
     /// Update order customer and address in Prestashop
     async fn update_order_customer(order_id: &str, customer_id: &str, address_id: &str) {
-        let api = Prestashop::default();
-        
-        // Get the current order XML
-        match api.request_raw_resource_by_id("orders", order_id).await {
-            Ok(xml) => {
-                // Update id_customer
-                match modify_xml(&xml, "id_customer", customer_id) {
-                    Ok(xml_with_customer) => {
-                        // Update id_address_invoice
-                        match modify_xml(&xml_with_customer, "id_address_invoice", address_id) {
-                            Ok(xml_with_address) => {
-                                // Remove problematic tags
-                                match remove_xml_tag(&xml_with_address, "tax_exempt") {
-                                    Ok(final_xml) => {
-                                        match api.modify_prestashop_order(&final_xml).await {
-                                            Ok(_) => log::info!("Successfully updated order {} with customer {}", order_id, customer_id),
-                                            Err(e) => log::error!("Error modifying prestashop order: {:?}", e),
-                                        }
-                                    }
-                                    Err(e) => log::error!("Error removing tax_exempt tag: {:?}", e),
-                                }
-                            }
-                            Err(e) => log::error!("Error modifying address in XML: {:?}", e),
-                        }
-                    }
-                    Err(e) => log::error!("Error modifying customer in XML: {:?}", e),
-                }
-            }
-            Err(e) => log::error!("Error getting order XML: {:?}", e),
+        // Both fields in one locked call: PrestaShop's PUT replaces the whole
+        // resource, so two separate writes would each revert the other.
+        match database::schema::prestashop::order_write::set_order_fields(
+            order_id,
+            &[("id_customer", customer_id), ("id_address_invoice", address_id)],
+        )
+        .await
+        {
+            Ok(_) => log::info!("Successfully updated order {order_id} with customer {customer_id}"),
+            Err(e) => log::error!("Error updating order {order_id}: {e:?}"),
         }
     }
 

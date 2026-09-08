@@ -56,7 +56,7 @@ impl Signup {
             let signup = &mut signup.clone();
             if let Ok(employee) = User::default().set_email(&email).find_employee_by_email().await {
                 *signup = Signup {
-                    id_prestashop: Some(employee.id.parse::<u64>().unwrap_or_default()),
+                    id_prestashop: employee.id.parse::<u64>().ok(),
                     id_store: Some(employee.id_store),
                     everest_initials: employee.initials,
                     ..signup.clone()

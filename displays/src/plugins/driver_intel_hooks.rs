@@ -132,7 +132,14 @@ pub fn ingest_driver_snapshot(
                 let changed: Vec<String> = diff
                     .changed
                     .iter()
-                    .map(|c| format!("{} {} -> {}", c.key, c.old_version, c.new_version))
+                    .map(|c| {
+                        let pkg = if c.published_name.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" ({})", c.published_name)
+                        };
+                        format!("{}{pkg} {} -> {}", c.key, c.old_version, c.new_version)
+                    })
                     .collect();
                 notices.push(format!(
                     "Driver drift since '{}' ({}): +{} added, -{} removed, {} version change(s){}",

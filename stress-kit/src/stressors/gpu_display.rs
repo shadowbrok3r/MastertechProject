@@ -2,6 +2,16 @@
 //! continuously, with periodic surface reconfiguration and desktop mode
 //! changes. Reports aggregate presented FPS.
 //!
+//! Each output gets its own logical device on the shared adapter, and its
+//! swapchain rebuilds run on a thread of their own. `Surface::configure` waits
+//! for its device to go idle — present queue included — with no timeout, so a
+//! shared device makes every rebuild wait on flips the parked siblings have
+//! stopped draining, and a rebuild that blocks anyway takes the stage with it.
+//! A configure that still does not return is bounded, and the output it
+//! belongs to is rebuilt — fresh window, device, swapchain and worker — with
+//! the stuck call left on its own thread, so the siblings and the output carry
+//! on and the stage is graded on what it presented.
+//!
 //! Every other GPU stressor in this crate is a compute shader — it never
 //! creates a surface, never presents, and never touches the flip queue, so it
 //! cannot reproduce a present/mode-set timeout (dxgkrnl `0x1b8`, `0x141`, AMD
@@ -66,6 +76,26 @@ const TURN_WAIT: Duration = Duration::from_secs(3);
 /// phase its siblings are stuck in reports first.
 #[cfg(target_os = "windows")]
 const HANG_STARVED: Duration = Duration::from_secs(20);
+/// Bound on one `Surface::configure`. Past it the call is treated as wedged:
+/// the pause is lifted, the turn goes back, and only that output stops
+/// presenting. Sized so the whole handshake — turn, quiesce, configure — fits
+/// inside [`WATCHDOG_STALL`], since parked siblings present nothing while it
+/// runs.
+#[cfg(target_os = "windows")]
+const CONFIGURE_WAIT: Duration = Duration::from_secs(8);
+/// Pump gap for an output waiting out a configure that outran its bound.
+#[cfg(target_os = "windows")]
+const RECOVER_POLL: Duration = Duration::from_millis(2);
+/// Time an output waits out a configure that outran its bound before its
+/// window, device, swapchain and worker are replaced and the stuck call is
+/// left behind. A call that answers inside this window was slow, not dead.
+#[cfg(target_os = "windows")]
+const REBUILD_AFTER: Duration = Duration::from_secs(2);
+/// Rebuilds one output may go through before it is left down for the rest of
+/// the stage. Each rebuild leaks a device and a window, so a present path that
+/// wedges every fresh swapchain must not be rebuilt for the whole run.
+#[cfg(target_os = "windows")]
+const MAX_REBUILDS: u32 = 5;
 /// No presented frame and no frame-loop progress from any output for this long
 /// ends the stage as a tool failure. Normal runs dip to a couple of FPS during
 /// a mode change; none of them stop advancing their loops.
@@ -102,9 +132,10 @@ const DUMP_SCAN_EVERY: Duration = Duration::from_secs(2);
 const FAULT_BACKOFF: Duration = Duration::from_millis(100);
 /// Time before the driven-output count is treated as settled. Sized for a
 /// spin-up next to saturated CPU lanes in a concurrent run, where an output's
-/// first configure can take several quiesce rounds before its first frame.
+/// first configure can take several quiesce rounds before its first frame, and
+/// for a first configure that outran its bound and was rebuilt.
 #[cfg(target_os = "windows")]
-const COVERAGE_WARMUP: Duration = Duration::from_secs(10);
+const COVERAGE_WARMUP: Duration = Duration::from_secs(15);
 /// Per-pixel iterations in the frame shader — enough that a frame is real work
 /// without turning the stage back into a compute test.
 #[cfg(target_os = "windows")]
@@ -236,6 +267,8 @@ mod windows_impl {
         Presenting = 6,
         ModeSetting = 7,
         Done = 8,
+        Recovering = 9,
+        Rebuilding = 10,
     }
 
     impl Phase {
@@ -250,6 +283,10 @@ mod windows_impl {
                 Self::Presenting => "drawing and presenting",
                 Self::ModeSetting => "inside ChangeDisplaySettingsEx",
                 Self::Done => "finished",
+                Self::Recovering => "not presenting, waiting out a configure that has not returned",
+                Self::Rebuilding => {
+                    "rebuilding its window and swapchain after a configure that did not return"
+                }
             }
         }
 
@@ -263,6 +300,8 @@ mod windows_impl {
                 6 => Self::Presenting,
                 7 => Self::ModeSetting,
                 8 => Self::Done,
+                9 => Self::Recovering,
+                10 => Self::Rebuilding,
                 _ => Self::Starting,
             }
         }
@@ -279,6 +318,9 @@ mod windows_impl {
         occluded: AtomicU64,
         reconfigures: AtomicU64,
         mode_sets: AtomicU64,
+        /// Window, device and swapchain rebuilds after a configure that did not
+        /// return. Each one leaked the attempt it replaced.
+        rebuilds: AtomicU64,
         stalled: AtomicBool,
         /// Frame-loop iterations this output has completed. Separates a stalled
         /// present (loop running, no frames leaving) from a wedged thread (loop
@@ -341,8 +383,16 @@ mod windows_impl {
         /// [`TURN_WAIT`]. Distinct from `quiesce_timeouts`: a busy sibling is
         /// normal, a sibling that will not let go of the turn is not.
         turn_timeouts: AtomicU64,
+        /// `Surface::configure` calls that outran [`CONFIGURE_WAIT`].
+        configure_wedges: AtomicU64,
+        /// Output rebuilds across the stage: an output whose configure stayed
+        /// out past [`REBUILD_AFTER`] got a fresh window, device and swapchain.
+        outputs_rebuilt: AtomicU64,
         /// A coverage complaint has been emitted and not yet resolved.
         coverage_complained: AtomicBool,
+        /// An output whose configure outran its bound has resumed presenting,
+        /// and the tick loop has not said so yet.
+        configure_recovered: AtomicBool,
         /// Latched by whichever detector finds the stage wedged inside its own
         /// handshake. Kept apart from `fatal`: that reports the display path,
         /// this reports the tool.
@@ -367,6 +417,98 @@ mod windows_impl {
     impl Drop for SubmitGuard<'_> {
         fn drop(&mut self) {
             self.0.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    /// How one attempt to build or rebuild this output's swapchain ended.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum ConfigureOutcome {
+        Ran,
+        /// The handshake turned the attempt away; the caller retries later.
+        Skipped,
+        /// The call outran [`CONFIGURE_WAIT`] and is still running on the
+        /// worker thread. This output must present nothing until it answers.
+        Wedged,
+    }
+
+    /// One `Surface::configure` request and the surface it applies to. The
+    /// surface travels with the request because a lost surface is replaced.
+    type ConfigureRequest = (Arc<wgpu::Surface<'static>>, wgpu::SurfaceConfiguration);
+
+    /// The worker one output's swapchain rebuilds run on.
+    type SurfaceWorker = ConfigureWorker<ConfigureRequest>;
+
+    /// Runs one output's `Surface::configure` calls on a thread of their own.
+    ///
+    /// `configure` waits for its device to go idle with no timeout, so a call
+    /// that does not come back cannot be abandoned where it is made. Off the
+    /// frame-loop thread it can be: the caller gives up on [`CONFIGURE_WAIT`],
+    /// releases the handshake, and keeps pumping its window until the worker
+    /// answers. The window keeps its thread, which Win32 requires.
+    struct ConfigureWorker<J> {
+        jobs: mpsc::Sender<J>,
+        replies: mpsc::Receiver<()>,
+        /// A job the worker has not answered yet.
+        pending: bool,
+    }
+
+    impl<J: Send + 'static> ConfigureWorker<J> {
+        fn spawn(index: usize, run: impl Fn(J) + Send + 'static) -> Result<Self, String> {
+            let (jobs, inbox) = mpsc::channel::<J>();
+            let (outbox, replies) = mpsc::channel::<()>();
+            std::thread::Builder::new()
+                .name(format!("stress-kit-display-cfg-{index}"))
+                .spawn(move || {
+                    while let Ok(job) = inbox.recv() {
+                        run(job);
+                        if outbox.send(()).is_err() {
+                            return;
+                        }
+                    }
+                })
+                .map_err(|e| format!("failed to spawn the configure worker: {e}"))?;
+            Ok(Self {
+                jobs,
+                replies,
+                pending: false,
+            })
+        }
+
+        /// Runs `job`, waiting [`CONFIGURE_WAIT`] for it while pumping.
+        fn submit(&mut self, job: J, ctx: &OutputCtx<'_>, stop: &AtomicBool) -> ConfigureOutcome {
+            if self.pending || self.jobs.send(job).is_err() {
+                return ConfigureOutcome::Wedged;
+            }
+            self.pending = true;
+            ctx.stats.set_phase(Phase::Configuring);
+            let deadline = Instant::now() + CONFIGURE_WAIT;
+            while Instant::now() < deadline {
+                if self.settled() {
+                    return ConfigureOutcome::Ran;
+                }
+                if stop.load(Ordering::Relaxed) {
+                    return ConfigureOutcome::Wedged;
+                }
+                (ctx.pump)();
+                std::thread::sleep(QUIESCE_POLL);
+            }
+            ConfigureOutcome::Wedged
+        }
+
+        /// Whether the worker is free. False while a configure that outran its
+        /// bound is still running; presenting again before it returns is the
+        /// half-built-swapchain race the handshake exists to stop.
+        fn settled(&mut self) -> bool {
+            if !self.pending {
+                return true;
+            }
+            match self.replies.try_recv() {
+                Ok(()) => {
+                    self.pending = false;
+                    true
+                }
+                Err(_) => false,
+            }
         }
     }
 
@@ -585,7 +727,8 @@ mod windows_impl {
         };
         let policy = ModeSetPolicy::resolve(options.modeset);
         log::info!(
-            "[stress-kit/gpu_display] {} output(s) on {} ({} backend), mode-set policy {:?}",
+            "[stress-kit/gpu_display] {} output(s) on {} ({} backend), mode-set policy {:?}, \
+             one logical device per output",
             outputs.len(),
             ctx.vendor_label,
             ctx.backend_label,
@@ -664,17 +807,21 @@ mod windows_impl {
         restore_touched_modes(&shared);
         log::info!(
             "[stress-kit/gpu_display] drove {} of {} attached output(s), {} frames presented, \
-             {} reconfigure(s) skipped for a busy sibling, {} for a held configure turn",
+             {} reconfigure(s) skipped for a busy sibling, {} for a held configure turn, \
+             {} configure(s) that did not return within {}s, {} output rebuild(s)",
             shared.driven(),
             attached,
             shared.total(|o| o.presented.load(Ordering::Relaxed)),
             shared.quiesce_timeouts.load(Ordering::Relaxed),
-            shared.turn_timeouts.load(Ordering::Relaxed)
+            shared.turn_timeouts.load(Ordering::Relaxed),
+            shared.configure_wedges.load(Ordering::Relaxed),
+            CONFIGURE_WAIT.as_secs(),
+            shared.outputs_rebuilt.load(Ordering::Relaxed)
         );
         for (output, stats) in outputs.iter().zip(&shared.outputs) {
             log::info!(
                 "[stress-kit/gpu_display] {}: {} presented, {} timeout, {} lost, {} outdated, \
-                 {} occluded, {} reconfigure, {} mode set",
+                 {} occluded, {} reconfigure, {} mode set, {} rebuild",
                 output.device,
                 stats.presented.load(Ordering::Relaxed),
                 stats.timeouts.load(Ordering::Relaxed),
@@ -683,6 +830,7 @@ mod windows_impl {
                 stats.occluded.load(Ordering::Relaxed),
                 stats.reconfigures.load(Ordering::Relaxed),
                 stats.mode_sets.load(Ordering::Relaxed),
+                stats.rebuilds.load(Ordering::Relaxed),
             );
         }
     }
@@ -817,15 +965,18 @@ mod windows_impl {
              advanced its frame loop for {stuck}s, so the stage is wedged inside its own \
              handshake rather than in the display path. Threads: {phases}. {quiesce} \
              configure(s) skipped for a busy sibling, {turn} for a sibling that would not \
-             release the configure turn. Zero FPS with no watchdog live dump, no TDR and no \
-             WHEA on a responsive machine is a TOOL failure: the run grades INCONCLUSIVE and \
-             proves nothing about this hardware in either direction. Re-run the stage; do \
-             not read this as a display fault.",
+             release the configure turn, {wedged} that never returned, {rebuilt} output \
+             rebuild(s). Zero FPS with no watchdog live dump, no TDR and no WHEA on a \
+             responsive machine is a TOOL failure: the run grades INCONCLUSIVE and proves \
+             nothing about this hardware in either direction. Re-run the stage; do not read \
+             this as a display fault.",
             marker = crate::STRESSOR_HANG_MARKER,
             stuck = stuck_for.as_secs(),
             phases = phases.join(", "),
             quiesce = shared.quiesce_timeouts.load(Ordering::Relaxed),
             turn = shared.turn_timeouts.load(Ordering::Relaxed),
+            wedged = shared.configure_wedges.load(Ordering::Relaxed),
+            rebuilt = shared.outputs_rebuilt.load(Ordering::Relaxed),
         )
     }
 
@@ -939,6 +1090,16 @@ mod windows_impl {
                  coverage shortfall no longer applies"
             ));
         }
+        // Also one-shot and also ahead of any standing warn: a configure that
+        // came back late leaves the output presenting again, so the shortfall
+        // it reported no longer stands.
+        if shared.configure_recovered.swap(false, Ordering::SeqCst) {
+            return Some(
+                "resolved - the configure that outran its bound returned and that output is \
+                 presenting again; the earlier shortfall no longer applies"
+                    .to_string(),
+            );
+        }
         if let Some(warn) = shared.warn() {
             return Some(warn);
         }
@@ -976,7 +1137,204 @@ mod windows_impl {
         _pad: [u32; 3],
     }
 
+    /// Everything one attempt at presenting to an output owns: its window, its
+    /// own logical device and queue, the swapchain and the worker that
+    /// configures it, and the pipeline that draws into it. Thread-affine
+    /// through the window. Replaced wholesale by a rebuild, never torn down
+    /// piecemeal.
+    struct Presenter {
+        window: OutputWindow,
+        raw_handle: wgpu::rwh::RawWindowHandle,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        worker: SurfaceWorker,
+        surface: Arc<wgpu::Surface<'static>>,
+        config: wgpu::SurfaceConfiguration,
+        present_modes: Vec<wgpu::PresentMode>,
+        module: wgpu::ShaderModule,
+        pipeline: wgpu::RenderPipeline,
+        frame_buf: wgpu::Buffer,
+        bind_group: wgpu::BindGroup,
+    }
+
+    impl Presenter {
+        /// Builds the window, device, surface and pipeline for `output`. The
+        /// swapchain is left unconfigured: the caller runs its first configure
+        /// through the quiesce handshake. `attempt` is zero for the first build
+        /// and counts rebuilds after it. `Err` names what could not be built.
+        fn build(
+            ctx: &Arc<GpuContext>,
+            output: &Output,
+            index: usize,
+            attempt: u32,
+        ) -> Result<Self, String> {
+            let window = OutputWindow::new(output)
+                .map_err(|e| format!("could not open a window on {} ({e})", output.device))?;
+            let raw_handle = window
+                .raw_handle()
+                .map_err(|e| format!("no window handle for {} ({e})", output.device))?;
+
+            // Its own logical device on the shared adapter. Sharing one device
+            // is what made a configure on this output wait for flips its parked
+            // siblings had stopped draining, with no timeout to escape.
+            let (device, queue) = ctx
+                .spawn_device(&format!("gpu_display {} #{attempt}", output.device))
+                .map_err(|e| format!("no device for {} ({e})", output.device))?;
+            let configure_on = device.clone();
+            let configure = move |(surface, config): ConfigureRequest| {
+                surface.configure(&configure_on, &config)
+            };
+            let worker = SurfaceWorker::spawn(index, configure)
+                .map_err(|e| format!("{} ({e})", output.device))?;
+
+            let surface = create_surface(ctx, raw_handle).map_err(|e| {
+                format!(
+                    "no swapchain on {} ({e}); this adapter cannot present to that output",
+                    output.device
+                )
+            })?;
+            let caps = surface.get_capabilities(&ctx.adapter);
+            if caps.formats.is_empty() {
+                return Err(format!(
+                    "{} reports no surface formats on this adapter",
+                    output.device
+                ));
+            }
+            // Fifo is guaranteed; the rest widen the flip-queue behaviour we cover.
+            let present_modes: Vec<wgpu::PresentMode> = caps.present_modes.clone();
+            log::info!(
+                "[stress-kit/gpu_display] {}: format {:?}, present modes {:?}",
+                output.device,
+                caps.formats[0],
+                present_modes
+            );
+            let config = surface
+                .get_default_config(&ctx.adapter, output.width, output.height)
+                .ok_or_else(|| {
+                    format!("{} is not supported by the bound adapter", output.device)
+                })?;
+
+            // Built before the swapchain, so an output whose first configure
+            // does not return can resume into the frame loop when it does.
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("gpu_display module"),
+                source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+            });
+            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("gpu_display pipeline"),
+                layout: None,
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some("vs"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some("fs"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(config.format.into())],
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            });
+            let frame_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("gpu_display frame"),
+                size: std::mem::size_of::<Frame>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("gpu_display bind group"),
+                layout: &pipeline.get_bind_group_layout(0),
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: frame_buf.as_entire_binding(),
+                }],
+            });
+
+            Ok(Self {
+                window,
+                raw_handle,
+                device,
+                queue,
+                worker,
+                surface: Arc::new(surface),
+                config,
+                present_modes,
+                module,
+                pipeline,
+                frame_buf,
+                bind_group,
+            })
+        }
+
+        /// Leaks this attempt. Its worker is inside `Surface::configure` on its
+        /// own thread and cannot be cancelled, and the window, surface and
+        /// device that call is using must not be destroyed under it from this
+        /// thread, so every handle is forgotten; the process exit reclaims
+        /// them, and the stage is short-lived. Only the worker's channel ends
+        /// drop, so its thread exits rather than parks if the call ever returns.
+        fn leak(self) {
+            let Self {
+                window,
+                raw_handle: _,
+                device,
+                queue,
+                worker,
+                surface,
+                config: _,
+                present_modes: _,
+                module,
+                pipeline,
+                frame_buf,
+                bind_group,
+            } = self;
+            drop(worker);
+            std::mem::forget(bind_group);
+            std::mem::forget(frame_buf);
+            std::mem::forget(pipeline);
+            std::mem::forget(module);
+            std::mem::forget(surface);
+            std::mem::forget(queue);
+            std::mem::forget(device);
+            std::mem::forget(window);
+        }
+    }
+
+    /// What an output waiting out a configure that outran its bound does next.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Recovery {
+        /// Keep pumping; the call may still answer.
+        Wait,
+        /// Leak this attempt and build a fresh one.
+        Rebuild,
+        /// The fresh swapchain was never configured; run its first configure again.
+        Reconfigure,
+        /// Out of rebuilds; the output stays down.
+        Exhausted,
+    }
+
+    /// `waited` is the time since this output stopped presenting;
+    /// `worker_stuck` says a configure is still out on the worker.
+    fn recovery_step(waited: Duration, worker_stuck: bool, rebuilds: u32) -> Recovery {
+        if waited < REBUILD_AFTER {
+            Recovery::Wait
+        } else if !worker_stuck {
+            Recovery::Reconfigure
+        } else if rebuilds >= MAX_REBUILDS {
+            Recovery::Exhausted
+        } else {
+            Recovery::Rebuild
+        }
+    }
+
     /// Owns one output end to end: its window, its swapchain, its mode changes.
+    /// A configure that does not return costs the output a rebuild, not the
+    /// stage: the stuck attempt is leaked and a fresh one takes over.
     fn drive_output(
         ctx: &Arc<GpuContext>,
         output: Output,
@@ -998,128 +1356,42 @@ mod windows_impl {
         let stats = &shared.outputs[index];
         stats.set_phase(Phase::Starting);
         let _phase_done = PhaseDone(stats);
-        let window = match OutputWindow::new(&output) {
-            Ok(w) => w,
+        let mut presenter = match Presenter::build(ctx, &output, index, 0) {
+            Ok(p) => p,
             Err(e) => {
                 shared.latch_fatal(format!(
-                    "gpu_display: inconclusive - could not open a window on {} ({e}); that \
-                     output's present path never ran",
-                    output.device
-                ));
-                return;
-            }
-        };
-        let raw_handle = match window.raw_handle() {
-            Ok(h) => h,
-            Err(e) => {
-                shared.latch_fatal(format!(
-                    "gpu_display: inconclusive - no window handle for {} ({e})",
-                    output.device
-                ));
-                return;
-            }
-        };
-        // Every bounded wait in the handshake pumps through this, so a thread
-        // that is waiting still answers the message broadcast a sibling's mode
-        // change is blocked on.
-        let pump = || window.pump();
-        let octx = OutputCtx { stats, pump: &pump };
-
-        let mut surface = match create_surface(ctx, raw_handle) {
-            Ok(s) => s,
-            Err(e) => {
-                shared.latch_fatal(format!(
-                    "gpu_display: inconclusive - no swapchain on {} ({e}); this adapter cannot \
-                     present to that output",
-                    output.device
+                    "gpu_display: inconclusive - {e}; that output's present path never ran"
                 ));
                 return;
             }
         };
 
-        let caps = surface.get_capabilities(&ctx.adapter);
-        if caps.formats.is_empty() {
-            shared.latch_fatal(format!(
-                "gpu_display: inconclusive - {} reports no surface formats on this adapter",
-                output.device
-            ));
-            return;
-        }
-        // Fifo is guaranteed; the rest widen the flip-queue behaviour we cover.
-        let present_modes: Vec<wgpu::PresentMode> = caps.present_modes.clone();
-        log::info!(
-            "[stress-kit/gpu_display] {}: format {:?}, present modes {:?}",
-            output.device,
-            caps.formats[0],
-            present_modes
-        );
-
-        let mut config = match surface.get_default_config(&ctx.adapter, output.width, output.height)
-        {
-            Some(c) => c,
-            None => {
-                shared.latch_fatal(format!(
-                    "gpu_display: inconclusive - {} is not supported by the bound adapter",
-                    output.device
-                ));
-                return;
-            }
-        };
         // The first configure creates the swapchain; presenting siblings park
         // so the build cannot race their submissions.
-        if !configure_initial(&surface, ctx, &config, shared, &octx, stop) {
-            shared.latch_fatal(format!(
-                "gpu_display: inconclusive - the swapchain on {} could not be configured while \
-                 sibling outputs were presenting; that output's present path never ran",
-                output.device
-            ));
-            return;
-        }
-
-        let module = ctx
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("gpu_display module"),
-                source: wgpu::ShaderSource::Wgsl(SHADER.into()),
-            });
-        let pipeline = ctx
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("gpu_display pipeline"),
-                layout: None,
-                vertex: wgpu::VertexState {
-                    module: &module,
-                    entry_point: Some("vs"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &module,
-                    entry_point: Some("fs"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(config.format.into())],
-                }),
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
-                cache: None,
-            });
-
-        let frame_buf = ctx.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gpu_display frame"),
-            size: std::mem::size_of::<Frame>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("gpu_display bind group"),
-            layout: &pipeline.get_bind_group_layout(0),
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: frame_buf.as_entire_binding(),
-            }],
-        });
+        let mut recovering = {
+            let pump = || presenter.window.pump();
+            let octx = OutputCtx { stats, pump: &pump };
+            match configure_initial(
+                &presenter.surface,
+                &presenter.config,
+                shared,
+                &octx,
+                stop,
+                &mut presenter.worker,
+            ) {
+                ConfigureOutcome::Ran => false,
+                ConfigureOutcome::Wedged => true,
+                ConfigureOutcome::Skipped => {
+                    shared.latch_fatal(format!(
+                        "gpu_display: inconclusive - the swapchain on {} could not be configured \
+                         while sibling outputs were presenting; that output's present path never \
+                         ran",
+                        output.device
+                    ));
+                    return;
+                }
+            }
+        };
 
         let mut modes = ModeCycle::new(&output, policy);
         let started = Instant::now();
@@ -1142,12 +1414,133 @@ mod windows_impl {
         // with the occasional successful configure — which keeps resetting that
         // timer — still classifies the stall as the tool and not the display.
         let mut starved_seen = false;
+        // When this output last stopped presenting to wait out a configure.
+        let mut recovering_since = Instant::now();
+        // Rebuilds so far, against `MAX_REBUILDS`; the exhausted note files once.
+        let mut rebuilds: u32 = 0;
+        let mut exhausted_reported = false;
+        // True while a rebuilt swapchain still awaits its first completed configure.
+        let mut unconfigured = false;
 
-        // Frame-loop membership for the quiesce handshake; setup never submits.
-        let _submit = SubmitGuard::enter(&shared.submitters);
+        // Frame-loop membership for the quiesce handshake; setup never submits,
+        // and neither does an output waiting out its own wedged configure.
+        let mut submit = (!recovering).then(|| SubmitGuard::enter(&shared.submitters));
+        if recovering {
+            warn_configure_wedged(shared, &output.device);
+        }
         let wedge_after = debug_wedge_frame(index);
 
         while !stop.load(Ordering::Relaxed) {
+            // Submits nothing and counts no progress while the worker is still
+            // inside a configure; only the window keeps being pumped.
+            if recovering {
+                stats.set_phase(Phase::Recovering);
+                presenter.window.pump();
+                // A configure that answers late leaves its swapchain built.
+                if !unconfigured && presenter.worker.settled() {
+                    recovering = false;
+                    submit = Some(SubmitGuard::enter(&shared.submitters));
+                    last_present = Instant::now();
+                    last_reconfigure = Instant::now();
+                    last_mode_set = Instant::now();
+                    expect_outdated_until = Instant::now() + SELF_INFLICTED_GRACE;
+                    starved_since = None;
+                    starved_seen = false;
+                    log::warn!(
+                        "[stress-kit/gpu_display] {}: the configure came back; presenting again",
+                        output.device
+                    );
+                    shared.configure_recovered.store(true, Ordering::SeqCst);
+                    continue;
+                }
+                let step = recovery_step(recovering_since.elapsed(), !unconfigured, rebuilds);
+                if step == Recovery::Rebuild {
+                    rebuilds += 1;
+                    stats.rebuilds.fetch_add(1, Ordering::Relaxed);
+                    shared.outputs_rebuilt.fetch_add(1, Ordering::Relaxed);
+                    // Counted as progress for the watchdog.
+                    stats.progress.fetch_add(1, Ordering::Relaxed);
+                    stats.set_phase(Phase::Rebuilding);
+                    log::warn!(
+                        "[stress-kit/gpu_display] {}: Surface::configure has not returned for \
+                         {:.0}s; leaking that attempt and rebuilding ({rebuilds} of \
+                         {MAX_REBUILDS})",
+                        output.device,
+                        CONFIGURE_WAIT.as_secs_f32() + recovering_since.elapsed().as_secs_f32()
+                    );
+                    match Presenter::build(ctx, &output, index, rebuilds) {
+                        Ok(fresh) => {
+                            std::mem::replace(&mut presenter, fresh).leak();
+                            unconfigured = true;
+                        }
+                        Err(e) => {
+                            // The output stays down; no further rebuild is attempted.
+                            rebuilds = MAX_REBUILDS;
+                            exhausted_reported = true;
+                            shared.set_warn(format!(
+                                "gpu_display: {} rebuilding {} failed ({e}); that output stays \
+                                 down for the rest of the stage while the others carry on. \
+                                 Coverage limit imposed by the tool, not a hardware fault.",
+                                crate::STRESSOR_LIMIT_MARKER,
+                                output.device
+                            ));
+                            recovering_since = Instant::now();
+                            std::thread::sleep(RECOVER_POLL);
+                            continue;
+                        }
+                    }
+                }
+                if matches!(step, Recovery::Rebuild | Recovery::Reconfigure) {
+                    // First configure of the fresh swapchain, through the quiesce handshake.
+                    let pump = || presenter.window.pump();
+                    let octx = OutputCtx { stats, pump: &pump };
+                    match configure_initial(
+                        &presenter.surface,
+                        &presenter.config,
+                        shared,
+                        &octx,
+                        stop,
+                        &mut presenter.worker,
+                    ) {
+                        ConfigureOutcome::Ran => {
+                            unconfigured = false;
+                            recovering = false;
+                            submit = Some(SubmitGuard::enter(&shared.submitters));
+                            last_present = Instant::now();
+                            last_reconfigure = Instant::now();
+                            last_mode_set = Instant::now();
+                            expect_outdated_until = Instant::now() + SELF_INFLICTED_GRACE;
+                            starved_since = None;
+                            starved_seen = false;
+                            recreate_failures = 0;
+                            warn_rebuilt(shared, &output.device, rebuilds);
+                        }
+                        ConfigureOutcome::Wedged => {
+                            // A late answer leaves the swapchain built for the settled check above.
+                            unconfigured = false;
+                            recovering_since = Instant::now();
+                            warn_configure_wedged(shared, &output.device);
+                        }
+                        ConfigureOutcome::Skipped => {
+                            recovering_since = Instant::now();
+                            log::warn!(
+                                "[stress-kit/gpu_display] {}: the rebuilt swapchain could not be \
+                                 configured while the siblings were presenting; retrying in {}s",
+                                output.device,
+                                REBUILD_AFTER.as_secs()
+                            );
+                        }
+                    }
+                    continue;
+                }
+                if step == Recovery::Exhausted && !exhausted_reported {
+                    exhausted_reported = true;
+                    warn_rebuilds_exhausted(shared, &output.device);
+                }
+                std::thread::sleep(RECOVER_POLL);
+                continue;
+            }
+
             if let Some(frame) = wedge_after
                 && stats.presented.load(Ordering::Relaxed) >= frame
             {
@@ -1166,29 +1559,40 @@ mod windows_impl {
             // thread that stops running at all.
             stats.progress.fetch_add(1, Ordering::Relaxed);
             stats.set_phase(Phase::Pumping);
-            window.pump();
+            presenter.window.pump();
+            // Every bounded wait in the handshake pumps through this, so a
+            // thread that is waiting still answers the message broadcast a
+            // sibling's mode change is blocked on.
+            let pump = || presenter.window.pump();
+            let octx = OutputCtx { stats, pump: &pump };
             shared.park_if_paused(&octx, stop);
 
             let elapsed = started.elapsed().as_secs_f32();
-            ctx.queue.write_buffer(
-                &frame_buf,
+            presenter.queue.write_buffer(
+                &presenter.frame_buf,
                 0,
                 bytemuck::bytes_of(&Frame {
                     time: elapsed,
                     tint: 0.25 + 0.75 * (index as f32 / total.max(1) as f32),
                     band: (elapsed * 0.35).fract(),
-                    inv_width: 1.0 / config.width.max(1) as f32,
+                    inv_width: 1.0 / presenter.config.width.max(1) as f32,
                     iters: SHADER_ITERS,
                     _pad: [0; 3],
                 }),
             );
 
             stats.set_phase(Phase::Acquiring);
-            match surface.get_current_texture() {
+            match presenter.surface.get_current_texture() {
                 wgpu::CurrentSurfaceTexture::Success(frame)
                 | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
                     stats.set_phase(Phase::Presenting);
-                    draw_and_present(ctx, &pipeline, &bind_group, frame);
+                    draw_and_present(
+                        &presenter.device,
+                        &presenter.queue,
+                        &presenter.pipeline,
+                        &presenter.bind_group,
+                        frame,
+                    );
                     stats.presented.fetch_add(1, Ordering::Relaxed);
                     last_present = Instant::now();
                     starved_since = None;
@@ -1217,17 +1621,29 @@ mod windows_impl {
                         ));
                     }
                     // Left outdated when the siblings stay busy; retried next frame.
-                    if shared
-                        .with_quiesce(&octx, stop, true, || {
-                            surface.configure(&ctx.device, &config)
-                        })
-                        .is_some()
-                    {
-                        expect_outdated_until = Instant::now() + SELF_INFLICTED_GRACE;
-                        starved_since = None;
-                    } else {
-                        starved_since.get_or_insert_with(Instant::now);
-                        starved_seen = true;
+                    match request_configure(
+                        shared,
+                        &octx,
+                        stop,
+                        &mut presenter.worker,
+                        &presenter.surface,
+                        &presenter.config,
+                        true,
+                    ) {
+                        ConfigureOutcome::Ran => {
+                            expect_outdated_until = Instant::now() + SELF_INFLICTED_GRACE;
+                            starved_since = None;
+                        }
+                        ConfigureOutcome::Skipped => {
+                            starved_since.get_or_insert_with(Instant::now);
+                            starved_seen = true;
+                        }
+                        ConfigureOutcome::Wedged => {
+                            recovering = true;
+                            recovering_since = Instant::now();
+                            drop(submit.take());
+                            warn_configure_wedged(shared, &output.device);
+                        }
                     }
                 }
                 wgpu::CurrentSurfaceTexture::Lost => {
@@ -1236,14 +1652,26 @@ mod windows_impl {
                         "gpu_display: surface lost on {}, recreating",
                         output.device
                     ));
-                    match create_surface(ctx, raw_handle) {
+                    match create_surface(ctx, presenter.raw_handle) {
                         Ok(fresh) => {
-                            surface = fresh;
+                            presenter.surface = Arc::new(fresh);
                             // A fresh surface stays unconfigured until the siblings
                             // go quiet; the next frame reports Outdated and retries.
-                            shared.with_quiesce(&octx, stop, true, || {
-                                surface.configure(&ctx.device, &config)
-                            });
+                            if request_configure(
+                                shared,
+                                &octx,
+                                stop,
+                                &mut presenter.worker,
+                                &presenter.surface,
+                                &presenter.config,
+                                true,
+                            ) == ConfigureOutcome::Wedged
+                            {
+                                recovering = true;
+                                recovering_since = Instant::now();
+                                drop(submit.take());
+                                warn_configure_wedged(shared, &output.device);
+                            }
                             expect_outdated_until = Instant::now() + SELF_INFLICTED_GRACE;
                             recreate_failures = 0;
                         }
@@ -1274,6 +1702,13 @@ mod windows_impl {
                     ));
                     std::thread::sleep(FAULT_BACKOFF);
                 }
+            }
+
+            // The rest of the pass reads timers this output has stopped
+            // driving, and would ask the worker for a configure it is already
+            // inside.
+            if recovering {
+                continue;
             }
 
             if let Some(reason) = ctx.health.failure() {
@@ -1346,29 +1781,38 @@ mod windows_impl {
             if last_reconfigure.elapsed() >= RECONFIGURE_EVERY {
                 last_reconfigure = Instant::now();
                 present_mode_index = present_mode_index.wrapping_add(1);
-                let applied = reconfigure(
-                    &surface,
-                    ctx,
-                    &mut config,
-                    &present_modes,
+                match reconfigure(
+                    &presenter.surface,
+                    &mut presenter.config,
+                    &presenter.present_modes,
                     present_mode_index,
                     &output,
-                    &window,
+                    &presenter.window,
                     shared,
                     &octx,
                     stop,
-                );
-                if applied {
-                    stats.reconfigures.fetch_add(1, Ordering::Relaxed);
-                    expect_outdated_until = Instant::now() + SELF_INFLICTED_GRACE;
-                    starved_since = None;
-                } else {
-                    starved_since.get_or_insert_with(Instant::now);
-                    starved_seen = true;
+                    &mut presenter.worker,
+                ) {
+                    ConfigureOutcome::Ran => {
+                        stats.reconfigures.fetch_add(1, Ordering::Relaxed);
+                        expect_outdated_until = Instant::now() + SELF_INFLICTED_GRACE;
+                        starved_since = None;
+                    }
+                    ConfigureOutcome::Skipped => {
+                        starved_since.get_or_insert_with(Instant::now);
+                        starved_seen = true;
+                    }
+                    ConfigureOutcome::Wedged => {
+                        recovering = true;
+                        recovering_since = Instant::now();
+                        drop(submit.take());
+                        warn_configure_wedged(shared, &output.device);
+                    }
                 }
             }
 
-            if policy != ModeSetPolicy::Off && last_mode_set.elapsed() >= MODE_SET_EVERY {
+            if !recovering && policy != ModeSetPolicy::Off && last_mode_set.elapsed() >= MODE_SET_EVERY
+            {
                 last_mode_set = Instant::now();
                 if let Some((width, height, hz)) = modes.next_mode() {
                     // Registered with the stage before the call, not after:
@@ -1383,12 +1827,24 @@ mod windows_impl {
                                 "[stress-kit/gpu_display] {}: mode set to {width}x{height}@{hz}",
                                 output.device
                             );
-                            window.move_to(output.x, output.y, width, height);
-                            config.width = width.max(1);
-                            config.height = height.max(1);
-                            shared.with_quiesce(&octx, stop, true, || {
-                                surface.configure(&ctx.device, &config)
-                            });
+                            presenter.window.move_to(output.x, output.y, width, height);
+                            presenter.config.width = width.max(1);
+                            presenter.config.height = height.max(1);
+                            if request_configure(
+                                shared,
+                                &octx,
+                                stop,
+                                &mut presenter.worker,
+                                &presenter.surface,
+                                &presenter.config,
+                                true,
+                            ) == ConfigureOutcome::Wedged
+                            {
+                                recovering = true;
+                                recovering_since = Instant::now();
+                                drop(submit.take());
+                                warn_configure_wedged(shared, &output.device);
+                            }
                             expect_outdated_until = Instant::now() + SELF_INFLICTED_GRACE;
                         }
                         Err(e) => shared.set_warn(format!("gpu_display: {e}")),
@@ -1438,36 +1894,104 @@ mod windows_impl {
             .map_err(|e| e.to_string())
     }
 
+    /// One (re)configure of `surface`, serialized against sibling configures
+    /// and presents by the quiesce handshake and bounded by the worker.
+    #[allow(clippy::too_many_arguments)]
+    fn request_configure(
+        shared: &Shared,
+        octx: &OutputCtx<'_>,
+        stop: &AtomicBool,
+        worker: &mut SurfaceWorker,
+        surface: &Arc<wgpu::Surface<'static>>,
+        config: &wgpu::SurfaceConfiguration,
+        self_submits: bool,
+    ) -> ConfigureOutcome {
+        match shared.with_quiesce(octx, stop, self_submits, || {
+            worker.submit((surface.clone(), config.clone()), octx, stop)
+        }) {
+            // Counted only when the stage is still running: a teardown that
+            // interrupts a configure is not the stage obstructing itself.
+            Some(ConfigureOutcome::Wedged) if !stop.load(Ordering::Relaxed) => {
+                shared.configure_wedges.fetch_add(1, Ordering::Relaxed);
+                ConfigureOutcome::Wedged
+            }
+            Some(ConfigureOutcome::Wedged) | None => ConfigureOutcome::Skipped,
+            Some(outcome) => outcome,
+        }
+    }
+
+    /// Says which output stopped presenting and why, in the stage's own words:
+    /// a configure that does not return is the tool, not the display path.
+    /// Carries the limit marker, never the inconclusive one, so the runner
+    /// keeps it as a warning on the stage instead of failing the run.
+    fn warn_configure_wedged(shared: &Shared, device: &str) {
+        shared.set_warn(format!(
+            "gpu_display: {} Surface::configure on {device} has not returned after {}s, so that \
+             output stopped presenting while the others carry on; it is rebuilt if the call \
+             stays out. A configure waits for its device to go idle with no timeout; this is the \
+             stressor blocking itself and is not evidence about the display path. Coverage \
+             limit imposed by the tool, not a hardware fault.",
+            crate::STRESSOR_LIMIT_MARKER,
+            CONFIGURE_WAIT.as_secs()
+        ));
+    }
+
+    /// Says an output is presenting again on a fresh window, device and
+    /// swapchain, and that the stuck attempt was left behind to get there.
+    fn warn_rebuilt(shared: &Shared, device: &str, rebuilds: u32) {
+        shared.set_warn(format!(
+            "gpu_display: {} rebuilt the window, device and swapchain on {device} (rebuild \
+             {rebuilds} of {MAX_REBUILDS}) after Surface::configure did not return within {}s; \
+             the stuck call is left on its own thread and that output is presenting again. \
+             Coverage was interrupted by the tool, not by a hardware fault.",
+            crate::STRESSOR_LIMIT_MARKER,
+            CONFIGURE_WAIT.as_secs()
+        ));
+    }
+
+    /// Says an output stays down: every rebuild ended in another configure
+    /// that did not return, so the stage stops leaking attempts on it.
+    fn warn_rebuilds_exhausted(shared: &Shared, device: &str) {
+        shared.set_warn(format!(
+            "gpu_display: {} {device} stays down for the rest of the stage: {MAX_REBUILDS} \
+             rebuild(s) each ended in a Surface::configure that did not return within {}s, and \
+             the other outputs carry on without it. Coverage limit imposed by the tool, not a \
+             hardware fault.",
+            crate::STRESSOR_LIMIT_MARKER,
+            CONFIGURE_WAIT.as_secs()
+        ));
+    }
+
     /// First configure of a fresh surface, serialized against sibling
-    /// configures and presents. Bounded retries; `false` when it never ran.
+    /// configures and presents. Bounded retries.
+    #[allow(clippy::too_many_arguments)]
     fn configure_initial(
-        surface: &wgpu::Surface<'static>,
-        ctx: &Arc<GpuContext>,
+        surface: &Arc<wgpu::Surface<'static>>,
         config: &wgpu::SurfaceConfiguration,
         shared: &Shared,
         octx: &OutputCtx<'_>,
         stop: &AtomicBool,
-    ) -> bool {
+        worker: &mut SurfaceWorker,
+    ) -> ConfigureOutcome {
         for _ in 0..INITIAL_CONFIGURE_ATTEMPTS {
             if stop.load(Ordering::Relaxed) {
-                return false;
+                return ConfigureOutcome::Skipped;
             }
             // Each attempt is progress: bring-up next to saturated CPU lanes
             // can take several quiesce rounds, and a thread still working
             // through them is not wedged.
             octx.stats.progress.fetch_add(1, Ordering::Relaxed);
-            if shared
-                .with_quiesce(octx, stop, false, || surface.configure(&ctx.device, config))
-                .is_some()
-            {
-                return true;
+            match request_configure(shared, octx, stop, worker, surface, config, false) {
+                ConfigureOutcome::Skipped => {}
+                outcome => return outcome,
             }
         }
-        false
+        ConfigureOutcome::Skipped
     }
 
     fn draw_and_present(
-        ctx: &Arc<GpuContext>,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
         pipeline: &wgpu::RenderPipeline,
         bind_group: &wgpu::BindGroup,
         frame: wgpu::SurfaceTexture,
@@ -1475,11 +1999,9 @@ mod windows_impl {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = ctx
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("gpu_display encoder"),
-            });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("gpu_display encoder"),
+        });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("gpu_display pass"),
@@ -1501,17 +2023,16 @@ mod windows_impl {
             pass.set_bind_group(0, bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
-        ctx.queue.submit(std::iter::once(encoder.finish()));
-        ctx.queue.present(frame);
+        queue.submit(std::iter::once(encoder.finish()));
+        queue.present(frame);
     }
 
     /// Cycles present mode, frame latency, and the presented size — the
-    /// swapchain rebuild path a mode change also takes. Returns false when the
-    /// siblings never went quiet, leaving `config` updated for a later attempt.
+    /// swapchain rebuild path a mode change also takes. `config` is left
+    /// updated for a later attempt when the configure does not run.
     #[allow(clippy::too_many_arguments)]
     fn reconfigure(
-        surface: &wgpu::Surface<'static>,
-        ctx: &Arc<GpuContext>,
+        surface: &Arc<wgpu::Surface<'static>>,
         config: &mut wgpu::SurfaceConfiguration,
         present_modes: &[wgpu::PresentMode],
         step: usize,
@@ -1520,7 +2041,8 @@ mod windows_impl {
         shared: &Shared,
         octx: &OutputCtx<'_>,
         stop: &AtomicBool,
-    ) -> bool {
+        worker: &mut SurfaceWorker,
+    ) -> ConfigureOutcome {
         if !present_modes.is_empty() {
             config.present_mode = present_modes[step % present_modes.len()];
         }
@@ -1535,9 +2057,7 @@ mod windows_impl {
         window.move_to(output.x, output.y, width, height);
         config.width = width;
         config.height = height;
-        shared
-            .with_quiesce(octx, stop, true, || surface.configure(&ctx.device, config))
-            .is_some()
+        request_configure(shared, octx, stop, worker, surface, config, true)
     }
 
     /// The modes one output rotates through, native mode first.
@@ -1797,6 +2317,112 @@ mod windows_impl {
             assert_eq!(shared.parked.load(Ordering::SeqCst), 0, "a park was leaked");
         }
 
+        /// A configure worker that blocks until released, standing in for a
+        /// `Surface::configure` that does not return.
+        fn spawn_blocking_worker(release: Arc<AtomicBool>) -> ConfigureWorker<()> {
+            ConfigureWorker::spawn(0, move |()| {
+                while !release.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            })
+            .expect("spawn configure worker")
+        }
+
+        /// The wedge from service order 2151936, at the call that causes it:
+        /// `Surface::configure` waits for its device — present queue included —
+        /// with no timeout, so it must be bounded off-thread or it takes the
+        /// stage with it.
+        #[test]
+        fn a_configure_that_never_returns_is_bounded() {
+            let release = Arc::new(AtomicBool::new(false));
+            let mut worker = spawn_blocking_worker(release.clone());
+            let stop = AtomicBool::new(false);
+            let stats = OutputStats::default();
+            let ctx = test_ctx(&stats);
+
+            let started = Instant::now();
+            let outcome = worker.submit((), &ctx, &stop);
+            let waited = started.elapsed();
+
+            assert_eq!(outcome, ConfigureOutcome::Wedged);
+            assert!(
+                waited >= CONFIGURE_WAIT && waited < CONFIGURE_WAIT + Duration::from_secs(2),
+                "the caller waited {waited:?} on a configure bounded at {CONFIGURE_WAIT:?}"
+            );
+            // Still running: presenting again before it answers is the
+            // half-built-swapchain race.
+            assert!(
+                !worker.settled(),
+                "a running configure reported as finished"
+            );
+
+            release.store(true, Ordering::SeqCst);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !worker.settled() {
+                assert!(Instant::now() < deadline, "the worker never came back");
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+
+        /// A wedged configure must cost one output, not the stage: the pause
+        /// is lifted and the turn goes back, so the siblings resume.
+        #[test]
+        fn a_wedged_configure_releases_the_handshake() {
+            let release = Arc::new(AtomicBool::new(false));
+            let mut worker = spawn_blocking_worker(release.clone());
+            let shared = Arc::new(Shared::default());
+            let stop = Arc::new(AtomicBool::new(false));
+            let presenter = spawn_presenter(shared.clone(), stop.clone());
+            await_submitters(&shared, 1);
+
+            let stats = OutputStats::default();
+            let ctx = test_ctx(&stats);
+            let outcome = shared
+                .with_quiesce(&ctx, &stop, false, || worker.submit((), &ctx, &stop))
+                .expect("the handshake never reached the configure");
+
+            assert_eq!(outcome, ConfigureOutcome::Wedged);
+            assert!(
+                !shared.configure_pause.load(Ordering::SeqCst),
+                "a wedged configure left every sibling parked"
+            );
+            assert!(
+                shared.configure_turn.try_lock().is_ok(),
+                "a wedged configure kept the turn, so no sibling can ever configure"
+            );
+
+            release.store(true, Ordering::SeqCst);
+            stop.store(true, Ordering::SeqCst);
+            presenter.join().unwrap();
+            assert_eq!(shared.parked.load(Ordering::SeqCst), 0, "a park was leaked");
+        }
+
+        /// The handshake plus a bounded configure must fit inside the
+        /// watchdog: siblings present nothing while they are parked, so a
+        /// configure allowed to run longer than the stall bound would trip the
+        /// watchdog on a stage that is about to recover on its own.
+        #[test]
+        fn a_bounded_configure_fits_inside_the_watchdog() {
+            assert!(
+                TURN_WAIT + QUIESCE_TIMEOUT + CONFIGURE_WAIT < WATCHDOG_STALL,
+                "a configure can hold the siblings parked past the watchdog's fuse"
+            );
+            assert!(
+                CONFIGURE_WAIT < QUIESCE_PARK_MAX,
+                "a parked sibling gives up before the configure it is parked for does"
+            );
+            assert!(
+                CONFIGURE_WAIT + REBUILD_AFTER < WATCHDOG_STALL,
+                "a stage whose every output wedges at once must reach its rebuilds — which \
+                 count as progress — before the watchdog gives up on it"
+            );
+            assert!(
+                CONFIGURE_WAIT + REBUILD_AFTER < COVERAGE_WARMUP,
+                "an output whose first configure wedged must be rebuilt before the coverage \
+                 count settles, or every startup wedge files a shortfall it then has to resolve"
+            );
+        }
+
         /// The park bound must outlast the watchdog, or a sibling parked for a
         /// wedged configure resumes and submits into a half-built swapchain in
         /// the window between the two — the crash the handshake exists to stop.
@@ -1889,6 +2515,7 @@ mod windows_impl {
             shared.outputs[0].set_phase(Phase::Configuring);
             shared.outputs[1].set_phase(Phase::AwaitingTurn);
             shared.turn_timeouts.store(4, Ordering::Relaxed);
+            shared.outputs_rebuilt.store(2, Ordering::Relaxed);
 
             let start = Instant::now();
             let stall = Duration::from_millis(120);
@@ -1916,6 +2543,10 @@ mod windows_impl {
             assert!(
                 report.contains("TOOL failure"),
                 "the report does not say whose fault this is: {report}"
+            );
+            assert!(
+                report.contains("2 output rebuild(s)"),
+                "the report does not say how many outputs were rebuilt: {report}"
             );
         }
 
@@ -2043,6 +2674,100 @@ mod windows_impl {
             assert!(warn.contains("timed out"), "{warn}");
         }
 
+        /// A configure that comes back late resolves the note it filed, and
+        /// the note itself is the tool limiting its own coverage — never an
+        /// `inconclusive -`, which would grade an otherwise clean 1800s run as
+        /// proving nothing.
+        #[test]
+        fn a_recovered_configure_resolves_its_own_complaint() {
+            let mut shared = Shared::default();
+            shared.outputs.resize_with(2, OutputStats::default);
+            let shared = Arc::new(shared);
+            let settled = COVERAGE_WARMUP + Duration::from_secs(1);
+            for stats in &shared.outputs {
+                stats.presented.store(1, Ordering::Relaxed);
+            }
+
+            warn_configure_wedged(&shared, r"\\.\DISPLAY3");
+            let note = standing_note(&shared, 2, true, settled).expect("complaint expected");
+            assert!(note.contains(crate::STRESSOR_LIMIT_MARKER), "{note}");
+            assert!(
+                !note.contains("inconclusive -"),
+                "a tool limit carries the inconclusive marker, which fails the run: {note}"
+            );
+            assert!(note.contains("DISPLAY3"), "{note}");
+
+            // The resolution outranks the standing warn, and fires once.
+            shared.configure_recovered.store(true, Ordering::SeqCst);
+            let resolved = standing_note(&shared, 2, true, settled).expect("resolution expected");
+            assert!(resolved.starts_with("resolved -"), "{resolved}");
+            let warn = standing_note(&shared, 2, true, settled).expect("warn expected");
+            assert!(warn.contains("has not returned"), "{warn}");
+        }
+
+        /// Every note the rebuild path files is the tool limiting itself: it
+        /// carries the limit marker and neither the inconclusive nor the hang
+        /// one, so the runner keeps it as a warning instead of failing the run
+        /// or grading it a wedge.
+        #[test]
+        fn rebuild_notes_carry_the_limit_marker_only() {
+            let shared = Shared::default();
+            let device = r"\\.\DISPLAY2";
+            warn_configure_wedged(&shared, device);
+            let wedged = shared.warn().expect("wedge note");
+            warn_rebuilt(&shared, device, 2);
+            let rebuilt = shared.warn().expect("rebuilt note");
+            warn_rebuilds_exhausted(&shared, device);
+            let exhausted = shared.warn().expect("exhausted note");
+            for note in [&wedged, &rebuilt, &exhausted] {
+                assert!(
+                    note.contains(crate::STRESSOR_LIMIT_MARKER),
+                    "no limit marker: {note}"
+                );
+                assert!(
+                    !note.to_ascii_lowercase().contains("inconclusive -"),
+                    "a tool limit carries the inconclusive marker, which fails the run: {note}"
+                );
+                assert!(
+                    !note.contains(crate::STRESSOR_HANG_MARKER),
+                    "a tool limit carries the hang marker, which grades the run a wedge: {note}"
+                );
+                assert!(note.contains("DISPLAY2"), "{note}");
+            }
+            assert!(
+                rebuilt.contains(&format!("rebuild 2 of {MAX_REBUILDS}")),
+                "{rebuilt}"
+            );
+            assert!(
+                exhausted.contains(&format!("{MAX_REBUILDS} rebuild(s)")),
+                "{exhausted}"
+            );
+        }
+
+        /// The recovery policy: wait out the grace, rebuild a stuck worker up
+        /// to the cap, re-run a first configure the handshake turned away
+        /// without leaking anything, and stop at the cap.
+        #[test]
+        fn recovery_waits_then_rebuilds_then_gives_up() {
+            let early = REBUILD_AFTER - Duration::from_millis(1);
+            let due = REBUILD_AFTER;
+            assert_eq!(recovery_step(early, true, 0), Recovery::Wait);
+            assert_eq!(recovery_step(early, false, 0), Recovery::Wait);
+            assert_eq!(recovery_step(due, true, 0), Recovery::Rebuild);
+            assert_eq!(
+                recovery_step(due, true, MAX_REBUILDS - 1),
+                Recovery::Rebuild
+            );
+            assert_eq!(recovery_step(due, true, MAX_REBUILDS), Recovery::Exhausted);
+            assert_eq!(
+                recovery_step(due, false, MAX_REBUILDS),
+                Recovery::Reconfigure,
+                "an unconfigured swapchain with no call out must be retried, never leaked or \
+                 given up on"
+            );
+            assert_eq!(Phase::from_u8(Phase::Rebuilding as u8), Phase::Rebuilding);
+        }
+
         /// A small window standing in for one output; the race under test is
         /// per-device, not per-monitor.
         fn test_output(base: &Output, offset_x: i32, name: &str) -> Output {
@@ -2057,13 +2782,16 @@ mod windows_impl {
             }
         }
 
-        fn present_clear_frame(ctx: &GpuContext, frame: wgpu::SurfaceTexture) {
+        fn present_clear_frame(
+            device: &wgpu::Device,
+            queue: &wgpu::Queue,
+            frame: wgpu::SurfaceTexture,
+        ) {
             let view = frame
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
-            let mut encoder = ctx
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            let mut encoder =
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
             {
                 let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: None,
@@ -2082,19 +2810,26 @@ mod windows_impl {
                     multiview_mask: None,
                 });
             }
-            ctx.queue.submit(std::iter::once(encoder.finish()));
-            ctx.queue.present(frame);
+            queue.submit(std::iter::once(encoder.finish()));
+            queue.present(frame);
         }
 
         /// Regression pin for the dual-output startup crash (ntdll heap AV,
-        /// run `be8996be` on DESKTOP-NFOQK4J): the second swapchain's first
-        /// configure runs while the first presents flat out on the same
-        /// device. Serialized correctly, both outputs present and the device
-        /// reports no errors. Run it deliberately with
+        /// run `be8996be` on DESKTOP-NFOQK4J) in the topology the stage now
+        /// uses: one logical device per output on one adapter, the second
+        /// swapchain's first configure running while the first presents flat
+        /// out. Both outputs present and neither device reports an error.
+        ///
+        /// The two surfaces deliberately do not share a device. `configure`
+        /// waits for its device's present queue to drain, so a shared one
+        /// makes each rebuild wait on flips the parked sibling has stopped
+        /// draining — the wedge on service order 2151936.
+        ///
+        /// Run it deliberately with
         /// `cargo test -p stress-kit --lib -- --ignored two_swapchains`.
         #[test]
         #[ignore = "creates windows and drives real swapchains on whatever adapter answers"]
-        fn two_swapchains_share_one_device_from_startup() {
+        fn two_swapchains_on_one_adapter_from_startup() {
             let Some(base) = enumerate_outputs().into_iter().next() else {
                 eprintln!("no attached outputs in this session");
                 return;
@@ -2123,24 +2858,29 @@ mod windows_impl {
                 },
             ))
             .expect("adapter");
-            let (device, queue) = pollster::block_on(
-                adapter.request_device(&wgpu::DeviceDescriptor {
-                    label: Some("two swapchain test"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
-                    experimental_features: wgpu::ExperimentalFeatures::disabled(),
-                    memory_hints: wgpu::MemoryHints::Performance,
-                    trace: wgpu::Trace::Off,
-                }),
-            )
-            .expect("device");
 
             let uncaptured = Arc::new(AtomicU64::new(0));
-            let uncaptured_in_handler = uncaptured.clone();
-            device.on_uncaptured_error(Arc::new(move |e| {
-                eprintln!("uncaptured device error: {e}");
-                uncaptured_in_handler.fetch_add(1, Ordering::Relaxed);
-            }));
+            let request = |label: &'static str| {
+                let (device, queue) = pollster::block_on(adapter.request_device(
+                    &wgpu::DeviceDescriptor {
+                        label: Some(label),
+                        required_features: wgpu::Features::empty(),
+                        required_limits: wgpu::Limits::default(),
+                        experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                        memory_hints: wgpu::MemoryHints::Performance,
+                        trace: wgpu::Trace::Off,
+                    },
+                ))
+                .unwrap_or_else(|e| panic!("{label}: {e}"));
+                let counter = uncaptured.clone();
+                device.on_uncaptured_error(Arc::new(move |e| {
+                    eprintln!("uncaptured device error: {e}");
+                    counter.fetch_add(1, Ordering::Relaxed);
+                }));
+                (device, queue)
+            };
+            let (device, queue) = request("two swapchain test A");
+            let (device_b, queue_b) = request("two swapchain test B");
 
             let info = adapter.get_info();
             eprintln!("adapter: {} ({:?})", info.name, info.backend);
@@ -2170,17 +2910,23 @@ mod windows_impl {
                     .name("test-presenter-a".into())
                     .spawn(move || {
                         let window = OutputWindow::new(&out_a).expect("window A");
-                        let surface =
+                        let surface = Arc::new(
                             create_surface(&ctx, window.raw_handle().expect("raw A"))
-                                .expect("surface A");
+                                .expect("surface A"),
+                        );
                         let config = surface
                             .get_default_config(&ctx.adapter, out_a.width, out_a.height)
                             .expect("config A");
                         let stats = OutputStats::default();
                         let pump = || window.pump();
                         let octx = OutputCtx { stats: &stats, pump: &pump };
-                        assert!(
-                            configure_initial(&surface, &ctx, &config, &shared, &octx, &stop),
+                        let configure_a = ctx.device.clone();
+                        let configure = move |(s, c): ConfigureRequest| s.configure(&configure_a, &c);
+                        let mut worker = SurfaceWorker::spawn(0, configure).expect("worker A");
+                        let first = configure_initial(&surface, &config, &shared, &octx, &stop, &mut worker);
+                        assert_eq!(
+                            first,
+                            ConfigureOutcome::Ran,
                             "first configure of surface A never ran"
                         );
                         let _submit = SubmitGuard::enter(&shared.submitters);
@@ -2190,7 +2936,7 @@ mod windows_impl {
                             match surface.get_current_texture() {
                                 wgpu::CurrentSurfaceTexture::Success(frame)
                                 | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
-                                    present_clear_frame(&ctx, frame);
+                                    present_clear_frame(&ctx.device, &ctx.queue, frame);
                                     presented.fetch_add(1, Ordering::Relaxed);
                                 }
                                 other => {
@@ -2213,14 +2959,21 @@ mod windows_impl {
                 std::thread::sleep(Duration::from_millis(10));
             }
 
+            let surface_b = Arc::new(surface_b);
             let config_b = surface_b
                 .get_default_config(&ctx.adapter, out_b.width, out_b.height)
                 .expect("config B");
             let stats_b = OutputStats::default();
             let pump_b = || window_b.pump();
             let octx_b = OutputCtx { stats: &stats_b, pump: &pump_b };
-            assert!(
-                configure_initial(&surface_b, &ctx, &config_b, &shared, &octx_b, &stop),
+            let configure_b = device_b.clone();
+            let configure = move |(s, c): ConfigureRequest| s.configure(&configure_b, &c);
+            let mut worker_b = SurfaceWorker::spawn(1, configure).expect("worker B");
+            let first_b =
+                configure_initial(&surface_b, &config_b, &shared, &octx_b, &stop, &mut worker_b);
+            assert_eq!(
+                first_b,
+                ConfigureOutcome::Ran,
                 "surface B's first configure never ran while A was presenting"
             );
 
@@ -2234,7 +2987,7 @@ mod windows_impl {
                     match surface_b.get_current_texture() {
                         wgpu::CurrentSurfaceTexture::Success(frame)
                         | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
-                            present_clear_frame(&ctx, frame);
+                            present_clear_frame(&device_b, &queue_b, frame);
                             presented_b += 1;
                         }
                         other => {

@@ -1,0 +1,76 @@
+# Dual-key identity tables for the Shopify migration (Documentation/SHOPIFY_MIGRATION.md §0.6, outside this repo).
+#
+# PrestaShop numbers orders and customers with integers, Shopify with GIDs.
+# Rather than rewrite Mastertech's integer-keyed data, both keys are recorded
+# side by side so `order_identity` can become the routing authority — the
+# backend that owns an order is looked up instead of inferred from the key's
+# digit shape (`OrderKey::parse`, §4 L2), which today sends Shopify order
+# #200000 to PrestaShop and 404s with no log.
+#
+# Purely additive: two new tables, no existing table touched, nothing backfilled.
+# Reads fall back to the old shape heuristic while the tables are empty, so this
+# is inert until something starts stamping rows.
+#
+# Every optional key is `DEFAULT NONE`, never `''` or `0`. A UNIQUE index admits
+# any number of NONE rows but still rejects a duplicate real id; a sentinel
+# default would instead collapse every "not in this system" row onto one value
+# and let the index latch after the first — the `user.id_prestashop` bug.
+#
+# Indexes are defined after the fields they cover: a file is applied in order and
+# an index on a not-yet-defined field aborts the sync.
+id = "20260829010000__order_customer_identity"
+name = "order_customer_identity"
+state = "planned"
+source_schema_hash = "a6e49c11032eae543686c5e6ab58bcbee03104ae9e2343d60c25d03d155d493c"
+target_schema_hash = "a6e49c11032eae543686c5e6ab58bcbee03104ae9e2343d60c25d03d155d493c"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "define_order_identity"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE order_identity TYPE ANY SCHEMAFULL PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE ps_id                ON order_identity TYPE none | string DEFAULT NONE PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE shopify_gid          ON order_identity TYPE none | string DEFAULT NONE PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE shopify_order_number ON order_identity TYPE none | string DEFAULT NONE PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE everest_doc          ON order_identity TYPE none | string DEFAULT NONE PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE reference            ON order_identity TYPE none | string DEFAULT NONE PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE backend              ON order_identity TYPE string ASSERT $value IN ['prestashop', 'shopify'] PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE created_at           ON order_identity TYPE datetime DEFAULT time::now() PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE updated_at           ON order_identity TYPE datetime DEFAULT time::now() PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE order_identity_ps_idx        ON order_identity FIELDS ps_id UNIQUE;
+DEFINE INDEX OVERWRITE order_identity_gid_idx       ON order_identity FIELDS shopify_gid UNIQUE;
+DEFINE INDEX OVERWRITE order_identity_number_idx    ON order_identity FIELDS shopify_order_number;
+DEFINE INDEX OVERWRITE order_identity_everest_idx   ON order_identity FIELDS everest_doc;
+DEFINE INDEX OVERWRITE order_identity_reference_idx ON order_identity FIELDS reference;
+"""
+
+[[steps]]
+id = "define_customer_identity"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE customer_identity TYPE ANY SCHEMAFULL PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE ps_id       ON customer_identity TYPE none | string DEFAULT NONE PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE shopify_gid ON customer_identity TYPE none | string DEFAULT NONE PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE cust_code   ON customer_identity TYPE none | string DEFAULT NONE PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE email       ON customer_identity TYPE none | string DEFAULT NONE PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE backend     ON customer_identity TYPE string ASSERT $value IN ['prestashop', 'shopify'] PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE created_at  ON customer_identity TYPE datetime DEFAULT time::now() PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE updated_at  ON customer_identity TYPE datetime DEFAULT time::now() PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE customer_identity_ps_idx    ON customer_identity FIELDS ps_id UNIQUE;
+DEFINE INDEX OVERWRITE customer_identity_gid_idx   ON customer_identity FIELDS shopify_gid UNIQUE;
+DEFINE INDEX OVERWRITE customer_identity_code_idx  ON customer_identity FIELDS cust_code;
+DEFINE INDEX OVERWRITE customer_identity_email_idx ON customer_identity FIELDS email;
+"""
+
+[[steps]]
+id = "drop_identity_tables"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE TABLE IF EXISTS order_identity;
+REMOVE TABLE IF EXISTS customer_identity;
+"""

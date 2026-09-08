@@ -21,10 +21,13 @@ lowlevel = ["dep:raw-cpuid"]
 backend-winring0 = ["lowlevel"]
 # Mastertech's own signed driver with a fixed register allowlist.
 backend-mtdrv = ["lowlevel"]
+# Intel DPTF/ESIF package temperature over WMI. No driver and no elevation, so
+# it reads where WinRing0 will not load; temperature only, no board rails.
+backend-esif-wmi = ["lowlevel"]
 # Scripted backend so downstream crates can test the readers without hardware.
 mock-backend = ["lowlevel"]
 # What the apps enable.
-hw-sensors = ["backend-winring0"]
+hw-sensors = ["backend-winring0", "backend-esif-wmi"]
 # Deprecated alias kept so consumers keep building through the migration.
 winring0-thermal = ["backend-winring0"]
 # JsonSchema derive on wire types for MCP consumers (unifies with rmcp's schemars 1.x).

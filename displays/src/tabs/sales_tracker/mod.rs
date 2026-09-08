@@ -360,7 +360,8 @@ impl SalesTracker {
 					OrderType::ReadyToRoll => spiffs_total += 5.0,
 					OrderType::Rci => spiffs_total += 5.0,
 					OrderType::Bsd => spiffs_total += 25.0,
-					OrderType::SalesOrder | OrderType::ServiceOrder => {}
+					// Unknown pays no spiff.
+					OrderType::SalesOrder | OrderType::ServiceOrder | OrderType::RepairOrder | OrderType::Unknown => {}
 				}
 			}
 

@@ -46,6 +46,10 @@
       "hash": "0bba0576753ccde3f5abd0e879f0637b718fd9d67e724f751f0bf179222a3d1b"
     },
     {
+      "path": "database/schema/customer_identity.surql",
+      "hash": "64745b4c9d4421ecc39ae27712a33da6819840ccb46a48fc582b88a2a809b77c"
+    },
+    {
       "path": "database/schema/diagnostic_entry.surql",
       "hash": "10251dce2d8687ce12e2a5ff4b56fb736e336538ce3faadb643ae8484dca9a4d"
     },
@@ -92,6 +96,10 @@
     {
       "path": "database/schema/notification.surql",
       "hash": "4f1095f47412d80cee5fcf3a0ee9c9294b73d495efa222f6d8f602e54d728b7f"
+    },
+    {
+      "path": "database/schema/order_identity.surql",
+      "hash": "dd14211595efc0be8bff36cb770aed6fe8bcaff53bc4354cf174dc872fc2964e"
     },
     {
       "path": "database/schema/plugin_registry.surql",
@@ -159,7 +167,7 @@
     },
     {
       "path": "database/schema/user.surql",
-      "hash": "2b0a3010738497d767211caeaa19e459bad2aa364e81862466313b74ba771044"
+      "hash": "b262074a79594df536e21fa9673be1e9fe7207facd07dce40fc75de7e3af1bb6"
     },
     {
       "path": "database/schema/user_message.surql",

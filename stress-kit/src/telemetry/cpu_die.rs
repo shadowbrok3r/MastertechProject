@@ -4,12 +4,18 @@
 //! exposes Tctl through the SMU over SMN. Both need kernel-mode access, which
 //! comes from whichever [`crate::lowlevel`] backend is live — this module owns
 //! only the register decode and plausibility limits.
+//!
+//! A backend that vends whole degrees instead of registers (Intel DPTF over WMI)
+//! is read through the same monitor: it has no per-core sensor, so it publishes
+//! the hottest measuring domain of the processor participant as the package
+//! value and every domain alongside it.
 
 use std::time::{Duration, Instant};
 
-use crate::lowlevel::LowLevelAccess;
+use crate::lowlevel::{DomainTemp, LowLevelAccess};
 
-use super::{CpuDieReader, CpuDieThermal};
+use super::cpu_ceiling::{self, CpuThermalCeiling, CpuVendor};
+use super::{CpuDieReader, CpuDieThermal, ThermalReading};
 
 const MSR_TEMPERATURE_TARGET: u32 = 0x1A2;
 const IA32_THERM_STATUS: u32 = 0x19C;
@@ -33,18 +39,15 @@ const _: () = assert!(
     "cache would expire before the next read could refresh it"
 );
 
-#[derive(Clone, Copy, PartialEq)]
-enum Vendor {
-    Intel,
-    Amd,
-    Other,
-}
-
 pub struct CpuDieMonitor {
     access: LowLevelAccess,
-    vendor: Vendor,
+    vendor: CpuVendor,
     tj_max: u32,
+    /// The part's own thermal ceiling, resolved once at open.
+    ceiling: Option<CpuThermalCeiling>,
     cached: Option<CpuDieThermal>,
+    /// Per-domain readings behind `cached`; empty on every register-decode path.
+    cached_domains: Vec<ThermalReading>,
     last_polled: Instant,
     /// Timestamp of the last read that produced a die value.
     last_good: Instant,
@@ -54,12 +57,12 @@ impl CpuDieMonitor {
     /// `None` when the live backend cannot reach this vendor's die sensor, or
     /// when no plausible reading came back on the first try.
     pub fn open(access: LowLevelAccess) -> Option<Self> {
-        let vendor = detect_vendor();
+        let vendor = cpu_ceiling::vendor();
         let caps = access.capabilities();
         let reachable = match vendor {
-            Vendor::Intel => caps.msr,
-            Vendor::Amd => caps.smn,
-            Vendor::Other => false,
+            CpuVendor::Intel => caps.msr || caps.package_temp,
+            CpuVendor::Amd => caps.smn,
+            CpuVendor::Other => false,
         };
         if !reachable {
             log::debug!(
@@ -73,13 +76,19 @@ impl CpuDieMonitor {
             access,
             vendor,
             tj_max: 100,
+            ceiling: None,
             cached: None,
+            cached_domains: Vec::new(),
             last_polled: Instant::now() - MIN_POLL_INTERVAL,
             last_good: Instant::now(),
         };
-        if vendor == Vendor::Intel {
-            me.tj_max = me.read_tjmax();
+        let mut msr_tjmax = None;
+        if vendor == CpuVendor::Intel {
+            // Only a value the register returned; the fallback is not a ceiling.
+            msr_tjmax = me.read_tjmax();
+            me.tj_max = msr_tjmax.unwrap_or(100);
         }
+        me.ceiling = cpu_ceiling::detect(msr_tjmax);
         me.cached = me.read_all();
         me.last_good = Instant::now();
         match me.cached.as_ref() {
@@ -95,6 +104,17 @@ impl CpuDieMonitor {
             ),
         }
         Some(me)
+    }
+
+    /// The part's own thermal ceiling; `None` when it could not be resolved.
+    pub fn ceiling(&self) -> Option<CpuThermalCeiling> {
+        self.ceiling
+    }
+
+    /// Per-domain readings behind the cached package value. Empty on the MSR and
+    /// SMN paths, and cleared with the cache so a dropped reading never replays.
+    pub fn domain_thermals(&self) -> Vec<ThermalReading> {
+        self.cached_domains.clone()
     }
 
     /// Latest die readings, throttled to [`MIN_POLL_INTERVAL`]. A failed read
@@ -114,6 +134,7 @@ impl CpuDieMonitor {
             None => {
                 if self.access.confirm_lost("CPU die read") {
                     self.cached = None;
+                    self.cached_domains.clear();
                 } else {
                     self.drop_stale_cache();
                 }
@@ -133,14 +154,39 @@ impl CpuDieMonitor {
              dropping cached temps instead of republishing them"
         );
         self.cached = None;
+        self.cached_domains.clear();
     }
 
-    fn read_all(&self) -> Option<CpuDieThermal> {
+    /// Intel prefers the DTS registers; the DPTF path serves the parts whose
+    /// backend can reach no register at all.
+    fn read_all(&mut self) -> Option<CpuDieThermal> {
         match self.vendor {
-            Vendor::Intel => self.read_intel(),
-            Vendor::Amd => self.read_amd(),
-            Vendor::Other => None,
+            CpuVendor::Intel if self.access.capabilities().msr => self.read_intel(),
+            CpuVendor::Intel => self.read_dptf(),
+            CpuVendor::Amd => self.read_amd(),
+            CpuVendor::Other => None,
         }
+    }
+
+    /// Hottest measuring domain of the processor participant as the package
+    /// value, with every domain kept for `thermals`. Hottest rather than a fixed
+    /// index: the domains are unlabelled, and the one that tracks load is the one
+    /// that leads under it.
+    fn read_dptf(&mut self) -> Option<CpuDieThermal> {
+        let domains = self.access.package_temp()?.read_package_domains();
+        let package_c = hottest_domain(&domains)?;
+        self.cached_domains = domains
+            .iter()
+            .map(|d| ThermalReading {
+                label: format!("DPTF Domain {}", d.index),
+                temp_c: d.temp_c,
+            })
+            .collect();
+        Some(CpuDieThermal {
+            package_c: Some(package_c),
+            cores: Vec::new(),
+            reader: CpuDieReader::DptfParticipant,
+        })
     }
 
     /// Package DTS plus one DTS read per logical core; a core whose sensor does
@@ -179,11 +225,13 @@ impl CpuDieMonitor {
         })
     }
 
-    fn read_tjmax(&self) -> u32 {
-        match self.access.msr().and_then(|m| m.read_msr(MSR_TEMPERATURE_TARGET)) {
-            Some(v) => tjmax_from_msr(v),
-            None => 100,
-        }
+    /// `None` when the register did not answer, so no ceiling is claimed from a
+    /// fallback value.
+    fn read_tjmax(&self) -> Option<u32> {
+        self.access
+            .msr()
+            .and_then(|m| m.read_msr(MSR_TEMPERATURE_TARGET))
+            .map(tjmax_from_msr)
     }
 
     fn read_amd_tctl(&self) -> Option<f32> {
@@ -210,6 +258,14 @@ fn dts_temp(msr_value: Option<u64>, tj_max: u32) -> Option<f32> {
     Some(tj_max.saturating_sub(readout) as f32)
 }
 
+/// Hottest plausible domain reading; `None` when none survives the limits.
+fn hottest_domain(domains: &[DomainTemp]) -> Option<f32> {
+    domains
+        .iter()
+        .filter_map(|d| plausible_cpu_temp(d.temp_c))
+        .fold(None::<f32>, |acc, t| Some(acc.map_or(t, |m| m.max(t))))
+}
+
 /// Zen Tctl from `THM_CUR_TEMP`: bits 31:21 in 0.125 °C steps, less a 49 °C
 /// offset when the range-select bits are set. `None` for a dead register.
 fn tctl_temp(raw: u32) -> Option<f32> {
@@ -232,35 +288,17 @@ fn plausible_cpu_temp(t: f32) -> Option<f32> {
         .then_some(t)
 }
 
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-fn detect_vendor() -> Vendor {
-    let v = raw_cpuid::CpuId::new()
-        .get_vendor_info()
-        .map(|v| v.as_str().to_string())
-        .unwrap_or_default();
-    if v.contains("Intel") {
-        Vendor::Intel
-    } else if v.contains("AMD") {
-        Vendor::Amd
-    } else {
-        Vendor::Other
-    }
-}
-
-#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-fn detect_vendor() -> Vendor {
-    Vendor::Other
-}
-
 #[cfg(test)]
 impl CpuDieMonitor {
     /// Monitor over a scripted backend, bypassing CPUID vendor detection.
-    fn for_test(access: LowLevelAccess, vendor: Vendor, tj_max: u32) -> Self {
+    fn for_test(access: LowLevelAccess, vendor: CpuVendor, tj_max: u32) -> Self {
         Self {
             access,
             vendor,
             tj_max,
+            ceiling: None,
             cached: None,
+            cached_domains: Vec::new(),
             last_polled: Instant::now() - MIN_POLL_INTERVAL,
             last_good: Instant::now(),
         }
@@ -372,7 +410,7 @@ mod tests {
                 .unwrap()
                 .insert((cpu, IA32_THERM_STATUS), therm_status(20 + cpu as u32).unwrap());
         }
-        let monitor = CpuDieMonitor::for_test(access_over(mock), Vendor::Intel, 100);
+        let monitor = CpuDieMonitor::for_test(access_over(mock), CpuVendor::Intel, 100);
 
         let die = monitor.read_intel().expect("no die reading");
         assert_eq!(die.reader, CpuDieReader::IntelDts);
@@ -390,17 +428,118 @@ mod tests {
             .lock()
             .unwrap()
             .insert((0, IA32_PACKAGE_THERM_STATUS), therm_status(30).unwrap());
-        let monitor = CpuDieMonitor::for_test(access_over(mock), Vendor::Intel, 100);
+        let monitor = CpuDieMonitor::for_test(access_over(mock), CpuVendor::Intel, 100);
 
         let die = monitor.read_intel().expect("no die reading");
         assert_eq!(die.package_c, Some(70.0));
         assert!(die.cores.is_empty(), "no core answered, so no core slots publish");
     }
 
+    /// The DPTF backend vends degrees, so the package value is the hottest
+    /// measuring domain and every domain is kept for the thermals list.
+    #[test]
+    fn dptf_publishes_the_hottest_domain_and_keeps_them_all() {
+        let mock = MockBackend::package_temp_only()
+            .with_domain(0, 40.0)
+            .with_domain(2, 45.0)
+            .with_domain(3, 33.0);
+        let mut monitor = CpuDieMonitor::for_test(access_over(mock), CpuVendor::Intel, 100);
+
+        let die = monitor.read_all().expect("no die reading");
+        assert_eq!(die.reader, CpuDieReader::DptfParticipant);
+        assert_eq!(die.package_c, Some(45.0));
+        assert!(die.cores.is_empty(), "DPTF exposes no per-core sensor");
+        assert_eq!(
+            monitor
+                .domain_thermals()
+                .into_iter()
+                .map(|r| (r.label, r.temp_c))
+                .collect::<Vec<_>>(),
+            vec![
+                ("DPTF Domain 0".to_string(), 40.0),
+                ("DPTF Domain 2".to_string(), 45.0),
+                ("DPTF Domain 3".to_string(), 33.0),
+            ]
+        );
+    }
+
+    /// A DPTF reading is CPU-side but not the DTS, so it must not be graded as
+    /// a die reading nor as a board zone.
+    #[test]
+    fn dptf_reports_its_own_sensor_class() {
+        assert_eq!(
+            CpuDieReader::DptfParticipant.temp_source(),
+            crate::telemetry::CpuTempSource::DptfParticipant
+        );
+        assert_eq!(
+            CpuDieReader::IntelDts.temp_source(),
+            crate::telemetry::CpuTempSource::Die
+        );
+    }
+
+    /// A participant answering nothing publishes nothing rather than a zero.
+    #[test]
+    fn dptf_with_no_measuring_domain_publishes_nothing() {
+        let mock = MockBackend::package_temp_only();
+        let mut monitor = CpuDieMonitor::for_test(access_over(mock), CpuVendor::Intel, 100);
+        assert_eq!(monitor.read_all(), None);
+        assert!(monitor.domain_thermals().is_empty());
+    }
+
+    /// Implausible domain values are dropped by the same limits the register
+    /// paths use, so a garbage participant cannot publish a CPU temperature.
+    #[test]
+    fn implausible_domains_are_dropped_from_the_package_pick() {
+        assert_eq!(hottest_domain(&[]), None);
+        assert_eq!(
+            hottest_domain(&[DomainTemp { index: 0, temp_c: 1.0 }]),
+            None
+        );
+        assert_eq!(
+            hottest_domain(&[
+                DomainTemp { index: 0, temp_c: 200.0 },
+                DomainTemp { index: 1, temp_c: 61.0 },
+            ]),
+            Some(61.0)
+        );
+    }
+
+    /// An MSR-capable backend keeps the register path; DPTF is the fallback for
+    /// a backend that can reach no register at all.
+    #[test]
+    fn the_register_path_wins_when_the_backend_has_one() {
+        let mock = MockBackend::full().with_domain(0, 90.0);
+        mock.msrs
+            .lock()
+            .unwrap()
+            .insert((0, IA32_PACKAGE_THERM_STATUS), therm_status(30).unwrap());
+        let mut monitor = CpuDieMonitor::for_test(access_over(mock), CpuVendor::Intel, 100);
+
+        let die = monitor.read_all().expect("no die reading");
+        assert_eq!(die.reader, CpuDieReader::IntelDts);
+        assert_eq!(die.package_c, Some(70.0));
+    }
+
+    /// A backend with no MSR must not have the TjMax fallback published as the
+    /// part's own ceiling.
+    #[test]
+    fn a_missing_tjmax_register_claims_no_ceiling() {
+        let no_msr = CpuDieMonitor::for_test(
+            access_over(MockBackend::package_temp_only()),
+            CpuVendor::Intel,
+            100,
+        );
+        assert_eq!(no_msr.read_tjmax(), None);
+
+        let mock = MockBackend::full().with_msr(0, MSR_TEMPERATURE_TARGET, 105 << 16);
+        let with_msr = CpuDieMonitor::for_test(access_over(mock), CpuVendor::Intel, 100);
+        assert_eq!(with_msr.read_tjmax(), Some(105));
+    }
+
     #[test]
     fn amd_reads_tctl_over_smn() {
         let mock = MockBackend::full().with_smn(AMD_SMN_THM_CUR_TEMP, thm_cur_temp(560));
-        let monitor = CpuDieMonitor::for_test(access_over(mock), Vendor::Amd, 100);
+        let monitor = CpuDieMonitor::for_test(access_over(mock), CpuVendor::Amd, 100);
 
         let die = monitor.read_amd().expect("no die reading");
         assert_eq!(die.reader, CpuDieReader::AmdTctl);
@@ -415,7 +554,7 @@ mod tests {
         let mock = MockBackend::full().with_smn(AMD_SMN_THM_CUR_TEMP, thm_cur_temp(560));
         mock.fail_after.store(1, std::sync::atomic::Ordering::Relaxed);
         let access = access_over(mock);
-        let mut monitor = CpuDieMonitor::for_test(access.clone(), Vendor::Amd, 100);
+        let mut monitor = CpuDieMonitor::for_test(access.clone(), CpuVendor::Amd, 100);
 
         assert_eq!(monitor.read_all().and_then(|d| d.package_c), Some(70.0));
         monitor.cached = Some(CpuDieThermal {

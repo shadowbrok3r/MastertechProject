@@ -9,8 +9,10 @@ use super::{BackendId, LowLevelAccess, LowLevelBackend, RejectedBackend, WeakAcc
 const OVERRIDE_ENV: &str = "MTECH_LOWLEVEL_BACKEND";
 
 /// Priority order. Fixed, not configurable: a signed provider always beats an
-/// unsigned one on a customer machine.
-const ORDER: &[BackendId] = &[BackendId::Mtdrv, BackendId::WinRing0];
+/// unsigned one on a customer machine, and a driver that also reads board rails
+/// beats the WMI path that only reads a temperature.
+const ORDER: &[BackendId] =
+    &[BackendId::Mtdrv, BackendId::WinRing0, BackendId::EsifWmi];
 
 /// An opened backend and the sentence describing why it is live.
 type Opened = (Box<dyn LowLevelBackend>, String);
@@ -20,6 +22,7 @@ fn parse_override(raw: &str) -> Option<BackendId> {
         "none" | "off" => Some(BackendId::None),
         "mtdrv" | "mastertech" => Some(BackendId::Mtdrv),
         "winring0" | "win_ring0" => Some(BackendId::WinRing0),
+        "esif" | "esif_wmi" | "dptf" => Some(BackendId::EsifWmi),
         _ => None,
     }
 }
@@ -41,13 +44,15 @@ pub fn open() -> LowLevelAccess {
         // A panic mid-open left the slot mid-write; the value itself is a Weak.
         Err(poisoned) => poisoned.into_inner(),
     };
-    // A handle whose provider died is never handed to a new caller: the loss
-    // latch is one-way, so reusing it would blind every sampler started after
-    // it for the life of the process.
+    // A handle that can no longer read is never handed to a new caller. The
+    // loss latch is one-way, and a handle that opened nothing stays empty, so
+    // reusing either would blind every sampler started after it for the life of
+    // the process — a machine whose driver was merely busy at first-open would
+    // never read a sensor again.
     if let Some(live) = cached
         .as_ref()
         .and_then(WeakAccess::upgrade)
-        .filter(|a| !a.is_lost())
+        .filter(|a| !a.is_dead())
     {
         return live;
     }
@@ -128,8 +133,31 @@ fn try_open(candidate: BackendId) -> Result<Opened, String> {
         #[cfg(not(all(target_os = "windows", feature = "backend-winring0")))]
         BackendId::WinRing0 => Err("not compiled in".into()),
 
+        #[cfg(all(target_os = "windows", feature = "backend-esif-wmi"))]
+        BackendId::EsifWmi => open_esif_wmi(),
+        #[cfg(not(all(target_os = "windows", feature = "backend-esif-wmi")))]
+        BackendId::EsifWmi => Err("not compiled in".into()),
+
         BackendId::None | BackendId::Mock => Err("not selectable".into()),
     }
+}
+
+/// DPTF ships only on Intel platforms, so the vendor is checked before the WMI
+/// round trip rather than after it fails.
+#[cfg(all(target_os = "windows", feature = "backend-esif-wmi"))]
+fn open_esif_wmi() -> Result<Opened, String> {
+    use crate::telemetry::cpu_ceiling::{self, CpuVendor};
+
+    if cpu_ceiling::vendor() != CpuVendor::Intel {
+        return Err("not an Intel platform; DPTF/ESIF publishes no participants here".into());
+    }
+    super::esif_wmi::EsifWmiBackend::open().map(|b| {
+        let detail = "Intel DPTF (WMI) is live. It reads the processor participant's own \
+                      temperature out of the root/wmi EsifDeviceInformation class with no driver \
+                      and no elevation, and carries no board voltage rails."
+            .to_string();
+        (Box::new(b) as Box<dyn LowLevelBackend>, detail)
+    })
 }
 
 #[cfg(test)]
@@ -142,15 +170,20 @@ mod tests {
         assert_eq!(parse_override("  WinRing0 "), Some(BackendId::WinRing0));
         assert_eq!(parse_override("none"), Some(BackendId::None));
         assert_eq!(parse_override("mtdrv"), Some(BackendId::Mtdrv));
+        assert_eq!(parse_override("DPTF"), Some(BackendId::EsifWmi));
+        assert_eq!(parse_override("esif_wmi"), Some(BackendId::EsifWmi));
         assert_eq!(parse_override("pawnio"), None);
     }
 
-    /// Priority must place the signed driver ahead of the legacy one.
+    /// Priority must place the signed driver ahead of the legacy one, and both
+    /// driver backends ahead of the WMI path, which reads no board rails.
     #[test]
     fn signed_backend_outranks_winring0() {
         let mtdrv = ORDER.iter().position(|b| *b == BackendId::Mtdrv);
         let legacy = ORDER.iter().position(|b| *b == BackendId::WinRing0);
+        let wmi = ORDER.iter().position(|b| *b == BackendId::EsifWmi);
         assert!(mtdrv < legacy, "WinRing0 must never be preferred");
+        assert!(legacy < wmi, "the temperature-only WMI path must be the last resort");
     }
 
     /// An unparseable override opens nothing rather than falling through to a
@@ -169,18 +202,24 @@ mod tests {
         assert!(access.status().rejected.is_empty());
     }
 
-    /// Concurrent callers must share one provider. A second open would stop the
-    /// driver service the first is still reading through, which is how a
-    /// running stress test lost its CPU die temperature the moment anything
-    /// else asked for telemetry.
+    /// Concurrent callers must share one open provider. A second open would
+    /// stop the driver service the first is still reading through, which is how
+    /// a running stress test lost its CPU die temperature the moment anything
+    /// else asked for telemetry. A handle that opened nothing is exempt: there
+    /// is no provider to invalidate, and pinning callers to it would blind
+    /// every sampler started after a driver that was merely busy.
     #[test]
     fn overlapping_callers_share_one_provider() {
         let first = open();
         let second = open();
-        assert!(
-            first.same_provider(&second),
-            "a second caller opened its own provider"
-        );
+        if first.is_absent() {
+            assert!(second.is_absent(), "an empty handle opened a provider on retry");
+        } else {
+            assert!(
+                first.same_provider(&second),
+                "a second caller opened its own provider"
+            );
+        }
 
         drop(first);
         drop(second);
@@ -195,5 +234,26 @@ mod tests {
                 .is_none(),
             "the cache kept the provider alive past its last holder"
         );
+    }
+
+    /// A cached handle that opened nothing must not be handed to a later
+    /// caller: the driver may only have been busy, and reusing the empty handle
+    /// blinds every sampler started after it for the life of the process.
+    #[test]
+    fn an_empty_handle_is_never_reused_from_the_cache() {
+        let empty = LowLevelAccess::unavailable("nothing opened", Vec::new());
+        assert!(empty.is_dead(), "an empty handle must read as dead");
+
+        let mut cached = SHARED.lock().unwrap_or_else(|e| e.into_inner());
+        let restore = cached.take();
+        *cached = Some(empty.downgrade());
+        let reused = cached
+            .as_ref()
+            .and_then(WeakAccess::upgrade)
+            .filter(|a| !a.is_dead());
+        *cached = restore;
+        drop(cached);
+
+        assert!(reused.is_none(), "the cache handed back an empty handle");
     }
 }

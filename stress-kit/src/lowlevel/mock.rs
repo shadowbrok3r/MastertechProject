@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use super::{
-    BackendId, Capabilities, LowLevelBackend, LpcAccess, LpcSlot, MsrAccess, SmnAccess,
-    SuperIoFamily,
+    BackendId, Capabilities, DomainTemp, LowLevelBackend, LpcAccess, LpcSlot, MsrAccess,
+    PackageTempAccess, SmnAccess, SuperIoFamily,
 };
 
 /// One recorded LPC operation, so a test can assert the exact unlock,
@@ -32,6 +32,8 @@ pub struct MockBackend {
     /// affinity is caught rather than returning a plausible constant.
     pub msrs: Mutex<HashMap<(usize, u32), u64>>,
     pub smn: Mutex<HashMap<u32, u32>>,
+    /// Scripted CPU-side temperature domains, lowest index first.
+    pub domains: Mutex<Vec<DomainTemp>>,
     /// `(index port, config register) -> value`.
     pub cr: Mutex<HashMap<(u16, u8), u8>>,
     /// `(window base, offset) -> value`, resolved after bank select.
@@ -55,7 +57,18 @@ impl MockBackend {
                 smn: true,
                 lpc_config: true,
                 lpc_window: true,
+                package_temp: true,
             },
+            fail_after: AtomicUsize::new(usize::MAX),
+            ..Default::default()
+        }
+    }
+
+    /// Backend that vends only whole-degree package temperatures, as the DPTF
+    /// path does.
+    pub fn package_temp_only() -> Self {
+        Self {
+            caps: Capabilities { package_temp: true, ..Default::default() },
             fail_after: AtomicUsize::new(usize::MAX),
             ..Default::default()
         }
@@ -79,6 +92,11 @@ impl MockBackend {
 
     pub fn with_smn(self, addr: u32, value: u32) -> Self {
         self.smn.lock().unwrap().insert(addr, value);
+        self
+    }
+
+    pub fn with_domain(self, index: u32, temp_c: f32) -> Self {
+        self.domains.lock().unwrap().push(DomainTemp { index, temp_c });
         self
     }
 
@@ -123,6 +141,15 @@ impl SmnAccess for MockBackend {
         self.alive()
             .then(|| self.smn.lock().ok()?.get(&addr).copied())
             .flatten()
+    }
+}
+
+impl PackageTempAccess for MockBackend {
+    fn read_package_domains(&self) -> Vec<DomainTemp> {
+        if !self.alive() {
+            return Vec::new();
+        }
+        self.domains.lock().map(|d| d.clone()).unwrap_or_default()
     }
 }
 
@@ -236,5 +263,9 @@ impl LowLevelBackend for MockBackend {
 
     fn lpc(&self) -> Option<&dyn LpcAccess> {
         self.caps.lpc_config.then_some(self as &dyn LpcAccess)
+    }
+
+    fn package_temp(&self) -> Option<&dyn PackageTempAccess> {
+        self.caps.package_temp.then_some(self as &dyn PackageTempAccess)
     }
 }

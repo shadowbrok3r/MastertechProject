@@ -4,6 +4,10 @@ use displays::{app_state::{default_tree, SharedContext}, channel_manager::Channe
 use std::{path::PathBuf,sync::{atomic::AtomicBool, Arc, Mutex, RwLock}};
 use egui_dock::{NodeIndex, SurfaceIndex};
 use crossbeam::channel::{Receiver, Sender};
+
+/// One order pull, success or failure. The error is a `String` because it
+/// crosses a channel and only ever gets displayed.
+pub type OrderPullResult = Result<database::orders::tur_pull::PulledOrder, String>;
 use database::schema::RecordId;
 use chrono::{DateTime, Utc};
 use eframe::egui::Align2;
@@ -89,8 +93,10 @@ pub struct MastertechContext {
     pub assist_offer_tx: Sender<crate::tabs::tur_sheet::assist_prompt::PendingAssist>,
     /// Throttles the assist-offer poll.
     pub last_offer_poll: Option<std::time::Instant>,
-    pub prestashop_api_rx: Receiver<PrestashopPayload>,
-    pub prestashop_api_tx: Sender<PrestashopPayload>,
+    /// Carries the failure too — a dropped `JoinHandle` was why a failed pull
+    /// showed nothing at all.
+    pub prestashop_api_rx: Receiver<OrderPullResult>,
+    pub prestashop_api_tx: Sender<OrderPullResult>,
 
     pub cps_keys_tx: Sender<Vec<GetKeysResponse>>,
     pub cps_keys_rx: Receiver<Vec<GetKeysResponse>>,

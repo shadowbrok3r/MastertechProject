@@ -161,7 +161,7 @@ impl egui_dock::TabViewer for SharedContext {
                 }
             }
             TabId::Koth => self.koth.ui(ui),
-            TabId::CreatePrestashopOrder => self.prestashop_order_form.ui(ui),
+            TabId::CreateOrder => self.prestashop_order_form.ui(ui),
             TabId::StressLab => self.stress_lab.ui(ui),
             #[cfg(not(target_arch = "wasm32"))]
             TabId::SessionBoard => self.session_board.ui(ui),

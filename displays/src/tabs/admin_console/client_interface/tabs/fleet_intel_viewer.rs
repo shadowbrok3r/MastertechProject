@@ -1155,6 +1155,14 @@ fn render_driver_row(ui: &mut Ui, driver: &DriverRecord, glyph: &str, color: Col
     ui.horizontal_wrapped(|ui| {
         ui.colored_label(color, glyph);
         ui.label(RichText::new(driver.key()).monospace().color(strong));
+        if !driver.published_name.is_empty() {
+            ui.label(
+                RichText::new(driver.published_name.as_str())
+                    .small()
+                    .monospace()
+                    .color(weak),
+            );
+        }
         badge(ui, non_empty(&driver.driver_version, "unknown"), color);
         if !driver.driver_date.is_empty() {
             ui.label(
@@ -1182,6 +1190,14 @@ fn render_driver_change_row(ui: &mut Ui, change: &DriverChange) {
     ui.horizontal_wrapped(|ui| {
         ui.colored_label(warn, icons::REFRESH);
         ui.label(RichText::new(&change.key).monospace().color(strong));
+        if !change.published_name.is_empty() {
+            ui.label(
+                RichText::new(change.published_name.as_str())
+                    .small()
+                    .monospace()
+                    .color(weak),
+            );
+        }
         badge(ui, non_empty(&change.old_version, "unknown"), weak);
         ui.colored_label(weak, icons::ARROW_RIGHT);
         badge(ui, non_empty(&change.new_version, "unknown"), warn);

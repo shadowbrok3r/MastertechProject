@@ -355,107 +355,84 @@ impl EmployeeHelper for Employee {
     }
 
     async fn to_prestashop_payload(service_number: &str) -> Result<prestashop_schema::PrestashopPayload, Error> {
-        let mut api_call = Prestashop::default();
-        let mut query = HashMap::new();
+        let api_call = Prestashop::default();
         let task_notes = &mut vec![];
         debug!("helper_traits -> Pulling order {service_number}");
-        query.insert("filter[id]", service_number);
-        query.insert("output_format", "JSON");
-        // api_call.display = "[id,id_address_invoice,id_customer,current_state,date_add,id_employee_sales_rep,id_employee_split_rep,id_store,associations]";
-    
+
+        let mut thread_query = HashMap::new();
+        thread_query.insert("filter[id_order]", service_number);
+        thread_query.insert("output_format", "JSON");
         let customer_threads: Vec<prestashop_schema::CustomerThread> = api_call
-            .request_resources_checked("customer_threads", query.clone())
-            .await?;
-    
+            .request_resources_checked("customer_threads", thread_query)
+            .await
+            .context("Pulling customer threads")?;
+
         let mut customer_messages: Vec<prestashop_schema::CustomerMessage> = Vec::new();
-    
-        if !customer_threads.is_empty() {
-            for thread in customer_threads.iter() {
-                for msg in thread.associations.customer_messages.iter() {
-                    let msg: prestashop_schema::CustomerMessage =  api_call
-                        .request_subresources_by_id_wasm(
-                            "customer_messages",
-                            "customer_message",
-                            msg.id.as_str(),
-                        )
-                        .await?;
-                    task_notes.push(msg.into_task_note(service_number).await?);
-                    customer_messages.push(msg);
+
+        for thread in customer_threads.iter() {
+            for msg in thread.associations.customer_messages.iter() {
+                let msg: prestashop_schema::CustomerMessage = api_call
+                    .request_subresources_by_id_wasm("customer_messages", "customer_message", msg.id.as_str())
+                    .await
+                    .with_context(|| format!("Pulling customer message {} for order {service_number}", msg.id))?;
+                match msg.into_task_note(service_number).await {
+                    Ok(note) => task_notes.push(note),
+                    Err(e) => log::warn!("Order {service_number}: message {} not converted to a note: {e:?}", msg.id),
                 }
+                customer_messages.push(msg);
             }
         }
-    
-        let order: prestashop_schema::Order = api_call
-            .find_resource_wasm("orders", query.clone())
-            .await.context("Pulling order")?;
 
-        api_call.display = "full";
-        if order.id_customer.is_empty() 
-        {
-            return Err(anyhow::anyhow!("order.id_customer is empty")).into();
+        let mut order_query = HashMap::new();
+        order_query.insert("filter[id]", service_number);
+        order_query.insert("output_format", "JSON");
+        let order: prestashop_schema::Order = api_call
+            .find_resource_wasm("orders", order_query)
+            .await
+            .context("Pulling order")?;
+
+        if order.id_customer.is_empty() {
+            return Err(anyhow::anyhow!("order.id_customer is empty"));
         }
 
-        api_call.display = "[id,id_store,lastname,firstname,email,initials]";
-
-        let sales_rep: Option<Employee>  = if !order.id_employee_sales_rep.eq("checkinshelf") && !order.id_employee_sales_rep.eq("0"){
-            let mut new_query = query.clone();
-            new_query.clear();
-            new_query.insert("filter[id]", &order.id_employee_sales_rep);
-            new_query.insert("output_format", "JSON");
+        // By-id reads: filtered employee and customer lists are scoped to the API host's shop.
+        let sales_rep: Option<Employee> = if !order.id_employee_sales_rep.eq("checkinshelf") && !order.id_employee_sales_rep.eq("0") {
             api_call
-                .find_resource_wasm(
-                    "employees",
-                    new_query
-                )
+                .request_subresources_by_id_wasm("employees", "employee", &order.id_employee_sales_rep)
                 .await
+                .inspect_err(|e| log::warn!("Order {service_number}: sales rep {} unavailable: {e:#}", order.id_employee_sales_rep))
                 .ok()
         } else {
-            let mut emp = Employee::default();
-            emp.firstname = "CheckInShelf".to_string();
-            Some(emp)
+            Some(Employee { firstname: "CheckInShelf".to_string(), ..Default::default() })
         };
 
         let split_rep: Option<Employee> = if !order.id_employee_split_rep.eq("0") {
-            let mut new_query = query.clone();
-            new_query.clear();
-            new_query.insert("filter[id]", &order.id_employee_split_rep);
-            new_query.insert("output_format", "JSON");
-            let employee_2: Option<Employee> = api_call
-                .find_resource_wasm(
-                    "employees",
-                    new_query
-                )
+            api_call
+                .request_subresources_by_id_wasm("employees", "employee", &order.id_employee_split_rep)
                 .await
-                .ok();
-
-            employee_2
+                .inspect_err(|e| log::warn!("Order {service_number}: split rep {} unavailable: {e:#}", order.id_employee_split_rep))
+                .ok()
         } else {
             None
         };
 
         let cust: prestashop_schema::Customer = if order.id_employee_sales_rep.eq("0") {
-            let mut cust = prestashop_schema::Customer::default();
-            cust.firstname = "Checkin".to_string();
-            cust.lastname = "Shelf".to_string();
-            cust
+            prestashop_schema::Customer {
+                firstname: "Checkin".to_string(),
+                lastname: "Shelf".to_string(),
+                ..Default::default()
+            }
         } else {
-            api_call.display = "[id,lastname,firstname,email]";
-            let mut new_query = query.clone();
-            new_query.clear();
-            new_query.insert("filter[id]", &order.id_customer);
-            new_query.insert("output_format", "JSON");
             api_call
-                .find_resource_wasm(
-                    "customers", 
-                    new_query
-                )
-                .await.context("Pulling customer")?
+                .request_subresources_by_id_wasm("customers", "customer", &order.id_customer)
+                .await
+                .with_context(|| format!("Pulling customer {} for order {service_number}", order.id_customer))?
         };
-        
-        api_call.display = "full";
+
         let address: prestashop_schema::Address = api_call
             .request_subresources_by_id_wasm("addresses", "address", &order.id_address_invoice)
-            .await?;
+            .await
+            .with_context(|| format!("Pulling invoice address {} for order {service_number}", order.id_address_invoice))?;
 
         // Use phone if available, otherwise fall back to phone_mobile
         let phone_number = if !address.phone.is_empty() {
@@ -822,16 +799,12 @@ impl From<PrestashopPayload> for TaskPayload {
     }
 }
 
+/// Odoo numbering only. A PrestaShop store id (7, 8, 10, 12, 14) misses every
+/// arm and yields RIV — use `Store::from_any_store_id` when the scheme is not
+/// known at the call site.
 impl From<u64> for Store {
     fn from(value: u64) -> Self {
-        match value {
-            76 => Store::RIV,
-            73 => Store::LTN,
-            74 => Store::MUR,
-            75 => Store::ORE,
-            77 => Store::SAN,
-            _ => Store::RIV,
-        }
+        Store::from_odoo_store_id(&value.to_string())
     }
 }
 

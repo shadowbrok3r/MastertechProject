@@ -97,7 +97,7 @@ pub fn identity_hostname() -> String {
                 .map(|w| w.hostname.clone())
                 .filter(|h| !h.is_empty());
             match resolved {
-                Some(h) if h == live => live,
+                Some(h) if h.eq_ignore_ascii_case(&live) => h,
                 Some(h) => {
                     let from = offline_windows()
                         .map(|w| format!("{}{}", w.volume, w.control_set))
@@ -264,8 +264,13 @@ fn read_offline_computer_name(hive: &Path) -> Option<(String, String, bool)> {
             _ => ("ControlSet001".to_string(), false),
         };
 
+    // sysinfo reports the DNS hostname, which preserves case; the NetBIOS name
+    // under Control\ComputerName is stored uppercased.
+    let tcpip = format!(r"{OFFLINE_HIVE_MOUNT}\{control_set}\Services\Tcpip\Parameters");
     let control = format!(r"{OFFLINE_HIVE_MOUNT}\{control_set}\Control\ComputerName");
-    let hostname = reg_value(&format!(r"{control}\ComputerName"), "ComputerName")
+    let hostname = reg_value(&tcpip, "NV Hostname")
+        .or_else(|| reg_value(&tcpip, "Hostname"))
+        .or_else(|| reg_value(&format!(r"{control}\ComputerName"), "ComputerName"))
         .or_else(|| reg_value(&format!(r"{control}\ActiveComputerName"), "ComputerName"))?;
     let hostname = hostname.trim().to_string();
     if hostname.is_empty() {

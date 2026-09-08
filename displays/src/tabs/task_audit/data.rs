@@ -72,7 +72,7 @@ impl TaskAuditViewer { // NEED TO LOOK INTO SOME NOTES THINKING THERE IS NOT A S
                                 }
                                 let _ = order_tx.try_send(service);
                             }
-                            Err(e) => log::error!("Error getting service payload: {e:?}"),
+                            Err(e) => log::error!("Error getting service payload for order {}: {e:?}", order_num.id),
                         }
                     }
                 }
