@@ -229,6 +229,47 @@ impl Default for ConnectedClient {
     }
 }
 
+/// Why a client may not be handed to an AI diagnosis.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DiagnosisBlock {
+    /// `autopilot_opt_out` is set on the client row.
+    OptedOut,
+    /// The flag could not be read, so the answer is unknown.
+    Unknown(String),
+}
+
+impl std::fmt::Display for DiagnosisBlock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::OptedOut => write!(f, "this machine is opted out of AI diagnosis"),
+            Self::Unknown(e) => write!(f, "could not check the AI opt-out flag: {e}"),
+        }
+    }
+}
+
+impl ConnectedClient {
+    /// Blocks a client whose `autopilot_opt_out` is set, and blocks on a failed
+    /// read: a refused diagnosis is retried, an unwanted one cannot be undone.
+    /// A client with no row was never opted out, so it passes.
+    pub async fn diagnosis_block(connection_string: &str) -> Option<DiagnosisBlock> {
+        let mut res = match crate::db()
+            .query(
+                "SELECT VALUE autopilot_opt_out ?? false FROM connected_client \
+                 WHERE connection_string = $cs LIMIT 1",
+            )
+            .bind(("cs", connection_string.to_string()))
+            .await
+        {
+            Ok(res) => res,
+            Err(e) => return Some(DiagnosisBlock::Unknown(e.to_string())),
+        };
+        match res.take::<Vec<bool>>(0) {
+            Ok(flags) => flags.first().copied().unwrap_or(false).then_some(DiagnosisBlock::OptedOut),
+            Err(e) => Some(DiagnosisBlock::Unknown(e.to_string())),
+        }
+    }
+}
+
 impl Sortable<ConnectedClient> for Vec<ConnectedClient> {
     fn default_sort(&mut self,  sort_direction: SortDirection) -> &mut Vec<ConnectedClient> {
         self.sort_by_date(sort_direction)

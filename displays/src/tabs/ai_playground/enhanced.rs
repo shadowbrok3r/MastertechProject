@@ -171,7 +171,29 @@ impl EnhancedAiPlayground {
                 .insert(thread_id.clone(), format!("Claude Code (local) \u{00B7} {model}"));
             self.claude.reset();
             self.claude_thread = Some(thread_id.clone());
-            self.claude.send(prompt, connection_string, thread_id, self.response_tx.clone());
+            // Same opt-out gate as the agent route. The session is Arc-backed, so
+            // the turn still runs against the one the tab holds.
+            let session = self.claude.clone();
+            let tx = self.response_tx.clone();
+            PlatformSpawner::spawn(async move {
+                if let Some(cs) = connection_string.as_deref() {
+                    if let Some(block) =
+                        database::schema::ConnectedClient::diagnosis_block(cs).await
+                    {
+                        let _ = tx.try_send(ChatMessage {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            thread_id: thread_id.clone(),
+                            ts: crate::tabs::ai_playground::now_ts(),
+                            from: SentFrom::Assistant,
+                            content: ChatMessageType::Error(format!(
+                                "Not dispatched — {cs}: {block}."
+                            )),
+                        });
+                        return;
+                    }
+                }
+                session.send(prompt, connection_string, thread_id, tx);
+            });
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -694,6 +716,8 @@ impl EnhancedAiPlayground {
         connection_string: Option<String>,
     ) {
         self.agent_threads.insert(thread_id.clone());
+        // Only a diagnosis names its target; plain chat passes None and is not gated.
+        let target = connection_string.clone();
         let ctx = database::schema::AssistContext {
             tech: crate::get_current_user_from_auth().map(|u| u.get_email().to_string()),
             service_number: self.service_number.clone(),
@@ -702,14 +726,21 @@ impl EnhancedAiPlayground {
         let tx = self.response_tx.clone();
         let tid = thread_id.clone();
         PlatformSpawner::spawn(async move {
+            let err = |text: String| ChatMessage {
+                id: uuid::Uuid::new_v4().to_string(),
+                thread_id: tid.clone(),
+                ts: crate::tabs::ai_playground::now_ts(),
+                from: SentFrom::Assistant,
+                content: ChatMessageType::Error(text),
+            };
+            if let Some(cs) = target.as_deref() {
+                if let Some(block) = database::schema::ConnectedClient::diagnosis_block(cs).await {
+                    let _ = tx.try_send(err(format!("Not dispatched — {cs}: {block}.")));
+                    return;
+                }
+            }
             if let Err(e) = database::schema::AssistMessage::ask(&tid, &text, &ctx).await {
-                let _ = tx.try_send(ChatMessage {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    thread_id: tid,
-                    ts: crate::tabs::ai_playground::now_ts(),
-                    from: SentFrom::Assistant,
-                    content: ChatMessageType::Error(format!("could not reach the agent queue: {e}")),
-                });
+                let _ = tx.try_send(err(format!("could not reach the agent queue: {e}")));
             }
         });
     }
