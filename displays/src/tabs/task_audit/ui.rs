@@ -22,6 +22,10 @@ impl TaskAuditViewer {
             let users = get_database_users();
             if !users.is_empty() {
                 self.services_viewer.users = users;
+                self.services_viewer.my_store = current_user
+                    .as_ref()
+                    .map(|u| u.get_store())
+                    .unwrap_or_default();
                 self.services_viewer.first_run = false;
                 info!("Loaded {} users for task audit comboboxes", self.services_viewer.users.len());
             }

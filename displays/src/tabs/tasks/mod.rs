@@ -326,14 +326,14 @@ impl SharedContext {
                     let mut temp_layout = TaskLayout::new(
                         target_map,
                         target_ordered_keys,
-                        self.store_users.clone(),
+                        crate::get_database_users(),
                         self.search_results.clone(),
                         best.to_string(),
                         current_user.clone(),
                     );
                     if let Some(cfg) = layout_configs.get(best) {
                         if cfg.update_assignees {
-                            temp_layout.update_assignees(self.store_users.clone());
+                            temp_layout.update_assignees(crate::get_database_users());
                         }
                     }
                     temp_layout.layout_cols(ui, self.ui_actions_tx.clone());
@@ -458,7 +458,7 @@ impl SharedContext {
             let mut layout = TaskLayout::new(
                 map.clone(),
                 ordered_keys.clone(),
-                self.store_users.clone(),
+                crate::get_database_users(),
                 self.search_results.clone(),
                 page.to_string(),
                 current_user.clone(),
@@ -470,7 +470,7 @@ impl SharedContext {
                 }
             }
             if config.update_assignees {
-                layout.update_assignees(self.store_users.clone());
+                layout.update_assignees(crate::get_database_users());
             }
             layout
         });

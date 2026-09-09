@@ -1,4 +1,4 @@
-use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TaskCreationResult, TicketData, User, prestashop::OrderType, entity_link::computer_has_minimal_hardware},db};
+use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TaskCreationResult, TicketData, User, assignable_users, prestashop::OrderType, entity_link::computer_has_minimal_hardware},db};
 use crate::{get_current_user_from_auth, get_toast_sender, ui_tools::autocomplete::AutoCompleteTextEdit, ui_tools::icons, DisplayModal, PlatformSpawner, Spawner, ToastMessage};
 use eframe::egui::{Align, Button, Color32, ComboBox, Frame, RichText, Spinner, Stroke, TextEdit, Ui, Vec2, Widget, vec2};
 use database::schema::utilities::create_full_task_payload;
@@ -311,7 +311,7 @@ impl CreateTaskModal {
             ui.add_space(15.0);
             let mut inputs = BTreeSet::new();
 
-            for user in self.store_users.iter() {
+            for user in assignable_users(&self.store_users, self.user.get_store()) {
                 inputs.insert(user.get_username().to_string());
             }
 
@@ -339,7 +339,7 @@ impl CreateTaskModal {
                 self.assignee_status = AssigneeVerification::Unverified;
             }
 
-            let exact_match = self.store_users.iter().any(|u| u.get_username() == self.assignee);
+            let exact_match = self.store_users.iter().any(|u| u.is_active() && u.get_username() == self.assignee);
             if !self.assignee.is_empty()
                 && self.assignee_status == AssigneeVerification::Unverified
                 && (lost_focus || exact_match)
@@ -465,7 +465,7 @@ impl CreateTaskModal {
                 self.creating_task = true;
                 
                 let usr = &mut User::default();
-                for user in self.store_users.iter() {
+                for user in self.store_users.iter().filter(|u| u.is_active()) {
                     if assignee == user.get_username() {
                         log::info!("Got {:?} from assignee: {assignee:?}", user.get_name());
                         *usr = user.clone();

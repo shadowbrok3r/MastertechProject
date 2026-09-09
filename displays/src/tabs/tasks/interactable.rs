@@ -1,6 +1,6 @@
 
 use eframe::egui::{Align, Color32, ComboBox, FontId, Id, Margin, Response, RichText, Stroke, TextEdit, Ui, Widget};
-use database::schema::{LiveTaskPayload, Priority, RecordIdExt, Status, TaskField, User};
+use database::schema::{LiveTaskPayload, Priority, RecordIdExt, Status, TaskField, User, assignable_users};
 use crate::ui_data::pending_task_edits::stage_edit;
 use crate::{Interaction, PlatformSpawner, Spawner, apply_jiff_date, to_jiff_date};
 use egui_extras::DatePickerButton;
@@ -212,36 +212,20 @@ impl Interaction for LiveTaskPayload {
     }
 
     fn interact_assignee(&mut self, ui: &mut Ui, store_users: &Vec<User>, current_user: &User) -> Response {
-        // 1. Figure out what to show in the ComboBox when nothing is open:
         let current_name = store_users
             .iter()
-            .filter(|u| u.is_active())
             .find(|u| u.get_id() == self.assignee)
             .map(|u| u.get_username().to_owned())
             .unwrap_or_else(|| "Unassigned".to_string());
-
-        // 2) Build & sort the list
         let my_store = current_user.get_store();
-        let mut sorted_users: Vec<&User> = store_users
-            .iter()
-            .filter(|u| u.is_active())
-            .collect();
-
-        sorted_users.sort_by_key(|u| {
-            (
-                // same‑store? (false=first, true=later)
-                u.get_store() != my_store,
-                // then by username (case‑insensitive)
-                u.get_username().to_lowercase(),
-            )
-        });
 
         ComboBox::from_id_salt(Id::new(&self.id.key_string()))
             .selected_text(current_name)
             .width(100.)
             .height(150.)
             .show_ui(ui, |ui| {
-                for user in sorted_users {
+                let roster = crate::get_database_users();
+                for user in assignable_users(&roster, my_store) {
                     let previous = self.assignee.clone();
                     let assignee_selection = ui.selectable_value(
                     &mut self.assignee,       // current_value: &mut RecordId

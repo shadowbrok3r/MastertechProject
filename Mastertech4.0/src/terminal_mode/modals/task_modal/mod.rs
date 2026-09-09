@@ -10,8 +10,9 @@
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use database::schema::{
-    random_record_id, ComputerData, CustomerData, LiveTaskPayload, Priority, RecordId,
-    RecordIdExt, Status, TaskHistory, TaskNotePayload, TicketData, User, TASK_NOTE_TABLE,
+    assignable_users, random_record_id, ComputerData, CustomerData, LiveTaskPayload, Priority,
+    RecordId, RecordIdExt, Status, TaskHistory, TaskNotePayload, TicketData, User,
+    TASK_NOTE_TABLE,
 };
 use std::cell::RefCell;
 use std::time::Instant;
@@ -497,12 +498,11 @@ impl<'a> TaskModal<'a> {
 
     /// Open the assignee selector popup.
     pub fn open_assignee_selector(&mut self) {
-        let options: Vec<(String, String)> = self
-            .store_users
-            .iter()
-            .filter(|u| u.is_active())
-            .map(|u| (u.get_id().key_string(), u.get_username().to_owned()))
-            .collect();
+        let options: Vec<(String, String)> =
+            assignable_users(&self.store_users, self.current_user.get_store())
+                .into_iter()
+                .map(|u| (u.get_id().key_string(), u.get_username().to_owned()))
+                .collect();
         if options.is_empty() {
             self.set_status("No store users loaded yet");
             return;

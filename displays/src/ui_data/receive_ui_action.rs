@@ -108,14 +108,14 @@ impl SharedContext {
                     if let Some(task_data) = optional_task_data {
                         let mut create_modal = CreateTaskModal::new(
                             "Create Task",
-                            self.store_users.clone(),
+                            crate::get_database_users(),
                             self.tur_channel.0.clone(),
                         );
                         create_modal.update_tur_info(task_data);
                     } else {
                         let create_modal = CreateTaskModal::new(
                             "Create Task",
-                            self.store_users.clone(),
+                            crate::get_database_users(),
                             self.tur_channel.0.clone(),
                         );
 
@@ -132,7 +132,7 @@ impl SharedContext {
                     log::debug!("Opening create task modal from order: {}", presta_payload.order.id);
                     let mut create_modal = CreateTaskModal::new(
                         "Create Task",
-                        self.store_users.clone(),
+                        crate::get_database_users(),
                         self.tur_channel.0.clone(),
                     );
                     
@@ -178,7 +178,7 @@ impl SharedContext {
                     log::debug!("Opening create task modal from system: {}", system_data.order_id);
                     let mut create_modal = CreateTaskModal::new(
                         "Create Task",
-                        self.store_users.clone(),
+                        crate::get_database_users(),
                         self.tur_channel.0.clone(),
                     );
                     

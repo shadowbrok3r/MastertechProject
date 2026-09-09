@@ -142,7 +142,7 @@ impl SharedContext {
                 }
 
                 if config.update_assignees {
-                    layout.update_assignees(self.store_users.clone());
+                    layout.update_assignees(crate::get_database_users());
                 }
                 // Try to load and apply user's saved order for this page
                 if let Some(user) = self.current_user.as_ref() {

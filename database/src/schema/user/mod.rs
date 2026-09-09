@@ -143,6 +143,14 @@ impl UserAuthorization {
     }
 }
 
+/// Active users only, `store` first, then by username. The option list every
+/// assignee picker draws from.
+pub fn assignable_users(users: &[User], store: Store) -> Vec<&User> {
+    let mut sorted: Vec<&User> = users.iter().filter(|u| u.is_active()).collect();
+    sorted.sort_by_key(|u| (u.get_store() != store, u.get_username().to_lowercase()));
+    sorted
+}
+
 impl User {
     pub fn get_id(&self) -> RecordId {
         self.id.clone()
@@ -599,7 +607,8 @@ impl User {
         })
     }
 
-    /// True if a `user` record exists for this username's email; no PrestaShop fallback.
+    /// True if an active `user` record exists for this username's email; no
+    /// PrestaShop fallback.
     pub async fn username_exists(username: String) -> anyhow::Result<bool, anyhow::Error> {
         let full_email = if username.ends_with("@pclaptops.com") {
             username
@@ -608,7 +617,7 @@ impl User {
         };
 
         let emails: Vec<String> = db()
-            .query("RETURN (SELECT VALUE email FROM user WHERE email == $email)")
+            .query("RETURN (SELECT VALUE email FROM user WHERE email == $email AND active == true)")
             .bind(("email", full_email))
             .await?
             .take(0)?;

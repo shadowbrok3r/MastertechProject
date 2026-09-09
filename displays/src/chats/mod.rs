@@ -96,7 +96,7 @@ impl ChatView {
          let (ui_event_tx, ui_event_rx) = crossbeam::channel::unbounded();
         let mut users_set = BTreeSet::new();
 
-        for user in users {
+        for user in users.iter().filter(|u| u.is_active()) {
             let parsed_email = user.get_username();
             users_set.insert(format!("@{parsed_email}"));   
         }
@@ -178,7 +178,7 @@ impl ChatView {
     }
 
     pub fn set_users(&mut self, users: Vec<User>) -> &mut Self {
-        for user in users.iter() {
+        for user in users.iter().filter(|u| u.is_active()) {
             let parsed_email = user.get_username();
             self.users.insert(format!("@{parsed_email}"));  
         }

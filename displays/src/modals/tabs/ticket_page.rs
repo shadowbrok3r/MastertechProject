@@ -1,5 +1,5 @@
 use eframe::egui::{Button, Color32, ComboBox, FontId, Grid, Hyperlink, Id, Margin, RichText, ScrollArea, Spinner, TextEdit, Ui, Vec2, Widget};
-use database::schema::{CarboniteResponse, ComputerData, CustomerData, LiveTaskPayload, Record, RecordIdExt, Status, TicketData, User};
+use database::schema::{CarboniteResponse, ComputerData, CustomerData, LiveTaskPayload, Record, RecordIdExt, Status, TicketData, User, assignable_users};
 use database::schema::prestashop::OrderState;
 use database::schema::prestashop::order_write;
 // use database::schema::helper_traits::parse_email_user;
@@ -152,7 +152,7 @@ pub fn display_ticket_page(
                                 });
                             }
                             ui.separator();
-                            for user in store_users.iter().filter(|u| u.is_active()) {
+                            for user in assignable_users(store_users, current_user.get_store()) {
                                 let username = user.get_username();
                                 let is_selected = username.to_lowercase() == current_tech.to_lowercase();
                                 if ui.selectable_label(is_selected, username).clicked() && !is_selected {
@@ -210,7 +210,7 @@ pub fn display_ticket_page(
                                 });
                             }
                             ui.separator();
-                            for user in store_users.iter().filter(|u| u.is_active()) {
+                            for user in assignable_users(store_users, current_user.get_store()) {
                                 let username = user.get_username();
                                 let is_selected = username.to_lowercase() == current_salesman.to_lowercase();
                                 if ui.selectable_label(is_selected, username).clicked() && !is_selected {

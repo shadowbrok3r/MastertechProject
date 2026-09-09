@@ -1,4 +1,4 @@
-use database::{schema::{odoo::{search_odoo_products, ExtraInventoryData}, prestashop::{Address, Customer, DesktopModel, Device, DeviceMfg, LaptopModel, Order, PrestashopOrderType, ServiceOrder}, User}, PlatformSpawner, Spawner};
+use database::{schema::{odoo::{search_odoo_products, ExtraInventoryData}, prestashop::{Address, Customer, DesktopModel, Device, DeviceMfg, LaptopModel, Order, PrestashopOrderType, ServiceOrder}, User, assignable_users}, PlatformSpawner, Spawner};
 use eframe::egui::{pos2, vec2, Align, CentralPanel, Checkbox, ComboBox, Direction, FontId, Frame, Grid, Id, Layout, Rect, RichText, ScrollArea, TextEdit, Ui, UiBuilder, Widget};
 use crate::{get_current_user_from_auth, get_database_users, modals::tabs::return_colors};
 use crossbeam::channel::{Receiver, Sender};
@@ -654,32 +654,18 @@ impl PrestashopOrderForm {
 
                         let current_name = self.store_users
                             .iter()
-                            .filter(|u| u.is_active())
                             .find(|u| u.get_id() == self.sales_rep.get_id())
                             .map(|u| u.get_username().to_owned())
                             .unwrap_or_else(|| "Sales Rep".to_string());
 
                         let current_split_rep = self.store_users
                             .iter()
-                            .filter(|u| u.is_active() && u.get_id() != self.sales_rep.get_id())
+                            .filter(|u| u.get_id() != self.sales_rep.get_id())
                             .find_or_first(|u| u.get_id() == self.split_rep.get_id())
                             .map(|u| u.get_username().to_owned())
                             .unwrap_or_else(|| "Split Rep".to_string());
 
-                        let my_store = self.sales_rep.get_store();
-                        let mut sorted_users: Vec<&User> = self.store_users
-                            .iter()
-                            .filter(|u| u.is_active())
-                            .collect();
-
-                        sorted_users.sort_by_key(|u| {
-                            (
-                                // same‑store? (false=first, true=later)
-                                u.get_store() != my_store,
-                                // then by username (case‑insensitive)
-                                u.get_username().to_lowercase(),
-                            )
-                        });
+                        let sorted_users = assignable_users(&self.store_users, self.sales_rep.get_store());
 
                         ui.horizontal(|ui| {
                             ui.colored_label(ui.style().visuals.error_fg_color, "Sales Rep:");

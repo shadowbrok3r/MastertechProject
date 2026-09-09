@@ -11,7 +11,7 @@ use crate::modals::tabs::ai_checklist_panel::{
 use crate::ui_tools::{icons, theme};
 use crate::TaskUiActions;
 use crossbeam::channel::Sender;
-use database::schema::{AiTask, AiTaskItem, AiTaskStatus, LiveTaskPayload, RecordIdExt, TaskNotePayload, User};
+use database::schema::{AiTask, AiTaskItem, AiTaskStatus, LiveTaskPayload, RecordIdExt, TaskNotePayload, User, assignable_users};
 use eframe::egui::{Button, CollapsingHeader, ComboBox, Frame, Margin, RichText, ScrollArea, Shadow, Ui, Vec2, Widget};
 
 #[derive(Clone, PartialEq)]
@@ -168,7 +168,8 @@ impl AiTaskCardView {
                     ComboBox::from_id_salt(("ai_assignee_cb", &key))
                         .selected_text(assignee_name)
                         .show_ui(ui, |ui| {
-                            for u in store_users.iter().filter(|u| u.is_active()) {
+                            let roster = crate::get_database_users();
+                            for u in assignable_users(&roster, current_user.get_store()) {
                                 if ui.selectable_label(
                                     u.get_id() == task.assignee,
                                     u.get_name(),

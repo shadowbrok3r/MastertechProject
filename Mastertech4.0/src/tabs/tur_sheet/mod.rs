@@ -1,6 +1,6 @@
 use crate::{app_state::MastertechContext, tabs::tur_sheet::scaffold::HardwareTest::{HddFail, HddNotTested, HddPass, RamFail, RamNotTested, RamPass, SsdFail, SsdNotTested, SsdPass}};
 use eframe::egui::{vec2, Align, Button, Color32, ComboBox, FontId, Grid, Id, Key, KeyboardShortcut, Margin, Modifiers, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget };
-use database::schema::{CarboniteResponse, CustomerData, LiveTaskPayload, TicketData};
+use database::schema::{assignable_users, CarboniteResponse, CustomerData, LiveTaskPayload, TicketData};
 use displays::plugins::push_widget_anchor;
 use displays::ui_tools::{autocomplete::AutoCompleteTextEdit, toasts::{Toast, ToastKind, ToastOptions}};
 use egui::Frame;
@@ -262,7 +262,14 @@ impl MastertechContext {
 
             let mut inputs = BTreeSet::new();
 
-            for user in self.shared_ctx.store_users.iter() {
+            let roster = displays::get_database_users();
+            let my_store = self
+                .shared_ctx
+                .current_user
+                .as_ref()
+                .map(|u| u.get_store())
+                .unwrap_or_default();
+            for user in assignable_users(&roster, my_store) {
                 inputs.insert(user.get_username().to_string());
             }
             

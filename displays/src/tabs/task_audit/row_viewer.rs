@@ -1,7 +1,7 @@
 use crate::{channel_manager::ChannelManager, chats::ChatView, Spawner};
 use crate::ui_tools::{icons, theme};
 use eframe::egui::{Color32, ComboBox, Hyperlink, Id, Label, Widget};
-use database::schema::{Store, TaskNotePayload, User, LiveTaskPayload, helper_traits::parse_email_user, prestashop::{OrderState}, prestashop_schema::{Employee, MissedCallOrder, PrestashopPayload}};
+use database::schema::{Store, TaskNotePayload, User, LiveTaskPayload, assignable_users, helper_traits::parse_email_user, prestashop::{OrderState}, prestashop_schema::{Employee, MissedCallOrder, PrestashopPayload}};
 use std::collections::HashMap;
 use database::schema::prestashop::order_write;
 use database::xidax_order_url;
@@ -73,6 +73,9 @@ pub struct TaskRowViewer {
     pub store_selection: u64,
     #[serde(skip)]
     pub users: Vec<User>,
+    /// Signed-in user's store, sorted to the top of the rep pickers.
+    #[serde(skip)]
+    pub my_store: Store,
     #[serde(skip)]
     pub existing_tasks: HashMap<String, LiveTaskPayload>,
     #[serde(skip)]
@@ -107,6 +110,7 @@ impl Default for TaskRowViewer {
             missed_calls: Vec::new(),
             store_selection: Store::RIV.into_store_id() as u64,
             users: Vec::new(),
+            my_store: Store::default(),
             first_run: true,
         }
     }
@@ -278,6 +282,7 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                 let current_name = parse_email_user(&current_emp.email);
                 let order_id = row.order.id.clone();
                 let users = self.users.clone();
+                let my_store = self.my_store;
                 
                 // Check if current is the checkin shelf employee (id 1347)
                 let is_checkin_shelf = current_emp_id == "1347";
@@ -309,7 +314,7 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                                 );
                             }
                             ui.separator();
-                            for user in users.iter().filter(|u| u.is_active()) {
+                            for user in assignable_users(&users, my_store) {
                                 let user_emp_id = user.get_employee_id().map(|id| id.to_string()).unwrap_or_default();
                                 let is_selected = user_emp_id == current_emp_id;
                                 if ui.selectable_label(is_selected, user.get_username()).clicked() {
@@ -350,6 +355,7 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                 let current_name = parse_email_user(&current_emp.email);
                 let order_id = row.order.id.clone();
                 let users = self.users.clone();
+                let my_store = self.my_store;
                 
                 // Check if current is empty/none
                 let is_none = current_emp_id.is_empty();
@@ -381,7 +387,7 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                                 );
                             }
                             ui.separator();
-                            for user in users.iter().filter(|u| u.is_active()) {
+                            for user in assignable_users(&users, my_store) {
                                 let user_emp_id = user.get_employee_id().map(|id| id.to_string()).unwrap_or_default();
                                 let is_selected = user_emp_id == current_emp_id;
                                 if ui.selectable_label(is_selected, user.get_username()).clicked() {
