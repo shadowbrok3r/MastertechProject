@@ -41,6 +41,14 @@ pub struct Snapshot {
 /// is quiet for minutes, so this is deliberately past that.
 const STALL_SECS: i64 = 420;
 
+/// How far before the dispatch a session may have started and still count as
+/// this run's. An operator often opens the session first and then asks for AI
+/// help, so a hard cut at the dispatch hides the very session the agent is
+/// working in. Kept short: an abandoned session from an earlier request is
+/// typically an hour or more back, and admitting one is what made the window
+/// report a dead run as live.
+const SESSION_GRACE: &str = "15m";
+
 pub struct AssistProgress {
     connection_string: String,
     service_number: String,
@@ -268,11 +276,12 @@ async fn fetch(connection_string: &str) -> Option<Snapshot> {
         Vec::new()
     } else {
         database::db()
-            .query(
+            .query(&format!(
                 "SELECT id, status, summary, diagnosed_at, started_at FROM diagnostic_session \
-                 WHERE connection_string = $cs AND started_at >= type::datetime($since) \
-                 ORDER BY started_at DESC LIMIT 1",
-            )
+                 WHERE connection_string = $cs \
+                 AND started_at >= type::datetime($since) - {SESSION_GRACE} \
+                 ORDER BY started_at DESC LIMIT 1"
+            ))
             .bind(("cs", connection_string.to_string()))
             .bind(("since", since))
             .await
