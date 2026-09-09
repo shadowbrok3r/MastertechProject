@@ -66,14 +66,21 @@ fn open_in(dir: &Path) -> Option<(File, PathBuf)> {
         .map(|file| (file, per_process))
 }
 
+/// Dependency log targets dropped by every sink: per-record chatter, no diagnostic value.
+///
+/// `evtx` logs one `INFO` per event-log record, and the telemetry sampler rescans
+/// `System.evtx` every 30 s for the life of the process.
+pub const MUTED_TARGETS: [&str; 2] = ["evtx::evtx_chunk", "evtx::evtx_parser"];
+
 /// A `Trace`-level file sink, or `None` when no candidate directory is writable.
 pub fn file_logger() -> Option<Box<dyn log::Log + 'static>> {
     let (file, path) = candidate_dirs().iter().find_map(|dir| open_in(dir))?;
-    let logger = simplelog::WriteLogger::new(
-        log::LevelFilter::Trace,
-        simplelog::Config::default(),
-        file,
-    );
+    let mut config = simplelog::ConfigBuilder::new();
+    for target in MUTED_TARGETS {
+        config.add_filter_ignore_str(target);
+    }
+    let logger =
+        simplelog::WriteLogger::new(log::LevelFilter::Trace, config.build(), file);
     let _ = ACTIVE_PATH.set(path);
     Some(logger)
 }

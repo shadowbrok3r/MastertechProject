@@ -380,12 +380,11 @@ fn try_software_gui() -> bool {
 }
 
 async fn run_gui(opts: LaunchOptions) -> eframe::Result<()> {
-    let egui_logger = Box::new(
-        displays::ui_tools::egui_logger::builder()
-            .add_blacklist("evtx::evtx_chunk")
-            .add_blacklist("evtx::evtx_parser")
-            .build(),
-    );
+    let mut egui_builder = displays::ui_tools::egui_logger::builder();
+    for target in logging::MUTED_TARGETS {
+        egui_builder = egui_builder.add_blacklist(target);
+    }
+    let egui_logger = Box::new(egui_builder.build());
     start_tui_logger_event_pump();
     // This path can fall back to terminal mode, so it needs the same guarantees.
     mtech_tui::panic_guard::install_hook();
