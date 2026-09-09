@@ -8574,7 +8574,7 @@ matched, and an error when the lookup itself failed."
             .take(0)
             .map_err(|e| surrealql_error(e.to_string()))?;
         let mut payload = serde_json::json!({ "results": result });
-        if let Some(hint) = empty_result_hint(trimmed, &result) {
+        if let Some(hint) = empty_result_hint(trimmed, &result).await {
             payload["hint"] = serde_json::Value::String(hint);
         }
         Ok(CallToolResult::success(vec![
@@ -11330,31 +11330,51 @@ fn queried_tables(query: &str) -> Vec<String> {
     out
 }
 
+/// Field names a table DEFINEs, via `INFO FOR TABLE`. Needs a signed-in user:
+/// as guest this returns an IAM error, so the caller treats `None` as "cannot
+/// tell" and falls back to a hint that does not claim to know the schema.
+/// Array-element definitions (`field.*`) are dropped — they are not columns.
+async fn defined_fields(table: &str) -> Option<Vec<String>> {
+    // The table name is matched against the query's own FROM clause, so it is
+    // already restricted to an identifier by `queried_tables`.
+    let mut res = database::db().query(format!("INFO FOR TABLE {table}")).await.ok()?;
+    let info: Option<serde_json::Value> = res.take(0).ok()?;
+    let fields = info?.get("fields")?.as_object()?.keys().cloned().collect::<Vec<_>>();
+    Some(fields.into_iter().filter(|f| !f.contains(".*")).collect())
+}
+
 /// An empty read is ambiguous in SurrealDB: a wrong field name returns no rows
 /// rather than an error, so an agent cannot tell a typo from an empty table and
 /// will re-query variations until something stops it. Measured: one turn burned
 /// 24 queries guessing `computer.computer_id`, `service_order.computer_id` and
-/// `checkin_note`, then died to the loop detector. Naming the ambiguity and one
-/// move that reveals the real shape is what breaks that cycle.
-fn empty_result_hint(query: &str, result: &[serde_json::Value]) -> Option<String> {
+/// `checkin_note`, then died to the loop detector. Naming the real columns is
+/// what breaks that cycle.
+async fn empty_result_hint(query: &str, result: &[serde_json::Value]) -> Option<String> {
     let empty = result.is_empty()
         || result.iter().all(|v| v.as_array().is_some_and(|a| a.is_empty()));
     if !empty {
         return None;
     }
-    let tables = queried_tables(query);
-    let probe = match tables.first() {
-        Some(t) => format!("SELECT * FROM {t} LIMIT 1"),
-        None => "SELECT * FROM <table> LIMIT 1".to_string(),
+    let preamble = "0 rows. This does NOT mean the table is empty: SurrealDB returns no rows \
+                    for a field that does not exist, so a mistyped or invented field name \
+                    looks exactly like this. Do not retry variations of the same guess — that \
+                    is what trips the loop detector.";
+    let Some(table) = queried_tables(query).into_iter().next() else {
+        return Some(format!("{preamble} Check the field names against database/schema/*.surql."));
     };
-    Some(format!(
-        "0 rows. This does NOT mean the table is empty: SurrealDB returns no rows for a field \
-         that does not exist, so a mistyped or invented field name looks exactly like this. \
-         Before re-querying, run `{probe}` to see the real field names, or read \
-         database/schema/{}.surql. Do not retry variations of the same guess — that is what \
-         trips the loop detector.",
-        tables.first().map(String::as_str).unwrap_or("<table>")
-    ))
+    match defined_fields(&table).await {
+        // A SCHEMALESS table DEFINEs nothing, so an empty list is not "no columns".
+        Some(fields) if !fields.is_empty() => Some(format!(
+            "{preamble} Fields DEFINEd on `{table}`: {}. If the table is SCHEMALESS it may \
+             carry more than these, so `SELECT * FROM {table} LIMIT 1` is authoritative.",
+            fields.join(", ")
+        )),
+        _ => Some(format!(
+            "{preamble} `{table}` DEFINEs no fields readable here, so run \
+             `SELECT * FROM {table} LIMIT 1` to see its real shape, or read \
+             database/schema/{table}.surql."
+        )),
+    }
 }
 
 fn surrealql_error(raw: String) -> ErrorData {
