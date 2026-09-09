@@ -34,6 +34,9 @@ pub struct Snapshot {
     pub conversation: usize,
     /// Seconds since the request was handed over, for the stall check.
     pub since_dispatch: Option<i64>,
+    /// `(tool, succeeded, clock)` the agent ran against this machine, newest
+    /// first. The only proof of life during the minutes before it speaks.
+    pub tool_activity: Vec<(String, bool, String)>,
 }
 
 /// How long a handed-over request may go without the agent saying anything or
@@ -189,6 +192,30 @@ impl AssistProgress {
             ui.add_space(6.);
         }
 
+        // Shown even while the agent is silent: a turn can run for minutes
+        // before it produces a word, and an empty pane reads as nothing
+        // happening when it is actually mid-diagnosis.
+        if !self.snapshot.tool_activity.is_empty() {
+            ui.label(
+                RichText::new(format!("Agent activity ({})", self.snapshot.tool_activity.len()))
+                    .small()
+                    .color(theme::weak_text(ui)),
+            );
+            for (tool, ok, clock) in self.snapshot.tool_activity.clone() {
+                ui.horizontal(|ui| {
+                    let (mark, color) = if ok {
+                        (icons::CHECK, theme::success(ui))
+                    } else {
+                        (icons::CLOSE, theme::error(ui))
+                    };
+                    ui.label(RichText::new(mark).small().color(color));
+                    ui.label(RichText::new(tool).small());
+                    ui.label(RichText::new(clock).small().color(theme::weak_text(ui)));
+                });
+            }
+            ui.add_space(6.);
+        }
+
         if let Some(summary) = self.snapshot.summary.clone() {
             ui.label(RichText::new("Summary").small().color(theme::weak_text(ui)));
             ui.label(RichText::new(summary));
@@ -316,6 +343,34 @@ async fn fetch(connection_string: &str) -> Option<Snapshot> {
     // The conversation is what the AI tab shows. Reading it here is what stops
     // this window disagreeing with the chat the tech can already see, and it is
     // the only place an agent's own words reach them when no session opens.
+    // zeroclaw_audit is the only record of what the agent tried before it says
+    // anything. Machine-scoped tools carry the connection string in args; the
+    // rest (query_surrealdb and friends) cannot be attributed to a machine, so
+    // they are deliberately left out rather than guessed at.
+    if let Ok(mut res) = database::db()
+        .query(
+            "SELECT tool, success, event_ts FROM zeroclaw_audit \
+             WHERE args.connection_string = $cs ORDER BY created_at DESC LIMIT 8",
+        )
+        .bind(("cs", connection_string.to_string()))
+        .await
+    {
+        let rows: Vec<serde_json::Value> = res.take(0).unwrap_or_default();
+        snap.tool_activity = rows
+            .iter()
+            .filter_map(|r| {
+                let tool = str_at(r, "tool")?;
+                // The mastertech__ prefix is noise when every row carries it.
+                let tool = tool.strip_prefix("mastertech__").unwrap_or(&tool).to_string();
+                let clock = str_at(r, "event_ts")
+                    .and_then(|t| t.split('T').nth(1).map(|s| s[..s.len().min(8)].to_string()))
+                    .unwrap_or_default();
+                let ok = r.get("success").and_then(serde_json::Value::as_bool).unwrap_or(false);
+                Some((tool, ok, clock))
+            })
+            .collect();
+    }
+
     if let Some(request_id) = request.and_then(|r| str_at(r, "id")) {
         let thread = database::schema::entity_link::parse_record_id(
             &request_id,

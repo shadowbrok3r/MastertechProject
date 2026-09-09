@@ -8573,10 +8573,13 @@ matched, and an error when the lookup itself failed."
             .map_err(|e| surrealql_error(e.to_string()))?
             .take(0)
             .map_err(|e| surrealql_error(e.to_string()))?;
-        Ok(CallToolResult::success(vec![ContentBlock::json(
-            serde_json::json!({ "results": result }),
-        )
-        .map_err(to_internal)?]))
+        let mut payload = serde_json::json!({ "results": result });
+        if let Some(hint) = empty_result_hint(trimmed, &result) {
+            payload["hint"] = serde_json::Value::String(hint);
+        }
+        Ok(CallToolResult::success(vec![
+            ContentBlock::json(payload).map_err(to_internal)?,
+        ]))
     }
 
     #[tool(
@@ -11309,6 +11312,51 @@ async fn run_approved_statement(
 /// The raw engine errors state what was rejected but not what to write instead,
 /// so the same handful of parse and NONE-arithmetic failures were being retried
 /// unchanged. Returns the original error with a fix appended.
+/// Tables a SELECT reads, for the empty-result hint. First identifier after
+/// each FROM, with any `table:key` record id reduced to the table.
+fn queried_tables(query: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let lower = query.to_lowercase();
+    for (idx, _) in lower.match_indices("from ") {
+        let rest = query[idx + 5..].trim_start();
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        if !name.is_empty() && !out.contains(&name) {
+            out.push(name);
+        }
+    }
+    out
+}
+
+/// An empty read is ambiguous in SurrealDB: a wrong field name returns no rows
+/// rather than an error, so an agent cannot tell a typo from an empty table and
+/// will re-query variations until something stops it. Measured: one turn burned
+/// 24 queries guessing `computer.computer_id`, `service_order.computer_id` and
+/// `checkin_note`, then died to the loop detector. Naming the ambiguity and one
+/// move that reveals the real shape is what breaks that cycle.
+fn empty_result_hint(query: &str, result: &[serde_json::Value]) -> Option<String> {
+    let empty = result.is_empty()
+        || result.iter().all(|v| v.as_array().is_some_and(|a| a.is_empty()));
+    if !empty {
+        return None;
+    }
+    let tables = queried_tables(query);
+    let probe = match tables.first() {
+        Some(t) => format!("SELECT * FROM {t} LIMIT 1"),
+        None => "SELECT * FROM <table> LIMIT 1".to_string(),
+    };
+    Some(format!(
+        "0 rows. This does NOT mean the table is empty: SurrealDB returns no rows for a field \
+         that does not exist, so a mistyped or invented field name looks exactly like this. \
+         Before re-querying, run `{probe}` to see the real field names, or read \
+         database/schema/{}.surql. Do not retry variations of the same guess — that is what \
+         trips the loop detector.",
+        tables.first().map(String::as_str).unwrap_or("<table>")
+    ))
+}
+
 fn surrealql_error(raw: String) -> ErrorData {
     let hint = if raw.contains("Missing order idiom") {
         Some(

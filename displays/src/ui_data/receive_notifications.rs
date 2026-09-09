@@ -86,6 +86,17 @@ impl SharedContext {
                             self.notification_center.read_notifications = false;
                         }
                         self.notification_center.apply_update(notification.clone());
+                    } else if notification.notification_type.starts_with("ZeroClaw") {
+                        // Agent activity is continuous — a single turn emits
+                        // dozens of these. A toast each buries the ones a tech
+                        // has to act on, so they only raise the unread count on
+                        // the bar and are read and cleared in the centre.
+                        // Prefix-matched so a new ZeroClaw type cannot
+                        // reintroduce the toast storm by default.
+                        if notification.user == user.get_id() {
+                            self.notification_center.read_notifications = false;
+                        }
+                        self.notification_center.apply_update(notification.clone());
                     } else {
                         if let Some(usr) = self.current_user.as_ref() {
                             if notification.user == usr.get_id() {
