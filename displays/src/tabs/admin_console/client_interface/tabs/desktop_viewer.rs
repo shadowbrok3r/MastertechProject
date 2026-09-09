@@ -97,16 +97,18 @@ impl DesktopViewer {
         while let Ok(frame) = self.frame_rx.try_recv() {
             newest = Some(frame);
         }
-        if let Some(frame) = newest {
-            self.upload(ctx, &frame);
-            self.has_received_frame = true;
-            true
-        } else {
-            false
+        match newest {
+            Some(frame) => {
+                let uploaded = self.upload(ctx, &frame);
+                self.has_received_frame |= uploaded;
+                uploaded
+            }
+            None => false,
         }
     }
 
-    fn upload(&mut self, ctx: &egui::Context, frame: &DesktopFrameMessage) {
+    /// Returns `true` when the frame reached the texture; `false` when it was skipped.
+    fn upload(&mut self, ctx: &egui::Context, frame: &DesktopFrameMessage) -> bool {
         let decode_start = Instant::now();
         let color = match frame.encoding {
             DesktopFrameEncoding::Jpeg => {
@@ -118,15 +120,25 @@ impl DesktopViewer {
                     }
                     Err(e) => {
                         log::warn!(target: "remote_desktop", "jpeg decode failed: {e}");
-                        return;
+                        return false;
                     }
                 }
             }
             DesktopFrameEncoding::Rgba => {
                 let size = [frame.width as usize, frame.height as usize];
-                if frame.data.len() < size[0] * size[1] * 4 {
-                    log::warn!(target: "remote_desktop", "rgba frame smaller than declared size");
-                    return;
+                // `ColorImage::from_rgba_unmultiplied` asserts on any mismatch, so a
+                // peer's header and payload have to agree exactly. Checked so
+                // `width * height * 4` cannot wrap past the comparison.
+                let expected = size[0].checked_mul(size[1]).and_then(|n| n.checked_mul(4));
+                if expected != Some(frame.data.len()) {
+                    log::warn!(
+                        target: "remote_desktop",
+                        "rgba frame {}x{} wants {expected:?} bytes, carries {}",
+                        frame.width,
+                        frame.height,
+                        frame.data.len(),
+                    );
+                    return false;
                 }
                 ColorImage::from_rgba_unmultiplied(size, &frame.data)
             }
@@ -150,6 +162,7 @@ impl DesktopViewer {
             .map(|d| d.as_millis())
             .unwrap_or(0);
         self.last_latency_ms = now.saturating_sub(frame.timestamp_ms);
+        true
     }
 
     /// Paint the latest frame and forward input via `send_input`.
