@@ -1417,8 +1417,8 @@ impl SharedContext {
             let ws_layout = &mut self.web_console_layout;
             // let connection_string = ws_layout.c
             if !ws_layout.error.is_empty() {
-                let options = ToastOptions::default();
-                options.duration(Some(web_time::Duration::from_secs(3)));
+                let options = ToastOptions::default()
+                    .duration(Some(web_time::Duration::from_secs(3)));
 
                 self.toasts.add(Toast {
                     kind: crate::ui_tools::toasts::ToastKind::Error,
