@@ -1,0 +1,88 @@
+PawnIO — signed kernel driver and bytecode modules
+==================================================
+
+Replaces the legacy WinRing0 backend. PawnIO runs sandboxed Pawn bytecode
+modules inside a Microsoft-attestation-signed driver, so it loads on stock
+Windows with Secure Boot and Memory Integrity (HVCI) enabled.
+
+
+Provenance
+----------
+
+PawnIO_setup.exe   2.1.0.0, redistributed from LibreHardwareMonitor
+                   (LibreHardwareMonitor.Windows.Forms/Resources/).
+                   sha256 a3a46226c5e2824f4cdd42be0eecbabfc672c86f7889710f5ab1e6ad385b47a0
+                   Upstream downloads: https://pawnio.eu
+                   Driver source:      https://github.com/namazso/PawnIO
+
+x64/               The x64 driver package carved out of that installer, renamed to the
+                   names its own INF and catalog reference. 149 KB against the
+                   installer's 3.2 MB, which is why the pawnio-triplet route exists.
+                   sha256 PawnIO.sys f92de04e5a02256e86ffa1b4252fe669282198b7329227f40e51bca9267d133d
+                   sha256 PawnIO.inf 13615792a75f85191bc3f2d19055a0292e47a1cc65f0d12b8631bcc0292b0e7f
+                   sha256 PawnIO.cat b053f9301280b840a400a65a6f91eaa71f50cd74062ec17aa95f8968076ea9ee
+
+*.bin              Signed modules from the official PawnIO.Modules 0.2.11
+                   release, via LibreHardwareMonitorLib/Resources/PawnIo/.
+                   Source: https://github.com/namazso/PawnIO.Modules
+
+The installer carries x64 and ARM64 builds of both the official (signed) and
+unrestricted (unsigned) editions. `-install` without `-unrestricted` selects the
+attestation-signed one. Verified on the x64 official set:
+
+    signtool verify /kp /c pawnio.cat PawnIO.sys   ->  Successfully verified
+    catalog signer: CN=Microsoft Windows Hardware Compatibility Publisher
+                    -> Microsoft Windows Third Party Component CA 2014
+                    -> Microsoft Root Certificate Authority 2010
+
+The driver's own embedded signature is namazso's GLOBALTRUST code-signing cert
+and does NOT satisfy kernel signing policy on its own; the catalog carries the
+attestation. Any driver-package install must therefore register the .cat.
+
+
+Licensing
+---------
+
+LICENSE_PAWNIO  GPL-2.0 covering the driver, with the copyright holder's special
+                exception permitting combination with "independent modules that
+                communicate with PawnIO solely through the device IO control
+                interface". Mastertech talks to PawnIO only over DeviceIoControl,
+                so that exception applies and no GPL terms reach our code.
+
+                Shipping the driver binary does carry GPLv2 section 3: source for
+                the driver must be offered alongside it. The upstream repository
+                above is the corresponding source for this exact version.
+
+COPYING         LGPL-2.1 covering the .bin modules.
+
+The exception does NOT extend to code talking over the Pawn interface: any
+module loaded into PawnIO must itself be GPL/LGPL compatible. We load only
+upstream's signed modules and write none of our own.
+
+
+Do not modify these files
+-------------------------
+
+The modules are signature-checked by the driver (PawnIO/src/vm.cpp,
+check_signature against a table of trusted keys), and the driver package is
+catalog-verified. Editing any byte of a .bin or of the .inf/.cat/.sys triplet
+invalidates it. Update by replacing whole files from an upstream release and
+refreshing the hashes above.
+
+
+Install routes
+--------------
+
+Two cargo features pick how an absent driver gets installed; the backend uses an
+already-installed PawnIO with neither.
+
+pawnio-installer   Runs PawnIO_setup.exe -install -silent. Upstream's own path,
+                   and what LibreHardwareMonitor does. Costs 3.2 MB.
+
+pawnio-triplet     Installs x64/ through SetupAPI: SetupCopyOEMInfW to register
+                   the catalog, a Root\PawnIO devnode, then
+                   UpdateDriverForPlugAndPlayDevicesW. Costs 149 KB.
+
+Both compiled in, the triplet is tried first. MTECH_PAWNIO_INSTALL forces one
+route (triplet / installer / none) for bench comparison; a forced route that
+fails does not fall through.

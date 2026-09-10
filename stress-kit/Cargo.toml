@@ -19,6 +19,16 @@ lowlevel = ["dep:raw-cpuid"]
 # DEPRECATED: embeds WinRing0 (CVE-2020-14979), which only loads with Windows
 # driver protections lowered and is quarantined by current Defender definitions.
 backend-winring0 = ["lowlevel"]
+# Signed PawnIO driver running upstream's audited bytecode modules. Its driver is
+# Microsoft attestation-signed, so it loads with Memory Integrity and the
+# Vulnerable Driver Blocklist on; register reach is what those modules allow.
+backend-pawnio = ["lowlevel"]
+# How an absent PawnIO gets installed. With neither, the backend uses an already
+# installed driver and does nothing to a machine without one.
+# Upstream's installer: every architecture and both editions, 3 MB of binary.
+pawnio-installer = ["backend-pawnio"]
+# The x64 driver package alone, installed through SetupAPI. 150 KB.
+pawnio-triplet = ["backend-pawnio"]
 # Mastertech's own signed driver with a fixed register allowlist.
 backend-mtdrv = ["lowlevel"]
 # Intel DPTF/ESIF package temperature over WMI. No driver and no elevation, so
@@ -27,7 +37,7 @@ backend-esif-wmi = ["lowlevel"]
 # Scripted backend so downstream crates can test the readers without hardware.
 mock-backend = ["lowlevel"]
 # What the apps enable.
-hw-sensors = ["backend-winring0", "backend-esif-wmi"]
+hw-sensors = ["backend-pawnio", "pawnio-installer", "backend-winring0", "backend-esif-wmi"]
 # Deprecated alias kept so consumers keep building through the migration.
 winring0-thermal = ["backend-winring0"]
 # JsonSchema derive on wire types for MCP consumers (unifies with rmcp's schemars 1.x).
@@ -56,6 +66,7 @@ windows = { version = "0.62", features = [
     "Win32_NetworkManagement_IpHelper",
     "Win32_Storage_FileSystem",
     "Win32_System_Ioctl",
+    "Win32_Devices_DeviceAndDriverInstallation",
     "Win32_System_IO",
     "Win32_System_EventLog",
     "Win32_System_LibraryLoader",

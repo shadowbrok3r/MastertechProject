@@ -1,7 +1,7 @@
 //! Extracts the embedded WinRing0 driver and runs it as a kernel service.
 
-use std::ffi::{c_void, CString};
-use std::path::{Path, PathBuf};
+use std::ffi::CString;
+use std::path::PathBuf;
 use std::ptr::{null, null_mut};
 use std::sync::Mutex;
 
@@ -11,10 +11,7 @@ use winapi::um::winsvc::{
     OpenServiceW, StartServiceW, SC_HANDLE, SC_MANAGER_ALL_ACCESS, SERVICE_ALL_ACCESS,
     SERVICE_CONTROL_STOP, SERVICE_STATUS,
 };
-use winapi::shared::sddl;
-use winapi::um::{
-    errhandlingapi, fileapi, handleapi, minwinbase, securitybaseapi, winbase, winnt,
-};
+use winapi::um::{errhandlingapi, fileapi, handleapi, winnt};
 
 /// Device name baked into this WinRing0 build; the user-mode path and the
 /// service name both use it.
@@ -30,97 +27,12 @@ const ERROR_SERVICE_MARKED_FOR_DELETE: u32 = 1072;
 const ERROR_SERVICE_EXISTS: u32 = 1073;
 const ERROR_DRIVER_BLOCKED: u32 = 1275;
 
-pub fn wide(s: &str) -> Vec<u16> {
-    use std::os::windows::ffi::OsStrExt;
-    std::ffi::OsStr::new(s)
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect()
-}
+pub use crate::lowlevel::busmutex::wide;
 
 const DRIVER_FILE: &str = "WinRing0_mtech.sys";
 
-/// Grants only SYSTEM and Administrators, inherited by files created inside.
-const DRIVER_DIR_SDDL: &str = "D:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)";
-
-const ERROR_ALREADY_EXISTS: u32 = 183;
-
-/// Staging directory for the driver image, locked to SYSTEM and Administrators.
-///
-/// `StartServiceW` loads whatever sits at this path, so a world-writable
-/// directory lets any non-admin process swap the image between the write and the
-/// load and reach ring 0. Returns `None` when the directory cannot be created or
-/// locked down, in which case the driver is not staged at all.
-fn driver_dir() -> Option<PathBuf> {
-    let base = std::env::var("ProgramData").unwrap_or_else(|_| r"C:\ProgramData".to_string());
-    let parent = Path::new(&base).join("Mastertech");
-    std::fs::create_dir_all(&parent).ok()?;
-    let dir = parent.join("drivers");
-    locked_dir(&dir).then_some(dir)
-}
-
 fn driver_path() -> Option<PathBuf> {
-    Some(driver_dir()?.join(DRIVER_FILE))
-}
-
-/// Creates `path` with [`DRIVER_DIR_SDDL`], or re-applies that DACL when a
-/// previous build already created it.
-fn locked_dir(path: &Path) -> bool {
-    let Some(sd) = SecurityDescriptor::from_sddl(DRIVER_DIR_SDDL) else {
-        log::warn!("stress-kit/winring0: could not build the driver-directory security descriptor");
-        return false;
-    };
-    let wide_path = wide(&path.to_string_lossy());
-    let mut attrs = minwinbase::SECURITY_ATTRIBUTES {
-        nLength: std::mem::size_of::<minwinbase::SECURITY_ATTRIBUTES>() as u32,
-        lpSecurityDescriptor: sd.0,
-        bInheritHandle: 0,
-    };
-    if unsafe { fileapi::CreateDirectoryW(wide_path.as_ptr(), &mut attrs) } != 0 {
-        return true;
-    }
-    if unsafe { errhandlingapi::GetLastError() } != ERROR_ALREADY_EXISTS {
-        return false;
-    }
-    // Re-apply, so a directory left by an older build cannot stay user-writable.
-    let applied = unsafe {
-        securitybaseapi::SetFileSecurityW(
-            wide_path.as_ptr(),
-            winnt::DACL_SECURITY_INFORMATION,
-            sd.0,
-        )
-    } != 0;
-    if !applied {
-        log::warn!(
-            "stress-kit/winring0: could not lock {} down to SYSTEM and Administrators",
-            path.display()
-        );
-    }
-    applied
-}
-
-/// Security descriptor parsed from SDDL, freed on drop.
-struct SecurityDescriptor(*mut c_void);
-
-impl SecurityDescriptor {
-    fn from_sddl(sddl_text: &str) -> Option<Self> {
-        let mut sd: *mut c_void = null_mut();
-        let ok = unsafe {
-            sddl::ConvertStringSecurityDescriptorToSecurityDescriptorW(
-                wide(sddl_text).as_ptr(),
-                1, // SDDL_REVISION_1
-                &mut sd,
-                null_mut(),
-            )
-        };
-        (ok != 0 && !sd.is_null()).then_some(Self(sd))
-    }
-}
-
-impl Drop for SecurityDescriptor {
-    fn drop(&mut self) {
-        unsafe { winbase::LocalFree(self.0) };
-    }
+    Some(crate::lowlevel::staging::driver_dir()?.join(DRIVER_FILE))
 }
 
 /// Removes the driver image older builds staged in the world-writable temp
@@ -309,12 +221,6 @@ fn remove_service(scm: SC_HANDLE) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_staging_dacl_parses_and_a_bad_one_does_not() {
-        assert!(SecurityDescriptor::from_sddl(DRIVER_DIR_SDDL).is_some());
-        assert!(SecurityDescriptor::from_sddl("not-a-security-descriptor").is_none());
-    }
 
     /// The image must never be staged under the world-writable temp directory,
     /// where another process could swap it between the write and `StartService`.

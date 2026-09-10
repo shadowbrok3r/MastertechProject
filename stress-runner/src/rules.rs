@@ -5,7 +5,7 @@
 //! throughput — are rule-independent and fail under every policy.
 
 use serde::{Deserialize, Serialize};
-use stress_kit::telemetry::{AccessStatus, AccessTier, BackendId, TelemetrySnapshot};
+use stress_kit::telemetry::{AccessStatus, AccessTier, BackendId, CpuTempSource, TelemetrySnapshot};
 use stress_kit::{Metrics, Stressor};
 
 /// How far over its own thermal ceiling a part must sit before the ceiling
@@ -62,6 +62,12 @@ impl TempRule {
             (TempLimitBasis::PartCeiling, Some(c)) => c + OVER_CEILING_MARGIN_C,
             _ => self.limit_c,
         }
+    }
+
+    /// `true` when [`Self::effective_limit_c`] returns the flat `limit_c` in
+    /// place of a ceiling this rule asked for and did not get.
+    pub fn falls_back_to_flat_limit(&self, ceiling_c: Option<f32>) -> bool {
+        self.basis == TempLimitBasis::PartCeiling && ceiling_c.is_none()
     }
 }
 
@@ -222,17 +228,21 @@ pub enum RuleViolation {
     StressorHang { reason: String },
 }
 
-/// The sensor class a rule needs before it can be graded.
+/// What a rule needed before it could be graded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MissingSensor {
     CpuDieTemp,
     GpuTelemetry,
+    /// A temperature was read, but the part's own ceiling — the number a
+    /// part-ceiling rule grades against — could not be established.
+    CpuThermalCeiling,
 }
 
-/// A configured rule whose sensor never reported, so its limit was never
-/// tested. Kept apart from [`RuleViolation`]: nothing here is evidence against
-/// the hardware, in either direction.
+/// A configured rule that could not be graded — its sensor never reported, or
+/// the basis it grades against could not be established — so its limit was
+/// never tested. Kept apart from [`RuleViolation`]: nothing here is evidence
+/// against the hardware, in either direction.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UnevaluatedRule {
     /// The rule as configured, e.g. `max_cpu_temp_c 95C`.
@@ -255,6 +265,10 @@ impl UnevaluatedRule {
                 "the CPU was not graded thermally",
             ),
             MissingSensor::GpuTelemetry => ("no GPU telemetry", "the GPU was not graded thermally"),
+            MissingSensor::CpuThermalCeiling => (
+                "no thermal ceiling for this part",
+                "the CPU was not graded thermally",
+            ),
         };
         let cause = self
             .detail
@@ -391,6 +405,9 @@ pub struct StageStats {
     pub max_cpu_temp_c: Option<f32>,
     pub sum_cpu_temp: f64,
     pub cpu_temp_samples: u32,
+    /// CPU temperature samples that came from the DPTF participant, which
+    /// publishes no thermal ceiling.
+    dptf_temp_samples: u32,
     /// The CPU's own thermal ceiling, latched from the first tick that carried
     /// one. `None` on a part whose ceiling cannot be established.
     pub cpu_ceiling_c: Option<f32>,
@@ -465,6 +482,7 @@ impl StageStats {
             max_cpu_temp_c: None,
             sum_cpu_temp: 0.0,
             cpu_temp_samples: 0,
+            dptf_temp_samples: 0,
             cpu_ceiling_c: snapshot.cpu_ceiling.map(|c| c.limit_c),
             access: snapshot.access.clone(),
             max_gpu_temp_c: None,
@@ -581,14 +599,19 @@ impl StageStats {
             self.max_cpu_temp_c = Some(self.max_cpu_temp_c.map_or(t, |m| m.max(t)));
             self.sum_cpu_temp += t as f64;
             self.cpu_temp_samples = self.cpu_temp_samples.saturating_add(1);
+            if snapshot.cpu_temp_source() == CpuTempSource::DptfParticipant {
+                self.dptf_temp_samples = self.dptf_temp_samples.saturating_add(1);
+            }
         }
         if let Some(rule) = &rules.max_cpu_temp_c {
-            track_over_run(
-                tick_max_cpu_temp,
-                rule.effective_limit_c(self.cpu_ceiling_c),
-                &mut self.cpu_temp_over_run,
-                &mut self.worst_cpu_temp_over,
-            );
+            if !self.cpu_temp_ungradable(rule) {
+                track_over_run(
+                    tick_max_cpu_temp,
+                    rule.effective_limit_c(self.cpu_ceiling_c),
+                    &mut self.cpu_temp_over_run,
+                    &mut self.worst_cpu_temp_over,
+                );
+            }
         }
 
         let tick_max_gpu_temp = snapshot
@@ -727,6 +750,19 @@ impl StageStats {
     pub fn has_tool_limits(&self) -> bool {
         !self.tool_limits.is_empty()
     }
+
+    /// `true` when every CPU temperature this stage folded came from the DPTF
+    /// participant, which publishes no thermal ceiling.
+    fn only_dptf_cpu_temps(&self) -> bool {
+        self.cpu_temp_samples > 0 && self.dptf_temp_samples == self.cpu_temp_samples
+    }
+
+    /// `true` when the rule grades on the part's ceiling, no ceiling was
+    /// established, and every reading came from a source that publishes none
+    /// either.
+    fn cpu_temp_ungradable(&self, rule: &TempRule) -> bool {
+        rule.falls_back_to_flat_limit(self.cpu_ceiling_c) && self.only_dptf_cpu_temps()
+    }
 }
 
 /// Operator-facing tier name.
@@ -764,6 +800,16 @@ fn backend_state_line(access: &AccessStatus) -> String {
         "the {} backend was live at tier '{}' but the sensor did not answer",
         access.backend_label,
         tier_label(access.tier)
+    )
+}
+
+/// One line naming why a part-ceiling rule had no ceiling to grade against, so
+/// the gap carries its own cause.
+fn no_ceiling_line(flat_limit_c: f32) -> String {
+    format!(
+        "the DPTF participant reported the temperature but publishes no thermal ceiling, and \
+         this part's own ceiling is not one CPUID can establish; the configured \
+         {flat_limit_c:.0}C would fail every part whose ceiling sits above it"
     )
 }
 
@@ -976,6 +1022,14 @@ pub fn evaluate_stage(stats: &StageStats, rules: &VerdictRules) -> StageVerdict 
                 ticks: stats.ticks,
                 policy: rule.on_missing,
                 detail: Some(backend_state_line(&stats.access)),
+            });
+        } else if stats.cpu_temp_ungradable(rule) {
+            unevaluated.push(UnevaluatedRule {
+                rule: format!("max_cpu_temp_c (part ceiling + {OVER_CEILING_MARGIN_C:.0}C)"),
+                sensor: MissingSensor::CpuThermalCeiling,
+                ticks: stats.ticks,
+                policy: rule.on_missing,
+                detail: Some(no_ceiling_line(rule.limit_c)),
             });
         } else if stats.worst_cpu_temp_over >= rule.consecutive_ticks {
             violations.push(RuleViolation::CpuTemp {
@@ -1237,6 +1291,135 @@ mod tests {
         assert_eq!(ceiling_c, Some(95.0));
         assert_eq!(limit_c, 95.0 + OVER_CEILING_MARGIN_C);
         assert!(verdict.violation_lines()[0].contains("95C part ceiling"));
+    }
+
+    /// Snapshot from the Intel DPTF participant: a CPU-side temperature with
+    /// no ceiling behind it, which is what every machine reports once WinRing0
+    /// fails and the WMI backend is the one left.
+    fn dptf_snapshot(temp_c: f32) -> TelemetrySnapshot {
+        let mut snap = snapshot(temp_c, 4700, 95.0);
+        snap.cores[0].temp_c = None;
+        snap.cpu_die = Some(stress_kit::telemetry::CpuDieThermal {
+            package_c: Some(temp_c),
+            cores: Vec::new(),
+            reader: stress_kit::telemetry::CpuDieReader::DptfParticipant,
+        });
+        snap
+    }
+
+    /// Snapshot from an AMD die sensor whose CPUID pair is not in the ceiling
+    /// table — a mobile Zen part.
+    fn untabled_amd_snapshot(temp_c: f32) -> TelemetrySnapshot {
+        let mut snap = snapshot(temp_c, 4700, 95.0);
+        snap.cores[0].temp_c = None;
+        snap.cpu_die = Some(stress_kit::telemetry::CpuDieThermal {
+            package_c: Some(temp_c),
+            cores: Vec::new(),
+            reader: stress_kit::telemetry::CpuDieReader::AmdTctl,
+        });
+        snap
+    }
+
+    /// An Intel U/H part runs to 100 C by design and holds 95-100 C under
+    /// sustained load. The DPTF participant reads that temperature but
+    /// publishes no ceiling and the MSR is unreachable, so the flat 95 is a
+    /// guess in the fail direction: the run abstains instead of condemning a
+    /// laptop for behaving as designed.
+    #[test]
+    fn a_dptf_reading_with_no_ceiling_abstains_instead_of_failing() {
+        let rules = VerdictRules::certification();
+        let mut stats = stats_for(&rules);
+        for _ in 0..60 {
+            stats.absorb_tick(&metrics(100.0, 0), &dptf_snapshot(97.0), &rules);
+        }
+
+        assert_eq!(stats.cpu_temp_samples, 60, "the fixture measured no temperature");
+        assert_eq!(stats.max_cpu_temp_c, Some(97.0));
+        assert_eq!(stats.worst_cpu_temp_over, 0, "an ungradable rule accumulated a breach run");
+
+        let verdict = evaluate_stage(&stats, &rules);
+        assert!(
+            verdict.violations.is_empty(),
+            "a part with no readable ceiling was condemned: {:?}",
+            verdict.violations
+        );
+        assert!(verdict.pass);
+        assert_eq!(verdict.result_token(), "inconclusive");
+        assert!(verdict.has_blocking_gap());
+
+        let gap = verdict
+            .unevaluated
+            .iter()
+            .find(|u| u.sensor == MissingSensor::CpuThermalCeiling)
+            .unwrap_or_else(|| panic!("unevaluated: {:?}", verdict.unevaluated));
+        assert_eq!(gap.ticks, 60);
+        assert_eq!(gap.policy, MissingSensorPolicy::Inconclusive);
+        let line = gap.describe();
+        assert!(line.contains("no thermal ceiling for this part"), "{line}");
+        assert!(line.contains("DPTF participant"), "{line}");
+        assert!(line.contains("95C"), "{line}");
+    }
+
+    /// The guard keys on the absent ceiling, not on the sensor class: give the
+    /// same DPTF reading a ceiling and the rule grades again, unchanged.
+    #[test]
+    fn a_dptf_reading_grades_normally_once_a_ceiling_is_known() {
+        let rules = VerdictRules::certification();
+        let with_ceiling = |temp_c: f32| {
+            let mut snap = dptf_snapshot(temp_c);
+            snap.cpu_ceiling = Some(stress_kit::telemetry::CpuThermalCeiling {
+                limit_c: 100.0,
+                source: stress_kit::telemetry::CpuCeilingSource::IntelMsr,
+            });
+            snap
+        };
+
+        let mut at_ceiling = stats_for(&rules);
+        for _ in 0..60 {
+            at_ceiling.absorb_tick(&metrics(100.0, 0), &with_ceiling(99.5), &rules);
+        }
+        let verdict = evaluate_stage(&at_ceiling, &rules);
+        assert_eq!(verdict.result_token(), "pass", "{:?}", verdict.unevaluated);
+
+        let mut over_ceiling = stats_for(&rules);
+        for _ in 0..60 {
+            over_ceiling.absorb_tick(&metrics(100.0, 0), &with_ceiling(104.5), &rules);
+        }
+        assert!(!evaluate_stage(&over_ceiling, &rules).pass);
+    }
+
+    /// Abstaining is scoped to the ceiling basis. A rule written as an absolute
+    /// number asked for that number, whatever the sensor is.
+    #[test]
+    fn an_absolute_limit_still_grades_a_dptf_reading() {
+        let mut rules = VerdictRules::certification();
+        rules.max_cpu_temp_c = Some(TempRule {
+            limit_c: 95.0,
+            consecutive_ticks: 5,
+            on_missing: MissingSensorPolicy::Inconclusive,
+            basis: TempLimitBasis::Absolute,
+        });
+        let mut stats = stats_for(&rules);
+        for _ in 0..30 {
+            stats.absorb_tick(&metrics(100.0, 0), &dptf_snapshot(97.0), &rules);
+        }
+        let verdict = evaluate_stage(&stats, &rules);
+        assert!(!verdict.pass, "an absolute limit must still grade as written");
+    }
+
+    /// The untabled-AMD gap stays as it was. A mobile Zen part reads through
+    /// its own die sensor, so the flat limit still grades it — widening the
+    /// abstain to every unknown ceiling is a separate decision.
+    #[test]
+    fn an_untabled_die_sensor_still_grades_against_the_flat_limit() {
+        let rules = VerdictRules::certification();
+        let mut stats = stats_for(&rules);
+        for _ in 0..30 {
+            stats.absorb_tick(&metrics(100.0, 0), &untabled_amd_snapshot(97.0), &rules);
+        }
+        let verdict = evaluate_stage(&stats, &rules);
+        assert!(!verdict.pass);
+        assert!(matches!(verdict.violations[0], RuleViolation::CpuTemp { ceiling_c: None, .. }));
     }
 
     /// A rule that opts out of the ceiling grades the number as written.

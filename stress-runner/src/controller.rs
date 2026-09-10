@@ -2498,17 +2498,17 @@ fn thermally_blind_warning(stage_outcomes: &[StageOutcome]) -> Option<String> {
     )
 }
 
-/// Message for a run whose policy named rules the sensors could not answer.
-/// The limits were never tested, so the run neither certifies nor condemns the
-/// part — distinct from a breach, which is a measured failure.
+/// Message for a run whose policy named rules nothing could grade. The limits
+/// were never tested, so the run neither certifies nor condemns the part —
+/// distinct from a breach, which is a measured failure.
 fn ungraded_rules_evidence(stage_outcomes: &[StageOutcome]) -> Option<String> {
     let lines = ungraded_lines(stage_outcomes, true);
     if lines.is_empty() {
         return None;
     }
     Some(format!(
-        "inconclusive - {} configured rule(s) were never graded because their sensor \
-         never reported, so the run proves nothing about them: {}",
+        "inconclusive - {} configured rule(s) could not be graded, so the run proves \
+         nothing about them: {}",
         lines.len(),
         lines.join("; ")
     ))
@@ -3776,7 +3776,7 @@ mod tests {
             panic!("expected an AppError, got {:?}", verdict.failure_mode);
         };
         assert!(message.contains("max_cpu_temp_c 95C"), "{message}");
-        assert!(message.contains("never graded"), "{message}");
+        assert!(message.contains("could not be graded"), "{message}");
         assert!(!verdict.summary.thermal_throttle_detected);
     }
 

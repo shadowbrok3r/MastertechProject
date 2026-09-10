@@ -12,8 +12,9 @@ use std::ptr::null_mut;
 use std::sync::Mutex;
 
 use winapi::shared::minwindef::DWORD;
-use winapi::um::{errhandlingapi, handleapi, ioapiset, synchapi, winnt};
+use winapi::um::{errhandlingapi, handleapi, ioapiset, winnt};
 
+use super::busmutex::{IsaBus, PciMutex};
 use super::protocol;
 use super::{
     BackendId, Capabilities, LowLevelBackend, LpcAccess, LpcSlot, MsrAccess, SmnAccess,
@@ -39,16 +40,10 @@ const IOCTL_WRITE_IO_PORT_BYTE: u32 = ctl_code(0x836, FILE_WRITE_ACCESS);
 /// gone rather than that this CPU lacks the register.
 const IA32_TIME_STAMP_COUNTER: u32 = 0x10;
 
-const WAIT_OBJECT_0: u32 = 0;
-const WAIT_ABANDONED: u32 = 0x80;
-
 pub struct WinRing0Backend {
     device: winnt::HANDLE,
-    /// `Global\Access_PCI`; null when unavailable (caller proceeds unlocked).
-    pci_mutex: winnt::HANDLE,
-    /// Both ISA-bus mutex names; null entries mean the bus stays untouched.
-    isa_mutexes: [winnt::HANDLE; 2],
-    isa_held: Mutex<bool>,
+    pci: PciMutex,
+    isa: IsaBus,
     /// Currently admitted hardware-monitor window.
     window: Mutex<Option<(u16, u16)>>,
 }
@@ -70,12 +65,8 @@ impl WinRing0Backend {
         };
         Ok(Self {
             device,
-            pci_mutex: open_mutex(protocol::PCI_MUTEX_NAME),
-            isa_mutexes: [
-                open_mutex(protocol::ISA_MUTEX_NAMES[0]),
-                open_mutex(protocol::ISA_MUTEX_NAMES[1]),
-            ],
-            isa_held: Mutex::new(false),
+            pci: PciMutex::open(),
+            isa: IsaBus::open(),
             window: Mutex::new(None),
         })
     }
@@ -170,67 +161,19 @@ impl SmnAccess for WinRing0Backend {
     /// Index/data pair under `Global\Access_PCI`, so peers reading SMN cannot
     /// interleave between our index write and data read.
     fn read_smn(&self, addr: u32) -> Option<u32> {
-        let _guard = MutexGuardHandle::acquire(self.pci_mutex);
+        let _guard = self.pci.lock();
         self.write_pci_config(protocol::AMD_SMN_BUS_DEVICE_FN, protocol::AMD_SMN_INDEX_REG, addr)?;
         self.read_pci_config(protocol::AMD_SMN_BUS_DEVICE_FN, protocol::AMD_SMN_DATA_REG)
     }
 }
 
 impl LpcAccess for WinRing0Backend {
-    /// All-or-nothing across both mutex names; a partial take is released before
-    /// returning false so a peer is never blocked by a lease we did not get.
     fn acquire_bus(&self) -> bool {
-        let Ok(mut held) = self.isa_held.lock() else {
-            return false;
-        };
-        if *held {
-            return false;
-        }
-        let mut taken = 0usize;
-        let mut abandoned = false;
-        for &handle in &self.isa_mutexes {
-            if handle.is_null() {
-                break;
-            }
-            match unsafe { synchapi::WaitForSingleObject(handle, protocol::MUTEX_WAIT_MS) } {
-                WAIT_OBJECT_0 => taken += 1,
-                WAIT_ABANDONED => {
-                    taken += 1;
-                    abandoned = true;
-                }
-                _ => break,
-            }
-        }
-        if taken < self.isa_mutexes.len() {
-            for &handle in self.isa_mutexes.iter().take(taken).rev() {
-                unsafe { synchapi::ReleaseMutex(handle) };
-            }
-            log::debug!("stress-kit/winring0: ISA-bus mutex not fully acquired; skipping port access");
-            return false;
-        }
-        if abandoned {
-            log::warn!(
-                "stress-kit/winring0: ISA-bus mutex was abandoned; a peer may have left the \
-                 SuperIO in config mode"
-            );
-        }
-        *held = true;
-        true
+        self.isa.acquire()
     }
 
     fn release_bus(&self) {
-        let Ok(mut held) = self.isa_held.lock() else {
-            return;
-        };
-        if !*held {
-            return;
-        }
-        for &handle in self.isa_mutexes.iter().rev() {
-            if !handle.is_null() {
-                unsafe { synchapi::ReleaseMutex(handle) };
-            }
-        }
-        *held = false;
+        self.isa.release()
     }
 
     fn config_enter(&self, slot: LpcSlot, family: SuperIoFamily) -> Option<()> {
@@ -353,48 +296,10 @@ impl LowLevelBackend for WinRing0Backend {
 
 impl Drop for WinRing0Backend {
     fn drop(&mut self) {
-        self.release_bus();
-        for &handle in self.isa_mutexes.iter().chain(std::iter::once(&self.pci_mutex)) {
-            if !handle.is_null() {
-                unsafe { handleapi::CloseHandle(handle) };
-            }
-        }
+        // Released before the driver goes, so a peer never takes the bus while
+        // our unload is still in flight.
+        self.isa.release();
         unsafe { handleapi::CloseHandle(self.device) };
         loader::unload_driver();
-    }
-}
-
-/// Opens a shared named mutex; null on failure, which callers treat as "proceed
-/// unlocked" rather than as an error.
-fn open_mutex(name: &str) -> winnt::HANDLE {
-    let handle = unsafe { synchapi::CreateMutexW(null_mut(), 0, loader::wide(name).as_ptr()) };
-    if handle.is_null() {
-        log::warn!("stress-kit/winring0: cannot open shared mutex {name}");
-    }
-    handle
-}
-
-/// Bounded, best-effort hold of one shared mutex; proceeds unlocked past the
-/// timeout so a stuck peer cannot stall the sampler thread.
-struct MutexGuardHandle {
-    handle: winnt::HANDLE,
-    acquired: bool,
-}
-
-impl MutexGuardHandle {
-    fn acquire(handle: winnt::HANDLE) -> Self {
-        let acquired = !handle.is_null() && {
-            let r = unsafe { synchapi::WaitForSingleObject(handle, protocol::MUTEX_WAIT_MS) };
-            r == WAIT_OBJECT_0 || r == WAIT_ABANDONED
-        };
-        Self { handle, acquired }
-    }
-}
-
-impl Drop for MutexGuardHandle {
-    fn drop(&mut self) {
-        if self.acquired {
-            unsafe { synchapi::ReleaseMutex(self.handle) };
-        }
     }
 }

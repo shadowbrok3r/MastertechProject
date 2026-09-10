@@ -11,6 +11,18 @@
 
 pub mod protocol;
 
+#[cfg(all(
+    target_os = "windows",
+    any(feature = "backend-winring0", feature = "backend-pawnio")
+))]
+pub mod busmutex;
+
+#[cfg(all(
+    target_os = "windows",
+    any(feature = "backend-winring0", feature = "backend-pawnio")
+))]
+pub mod staging;
+
 #[cfg(any(test, feature = "mock-backend"))]
 pub mod mock;
 
@@ -18,6 +30,9 @@ pub mod select;
 
 #[cfg(all(target_os = "windows", feature = "backend-esif-wmi"))]
 pub mod esif_wmi;
+
+#[cfg(all(target_os = "windows", feature = "backend-pawnio"))]
+pub mod pawnio;
 
 #[cfg(all(target_os = "windows", feature = "backend-winring0"))]
 pub mod winring0;
@@ -35,6 +50,9 @@ pub enum BackendId {
     /// No kernel-mode provider; user-mode sources only.
     #[default]
     None,
+    /// Signed PawnIO driver running upstream's audited bytecode modules.
+    #[serde(rename = "pawnio")]
+    PawnIo,
     /// Mastertech's own signed driver with a fixed register allowlist.
     Mtdrv,
     /// Legacy WinRing0 (CVE-2020-14979); loads only with driver protections off.
@@ -50,6 +68,7 @@ impl BackendId {
     pub fn label(self) -> &'static str {
         match self {
             Self::None => "none",
+            Self::PawnIo => "PawnIO (signed)",
             Self::Mtdrv => "Mastertech sensor driver",
             Self::WinRing0 => "WinRing0 (legacy)",
             Self::EsifWmi => "Intel DPTF (WMI)",

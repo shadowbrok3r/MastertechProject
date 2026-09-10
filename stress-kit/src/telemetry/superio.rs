@@ -1,9 +1,14 @@
 //! SuperIO (LPC) board-voltage reader.
 //!
-//! Probes the 0x2E/0x4E LPC index-data slots once for a Nuvoton NCT67xx
-//! hardware-monitor block, requires the 0x5CA3 vendor id to confirm the window
-//! before it is used, then samples the voltage bank on a throttle. Rail scaling
-//! uses the *conventional* Nuvoton resistor dividers — the real ratios are
+//! Probes the 0x2E/0x4E LPC index-data slots once for a Nuvoton hardware-monitor
+//! block, then samples it on a throttle. Two register layouts are read, chosen
+//! by chip id: [`Family::Classic`] for the NCT67xx bank/register map, confirmed
+//! by its 0x5CA3 vendor id, and [`Family::Ec6687`] for the NCT6683/6686/6687
+//! EC space common on MSI AMD boards, confirmed by its 3VCC reading because it
+//! has no vendor register. Each family decodes to volts itself and the grading
+//! below is shared.
+//!
+//! Rail scaling uses the *conventional* resistor dividers — the real ratios are
 //! per-board, so every reading is published with `calibrated: false`. An
 //! out-of-nominal rail is reported, and so is a rail that falls below its
 //! reportable floor after having once read nominal, so both a sagging and a
@@ -53,60 +58,75 @@ impl Band {
     }
 }
 
-/// One voltage channel with the nominal divider applied.
+/// Grading properties of one rail. These are physical, so every chip family
+/// shares them; only where the rail is read differs.
 struct Rail {
     label: &'static str,
-    index: u8,
-    factor: f32,
     /// Values outside this are physically impossible and are discarded.
     reportable: Band,
     /// Values outside this are reported and warned about, not discarded.
     nominal: Band,
 }
 
+/// Where one family reads a rail, and the divider applied to it.
+struct Channel {
+    /// Voltage-bank channel on [`Family::Classic`]; EC-space register on
+    /// [`Family::Ec6687`].
+    at: u16,
+    factor: f32,
+}
+
 const RAIL_COUNT: usize = super::RAIL_LABELS.len();
 
-/// Channel-to-rail map and nominal dividers for the NCT67xx 0x48x layout;
-/// index assignment and divider are both board-specific in reality.
 // 3.14 here is a 3.3V rail's lower bound, not an approximation of PI.
 #[allow(clippy::approx_constant)]
-const NUVOTON_RAILS: [Rail; RAIL_COUNT] = [
+const RAILS: [Rail; RAIL_COUNT] = [
     Rail {
         label: super::RAIL_LABELS[0],
-        index: 0,
-        factor: 1.0,
         reportable: Band { min: 0.05, max: 2.04 },
         nominal: Band { min: 0.50, max: 1.80 },
     },
     Rail {
         label: super::RAIL_LABELS[1],
-        index: 1,
-        factor: 5.0,
         reportable: Band { min: 2.00, max: 8.00 },
         nominal: Band { min: 4.75, max: 5.25 },
     },
     // Chip supply, not the board's +3.3V PSU rail; labelled so nothing reads it as one.
     Rail {
         label: super::RAIL_LABELS[2],
-        index: 3,
-        factor: 2.0,
         reportable: Band { min: 1.50, max: 4.08 },
         nominal: Band { min: 3.14, max: 3.47 },
     },
     Rail {
         label: super::RAIL_LABELS[3],
-        index: 4,
-        factor: 12.0,
         reportable: Band { min: 4.00, max: 20.00 },
         nominal: Band { min: 11.40, max: 12.60 },
     },
     Rail {
         label: super::RAIL_LABELS[4],
-        index: 8,
-        factor: 2.0,
         reportable: Band { min: 1.00, max: 4.08 },
         nominal: Band { min: 2.50, max: 3.60 },
     },
+];
+
+/// NCT67xx 0x48x layout. Channel assignment and divider are both board-specific
+/// in reality, which is why every reading publishes uncalibrated.
+const CLASSIC_CHANNELS: [Channel; RAIL_COUNT] = [
+    Channel { at: 0, factor: 1.0 },
+    Channel { at: 1, factor: 5.0 },
+    Channel { at: 3, factor: 2.0 },
+    Channel { at: 4, factor: 12.0 },
+    Channel { at: 8, factor: 2.0 },
+];
+
+/// NCT6687 EC space (LHM's VIN map). The chip reports millivolts at the pin, so
+/// only rails sitting behind a board divider carry a factor.
+const EC6687_CHANNELS: [Channel; RAIL_COUNT] = [
+    Channel { at: 0x124, factor: 1.0 },  // VIN2, Vcore
+    Channel { at: 0x122, factor: 5.0 },  // VIN1, +5V
+    Channel { at: 0x130, factor: 1.0 },  // 3VCC I/O
+    Channel { at: 0x120, factor: 12.0 }, // VIN0, +12V
+    Channel { at: 0x13C, factor: 1.0 },  // VBAT
 ];
 
 const _: () = {
@@ -118,18 +138,24 @@ const _: () = {
         STALE_AFTER.as_millis() >= POLL_INTERVAL.as_millis(),
         "cache would expire before the next read could refresh it"
     );
+    // The gate has to be a rail we actually read, or a chip could pass the
+    // liveness check on a register nothing else touches.
+    assert!(
+        EC6687_CHANNELS[2].at == EC_GATE_REG,
+        "the EC liveness gate must be the 3VCC channel"
+    );
     let mut i = 0;
     while i < RAIL_COUNT {
         assert!(
-            (NUVOTON_RAILS[i].index as usize) < VOLTAGE_CHANNELS,
+            (CLASSIC_CHANNELS[i].at as usize) < VOLTAGE_CHANNELS,
             "rail channel out of bank range"
         );
         assert!(
-            NUVOTON_RAILS[i].reportable.min <= NUVOTON_RAILS[i].nominal.min,
+            RAILS[i].reportable.min <= RAILS[i].nominal.min,
             "nominal band must sit inside the reportable band"
         );
         assert!(
-            NUVOTON_RAILS[i].nominal.max <= NUVOTON_RAILS[i].reportable.max,
+            RAILS[i].nominal.max <= RAILS[i].reportable.max,
             "nominal band must sit inside the reportable band"
         );
         i += 1;
@@ -144,6 +170,33 @@ const GATE_FACTOR: f32 = 2.0;
 const GATE_MIN: f32 = 1.50;
 const GATE_MAX: f32 = 4.08;
 
+/// EC-space access triplet, at these offsets inside the same monitor window the
+/// classic layout uses. The page register doubles as a lock: it reads
+/// [`EC_PAGE_RELEASE`] when no tool holds the block.
+const EC_PAGE_OFFSET: u8 = 0x04;
+const EC_INDEX_OFFSET: u8 = 0x05;
+const EC_DATA_OFFSET: u8 = 0x06;
+const EC_PAGE_RELEASE: u8 = 0xFF;
+/// How long to wait for a peer to release the EC before forcing access.
+const EC_ACCESS_WAIT: Duration = Duration::from_millis(500);
+
+/// 3VCC I/O, the chip's own supply, is the EC liveness gate. One channel rather
+/// than the classic layout's pair because it is the only rail here that is
+/// chip-internal on every board. The band excludes both a floating read
+/// (0xFF/0xFF decodes to 4.095 V) and a dead one.
+const EC_GATE_REG: u16 = 0x130;
+const EC_GATE_MIN: f32 = 2.80;
+const EC_GATE_MAX: f32 = 3.60;
+
+/// Which register layout a detected chip speaks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Family {
+    /// NCT67xx: bank select, then 8-bit channels at 0x480.
+    Classic,
+    /// NCT6683/6686/6687: 16-bit EC space, 12-bit readings in millivolts.
+    Ec6687,
+}
+
 /// (chip id high, chip id low) pairs sharing the 0x48x voltage register map.
 const NUVOTON_CLASSIC: &[(u8, u8, &str)] = &[
     (0xC5, 0x60, "NCT6779D"),
@@ -157,6 +210,14 @@ const NUVOTON_CLASSIC: &[(u8, u8, &str)] = &[
     (0xD4, 0x2B, "NCT6796D-S"),
     (0xD4, 0x51, "NCT6797D"),
     (0xD8, 0x02, "NCT6799D-R"),
+];
+
+/// (chip id high, chip id low) pairs using the NCT6687 EC-space layout. Common
+/// on MSI AM4/AM5 boards, which is why AMD builds see no rails without this.
+const NUVOTON_EC6687: &[(u8, u8, &str)] = &[
+    (0xD5, 0x92, "NCT6687D"),
+    (0xD4, 0x92, "NCT6687D-M"),
+    (0xC7, 0x32, "NCT6683D"),
 ];
 
 /// Per-rail plausibility state; transitions are logged once.
@@ -183,12 +244,15 @@ impl RailState {
     }
 }
 
-/// One sampled voltage bank; `None` per channel means the read did not answer.
-type Bank = [Option<u8>; VOLTAGE_CHANNELS];
+/// One sample, already scaled to volts per rail. Families decode differently
+/// enough that they hand the grader volts rather than raw registers; `None`
+/// means that rail did not answer.
+type Sample = [Option<f32>; RAIL_COUNT];
 
 pub struct SuperIoMonitor {
     access: LowLevelAccess,
     hwm_base: u16,
+    family: Family,
     cached: Vec<VoltageReading>,
     last_polled: Instant,
     /// Timestamp of the last read that produced at least one rail.
@@ -227,11 +291,12 @@ impl SuperIoMonitor {
                 }
             }
         };
-        let (chip, hwm_base) = detected?;
+        let (chip, hwm_base, family) = detected?;
 
         let mut me = Self {
             access,
             hwm_base,
+            family,
             cached: Vec::new(),
             last_polled: Instant::now() - POLL_INTERVAL,
             last_good: Instant::now(),
@@ -292,8 +357,8 @@ impl SuperIoMonitor {
     /// consecutive-breach run, so only genuinely consecutive reads confirm a
     /// collapse.
     fn read_voltages(&mut self) -> Vec<VoltageReading> {
-        match self.sample_bank() {
-            Some(bank) => self.grade(&bank),
+        match self.sample() {
+            Some(sample) => self.grade(&sample),
             None => {
                 self.rail_breaches = [0; RAIL_COUNT];
                 Vec::new()
@@ -301,36 +366,31 @@ impl SuperIoMonitor {
         }
     }
 
-    /// Reads every voltage channel; `None` when the bus is held by a peer, the
-    /// window will not open, or the fixed AVCC/3VCC channels show the HWM block
-    /// isn't answering.
-    fn sample_bank(&self) -> Option<Bank> {
+    /// Channel map for the detected chip's register layout.
+    fn channels(&self) -> &'static [Channel; RAIL_COUNT] {
+        match self.family {
+            Family::Classic => &CLASSIC_CHANNELS,
+            Family::Ec6687 => &EC6687_CHANNELS,
+        }
+    }
+
+    /// Reads every rail; `None` when the bus is held by a peer, the window will
+    /// not open, or the family's liveness gate shows the block isn't answering.
+    fn sample(&self) -> Option<Sample> {
         let lpc = self.access.lpc()?;
         let _bus = BusLease::acquire(lpc)?;
         let window = HwmWindow::open(lpc, self.hwm_base, HWM_WINDOW_LEN)?;
-
-        // 0xFF is the floating-bus read and scales inside some rails' bands, so it
-        // stays no-data; 0x00 is kept so a collapsed rail can still be graded.
-        let mut bank: Bank = [None; VOLTAGE_CHANNELS];
-        for (channel, slot) in bank.iter_mut().enumerate() {
-            *slot = hwm_read(&window, VOLTAGE_BANK, VOLTAGE_REG_BASE + channel as u8)
-                .filter(|&r| r != 0xFF);
+        match self.family {
+            Family::Classic => sample_classic(&window),
+            Family::Ec6687 => sample_ec6687(&window),
         }
-
-        let live = GATE_INDEXES.iter().all(|&i| {
-            bank[i as usize].is_some_and(|r| {
-                let volts = r as f32 * LSB_VOLTS * GATE_FACTOR;
-                (GATE_MIN..=GATE_MAX).contains(&volts)
-            })
-        });
-        live.then_some(bank)
     }
 
-    /// Scales each mapped channel and grades it, logging state transitions.
-    fn grade(&mut self, bank: &Bank) -> Vec<VoltageReading> {
+    /// Grades each rail, logging state transitions.
+    fn grade(&mut self, sample: &Sample) -> Vec<VoltageReading> {
         let mut out = Vec::with_capacity(RAIL_COUNT);
-        for (slot, rail) in NUVOTON_RAILS.iter().enumerate() {
-            let volts = bank[rail.index as usize].map(|r| r as f32 * LSB_VOLTS * rail.factor);
+        for (slot, rail) in RAILS.iter().enumerate() {
+            let volts = sample[slot];
             let breached = volts.is_some_and(|v| v < rail.reportable.min);
             self.rail_breaches[slot] = if breached {
                 self.rail_breaches[slot].saturating_add(1)
@@ -341,7 +401,7 @@ impl SuperIoMonitor {
             self.rail_proven[slot] |= state == RailState::Ok;
             if self.rail_states[slot] != state {
                 self.rail_states[slot] = state;
-                log_rail_state(rail, state, volts);
+                log_rail_state(rail, state, volts, self.channels()[slot].at);
             }
             if let Some(volts) = volts.filter(|_| state.publishes()) {
                 out.push(VoltageReading {
@@ -370,8 +430,9 @@ fn classify_rail(rail: &Rail, volts: Option<f32>, proven: bool, breaches: u8) ->
     }
 }
 
-/// Logs a rail entering a new plausibility state.
-fn log_rail_state(rail: &Rail, state: RailState, volts: Option<f32>) {
+/// Logs a rail entering a new plausibility state. `channel` is the family's
+/// register or channel, which is what an unmapped rail needs naming.
+fn log_rail_state(rail: &Rail, state: RailState, volts: Option<f32>, channel: u16) {
     match state {
         RailState::Ok => log::info!(
             "stress-kit/superio: {} back inside its nominal band",
@@ -400,10 +461,9 @@ fn log_rail_state(rail: &Rail, state: RailState, volts: Option<f32>) {
             rail.reportable.min
         ),
         RailState::Unmapped => log::debug!(
-            "stress-kit/superio: {} channel {} reads {:.3} V, below reportable {:.2} V and never \
-             nominal; treated as unwired, not a collapse",
+            "stress-kit/superio: {} channel 0x{channel:02X} reads {:.3} V, below reportable \
+             {:.2} V and never nominal; treated as unwired, not a collapse",
             rail.label,
-            rail.index,
             volts.unwrap_or_default(),
             rail.reportable.min
         ),
@@ -425,17 +485,17 @@ fn log_rail_state(rail: &Rail, state: RailState, volts: Option<f32>) {
 
 /// Outcome of one Nuvoton probe at an LPC slot.
 enum NuvotonProbe {
-    /// Supported NCT67xx whose HWM window answered with the Nuvoton vendor id.
-    Found(&'static str, u16),
+    /// Supported chip whose monitor window was confirmed.
+    Found(&'static str, u16, Family),
     /// A chip answered the Nuvoton unlock, or a read/validation step failed.
     Answered,
     /// No chip id came back.
     Silent,
 }
 
-fn probe_slot(lpc: &dyn LpcAccess, slot: LpcSlot) -> Option<(&'static str, u16)> {
+fn probe_slot(lpc: &dyn LpcAccess, slot: LpcSlot) -> Option<(&'static str, u16, Family)> {
     match probe_nuvoton(lpc, slot) {
-        NuvotonProbe::Found(chip, base) => Some((chip, base)),
+        NuvotonProbe::Found(chip, base, family) => Some((chip, base, family)),
         NuvotonProbe::Answered => None,
         NuvotonProbe::Silent => {
             probe_ite(lpc, slot);
@@ -445,7 +505,7 @@ fn probe_slot(lpc: &dyn LpcAccess, slot: LpcSlot) -> Option<(&'static str, u16)>
 }
 
 fn probe_nuvoton(lpc: &dyn LpcAccess, slot: LpcSlot) -> NuvotonProbe {
-    let (chip, base) = {
+    let (chip, base, family) = {
         let mode = ConfigMode::enter(lpc, slot, SuperIoFamily::Nuvoton);
         let (Some(id_high), Some(id_low)) =
             (mode.read_cr(CR_CHIP_ID_HIGH), mode.read_cr(CR_CHIP_ID_LOW))
@@ -455,14 +515,13 @@ fn probe_nuvoton(lpc: &dyn LpcAccess, slot: LpcSlot) -> NuvotonProbe {
         if id_high == 0x00 || id_high == 0xFF {
             return NuvotonProbe::Silent;
         }
-        let Some(chip) = nuvoton_chip(id_high, id_low) else {
+        let Some((chip, family)) = nuvoton_chip(id_high, id_low) else {
             // Logged at info: the chip id is the one fact that turns "voltages
             // unavailable" into an actionable gap, and it is otherwise lost.
             log::info!(
-                "stress-kit/superio: slot 0x{:02X} chip id 0x{id_high:02X}{id_low:02X} ({}) has \
-                 no reader; board voltages unavailable",
-                slot.index_port(),
-                known_unsupported_chip(id_high, id_low).unwrap_or("unrecognized")
+                "stress-kit/superio: slot 0x{:02X} chip id 0x{id_high:02X}{id_low:02X} has no \
+                 reader; board voltages unavailable",
+                slot.index_port()
             );
             return NuvotonProbe::Answered;
         };
@@ -477,11 +536,19 @@ fn probe_nuvoton(lpc: &dyn LpcAccess, slot: LpcSlot) -> NuvotonProbe {
             );
             return NuvotonProbe::Answered;
         };
-        (chip, base)
+        (chip, base, family)
     };
 
+    // The 0x5CA3 vendor register lives in the bank-selected space, which the EC
+    // layout does not have. Those parts are confirmed instead by their 3VCC
+    // gate on the first sample, which is a reading rather than a constant and
+    // so proves rather more.
+    if family == Family::Ec6687 {
+        return NuvotonProbe::Found(chip, base, family);
+    }
+
     match read_vendor_id(lpc, base) {
-        Some(NUVOTON_VENDOR_ID) => NuvotonProbe::Found(chip, base),
+        Some(NUVOTON_VENDOR_ID) => NuvotonProbe::Found(chip, base, family),
         other => {
             log::warn!(
                 "stress-kit/superio: {chip} HWM @ 0x{base:04X} vendor id {other:04X?} != \
@@ -513,23 +580,16 @@ fn probe_ite(lpc: &dyn LpcAccess, slot: LpcSlot) {
     );
 }
 
-fn nuvoton_chip(id_high: u8, id_low: u8) -> Option<&'static str> {
-    NUVOTON_CLASSIC
-        .iter()
-        .find(|(h, l, _)| *h == id_high && *l == id_low)
-        .map(|(_, _, name)| *name)
-}
-
-/// Names a Nuvoton part that is identified but has no reader here, so the log
-/// says which chip is missing rather than only its id. These use the NCT6687
-/// EC-space layout, not the 0x48x bank/register map [`NUVOTON_CLASSIC`] reads.
-fn known_unsupported_chip(id_high: u8, id_low: u8) -> Option<&'static str> {
-    match (id_high, id_low) {
-        (0xD5, 0x92) => Some("NCT6687D"),
-        (0xD4, 0x92) => Some("NCT6687D-M"),
-        (0xC7, 0x32) => Some("NCT6683D"),
-        _ => None,
-    }
+fn nuvoton_chip(id_high: u8, id_low: u8) -> Option<(&'static str, Family)> {
+    let find = |table: &'static [(u8, u8, &'static str)]| {
+        table
+            .iter()
+            .find(|(h, l, _)| *h == id_high && *l == id_low)
+            .map(|(_, _, name)| *name)
+    };
+    find(NUVOTON_CLASSIC)
+        .map(|name| (name, Family::Classic))
+        .or_else(|| find(NUVOTON_EC6687).map(|name| (name, Family::Ec6687)))
 }
 
 /// Base address of the selected logical device, read twice; `None` unless both
@@ -577,6 +637,104 @@ fn sane_hwm_base(reported: u16) -> Option<u16> {
     protocol::window_admissible(base, HWM_WINDOW_LEN).then_some(base)
 }
 
+/// Samples the NCT67xx bank layout. Gated on the two chip-internal 3.3V
+/// supplies: an implausible pair means the block isn't answering, not that the
+/// rail channels were guessed wrong.
+fn sample_classic(window: &HwmWindow<'_>) -> Option<Sample> {
+    // 0xFF is the floating-bus read and scales inside some rails' bands, so it
+    // stays no-data; 0x00 is kept so a collapsed rail can still be graded.
+    let mut raw = [None; VOLTAGE_CHANNELS];
+    for (channel, slot) in raw.iter_mut().enumerate() {
+        *slot = hwm_read(window, VOLTAGE_BANK, VOLTAGE_REG_BASE + channel as u8)
+            .filter(|&r| r != 0xFF);
+    }
+    let live = GATE_INDEXES.iter().all(|&i| {
+        raw[i as usize].is_some_and(|r| {
+            let volts = r as f32 * LSB_VOLTS * GATE_FACTOR;
+            (GATE_MIN..=GATE_MAX).contains(&volts)
+        })
+    });
+    if !live {
+        return None;
+    }
+    let mut out: Sample = [None; RAIL_COUNT];
+    for (slot, channel) in CLASSIC_CHANNELS.iter().enumerate() {
+        out[slot] = raw[channel.at as usize].map(|r| r as f32 * LSB_VOLTS * channel.factor);
+    }
+    Some(out)
+}
+
+/// Samples the NCT6687 EC space, gated on 3VCC I/O.
+///
+/// The page register is claimed once for the whole sample rather than per byte:
+/// it is the block's lock, and re-taking it for each of the twelve reads would
+/// both let a peer interleave mid-sample and cost up to the full wait each
+/// time. Released on every path, since peers block on it.
+fn sample_ec6687(window: &HwmWindow<'_>) -> Option<Sample> {
+    await_ec(window);
+    let sample = read_ec_rails(window);
+    let _ = window.write(EC_PAGE_OFFSET, EC_PAGE_RELEASE);
+    sample
+}
+
+/// Reads the gate and every rail. Caller owns claiming and releasing the page.
+fn read_ec_rails(window: &HwmWindow<'_>) -> Option<Sample> {
+    let gate = ec_volts(window, EC_GATE_REG)?;
+    if !(EC_GATE_MIN..=EC_GATE_MAX).contains(&gate) {
+        log::debug!(
+            "stress-kit/superio: EC 3VCC reads {gate:.3} V, outside \
+             {EC_GATE_MIN:.2}..{EC_GATE_MAX:.2} V; the monitor block is not answering"
+        );
+        return None;
+    }
+    let mut out: Sample = [None; RAIL_COUNT];
+    for (slot, channel) in EC6687_CHANNELS.iter().enumerate() {
+        out[slot] = ec_volts(window, channel.at).map(|v| v * channel.factor);
+    }
+    Some(out)
+}
+
+/// One EC reading, from the register pair holding it.
+fn ec_volts(window: &HwmWindow<'_>, reg: u16) -> Option<f32> {
+    let high = ec_read(window, reg)?;
+    let low = ec_read(window, reg + 1)?;
+    Some(ec_decode(high, low))
+}
+
+/// 12 bits at 1 mV a step: a whole high byte, then the top nibble of the next
+/// register. Unlike the bank layout there is no ADC step to apply, so a rail
+/// with no board divider needs no factor at all.
+fn ec_decode(high: u8, low: u8) -> f32 {
+    let millivolts = ((high as u16) << 4) | (low >> 4) as u16;
+    millivolts as f32 / 1000.0
+}
+
+/// One EC-space byte, addressed as a page and an index. Assumes the caller has
+/// already claimed the page register through [`await_ec`] and will release it.
+fn ec_read(window: &HwmWindow<'_>, addr: u16) -> Option<u8> {
+    window.write(EC_PAGE_OFFSET, (addr >> 8) as u8)?;
+    window.write(EC_INDEX_OFFSET, (addr & 0xFF) as u8)?;
+    window.read(EC_DATA_OFFSET)
+}
+
+/// Waits for the page register to read [`EC_PAGE_RELEASE`], meaning no peer
+/// holds the block. Past the timeout it claims it anyway: a tool that died
+/// mid-access would otherwise lock the monitor out until reboot.
+fn await_ec(window: &HwmWindow<'_>) {
+    let deadline = Instant::now() + EC_ACCESS_WAIT;
+    loop {
+        if window.read(EC_PAGE_OFFSET) == Some(EC_PAGE_RELEASE) {
+            return;
+        }
+        if Instant::now() >= deadline {
+            log::debug!("stress-kit/superio: EC page register still held after {EC_ACCESS_WAIT:?}; forcing access");
+            let _ = window.write(EC_PAGE_OFFSET, EC_PAGE_RELEASE);
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
 /// One bank-selected hardware-monitor register read.
 fn hwm_read(window: &HwmWindow<'_>, bank: u8, reg: u8) -> Option<u8> {
     window.write(HWM_ADDR_OFFSET, HWM_BANK_SELECT)?;
@@ -598,7 +756,7 @@ mod tests {
     use super::*;
     use crate::lowlevel::mock::{LpcOp, MockBackend};
 
-    const V12: &Rail = &NUVOTON_RAILS[3];
+    const V12: &Rail = &RAILS[3];
 
     const SLOT: LpcSlot = LpcSlot::Port2E;
 
@@ -609,6 +767,65 @@ mod tests {
     #[test]
     fn v12_slot_matches_its_label() {
         assert_eq!(V12.label, "+12V");
+    }
+
+    /// Both id tables are searched, and each chip resolves to the layout it
+    /// actually speaks. Reading an EC part with the bank decoder returns
+    /// plausible-looking nonsense, so this mapping is load-bearing.
+    #[test]
+    fn chip_ids_resolve_to_their_register_layout() {
+        assert_eq!(nuvoton_chip(0xC5, 0x60), Some(("NCT6779D", Family::Classic)));
+        assert_eq!(nuvoton_chip(0xD8, 0x02), Some(("NCT6799D-R", Family::Classic)));
+        assert_eq!(nuvoton_chip(0xD5, 0x92), Some(("NCT6687D", Family::Ec6687)));
+        assert_eq!(nuvoton_chip(0xC7, 0x32), Some(("NCT6683D", Family::Ec6687)));
+        assert_eq!(nuvoton_chip(0xAB, 0xCD), None);
+    }
+
+    /// 12-bit millivolts: whole high byte, top nibble of the next register.
+    #[test]
+    fn ec_readings_decode_as_12_bit_millivolts() {
+        assert_eq!(ec_decode(0x00, 0x00), 0.0);
+        // 0xCE4 = 3300 mV, a 3.3V rail.
+        assert_eq!(ec_decode(0xCE, 0x40), 3.300);
+        // 0x44C = 1100 mV, a plausible Vcore.
+        assert_eq!(ec_decode(0x44, 0xC0), 1.100);
+        // The low nibble of the low byte is not part of the reading.
+        assert_eq!(ec_decode(0x44, 0xCF), ec_decode(0x44, 0xC0));
+        // Full scale, which is also what a floating bus reads.
+        assert_eq!(ec_decode(0xFF, 0xFF), 4.095);
+    }
+
+    /// The gate must reject both a floating bus and a dead block, or a chip
+    /// that is not answering publishes a full set of fabricated rails.
+    #[test]
+    fn the_ec_gate_rejects_a_bus_that_is_not_answering() {
+        let band = EC_GATE_MIN..=EC_GATE_MAX;
+        assert!(!band.contains(&ec_decode(0xFF, 0xFF)), "floating bus passed the gate");
+        assert!(!band.contains(&ec_decode(0x00, 0x00)), "dead block passed the gate");
+        assert!(band.contains(&ec_decode(0xCE, 0x40)), "a real 3.3V read must pass");
+    }
+
+    /// The EC map is upstream's VIN assignment; a transposed pair here reads
+    /// one rail's voltage under another rail's label and bands.
+    #[test]
+    fn the_ec_channel_map_matches_the_documented_registers() {
+        let at = |slot: usize| EC6687_CHANNELS[slot].at;
+        assert_eq!((at(0), RAILS[0].label), (0x124, "Vcore"));
+        assert_eq!((at(1), RAILS[1].label), (0x122, "+5V"));
+        assert_eq!((at(2), RAILS[2].label), (0x130, "3VCC (chip)"));
+        assert_eq!((at(3), RAILS[3].label), (0x120, "+12V"));
+        assert_eq!((at(4), RAILS[4].label), (0x13C, "VBAT"));
+    }
+
+    /// Only rails behind a board divider carry a factor: the EC reports
+    /// millivolts at the pin, unlike the bank layout's ADC steps.
+    #[test]
+    fn only_divided_ec_rails_carry_a_factor() {
+        assert_eq!(EC6687_CHANNELS[1].factor, 5.0);
+        assert_eq!(EC6687_CHANNELS[3].factor, 12.0);
+        for slot in [0, 2, 4] {
+            assert_eq!(EC6687_CHANNELS[slot].factor, 1.0, "slot {slot}");
+        }
     }
 
     #[test]
@@ -740,6 +957,7 @@ mod tests {
         let mut monitor = SuperIoMonitor {
             access,
             hwm_base: 0x0290,
+            family: Family::Classic,
             cached: Vec::new(),
             last_polled: Instant::now(),
             last_good: Instant::now(),

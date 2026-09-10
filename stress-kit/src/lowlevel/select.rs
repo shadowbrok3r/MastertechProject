@@ -4,25 +4,49 @@ use std::sync::Mutex;
 
 use super::{BackendId, LowLevelAccess, LowLevelBackend, RejectedBackend, WeakAccess};
 
-/// Forces one backend for bench A/B comparison. An override that fails does not
-/// fall through, so a comparison never silently measures a different backend.
+/// Chooses the backend. A forced backend that fails does not fall through, so a
+/// comparison never silently measures a different one.
 const OVERRIDE_ENV: &str = "MTECH_LOWLEVEL_BACKEND";
 
-/// Priority order. Fixed, not configurable: a signed provider always beats an
-/// unsigned one on a customer machine, and a driver that also reads board rails
-/// beats the WMI path that only reads a temperature.
-const ORDER: &[BackendId] =
-    &[BackendId::Mtdrv, BackendId::WinRing0, BackendId::EsifWmi];
+/// Priority order, used by [`Selection::Auto`]. Fixed, not configurable: a
+/// signed provider always beats an unsigned one on a customer machine, and a
+/// driver that also reads board rails beats the WMI path that only reads a
+/// temperature.
+const ORDER: &[BackendId] = &[
+    BackendId::PawnIo,
+    BackendId::Mtdrv,
+    BackendId::WinRing0,
+    BackendId::EsifWmi,
+];
+
+/// What runs when [`OVERRIDE_ENV`] is unset.
+///
+/// PawnIO alone while the migration is being proven. Falling back to WinRing0
+/// hides why PawnIO declined — the fallback answers, the snapshot looks healthy,
+/// and the reason PawnIO is not live only survives in `backend_rejected`, where
+/// it is easy to miss. Set `MTECH_LOWLEVEL_BACKEND=auto` for the full chain.
+const DEFAULT_SELECTION: Selection = Selection::Only(BackendId::PawnIo);
 
 /// An opened backend and the sentence describing why it is live.
 type Opened = (Box<dyn LowLevelBackend>, String);
 
-fn parse_override(raw: &str) -> Option<BackendId> {
+/// Which backends a run may open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Selection {
+    /// Every compiled-in backend in [`ORDER`], first one that answers.
+    Auto,
+    /// This backend or nothing.
+    Only(BackendId),
+}
+
+fn parse_selection(raw: &str) -> Option<Selection> {
     match raw.trim().to_ascii_lowercase().as_str() {
-        "none" | "off" => Some(BackendId::None),
-        "mtdrv" | "mastertech" => Some(BackendId::Mtdrv),
-        "winring0" | "win_ring0" => Some(BackendId::WinRing0),
-        "esif" | "esif_wmi" | "dptf" => Some(BackendId::EsifWmi),
+        "auto" | "order" | "chain" => Some(Selection::Auto),
+        "none" | "off" => Some(Selection::Only(BackendId::None)),
+        "pawnio" | "pawn_io" => Some(Selection::Only(BackendId::PawnIo)),
+        "mtdrv" | "mastertech" => Some(Selection::Only(BackendId::Mtdrv)),
+        "winring0" | "win_ring0" => Some(Selection::Only(BackendId::WinRing0)),
+        "esif" | "esif_wmi" | "dptf" => Some(Selection::Only(BackendId::EsifWmi)),
         _ => None,
     }
 }
@@ -61,32 +85,47 @@ pub fn open() -> LowLevelAccess {
     access
 }
 
-/// Opens the first backend that is compiled in and answers, recording why each
-/// earlier one was skipped.
+/// Resolves the selection, then opens under it.
 fn open_uncached() -> LowLevelAccess {
-    match std::env::var(OVERRIDE_ENV) {
-        Ok(raw) => open_overridden(&raw),
-        Err(_) => open_in_priority_order(),
+    let selection = match std::env::var(OVERRIDE_ENV) {
+        Ok(raw) => match parse_selection(&raw) {
+            Some(selection) => selection,
+            None => {
+                return LowLevelAccess::unavailable(
+                    format!("{OVERRIDE_ENV}={raw} is not a known backend; no backend opened"),
+                    Vec::new(),
+                );
+            }
+        },
+        Err(_) => DEFAULT_SELECTION,
+    };
+    match selection {
+        Selection::Auto => open_in_priority_order(),
+        Selection::Only(forced) => open_only(forced),
     }
 }
 
-fn open_overridden(raw: &str) -> LowLevelAccess {
-    let Some(forced) = parse_override(raw) else {
-        return LowLevelAccess::unavailable(
-            format!("{OVERRIDE_ENV}={raw} is not a known backend; no backend opened"),
-            Vec::new(),
-        );
-    };
+/// Opens one backend or nothing. The absence of a fallback is the point: the
+/// reason this backend declined is the whole answer, and another provider
+/// answering in its place buries it.
+fn open_only(forced: BackendId) -> LowLevelAccess {
     if forced == BackendId::None {
         return LowLevelAccess::unavailable(
-            format!("{OVERRIDE_ENV}={raw} — no backend opened by request"),
+            format!("{OVERRIDE_ENV} selected no backend, so none was opened"),
             Vec::new(),
         );
     }
     match try_open(forced) {
-        Ok((backend, detail)) => LowLevelAccess::new(backend, detail, Vec::new()),
+        Ok((backend, detail)) => {
+            log::info!("stress-kit/lowlevel: {} live", forced.label());
+            LowLevelAccess::new(backend, detail, Vec::new())
+        }
         Err(reason) => LowLevelAccess::unavailable(
-            format!("{OVERRIDE_ENV}={raw} could not open: {reason}"),
+            format!(
+                "{} is the only selected backend and it could not open: {reason}. Set \
+                 {OVERRIDE_ENV}=auto to fall back to the others.",
+                forced.label()
+            ),
             vec![RejectedBackend { backend: forced, reason }],
         ),
     }
@@ -120,6 +159,14 @@ fn open_in_priority_order() -> LowLevelAccess {
 /// Attempts one backend. `Err` carries the operator-actionable reason.
 fn try_open(candidate: BackendId) -> Result<Opened, String> {
     match candidate {
+        #[cfg(all(target_os = "windows", feature = "backend-pawnio"))]
+        BackendId::PawnIo => super::pawnio::PawnIoBackend::open().map(|b| {
+            let detail = b.detail();
+            (Box::new(b) as Box<dyn LowLevelBackend>, detail)
+        }),
+        #[cfg(not(all(target_os = "windows", feature = "backend-pawnio")))]
+        BackendId::PawnIo => Err("not compiled in".into()),
+
         BackendId::Mtdrv => Err("not compiled in".into()),
 
         #[cfg(all(target_os = "windows", feature = "backend-winring0"))]
@@ -166,13 +213,32 @@ mod tests {
 
     #[test]
     fn override_spellings_parse() {
-        assert_eq!(parse_override("winring0"), Some(BackendId::WinRing0));
-        assert_eq!(parse_override("  WinRing0 "), Some(BackendId::WinRing0));
-        assert_eq!(parse_override("none"), Some(BackendId::None));
-        assert_eq!(parse_override("mtdrv"), Some(BackendId::Mtdrv));
-        assert_eq!(parse_override("DPTF"), Some(BackendId::EsifWmi));
-        assert_eq!(parse_override("esif_wmi"), Some(BackendId::EsifWmi));
-        assert_eq!(parse_override("pawnio"), None);
+        use Selection::Only;
+        assert_eq!(parse_selection("winring0"), Some(Only(BackendId::WinRing0)));
+        assert_eq!(parse_selection("  WinRing0 "), Some(Only(BackendId::WinRing0)));
+        assert_eq!(parse_selection("none"), Some(Only(BackendId::None)));
+        assert_eq!(parse_selection("mtdrv"), Some(Only(BackendId::Mtdrv)));
+        assert_eq!(parse_selection("DPTF"), Some(Only(BackendId::EsifWmi)));
+        assert_eq!(parse_selection("esif_wmi"), Some(Only(BackendId::EsifWmi)));
+        assert_eq!(parse_selection("pawnio"), Some(Only(BackendId::PawnIo)));
+        assert_eq!(parse_selection("auto"), Some(Selection::Auto));
+        assert_eq!(parse_selection("winio"), None);
+    }
+
+    /// The default opens PawnIO alone. A fallback would answer in its place and
+    /// bury the reason PawnIO declined, which is the one thing being measured
+    /// while the migration is unproven.
+    #[test]
+    fn the_default_is_pawnio_alone() {
+        assert_eq!(DEFAULT_SELECTION, Selection::Only(BackendId::PawnIo));
+    }
+
+    /// The full chain has to stay reachable without a rebuild, or a machine
+    /// PawnIO cannot serve has no way back to a working backend.
+    #[test]
+    fn auto_restores_the_chain() {
+        assert_eq!(parse_selection("auto"), Some(Selection::Auto));
+        assert!(ORDER.len() > 1);
     }
 
     /// Priority must place the signed driver ahead of the legacy one, and both
@@ -182,6 +248,8 @@ mod tests {
         let mtdrv = ORDER.iter().position(|b| *b == BackendId::Mtdrv);
         let legacy = ORDER.iter().position(|b| *b == BackendId::WinRing0);
         let wmi = ORDER.iter().position(|b| *b == BackendId::EsifWmi);
+        let pawnio = ORDER.iter().position(|b| *b == BackendId::PawnIo);
+        assert!(pawnio < legacy, "WinRing0 must never be preferred");
         assert!(mtdrv < legacy, "WinRing0 must never be preferred");
         assert!(legacy < wmi, "the temperature-only WMI path must be the last resort");
     }
@@ -190,14 +258,18 @@ mod tests {
     /// backend the operator did not ask for.
     #[test]
     fn unknown_override_opens_nothing() {
-        let access = open_overridden("pawnio");
+        assert_eq!(parse_selection("winio"), None);
+        let access = LowLevelAccess::unavailable(
+            format!("{OVERRIDE_ENV}=winio is not a known backend; no backend opened"),
+            Vec::new(),
+        );
         assert_eq!(access.id(), BackendId::None);
         assert!(access.status().detail.contains("not a known backend"));
     }
 
     #[test]
     fn explicit_none_override_opens_nothing() {
-        let access = open_overridden("none");
+        let access = open_only(BackendId::None);
         assert_eq!(access.id(), BackendId::None);
         assert!(access.status().rejected.is_empty());
     }
