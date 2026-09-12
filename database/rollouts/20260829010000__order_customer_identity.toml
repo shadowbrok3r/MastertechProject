@@ -20,9 +20,11 @@
 # an index on a not-yet-defined field aborts the sync.
 id = "20260829010000__order_customer_identity"
 name = "order_customer_identity"
-state = "planned"
+state = "completed"
 source_schema_hash = "a6e49c11032eae543686c5e6ab58bcbee03104ae9e2343d60c25d03d155d493c"
-target_schema_hash = "a6e49c11032eae543686c5e6ab58bcbee03104ae9e2343d60c25d03d155d493c"
+# Re-pinned to the current schema-file set on 2026-09-12; source_schema_hash
+# still records the set this was authored against. The DDL is unchanged.
+target_schema_hash = "861cea744b96516fdf92a30608a7f08ef5219c42c14994772e7c38d655203030"
 compatibility = "phased"
 renames = []
 
