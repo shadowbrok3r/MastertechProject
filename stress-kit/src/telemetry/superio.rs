@@ -666,19 +666,12 @@ fn sample_classic(window: &HwmWindow<'_>) -> Option<Sample> {
 
 /// Samples the NCT6687 EC space, gated on 3VCC I/O.
 ///
-/// The page register is claimed once for the whole sample rather than per byte:
-/// it is the block's lock, and re-taking it for each of the twelve reads would
-/// both let a peer interleave mid-sample and cost up to the full wait each
-/// time. Released on every path, since peers block on it.
+/// Waits for the block once here rather than before every byte: the wait is
+/// contention handling, and paying it twelve times would stall the sampler for
+/// seconds behind a peer. Each read still releases the page itself, which is
+/// addressing rather than courtesy.
 fn sample_ec6687(window: &HwmWindow<'_>) -> Option<Sample> {
     await_ec(window);
-    let sample = read_ec_rails(window);
-    let _ = window.write(EC_PAGE_OFFSET, EC_PAGE_RELEASE);
-    sample
-}
-
-/// Reads the gate and every rail. Caller owns claiming and releasing the page.
-fn read_ec_rails(window: &HwmWindow<'_>) -> Option<Sample> {
     let gate = ec_volts(window, EC_GATE_REG)?;
     if !(EC_GATE_MIN..=EC_GATE_MAX).contains(&gate) {
         log::debug!(
@@ -709,12 +702,20 @@ fn ec_decode(high: u8, low: u8) -> f32 {
     millivolts as f32 / 1000.0
 }
 
-/// One EC-space byte, addressed as a page and an index. Assumes the caller has
-/// already claimed the page register through [`await_ec`] and will release it.
+/// One EC-space byte, addressed as a page and an index.
+///
+/// The trailing release is part of the addressing, not courtesy: the chip
+/// latches a page/index pair only as the page register leaves
+/// [`EC_PAGE_RELEASE`], so a read that skips it leaves the previous register
+/// selected and every later read answers with that one's value. Done on every
+/// path, including a failed select, or the block stays claimed against peers.
 fn ec_read(window: &HwmWindow<'_>, addr: u16) -> Option<u8> {
-    window.write(EC_PAGE_OFFSET, (addr >> 8) as u8)?;
-    window.write(EC_INDEX_OFFSET, (addr & 0xFF) as u8)?;
-    window.read(EC_DATA_OFFSET)
+    let selected = window
+        .write(EC_PAGE_OFFSET, (addr >> 8) as u8)
+        .and_then(|()| window.write(EC_INDEX_OFFSET, (addr & 0xFF) as u8));
+    let value = selected.and_then(|()| window.read(EC_DATA_OFFSET));
+    let _ = window.write(EC_PAGE_OFFSET, EC_PAGE_RELEASE);
+    value
 }
 
 /// Waits for the page register to read [`EC_PAGE_RELEASE`], meaning no peer
@@ -815,6 +816,41 @@ mod tests {
         assert_eq!((at(2), RAILS[2].label), (0x130, "3VCC (chip)"));
         assert_eq!((at(3), RAILS[3].label), (0x120, "+12V"));
         assert_eq!((at(4), RAILS[4].label), (0x13C, "VBAT"));
+    }
+
+    /// The page register must pass back through [`EC_PAGE_RELEASE`] between
+    /// reads. The chip latches a page/index pair only on that transition, so
+    /// selecting twice in a row leaves the first register selected and every
+    /// later read answers with its value — which on a live NCT6687D board
+    /// published one channel's voltage under all five rail labels.
+    #[test]
+    fn every_ec_read_releases_the_page_before_the_next_selects() {
+        const BASE: u16 = 0x0A20;
+        // The mock's window is flat, so both bytes of a pair read 0xC9, which
+        // decodes to 3.228 V and clears the gate.
+        let mock = MockBackend::full().with_hwm(BASE, EC_DATA_OFFSET, 0xC9);
+        {
+            let window = HwmWindow::open(&mock, BASE, HWM_WINDOW_LEN).expect("window opens");
+            assert!(sample_ec6687(&window).is_some(), "0xC9 should clear the gate");
+        }
+
+        let mut selections = 0usize;
+        let mut released = true;
+        for op in mock.ops() {
+            let LpcOp::WindowOut(_, EC_PAGE_OFFSET, value) = op else {
+                continue;
+            };
+            if value == EC_PAGE_RELEASE {
+                released = true;
+                continue;
+            }
+            assert!(released, "a page was selected while the previous one was still latched");
+            released = false;
+            selections += 1;
+        }
+        // Six register pairs: the gate, then five rails.
+        assert_eq!(selections, 12, "every byte should select its own register");
+        assert!(released, "the block was left claimed against peers");
     }
 
     /// Only rails behind a board divider carry a factor: the EC reports
