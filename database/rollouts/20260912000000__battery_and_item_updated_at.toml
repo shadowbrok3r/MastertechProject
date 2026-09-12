@@ -13,7 +13,7 @@
 # and no backfill makes every later write to an old row fail coercion.
 id = "20260912000000__battery_and_item_updated_at"
 name = "battery_and_item_updated_at"
-state = "planned"
+state = "completed"
 source_schema_hash = "861cea744b96516fdf92a30608a7f08ef5219c42c14994772e7c38d655203030"
 target_schema_hash = "861cea744b96516fdf92a30608a7f08ef5219c42c14994772e7c38d655203030"
 compatibility = "phased"
