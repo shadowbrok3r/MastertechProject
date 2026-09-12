@@ -21,11 +21,11 @@ const ORDER: &[BackendId] = &[
 
 /// What runs when [`OVERRIDE_ENV`] is unset.
 ///
-/// PawnIO alone while the migration is being proven. Falling back to WinRing0
-/// hides why PawnIO declined — the fallback answers, the snapshot looks healthy,
-/// and the reason PawnIO is not live only survives in `backend_rejected`, where
-/// it is easy to miss. Set `MTECH_LOWLEVEL_BACKEND=auto` for the full chain.
-const DEFAULT_SELECTION: Selection = Selection::Only(BackendId::PawnIo);
+/// The whole of [`ORDER`], so a machine PawnIO cannot serve still reads a die
+/// temperature. Every rejection is logged at warn level, so a backend answering
+/// in PawnIO's place no longer hides why PawnIO declined. Set
+/// `MTECH_LOWLEVEL_BACKEND=pawnio` to measure PawnIO alone.
+const DEFAULT_SELECTION: Selection = Selection::Auto;
 
 /// An opened backend and the sentence describing why it is live.
 type Opened = (Box<dyn LowLevelBackend>, String);
@@ -120,14 +120,20 @@ fn open_only(forced: BackendId) -> LowLevelAccess {
             log::info!("stress-kit/lowlevel: {} live", forced.label());
             LowLevelAccess::new(backend, detail, Vec::new())
         }
-        Err(reason) => LowLevelAccess::unavailable(
-            format!(
-                "{} is the only selected backend and it could not open: {reason}. Set \
-                 {OVERRIDE_ENV}=auto to fall back to the others.",
+        Err(reason) => {
+            log::warn!(
+                "stress-kit/lowlevel: {} declined and no other backend may open — {reason}",
                 forced.label()
-            ),
-            vec![RejectedBackend { backend: forced, reason }],
-        ),
+            );
+            LowLevelAccess::unavailable(
+                format!(
+                    "{} is the only selected backend and it could not open: {reason}. Set \
+                     {OVERRIDE_ENV}=auto to fall back to the others.",
+                    forced.label()
+                ),
+                vec![RejectedBackend { backend: forced, reason }],
+            )
+        }
     }
 }
 
@@ -140,12 +146,12 @@ fn open_in_priority_order() -> LowLevelAccess {
                 return LowLevelAccess::new(backend, detail, rejected);
             }
             Err(reason) => {
-                log::debug!("stress-kit/lowlevel: {} unavailable — {reason}", candidate.label());
+                log::warn!("stress-kit/lowlevel: {} unavailable — {reason}", candidate.label());
                 rejected.push(RejectedBackend { backend: candidate, reason });
             }
         }
     }
-    log::info!(
+    log::warn!(
         "stress-kit/lowlevel: no backend opened; CPU die temperature and board voltages \
          unavailable"
     );
@@ -225,12 +231,18 @@ mod tests {
         assert_eq!(parse_selection("winio"), None);
     }
 
-    /// The default opens PawnIO alone. A fallback would answer in its place and
-    /// bury the reason PawnIO declined, which is the one thing being measured
-    /// while the migration is unproven.
+    /// The default runs the whole chain, so a machine PawnIO cannot serve still
+    /// reads a die temperature instead of nothing.
     #[test]
-    fn the_default_is_pawnio_alone() {
-        assert_eq!(DEFAULT_SELECTION, Selection::Only(BackendId::PawnIo));
+    fn the_default_is_the_full_chain() {
+        assert_eq!(DEFAULT_SELECTION, Selection::Auto);
+    }
+
+    /// PawnIO leads the chain the default runs, so the signed driver is always
+    /// the one tried first.
+    #[test]
+    fn the_default_chain_tries_pawnio_first() {
+        assert_eq!(ORDER.first(), Some(&BackendId::PawnIo));
     }
 
     /// The full chain has to stay reachable without a rebuild, or a machine
