@@ -1,6 +1,6 @@
 id = "20260725140000__firmware_capsule_rail"
 name = "firmware_capsule_rail"
-state = "planned"
+state = "completed"
 source_schema_hash = "74eb9566360be9d27af9667d962233f3027a11d9f6d218b77111b5ea2262123d"
 target_schema_hash = "74eb9566360be9d27af9667d962233f3027a11d9f6d218b77111b5ea2262123d"
 compatibility = "phased"
