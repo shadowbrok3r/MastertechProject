@@ -188,7 +188,12 @@ pub struct ComputerData {
     #[serde(default)]
     #[surreal(default)]
     pub is_internal: Option<bool>,
-    pub installed_programs: Option<Value>
+    pub installed_programs: Option<Value>,
+    /// Laptop battery wear, gathered with the rest of the specs. `None` on
+    /// desktops and on rows written before this field existed.
+    #[serde(default)]
+    #[surreal(default)]
+    pub battery: Option<BatteryHealth>,
 }
 
 impl Default for ComputerData {
@@ -220,6 +225,7 @@ impl Default for ComputerData {
             installed_programs: Default::default(),
             current_antivirus: Default::default(),
             windows_active: Default::default(),
+            battery: None,
         }
     }
 }
@@ -281,6 +287,57 @@ impl ComputerData {
             .await?;
 
         Ok(computer)
+    }
+}
+
+/// Battery wear report for a laptop. Absent on machines with no battery.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Default, SurrealValue)]
+pub struct BatteryHealth {
+    /// Battery name/model as firmware reports it.
+    #[serde(default)]
+    pub name: String,
+    /// Cell chemistry (LiP, LIon, …) when the firmware reports one.
+    #[serde(default)]
+    pub chemistry: String,
+    /// Rated capacity when new, in mWh.
+    #[serde(default)]
+    pub design_capacity_mwh: u64,
+    /// Capacity at a full charge today, in mWh.
+    #[serde(default)]
+    pub full_charge_capacity_mwh: u64,
+    /// Charge cycles the firmware has counted; many packs report none.
+    #[serde(default)]
+    pub cycle_count: Option<u64>,
+    /// Charge level at the time of the reading.
+    #[serde(default)]
+    pub charge_percent: Option<u8>,
+}
+
+impl BatteryHealth {
+    /// Full-charge capacity as a percentage of the design capacity.
+    pub fn health_percent(&self) -> Option<u32> {
+        (self.design_capacity_mwh > 0 && self.full_charge_capacity_mwh > 0).then(|| {
+            ((self.full_charge_capacity_mwh as f64 / self.design_capacity_mwh as f64) * 100.0)
+                .round() as u32
+        })
+    }
+
+    /// One-line report for the TUR sheet and customer-facing specs.
+    pub fn summary(&self) -> String {
+        let mut line = match self.health_percent() {
+            Some(pct) => format!(
+                "{pct}% health ({} / {} mWh)",
+                self.full_charge_capacity_mwh, self.design_capacity_mwh
+            ),
+            None => "capacity not reported".to_string(),
+        };
+        if let Some(cycles) = self.cycle_count.filter(|c| *c > 0) {
+            line.push_str(&format!(", {cycles} cycles"));
+        }
+        if !self.chemistry.is_empty() {
+            line.push_str(&format!(", {}", self.chemistry));
+        }
+        line
     }
 }
 
@@ -538,6 +595,29 @@ mod deser_tests {
             other => panic!("ComputerData should serialize to an object, got {other:?}"),
         }
         v
+    }
+
+    #[test]
+    fn battery_health_is_capacity_against_design() {
+        let battery = BatteryHealth {
+            design_capacity_mwh: 54_000,
+            full_charge_capacity_mwh: 40_500,
+            cycle_count: Some(312),
+            chemistry: "Lithium-ion".into(),
+            ..Default::default()
+        };
+        assert_eq!(battery.health_percent(), Some(75));
+        assert_eq!(
+            battery.summary(),
+            "75% health (40500 / 54000 mWh), 312 cycles, Lithium-ion"
+        );
+    }
+
+    #[test]
+    fn battery_without_capacities_reports_no_health() {
+        let battery = BatteryHealth { name: "Primary".into(), ..Default::default() };
+        assert_eq!(battery.health_percent(), None);
+        assert_eq!(battery.summary(), "capacity not reported");
     }
 
     #[test]

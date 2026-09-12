@@ -254,6 +254,8 @@ impl<'a> ScriptsTab<'a> {
                     TodoItem::new("Uninstall OneDrive", Category::JunkwareRemoval),
                     TodoItem::new("Disable OneDrive Startup", Category::JunkwareRemoval),
                     TodoItem::new("Disable Edge Startup Boost", Category::JunkwareRemoval),
+                    TodoItem::new("Scan For Browser Hijackers", Category::JunkwareRemoval),
+                    TodoItem::new("Remove Browser Hijackers", Category::JunkwareRemoval),
                 ],
             },
         );

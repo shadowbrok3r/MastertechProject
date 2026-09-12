@@ -34,6 +34,28 @@ pub enum FilesPanelMode {
     MyTools,
 }
 
+/// Key a directory listing is ordered by. Directories stay ahead of files in
+/// every mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize)]
+pub enum FileSort {
+    #[default]
+    Name,
+    Type,
+    Size,
+    Modified,
+}
+
+impl FileSort {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Name => "Name",
+            Self::Type => "Type",
+            Self::Size => "Size",
+            Self::Modified => "Modified",
+        }
+    }
+}
+
 impl MastertechContext {
     pub fn file_browse(&mut self, ui: &mut Ui) {
         eframe::egui::Panel::top("file_browser_mode_panel")
@@ -133,6 +155,10 @@ pub struct FileBrowser {
     read_dirs_only: bool,
     /// Show hidden files
     show_hidden: bool,
+    /// Key the listing is ordered by.
+    sort: FileSort,
+    /// Reverse the active sort key.
+    sort_desc: bool,
     /// HashSet of selected files (hold CTRL key to select multiple)
     selected_items: RefCell<HashSet<PathBuf>>,
     /// HashMap of subcontents of a given dir
@@ -215,6 +241,8 @@ impl FileBrowser {
             filename_edit,
             read_dirs_only: false,
             show_hidden: false,
+            sort: FileSort::default(),
+            sort_desc: false,
             first_refresh_contents: true,
             depth: 1,
             file_metadata: RefCell::new(HashMap::new()),
@@ -375,6 +403,8 @@ impl FileBrowser {
                     let _ = self.command_tx.send(Some(Command::Refresh));
                 }
 
+                self.sort_controls(ui);
+
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if ui
                         .button(icons::FOLDER_PLUS)
@@ -403,6 +433,42 @@ impl FileBrowser {
             });
             ui.add_space(ui.spacing().item_spacing.y);
         });
+    }
+
+    /// Sort key picker and direction toggle for the current listing.
+    fn sort_controls(&mut self, ui: &mut Ui) {
+        let mut changed = false;
+        ComboBox::from_id_salt("file_browser_sort")
+            .width(90.0)
+            .selected_text(self.sort.as_str())
+            .show_ui(ui, |ui| {
+                for sort in [FileSort::Name, FileSort::Type, FileSort::Size, FileSort::Modified] {
+                    changed |= ui
+                        .selectable_value(&mut self.sort, sort, sort.as_str())
+                        .clicked();
+                }
+            });
+
+        let arrow = if self.sort_desc { icons::SORT_DESC } else { icons::SORT_ASC };
+        if ui
+            .button(arrow)
+            .on_hover_text(if self.sort_desc { "Descending" } else { "Ascending" })
+            .clicked()
+        {
+            self.sort_desc = !self.sort_desc;
+            changed = true;
+        }
+
+        if changed {
+            self.resort_contents();
+        }
+    }
+
+    /// Re-orders the cached listings without re-reading the disk.
+    fn resort_contents(&mut self) {
+        for paths in self.dir_contents.borrow_mut().values_mut() {
+            sort_paths(paths, self.sort, self.sort_desc);
+        }
     }
 
     pub fn bottom_panel(&mut self, ui: &mut Ui) {
@@ -1019,7 +1085,8 @@ impl FileBrowser {
         a folder
     */
     fn refresh_contents(&mut self) {
-        let new_contents = read_folder(&self.path, self.depth, self.read_dirs_only);
+        let mut new_contents = read_folder(&self.path, self.depth, self.read_dirs_only);
+        sort_paths(&mut new_contents, self.sort, self.sort_desc);
         self.dir_contents
             .borrow_mut()
             .insert(self.path.clone(), new_contents);
@@ -1224,6 +1291,74 @@ pub fn get_file_name(path: &PathBuf) -> &str {
         .unwrap_or_default()
 }
 
+/// Orders a directory listing in place, directories ahead of files.
+pub fn sort_paths(paths: &mut Vec<PathBuf>, sort: FileSort, descending: bool) {
+    // Decorate-sort-undecorate: the Size and Modified keys stat each entry, so
+    // read them once instead of inside the comparator.
+    let mut keyed: Vec<(SortKey, PathBuf)> = paths
+        .drain(..)
+        .map(|path| (SortKey::of(&path, sort), path))
+        .collect();
+
+    keyed.sort_by(|(a, _), (b, _)| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| {
+                let by_key = a.cmp_value(b, sort);
+                if descending { by_key.reverse() } else { by_key }
+            })
+            .then_with(|| a.name.cmp(&b.name))
+    });
+
+    paths.extend(keyed.into_iter().map(|(_, path)| path));
+}
+
+fn natural_name(path: &PathBuf) -> String {
+    get_file_name(path).to_lowercase()
+}
+
+/// Precomputed ordering key for one entry.
+struct SortKey {
+    is_dir: bool,
+    name: String,
+    extension: String,
+    size: u64,
+    modified: std::time::SystemTime,
+}
+
+impl SortKey {
+    fn of(path: &PathBuf, sort: FileSort) -> Self {
+        let is_dir = path.is_dir();
+        let (size, modified) = match sort {
+            FileSort::Size | FileSort::Modified => std::fs::metadata(path)
+                .map(|m| (m.len(), m.modified().unwrap_or(std::time::UNIX_EPOCH)))
+                .unwrap_or((0, std::time::UNIX_EPOCH)),
+            _ => (0, std::time::UNIX_EPOCH),
+        };
+        let name = natural_name(path);
+        // Directories and extensionless files share the empty extension, which
+        // groups them together ahead of every typed file.
+        let extension = if is_dir {
+            String::new()
+        } else {
+            path.extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or_default()
+                .to_lowercase()
+        };
+        Self { is_dir, name, extension, size, modified }
+    }
+
+    fn cmp_value(&self, other: &Self, sort: FileSort) -> std::cmp::Ordering {
+        match sort {
+            FileSort::Name => self.name.cmp(&other.name),
+            FileSort::Type => self.extension.cmp(&other.extension),
+            FileSort::Size => self.size.cmp(&other.size),
+            FileSort::Modified => self.modified.cmp(&other.modified),
+        }
+    }
+}
+
 /** Returns a Vec<PathBuf> of current directory contents and files. */
 pub fn read_folder(path: &PathBuf, depth: usize, read_dirs_only: bool) -> Vec<PathBuf> {
     let result: Vec<_> = WalkDir::new(path)
@@ -1263,4 +1398,45 @@ pub fn read_folder(path: &PathBuf, depth: usize, read_dirs_only: bool) -> Vec<Pa
         .collect();
 
     result
+}
+
+#[cfg(test)]
+mod sort_tests {
+    use super::{sort_paths, FileSort};
+    use std::path::PathBuf;
+
+    fn names(paths: &[PathBuf]) -> Vec<String> {
+        paths
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect()
+    }
+
+    fn listing() -> Vec<PathBuf> {
+        ["notes.txt", "b.rs", "archive.zip", "a.rs", "readme"]
+            .iter()
+            .map(PathBuf::from)
+            .collect()
+    }
+
+    #[test]
+    fn sorting_by_type_groups_extensions_then_names() {
+        let mut paths = listing();
+        sort_paths(&mut paths, FileSort::Type, false);
+        assert_eq!(names(&paths), ["readme", "a.rs", "b.rs", "notes.txt", "archive.zip"]);
+    }
+
+    #[test]
+    fn sorting_by_name_ignores_the_extension() {
+        let mut paths = listing();
+        sort_paths(&mut paths, FileSort::Name, false);
+        assert_eq!(names(&paths), ["a.rs", "archive.zip", "b.rs", "notes.txt", "readme"]);
+    }
+
+    #[test]
+    fn descending_reverses_the_key_but_keeps_the_name_tiebreak() {
+        let mut paths = listing();
+        sort_paths(&mut paths, FileSort::Type, true);
+        assert_eq!(names(&paths), ["archive.zip", "notes.txt", "a.rs", "b.rs", "readme"]);
+    }
 }

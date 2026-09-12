@@ -1,4 +1,5 @@
 pub mod antivirus;
+pub mod browser_hijack;
 #[cfg(target_os = "windows")]
 pub mod crash_dumps;
 pub mod installed_programs;

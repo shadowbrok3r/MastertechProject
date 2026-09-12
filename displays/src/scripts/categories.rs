@@ -305,6 +305,16 @@ pub fn junkware_scripts() -> Vec<ScriptItem> {
             .with_description("Prevent OneDrive from launching at startup"),
         ScriptItem::new("Disable Edge Startup Boost", ScriptCategory::JunkwareRemoval)
             .with_description("Disable Microsoft Edge startup boost and background running"),
+        ScriptItem::new("Scan For Browser Hijackers", ScriptCategory::JunkwareRemoval)
+            .with_description("Read-only sweep of browser policy keys, shortcut arguments, autostart entries and profile homepage / search overrides")
+            .with_pass_criteria("No hijack findings")
+            .with_warning_criteria("Findings reported")
+            .with_error_criteria("Scan failed to run"),
+        ScriptItem::new("Remove Browser Hijackers", ScriptCategory::JunkwareRemoval)
+            .with_description("Clear hijack policy values, strip URLs from browser shortcuts and remove browser autostart entries; profile overrides are reported for the tech")
+            .with_pass_criteria("Nothing left to remove")
+            .with_warning_criteria("Profile overrides still need a manual reset")
+            .with_error_criteria("Cleanup failed to run"),
     ]
 }
 

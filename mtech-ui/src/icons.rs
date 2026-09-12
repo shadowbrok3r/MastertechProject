@@ -55,6 +55,8 @@ pub const FULLSCREEN_ENTER: &str = p::CORNERS_OUT;
 pub const FULLSCREEN_EXIT: &str = p::CORNERS_IN;
 
 pub const UP: &str = p::ARROW_UP;
+pub const SORT_ASC: &str = p::SORT_ASCENDING;
+pub const SORT_DESC: &str = p::SORT_DESCENDING;
 pub const REFRESH: &str = p::ARROW_CLOCKWISE;
 pub const HOME: &str = p::HOUSE;
 

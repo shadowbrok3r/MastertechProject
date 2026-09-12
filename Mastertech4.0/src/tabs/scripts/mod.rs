@@ -1929,10 +1929,96 @@ impl EguiScriptsTab {
             "Disable Edge Startup Boost" => {
                 self.execute_disable_edge_startup_boost(log_tx, category, script_name);
             },
+            "Scan For Browser Hijackers" => {
+                self.execute_browser_hijack(log_tx, category, script_name, false);
+            },
+            "Remove Browser Hijackers" => {
+                self.execute_browser_hijack(log_tx, category, script_name, true);
+            },
             _ => {
                 self.execute_remove_junkware(log_tx, category, script_name.clone(), &script_name);
             }
         }
+    }
+
+    /// Scan for (and optionally clean) browser hijacks.
+    fn execute_browser_hijack(
+        &self,
+        log_tx: Sender<ScriptLogEntry>,
+        category: ScriptCategory,
+        script_name: String,
+        remove: bool,
+    ) {
+        #[cfg(target_os = "windows")]
+        {
+            std::thread::spawn(move || {
+                use crate::utilities::windows::browser_hijack;
+
+                let _ = log_tx.try_send(ScriptLogEntry::info(
+                    category.clone(),
+                    &script_name,
+                    "Checking browser policies, shortcuts, autostart entries and profiles...",
+                ));
+
+                let findings = browser_hijack::scan();
+                for finding in &findings {
+                    let _ = log_tx.try_send(ScriptLogEntry::info(
+                        category.clone(),
+                        &script_name,
+                        finding.line(),
+                    ));
+                }
+
+                if findings.is_empty() {
+                    let _ = log_tx.try_send(ScriptLogEntry::success(
+                        category, &script_name, "No browser hijacks found",
+                    ));
+                    return;
+                }
+
+                if !remove {
+                    let _ = log_tx.try_send(ScriptLogEntry::warning(
+                        category,
+                        &script_name,
+                        format!("{} hijack finding(s) — run Remove Browser Hijackers to clean", findings.len()),
+                    ));
+                    return;
+                }
+
+                for action in browser_hijack::remediate() {
+                    let _ = log_tx.try_send(ScriptLogEntry::info(
+                        category.clone(),
+                        &script_name,
+                        action,
+                    ));
+                }
+
+                let left = browser_hijack::scan();
+                let unresolved = left.iter().filter(|f| f.kind.is_removable()).count();
+                if unresolved > 0 {
+                    let _ = log_tx.try_send(ScriptLogEntry::error(
+                        category,
+                        &script_name,
+                        format!("{unresolved} hijack entr(ies) survived cleanup — check permissions and rerun elevated"),
+                    ));
+                } else if left.is_empty() {
+                    let _ = log_tx.try_send(ScriptLogEntry::success(
+                        category, &script_name, "Browser hijacks removed",
+                    ));
+                } else {
+                    let _ = log_tx.try_send(ScriptLogEntry::warning(
+                        category,
+                        &script_name,
+                        format!("Cleaned; {} profile override(s) still need a manual reset", left.len()),
+                    ));
+                }
+            });
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        let _ = log_tx.try_send(ScriptLogEntry::warning(
+            category, &script_name, "Browser hijack cleanup only available on Windows"
+        ));
     }
 
     /// Execute all junkware removal

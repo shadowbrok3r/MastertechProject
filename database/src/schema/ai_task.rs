@@ -127,6 +127,10 @@ pub struct AiTaskItem {
     pub checked_at: Option<Datetime>,
     pub entry_ref: Option<RecordId>,
     pub created_at: Datetime,
+    /// Set when the step's text is rewritten; absent on never-edited items.
+    #[serde(default)]
+    #[surreal(default)]
+    pub updated_at: Option<Datetime>,
 }
 
 impl Default for AiTaskItem {
@@ -141,6 +145,7 @@ impl Default for AiTaskItem {
             checked_at: None,
             entry_ref: None,
             created_at: chrono::Utc::now().into(),
+            updated_at: None,
         }
     }
 }
@@ -318,7 +323,7 @@ impl AiTaskItem {
     pub async fn edit_text_if_editable(id: &RecordId, text: &str) -> anyhow::Result<Option<Self>> {
         let updated: Vec<Self> = db()
             .query(
-                "UPDATE $id SET text = $text \
+                "UPDATE $id SET text = $text, updated_at = time::now() \
                  WHERE checked = false AND ai_task_ref.status != 'closed' RETURN AFTER",
             )
             .bind(("id", id.clone()))

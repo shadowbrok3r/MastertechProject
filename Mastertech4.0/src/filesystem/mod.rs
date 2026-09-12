@@ -3,6 +3,7 @@ use system_info::generate_client_id;
 use database::schema::RecordId;
 use sysinfo::System;
 
+pub mod battery;
 pub mod system_info;
 #[cfg(target_os = "windows")]
 pub mod oa_serial;

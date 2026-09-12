@@ -442,6 +442,7 @@ pub trait Displayable {
         notes: Vec<TaskNotePayload>,
         tx: Sender<TaskUiActions>,
         last_read: Option<chrono::DateTime<chrono::Utc>>,
+        recommendations: crate::tabs::tasks::task_cards::RecommendationSummary,
     );
 }
 
