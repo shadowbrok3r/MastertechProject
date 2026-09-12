@@ -453,6 +453,31 @@ impl SharedContext {
             });
         }
 
+        // AI checklist activity per task, for every page's cards -- unlike the
+        // AI Tasks column, this is not scoped to My Tasks or to the roles the
+        // current user holds.
+        let mut recommendations: std::collections::HashMap<
+            database::schema::RecordId,
+            crate::tabs::tasks::task_cards::RecommendationSummary,
+        > = std::collections::HashMap::new();
+        for ai_task in self.ai_tasks.values() {
+            let key = ai_task.id.key_string();
+            let items: Vec<database::schema::AiTaskItem> = self
+                .ai_task_items
+                .values()
+                .filter(|i| i.ai_task_ref.key_string() == key)
+                .cloned()
+                .collect();
+            if items.is_empty() {
+                continue;
+            }
+            let last_read = self.last_read_notes.get(&ai_task.task_ref).copied();
+            recommendations
+                .entry(ai_task.task_ref.clone())
+                .or_default()
+                .accumulate(&items, last_read);
+        }
+
         // Update or create layout
         let layout = self.task_layouts.entry(page.to_string()).or_insert_with(|| {
             let mut layout = TaskLayout::new(
@@ -481,6 +506,7 @@ impl SharedContext {
         layout.update_col_names(ordered_keys);
         // Propagate last_read_notes from SharedContext
         layout.last_read_notes = self.last_read_notes.clone();
+        layout.recommendations = recommendations;
         layout.client_cards = my_tasks_client_cards;
         layout.ai_cards = my_tasks_ai_cards;
 

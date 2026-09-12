@@ -1,4 +1,4 @@
-use eframe::egui::{Button, CollapsingHeader, Color32, Frame, Margin, RichText, Shadow, TextFormat, TextStyle, Ui, Vec2, Widget, WidgetText, text::LayoutJob};
+use eframe::egui::{Align, Button, CollapsingHeader, Color32, Frame, Layout, Margin, RichText, Shadow, TextFormat, TextStyle, Ui, Vec2, Widget, WidgetText, text::LayoutJob};
 use database::schema::{LiveTaskPayload, RecordIdExt, TaskNotePayload, User};
 use crossbeam::channel::Sender;
 use chrono::{DateTime, Utc};
@@ -6,7 +6,82 @@ use log::info;
 
 use crate::tabs::tasks::pending;
 use crate::{Displayable, Interaction, TaskUiActions};
-use crate::ui_tools::theme;
+use crate::modals::task_modal::ModalAction;
+use crate::ui_tools::{icons, theme};
+
+/// AI checklist activity for one task, as shown on its card.
+#[derive(Clone, Copy, Default)]
+pub struct RecommendationSummary {
+    /// Checklist steps across every AI task attached to this task.
+    pub total: usize,
+    /// Steps added or reworded since the tech last opened the task.
+    pub unseen: usize,
+}
+
+impl RecommendationSummary {
+    /// Counts the items of one AI task against the task's last-read stamp.
+    pub fn accumulate(
+        &mut self,
+        items: &[database::schema::AiTaskItem],
+        last_read: Option<chrono::DateTime<chrono::Utc>>,
+    ) {
+        self.total += items.len();
+        self.unseen += items
+            .iter()
+            .filter(|item| {
+                let touched: chrono::DateTime<chrono::Utc> = item
+                    .updated_at
+                    .clone()
+                    .unwrap_or_else(|| item.created_at.clone())
+                    .into();
+                last_read.map(|lr| touched > lr).unwrap_or(true)
+            })
+            .count();
+    }
+}
+
+/// AI-recommendation counterpart to the notes button: count, robot glyph and
+/// an unread dot that fires on steps added or reworded since the last open.
+fn recommendation_badge(ui: &mut Ui, style: &eframe::egui::Style, summary: RecommendationSummary) -> eframe::egui::Response {
+    let unseen = summary.unseen > 0;
+    let font = style
+        .text_styles
+        .get(&TextStyle::Button)
+        .cloned()
+        .unwrap_or_default();
+    let text_color = if unseen {
+        Color32::from_rgb(250, 100, 80)
+    } else {
+        style.visuals.warn_fg_color
+    };
+    let dot_color = if unseen { Color32::from_rgb(250, 100, 80) } else { Color32::TRANSPARENT };
+
+    let mut job = LayoutJob::default();
+    job.append(
+        &format!("{} {} ", summary.total, icons::ROBOT),
+        0.0,
+        TextFormat { font_id: font.clone(), color: text_color, ..Default::default() },
+    );
+    job.append(
+        "●",
+        0.0,
+        TextFormat { font_id: font, color: dot_color, ..Default::default() },
+    );
+
+    let hover = if unseen {
+        format!(
+            "{} recommendation(s), {} new or reworded since you last opened this task",
+            summary.total, summary.unseen
+        )
+    } else {
+        format!("{} recommendation(s)", summary.total)
+    };
+
+    Button::new(WidgetText::from(job))
+        .min_size(Vec2::new(25.0, 20.0))
+        .ui(ui)
+        .on_hover_text(hover)
+}
 
 impl Displayable for LiveTaskPayload {
     fn display_cards(
@@ -17,6 +92,7 @@ impl Displayable for LiveTaskPayload {
         notes: Vec<TaskNotePayload>, 
         tx: Sender<TaskUiActions>,
         last_read: Option<chrono::DateTime<chrono::Utc>>,
+        recommendations: RecommendationSummary,
     ) {
         let style = ui.style().clone();
 
@@ -104,7 +180,7 @@ impl Displayable for LiveTaskPayload {
                 if Button::new(txt)
                     .min_size(Vec2::new(25.0, 20.0))
                     .ui(ui)
-                    .on_disabled_hover_text("Open Task Notes")
+                    .on_hover_text(if has_unread { "Task notes — new since you last opened this task" } else { "Open Task Notes" })
                     .clicked()
                 {
                     let _ = tx.try_send(
@@ -166,6 +242,17 @@ impl Displayable for LiveTaskPayload {
                 task_descrip_head.show_unindented(ui, |ui| {
                     let _ = self.interact_task_description(ui);
                 });
+
+                if recommendations.total > 0 {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if recommendation_badge(ui, &style, recommendations).clicked() {
+                            let _ = tx.try_send(TaskUiActions::OpenTaskModalAtPage {
+                                task: self.to_owned(),
+                                page: ModalAction::DiagnosticsPage,
+                            });
+                        }
+                    });
+                }
             });
             
         }
@@ -197,5 +284,52 @@ pub fn date_colors(ui: &mut Ui, due_date: DateTime<Utc>, _complete: bool) -> Col
         theme::warn(ui)
     } else {
         theme::success(ui)
+    }
+}
+
+#[cfg(test)]
+mod recommendation_tests {
+    use super::RecommendationSummary;
+    use database::schema::AiTaskItem;
+
+    fn item(created: &str, updated: Option<&str>) -> AiTaskItem {
+        AiTaskItem {
+            created_at: created.parse::<chrono::DateTime<chrono::Utc>>().unwrap().into(),
+            updated_at: updated
+                .map(|u| u.parse::<chrono::DateTime<chrono::Utc>>().unwrap().into()),
+            ..Default::default()
+        }
+    }
+
+    fn at(stamp: &str) -> chrono::DateTime<chrono::Utc> {
+        stamp.parse().unwrap()
+    }
+
+    #[test]
+    fn a_step_added_after_the_last_read_is_unseen() {
+        let mut summary = RecommendationSummary::default();
+        summary.accumulate(
+            &[item("2026-01-01T00:00:00Z", None), item("2026-01-03T00:00:00Z", None)],
+            Some(at("2026-01-02T00:00:00Z")),
+        );
+        assert_eq!(summary.total, 2);
+        assert_eq!(summary.unseen, 1);
+    }
+
+    #[test]
+    fn a_reworded_step_counts_as_unseen() {
+        let mut summary = RecommendationSummary::default();
+        summary.accumulate(
+            &[item("2026-01-01T00:00:00Z", Some("2026-01-03T00:00:00Z"))],
+            Some(at("2026-01-02T00:00:00Z")),
+        );
+        assert_eq!(summary.unseen, 1);
+    }
+
+    #[test]
+    fn a_task_never_opened_has_every_step_unseen() {
+        let mut summary = RecommendationSummary::default();
+        summary.accumulate(&[item("2026-01-01T00:00:00Z", None)], None);
+        assert_eq!(summary.unseen, 1);
     }
 }

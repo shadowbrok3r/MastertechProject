@@ -16,6 +16,7 @@ DEFINE EVENT internal_machine_has_no_customer ON computer
 
 DEFINE INDEX computer_customer_idx ON computer FIELDS customer;
 
+DEFINE FIELD battery           ON computer TYPE none | object    PERMISSIONS FULL;
 DEFINE FIELD cpu               ON computer TYPE string DEFAULT '' PERMISSIONS FULL;
 DEFINE FIELD current_antivirus ON computer TYPE none | array<object> PERMISSIONS FULL;
 DEFINE FIELD current_antivirus.* ON computer TYPE object          PERMISSIONS FULL;

@@ -258,7 +258,8 @@ impl TaskAuditViewer {
                     self.loading = true;
                     let order_tx = self.order_channel.0.clone();
                     let selected = self.audit_selection.clone();
-                    let key = selected.cache_key();
+                    let key = self.current_key();
+                    self.loading_key = key.clone();
 
                     let start_idx = self
                         .index
@@ -275,28 +276,30 @@ impl TaskAuditViewer {
                     Self::get_services(selected.clone(), current_user.clone(), order_tx, svcs, start_idx, self.missed_calls_tx.clone(), self.services_viewer.store_selection.to_string());
                 }
                 ui.add_space(10.);
-                // Re-reads the rows already on screen, which Load skips.
-                if Button::new(icons::icon(icons::REFRESH)).ui(ui).on_hover_text("Re-read the loaded orders from Prestashop").clicked() {
+                // Drops the rows on screen and re-pulls the selection from the
+                // first page, so orders that moved out of it disappear instead
+                // of lingering while the new ones append beneath them.
+                if Button::new(icons::icon(icons::REFRESH)).ui(ui).on_hover_text("Reload this store's list from Prestashop").clicked() {
                     self.loading = true;
                     self.services_viewer.write_errors.clear();
+                    self.services_viewer.missed_calls.clear();
                     let order_tx = self.order_channel.0.clone();
                     let selected = self.audit_selection.clone();
-                    let key = selected.cache_key();
+                    let key = self.current_key();
+                    self.loading_key = key.clone();
 
-                    let start_idx = self
-                        .index
-                        .entry(key.clone())
-                        .or_insert(0)
-                        .clone();
+                    self.service_map.remove(&key);
+                    self.index.insert(key.clone(), 0);
 
                     self.time = Some(web_time::Instant::now());
-                    Self::get_services(selected.clone(), current_user.clone(), order_tx, Vec::new(), start_idx, self.missed_calls_tx.clone(), self.services_viewer.store_selection.to_string());
+                    Self::get_services(selected.clone(), current_user.clone(), order_tx, Vec::new(), 0, self.missed_calls_tx.clone(), self.services_viewer.store_selection.to_string());
                 }
                 ui.add_space(10.);
                 if Button::new(" Load +10 ").ui(ui).clicked() {
                     let order_tx = self.order_channel.0.clone();
                     let selected = self.audit_selection.clone();
-                    let key = selected.cache_key();
+                    let key = self.current_key();
+                    self.loading_key = key.clone();
 
                     let start_idx = self
                         .index
@@ -326,15 +329,26 @@ impl TaskAuditViewer {
         CentralPanel::default()
             .show(ui, |ui| 
         {
-            if let Some(table) = self.service_map.get_mut(&self.audit_selection.cache_key()) {
-                // style.single_click_edit_mode = true;
-                Renderer::new(table, &mut self.services_viewer)
-                .with_style_modify(|s| {
-                    s.scroll_bar_visibility = scroll_area::ScrollBarVisibility::AlwaysVisible;
-                    s.single_click_edit_mode = true;
-                    s.auto_shrink = [false, false].into();
-                })
-                .ui(ui);
+            let key = self.current_key();
+            match self.service_map.get_mut(&key) {
+                Some(table) => {
+                    // style.single_click_edit_mode = true;
+                    Renderer::new(table, &mut self.services_viewer)
+                    .with_style_modify(|s| {
+                        s.scroll_bar_visibility = scroll_area::ScrollBarVisibility::AlwaysVisible;
+                        s.single_click_edit_mode = true;
+                        s.auto_shrink = [false, false].into();
+                    })
+                    .ui(ui);
+                }
+                None if !self.loading => {
+                    let store = Store::from_presta_store_id(&self.services_viewer.store_selection.to_string());
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(40.);
+                        ui.label(format!("Nothing loaded for {}. Press Load.", store.as_str()));
+                    });
+                }
+                None => {}
             }
         });  
     }

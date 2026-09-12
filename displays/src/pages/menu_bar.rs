@@ -111,16 +111,22 @@ impl SharedContext {
                         
                         // Alert badge (red, shown first/rightmost)
                         if alert_count > 0 {
-                            let alert_badge = RichText::new(format!("⚠ {}", alert_count))
+                            let alert_badge = RichText::new(format!(
+                                "{} {}",
+                                crate::ui_tools::icons::STATUS_WARN,
+                                alert_count
+                            ))
                                 .color(Color32::WHITE)
                                 .small()
                                 .strong();
-                            ui.add(
+                            if ui.add(
                                 Button::new(alert_badge)
                                     .fill(theme::error(ui))
                                     .corner_radius(10.0)
                                     .min_size(vec2(28.0, 18.0))
-                            ).on_hover_text(format!("{} unread alerts", alert_count));
+                            ).on_hover_text(format!("{} unread alerts — click to open", alert_count)).clicked() {
+                                self.notification_center.open_unread(Some("ALERT".to_string()));
+                            }
                             ui.add_space(4.0);
                         }
                         
@@ -131,16 +137,22 @@ impl SharedContext {
                             } else {
                                 unread_count.to_string()
                             };
-                            let unread_badge = RichText::new(format!("🔔 {}", badge_text))
+                            let unread_badge = RichText::new(format!(
+                                "{} {}",
+                                crate::ui_tools::icons::BELL,
+                                badge_text
+                            ))
                                 .color(Color32::WHITE)
                                 .small()
                                 .strong();
-                            ui.add(
+                            if ui.add(
                                 Button::new(unread_badge)
                                     .fill(theme::success(ui))
                                     .corner_radius(10.0)
                                     .min_size(vec2(28.0, 18.0))
-                            ).on_hover_text(format!("{} unread notifications", unread_count));
+                            ).on_hover_text(format!("{} unread notifications — click to open", unread_count)).clicked() {
+                                self.notification_center.open_unread(None);
+                            }
                             ui.add_space(4.0);
                         }
                         

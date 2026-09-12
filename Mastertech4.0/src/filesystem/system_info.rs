@@ -203,6 +203,8 @@ impl ComputerInfo for ComputerData {
             self.seb_info = Some(seb_info);
         }
 
+        self.battery = super::battery::read_battery_health().await;
+
         self.cpu = sys.cpus()[0].brand().trim().to_string();
         self.ram = format!(
             "{} Gb",

@@ -1,0 +1,45 @@
+# Two optional fields, no existing data touched.
+#
+# `computer.battery` carries the laptop wear report the spec gather now
+# collects (design vs full-charge capacity, cycles, chemistry) so the TUR sheet
+# and the task modal's computer page can show it. Desktops report no battery
+# and the field stays NONE.
+#
+# `ai_task_item.updated_at` records when a checklist step's text was rewritten,
+# which is what lets a task card tell "a recommendation changed" from "a note
+# was added". Absent on every existing row and on items that were never edited.
+#
+# Both are `none | <type>` with no DEFAULT: an added field with a non-none type
+# and no backfill makes every later write to an old row fail coercion.
+id = "20260912000000__battery_and_item_updated_at"
+name = "battery_and_item_updated_at"
+state = "planned"
+source_schema_hash = "861cea744b96516fdf92a30608a7f08ef5219c42c14994772e7c38d655203030"
+target_schema_hash = "861cea744b96516fdf92a30608a7f08ef5219c42c14994772e7c38d655203030"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "define_computer_battery"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE battery ON computer TYPE none | object PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "define_ai_task_item_updated_at"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE updated_at ON ai_task_item TYPE none | datetime PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "drop_added_fields"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE FIELD IF EXISTS battery ON computer;
+REMOVE FIELD IF EXISTS updated_at ON ai_task_item;
+"""

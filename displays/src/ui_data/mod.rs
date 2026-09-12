@@ -969,6 +969,7 @@ impl crate::app_state::SharedContext {
     /// Called from `fn ui` where widget creation is allowed.
     pub fn receive_shared_ui(&mut self, ctx: &eframe::egui::Context) {
         self.admin_notification_ui(ctx);
+        self.notification_center_ui(ctx);
         self.handle_viewports(ctx);
         self.handle_modals(ctx);
         self.client_diagnostics_popup_ui(ctx);
@@ -978,6 +979,36 @@ impl crate::app_state::SharedContext {
             if let Some(target) = admin_tcp_toast_target(&text) {
                 self.dismissed_admin_tcp_targets.insert(target.to_string());
             }
+        }
+    }
+
+    /// Notification list opened from the menu-bar badges, with the same
+    /// filters and mark-read controls as the account-menu copy.
+    fn notification_center_ui(&mut self, ctx: &eframe::egui::Context) {
+        if !self.notification_center.show_notifications {
+            return;
+        }
+
+        let task_names: std::collections::BTreeSet<String> =
+            self.task_index.values().map(|t| t.task_name.clone()).collect();
+        let mut open = true;
+
+        eframe::egui::Window::new("Notifications")
+            .open(&mut open)
+            .default_size([520.0, 620.0])
+            .min_width(420.0)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                self.notification_center.ui(
+                    ui,
+                    &task_names,
+                    self.ui_actions_tx.clone(),
+                    &self.tasks,
+                );
+            });
+
+        if !open {
+            self.notification_center.show_notifications = false;
         }
     }
 

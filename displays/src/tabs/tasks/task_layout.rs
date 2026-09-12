@@ -2,6 +2,7 @@ use eframe::egui::{Align, Button, Color32, ComboBox, Frame, Layout, Margin, NumE
 use database::{self, db, SurrealValue, schema::{LiveTaskPayload, Record, SortDirection, Sortable, Store, TaskNotePayload, User}};
 use crate::{PlatformSpawner, Spawner, Displayable, TaskUiActions, tabs::tasks::client_cards::ClientCardData};
 use crate::tabs::tasks::ai_task_cards::{AiCardRole, AiTaskCardView};
+use crate::tabs::tasks::task_cards::RecommendationSummary;
 use crate::ui_tools::icons;
 use std::{collections::{BTreeMap, HashMap, HashSet}, f32};
 use crossbeam::channel::{Receiver, Sender};
@@ -41,6 +42,9 @@ pub struct TaskLayout{
     notes: Vec<TaskNotePayload>,
     /// Tracks when notes were last read per task (propagated from SharedContext)
     pub last_read_notes: HashMap<RecordId, chrono::DateTime<chrono::Utc>>,
+    /// AI checklist activity per task, for the card's recommendation badge.
+    #[serde(skip)]
+    pub recommendations: HashMap<RecordId, RecommendationSummary>,
     /// Connected-client cards rendered in the special
     /// `CONNECTED_CLIENTS_KEY` column. Refreshed each frame from
     /// `SharedContext` so newly connected clients appear immediately.
@@ -155,6 +159,7 @@ impl TaskLayout {
             search_results,
             has_run: false,
             last_read_notes: HashMap::new(),
+            recommendations: HashMap::new(),
             client_cards: Vec::new(),
             client_filter: String::new(),
             ai_cards: Vec::new(),
@@ -865,13 +870,22 @@ impl TaskLayout {
                                                     .cloned()
                                                     .collect::<Vec<TaskNotePayload>>();
 
+                                                let last_read =
+                                                    self.last_read_notes.get(&task.id).copied();
+                                                let recommendations = self
+                                                    .recommendations
+                                                    .get(&task.id)
+                                                    .copied()
+                                                    .unwrap_or_default();
+
                                                 task.display_cards(
                                                     ui, 
                                                     &self.user, 
                                                     &self.assignees, 
                                                     notes,
                                                     ui_actions_tx.clone(),
-                                                    self.last_read_notes.get(&task.id).copied(),
+                                                    last_read,
+                                                    recommendations,
                                                 );
                                             }
                                         }

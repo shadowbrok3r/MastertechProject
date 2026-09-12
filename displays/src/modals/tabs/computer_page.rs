@@ -256,6 +256,17 @@ pub fn display_computer_page_with_search(
                     ui.colored_label(Color32::LIGHT_RED, "RAM");
                     TextEdit::singleline(&mut computer.ram).desired_width(avail_size.x / 2.14).ui(ui);
                     ui.end_row();
+                    if let Some(battery) = computer.battery.clone() {
+                        ui.colored_label(Color32::LIGHT_RED, "Battery");
+                        let color = match battery.health_percent() {
+                            Some(pct) if pct < 60 => crate::ui_tools::theme::error(ui),
+                            Some(pct) if pct < 80 => crate::ui_tools::theme::warn(ui),
+                            _ => ui.style().visuals.text_color(),
+                        };
+                        ui.colored_label(color, battery.summary())
+                            .on_hover_text(battery.name.clone());
+                        ui.end_row();
+                    }
                     ui.colored_label(Color32::LIGHT_RED, "Device Name");
                     if let Some(device_name) = computer.device_name.as_mut() {
                         TextEdit::singleline(device_name).desired_width(avail_size.x / 2.14).ui(ui);

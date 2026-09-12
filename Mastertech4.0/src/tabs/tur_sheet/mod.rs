@@ -716,6 +716,22 @@ impl MastertechContext {
                 .min_size(text_edit_size)
                 .ui(ui);
 
+            // Laptops only; desktops report no battery and get no row.
+            if let Some(battery) = computer_data.battery.clone() {
+                let health = battery.health_percent();
+                let color = match health {
+                    Some(pct) if pct < 60 => ui.style().visuals.error_fg_color,
+                    Some(pct) if pct < 80 => ui.style().visuals.warn_fg_color,
+                    _ => ui.style().visuals.text_color(),
+                };
+                ui.colored_label(color, format!(" Battery: {}", battery.summary()))
+                    .on_hover_text(if battery.name.is_empty() {
+                        "Full-charge capacity against the pack's design capacity".to_string()
+                    } else {
+                        battery.name.clone()
+                    });
+            }
+
             /* 
                 if + .clicked() {
                     drive 1: 1tb ssd, etc

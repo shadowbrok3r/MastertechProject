@@ -3521,6 +3521,45 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                             send_result(&tx, &script.name, if ok { RemoteScriptStatus::Success } else { RemoteScriptStatus::Failed });
                         }
 
+                        "Scan For Browser Hijackers" | "Remove Browser Hijackers" => {
+                            #[cfg(target_os = "windows")]
+                            {
+                                use crate::utilities::windows::browser_hijack;
+                                let remove = script.name == "Remove Browser Hijackers";
+                                let findings = browser_hijack::scan();
+                                for finding in &findings {
+                                    send_log(&tx, finding.line());
+                                }
+                                if findings.is_empty() {
+                                    send_log(&tx, "No browser hijacks found".into());
+                                    send_result(&tx, &script.name, RemoteScriptStatus::Success);
+                                } else if !remove {
+                                    send_log(&tx, format!("{} hijack finding(s)", findings.len()));
+                                    send_result(&tx, &script.name, RemoteScriptStatus::Failed);
+                                } else {
+                                    for action in browser_hijack::remediate() {
+                                        send_log(&tx, action);
+                                    }
+                                    let unresolved = browser_hijack::scan()
+                                        .into_iter()
+                                        .filter(|f| f.kind.is_removable())
+                                        .count();
+                                    if unresolved > 0 {
+                                        send_log(&tx, format!("{unresolved} entr(ies) survived cleanup"));
+                                        send_result(&tx, &script.name, RemoteScriptStatus::Failed);
+                                    } else {
+                                        send_log(&tx, "Browser hijacks removed".into());
+                                        send_result(&tx, &script.name, RemoteScriptStatus::Success);
+                                    }
+                                }
+                            }
+                            #[cfg(not(target_os = "windows"))]
+                            {
+                                send_log(&tx, "Browser hijack cleanup only available on Windows".into());
+                                send_result(&tx, &script.name, RemoteScriptStatus::Failed);
+                            }
+                        }
+
                         "Disable proxy settings" | "Data Transfer"
                         | "When Was The Last Service Date?"
                         | "Are there scheduled tasks for it?"

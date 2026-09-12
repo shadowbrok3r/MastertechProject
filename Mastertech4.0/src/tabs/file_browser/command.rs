@@ -8,7 +8,7 @@ use log::{debug, error};
 // use sysinfo::System;
 use tracing::info;
 
-use crate::tabs::file_browser::read_folder;
+use crate::tabs::file_browser::{read_folder, sort_paths};
 
 use super::{file_copy::CopyBuilder, FileBrowser};
 
@@ -159,11 +159,12 @@ impl FileBrowser{
             },
 
             Command::ReadDirectory(path) => {
-                let new_contents = read_folder(
+                let mut new_contents = read_folder(
                     &path,
                     self.depth,
                     self.show_hidden,
                 );
+                sort_paths(&mut new_contents, self.sort, self.sort_desc);
                 self.dir_contents.borrow_mut().insert(path, new_contents);
             }
 

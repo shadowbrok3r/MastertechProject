@@ -36,13 +36,12 @@ impl NotificationCenter {
         tasks: &Vec<database::schema::LiveTaskPayload>
     ) {
         ui.add_space(10.0);
-        ui.vertical_centered(|ui| {
-            if self.notifications.is_empty() {
-                if ui.button(RichText::new("Show Notifications").heading()).clicked() {
-                    self.show_notifications = true;
-                }
-            }
-        });
+        if self.notifications.is_empty() {
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new("No notifications").heading().weak());
+            });
+            return;
+        }
 
         // Search input under the Show Notifications button
         ui.vertical_centered(|ui| {
@@ -259,6 +258,14 @@ impl NotificationCenter {
                 }
             });
         });
+    }
+
+    /// Opens the notification window on the unread list, optionally filtered
+    /// to one category.
+    pub fn open_unread(&mut self, category: Option<String>) {
+        self.show_notifications = true;
+        self.read_notifications = false;
+        self.selected_category = category;
     }
 
     pub fn set_notifications(&mut self, notifications: Vec<Notification>) {

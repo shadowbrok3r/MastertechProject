@@ -129,7 +129,7 @@ impl TaskAuditViewer { // NEED TO LOOK INTO SOME NOTES THINKING THERE IS NOT A S
         // now has a call today, so drop it from the table.
         while let Ok(service_number) = self.services_viewer.note_created_channel.1.try_recv() {
             if matches!(self.audit_selection, TaskAudit::NeedsCallToday) {
-                let key = self.audit_selection.cache_key();
+                let key = self.current_key();
                 if let Some(table) = self.service_map.get_mut(&key) {
                     table.retain(|row| row.order.id != service_number);
                 }
@@ -151,7 +151,7 @@ impl TaskAuditViewer { // NEED TO LOOK INTO SOME NOTES THINKING THERE IS NOT A S
 
         if let Ok(order) = self.order_channel.1.try_recv() {
             self.loading = true;
-            let key = self.audit_selection.cache_key();
+            let key = self.loading_key.clone();
 
             self
                 .service_map

@@ -18,6 +18,8 @@ impl <'a> ScriptsTab <'a> {
             "Uninstall OneDrive" => self.uninstall_onedrive(item_text, category),
             "Disable OneDrive Startup" => self.disable_onedrive_startup(item_text, category),
             "Disable Edge Startup Boost" => self.disable_edge_startup_boost(item_text, category),
+            "Scan For Browser Hijackers" => self.browser_hijack_sweep(false),
+            "Remove Browser Hijackers" => self.browser_hijack_sweep(true),
             "Run Junkware Category" => {
             //     self.remove_junkware(Some("Webroot TEST"));
             //     self.remove_junkware(Some("SuperAnti TEST"));
@@ -36,6 +38,36 @@ impl <'a> ScriptsTab <'a> {
             _ => {
                 self.log_message(&format!("Unknown Junkware script: {}: {:?}", item_text, category));
             }
+        }
+    }
+
+    /// Reports browser hijacks, and clears the removable ones when `remove`.
+    pub fn browser_hijack_sweep(&mut self, remove: bool) {
+        #[cfg(target_os = "windows")]
+        {
+            use crate::utilities::windows::browser_hijack;
+
+            let findings = browser_hijack::scan();
+            for finding in &findings {
+                self.log_message(&finding.line());
+            }
+            if findings.is_empty() {
+                self.log_message("No browser hijacks found");
+                return;
+            }
+            if !remove {
+                self.log_message(&format!("{} hijack finding(s)", findings.len()));
+                return;
+            }
+            for action in browser_hijack::remediate() {
+                self.log_message(&action);
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = remove;
+            self.log_message("Browser hijack cleanup only available on Windows");
         }
     }
 
