@@ -23,7 +23,7 @@
     },
     {
       "path": "database/schema/build_job.surql",
-      "hash": "b9423d9ce1e7b09c4a6d985e8f0a760d5420617b743e6f6fbea70d0f0b8d0de3"
+      "hash": "a8db6351b8b0a952a673694eb555185d064d8c1a99872be6f50da18146ad568f"
     },
     {
       "path": "database/schema/chat_thread.surql",
@@ -67,15 +67,15 @@
     },
     {
       "path": "database/schema/fleet_agent.surql",
-      "hash": "4633c47a566a2606a04030f454929a0340ba20d2e893493e210c21704fdc1088"
+      "hash": "f7c823c3bcc6b06103a1719cb257720781bf49af6ce9bf577b7f8455275992e2"
     },
     {
       "path": "database/schema/fleet_command.surql",
-      "hash": "97373be918693e1ef68aa5b1085001a3b19b12fc190ed029bbb56d85037e7e28"
+      "hash": "d09a0ea88a25cf7cbf8e8fcfd6400a8ed419bb104bb6beec202eee04cfb6a888"
     },
     {
       "path": "database/schema/fleet_event.surql",
-      "hash": "752fbfba5b6117c293b19e114a1325aac46dd47f71333ca4989781320bbc8b69"
+      "hash": "c2897fe657267924b107e54255d454820e3ea87d51e8e750809ffd349a393e66"
     },
     {
       "path": "database/schema/guest.surql",
@@ -87,7 +87,7 @@
     },
     {
       "path": "database/schema/inventory_audit.surql",
-      "hash": "4179c2527ec2abc25389d871421b4c05776ecd8a101cbf97eac18149027f919e"
+      "hash": "b9f0a85098f167d744c809a5928a4ad27ea247498cf14748c32f937806c89eaf"
     },
     {
       "path": "database/schema/job.surql",
@@ -103,7 +103,7 @@
     },
     {
       "path": "database/schema/plugin_registry.surql",
-      "hash": "39879c96b7f036faae98530ca66623b12ed6872eb667220a7479139d67a9116d"
+      "hash": "0502cf53a18f4b4f65f55151757e336ec146b92afbe330a073305b1a217bd340"
     },
     {
       "path": "database/schema/qc.surql",
@@ -111,7 +111,7 @@
     },
     {
       "path": "database/schema/qc_fingerprint.surql",
-      "hash": "6b643f167867704124d73da8257af08845cbc7f5aec33b47301fa4cdf326643e"
+      "hash": "ac94cc1fbc8ea80d90de0fa675205a18db3df36a03d72173399706b5b422bb57"
     },
     {
       "path": "database/schema/qc_report.surql",
@@ -167,7 +167,7 @@
     },
     {
       "path": "database/schema/user.surql",
-      "hash": "b262074a79594df536e21fa9673be1e9fe7207facd07dce40fc75de7e3af1bb6"
+      "hash": "4675eb240cf3e8cf4f79f502723791b452f340ee9d6396a58a5f17300fee077c"
     },
     {
       "path": "database/schema/user_message.surql",

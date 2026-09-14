@@ -24,7 +24,7 @@ id = "20260914120000__diag_entry_lookup_indexes"
 name = "diag_entry_lookup_indexes"
 state = "completed"
 source_schema_hash = "861cea744b96516fdf92a30608a7f08ef5219c42c14994772e7c38d655203030"
-target_schema_hash = "b1697d3216acb97dd9374b746a2e7c200da3080fcbb5fe61db72ae066dcc3595"
+target_schema_hash = "4a68b9182379c777f277e136353514faee576cf4c252c3d9c59a65e461e1ff11"
 compatibility = "phased"
 renames = []
 

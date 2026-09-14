@@ -1,0 +1,6 @@
+# surrealkit hashes schema files byte-for-byte, so line endings must not vary
+# by checkout. Without this, autocrlf rewrites LF blobs to CRLF on disk and
+# every recorded hash misses.
+*.surql text eol=lf
+database/snapshots/*.json text eol=lf
+database/rollouts/*.toml text eol=lf
