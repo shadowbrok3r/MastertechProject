@@ -1,4 +1,4 @@
-use database::{live_data::{listen_data_filtered, Action}, schema::{utilities::{get_notifications, get_qcs, get_store_users, get_tasks_for_store}, RecordIdExt, TaskNotePayload, TaskNoteRead, User}};
+use database::{live_data::{listen_data_filtered, Action}, schema::{utilities::{get_notifications, get_qcs, get_store_users, get_tasks_for_store}, RecordIdExt, TaskHistory, TaskNotePayload, TaskNoteRead, User}};
 use crate::ui_tools::toasts::{Toast, ToastKind, ToastOptions, ToastStyle};
 use crate::{get_toast_receiver, PlatformSpawner, Spawner, ToastMessage};
 use crate::app_state::ReconnectOutcome;
@@ -272,6 +272,15 @@ impl crate::app_state::SharedContext {
             PlatformSpawner::spawn(async move {
                 if let Err(e) = TaskNoteRead::fetch_all_for_user(read_state_tx).await {
                     log::error!("fetch_all_for_user (task_note_read) failed: {e:?}");
+                }
+            });
+
+            let description_changes_tx = self.description_changes_tx.clone();
+            PlatformSpawner::spawn(async move {
+                if let Err(e) =
+                    TaskHistory::fetch_description_changes_for_user(description_changes_tx).await
+                {
+                    log::error!("fetch_description_changes_for_user failed: {e:?}");
                 }
             });
 
@@ -693,6 +702,7 @@ impl crate::app_state::SharedContext {
         self.query_editor.receive();
         self.receive_ui_action();
         self.receive_read_state();
+        self.receive_description_changes();
         self.receive_users();
         self.receive_task();
         self.tick_pending_task_edits();

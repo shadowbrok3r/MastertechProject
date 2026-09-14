@@ -443,6 +443,7 @@ pub trait Displayable {
         tx: Sender<TaskUiActions>,
         last_read: Option<chrono::DateTime<chrono::Utc>>,
         recommendations: crate::tabs::tasks::task_cards::RecommendationSummary,
+        description_edit: Option<(chrono::DateTime<chrono::Utc>, String)>,
     );
 }
 

@@ -184,7 +184,19 @@ impl SharedContext {
                         let new_task_payload: LiveTaskPayload = new_task.1.clone().into();
                         if old_task.has_changes_from(&new_task_payload) {
                             let diff_json = old_task.diff_to_json(&new_task_payload);
-                            
+
+                            // The card's description indicator reads this map; the
+                            // scoped startup query only covers edits made before login.
+                            if diff_json.get("task_description").is_some() {
+                                let editor = get_current_user_from_auth()
+                                    .map(|u| u.get_username().to_string())
+                                    .unwrap_or_else(|| "System".to_string());
+                                self.description_changes.insert(
+                                    new_task_payload.id.clone(),
+                                    (chrono::Utc::now(), editor),
+                                );
+                            }
+
                             // Get current user for history record
                             let (user_id, username) = if let Some(user) = get_current_user_from_auth() {
                                 (user.get_id(), user.get_username().to_string())

@@ -1,5 +1,5 @@
 use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, database_viewer::DatabaseEditor, dock_session::{default_dock_session_native, default_dock_session_wasm, DockSession}, github::{GithubIssue, GithubRelease}, koth::Koth, presta_order::PrestashopOrderForm, raw_queries::QueryEditor, resource_monitor::ResourceMonitor, sales_tracker::SalesTracker, server_console::ServerConsole, stock::StockTable, stress_lab::StressLab, task_audit::TaskAuditViewer, tasks::task_layout::{LayoutConfig, TaskLayout}, user_chat::UserChat, TabId}, ui_tools::{notification_center::NotificationCenter, theme_config::{bootstrap_startup_theme, set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions, Spawner};
-use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, AiTask, AiTaskItem, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, TaskNoteRead, User, UserSettings}, Database};
+use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, AiTask, AiTaskItem, CarboniteResponse, ConnectedClient, DescriptionChange, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, TaskNoteRead, User, UserSettings}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use std::{collections::{BTreeMap, HashMap, HashSet}, sync::Arc};
 use crossbeam::channel::{self, Receiver, Sender};
@@ -458,6 +458,12 @@ pub struct SharedContext {
     pub read_state_tx: Sender<Vec<TaskNoteRead>>,
     #[serde(skip)]
     pub read_state_rx: Receiver<Vec<TaskNoteRead>>,
+    /// Last description edit per task (task_id -> edited_at, editor).
+    pub description_changes: HashMap<RecordId, (chrono::DateTime<chrono::Utc>, String)>,
+    #[serde(skip)]
+    pub description_changes_tx: Sender<Vec<DescriptionChange>>,
+    #[serde(skip)]
+    pub description_changes_rx: Receiver<Vec<DescriptionChange>>,
     /// When set, the Admin Console renderer should scroll to / select this
     /// `connection_string`. Cleared by the renderer after acting.
     #[serde(skip)]
@@ -649,6 +655,8 @@ impl SharedContext {
         let (client_customer_resolved_tx, client_customer_resolved_rx) = channel::unbounded::<Vec<(String, RecordId)>>();
         let (notes_tx, notes_rx) = channel::unbounded::<(Action, TaskNotePayload)>();
         let (read_state_tx, read_state_rx) = channel::unbounded::<Vec<TaskNoteRead>>();
+        let (description_changes_tx, description_changes_rx) =
+            channel::unbounded::<Vec<DescriptionChange>>();
         let (client_diagnostics_tx, client_diagnostics_rx) =
             channel::unbounded::<crate::modals::tabs::DiagnosticSessionView>();
         let (reachability_tx, reachability_rx) =
@@ -832,6 +840,8 @@ impl SharedContext {
             added_nodes: Vec::new(),
             last_read_notes: HashMap::new(),
             read_state_tx, read_state_rx,
+            description_changes: HashMap::new(),
+            description_changes_tx, description_changes_rx,
             pending_admin_console_focus: None,
             pending_open_service_candidate: None,
             open_service_confirm_modal: None,

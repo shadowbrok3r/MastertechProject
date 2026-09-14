@@ -93,6 +93,7 @@ impl Displayable for LiveTaskPayload {
         tx: Sender<TaskUiActions>,
         last_read: Option<chrono::DateTime<chrono::Utc>>,
         recommendations: RecommendationSummary,
+        description_edit: Option<(chrono::DateTime<chrono::Utc>, String)>,
     ) {
         let style = ui.style().clone();
 
@@ -248,11 +249,28 @@ impl Displayable for LiveTaskPayload {
 
             ui.horizontal(|ui| {
                 let task_descrip_header = ui.make_persistent_id(format!("task_description {:?}",self.id.clone()));
-                let task_descrip_head = CollapsingHeader::new("Task Description").id_salt(task_descrip_header);
-                task_descrip_head.show_unindented(ui, |ui| {
+
+                // Edited since the tech last opened the task: colour the header
+                // rather than add a widget, the row being tight already.
+                let unseen_edit = description_edit
+                    .as_ref()
+                    .filter(|(edited_at, _)| last_read.map(|lr| *edited_at > lr).unwrap_or(true));
+                let heading = match unseen_edit {
+                    Some(_) => RichText::new("Task Description").color(Color32::from_rgb(250, 100, 80)).strong(),
+                    None => RichText::new("Task Description"),
+                };
+
+                let task_descrip_head = CollapsingHeader::new(heading).id_salt(task_descrip_header);
+                let header = task_descrip_head.show_unindented(ui, |ui| {
                     let _ = self.interact_task_description(ui);
                 });
 
+                if let Some((edited_at, editor)) = unseen_edit {
+                    header.header_response.on_hover_text(format!(
+                        "Description edited by {editor} on {} — the Task History tab shows what changed",
+                        edited_at.format("%m/%d/%Y %H:%M")
+                    ));
+                }
             });
             
         }

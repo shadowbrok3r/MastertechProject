@@ -507,6 +507,7 @@ impl SharedContext {
         // Propagate last_read_notes from SharedContext
         layout.last_read_notes = self.last_read_notes.clone();
         layout.recommendations = recommendations;
+        layout.description_changes = self.description_changes.clone();
         layout.client_cards = my_tasks_client_cards;
         layout.ai_cards = my_tasks_ai_cards;
 

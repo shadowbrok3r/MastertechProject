@@ -45,6 +45,9 @@ pub struct TaskLayout{
     /// AI checklist activity per task, for the card's recommendation badge.
     #[serde(skip)]
     pub recommendations: HashMap<RecordId, RecommendationSummary>,
+    /// Last description edit per task (edited_at, editor), for the card header.
+    #[serde(skip)]
+    pub description_changes: HashMap<RecordId, (chrono::DateTime<chrono::Utc>, String)>,
     /// Connected-client cards rendered in the special
     /// `CONNECTED_CLIENTS_KEY` column. Refreshed each frame from
     /// `SharedContext` so newly connected clients appear immediately.
@@ -160,6 +163,7 @@ impl TaskLayout {
             has_run: false,
             last_read_notes: HashMap::new(),
             recommendations: HashMap::new(),
+            description_changes: HashMap::new(),
             client_cards: Vec::new(),
             client_filter: String::new(),
             ai_cards: Vec::new(),
@@ -877,6 +881,10 @@ impl TaskLayout {
                                                     .get(&task.id)
                                                     .copied()
                                                     .unwrap_or_default();
+                                                let description_edit = self
+                                                    .description_changes
+                                                    .get(&task.id)
+                                                    .cloned();
 
                                                 task.display_cards(
                                                     ui, 
@@ -886,6 +894,7 @@ impl TaskLayout {
                                                     ui_actions_tx.clone(),
                                                     last_read,
                                                     recommendations,
+                                                    description_edit,
                                                 );
                                             }
                                         }

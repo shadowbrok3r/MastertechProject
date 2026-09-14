@@ -616,6 +616,14 @@ impl Default for TaskHistory {
     }
 }
 
+/// When a task's description was last edited, and by whom.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, SurrealValue)]
+pub struct DescriptionChange {
+    pub task_id: RecordId,
+    pub username: String,
+    pub created_at: Datetime,
+}
+
 impl TaskHistory {
     /// Create a new TaskHistory record from diff data
     pub fn new(
@@ -642,6 +650,23 @@ impl TaskHistory {
             .await?;
         log::debug!("Created task history record: {:?}", record);
         Ok(record)
+    }
+
+    /// Description edits on the authenticated user's own open tasks, newest
+    /// first. Deliberately narrow: an unscoped history load would pull every
+    /// field change on every task in the shop for each employee who signs in.
+    pub async fn fetch_description_changes_for_user(
+        tx: crossbeam::channel::Sender<Vec<DescriptionChange>>,
+    ) -> anyhow::Result<(), anyhow::Error> {
+        let rows: Vec<DescriptionChange> = db()
+            .query(
+                "SELECT task_id, username, created_at FROM task_history                  WHERE diff.task_description != NONE                    AND task_id.assignee == $auth.id                    AND task_id.completed == false                  ORDER BY created_at DESC",
+            )
+            .await?
+            .take(0)?;
+
+        let _ = tx.try_send(rows);
+        Ok(())
     }
 
     /// Get all history records for a specific task
