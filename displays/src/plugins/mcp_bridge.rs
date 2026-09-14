@@ -6085,15 +6085,6 @@ impl PluginToolProvider {
         let session = session.ok_or_else(|| ErrorData::invalid_params(
             format!("create_ai_task: diagnostic session '{session_key}' not found"), None))?;
 
-        // One open AI task per session — retries must append, not spam popups.
-        if let Some(existing) = database::schema::AiTask::get_open_for_session(&session_ref)
-            .await.map_err(to_internal)?
-        {
-            return Err(ErrorData::invalid_params(format!(
-                "create_ai_task: ai_task '{}' already open for this session — use add_ai_task_steps",
-                existing.id.key_string()), None));
-        }
-
         // Task to attach to: explicit task_id > session.task_ref > auto-resolve
         // from the connection's open service order (then link it to the session).
         let (task_ref, auto_linked) = match p.task_id.as_deref() {
@@ -6134,6 +6125,19 @@ impl PluginToolProvider {
                 log::warn!("create_ai_task: reconcile failed: {e}");
             }
         }
+
+        // One open AI task per service task, not per session: a later sweep
+        // opens a new session and must append rather than spawn a rival
+        // checklist and a second "requires your attention" popup.
+        if let Some(existing) = database::schema::AiTask::get_open_for_task(&task_ref)
+            .await.map_err(to_internal)?
+        {
+            return Err(ErrorData::invalid_params(format!(
+                "create_ai_task: ai_task '{}' already open for task '{}' — use add_ai_task_steps",
+                existing.id.key_string(),
+                task_ref.key_string()), None));
+        }
+
         let task: Option<database::schema::LiveTaskPayload> =
             database::db().select(task_ref.clone()).await.map_err(to_internal)?;
         let task = task.ok_or_else(|| ErrorData::invalid_params(

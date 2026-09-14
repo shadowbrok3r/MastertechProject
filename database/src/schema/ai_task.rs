@@ -259,6 +259,18 @@ impl AiTask {
         Ok(tasks.into_iter().next())
     }
 
+    /// Oldest non-closed AI task on a service task, if any. Keyed on the task
+    /// rather than the session so a later engagement appends instead of
+    /// opening a rival checklist.
+    pub async fn get_open_for_task(task_ref: &RecordId) -> anyhow::Result<Option<Self>> {
+        let tasks: Vec<Self> = db()
+            .query("SELECT * FROM ai_task WHERE task_ref == $tid AND status != 'closed' ORDER BY created_at ASC LIMIT 1")
+            .bind(("tid", task_ref.clone()))
+            .await?
+            .take(0)?;
+        Ok(tasks.into_iter().next())
+    }
+
     /// True when any AI task (any status) was ever created for the session.
     pub async fn any_for_session(session_ref: &RecordId) -> anyhow::Result<bool> {
         let tasks: Vec<Self> = db()
