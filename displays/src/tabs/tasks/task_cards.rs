@@ -40,6 +40,9 @@ impl RecommendationSummary {
     }
 }
 
+/// Gap between the widgets on a card's assignee / priority / status row.
+const ROW_GAP: f32 = 8.0;
+
 /// AI-recommendation counterpart to the notes button: count, robot glyph and
 /// an unread dot that fires on steps added or reworded since the last open.
 fn recommendation_badge(ui: &mut Ui, style: &eframe::egui::Style, summary: RecommendationSummary) -> eframe::egui::Response {
@@ -51,6 +54,8 @@ fn recommendation_badge(ui: &mut Ui, style: &eframe::egui::Style, summary: Recom
         .unwrap_or_default();
     let text_color = if unseen {
         Color32::from_rgb(250, 100, 80)
+    } else if summary.total == 0 {
+        style.visuals.weak_text_color()
     } else {
         style.visuals.warn_fg_color
     };
@@ -73,12 +78,14 @@ fn recommendation_badge(ui: &mut Ui, style: &eframe::egui::Style, summary: Recom
             "{} recommendation(s), {} new or reworded since you last opened this task",
             summary.total, summary.unseen
         )
+    } else if summary.total == 0 {
+        "No AI recommendations on this task".to_string()
     } else {
         format!("{} recommendation(s)", summary.total)
     };
 
     Button::new(WidgetText::from(job))
-        .min_size(Vec2::new(25.0, 20.0))
+        .min_size(Vec2::new(52.0, 20.0))
         .ui(ui)
         .on_hover_text(hover)
 }
@@ -179,7 +186,7 @@ impl Displayable for LiveTaskPayload {
                 };
 
                 if Button::new(txt)
-                    .min_size(Vec2::new(25.0, 20.0))
+                    .min_size(Vec2::new(52.0, 20.0))
                     .ui(ui)
                     .on_hover_text(if has_unread { "Task notes — new since you last opened this task" } else { "Open Task Notes" })
                     .clicked()
@@ -218,29 +225,30 @@ impl Displayable for LiveTaskPayload {
                     let _ = self.interact_assignee(ui, store_users, user);
                 });
 
-                ui.add_space(22.);
-                
+                ui.add_space(ROW_GAP);
+
                 ui.push_id(format!("Priority {}", self.id.key_string().clone()), |ui| {
                     let _ = self.interact_priority(ui);
                 });
 
-                ui.add_space(22.);
+                ui.add_space(ROW_GAP);
 
                 ui.push_id(format!("Status {}", self.id.key_string().clone()), |ui| {
                     let _ = self.interact_status(user, ui);
                 });
 
-                ui.add_space(22.);
+                ui.add_space(ROW_GAP);
 
-                if recommendations.total > 0 {
-                    if recommendation_badge(ui, &style, recommendations).clicked() {
-                        let _ = tx.try_send(TaskUiActions::OpenTaskModalAtPage {
-                            task: self.to_owned(),
-                            page: ModalAction::DiagnosticsPage,
-                        });
-                    }
-                    ui.add_space(22.);
+                // Rendered at a fixed size even at zero, so a card with no
+                // recommendations is exactly as wide as one with them.
+                if recommendation_badge(ui, &style, recommendations).clicked() {
+                    let _ = tx.try_send(TaskUiActions::OpenTaskModalAtPage {
+                        task: self.to_owned(),
+                        page: ModalAction::DiagnosticsPage,
+                    });
                 }
+
+                ui.add_space(ROW_GAP);
 
                 let _ = self.interact_due_date(ui);
             });
