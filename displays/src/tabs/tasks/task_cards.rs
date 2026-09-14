@@ -1,4 +1,4 @@
-use eframe::egui::{Align, Button, CollapsingHeader, Color32, Frame, Layout, Margin, RichText, Shadow, TextFormat, TextStyle, Ui, Vec2, Widget, WidgetText, text::LayoutJob};
+use eframe::egui::{Button, CollapsingHeader, Color32, Frame, Margin, RichText, Shadow, TextFormat, TextStyle, Ui, Vec2, Widget, WidgetText, text::LayoutJob};
 use database::schema::{LiveTaskPayload, RecordIdExt, TaskNotePayload, User};
 use crossbeam::channel::Sender;
 use chrono::{DateTime, Utc};
@@ -63,7 +63,7 @@ fn recommendation_badge(ui: &mut Ui, style: &eframe::egui::Style, summary: Recom
         TextFormat { font_id: font.clone(), color: text_color, ..Default::default() },
     );
     job.append(
-        "●",
+        icons::STATUS_DOT,
         0.0,
         TextFormat { font_id: font, color: dot_color, ..Default::default() },
     );
@@ -168,7 +168,7 @@ impl Displayable for LiveTaskPayload {
                         TextFormat { font_id: button_font.clone(), color: text_color, ..Default::default() },
                     );
                     job.append(
-                        "●",
+                        icons::STATUS_DOT,
                         0.0,
                         TextFormat { font_id: button_font, color: dot_color, ..Default::default() },
                     );
@@ -231,6 +231,16 @@ impl Displayable for LiveTaskPayload {
 
                 ui.add_space(22.);
 
+                if recommendations.total > 0 {
+                    if recommendation_badge(ui, &style, recommendations).clicked() {
+                        let _ = tx.try_send(TaskUiActions::OpenTaskModalAtPage {
+                            task: self.to_owned(),
+                            page: ModalAction::DiagnosticsPage,
+                        });
+                    }
+                    ui.add_space(22.);
+                }
+
                 let _ = self.interact_due_date(ui);
             });
 
@@ -243,16 +253,6 @@ impl Displayable for LiveTaskPayload {
                     let _ = self.interact_task_description(ui);
                 });
 
-                if recommendations.total > 0 {
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if recommendation_badge(ui, &style, recommendations).clicked() {
-                            let _ = tx.try_send(TaskUiActions::OpenTaskModalAtPage {
-                                task: self.to_owned(),
-                                page: ModalAction::DiagnosticsPage,
-                            });
-                        }
-                    });
-                }
             });
             
         }
