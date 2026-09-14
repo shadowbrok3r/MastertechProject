@@ -235,9 +235,9 @@ pub struct DiagnosticEntry {
     pub detail: String,
     pub data: Option<serde_json::Value>,
     pub plugins_used: Vec<PluginUsageRef>,
-    /// 768-dim vector from `fn::embed_text(title + detail)` on insert
-    /// (`DiagnosticEntry::create`). Populated on read; not sent empty on write.
-    #[serde(default)]
+    /// 768-dim `fn::embed_text` vector; read paths OMIT it so it arrives empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[surreal(default)]
     pub embedding: Vec<f32>,
 }
 
@@ -464,7 +464,10 @@ impl DiagnosticSession {
         let Some(session) = session else { return Ok(None) };
 
         let entries: Vec<DiagnosticEntry> = db()
-            .query("SELECT * FROM diagnostic_entry WHERE session_ref == $sid ORDER BY timestamp ASC")
+            .query(
+                "SELECT * OMIT embedding FROM diagnostic_entry \
+                 WHERE session_ref == $sid ORDER BY timestamp ASC",
+            )
             .bind(("sid", sid))
             .await?
             .take(0)?;
@@ -707,9 +710,31 @@ impl DiagnosticEntry {
         format!("{} {}", self.title.trim(), self.detail.trim())
     }
 
+    /// Whether this session already carries an entry with `title`. Errors are
+    /// returned rather than folded into `false`, so a failed probe is not read
+    /// as "absent".
+    pub async fn title_exists_for_session(
+        session_ref: &RecordId,
+        title: &str,
+    ) -> anyhow::Result<bool> {
+        let hit: Option<RecordId> = db()
+            .query(
+                "SELECT VALUE id FROM diagnostic_entry \
+                 WHERE session_ref == $sid AND title == $title LIMIT 1",
+            )
+            .bind(("sid", session_ref.clone()))
+            .bind(("title", title.to_string()))
+            .await?
+            .take(0)?;
+        Ok(hit.is_some())
+    }
+
     pub async fn list_all(start: i32) -> anyhow::Result<Vec<Self>> {
         let entries: Vec<Self> = db()
-            .query("SELECT * FROM diagnostic_entry ORDER BY timestamp DESC LIMIT 200 START $start")
+            .query(
+                "SELECT * OMIT embedding FROM diagnostic_entry \
+                 ORDER BY timestamp DESC LIMIT 200 START $start",
+            )
             .bind(("start", start))
             .await?
             .take(0)?;
@@ -852,5 +877,36 @@ mod actor_tests {
         let re = schema_pattern("diagnosed_by");
         assert!(re.is_match(&normalize_actor("unknown", "tech")));
         assert!(re.is_match(&normalize_actor("Joshua Adams", "tech")));
+    }
+}
+
+#[cfg(test)]
+mod deser_tests {
+    use super::*;
+    use surrealdb_types::Value;
+
+    /// Mirrors what `SELECT * OMIT embedding` hands back.
+    fn row_without_embedding() -> Value {
+        let mut v = DiagnosticEntry::default().into_value();
+        match &mut v {
+            Value::Object(obj) => {
+                obj.remove("embedding");
+            }
+            other => panic!("DiagnosticEntry should serialize to an object, got {other:?}"),
+        }
+        v
+    }
+
+    #[test]
+    fn omitted_embedding_still_deserializes() {
+        let parsed = DiagnosticEntry::from_value(row_without_embedding())
+            .expect("SELECT * OMIT embedding must not fail to deserialize");
+        assert!(parsed.embedding.is_empty());
+    }
+
+    #[test]
+    fn an_empty_embedding_is_not_serialized() {
+        let json = serde_json::to_value(DiagnosticEntry::default()).expect("serializes");
+        assert!(json.get("embedding").is_none());
     }
 }

@@ -1,0 +1,49 @@
+# Three lookup indexes on diagnostic_entry, which had only the HNSW vector
+# index against 19,778 rows. Every non-vector predicate on the table was a full
+# scan, and each row carries a 768-float embedding (~3 KB), so a scan
+# deserializes ~60 MB.
+#
+# `session_ref` serves four call sites: DiagnosticSession::get_full
+# (database/src/schema/diagnostic.rs), the service-metrics rollup
+# (service_metrics.rs), and both stale-session sweeps
+# (axum_server/.../stale_session_sweep.rs) — the last two on a timer.
+# `timestamp` serves DiagnosticEntry::list_all, which sorted the whole table to
+# return 200 rows. `data.flywheel_lesson` serves the zeroclaw consolidator's
+# unconsolidated-session subquery: 67 matching rows out of 19,778.
+#
+# Additive and non-destructive: adding an index changes no row and no field
+# definition, so start-phase only and safe to run while the app is up.
+#
+# APPLIED 2026-09-14 over HTTP /sql, not by `rollout start`. The session_ref
+# build takes ~42s against 19,778 rows and the wss connection resets at ~31s:
+# the step recorded `status: failed, error: "Connection reset"` while surrealkit
+# still printed "Completed rollout" and exited 0. The __rollout step row was
+# reconciled by hand afterward. Any future index build on this table wants the
+# HTTP route, not wss.
+id = "20260914120000__diag_entry_lookup_indexes"
+name = "diag_entry_lookup_indexes"
+state = "completed"
+source_schema_hash = "861cea744b96516fdf92a30608a7f08ef5219c42c14994772e7c38d655203030"
+target_schema_hash = "b1697d3216acb97dd9374b746a2e7c200da3080fcbb5fe61db72ae066dcc3595"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "define_diag_entry_lookup_indexes"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE INDEX OVERWRITE diag_entry_session ON diagnostic_entry FIELDS session_ref;
+DEFINE INDEX OVERWRITE diag_entry_timestamp ON diagnostic_entry FIELDS timestamp;
+DEFINE INDEX OVERWRITE diag_entry_lesson ON diagnostic_entry FIELDS data.flywheel_lesson;
+"""
+
+[[steps]]
+id = "drop_diag_entry_lookup_indexes"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE INDEX IF EXISTS diag_entry_session ON diagnostic_entry;
+REMOVE INDEX IF EXISTS diag_entry_timestamp ON diagnostic_entry;
+REMOVE INDEX IF EXISTS diag_entry_lesson ON diagnostic_entry;
+"""

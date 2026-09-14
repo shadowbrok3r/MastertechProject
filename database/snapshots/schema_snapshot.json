@@ -51,7 +51,7 @@
     },
     {
       "path": "database/schema/diagnostic_entry.surql",
-      "hash": "10251dce2d8687ce12e2a5ff4b56fb736e336538ce3faadb643ae8484dca9a4d"
+      "hash": "e1b432cd61460ad0adb0974c1af47969fbdfa9bef63ac8991a1ec03d40658e52"
     },
     {
       "path": "database/schema/diagnostic_session.surql",

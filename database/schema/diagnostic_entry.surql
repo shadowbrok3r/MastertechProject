@@ -29,3 +29,11 @@ DEFINE FIELD OVERWRITE embedding.* ON diagnostic_entry TYPE float PERMISSIONS FU
 -- field aborts the sync. LM is auto-derived by SurrealDB and is not written here.
 DEFINE INDEX OVERWRITE diag_embedding ON diagnostic_entry FIELDS embedding
   HNSW DIMENSION 768 DIST COSINE TYPE F32 EFC 150 M 12 M0 24;
+
+-- Lookup indexes. `session_ref` serves DiagnosticSession::get_full, the service
+-- metrics rollup and both stale-session sweeps; `timestamp` serves the
+-- newest-first listing; `data.flywheel_lesson` serves the consolidator's
+-- unconsolidated-session subquery (67 of 19,778 rows).
+DEFINE INDEX OVERWRITE diag_entry_session ON diagnostic_entry FIELDS session_ref;
+DEFINE INDEX OVERWRITE diag_entry_timestamp ON diagnostic_entry FIELDS timestamp;
+DEFINE INDEX OVERWRITE diag_entry_lesson ON diagnostic_entry FIELDS data.flywheel_lesson;

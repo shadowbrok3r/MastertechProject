@@ -99,6 +99,16 @@ fn verdict_summary(ingest: &CrashIngest) -> Option<String> {
 }
 
 async fn log_finding(session_ref: &RecordId, ingest: &CrashIngest, tool_name: &str) {
+    let title = format!(
+        "Crash signature {} {}",
+        ingest.signature.bugcheck_code, ingest.signature.module
+    );
+    // One entry per signature per session; re-analysis re-ingests every dump.
+    match DiagnosticEntry::title_exists_for_session(session_ref, &title).await {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(e) => log::warn!("crash_intel: dedupe probe failed, logging anyway: {e}"),
+    }
     let detail = match verdict_summary(ingest) {
         Some(s) => s,
         None => format!(
@@ -116,10 +126,7 @@ async fn log_finding(session_ref: &RecordId, ingest: &CrashIngest, tool_name: &s
     let entry = DiagnosticEntry {
         session_ref: session_ref.clone(),
         category: DiagnosticCategory::Finding,
-        title: format!(
-            "Crash signature {} {}",
-            ingest.signature.bugcheck_code, ingest.signature.module
-        ),
+        title,
         detail,
         data: serde_json::to_value(ingest).ok(),
         plugins_used: vec![PluginUsageRef {
