@@ -271,13 +271,26 @@ fn render_session(
     let session = &view.session;
     let started = format_datetime(&session.started_at);
     let stale_days = session.stale_days();
+    let theory = session
+        .current_theory
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty());
+    // Truncated into the header so the verdict reads without expanding.
     let header = format!(
-        "{} • {} • {}{}",
+        "{} • {} • {}{}{}",
         started,
         session.tech.as_deref().unwrap_or("(unknown tech)"),
         session.hostname,
         stale_days
             .map(|d| format!("  {} STALE — open {d}d", icons::STATUS_WARN))
+            .unwrap_or_default(),
+        theory
+            .map(|t| {
+                let short: String = t.chars().take(70).collect();
+                let cut = if t.chars().count() > 70 { "…" } else { "" };
+                format!("   {} {short}{cut}", icons::LIGHTBULB)
+            })
             .unwrap_or_default(),
     );
 
@@ -292,6 +305,32 @@ fn render_session(
         .id_salt(format!("diag_session_{idx}_{}", session.id.key_string()))
         .default_open(idx == 0 || selected)
         .show(ui, |ui| {
+            if let Some(t) = theory {
+                ui.label(RichText::new(format!("{} {t}", icons::LIGHTBULB)).strong());
+                if let Some(next) = session
+                    .theory_next_step
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    ui.label(RichText::new(format!("Next: {next}")).weak());
+                }
+                let meta = match (
+                    session.theory_confidence.as_deref(),
+                    session.theory_updated_at.as_ref(),
+                ) {
+                    (Some(c), Some(at)) => {
+                        Some(format!("{c} confidence • updated {}", format_datetime(at)))
+                    }
+                    (Some(c), None) => Some(format!("{c} confidence")),
+                    (None, Some(at)) => Some(format!("updated {}", format_datetime(at))),
+                    (None, None) => None,
+                };
+                if let Some(m) = meta {
+                    ui.label(RichText::new(m).weak().small());
+                }
+                ui.separator();
+            }
             Grid::new(format!("diag_meta_grid_{idx}"))
                 .num_columns(2)
                 .striped(false)
