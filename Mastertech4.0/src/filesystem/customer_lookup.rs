@@ -340,7 +340,7 @@ pub async fn lookup_open_service_orders_for_customer(
             }
             Err(e) => {
                 failed += 1;
-                log::debug!("PrestaShop full-order fetch failed for {id}: {e}");
+                log::warn!("PrestaShop full-order fetch failed for {id}: {e}");
             }
         }
     }
@@ -359,16 +359,14 @@ pub async fn lookup_open_service_orders_for_customer(
     Ok(candidates)
 }
 
-/// GET /orders/{id}?display=full and parse with the canonical
-/// `Order` struct so we inherit every extract_* helper.
+/// GET /orders/{id} and parse with the canonical `Order` struct.
+/// `display` is omitted: a by-id URL carrying it answers with the list shape holding only the id.
 async fn fetch_full_order(client: &Client, id_order: &str) -> Result<FullOrder> {
     #[derive(Debug, Deserialize)]
     struct FullOrderResponse {
         order: FullOrder,
     }
-    let url = format!(
-        "{PRESTASHOP_API_URL_WASM}/orders/{id_order}?output_format=JSON&display=full"
-    );
+    let url = format!("{PRESTASHOP_API_URL_WASM}/orders/{id_order}?output_format=JSON");
     let resp: FullOrderResponse = client
         .get(&url)
         .send()

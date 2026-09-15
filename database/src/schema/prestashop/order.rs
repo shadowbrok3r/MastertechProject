@@ -926,3 +926,80 @@ impl Order {
         String::new()
     }
 }
+
+#[cfg(test)]
+mod by_id_shape_tests {
+    use super::*;
+
+    /// Shape of `GET /orders/{id}?output_format=JSON` with no `display`, trimmed
+    /// to the fields `Order` requires. Adding `display` collapses this to
+    /// `{"orders":[{"id":…}]}` and the `order` key disappears.
+    const BY_ID_NO_DISPLAY: &str = r#"{
+      "order": {
+        "id": 2154943,
+        "id_order_type": "2",
+        "id_customer": "171383",
+        "current_state": "29",
+        "date_add": "2026-09-14 17:05:40",
+        "date_upd": "2026-09-14 17:08:03",
+        "order_type": "configurator",
+        "associations": {
+          "order_rows": [
+            {
+              "id": 1,
+              "id_order_config": "0",
+              "product_id": "12",
+              "product_quantity": "1",
+              "product_name": "Bench Fee",
+              "product_price": "233.000000",
+              "product_reference": "BENCH"
+            }
+          ],
+          "order_service": [
+            {
+              "id_order_service": 9,
+              "device_name": "Tower",
+              "device_mfg": "Xidax",
+              "device_model": "X-6",
+              "device_serial": "0000000000000",
+              "device_password": "",
+              "device_power_supply": "",
+              "other_hardware_software": "",
+              "physical_damage": "",
+              "check_in_notes": "wont post",
+              "intake_notes": ""
+            }
+          ]
+        }
+      }
+    }"#;
+
+    #[derive(Debug, Deserialize)]
+    struct FullOrderResponse {
+        order: Order,
+    }
+
+    #[test]
+    fn a_by_id_order_deserializes_with_its_associations() {
+        let resp: FullOrderResponse =
+            serde_json::from_str(BY_ID_NO_DISPLAY).expect("by-id order must parse");
+
+        assert_eq!(resp.order.id, "2154943");
+        assert_eq!(resp.order.order_type, "configurator");
+        assert_eq!(resp.order.current_state, "29");
+        assert_eq!(resp.order.associations.order_rows.len(), 1);
+        assert_eq!(
+            resp.order.associations.order_service[0].check_in_notes,
+            "wont post"
+        );
+    }
+
+    /// The list shape a by-id URL returns when `display` is present: no `order`
+    /// key, so the candidate picker skips every order.
+    #[test]
+    fn the_display_list_shape_has_no_order_key() {
+        let err = serde_json::from_str::<FullOrderResponse>(r#"{"orders":[{"id":2154943}]}"#)
+            .expect_err("list shape must not satisfy the by-id response");
+        assert!(err.to_string().contains("order"), "{err}");
+    }
+}

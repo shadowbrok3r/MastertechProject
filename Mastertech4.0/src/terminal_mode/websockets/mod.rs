@@ -5276,6 +5276,17 @@ pub async fn create_client(mut client: ConnectedClient) -> anyhow::Result<Connec
         }
     }
 
+    // Prefers the machine's newest service order over the cached OA3-derived name.
+    let service_order_name = match (locked, client.computer.clone()) {
+        (false, Some(computer)) => {
+            database::schema::customer_resolution::service_order_friendly_name(&computer).await
+        }
+        _ => None,
+    };
+    if let Some(name) = service_order_name.clone() {
+        client.friendly_name = Some(name);
+    }
+
     // Attempt to lookup customer by OA3 serial number (Windows only).
     // Skipped when `customer_locked` is true (admin override) or when
     // the DB row already has a cached `friendly_name` from a prior
@@ -5284,6 +5295,11 @@ pub async fn create_client(mut client: ConnectedClient) -> anyhow::Result<Connec
     if locked {
         log::debug!(
             "websockets -> create_client: customer_locked is true; \
+             skipping OA-serial customer lookup"
+        );
+    } else if let Some(name) = service_order_name.as_deref() {
+        log::info!(
+            "websockets -> create_client: friendly_name from service order ({name}); \
              skipping OA-serial customer lookup"
         );
     } else if cached_friendly.is_some() {

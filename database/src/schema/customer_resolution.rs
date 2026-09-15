@@ -298,6 +298,57 @@ async fn service_order_customer(order_number: &str) -> Result<Option<CustomerCan
     )))
 }
 
+/// Newest service order written against `computer`, as a customer candidate.
+pub async fn lookup_computer_service_order(
+    computer: &RecordId,
+) -> Result<Option<CustomerCandidate>, String> {
+    let rows: Vec<serde_json::Value> = db()
+        .query(
+            "SELECT service_number, record::id(customer) AS customer_key, \
+             customer.name AS customer_name, created_at FROM service_order \
+             WHERE computer == $comp AND customer != NONE \
+             AND service_number != NONE AND service_number != '' \
+             ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(("comp", computer.clone()))
+        .await
+        .map_err(|e| e.to_string())?
+        .take(0)
+        .map_err(|e| e.to_string())?;
+
+    let Some(row) = rows.first() else {
+        return Ok(None);
+    };
+    let field = |name: &str| -> &str {
+        row.get(name).and_then(|v| v.as_str()).unwrap_or_default().trim()
+    };
+    let key = field("customer_key");
+    let name = field("customer_name");
+    let number = field("service_number");
+    if key.is_empty() || name.is_empty() || number.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(CustomerCandidate::new(
+        key,
+        name,
+        number,
+        CustomerSource::ServiceOrder,
+    )))
+}
+
+/// `"Customer Name - service#"` from the newest service order on `computer`.
+pub async fn service_order_friendly_name(computer: &RecordId) -> Option<String> {
+    match lookup_computer_service_order(computer).await {
+        Ok(found) => found
+            .map(|c| c.friendly_name())
+            .filter(|s| !s.is_empty()),
+        Err(e) => {
+            log::warn!("service_order lookup failed for {computer:?}: {e}");
+            None
+        }
+    }
+}
+
 /// `customer.name` for a key, empty when the row is missing or unreadable.
 async fn customer_name(key: &str) -> String {
     let rid = RecordId::new(CUSTOMER_TABLE, key);

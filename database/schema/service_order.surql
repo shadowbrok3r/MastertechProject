@@ -22,6 +22,7 @@ DEFINE EVENT created ON service_order
 
 DEFINE INDEX service_idx        ON service_order FIELDS service_number;
 DEFINE INDEX service_number_idx ON service_order FIELDS service_number UNIQUE;
+DEFINE INDEX service_computer_idx ON service_order FIELDS computer;
 
 DEFINE FIELD checkin_notes       ON service_order TYPE string                PERMISSIONS FULL;
 DEFINE FIELD checkin_rep         ON service_order TYPE string                PERMISSIONS FULL;

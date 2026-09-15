@@ -20,6 +20,21 @@ static SPECS_GATHER_STARTED: AtomicBool = AtomicBool::new(false);
 /// once per process; reentry would race on the port and leak listeners.
 static TCP_LISTENER_STARTED: AtomicBool = AtomicBool::new(false);
 
+/// UPSERTs `friendly_name` onto the connected_client row, naming `source` on failure.
+#[cfg(target_os = "windows")]
+async fn persist_friendly_name(client_uuid: &RecordId, name: &str, source: &str) {
+    let res = database::db()
+        .query("UPSERT $id SET friendly_name = $name, last_update = time::now()")
+        .bind(("id", client_uuid.clone()))
+        .bind(("name", name.to_string()))
+        .await;
+    if let Err(e) = res {
+        log::warn!(
+            "first_run -> {source} friendly_name persist failed for {client_uuid:?}: {e}"
+        );
+    }
+}
+
 impl MasterTechApp {
     pub fn first_run(&mut self, ctx: &Context) {
         self.context.shared_ctx.first_run = false;
@@ -307,37 +322,64 @@ impl MasterTechApp {
             if self.context.client_friendly_name.is_empty() {
                 let fname_tx = self.context.friendly_name_tx.clone();
                 let client_uuid = self.context.client_uuid.clone();
+                let computer_id = crate::filesystem::local_computer_record();
                 spawn(async move {
                     use crate::filesystem::oa_serial::{get_oa_style_serial, to_oa3_13digit};
                     use crate::filesystem::customer_lookup::lookup_customer_by_serial;
+                    use database::schema::customer_resolution::service_order_friendly_name;
                     use database::schema::utilities::query_id;
                     use database::schema::client::ConnectedClient;
-                    use database::db;
 
                     // Ensure client_hash + computer exist before the
                     // friendly_name UPSERT below, which would otherwise create
                     // a row missing both.
                     crate::tcp_listener::upsert_self_identity(true).await;
 
+                    let cached = query_id::<ConnectedClient>(
+                        CONNECTED_CLIENT_TABLE.to_string(),
+                        client_uuid.clone(),
+                    )
+                    .await
+                    .ok()
+                    .flatten();
+                    let locked = cached.as_ref().is_some_and(|c| c.customer_locked);
+                    let cached_name = cached
+                        .and_then(|c| c.friendly_name)
+                        .filter(|s| !s.is_empty());
+
+                    // Prefers the machine's newest service order over the cached name.
+                    if !locked {
+                        if let Some(name) = service_order_friendly_name(&computer_id).await {
+                            log::info!("first_run -> friendly_name from service order: {name}");
+                            if cached_name.as_deref() != Some(name.as_str()) {
+                                persist_friendly_name(&client_uuid, &name, "service-order").await;
+                            }
+                            let _ = fname_tx.try_send(name);
+                            return;
+                        }
+                    }
+
                     // Skip the PrestaShop/Everest network roundtrip when
                     // the DB already has a cached friendly_name for this
                     // OA3 — the product key is hardware-derived and won't
                     // change between sessions, so a prior successful
                     // lookup is authoritative until an admin clears it.
-                    if let Ok(Some(cached)) = query_id::<ConnectedClient>(
-                        CONNECTED_CLIENT_TABLE.to_string(),
-                        client_uuid.clone(),
-                    )
-                    .await
-                    {
-                        if let Some(name) = cached.friendly_name.filter(|s| !s.is_empty()) {
-                            log::debug!(
-                                "first_run -> friendly_name cached in DB ({name}); \
-                                 skipping OA-serial customer lookup"
-                            );
-                            let _ = fname_tx.try_send(name);
-                            return;
-                        }
+                    if let Some(name) = cached_name {
+                        log::debug!(
+                            "first_run -> friendly_name cached in DB ({name}); \
+                             skipping OA-serial customer lookup"
+                        );
+                        let _ = fname_tx.try_send(name);
+                        return;
+                    }
+
+                    // A locked row keeps the admin-set name.
+                    if locked {
+                        log::debug!(
+                            "first_run -> customer_locked is true; \
+                             skipping OA-serial customer lookup"
+                        );
+                        return;
                     }
 
                     if let Ok(raw) = get_oa_style_serial() {
@@ -362,28 +404,12 @@ impl MasterTechApp {
                             }
                             match lookup_customer_and_open_orders(&serial13).await {
                                 Ok((match_, candidates)) => {
-                                    // Persist friendly_name so subsequent
-                                    // runs hit the cache check above.
-                                    // UPSERT — by this point the row should already
-                                    // exist (connect() UPSERTed it earlier), but
-                                    // friendly_name persistence is too important to
-                                    // gate on that assumption: a missed UPSERT here
-                                    // means the client appears anonymously every run
-                                    // because the OA3 cache check above never hits.
-                                    let res = db()
-                                        .query(
-                                            "UPSERT $id SET friendly_name = $name, \
-                                             last_update = time::now()",
-                                        )
-                                        .bind(("id", client_uuid.clone()))
-                                        .bind(("name", match_.friendly_name.clone()))
-                                        .await;
-                                    if let Err(e) = res {
-                                        log::warn!(
-                                            "first_run -> failed to persist friendly_name \
-                                             to {client_uuid:?}: {e}"
-                                        );
-                                    }
+                                    persist_friendly_name(
+                                        &client_uuid,
+                                        &match_.friendly_name,
+                                        "prestashop",
+                                    )
+                                    .await;
                                     let _ = fname_tx.try_send(match_.friendly_name.clone());
 
                                     // Stage 2: stash the resolution in the
@@ -429,24 +455,8 @@ impl MasterTechApp {
                                     if let Ok(name) =
                                         lookup_customer_by_serial(&serial13).await
                                     {
-                                        // UPSERT for the same reason as the structured
-                                        // PrestaShop branch above — Everest is the
-                                        // fallback, so the only chance to persist a
-                                        // friendly_name on this run is here.
-                                        let res = db()
-                                            .query(
-                                                "UPSERT $id SET friendly_name = $name, \
-                                                 last_update = time::now()",
-                                            )
-                                            .bind(("id", client_uuid.clone()))
-                                            .bind(("name", name.clone()))
+                                        persist_friendly_name(&client_uuid, &name, "everest")
                                             .await;
-                                        if let Err(e) = res {
-                                            log::warn!(
-                                                "first_run -> Everest-fallback persist \
-                                                 failed for {client_uuid:?}: {e}"
-                                            );
-                                        }
                                         let _ = fname_tx.try_send(name);
                                     }
                                 }

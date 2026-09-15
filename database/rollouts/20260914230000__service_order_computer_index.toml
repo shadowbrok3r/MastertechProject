@@ -1,0 +1,37 @@
+# Lookup index on service_order.computer. The table had indexes on
+# service_number only, so every predicate keyed on the machine was a full scan
+# of ~4,710 rows.
+#
+# Serves customer_resolution::lookup_computer_service_order
+# (database/src/schema/customer_resolution.rs), which names a connected client
+# from the newest service order written against its computer. That runs on
+# every Mastertech first_run and on every websockets::create_client reconnect,
+# so the scan was per-connect and fleet-wide.
+#
+# Additive and non-destructive: adding an index changes no row and no field
+# definition, so start-phase only and safe to run while the app is up. The
+# table is small enough that the build finishes well inside the ~31s wss
+# timeout that forced the HTTP route for 20260914120000.
+id = "20260914230000__service_order_computer_index"
+name = "service_order_computer_index"
+state = "completed"
+source_schema_hash = "4a68b9182379c777f277e136353514faee576cf4c252c3d9c59a65e461e1ff11"
+target_schema_hash = "099416eaf9ad7ece442f93097e88ebde7b7e923d0255ccbfeb33b8254bfe3848"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "define_service_order_computer_index"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE INDEX OVERWRITE service_computer_idx ON service_order FIELDS computer;
+"""
+
+[[steps]]
+id = "drop_service_order_computer_index"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE INDEX IF EXISTS service_computer_idx ON service_order;
+"""

@@ -1,6 +1,7 @@
 //! Small popup for editing a connected client's `friendly_name` directly
-//! from the client list. An empty name clears the field so the row falls
-//! back to showing the connection string.
+//! from the client list. A saved name sets `customer_locked`; an empty name
+//! clears both, so the row falls back to the connection string and to
+//! client-side auto-detection.
 
 use crate::ui_tools::{icons, theme};
 use crate::{PlatformSpawner, Spawner};
@@ -37,11 +38,17 @@ impl RenameClientPopup {
         // Empty input clears the friendly name.
         let name = Some(self.name.trim().to_string()).filter(|n| !n.is_empty());
         let tx = self.tx.clone();
+        // Locked while a name is set, so the client-side lookups leave it alone.
+        let locked = name.is_some();
         PlatformSpawner::spawn(async move {
             let result: Result<_, surrealdb::Error> = db()
-                .query("UPDATE $id SET friendly_name = $name, last_update = time::now()")
+                .query(
+                    "UPDATE $id SET friendly_name = $name, customer_locked = $locked, \
+                     last_update = time::now()",
+                )
                 .bind(("id", id))
                 .bind(("name", name))
+                .bind(("locked", locked))
                 .await;
             let _ = tx.try_send(result.map(|_| ()).map_err(|e| e.to_string()));
         });
