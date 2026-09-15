@@ -20,7 +20,7 @@
 # service_computer_idx. Re-lint if these land in a different order.
 id = "20260914233000__ai_task_theory_and_step_reason"
 name = "ai_task_theory_and_step_reason"
-state = "planned"
+state = "completed"
 source_schema_hash = "4a68b9182379c777f277e136353514faee576cf4c252c3d9c59a65e461e1ff11"
 target_schema_hash = "0aa99265a6795bbd24d2cdb14561601ad41d0fe9fe4d252f2b5e16e21527691b"
 compatibility = "phased"
