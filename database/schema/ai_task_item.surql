@@ -16,6 +16,8 @@ DEFINE FIELD checked_at  ON ai_task_item TYPE none | datetime                 PE
 DEFINE FIELD entry_ref   ON ai_task_item TYPE none | record<diagnostic_entry> PERMISSIONS FULL;
 DEFINE FIELD created_at  ON ai_task_item TYPE datetime DEFAULT time::now()    PERMISSIONS FULL;
 DEFINE FIELD updated_at  ON ai_task_item TYPE none | datetime                 PERMISSIONS FULL;
+-- Which of the six hands-on categories justifies this being a human step.
+DEFINE FIELD reason      ON ai_task_item TYPE none | string ASSERT $value == NONE OR $value IN ['physical', 'connect', 'firmware', 'bios_only', 'senses', 'judgement'] PERMISSIONS FULL;
 
 DEFINE INDEX ai_task_item_idx ON ai_task_item FIELDS ai_task_ref, checked;
 

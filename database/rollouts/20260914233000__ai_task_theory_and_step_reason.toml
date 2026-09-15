@@ -1,0 +1,69 @@
+# Adds the live "current theory" an operator reads instead of the entry log,
+# and the per-step reason that gates what may go on a tech's checklist.
+#
+# diagnostic_session gains the theory itself: `summary` is written once by
+# close(), so while a session is open there is nowhere to state the verdict —
+# only 2 of 18 open sessions carried one. ai_task mirrors theory/next_step so
+# the AI Task card renders them through the sync it already has, without
+# loading the session.
+#
+# ai_task_item.reason names which of the six hands-on categories justifies the
+# step being human work. A step fitting none of them is work the AI can do
+# itself, which is the defect this is meant to stop.
+#
+# Every field is `none | <type>` with no DEFAULT: an added field with a
+# non-none type and no backfill makes every later write to an old row fail
+# coercion.
+#
+# NOTE: linted while 20260914230000__service_order_computer_index was still
+# uncommitted, so target_schema_hash includes that rollout's
+# service_computer_idx. Re-lint if these land in a different order.
+id = "20260914233000__ai_task_theory_and_step_reason"
+name = "ai_task_theory_and_step_reason"
+state = "planned"
+source_schema_hash = "4a68b9182379c777f277e136353514faee576cf4c252c3d9c59a65e461e1ff11"
+target_schema_hash = "0aa99265a6795bbd24d2cdb14561601ad41d0fe9fe4d252f2b5e16e21527691b"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "define_session_theory"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE current_theory    ON diagnostic_session TYPE none | string   PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE theory_next_step  ON diagnostic_session TYPE none | string   PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE theory_confidence ON diagnostic_session TYPE none | string ASSERT $value == NONE OR $value IN ['low', 'medium', 'high'] PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE theory_updated_at ON diagnostic_session TYPE none | datetime PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "define_ai_task_theory_mirror"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE current_theory   ON ai_task TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE theory_next_step ON ai_task TYPE none | string PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "define_ai_task_item_reason"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE reason ON ai_task_item TYPE none | string ASSERT $value == NONE OR $value IN ['physical', 'connect', 'firmware', 'bios_only', 'senses', 'judgement'] PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "drop_theory_and_reason"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE FIELD IF EXISTS current_theory    ON diagnostic_session;
+REMOVE FIELD IF EXISTS theory_next_step  ON diagnostic_session;
+REMOVE FIELD IF EXISTS theory_confidence ON diagnostic_session;
+REMOVE FIELD IF EXISTS theory_updated_at ON diagnostic_session;
+REMOVE FIELD IF EXISTS current_theory    ON ai_task;
+REMOVE FIELD IF EXISTS theory_next_step  ON ai_task;
+REMOVE FIELD IF EXISTS reason            ON ai_task_item;
+"""

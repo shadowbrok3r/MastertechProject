@@ -12,7 +12,7 @@ use crate::ui_tools::{icons, theme};
 use crate::TaskUiActions;
 use crossbeam::channel::Sender;
 use database::schema::{AiTask, AiTaskItem, AiTaskStatus, LiveTaskPayload, RecordIdExt, TaskNotePayload, User, assignable_users};
-use eframe::egui::{Button, CollapsingHeader, ComboBox, Frame, Margin, RichText, ScrollArea, Shadow, Ui, Vec2, Widget};
+use eframe::egui::{Button, CollapsingHeader, ComboBox, Frame, Margin, RichText, Shadow, Ui, Vec2, Widget};
 
 #[derive(Clone, PartialEq)]
 pub enum AiCardRole {
@@ -204,6 +204,24 @@ impl AiTaskCardView {
 
             ui.separator();
 
+            if let Some(theory) = task
+                .current_theory
+                .as_deref()
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+            {
+                ui.label(RichText::new(format!("{} {theory}", icons::LIGHTBULB)).strong());
+                if let Some(next) = task
+                    .theory_next_step
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty())
+                {
+                    ui.label(RichText::new(next).weak().small());
+                }
+                ui.separator();
+            }
+
             let (checked, total) = ai_checklist_progress(ui, &self.items);
 
             if self.in_grace && done {
@@ -226,14 +244,7 @@ impl AiTaskCardView {
                 .id_salt(("ai_checklist", &key))
                 .default_open(default_open)
                 .show_unindented(ui, |ui| {
-                    // Height-capped even when open so a long checklist can't
-                    // balloon the card/column.
-                    ScrollArea::vertical()
-                        .id_salt(("ai_checklist_scroll", &key))
-                        .max_height(220.0)
-                        .show(ui, |ui| {
-                            display_ai_checklist(ui, task, &self.items, store_users, interactive, tx);
-                        });
+                    display_ai_checklist(ui, task, &self.items, store_users, interactive, tx);
                 });
 
             // Handback actions — requester always, assignee once complete.

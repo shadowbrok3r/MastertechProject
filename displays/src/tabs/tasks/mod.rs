@@ -448,8 +448,12 @@ impl SharedContext {
                     in_grace,
                 });
             }
+            // Awaiting-review cards first, then newest.
             my_tasks_ai_cards.sort_by(|a, b| {
-                b.ai_task.created_at.cmp(&a.ai_task.created_at)
+                let rank = |s| u8::from(s != AiTaskStatus::AwaitingFollowup);
+                rank(a.ai_task.status)
+                    .cmp(&rank(b.ai_task.status))
+                    .then_with(|| b.ai_task.created_at.cmp(&a.ai_task.created_at))
             });
         }
 

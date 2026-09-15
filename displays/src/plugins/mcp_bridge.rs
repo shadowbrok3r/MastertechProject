@@ -1497,8 +1497,8 @@ pub struct CreateAiTaskParams {
     pub session_id: Option<String>,
     #[schemars(description = "Web Console connection_string — alternative to session_id when a session is active for this client.")]
     pub connection_string: Option<String>,
-    #[schemars(description = "Concrete hands-on steps for the technician, in order (1-30). Each becomes one checkbox. Be specific and actionable, e.g. 'Disable XMP in BIOS (JEDEC defaults)' not 'check BIOS'.")]
-    pub steps: Vec<String>,
+    #[schemars(description = "Hands-on steps for the technician, in order. Each becomes one checkbox and each must carry a `reason` naming which of the six hands-on categories makes it human work — a step that fits none of them is work you must do yourself. A task holds at most 15 items across create and every later append.")]
+    pub steps: Vec<AiTaskStep>,
     #[schemars(description = "SHORT summary of the work ONLY — 3-6 words. The card automatically prefixes '{customer} - {service#}', so provide JUST the summary: do NOT include the customer name, service number, or hostname. Good: 'Clear Device Manager errors', 'Reseat RAM + retest', 'Replace SATA cable'. Bad: 'DESKTOP-XYZ - clear 3 Device Manager yellow-bangs (Dell Precision 5540)'. Default: 'Hands-on work needed'.")]
     pub title: Option<String>,
     #[schemars(description = "Task record id (`task:key`) to attach to. Optional — defaults to the session's task_ref, and if that is unset it auto-resolves the task from the session's (or the connection's) open service order and links it to the session. Only pass this to override that resolution.")]
@@ -1511,8 +1511,122 @@ pub struct CreateAiTaskParams {
 pub struct AddAiTaskStepsParams {
     #[schemars(description = "AI task record id (`ai_task:key` or bare key) returned by create_ai_task")]
     pub ai_task_id: String,
-    #[schemars(description = "Additional hands-on steps to append (1-30). Reopens the AI task and re-notifies the technician.")]
-    pub steps: Vec<String>,
+    #[schemars(description = "Additional hands-on steps to append, each with its `reason`. Reopens the AI task and re-notifies the technician. Refused if it would push the task past 15 items total.")]
+    pub steps: Vec<AiTaskStep>,
+}
+
+/// The only six justifications for putting work on a human's checklist. A step
+/// that fits none of them is work the AI has to do itself.
+#[derive(Deserialize, Debug, Serialize, JsonSchema, Clone, Copy, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum StepReason {
+    /// Hands inside or on the machine: reseat, replace, reroute, repaste, open the chassis.
+    Physical,
+    /// Plugging or unplugging something: another monitor, another port, a known-good part.
+    Connect,
+    /// Flashing BIOS, EC, or a UEFI-shell payload. Stage it yourself; a human runs it.
+    Firmware,
+    /// Only reachable from BIOS setup or a pre-boot menu — including merely reading a value there.
+    BiosOnly,
+    /// Eyes, ears or nose on a symptom, or a wake-from-sleep test.
+    Senses,
+    /// A judgement call that is genuinely the customer's or the shop's.
+    Judgement,
+}
+
+impl StepReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Physical => "physical",
+            Self::Connect => "connect",
+            Self::Firmware => "firmware",
+            Self::BiosOnly => "bios_only",
+            Self::Senses => "senses",
+            Self::Judgement => "judgement",
+        }
+    }
+}
+
+/// Trims, length-checks and caps a step batch. `existing` is the task's current
+/// item count (0 on create).
+fn validate_steps(
+    steps: &[AiTaskStep],
+    existing: usize,
+) -> Result<Vec<database::schema::NewStep>, ErrorData> {
+    use database::schema::{MAX_ITEMS_PER_TASK, MAX_STEP_CHARS};
+    if steps.is_empty() {
+        return Err(ErrorData::invalid_params("steps must not be empty".to_string(), None));
+    }
+    let total = existing + steps.len();
+    if total > MAX_ITEMS_PER_TASK {
+        return Err(ErrorData::invalid_params(format!(
+            "that would put the checklist at {total} items and the cap is {MAX_ITEMS_PER_TASK} \
+             (this task already has {existing}). A list this long means work is on it that you \
+             can do yourself — do that work instead, or close this task and open a new one for \
+             what is genuinely left for a human."), None));
+    }
+    let mut out = Vec::with_capacity(steps.len());
+    for s in steps {
+        let text = s.text.trim();
+        if text.is_empty() {
+            return Err(ErrorData::invalid_params("a step's text is empty".to_string(), None));
+        }
+        let len = text.chars().count();
+        if len > MAX_STEP_CHARS {
+            let head: String = text.chars().take(60).collect();
+            return Err(ErrorData::invalid_params(format!(
+                "a step is {len} characters and the cap is {MAX_STEP_CHARS}: '{head}…'. Put the \
+                 reasoning in log_diagnostic_entry and leave one imperative action here."), None));
+        }
+        out.push(database::schema::NewStep {
+            text: text.to_string(),
+            reason: Some(s.reason.as_str().to_string()),
+        });
+    }
+    Ok(out)
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct AiTaskStep {
+    #[schemars(description = "One concrete action, imperative and self-contained, max 200 characters. Name the specific target: 'Reseat both DIMMs in slots A2/B2', not 'RAM'. No rationale and no findings — those go in log_diagnostic_entry.")]
+    pub text: String,
+    #[schemars(description = "Which hands-on category makes this a human step. If none of the six fits, the step is work you can do over RemoteExec, a script or a plugin — do it instead of listing it.")]
+    pub reason: StepReason,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema, Clone, Copy, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum TheoryConfidence {
+    /// A hypothesis worth testing; evidence is thin or ambiguous.
+    Low,
+    /// Evidence points here, but a competing explanation is still open.
+    Medium,
+    /// Established by evidence you would defend to the customer.
+    High,
+}
+
+impl TheoryConfidence {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct SetCurrentTheoryParams {
+    #[schemars(description = "Diagnostic session id. Omit to resolve from connection_string via the active-session registry.")]
+    pub session_id: Option<String>,
+    #[schemars(description = "Web Console connection_string - alternative to session_id when a session is active for this client.")]
+    pub connection_string: Option<String>,
+    #[schemars(description = "One plain sentence, max 240 characters: what you think is wrong, in words a tech or customer would use. Not a log line, not a bugcheck code.")]
+    pub theory: String,
+    #[schemars(description = "One line: what happens next and why. This is what stops an operator asking why the checklist says what it says.")]
+    pub next_step: Option<String>,
+    #[schemars(description = "How firmly the evidence supports the theory.")]
+    pub confidence: TheoryConfidence,
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
@@ -6055,6 +6169,65 @@ impl PluginToolProvider {
     }
 
     #[tool(
+        name = "set_current_theory",
+        description = "State, in plain words, what you currently think is wrong with this machine and what you are doing about it. This is the one line a tech or operator reads instead of scrolling your entry log; it shows above the checklist on the AI Task card and on the task's Diagnostics tab. Overwrite it whenever the picture changes - a superseded theory is worse than none. create_ai_task requires it.\n\nWrite it for a human who has not read anything you have done: name the part or subsystem and the behaviour. No bugcheck codes or driver filenames unless they ARE the finding. Good: 'The GPU hangs the display path when a second monitor is attached; compute tests all pass, so the card itself is probably fine.' Bad: '0x1b8 WATCHDOG4400 companion records correlate with 0x141 at +1-4s.' next_step is what happens now and why, in one line: 'Retesting on the customer's own two-monitor setup, because a single bench panel never reproduces it.'"
+    )]
+    async fn set_current_theory(
+        &self,
+        Parameters(p): Parameters<SetCurrentTheoryParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        const MAX_THEORY: usize = 240;
+        let session_key = match (&p.session_id, &p.connection_string) {
+            (Some(sid), _) => sid.clone(),
+            (None, Some(cs)) => super::diagnostic_session_registry::get(cs).ok_or_else(|| {
+                ErrorData::invalid_params(format!(
+                    "set_current_theory: no active diagnostic session for '{cs}' - pass session_id"), None)
+            })?,
+            (None, None) => return Err(ErrorData::invalid_params(
+                "set_current_theory: session_id or connection_string is required".to_string(), None)),
+        };
+        let theory = p.theory.trim();
+        if theory.is_empty() {
+            return Err(ErrorData::invalid_params(
+                "set_current_theory: theory must not be empty".to_string(), None));
+        }
+        if theory.chars().count() > MAX_THEORY {
+            return Err(ErrorData::invalid_params(format!(
+                "set_current_theory: theory is {} characters and the cap is {MAX_THEORY} - one sentence. The supporting detail belongs in log_diagnostic_entry.",
+                theory.chars().count()), None));
+        }
+        let next_step = p.next_step.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        let confidence = p.confidence.as_str();
+
+        database::schema::DiagnosticSession::set_theory(&session_key, theory, next_step, confidence)
+            .await
+            .map_err(to_internal)?;
+
+        // Mirror into the entry log so the theory's history stays readable.
+        let session_ref = parse_record_id(&session_key, database::schema::DIAGNOSTIC_SESSION_TABLE);
+        let entry = database::schema::DiagnosticEntry {
+            session_ref,
+            category: database::schema::DiagnosticCategory::Note,
+            title: format!("Theory ({confidence})"),
+            detail: match next_step {
+                Some(n) => format!("{theory}\n\nNext: {n}"),
+                None => theory.to_string(),
+            },
+            ..Default::default()
+        };
+        if let Err(e) = database::schema::DiagnosticEntry::create(&entry).await {
+            log::warn!("set_current_theory: mirror entry failed: {e}");
+        }
+
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
+            "session_id": session_key,
+            "current_theory": theory,
+            "next_step": next_step,
+            "confidence": confidence,
+        })).map_err(to_internal)?]))
+    }
+
+    #[tool(
         name = "create_ai_task",
         description = "Hand off ONLY the work you physically cannot do. Creates an AI Task - a checklist overlay on the service task - which pops a 'requires your attention' modal on the assigned tech's desktop and appears in their AI Tasks column. Steps also log to the diagnostic session as recommendation entries. The task to attach to auto-resolves (explicit task_id > the session's task_ref > the task on the connection's open service order, which then gets linked to the session) - you do NOT need to call link_diagnostic_to_task first. Assignee resolves: explicit assignee_email > service ticket technician > task assignee. Poll get_ai_task_status to see progress; the operator (not the AI) closes the task.\n\nTHE GATE, APPLIED PER STEP BEFORE YOU WRITE IT: 'Could I do this myself over RemoteExec, a script, or a plugin?' If yes - even if it is tedious, multi-step, or needs a reboot - DO IT and log_diagnostic_entry the result. Do not write it here. A checklist that lists work you were capable of doing is a defect: it silently reassigns your job to a human and the ticket stalls.\n\nYOU CAN DO ALL OF THIS YOURSELF - none of it belongs on the list:\n- Install / uninstall / update ANY driver. remote_exec_start runs elevated (the client is requireAdministrator): pnputil /add-driver /install, pnputil /delete-driver, or a vendor setup.exe with silent flags. Stage the package first with com.mastertech.driver-fetch (fetch_model_path for TechDB drivers, fetch_firmware_path for BiosLove payloads).\n- Uninstall applications: the registry uninstall strings, MsiExec /x /qn, or winget uninstall, via remote_exec_start.\n- Any Windows setting: powercfg (power plans, PCIe ASPM, sleep and display idle timeouts), registry writes, bcdedit, pagefile and crash-dump config via Win32_PageFileSetting and the CrashControl key, service start types, scheduled tasks, Fast Startup (HiberbootEnabled).\n- Delete files and reclaim disk: stale dumps, LiveKernelReports, temp trees.\n- Device Manager work: enumerate and remove problem, degraded or ghost devices with pnputil and the PnP cmdlets, then rescan.\n- Change display mode and refresh rate, and read every diagnostic (events, SMART, telemetry, dumps, driver snapshots, DB queries).\n- Reboot the client: remote_reboot_client, or a scheduled abortable restart. Needing a reboot does NOT make something a human task.\nSet risk correctly on remote_exec_start ('mutate' for reversible, 'destructive' for driver/boot/security/data changes, which also requires a non-empty reason) and say what you changed in the log.\n\nONLY THESE BELONG ON THE LIST:\n- Hands inside or on the machine: reseat, replace or reroute a part or cable, open the chassis, blow out heatsinks, repaste, swap a panel.\n- Plugging or unplugging something: attach an external monitor, move a drive to another port, connect a loopback or a known-good part.\n- Firmware flashing: BIOS, EC, or any UEFI-shell payload. You may stage it; a human runs it.\n- Anything only reachable from BIOS setup or a pre-boot menu, including merely READING a value there (EC firmware version, XMP state).\n- Eyes or ears on a symptom: confirming a visual artifact, an audible noise, a smell, a physical intermittent. Also any wake-from-sleep test - you can suspend a machine but you cannot wake it, and suspending it ends your own session.\n- A judgement call that is genuinely the customer's or the shop's: replace vs repair, spend money, accept data loss.\n\nRULES for the steps array:\n1. This list is NOT a log. Never add an item that records what happened, notes a mistake you made, states a finding, or explains context - that ALL belongs in log_diagnostic_entry. An item with no concrete human action to perform does not belong on the list.\n2. Apply the gate above to every item. If a step is only partly human, split it: do your half, and list only the human half. 'Stage BIOS 1.07.20 then flash it' becomes you staging it, plus one step 'Flash the staged BIOS 1.07.20 from C:/ProgramData/MTechFirmware on AC power'.\n3. Write each step short, imperative, and self-contained: one concrete action a tech can check off, with the specific target. 'Reseat both DIMMs in slots A2/B2' - not 'RAM'. 'Replace SATA data cable on the D: drive (WD20EZBX) and move to port 3' - not 'look at the disk'. Thorough but terse; no narration, no rationale paragraphs.\n4. Give the human what they need to act without re-deriving it: exact part, slot or port, the staged path, and the version or value to confirm. Put the reasoning in log_diagnostic_entry and reference it rather than restating it here."
     )]
@@ -6064,10 +6237,8 @@ impl PluginToolProvider {
     ) -> Result<CallToolResult, ErrorData> {
         use database::schema::RecordIdExt;
 
-        if p.steps.is_empty() || p.steps.len() > 30 || p.steps.iter().any(|s| s.trim().is_empty()) {
-            return Err(ErrorData::invalid_params(
-                "create_ai_task: steps must be 1-30 non-empty strings".to_string(), None));
-        }
+        let steps = validate_steps(&p.steps, 0)
+            .map_err(|e| ErrorData::invalid_params(format!("create_ai_task: {}", e.message), None))?;
 
         // Resolve the diagnostic session (explicit id, or active-registry lookup).
         let session_key = match (&p.session_id, &p.connection_string) {
@@ -6084,6 +6255,14 @@ impl PluginToolProvider {
             database::db().select(session_ref.clone()).await.map_err(to_internal)?;
         let session = session.ok_or_else(|| ErrorData::invalid_params(
             format!("create_ai_task: diagnostic session '{session_key}' not found"), None))?;
+
+        // A checklist with no stated theory is why operators end up reading the
+        // whole entry log to find out what the AI thinks is wrong.
+        if session.current_theory.as_deref().map(str::trim).unwrap_or("").is_empty() {
+            return Err(ErrorData::invalid_params(
+                "create_ai_task: this session has no current theory - call set_current_theory first with one plain sentence on what you think is wrong and what the next step is. The tech reads that line above the checklist.".to_string(),
+                None));
+        }
 
         // Task to attach to: explicit task_id > session.task_ref > auto-resolve
         // from the connection's open service order (then link it to the session).
@@ -6198,10 +6377,12 @@ impl PluginToolProvider {
             customer_name,
             service_number,
             connection_string: Some(session.connection_string.clone()),
+            current_theory: session.current_theory.clone(),
+            theory_next_step: session.theory_next_step.clone(),
             ..Default::default()
         };
         let (ai_task_id, item_ids) =
-            database::schema::AiTask::create_with_items(&ai_task, &p.steps)
+            database::schema::AiTask::create_with_items(&ai_task, &steps)
                 .await
                 .map_err(to_internal)?;
 
@@ -6236,10 +6417,7 @@ impl PluginToolProvider {
     ) -> Result<CallToolResult, ErrorData> {
         use database::schema::RecordIdExt;
 
-        if p.steps.is_empty() || p.steps.len() > 30 || p.steps.iter().any(|s| s.trim().is_empty()) {
-            return Err(ErrorData::invalid_params(
-                "add_ai_task_steps: steps must be 1-30 non-empty strings".to_string(), None));
-        }
+
         let id = parse_record_id(&p.ai_task_id, database::schema::AI_TASK_TABLE);
         let full = database::schema::AiTask::get_full(&id).await.map_err(to_internal)?;
         let (task, existing_items) = full.ok_or_else(|| ErrorData::invalid_params(
@@ -6249,7 +6427,10 @@ impl PluginToolProvider {
                 "add_ai_task_steps: ai_task is closed — create_ai_task for new work".to_string(), None));
         }
 
-        let new_item_ids = database::schema::AiTask::add_steps(&id, &p.steps)
+        let steps = validate_steps(&p.steps, existing_items.len())
+            .map_err(|e| ErrorData::invalid_params(format!("add_ai_task_steps: {}", e.message), None))?;
+
+        let new_item_ids = database::schema::AiTask::add_steps(&id, &steps)
             .await
             .map_err(to_internal)?;
 
@@ -6470,11 +6651,11 @@ impl PluginToolProvider {
             (Some(aid), _) => parse_record_id(aid, database::schema::AI_TASK_TABLE),
             (None, Some(sid)) => {
                 let session_ref = parse_record_id(sid, database::schema::DIAGNOSTIC_SESSION_TABLE);
-                database::schema::AiTask::get_open_for_session(&session_ref)
+                database::schema::AiTask::get_open_for_session_or_task(&session_ref)
                     .await.map_err(to_internal)?
-                    .map(|t| t.id)
+                    .map(|(t, _)| t.id)
                     .ok_or_else(|| ErrorData::invalid_params(format!(
-                        "get_ai_task_status: no non-closed ai_task on session '{sid}'"), None))?
+                        "get_ai_task_status: no non-closed ai_task on session '{sid}' or its task"), None))?
             }
             (None, None) => return Err(ErrorData::invalid_params(
                 "get_ai_task_status: ai_task_id or session_id is required".to_string(), None)),
@@ -6832,7 +7013,7 @@ impl PluginToolProvider {
         // Escalated work is only handed off through a tracked AI-task checklist.
         // Unknown (lookup error) never trips the gate — only a definite absence.
         let has_ai_task: Option<bool> =
-            match database::schema::AiTask::any_for_session(&session.id).await {
+            match database::schema::AiTask::handoff_exists(&session.id).await {
                 Ok(b) => Some(b),
                 Err(e) => {
                     log::warn!("close_diagnostic_session: ai_task lookup failed: {e}");
@@ -6876,16 +7057,19 @@ impl PluginToolProvider {
             ));
         }
 
-        if let Ok(Some(open)) = database::schema::AiTask::get_open_for_session(&session.id).await
+        if let Ok(Some((open, via_task))) =
+            database::schema::AiTask::get_open_for_session_or_task(&session.id).await
         {
+            let whose = if via_task { " (opened by an earlier session on this task)" } else { "" };
             warnings.push(ToolWarning::warn(
                 "open_ai_task",
                 format!(
-                    "AI task '{}' is still '{}' — verify the tech's outcome (re-run the failing \
+                    "AI task '{}' is still '{}'{} — verify the tech's outcome (re-run the failing \
                      check) before considering this engagement finished; reopen with \
                      add_ai_task_steps if more work surfaces.",
                     open.id.key_string(),
-                    open.status.as_str()
+                    open.status.as_str(),
+                    whose
                 ),
             ));
         }

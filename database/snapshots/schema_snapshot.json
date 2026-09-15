@@ -7,11 +7,11 @@
     },
     {
       "path": "database/schema/ai_task.surql",
-      "hash": "e95fca3a05922e10478100b046b27b41f305e9c953489ea2d9f7641f38e0011f"
+      "hash": "701a467766e78cf826eb1e21d69b7bda26c88186010574f8abe5f14345a55510"
     },
     {
       "path": "database/schema/ai_task_item.surql",
-      "hash": "b30a39177d8bfad4a171f1fe0d9bbb32bf18ce1925ed748b936c848376de0500"
+      "hash": "b17cc1630e1b9e9b03504138c860b66111ecb811807827868b48783f1dd10204"
     },
     {
       "path": "database/schema/audit_log.surql",
@@ -55,7 +55,7 @@
     },
     {
       "path": "database/schema/diagnostic_session.surql",
-      "hash": "18c821244d08eae01f85796da145f41be7f6cf52d0bd643625f21a051c855dfa"
+      "hash": "f79bfb77dcd3c3b3c0abc1074cf712bbf65689082e6f42860307fd835fd829f5"
     },
     {
       "path": "database/schema/driver_intel.surql",

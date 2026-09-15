@@ -179,6 +179,21 @@ pub struct DiagnosticSession {
     #[surreal(default)]
     pub outcome_override_at: Option<Datetime>,
     pub summary: Option<String>,
+    /// Live plain-language verdict, refreshed as the diagnosis moves. `summary`
+    /// is written once at close; this carries the picture while work is open.
+    #[serde(default)]
+    #[surreal(default)]
+    pub current_theory: Option<String>,
+    /// What we are doing about the theory, and why.
+    #[serde(default)]
+    #[surreal(default)]
+    pub theory_next_step: Option<String>,
+    #[serde(default)]
+    #[surreal(default)]
+    pub theory_confidence: Option<String>,
+    #[serde(default)]
+    #[surreal(default)]
+    pub theory_updated_at: Option<Datetime>,
     /// Newest real work on the session; the staleness sweep keys on this rather
     /// than `started_at`. `None` only on rows written before the backfill.
     #[serde(default)]
@@ -217,6 +232,10 @@ impl Default for DiagnosticSession {
             outcome_override_by: None,
             outcome_override_at: None,
             summary: None,
+            current_theory: None,
+            theory_next_step: None,
+            theory_confidence: None,
+            theory_updated_at: None,
             last_activity_at: None,
             swept_at: None,
             status: "open".to_string(),
@@ -450,6 +469,59 @@ impl DiagnosticSession {
             .bind(("task", task.clone()))
             .await?;
         Ok(())
+    }
+
+    /// Overwrites the live theory. Callers re-state it whenever the picture
+    /// changes; history stays readable through the mirrored note entries.
+    pub async fn set_theory(
+        session_id: &str,
+        theory: &str,
+        next_step: Option<&str>,
+        confidence: &str,
+    ) -> anyhow::Result<()> {
+        let sid = RecordId::new(super::DIAGNOSTIC_SESSION_TABLE, session_id);
+        db().query(
+            "UPDATE $sid SET current_theory = $theory, theory_next_step = $next, \
+             theory_confidence = $conf, theory_updated_at = time::now(), \
+             last_activity_at = time::now()",
+        )
+        .bind(("sid", sid))
+        .bind(("theory", theory.to_string()))
+        .bind(("next", next_step.map(str::to_string)))
+        .bind(("conf", confidence.to_string()))
+        .await?;
+
+        // Mirror onto the task's open checklist so the AI Task card shows the
+        // live theory through the sync it already has.
+        db().query(
+            "UPDATE ai_task SET current_theory = $theory, theory_next_step = $next \
+             WHERE status != 'closed' AND task_ref = (SELECT VALUE task_ref FROM $sid)[0]",
+        )
+        .bind(("sid", RecordId::new(super::DIAGNOSTIC_SESSION_TABLE, session_id)))
+        .bind(("theory", theory.to_string()))
+        .bind(("next", next_step.map(str::to_string)))
+        .await?;
+        Ok(())
+    }
+
+    /// Newest theory recorded against a service task, for the task-level banner.
+    pub async fn latest_theory_for_task(
+        task_ref: &RecordId,
+    ) -> anyhow::Result<Option<(String, Option<String>, Option<String>, Option<Datetime>)>> {
+        let rows: Vec<Self> = db()
+            .query(
+                "SELECT * FROM diagnostic_session \
+                 WHERE task_ref == $tid AND current_theory != NONE \
+                 ORDER BY theory_updated_at DESC LIMIT 1",
+            )
+            .bind(("tid", task_ref.clone()))
+            .await?
+            .take(0)?;
+        Ok(rows.into_iter().next().and_then(|s| {
+            s.current_theory.map(|t| {
+                (t, s.theory_next_step, s.theory_confidence, s.theory_updated_at)
+            })
+        }))
     }
 
     /// Fetch one session row by key.

@@ -202,6 +202,22 @@ fn render_ai_handoff_panel(
                 .weak()
                 .small(),
             );
+            if let Some(theory) = task
+                .current_theory
+                .as_deref()
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+            {
+                ui.label(RichText::new(format!("{} {theory}", icons::LIGHTBULB)).strong());
+                if let Some(next) = task
+                    .theory_next_step
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty())
+                {
+                    ui.label(RichText::new(next).weak().small());
+                }
+            }
             let _ = ai_checklist_progress(ui, items);
 
             let interactive = task.status != AiTaskStatus::Closed
@@ -211,19 +227,11 @@ fn render_ai_handoff_panel(
                     .map(|u| u.get_id() == task.assignee || u.get_id() == task.requested_by)
                     .unwrap_or(false);
             if let Some(tx) = ctx.ui_actions_tx {
-                // Collapsed by default and height-capped even when open, so a
-                // long checklist can't push the diagnostic sessions list
-                // below it out of view.
                 CollapsingHeader::new(RichText::new("Checklist").small())
                     .id_salt(format!("ai_checklist_collapse_{}", task.id.key_string()))
                     .default_open(false)
                     .show(ui, |ui| {
-                        ScrollArea::vertical()
-                            .id_salt(format!("ai_checklist_scroll_{}", task.id.key_string()))
-                            .max_height(220.0)
-                            .show(ui, |ui| {
-                                display_ai_checklist(ui, task, items, ctx.store_users, interactive, tx);
-                            });
+                        display_ai_checklist(ui, task, items, ctx.store_users, interactive, tx);
                     });
             }
 

@@ -90,6 +90,14 @@ pub struct AiTask {
     pub created_at: Datetime,
     pub completed_at: Option<Datetime>,
     pub closed_at: Option<Datetime>,
+    /// Mirrored from the session by set_current_theory, so the card shows
+    /// why the checklist exists without loading the session.
+    #[serde(default)]
+    #[surreal(default)]
+    pub current_theory: Option<String>,
+    #[serde(default)]
+    #[surreal(default)]
+    pub theory_next_step: Option<String>,
 }
 
 impl Default for AiTask {
@@ -111,6 +119,8 @@ impl Default for AiTask {
             created_at: now,
             completed_at: None,
             closed_at: None,
+            current_theory: None,
+            theory_next_step: None,
         }
     }
 }
@@ -131,7 +141,25 @@ pub struct AiTaskItem {
     #[serde(default)]
     #[surreal(default)]
     pub updated_at: Option<Datetime>,
+    /// Which hands-on category justifies this being a human step. Absent on
+    /// items written before the gate existed.
+    #[serde(default)]
+    #[surreal(default)]
+    pub reason: Option<String>,
 }
+
+/// A checklist step plus the hands-on category justifying it as human work.
+#[derive(Debug, Clone)]
+pub struct NewStep {
+    pub text: String,
+    pub reason: Option<String>,
+}
+
+/// Hard ceiling on items per AI task, counted across create + every append.
+pub const MAX_ITEMS_PER_TASK: usize = 15;
+
+/// Hard ceiling on one step's text; rationale belongs in a diagnostic entry.
+pub const MAX_STEP_CHARS: usize = 200;
 
 impl Default for AiTaskItem {
     fn default() -> Self {
@@ -146,6 +174,7 @@ impl Default for AiTaskItem {
             entry_ref: None,
             created_at: chrono::Utc::now().into(),
             updated_at: None,
+            reason: None,
         }
     }
 }
@@ -153,17 +182,18 @@ impl Default for AiTaskItem {
 impl AiTask {
     /// Create the checklist items first, then the parent last — the parent
     /// CREATE fires the tech-attention event, so items must already exist.
-    pub async fn create_with_items(task: &Self, steps: &[String]) -> anyhow::Result<(RecordId, Vec<RecordId>)> {
+    pub async fn create_with_items(task: &Self, steps: &[NewStep]) -> anyhow::Result<(RecordId, Vec<RecordId>)> {
         let mut t = task.clone();
         t.id = super::random_record_id(super::AI_TASK_TABLE);
         t.created_at = chrono::Utc::now().into();
         t.status = AiTaskStatus::Open;
 
         let mut item_ids = Vec::with_capacity(steps.len());
-        for (idx, text) in steps.iter().enumerate() {
+        for (idx, step) in steps.iter().enumerate() {
             let item = AiTaskItem {
                 ai_task_ref: t.id.clone(),
-                text: text.clone(),
+                text: step.text.clone(),
+                reason: step.reason.clone(),
                 position: idx as i64,
                 ..Default::default()
             };
@@ -175,8 +205,18 @@ impl AiTask {
         Ok((created.map(|c| c.id).unwrap_or(t.id), item_ids))
     }
 
+    /// How many checklist items the task already carries, for the total cap.
+    pub async fn item_count(id: &RecordId) -> anyhow::Result<usize> {
+        let n: Option<i64> = db()
+            .query("array::first((SELECT VALUE count() FROM ai_task_item WHERE ai_task_ref = $id GROUP ALL))")
+            .bind(("id", id.clone()))
+            .await?
+            .take(0)?;
+        Ok(n.unwrap_or(0).max(0) as usize)
+    }
+
     /// Append steps and reopen; positions continue after the current max.
-    pub async fn add_steps(id: &RecordId, steps: &[String]) -> anyhow::Result<Vec<RecordId>> {
+    pub async fn add_steps(id: &RecordId, steps: &[NewStep]) -> anyhow::Result<Vec<RecordId>> {
         let next: Option<i64> = db()
             .query("array::first((SELECT VALUE math::max(position) FROM ai_task_item WHERE ai_task_ref = $id GROUP ALL))")
             .bind(("id", id.clone()))
@@ -185,10 +225,11 @@ impl AiTask {
         let start = next.map(|n| n + 1).unwrap_or(0);
 
         let mut item_ids = Vec::with_capacity(steps.len());
-        for (idx, text) in steps.iter().enumerate() {
+        for (idx, step) in steps.iter().enumerate() {
             let item = AiTaskItem {
                 ai_task_ref: id.clone(),
-                text: text.clone(),
+                text: step.text.clone(),
+                reason: step.reason.clone(),
                 position: start + idx as i64,
                 ..Default::default()
             };
@@ -269,6 +310,43 @@ impl AiTask {
             .await?
             .take(0)?;
         Ok(tasks.into_iter().next())
+    }
+
+    /// The session's own open AI task, else the open one on its service task.
+    /// The bool is true when it resolved via the task, so a caller can say the
+    /// checklist belongs to an earlier engagement.
+    pub async fn get_open_for_session_or_task(
+        session_ref: &RecordId,
+    ) -> anyhow::Result<Option<(Self, bool)>> {
+        if let Some(t) = Self::get_open_for_session(session_ref).await? {
+            return Ok(Some((t, false)));
+        }
+        let Some(task_ref) = Self::session_task(session_ref).await? else {
+            return Ok(None);
+        };
+        Ok(Self::get_open_for_task(&task_ref).await?.map(|t| (t, true)))
+    }
+
+    /// Whether an escalation is backed by a checklist: one on the session, or
+    /// an open one on its service task. A repeat engagement cannot create its
+    /// own, so a session-only check would refuse a legitimate close.
+    pub async fn handoff_exists(session_ref: &RecordId) -> anyhow::Result<bool> {
+        if Self::any_for_session(session_ref).await? {
+            return Ok(true);
+        }
+        let Some(task_ref) = Self::session_task(session_ref).await? else {
+            return Ok(false);
+        };
+        Ok(Self::get_open_for_task(&task_ref).await?.is_some())
+    }
+
+    async fn session_task(session_ref: &RecordId) -> anyhow::Result<Option<RecordId>> {
+        let found: Option<RecordId> = db()
+            .query("SELECT VALUE task_ref FROM $sid WHERE task_ref != NONE")
+            .bind(("sid", session_ref.clone()))
+            .await?
+            .take(0)?;
+        Ok(found)
     }
 
     /// True when any AI task (any status) was ever created for the session.

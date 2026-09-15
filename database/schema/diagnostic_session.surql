@@ -27,6 +27,13 @@ DEFINE FIELD started_at        ON diagnostic_session TYPE datetime DEFAULT time:
 DEFINE FIELD status            ON diagnostic_session TYPE string ASSERT $value IN ['open', 'resolved', 'escalated', 'abandoned'] PERMISSIONS FULL;
 DEFINE FIELD store             ON diagnostic_session TYPE none | string                    PERMISSIONS FULL;
 DEFINE FIELD summary           ON diagnostic_session TYPE none | string                    PERMISSIONS FULL;
+
+-- Plain-language verdict, refreshed as the diagnosis moves. `summary` is written
+-- once at close; these carry the live picture while the session is open.
+DEFINE FIELD current_theory     ON diagnostic_session TYPE none | string                    PERMISSIONS FULL;
+DEFINE FIELD theory_next_step   ON diagnostic_session TYPE none | string                    PERMISSIONS FULL;
+DEFINE FIELD theory_confidence  ON diagnostic_session TYPE none | string ASSERT $value == NONE OR $value IN ['low', 'medium', 'high'] PERMISSIONS FULL;
+DEFINE FIELD theory_updated_at  ON diagnostic_session TYPE none | datetime                  PERMISSIONS FULL;
 -- Set only by the staleness sweep, so a sweep-written status/ended_at is distinguishable from an operator's.
 DEFINE FIELD swept_at          ON diagnostic_session TYPE none | datetime                  PERMISSIONS FULL;
 DEFINE FIELD tags              ON diagnostic_session TYPE array<string>                    PERMISSIONS FULL;

@@ -20,6 +20,9 @@ DEFINE FIELD review_acknowledged_at ON ai_task TYPE none | datetime             
 DEFINE FIELD created_at             ON ai_task TYPE datetime DEFAULT time::now() PERMISSIONS FULL;
 DEFINE FIELD completed_at           ON ai_task TYPE none | datetime              PERMISSIONS FULL;
 DEFINE FIELD closed_at              ON ai_task TYPE none | datetime              PERMISSIONS FULL;
+-- Mirrored from the session so the card can show why the checklist exists.
+DEFINE FIELD current_theory         ON ai_task TYPE none | string                PERMISSIONS FULL;
+DEFINE FIELD theory_next_step       ON ai_task TYPE none | string                PERMISSIONS FULL;
 
 DEFINE INDEX ai_task_idx ON ai_task FIELDS task_ref, session_ref, assignee, status;
 
