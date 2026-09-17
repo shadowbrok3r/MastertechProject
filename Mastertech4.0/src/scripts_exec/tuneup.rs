@@ -11,7 +11,7 @@ use displays::scripts::executor::{
 };
 use displays::scripts::id::ScriptId;
 
-use super::powershell;
+use super::{not_implemented, powershell};
 
 /// Ids this executor claims.
 const HANDLED: &[&str] = &[
@@ -91,11 +91,6 @@ fn run(def: &ScriptDef, ctx: &ScriptContext) -> (ScriptResult, Option<i32>) {
             None,
         ),
     }
-}
-
-fn not_implemented(ctx: &ScriptContext, def: &ScriptDef, message: &str) -> ScriptResult {
-    ctx.log_warning(def.category(), def.name.as_str(), message);
-    ScriptResult::Skipped(message.into())
 }
 
 #[cfg(target_os = "windows")]
