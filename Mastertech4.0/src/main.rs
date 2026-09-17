@@ -134,11 +134,35 @@ impl eframe::App for app_state::MasterTechApp {
         self.receive_ui(ui.ctx(), frame);
         // Before any tab content: painting this is what admits RemoteExec jobs.
         remote_exec::banner_egui::show(ui);
-        self.menu_bar(ui);
+        let on_workspace = matches!(
+            self.context.shared_ctx.state,
+            AppState::Authenticated(MainPages::Tasks)
+        );
+        // Login authenticates before the account lands, and the account carries the
+        // mode; painting either the dock or the picker first would show the wrong one.
+        let awaiting_account = on_workspace && self.context.get_settings;
+        // The picker stands in for the whole workspace, menu bar included.
+        let picking =
+            on_workspace && !awaiting_account && self.context.work_mode.active.is_none();
+        if !picking && !awaiting_account {
+            self.menu_bar(ui);
+        }
 
         match &self.context.shared_ctx.state {
             AppState::Authenticated(page) => match page {
-                MainPages::Tasks => self.main_page(ui),
+                MainPages::Tasks => {
+                    if awaiting_account {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(ui.available_height() / 3.0);
+                            ui.spinner();
+                            ui.label("Loading your workspace...");
+                        });
+                    } else if picking {
+                        self.work_mode_picker(ui)
+                    } else {
+                        self.main_page(ui)
+                    }
+                }
                 MainPages::UserPreferences => self
                     .context
                     .shared_ctx

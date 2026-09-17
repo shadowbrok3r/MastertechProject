@@ -1,0 +1,36 @@
+# Stores which work mode MasterTech opens into, per account.
+#
+# `none | string` with no DEFAULT is deliberate: NONE means "show the picker",
+# and an added field with a non-none type and no backfill makes every later
+# write to an old row fail coercion. The Rust side mirrors this with
+# Option<String> plus #[surreal(default)] — serde(default) alone does not cover
+# the SurrealValue path.
+#
+# user_settings.ui_layout is FLEXIBLE, so writes would land without this DEFINE;
+# it is declared so drift audits stay clean and the ASSERT catches a typo'd slug.
+# NOTE: linted while 20260916190000__agent_threads was still uncommitted, so
+# target_schema_hash includes that rollout's agent_* tables. Re-lint if these
+# land in a different order.
+id = "20260917120000__user_default_work_mode"
+name = "user_default_work_mode"
+state = "completed"
+source_schema_hash = "4a5eb372e9cf1b42ef4fcd3c7159a5ccc37dbd4e232865136733510f4fe9f94b"
+target_schema_hash = "4a5eb372e9cf1b42ef4fcd3c7159a5ccc37dbd4e232865136733510f4fe9f94b"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "define_default_work_mode"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE user_settings.ui_layout.default_work_mode ON user TYPE none | string ASSERT $value == NONE OR $value IN ['tuneup_qc', 'diagnostic', 'admin', 'full'] PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "drop_default_work_mode"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE FIELD IF EXISTS user_settings.ui_layout.default_work_mode ON user;
+"""

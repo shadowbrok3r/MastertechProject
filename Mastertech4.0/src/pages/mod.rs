@@ -1,10 +1,12 @@
 use eframe::egui::Ui;
 use egui_dock::DockArea;
 
-use crate::app_state::MasterTechApp;
-use displays::tabs::TabId;
+use crate::app_state::{MastertechContext, MasterTechApp};
+use displays::tabs::{TabContext, TabId, WorkMode};
+use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
 
 pub mod menu_bar;
+pub mod work_mode;
 
 impl MasterTechApp {
     pub fn main_page(&mut self, ui: &mut Ui) {
@@ -23,6 +25,8 @@ impl MasterTechApp {
             .draggable_tabs(true)
             .show_inside(ui, &mut self.context);
 
+        let mode = self.context.work_mode.active.unwrap_or_default();
+
         if !self.context.pending_tab_removes.is_empty() || !self.context.pending_tab_adds.is_empty()
         {
             for tab in self.context.pending_tab_removes.drain(..) {
@@ -30,13 +34,21 @@ impl MasterTechApp {
                     tree.remove_tab(index);
                 }
             }
-            for (surface, node, tab) in self.context.pending_tab_adds.drain(..) {
+            for (surface, node, tab) in std::mem::take(&mut self.context.pending_tab_adds) {
+                if !mode.allows(tab) {
+                    refuse(&mut self.context, mode, tab);
+                    continue;
+                }
                 tree.set_focused_node_and_surface((surface, node));
                 tree.push_to_focused_leaf(tab);
             }
         }
 
-        for tab in self.context.pending_tab_opens.drain(..) {
+        for tab in std::mem::take(&mut self.context.pending_tab_opens) {
+            if !mode.allows(tab) {
+                refuse(&mut self.context, mode, tab);
+                continue;
+            }
             if tree.find_tab(&tab).is_none() {
                 tree.push_to_focused_leaf(tab);
             }
@@ -50,4 +62,18 @@ impl MasterTechApp {
 
         self.dock.tree = tree;
     }
+}
+
+/// Tells the operator a tab was refused rather than dropping the request silently.
+fn refuse(context: &mut MastertechContext, mode: WorkMode, tab: TabId) {
+    let title = tab.title(TabContext::MastertechNative);
+    log::debug!("{} refused opening {title}", mode.title());
+    context.shared_ctx.toasts.add(Toast {
+        kind: ToastKind::Info,
+        text: format!("{title} is not part of {}. Switch modes to open it.", mode.title()).into(),
+        options: ToastOptions::default()
+            .show_progress(true)
+            .duration_in_seconds(6.0),
+        ..Default::default()
+    });
 }

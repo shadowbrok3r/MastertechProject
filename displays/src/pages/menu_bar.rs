@@ -1,5 +1,5 @@
 #![allow(deprecated)]
-use crate::{app_state::{default_tree, default_tree_wasm, AppState, MainPages, SharedContext}, pages::view_menu, tabs::{github::get_github_releases, TabContext}, ui_tools::theme, PlatformSpawner, Spawner, TaskUiActions};
+use crate::{app_state::{default_tree, default_tree_wasm, AppState, MainPages, SharedContext}, pages::view_menu, tabs::{github::get_github_releases, TabContext, WorkMode}, ui_tools::theme, PlatformSpawner, Spawner, TaskUiActions};
 use database::{schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, Notification, Store}, db};
 use eframe::egui::{containers::menu::MenuConfig, *};
 
@@ -16,7 +16,7 @@ impl SharedContext {
                     ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                         ui.add_space(1.0);
                         ui.menu_button(RichText::new("View").color(ui.global_style().visuals.error_fg_color).heading().underline(), |ui| {
-                            view_menu(ui, &mut self.dock, tab_ctx, None);
+                            view_menu(ui, &mut self.dock, tab_ctx, WorkMode::Full, None);
                         });
 
                         ui.add_space(10.0);

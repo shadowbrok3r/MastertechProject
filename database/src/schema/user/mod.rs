@@ -91,7 +91,11 @@ pub struct UserSettings {
 pub struct UiLayout {
     mtechserver: Value,
     mastertech: Value,
-    task_column_layout: Option<Value>
+    task_column_layout: Option<Value>,
+    /// Work-mode slug MasterTech opens into; `None` shows the picker.
+    #[serde(default)]
+    #[surreal(default)]
+    default_work_mode: Option<String>,
 }
 
 impl UserSettings {
@@ -110,6 +114,15 @@ impl UserSettings {
 
     pub fn set_ui_layout_mtechserver(&mut self, ui_layout_mtechserver: Value) -> &mut Self {
         self.ui_layout.mtechserver = ui_layout_mtechserver;
+        self
+    }
+
+    pub fn get_default_work_mode(&self) -> Option<String> {
+        self.ui_layout.default_work_mode.clone()
+    }
+
+    pub fn set_default_work_mode(&mut self, mode: Option<String>) -> &mut Self {
+        self.ui_layout.default_work_mode = mode;
         self
     }
 
@@ -342,6 +355,11 @@ impl User {
         self
     }
 
+    pub fn set_default_work_mode_local(&mut self, mode: Option<String>) -> &mut Self {
+        self.user_settings.ui_layout.default_work_mode = mode;
+        self
+    }
+
     pub fn set_color_scheme(&mut self, color_scheme: Vec<u8>) -> &mut Self {
         self.user_settings.color_scheme = Some(color_scheme.into());
         self
@@ -413,6 +431,20 @@ impl User {
         Ok(())
     }
     
+    /// Binding `None` writes `NONE`, which clears the preference and restores the picker.
+    pub async fn save_default_work_mode(&mut self, mode: Option<String>) -> anyhow::Result<(), anyhow::Error> {
+        log::debug!("save_default_work_mode -> {mode:?}");
+        match db()
+            .query("UPDATE $auth.id SET user_settings.ui_layout.default_work_mode = $mode")
+            .bind(("mode", mode))
+            .await
+        {
+            Ok(res) => log::debug!("helper_traits -> Result: {res:?}"),
+            Err(e) => log::error!("helper_traits -> Error updating User Settings: {e:?}"),
+        }
+        Ok(())
+    }
+
     pub async fn save_version(&mut self, version: impl Display + Serialize + 'static + SurrealValue) -> anyhow::Result<(), anyhow::Error> {
         log::debug!("save_version -> {version}");
         match db()
@@ -747,5 +779,37 @@ impl User {
             .take(0)?;
 
         Ok(user_threads)
+    }
+}
+#[cfg(test)]
+mod user_settings_tests {
+    use super::*;
+    use surrealdb::types::Value as SurrealDBValue;
+
+    /// An account row written before the field existed must still deserialize, or nobody can log in.
+    #[test]
+    fn a_row_without_the_startup_mode_still_loads() {
+        let mut value = UserSettings::default().into_value();
+        let SurrealDBValue::Object(ref mut settings) = value else {
+            panic!("UserSettings did not encode as an object");
+        };
+        let Some(SurrealDBValue::Object(layout)) = settings.get_mut("ui_layout") else {
+            panic!("ui_layout is missing from the encoded settings");
+        };
+        assert!(
+            layout.remove("default_work_mode").is_some(),
+            "the field must be written, or this test proves nothing"
+        );
+
+        let restored = UserSettings::from_value(value).expect("an older row must still deserialize");
+        assert_eq!(restored.get_default_work_mode(), None);
+    }
+
+    #[test]
+    fn the_startup_mode_round_trips() {
+        let mut settings = UserSettings::default();
+        settings.set_default_work_mode(Some("diagnostic".to_owned()));
+        let restored = UserSettings::from_value(settings.into_value()).expect("round-trip");
+        assert_eq!(restored.get_default_work_mode().as_deref(), Some("diagnostic"));
     }
 }

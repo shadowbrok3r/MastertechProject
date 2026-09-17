@@ -337,6 +337,18 @@ pub struct AdminConsole {
 }
 
 impl AdminConsole {
+    pub fn right_panel(&self) -> Option<RightPanel> {
+        self.right_panel
+    }
+
+    /// Opens or closes the right-side panel. Fullscreen only means anything while Chat is open.
+    pub fn set_right_panel(&mut self, panel: Option<RightPanel>) {
+        self.right_panel = panel;
+        if panel != Some(RightPanel::Chat) {
+            self.chat_fullscreen = false;
+        }
+    }
+
     pub fn new(client_map: BTreeMap<String, Vec<ConnectedClient>>, clients: Vec<ConnectedClient>) -> Self {
         let ui_actions_channel = ClientUiAction::create_unbounded_channel();
         let (fk_health_tx, fk_health_rx) = crossbeam::channel::unbounded();
