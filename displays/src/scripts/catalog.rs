@@ -18,7 +18,10 @@ const EMBEDDED: &[(&str, &str)] = &[
         "informational",
         include_str!("../../scripts_catalog/informational.toml"),
     ),
-    ("junkware", include_str!("../../scripts_catalog/junkware.toml")),
+    (
+        "junkware",
+        include_str!("../../scripts_catalog/junkware.toml"),
+    ),
     ("stress", include_str!("../../scripts_catalog/stress.toml")),
     (
         "benchmarks",
@@ -242,11 +245,11 @@ mod catalog_tests {
     #[test]
     fn catalog_parses() {
         for (name, raw) in EMBEDDED {
-            let file: CatalogFile = toml::from_str(raw)
-                .unwrap_or_else(|e| panic!("{name}.toml does not parse: {e}"));
+            let file: CatalogFile =
+                toml::from_str(raw).unwrap_or_else(|e| panic!("{name}.toml does not parse: {e}"));
             assert!(!file.script.is_empty(), "{name}.toml is empty");
         }
-        assert_eq!(CATALOG.len(), 95, "every catalog entry must survive load");
+        assert_eq!(CATALOG.len(), 98, "every catalog entry must survive load");
     }
 
     #[test]
@@ -272,18 +275,27 @@ mod catalog_tests {
         }
     }
 
-    /// Renaming a script is a breaking change in six places, so the set is pinned.
+    /// Renaming a script is a breaking change in six places, so no shipped name may
+    /// change or disappear. New entries are allowed only if RECOVERED declares them.
     #[test]
     fn display_names_are_unchanged() {
-        let catalog: std::collections::BTreeSet<&str> =
-            CATALOG.iter().map(|d| d.name.as_str()).collect();
-        let legacy: std::collections::BTreeSet<String> = crate::scripts::categories::get_all_categories()
-            .values()
-            .flatten()
-            .map(|s| s.name.clone())
-            .collect();
-        let legacy: std::collections::BTreeSet<&str> = legacy.iter().map(|s| s.as_str()).collect();
-        assert_eq!(catalog, legacy, "the catalog no longer matches the shipped names");
+        let catalog: std::collections::BTreeSet<String> =
+            CATALOG.iter().map(|d| d.name.clone()).collect();
+        let shipped: std::collections::BTreeSet<String> =
+            crate::scripts::categories::get_all_categories()
+                .values()
+                .flatten()
+                .map(|s| s.name.clone())
+                .collect();
+        let missing: Vec<&String> = shipped.difference(&catalog).collect();
+        assert!(
+            missing.is_empty(),
+            "shipped names dropped from the catalog: {missing:?}"
+        );
+        let added: std::collections::BTreeSet<&str> =
+            catalog.difference(&shipped).map(|s| s.as_str()).collect();
+        let declared: std::collections::BTreeSet<&str> = RECOVERED.iter().copied().collect();
+        assert_eq!(added, declared, "undeclared additions to the catalog");
     }
 
     #[test]
@@ -347,5 +359,111 @@ mod catalog_tests {
                 "'{name}' must still be reachable over MCP"
             );
         }
+    }
+
+    /// Every name the terminal tab's own catalog lists, extracted verbatim from
+    /// terminal_mode/tabs/scripts/mod.rs.
+    const TERMINAL_CATALOG: &[&str] = &[
+        "Activate SEB",
+        "Activate SuperAnti",
+        "Activate Webroot",
+        "Align Taskbar to left",
+        "Any Recent Blue Screens?",
+        "Are there scheduled tasks for it?",
+        "Avast Browser",
+        "Change SuperAntiSpyware settings",
+        "Change Timezone to Mountain",
+        "Check Updates",
+        "Clear Browser",
+        "Data Transfer",
+        "Disable BitLocker",
+        "Disable Edge Startup Boost",
+        "Disable Notifications",
+        "Disable OneDrive Startup",
+        "Disable Sleep / Hibernation",
+        "Disable Startup Apps",
+        "Disable proxy settings",
+        "Driver Support",
+        "ESET Security",
+        "Install LibreOffice",
+        "Install Windows Updates",
+        "Is Hibernation/Sleep enabled?",
+        "Is SuperAntiSpyware installed?",
+        "Is SuperEasyBackup installed?",
+        "Is Webroot installed?",
+        "Is Windows Activated?",
+        "Mcaffee Safe",
+        "OneLaunch",
+        "Remove Browser Hijackers",
+        "Run Junkware Category",
+        "Run Prechecks",
+        "Run SuperAntiSpyware Scan",
+        "Run Webroot Scan",
+        "Scan For Browser Hijackers",
+        "Shift Browser",
+        "SuperAnti TEST",
+        "Uninstall Microsoft 365",
+        "Uninstall OneDrive",
+        "Unpin Copilot",
+        "Wave Browser",
+        "WebNavigator Browser",
+        "Webroot TEST",
+        "When Was The Last Service Date?",
+        "Windows Version",
+        "Winzip",
+    ];
+
+    /// Every name the remote executor has a match arm for, extracted verbatim from
+    /// terminal_mode/websockets/mod.rs.
+    const REMOTE_MATCH_ARMS: &[&str] = &[
+        "Activate SEB",
+        "Activate SuperAnti",
+        "Activate Webroot",
+        "Align Taskbar to left",
+        "Any Recent Blue Screens?",
+        "Change SuperAntiSpyware settings",
+        "Check Updates",
+        "Disable Notifications",
+        "Disable Sleep / Hibernation",
+        "Disable Startup Apps",
+        "Install LibreOffice",
+        "Install Windows Updates",
+        "Is Hibernation/Sleep enabled?",
+        "Is SuperAntiSpyware installed?",
+        "Is SuperEasyBackup installed?",
+        "Is Webroot installed?",
+        "Is Windows Activated?",
+        "Remove Browser Hijackers",
+        "Run Prechecks",
+        "Run SuperAntiSpyware Scan",
+        "Run Webroot Scan",
+        "Scan For Browser Hijackers",
+        "Unpin Copilot",
+        "Windows Version",
+    ];
+
+    /// Recovered by the three-way diff: implemented somewhere but listed in no
+    /// catalog, so unreachable by name. Adding to this list is a deliberate act.
+    const RECOVERED: &[&str] = &["Activate Webroot", "Activate SuperAnti", "ESET Security"];
+
+    /// Three catalogs disagreed; this keeps them from drifting apart again. A name
+    /// here that stops resolving means a surface can ask for a script nothing can name.
+    #[test]
+    fn legacy_names_are_exhaustive() {
+        let mut unresolved = Vec::new();
+        for (source, names) in [
+            ("terminal catalog", TERMINAL_CATALOG),
+            ("remote match arms", REMOTE_MATCH_ARMS),
+        ] {
+            for name in names {
+                if CATALOG.id_for_legacy_name(name).is_none() {
+                    unresolved.push(format!("{source}: {name}"));
+                }
+            }
+        }
+        assert!(
+            unresolved.is_empty(),
+            "names no surface can resolve: {unresolved:?}"
+        );
     }
 }

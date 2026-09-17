@@ -27,7 +27,8 @@ impl ScriptId {
         !s.is_empty()
             && !s.starts_with('-')
             && !s.ends_with('-')
-            && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+            && s.chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
     }
 }
 

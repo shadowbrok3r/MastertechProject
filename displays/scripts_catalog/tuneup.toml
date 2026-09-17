@@ -16,7 +16,30 @@ category = "tuneup"
 summary = "Install and activate Webroot and SuperAntiSpyware"
 timeout_secs = 1800
 surfaces = ["egui", "terminal", "remote", "mcp"]
+runs = ["activate-webroot", "activate-superanti"]
 order = 20
+
+# Named by the terminal catalog and implemented by the remote executor, but absent
+# from the shipped list, so only reachable through Activate CPS. Surfaces match that.
+[[script]]
+id = "activate-webroot"
+name = "Activate Webroot"
+category = "tuneup"
+summary = "Install and activate Webroot"
+timeout_secs = 1800
+surfaces = ["terminal", "remote", "mcp"]
+aliases = ["Webroot TEST"]
+order = 21
+
+[[script]]
+id = "activate-superanti"
+name = "Activate SuperAnti"
+category = "tuneup"
+summary = "Install and activate SuperAntiSpyware"
+timeout_secs = 1800
+surfaces = ["terminal", "remote", "mcp"]
+aliases = ["SuperAnti TEST"]
+order = 22
 
 [[script]]
 id = "activate-seb"
