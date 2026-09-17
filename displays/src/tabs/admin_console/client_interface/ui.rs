@@ -10,6 +10,7 @@ use crate::plugins::remote::EguiInputEvent;
 use super::{AdminTransport, TransportKind, WebSocketClient};
 
 
+#[derive(Debug)]
 pub enum WsDisplayState {
     /// RMM-style overview for this connected client: hardware inventory,
     /// live stress-run status with countdown, live telemetry charts, and
@@ -41,6 +42,14 @@ pub enum WsDisplayState {
     FleetIntel,
     /// Crash Dumps: this machine's own sightings, signatures, and verdicts.
     CrashDumps,
+}
+
+impl WsDisplayState {
+    /// Pages that only mean something against a remote machine: two frame streams
+    /// and an interactive remote shell.
+    pub fn is_remote_only(&self) -> bool {
+        matches!(self, Self::Shell | Self::Terminal | Self::RemoteDesktop)
+    }
 }
 
 /// Sends one remote-desktop input event on the tagged binary path.
@@ -107,7 +116,7 @@ impl WebSocketClient {
         // The currently-active page is shown as a small badge after the
         // menus so the operator can see what they're looking at without
         // having to remember which tab they last clicked.
-        eframe::egui::Panel::top(Id::new(format!("ClientTopPanel-{}", self.client.client_hash)))
+        eframe::egui::Panel::top(Id::new(format!("ClientTopPanel-{}{}", self.id_prefix(), self.client.client_hash)))
         .exact_size(38.)
         .show(ui, |ui| {
             ui.add_space(4.);
@@ -182,6 +191,7 @@ impl WebSocketClient {
                         }
                         ui.close();
                     }
+                    let show_remote_only = !self.local_only;
                     let notifs = if matches!(self.state, WsDisplayState::Shell) {
                         format!("{} Shell", icons::TERMINAL)
                     } else if self.notifications > 0 {
@@ -189,7 +199,7 @@ impl WebSocketClient {
                     } else {
                         format!("{} Shell", icons::TERMINAL)
                     };
-                    if ui.button(notifs).clicked() {
+                    if show_remote_only && ui.button(notifs).clicked() {
                         let _ = self.display_state_channel.0.try_send(WsDisplayState::Shell);
                         ui.close();
                     }
@@ -213,7 +223,8 @@ impl WebSocketClient {
                         let _ = self.display_state_channel.0.try_send(WsDisplayState::CrashDumps);
                         ui.close();
                     }
-                    if ui
+                    if show_remote_only
+                        && ui
                         .button(format!("{} Download crash dumps", icons::DOWNLOAD))
                         .on_hover_text(
                             "Zip and download this client's MEMORY.DMP, Minidump\\*, LiveKernelReports\\*, and UE/GPU crash folders (Aftermath dumps + crash context, last 30 days) in one archive",
@@ -246,6 +257,7 @@ impl WebSocketClient {
                         self.live_stats_active = true;
                         ui.close();
                     }
+                    if show_remote_only {
                     if self.egui_viewer_active {
                         if ui.button(RichText::new(format!("{} Stop Viewer", icons::STOP)).color(ui.style().visuals.error_fg_color)).clicked() {
                             self.egui_viewer_active = false;
@@ -287,6 +299,7 @@ impl WebSocketClient {
                             let _ = self.send_cmd_tx.try_send(Cmd::Quit);
                             ui.close();
                         }
+                    }
                     }
                     ui.separator();
                     let pending = crate::mcp_tool_log::pending_count(&self.client.connection_string);
@@ -395,6 +408,7 @@ impl WebSocketClient {
                     } else {
                         sys_color
                     };
+                    if !self.local_only {
                     ui.menu_button(
                         RichText::new(menu_label("Transfer")).color(transfer_color).strong(),
                         |ui| {
@@ -446,6 +460,7 @@ impl WebSocketClient {
                             }
                         },
                     );
+                    }
                 }
 
                 // ── Power ────────────────────────────────────────────
@@ -454,6 +469,7 @@ impl WebSocketClient {
                 // out, reboot, or shut down — order them from least to
                 // most disruptive so the destructive ones don't sit at
                 // the top of the menu.
+                if !self.local_only {
                 ui.menu_button(
                     RichText::new(menu_label("Power")).color(os_btn_color).strong(),
                     |ui| {
@@ -487,6 +503,7 @@ impl WebSocketClient {
                         }
                     },
                 );
+                }
 
                 // ── Protections ──────────────────────────────────────
                 // Disable/re-enable Memory Integrity + the driver blocklist.
@@ -585,7 +602,7 @@ impl WebSocketClient {
                     // ── Client build badge: MasterTech version the agent reported ──
                     // Shown in full, hash included: the release number sits still between builds,
                     // so the hash is the only part that identifies which build is out there.
-                    if let Some(ver) = self.client_version.as_deref() {
+                    if let Some(ver) = self.client_version.as_deref().filter(|_| !self.local_only) {
                         let admin_ver = crate::shape_fp::BUILD_VERSION;
                         use crate::shape_fp::release_of;
                         let (ver_color, ver_text, ver_hover) = if self.cmd_protocol_mismatch {
@@ -647,7 +664,9 @@ impl WebSocketClient {
                         ));
                     }
 
-                    if let Some((ref name, sent, total)) = self.file_transfer_progress {
+                    if !self.local_only
+                        && let Some((ref name, sent, total)) = self.file_transfer_progress
+                    {
                         ui.separator();
                         let short = name.rsplit(['/', '\\']).next().unwrap_or(name);
                         let frac = if total > 0 {
@@ -671,6 +690,11 @@ impl WebSocketClient {
                 });
             });
         });
+
+        if self.local_only && self.state.is_remote_only() {
+            log::debug!("client_interface -> local session refused a remote-only page");
+            self.state = WsDisplayState::Home;
+        }
 
         match self.state {
             WsDisplayState::Home => self.show_home(ui),
@@ -1102,5 +1126,44 @@ impl WebSocketClient {
             "Self-update queued: {} bytes, {total_chunks} chunks",
             data.len()
         );
+    }
+}
+#[cfg(test)]
+mod local_gating_tests {
+    use super::*;
+
+    /// A local session must never land on a frame-stream or remote-shell page.
+    /// Hiding the menu entries is the UI half; this is the half that holds even
+    /// if a display-state message arrives from somewhere else.
+    #[test]
+    fn only_the_stream_pages_are_remote_only() {
+        for state in [
+            WsDisplayState::Shell,
+            WsDisplayState::Terminal,
+            WsDisplayState::RemoteDesktop,
+        ] {
+            assert!(state.is_remote_only(), "{state:?} must be refused locally");
+        }
+        for state in [
+            WsDisplayState::Home,
+            WsDisplayState::Explorer,
+            WsDisplayState::ToolBox,
+            WsDisplayState::EventLog,
+            WsDisplayState::ClientLog,
+            WsDisplayState::Services,
+            WsDisplayState::TaskScheduler,
+            WsDisplayState::Registry,
+            WsDisplayState::StartupApps,
+            WsDisplayState::Scripts,
+            WsDisplayState::InstalledPrograms,
+            WsDisplayState::McpToolLog,
+            WsDisplayState::FleetIntel,
+            WsDisplayState::CrashDumps,
+        ] {
+            assert!(
+                !state.is_remote_only(),
+                "{state:?} works against this machine and must stay available"
+            );
+        }
     }
 }
