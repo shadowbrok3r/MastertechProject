@@ -141,6 +141,8 @@ pub struct ScriptHandle {
 pub struct ScriptContext {
     pub service_number: Option<String>,
     pub customer_email: Option<String>,
+    /// Session a run links itself to, when one is open.
+    pub diagnostic_session_id: Option<String>,
     pub channels: ScriptChannels,
 }
 
@@ -156,6 +158,11 @@ impl ScriptContext {
 
     pub fn with_customer_email(mut self, email: impl Into<String>) -> Self {
         self.customer_email = Some(email.into());
+        self
+    }
+
+    pub fn with_diagnostic_session(mut self, id: impl Into<String>) -> Self {
+        self.diagnostic_session_id = Some(id.into());
         self
     }
 
