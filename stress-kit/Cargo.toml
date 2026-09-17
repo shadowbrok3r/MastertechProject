@@ -23,11 +23,9 @@ backend-winring0 = ["lowlevel"]
 # Microsoft attestation-signed, so it loads with Memory Integrity and the
 # Vulnerable Driver Blocklist on; register reach is what those modules allow.
 backend-pawnio = ["lowlevel"]
-# How an absent PawnIO gets installed. With neither, the backend uses an already
-# installed driver and does nothing to a machine without one.
-# Upstream's installer: every architecture and both editions, 3 MB of binary.
-pawnio-installer = ["backend-pawnio"]
-# The x64 driver package alone, installed through SetupAPI. 150 KB.
+# How an absent PawnIO gets installed: the x64 driver package alone, through
+# SetupAPI. 150 KB. Without it the backend uses an already installed driver and
+# does nothing to a machine without one.
 pawnio-triplet = ["backend-pawnio"]
 # Mastertech's own signed driver with a fixed register allowlist.
 backend-mtdrv = ["lowlevel"]
@@ -37,7 +35,7 @@ backend-esif-wmi = ["lowlevel"]
 # Scripted backend so downstream crates can test the readers without hardware.
 mock-backend = ["lowlevel"]
 # What the apps enable.
-hw-sensors = ["backend-pawnio", "pawnio-installer", "backend-winring0", "backend-esif-wmi"]
+hw-sensors = ["backend-pawnio", "pawnio-triplet", "backend-winring0", "backend-esif-wmi"]
 # Deprecated alias kept so consumers keep building through the migration.
 winring0-thermal = ["backend-winring0"]
 # JsonSchema derive on wire types for MCP consumers (unifies with rmcp's schemars 1.x).

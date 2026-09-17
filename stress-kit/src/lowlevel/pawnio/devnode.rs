@@ -1,10 +1,10 @@
 //! Counts the `Root\PawnIO` device nodes on this machine.
 //!
-//! Every install route creates a node, and none of them checks first, so this
-//! is what stops a second route from adding one beside a node that is already
-//! there. Two nodes for one hardware id is not a benign duplicate: only one of
-//! them can own the `\Device\PawnIO` symlink, and upstream's installer starts
-//! failing with `STATUS_OBJECT_NAME_COLLISION`.
+//! Installing creates a node and does not check for one first, so this is what
+//! stops an install from adding one beside a node that is already there. Two
+//! nodes for one hardware id is not a benign duplicate: only one of them can
+//! own the `\Device\PawnIO` symlink, and installs then fail with
+//! `STATUS_OBJECT_NAME_COLLISION`.
 
 use windows::core::{GUID, PCWSTR};
 use windows::Win32::Devices::DeviceAndDriverInstallation::{
