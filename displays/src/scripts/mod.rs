@@ -51,6 +51,8 @@ pub fn default_remote_script_timeout_secs(script_name: &str) -> u64 {
         "Data Transfer" => 7200,
         "Install Windows Updates" | "Run SuperAntiSpyware Scan" | "Run Webroot Scan" => 3600,
         "Activate CPS" | "Activate Webroot" | "Activate SuperAnti" | "Activate SEB" => 1800,
+        // Nine uninstalls, one at a time.
+        "Run Junkware Category" => 1800,
         // 12+ benchmarks at ~15 s each plus warmup and persistence.
         "Benchmark Suite" => 1800,
         "QC Benchmark" | "Memory Test" => 1200,
