@@ -1,15 +1,15 @@
 # Kubernetes manifests for the admin-agent crate.
 #
 # Always-on headless MasterTech: holds admin sessions to connected clients,
-# hosts the plugin MCP server, and dispatches tech-confirmed assist requests
-# to the zeroclaw gateway. Mirrors the axum-server pattern: single replica
-# pinned to `ubuntu-server`.
+# hosts the plugin MCP server, and runs tech-confirmed assist requests as Codex
+# threads through zc-codexd on the zeroclaw box. Mirrors the axum-server
+# pattern: single replica pinned to `ubuntu-server`.
 #
 # Deliberately NO Ingress. The plugin MCP server has no authentication (it is
 # built to listen on loopback), so a public hostname would expose remote
-# diagnostics on customer machines to anyone. The assist dispatcher only makes
-# outbound calls to the gateway, so it needs no inbound route. The Service
-# below is cluster-internal only.
+# diagnostics on customer machines to anyone. The broker only makes outbound
+# calls (database, zc-codexd, connected clients); the one inbound route is the
+# LAN-scoped MCP port below, which ZeroClaw's remaining agents still use.
 
 apiVersion: apps/v1
 kind: Deployment
@@ -22,7 +22,7 @@ spec:
     matchLabels:
       app: admin-agent
   strategy:
-    # Two dispatchers would both claim assist rows; the guarded claim makes that
+    # Two brokers would both claim assist rows; the guarded claim makes that
     # safe but pointless, and two session pumps would double-dial every client.
     type: Recreate
   template:
@@ -45,24 +45,11 @@ spec:
           value: "America/Denver"
         - name: RUST_LOG
           value: "admin_agent=info,displays=info,database=warn"
-        # Both listeners default to 127.0.0.1, which is unreachable from
-        # outside the pod.
+        # Defaults to 127.0.0.1, which is unreachable from outside the pod.
         - name: MTECH_MCP_HTTP_ADDR
           value: "0.0.0.0:9004"
-        - name: MTECH_ZC_REPLY_ADDR
-          value: "0.0.0.0:9015"
-        # CI does not put ZEROCLAW_GATEWAY_URL in the build `.env`, so the
-        # compiled-in fallback is empty and this must be set explicitly.
-        - name: MTECH_ZC_GATEWAY
-          value: "https://zeroclaw.master-tech.app"
-        - name: MTECH_ZC_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: zeroclaw-gateway
-              key: token
-        # Codex broker: zc-codexd on the zeroclaw box (LAN, bearer token). Setting
-        # the URL hands assist dispatch to the broker; unset falls back to the
-        # ZeroClaw channel/webhook paths below.
+        # Codex broker: zc-codexd on the zeroclaw box (LAN, bearer token). Unset,
+        # assist requests stay pending and nothing runs.
         - name: MTECH_CODEXD_URL
           value: "ws://192.168.22.7:7420"
         - name: MTECH_CODEXD_TOKEN
@@ -80,8 +67,11 @@ spec:
           value: "2"
         - name: MTECH_AGENT_NODE
           value: "admin-agent"
+        # Transcripts, turns and approvals of closed sessions are purged after this.
+        - name: MTECH_AGENT_EVENT_RETENTION_DAYS
+          value: "30"
         # Signin failure is non-fatal — the daemon continues as guest — so these
-        # are optional. The assist tables are PERMISSIONS FULL, so guest works;
+        # are optional. The agent tables are PERMISSIONS FULL, so guest works;
         # set them to attribute the daemon's writes to a service account.
         - name: MTECH_AGENT_USER
           valueFrom:
@@ -95,33 +85,9 @@ spec:
               name: mtech-agent
               key: pass
               optional: true
-        # Chat bridge only; the assist dispatcher runs without these. Absent
-        # channel config leaves assist_message rows pending rather than failing.
-        - name: MTECH_ZC_CHANNEL_URL
-          valueFrom:
-            secretKeyRef:
-              name: zeroclaw-channel
-              key: url
-              optional: true
-        - name: MTECH_ZC_CHANNEL_SECRET
-          valueFrom:
-            secretKeyRef:
-              name: zeroclaw-channel
-              key: secret
-              optional: true
-        # Required, not optional: the reply listener is reachable on the LAN
-        # through admin-agent-lan, and it accepts every request unauthenticated
-        # when this is unset.
-        - name: MTECH_ZC_REPLY_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: zeroclaw-channel
-              key: reply_token
         ports:
         - name: mcp
           containerPort: 9004
-        - name: zc-reply
-          containerPort: 9015
       imagePullSecrets:
       - name: regcred
 
@@ -140,17 +106,14 @@ spec:
   - name: mcp
     port: 9004
     targetPort: 9004
-  - name: zc-reply
-    port: 9015
-    targetPort: 9015
 
 ---
 
-# LAN route for zeroclaw: MCP tool calls in, channel replies back.
+# LAN route for zeroclaw's remaining agents: MCP tool calls in.
 #
 # `externalTrafficPolicy: Local` preserves the client source IP, which the
 # NetworkPolicy below matches on; the trade-off is that only the node running
-# the pod serves these ports, and the pod is pinned to `ubuntu-server`
+# the pod serves this port, and the pod is pinned to `ubuntu-server`
 # (192.168.120.122) — the address zeroclaw already reaches.
 apiVersion: v1
 kind: Service
@@ -167,23 +130,18 @@ spec:
     port: 9004
     targetPort: 9004
     nodePort: 30904
-  - name: zc-reply
-    port: 9015
-    targetPort: 9015
-    nodePort: 30915
 
 ---
 
-# Source restriction for the two LAN-exposed ports.
+# Source restriction for the LAN-exposed MCP port.
 #
 # The plugin MCP server on 9004 has no authentication of its own, so this is
 # the only thing between it and every other host on the shop LAN — which
-# includes live-infected intake machines. 9015 additionally checks
-# MTECH_ZC_REPLY_TOKEN.
+# includes live-infected intake machines.
 #
 # Ingress-only: `policyTypes` omits Egress, so the daemon still dials the
-# database, the gateway and connected clients. Nothing in-cluster calls this
-# pod, so no namespace or pod selectors are allowed in.
+# database, zc-codexd and connected clients. Nothing in-cluster calls this pod,
+# so no namespace or pod selectors are allowed in.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -202,5 +160,3 @@ spec:
     ports:
     - protocol: TCP
       port: 9004
-    - protocol: TCP
-      port: 9015

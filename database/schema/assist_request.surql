@@ -31,6 +31,6 @@ DEFINE FIELD store              ON assist_request TYPE none | string PERMISSIONS
 DEFINE FIELD tech_note          ON assist_request TYPE none | string
     ASSERT $value == NONE OR string::len($value) <= 500 PERMISSIONS FULL;
 DEFINE FIELD trigger_source     ON assist_request TYPE string DEFAULT 'tur_sheet'
-    ASSERT $value IN ['auto', 'tur_sheet'] PERMISSIONS FULL;
+    ASSERT $value IN ['auto', 'tur_sheet', 'chat'] PERMISSIONS FULL;
 
 DEFINE INDEX assist_request_status_idx ON assist_request FIELDS status;

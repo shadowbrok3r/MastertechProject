@@ -2,28 +2,70 @@
 //! transcripts from `agent_event`, and a composer that queues `agent_turn` rows.
 //!
 //! Everything comes from SurrealDB, so this instance sees the same sessions as
-//! every other one and never needs a socket to the agent host. Rows are polled
-//! incrementally (new seq or still streaming), which keeps the traffic small.
+//! every other one and never needs a socket to the agent host. LIVE SELECT
+//! streams push thread and transcript changes; slow snapshot polls fill the
+//! gap a dropped stream leaves.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crossbeam::channel::{Receiver, Sender};
+use database::live_data::{listen_data_filtered, Action};
 use database::schema::{AgentEvent, AgentThread, AgentTurn, RecordId, RecordIdExt};
 use eframe::egui::{self, Align, Layout, RichText, ScrollArea, TextEdit, Ui, vec2};
+use futures::future::AbortHandle;
 use serde_json::Value;
+use web_time::Instant;
 
 use crate::markdown_editor::chat_markdown;
 use crate::ui_tools::{hex_json, icons, theme};
 use crate::{PlatformSpawner, Spawner};
 
-const THREADS_POLL: Duration = Duration::from_secs(5);
-const EVENTS_POLL: Duration = Duration::from_millis(1500);
+/// Snapshot polls behind the live streams.
+const THREADS_POLL: Duration = Duration::from_secs(30);
+const EVENTS_POLL: Duration = Duration::from_secs(10);
+/// Pause before a dropped stream is reopened.
+const STREAM_RETRY: Duration = Duration::from_secs(3);
+/// Repaint cadence that drains pushed rows while streams are open.
+const TICK: Duration = Duration::from_millis(400);
 const EVENT_PAGE: usize = 400;
 
 enum Msg {
     Threads(Result<Vec<AgentThread>, String>),
     Events(RecordId, Result<Vec<AgentEvent>, String>),
     Turn(Result<(), String>),
+    ThreadStreamEnded(u64, Option<String>),
+    EventStreamEnded(u64, Option<String>),
+}
+
+/// One abortable LIVE SELECT and when to reopen it after it drops.
+#[derive(Default)]
+struct LiveStream {
+    generation: u64,
+    abort: Option<AbortHandle>,
+    retry_at: Option<Instant>,
+}
+
+impl LiveStream {
+    fn stop(&mut self) {
+        if let Some(handle) = self.abort.take() {
+            handle.abort();
+        }
+        self.retry_at = None;
+    }
+
+    fn due(&self) -> bool {
+        self.abort.is_none() && self.retry_at.is_none_or(|t| Instant::now() >= t)
+    }
+
+    /// Marks the stream closed; `false` when the notice belongs to a superseded generation.
+    fn ended(&mut self, generation: u64) -> bool {
+        if generation != self.generation {
+            return false;
+        }
+        self.abort = None;
+        self.retry_at = Some(Instant::now() + STREAM_RETRY);
+        true
+    }
 }
 
 pub struct AgentSessions {
@@ -40,13 +82,21 @@ pub struct AgentSessions {
     loading_events: bool,
     last_threads_poll: Option<Instant>,
     last_events_poll: Option<Instant>,
+    thread_stream: LiveStream,
+    event_stream: LiveStream,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
+    thread_live_tx: Sender<(Action, AgentThread)>,
+    thread_live_rx: Receiver<(Action, AgentThread)>,
+    event_live_tx: Sender<(Action, AgentEvent)>,
+    event_live_rx: Receiver<(Action, AgentEvent)>,
 }
 
 impl Default for AgentSessions {
     fn default() -> Self {
         let (tx, rx) = crossbeam::channel::unbounded();
+        let (thread_live_tx, thread_live_rx) = crossbeam::channel::unbounded();
+        let (event_live_tx, event_live_rx) = crossbeam::channel::unbounded();
         Self {
             threads: Vec::new(),
             selected: None,
@@ -61,8 +111,14 @@ impl Default for AgentSessions {
             loading_events: false,
             last_threads_poll: None,
             last_events_poll: None,
+            thread_stream: LiveStream::default(),
+            event_stream: LiveStream::default(),
             tx,
             rx,
+            thread_live_tx,
+            thread_live_rx,
+            event_live_tx,
+            event_live_rx,
         }
     }
 }
@@ -75,7 +131,54 @@ impl AgentSessions {
             self.events.clear();
             self.last_seq = 0;
             self.last_events_poll = None;
+            self.event_stream.stop();
         }
+    }
+
+    fn start_thread_stream(&mut self) {
+        self.thread_stream.stop();
+        self.thread_stream.generation += 1;
+        let generation = self.thread_stream.generation;
+        let live_tx = self.thread_live_tx.clone();
+        let msg_tx = self.tx.clone();
+        let (fut, handle) = futures::future::abortable(async move {
+            let res = listen_data_filtered::<AgentThread>(
+                live_tx,
+                "LIVE SELECT * FROM agent_thread".to_string(),
+                Vec::new(),
+                None,
+            )
+            .await;
+            let _ = msg_tx.send(Msg::ThreadStreamEnded(generation, res.err().map(|e| e.to_string())));
+        });
+        self.thread_stream.abort = Some(handle);
+        PlatformSpawner::spawn(async move {
+            let _ = fut.await;
+        });
+    }
+
+    fn start_event_stream(&mut self) {
+        self.event_stream.stop();
+        let Some(thread) = self.selected.clone() else { return };
+        let key = thread.key_string();
+        // The key is inlined, so only the alphabet SurrealDB generates is accepted.
+        if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-')) {
+            self.event_stream.retry_at = Some(Instant::now() + Duration::from_secs(3600));
+            return;
+        }
+        self.event_stream.generation += 1;
+        let generation = self.event_stream.generation;
+        let query = format!("LIVE SELECT * FROM agent_event WHERE thread = agent_thread:`{key}`");
+        let live_tx = self.event_live_tx.clone();
+        let msg_tx = self.tx.clone();
+        let (fut, handle) = futures::future::abortable(async move {
+            let res = listen_data_filtered::<AgentEvent>(live_tx, query, Vec::new(), None).await;
+            let _ = msg_tx.send(Msg::EventStreamEnded(generation, res.err().map(|e| e.to_string())));
+        });
+        self.event_stream.abort = Some(handle);
+        PlatformSpawner::spawn(async move {
+            let _ = fut.await;
+        });
     }
 
     fn poll_threads(&mut self) {
@@ -107,7 +210,44 @@ impl AgentSessions {
         });
     }
 
+    fn merge_event(&mut self, row: AgentEvent) {
+        self.last_seq = self.last_seq.max(row.seq);
+        match self.events.iter_mut().find(|e| e.id == row.id) {
+            Some(existing) => *existing = row,
+            None => self.events.push(row),
+        }
+        self.events.sort_by_key(|e| e.seq);
+    }
+
+    fn merge_thread(&mut self, row: AgentThread) {
+        let keep = self.include_closed || row.is_open();
+        match self.threads.iter().position(|t| t.id == row.id) {
+            Some(i) if keep => self.threads[i] = row,
+            Some(i) => {
+                self.threads.remove(i);
+            }
+            None if keep => self.threads.insert(0, row),
+            None => {}
+        }
+    }
+
     fn drain(&mut self) {
+        while let Ok((action, row)) = self.thread_live_rx.try_recv() {
+            match action {
+                Action::Delete => self.threads.retain(|t| t.id != row.id),
+                Action::Create | Action::Update => self.merge_thread(row),
+            }
+            self.status = format!("{} sessions", self.threads.len());
+        }
+        while let Ok((action, row)) = self.event_live_rx.try_recv() {
+            if self.selected.as_ref() != Some(&row.thread) {
+                continue;
+            }
+            match action {
+                Action::Delete => self.events.retain(|e| e.id != row.id),
+                Action::Create | Action::Update => self.merge_event(row),
+            }
+        }
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 Msg::Threads(Ok(threads)) => {
@@ -130,13 +270,8 @@ impl AgentSessions {
                         continue;
                     }
                     for row in rows {
-                        self.last_seq = self.last_seq.max(row.seq);
-                        match self.events.iter_mut().find(|e| e.id == row.id) {
-                            Some(existing) => *existing = row,
-                            None => self.events.push(row),
-                        }
+                        self.merge_event(row);
                     }
-                    self.events.sort_by_key(|e| e.seq);
                 }
                 Msg::Events(_, Err(e)) => {
                     self.loading_events = false;
@@ -144,6 +279,22 @@ impl AgentSessions {
                 }
                 Msg::Turn(Ok(())) => self.status = "sent".into(),
                 Msg::Turn(Err(e)) => self.status = format!("send failed: {e}"),
+                Msg::ThreadStreamEnded(generation, error) => {
+                    if self.thread_stream.ended(generation) {
+                        self.last_threads_poll = None;
+                        if let Some(e) = error {
+                            self.status = format!("session stream dropped, reconnecting: {e}");
+                        }
+                    }
+                }
+                Msg::EventStreamEnded(generation, error) => {
+                    if self.event_stream.ended(generation) {
+                        self.last_events_poll = None;
+                        if let Some(e) = error {
+                            self.status = format!("transcript stream dropped, reconnecting: {e}");
+                        }
+                    }
+                }
             }
         }
     }
@@ -172,13 +323,19 @@ impl AgentSessions {
 
     pub fn ui(&mut self, ui: &mut Ui) {
         self.drain();
+        if self.thread_stream.due() {
+            self.start_thread_stream();
+        }
+        if self.selected.is_some() && self.event_stream.due() {
+            self.start_event_stream();
+        }
         if self.last_threads_poll.is_none_or(|t| t.elapsed() >= THREADS_POLL) {
             self.poll_threads();
         }
         if self.selected.is_some() && self.last_events_poll.is_none_or(|t| t.elapsed() >= EVENTS_POLL) {
             self.poll_events();
         }
-        ui.ctx().request_repaint_after(EVENTS_POLL);
+        ui.ctx().request_repaint_after(TICK);
 
         ui.horizontal(|ui| {
             if ui.button(format!("{} Refresh", icons::REFRESH)).clicked() {

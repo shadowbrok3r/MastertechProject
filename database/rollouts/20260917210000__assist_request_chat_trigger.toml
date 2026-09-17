@@ -1,0 +1,27 @@
+# The chat rail files assist requests too, so `trigger_source` admits 'chat'.
+# Widening an ASSERT only; every existing row keeps passing.
+id = "20260917210000__assist_request_chat_trigger"
+name = "assist_request_chat_trigger"
+state = "completed"
+source_schema_hash = "4b8bbfd52b77ad3b7c2325166a25891311501ba4f07f6e1479578a0d13ed9f47"
+target_schema_hash = "4b8bbfd52b77ad3b7c2325166a25891311501ba4f07f6e1479578a0d13ed9f47"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "widen_trigger_source"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE trigger_source ON assist_request TYPE string DEFAULT 'tur_sheet'
+    ASSERT $value IN ['auto', 'tur_sheet', 'chat'] PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "narrow_trigger_source"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE trigger_source ON assist_request TYPE string DEFAULT 'tur_sheet'
+    ASSERT $value IN ['auto', 'tur_sheet'] PERMISSIONS FULL;
+"""

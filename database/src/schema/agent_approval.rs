@@ -217,6 +217,20 @@ impl AgentApproval {
         Ok(())
     }
 
+    /// Fails every pending decision of a thread whose broker died before relaying it.
+    pub async fn fail_pending_for_thread(thread: &RecordId, note: &str) -> anyhow::Result<usize> {
+        let mut res = db()
+            .query(
+                "UPDATE agent_approval SET status = 'failed', deny_note = $note, decided_at = time::now() \
+                 WHERE thread = $thread AND status = 'pending' RETURN VALUE id",
+            )
+            .bind(("thread", thread.clone()))
+            .bind(("note", note.to_string()))
+            .await?;
+        let ids: Vec<RecordId> = res.take(0).unwrap_or_default();
+        Ok(ids.len())
+    }
+
     /// Every open decision, oldest first.
     pub async fn list_pending() -> anyhow::Result<Vec<Self>> {
         let mut res = db()
