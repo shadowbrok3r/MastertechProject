@@ -96,7 +96,7 @@ pub use controller::{
     stage_verdict_token, RunController, RunPlan, RunSpec, RunStage, RunUpdate, RunVerdict,
     StageOutcome,
 };
-pub use drive::drive_blocking;
+pub use drive::{drive_blocking, drive_blocking_cancellable};
 pub use presets::{
     cert_spec, cert_spec_detected, load_cert_preset, CertPreset, CertStage, MemorySpec,
     CERT_PRESET_NAMES,
