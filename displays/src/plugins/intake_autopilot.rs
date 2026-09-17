@@ -3,9 +3,9 @@
 //! Fires the collection suite on the client (crash survey, WMI driver
 //! inventory, DriverStore snapshot, detached WinDbg batch analysis), logs each
 //! result into a diagnostic session, lets the crash/driver intel hooks persist
-//! signatures and blocklist hits, then has Claude Code draft a triage verdict
-//! from everything gathered. Progress surfaces through the shared notice queue
-//! and toasts; findings land as diagnostic entries.
+//! signatures and blocklist hits, then hands everything gathered to the
+//! machine's Codex agent session for a triage verdict. Progress surfaces through
+//! the shared notice queue and toasts; findings land as diagnostic entries.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -19,8 +19,6 @@ use database::schema::{
 };
 use once_cell::sync::Lazy;
 
-use crate::ai::claude_code::ClaudeCodeSession;
-use crate::tabs::ai_playground::{ChatMessage, ChatMessageType};
 use crate::{get_toast_sender, Cmd, PlatformSpawner, Spawner, ToastMessage};
 
 use super::crash_intel_hooks::{self, push_shared_notice, DUMP_DECODE_PLUGIN_ID};
@@ -344,74 +342,36 @@ async fn triage_inner(
     .await;
 
     if with_ai {
-        push_shared_notice(&cs, "Drafting AI triage verdict…".to_string());
-        match draft_ai_verdict(&cs, sk, &summary, &oldest_drivers).await {
-            Ok(verdict) if !verdict.trim().is_empty() => {
-                log_entry(
-                    sk,
-                    DiagnosticCategory::Recommendation,
-                    "Autopilot: AI triage draft",
-                    verdict.clone(),
-                    None,
-                )
-                .await;
-                push_shared_notice(&cs, format!("AI triage draft: {verdict}"));
-            }
-            Ok(_) => push_shared_notice(&cs, "AI returned an empty draft".to_string()),
-            Err(e) => push_shared_notice(&cs, format!("AI draft unavailable: {e}")),
+        match request_agent_verdict(&cs, sk, &summary, &oldest_drivers).await {
+            Ok(()) => push_shared_notice(
+                &cs,
+                "AI verdict requested: the agent's session for this machine records the draft in the diagnostic session (follow it under Agent Sessions)".to_string(),
+            ),
+            Err(e) => push_shared_notice(&cs, format!("AI verdict request failed: {e}")),
         }
     }
 
     Ok(summary)
 }
 
-/// One Claude Code turn drafting a verdict from the gathered triage material.
-async fn draft_ai_verdict(
+/// Hands the gathered triage material to the machine's Codex agent session through the broker.
+async fn request_agent_verdict(
     connection_string: &str,
     session_key: Option<&str>,
     summary: &str,
     oldest_drivers: &str,
-) -> anyhow::Result<String> {
-    let prompt = format!(
-        "Intake triage just ran on connected client '{connection_string}'\
-         {session}. Gathered: {summary}. Oldest third-party drivers: {drivers}. \
-         Use crash_intel_search / crash_intel_signature for prior fleet verdicts on any \
-         signature mentioned, and get_diagnostic_session for the full entry data. Then write a \
-         short intake verdict draft for the tech: most likely root cause, confidence, and the \
-         first two bench actions. If a signature has a recorded fleet verdict, lead with it.",
-        session = session_key
-            .map(|k| format!(" (diagnostic session {k})"))
-            .unwrap_or_default(),
+) -> anyhow::Result<()> {
+    let note = format!(
+        "Intake triage just ran on this machine{session}. Gathered: {summary}. Oldest third-party \
+         drivers: {drivers}. Use crash_intel_search / crash_intel_signature for prior fleet verdicts \
+         on any signature mentioned, and get_diagnostic_session for the full entry data. Then log a \
+         short intake verdict draft as a diagnostic entry (category recommendation): most likely \
+         root cause, confidence, and the first two bench actions. If a signature has a recorded fleet \
+         verdict, lead with it.",
+        session = session_key.map(|k| format!(" (diagnostic session {k})")).unwrap_or_default(),
         drivers = if oldest_drivers.is_empty() { "n/a" } else { oldest_drivers },
     );
-
-    let (tx, rx) = crossbeam::channel::unbounded::<ChatMessage>();
-    let session = ClaudeCodeSession::new();
-    session.send(
-        prompt,
-        Some(connection_string.to_string()),
-        "autopilot-triage".to_string(),
-        tx,
-    );
-
-    tokio::task::spawn_blocking(move || {
-        let mut text = String::new();
-        loop {
-            match rx.recv_timeout(Duration::from_secs(300)) {
-                Ok(msg) => match msg.content {
-                    ChatMessageType::Text(t) => {
-                        if !t.starts_with(crate::ai::claude_code::TOOL_PREFIX) {
-                            text.push_str(&t);
-                        }
-                    }
-                    ChatMessageType::Error(e) => anyhow::bail!("claude error: {e}"),
-                    ChatMessageType::Done => break,
-                    _ => {}
-                },
-                Err(_) => anyhow::bail!("claude timed out"),
-            }
-        }
-        Ok(text.trim().to_string())
-    })
-    .await?
+    let requested_by = crate::get_current_user_from_auth().map(|u| u.get_email().to_string());
+    database::schema::AssistRequest::create_auto(connection_string, requested_by.as_deref(), &note).await?;
+    Ok(())
 }

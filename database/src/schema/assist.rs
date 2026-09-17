@@ -80,7 +80,10 @@ impl AssistRequest {
         service_number: Option<&str>,
         tech_note: &str,
     ) -> anyhow::Result<RecordId> {
-        let hostname = connection_string.split(':').next().filter(|h| !h.is_empty()).map(str::to_string);
+        // `general:<tech>` names a session with no machine, so it carries no hostname.
+        let hostname = (!connection_string.starts_with("general:"))
+            .then(|| connection_string.split(':').next().filter(|h| !h.is_empty()).map(str::to_string))
+            .flatten();
         let mut res = db()
             .query(
                 "CREATE assist_request CONTENT { connection_string: $cs, hostname: $host, \
@@ -93,6 +96,28 @@ impl AssistRequest {
             .bind(("store", store.map(str::to_string)))
             .bind(("sn", service_number.map(str::to_string)))
             .bind(("note", tech_note.chars().take(500).collect::<String>()))
+            .await?;
+        let ids: Vec<RecordId> = res.take(0).unwrap_or_default();
+        ids.into_iter().next().ok_or_else(|| anyhow::anyhow!("assist_request was not created"))
+    }
+
+    /// Files a request raised by automation (intake triage) rather than a technician's click.
+    pub async fn create_auto(
+        connection_string: &str,
+        requested_by: Option<&str>,
+        tech_note: &str,
+    ) -> anyhow::Result<RecordId> {
+        let hostname = connection_string.split(':').next().filter(|h| !h.is_empty()).map(str::to_string);
+        let mut res = db()
+            .query(
+                "CREATE assist_request CONTENT { connection_string: $cs, hostname: $host, \
+                 requested_by: $by, trigger_source: 'auto', machine_confirmed: false, \
+                 status: 'pending', tech_note: $note } RETURN VALUE id",
+            )
+            .bind(("cs", connection_string.to_string()))
+            .bind(("host", hostname))
+            .bind(("by", requested_by.map(str::to_string)))
+            .bind(("note", tech_note.chars().take(2000).collect::<String>()))
             .await?;
         let ids: Vec<RecordId> = res.take(0).unwrap_or_default();
         ids.into_iter().next().ok_or_else(|| anyhow::anyhow!("assist_request was not created"))

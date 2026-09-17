@@ -76,11 +76,15 @@ pub async fn dispatch(req: AssistRequest) {
         Err(e) => log::warn!("codex: active-thread lookup failed for {}: {e}", req.connection_string),
     }
 
-    let title = match (&req.service_number, &req.hostname) {
-        (Some(sn), Some(host)) => Some(format!("#{sn} {host}")),
-        (Some(sn), None) => Some(format!("#{sn}")),
-        (None, Some(host)) => Some(host.clone()),
-        (None, None) => None,
+    let title = if super::is_general(&req.connection_string) {
+        Some(format!("General \u{00b7} {}", req.requested_by.clone().unwrap_or_else(|| "technician".into())))
+    } else {
+        match (&req.service_number, &req.hostname) {
+            (Some(sn), Some(host)) => Some(format!("#{sn} {host}")),
+            (Some(sn), None) => Some(format!("#{sn}")),
+            (None, Some(host)) => Some(host.clone()),
+            (None, None) => None,
+        }
     };
     let new = NewAgentThread {
         assist_request: Some(req.id.clone()),

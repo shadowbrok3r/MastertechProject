@@ -70,6 +70,16 @@ spec:
         # Transcripts, turns and approvals of closed sessions are purged after this.
         - name: MTECH_AGENT_EVENT_RETENTION_DAYS
           value: "30"
+        # ZeroClaw's memory over its gateway REST API: the agent's recall/remember
+        # tools, the brief at session start and the note at close. Same store its
+        # own agents use.
+        - name: MTECH_ZC_GATEWAY
+          value: "https://zeroclaw.master-tech.app"
+        - name: MTECH_ZC_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: zeroclaw-gateway
+              key: token
         # Signin failure is non-fatal — the daemon continues as guest — so these
         # are optional. The agent tables are PERMISSIONS FULL, so guest works;
         # set them to attribute the daemon's writes to a service account.
