@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 use crossbeam::channel::{Receiver, Sender};
 
+pub mod catalog;
+pub mod id;
 pub mod categories;
 pub mod executor;
 pub mod mcp_channel;

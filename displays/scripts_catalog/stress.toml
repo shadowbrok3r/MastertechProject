@@ -1,0 +1,408 @@
+# Generated from displays::scripts::categories; display names are the wire contract.
+
+[[script]]
+id = "cert-bronze"
+name = "Cert: Bronze"
+category = "stress"
+summary = "Cert tier ~1.5h: CPU, RAM and GPU verified; run as minimum sign-off on a stock build"
+pass = "All stages pass the cert rules (temps, WHEA, throughput stability)"
+fail = "Any rule violation, WHEA delta, or stressor error"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 10
+
+[[script]]
+id = "cert-silver"
+name = "Cert: Silver"
+category = "stress"
+summary = "Cert tier ~3.5h: CPU, RAM, GPU, PSU load; run as standard sign-off on a gaming build"
+pass = "All stages pass the cert rules (temps, WHEA, throughput stability)"
+fail = "Any rule violation, WHEA delta, or stressor error"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 20
+
+[[script]]
+id = "cert-gold"
+name = "Cert: Gold"
+category = "stress"
+summary = "Cert tier ~8h: CPU mix, Linpack, RAM, GPU, VRAM, PSU; run on high-end or OC builds"
+pass = "All stages pass the cert rules (temps, WHEA, throughput stability)"
+fail = "Any rule violation, WHEA delta, or stressor error"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 30
+
+[[script]]
+id = "cert-platinum"
+name = "Cert: Platinum"
+category = "stress"
+summary = "Cert tier ~12h: full CPU/RAM/GPU/disk/PSU mix; run on flagships or to chase intermittents"
+pass = "All stages pass the cert rules (temps, WHEA, throughput stability)"
+fail = "Any rule violation, WHEA delta, or stressor error"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 40
+
+[[script]]
+id = "power-virus"
+name = "Power Virus"
+category = "stress"
+summary = "Concurrent CPU + GPU at max load, 30m; run to prove PSU and cooling survive worst case"
+pass = "Run completes within temp limits; no WHEA, no TDR"
+fail = "Any rule violation, WHEA delta, or TDR event"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 50
+
+[[script]]
+id = "gpu-probe"
+name = "GPU Stress Test"
+category = "stress"
+summary = "Compute, matmul, VRAM and PCIe in one pass; run when the GPU is the suspect"
+pass = "All stages above throughput floors; no TDR, no ECC errors, no VRAM mismatches"
+warn = "Corrected ECC errors or PCIe replay deltas"
+fail = "Uncorrected ECC, new TDR event, or VRAM mismatch"
+timeout_secs = 900
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 60
+
+[[script]]
+id = "qc-benchmark"
+name = "QC Benchmark"
+category = "stress"
+summary = "8-stage CPU/RAM burn-in; run as the bench-wide CPU and RAM burn-in at intake"
+pass = "Every stage above qc_floor_for(stressor)"
+warn = "Stage throughput between 0.9× and 1.0× floor"
+fail = "Any stage below floor, WHEA delta, or BSOD"
+timeout_secs = 1200
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 70
+
+[[script]]
+id = "stress-memtest"
+name = "Memory Test"
+category = "stress"
+summary = "MemTest86-style pattern write/verify; run when you suspect bad RAM"
+pass = "Zero mismatches across all patterns"
+fail = "Any data mismatch — treat as faulty RAM"
+timeout_secs = 1200
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 80
+
+[[script]]
+id = "stress-cpu-verify"
+name = "Stress: CPU Verify"
+category = "stress"
+summary = "Runs the same work twice and compares digests; run when results are wrong with no WHEA"
+pass = "Zero digest divergences"
+fail = "Any divergence — silent data corruption under load"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 90
+
+[[script]]
+id = "stress-linpack"
+name = "Stress: Linpack"
+category = "stress"
+summary = "LU solves with residual check; run when you need heavy FP load with correctness checked"
+pass = "All residuals under the HPL threshold (16)"
+fail = "Any residual breach — compute error under load"
+timeout_secs = 900
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 100
+
+[[script]]
+id = "stress-psu"
+name = "Stress: PSU"
+category = "stress"
+summary = "All-core FMA plus GPU compute at once; run when a machine dies only under heavy load"
+pass = "Run completes; no WHEA delta; no thermal runaway"
+warn = "No GPU present — CPU-only load"
+fail = "WHEA events or reboot during the run"
+timeout_secs = 900
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 110
+
+[[script]]
+id = "stress-psu-transient"
+name = "Stress: PSU Transient"
+category = "stress"
+summary = "Square-wave GPU load steps; run when a PC dies under load spikes but survives steady load"
+pass = "Run completes; no WHEA delta; no rail droop or shutdown across the load steps"
+warn = "No GPU present — CPU-only load, so no transient is generated"
+fail = "Reboot, shutdown, or power-off during the run (an unstable rail under load stepping — the point of this test), WHEA events, or a TDR"
+timeout_secs = 900
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 120
+
+[[script]]
+id = "stress-cpu"
+name = "Stress: CPU"
+category = "stress"
+summary = "Float-op burst loop; run for a quick all-core load and thermal check"
+pass = "≥ 50 Mop/s sustained"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 130
+
+[[script]]
+id = "stress-matrix"
+name = "Stress: Matrix"
+category = "stress"
+summary = "Square f32 matmul; run when SIMD/FP throughput looks low for the part"
+pass = "≥ 200 Mflop/s sustained"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 140
+
+[[script]]
+id = "stress-fp"
+name = "Stress: FP/FMA"
+category = "stress"
+summary = "FMA chains, the hottest per-core load; run when checking a cooler mount"
+pass = "≥ 200 Mflop/s sustained"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 150
+
+[[script]]
+id = "stress-bitops"
+name = "Stress: Bitops"
+category = "stress"
+summary = "Hot-loop popcount/ctlz/rotate; run when integer results look wrong"
+pass = "≥ 50 Mop/s sustained"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 160
+
+[[script]]
+id = "stress-branch"
+name = "Stress: Branch"
+category = "stress"
+summary = "Data-dependent branches; run when a fault needs unpredictable control flow"
+pass = "≥ 100 Mbranch/s sustained"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 170
+
+[[script]]
+id = "stress-prime"
+name = "Stress: Prime"
+category = "stress"
+summary = "Prime sieve; run for a light long soak that can sit on the bench"
+pass = "≥ 0.5 Mprime/s sustained"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 180
+
+[[script]]
+id = "stress-hash"
+name = "Stress: Hash"
+category = "stress"
+summary = "FNV-1a over a 1 MiB buffer; run for steady mixed integer and memory load"
+pass = "≥ 50 MiB/s sustained"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 190
+
+[[script]]
+id = "stress-cache"
+name = "Stress: Cache"
+category = "stress"
+summary = "Cache-line thrash with clflush; run when instability tracks cache or fabric clocks"
+pass = "≥ 50 Mref/s sustained"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 200
+
+[[script]]
+id = "stress-prefetch"
+name = "Stress: Prefetch"
+category = "stress"
+summary = "Sequential and striped reads; run when sequential memory reads underperform"
+pass = "≥ 50 Mref/s sustained"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 210
+
+[[script]]
+id = "stress-icache"
+name = "Stress: I-Cache"
+category = "stress"
+summary = "Indirect calls through a 64-fn table; run when crashes look like fetch faults"
+pass = "≥ 5 Mcall/s sustained"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 220
+
+[[script]]
+id = "stress-tsc"
+name = "Stress: TSC"
+category = "stress"
+summary = "rdtsc read-rate loop; run when timers or timestamps drift"
+pass = "≥ 5 Mread/s sustained"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 230
+
+[[script]]
+id = "stress-atomic"
+name = "Stress: Atomic"
+category = "stress"
+summary = "Cores contending on one AtomicU64; run when multi-core sync faults or hangs"
+pass = "≥ 5 Mop/s sustained"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 240
+
+[[script]]
+id = "stress-mutex"
+name = "Stress: Mutex"
+category = "stress"
+summary = "Threads contending on one mutex; run when lock-heavy workloads stall"
+pass = "≥ 0.5 Mop/s sustained"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 250
+
+[[script]]
+id = "stress-switch"
+name = "Stress: Context Switch"
+category = "stress"
+summary = "Threads ping-ponging on condvars; run when the machine lags with many threads"
+pass = "≥ 0.05 Mctxsw/s sustained"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 260
+
+[[script]]
+id = "stress-memory"
+name = "Stress: Memory"
+category = "stress"
+summary = "Heap fill/touch up to the RAM cap; run to pressure capacity, not to verify data"
+pass = "≥ 2 MiB/s sustained"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 270
+
+[[script]]
+id = "stress-memcpy"
+name = "Stress: Memcpy"
+category = "stress"
+summary = "Bulk memcpy of paired buffers; run when large copies or file operations are slow"
+pass = "≥ 2 GB/s sustained"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 280
+
+[[script]]
+id = "stress-stream"
+name = "Stress: Stream"
+category = "stress"
+summary = "STREAM copy/scale/add/triad; run when RAM bandwidth or channel setup is the suspect"
+pass = "≥ 5 GB/s sustained"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 290
+
+[[script]]
+id = "stress-vm"
+name = "Stress: VM"
+category = "stress"
+summary = "Page-touch churn on the working set; run when a low-RAM machine feels slow"
+pass = "≥ 200 MiB/s sustained"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 300
+
+[[script]]
+id = "stress-disk"
+name = "Stress: Disk"
+category = "stress"
+summary = "Temp-file write/read loop; run when a drive is slow, dropping out, or erroring"
+pass = "≥ 5 MiB/s sustained"
+fail = "Any I/O error during the run"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 310
+
+[[script]]
+id = "stress-gpu"
+name = "Stress: GPU Compute"
+category = "stress"
+summary = "Compute-shader FMA hammer; run when a GPU hangs, resets, or black-screens under load"
+pass = "≥ 100 GFLOPS sustained; no TDR"
+fail = "TDR event or shader compile failure"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 320
+
+[[script]]
+id = "stress-gpu-matmul"
+name = "Stress: GPU Matmul"
+category = "stress"
+summary = "GPU NxN fp32 matmul; run when GPU throughput looks low for the card"
+pass = "≥ 100 GFLOPS sustained; no TDR"
+fail = "TDR event during the run"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 330
+
+[[script]]
+id = "stress-gpu-vram"
+name = "Stress: GPU VRAM"
+category = "stress"
+summary = "VRAM write-verify pattern walker; run when artifacts or VRAM corruption are suspected"
+pass = "≥ 1000 MiB/s sustained; no mismatches"
+fail = "VRAM mismatch surfaced via last_error"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 340
+
+[[script]]
+id = "stress-gpu-pcie"
+name = "Stress: GPU PCIe"
+category = "stress"
+summary = "CPU↔GPU round-trip with readback verify; run when the link drops or data comes back bad"
+pass = "≥ 1 GB/s sustained; zero mismatches"
+warn = "PCIe replay deltas during the run"
+fail = "Any round-trip data mismatch"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 350
+
+[[script]]
+id = "stress-gpu-display"
+name = "Stress: GPU Display"
+category = "stress"
+summary = "Real swapchain per output with mode changes; run when a machine black-screens, drops a monitor, or hangs on a mode change"
+pass = "Sustained present rate with no present timeouts, lost surfaces, or watchdog live dumps"
+warn = "Only one output attached — the display path is barely exercised"
+fail = "Present timeout, lost surface, or a watchdog live dump"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 360
+
+[[script]]
+id = "stress-combined"
+name = "Stress: Combined"
+category = "stress"
+summary = "Fused CPU + RAM + GPU stressor; run for whole-system load when bench time is short"
+pass = "Runs to completion with no errors or TDR"
+fail = "GPU device loss or any reported error"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 370
+
+[[script]]
+id = "stress-concurrent"
+name = "Concurrent: CPU+RAM+GPU"
+category = "stress"
+summary = "CPU, RAM and GPU as separate lanes; run when a fault needs all three busy at once"
+pass = "All lanes run to completion with no errors"
+fail = "Any lane reports errors or aborts"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 380
+

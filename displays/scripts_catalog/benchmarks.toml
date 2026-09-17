@@ -1,0 +1,135 @@
+# Generated from displays::scripts::categories; display names are the wire contract.
+
+[[script]]
+id = "bench-suite"
+name = "Benchmark Suite"
+category = "stress"
+summary = "Scored CPU/RAM/disk/GPU suite; run when the complaint is slowness and you need numbers"
+pass = "All benchmarks complete with zero errors; scores persisted"
+warn = "Kind reporting status no_samples (zero throughput ticks; row persisted unscored, suite still passes)"
+fail = "Any benchmark errors"
+timeout_secs = 1800
+surfaces = ["terminal", "remote", "mcp"]
+order = 10
+
+[[script]]
+id = "bench-cpu-single"
+name = "Benchmark: CPU Single"
+category = "stress"
+summary = "Single-thread FMA score; run to check one core for thermal or power throttling"
+timeout_secs = 600
+surfaces = ["terminal", "remote", "mcp"]
+order = 20
+
+[[script]]
+id = "bench-cpu-multi"
+name = "Benchmark: CPU Multi"
+category = "stress"
+summary = "All-thread FMA score; run to catch a core parked or disabled in BIOS"
+timeout_secs = 600
+surfaces = ["terminal", "remote", "mcp"]
+order = 30
+
+[[script]]
+id = "bench-matrix-single"
+name = "Benchmark: Matrix Single"
+category = "stress"
+summary = "Single-thread matmul score; run to score one core's SIMD"
+timeout_secs = 600
+surfaces = ["terminal", "remote", "mcp"]
+order = 40
+
+[[script]]
+id = "bench-matrix-multi"
+name = "Benchmark: Matrix Multi"
+category = "stress"
+summary = "All-thread matmul score; run to check all-core SIMD scaling"
+timeout_secs = 600
+surfaces = ["terminal", "remote", "mcp"]
+order = 50
+
+[[script]]
+id = "bench-linpack"
+name = "Benchmark: Linpack"
+category = "stress"
+summary = "LU-solve GFLOPS score with residual check; run to score sustained verified FP"
+fail = "Any residual breach during measurement"
+timeout_secs = 600
+surfaces = ["terminal", "remote", "mcp"]
+order = 60
+
+[[script]]
+id = "bench-memory-bandwidth"
+name = "Benchmark: Memory Bandwidth"
+category = "stress"
+summary = "STREAM bandwidth score; run to confirm RAM speed and channel count"
+timeout_secs = 600
+surfaces = ["terminal", "remote", "mcp"]
+order = 70
+
+[[script]]
+id = "bench-memcpy"
+name = "Benchmark: Memcpy"
+category = "stress"
+summary = "Bulk memcpy bandwidth score; run to score large-copy throughput"
+timeout_secs = 600
+surfaces = ["terminal", "remote", "mcp"]
+order = 80
+
+[[script]]
+id = "bench-memory-latency"
+name = "Benchmark: Memory Latency"
+category = "stress"
+summary = "Pointer-chase ladder to 128 MiB in ns/access; run when slow but bandwidth measures fine"
+timeout_secs = 600
+surfaces = ["terminal", "remote", "mcp"]
+order = 90
+
+[[script]]
+id = "bench-disk"
+name = "Benchmark: Disk"
+category = "stress"
+summary = "Write+sync+read score; run to compare the boot drive against a known-good unit"
+fail = "Any I/O error during measurement"
+timeout_secs = 600
+surfaces = ["terminal", "remote", "mcp"]
+order = 100
+
+[[script]]
+id = "bench-gpu-compute"
+name = "Benchmark: GPU Compute"
+category = "stress"
+summary = "Compute-shader GFLOPS score; run on a suspected power limit or driver regression"
+timeout_secs = 600
+surfaces = ["terminal", "remote", "mcp"]
+order = 110
+
+[[script]]
+id = "bench-gpu-matmul"
+name = "Benchmark: GPU Matmul"
+category = "stress"
+summary = "GPU matmul GFLOPS score; run to score GPU FP throughput"
+timeout_secs = 600
+surfaces = ["terminal", "remote", "mcp"]
+order = 120
+
+[[script]]
+id = "bench-gpu-vram"
+name = "Benchmark: GPU VRAM"
+category = "stress"
+summary = "VRAM write+verify bandwidth score; run when a card may be stuck in a low memory state"
+fail = "Any VRAM mismatch during measurement"
+timeout_secs = 600
+surfaces = ["terminal", "remote", "mcp"]
+order = 130
+
+[[script]]
+id = "bench-gpu-pcie"
+name = "Benchmark: GPU PCIe"
+category = "stress"
+summary = "Verified round-trip bandwidth score; run when the card may negotiate fewer lanes"
+fail = "Any round-trip mismatch during measurement"
+timeout_secs = 600
+surfaces = ["terminal", "remote", "mcp"]
+order = 140
+

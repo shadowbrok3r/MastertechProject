@@ -24,6 +24,7 @@ arboard = "3"
 structdiff = { version = "0.7", features = ["rustc_hash"] }
 reqwest = { version = "0.13", default-features = false, features = ["stream", "json"] }
 compact_str = { version = "0.9.0", features = ["serde"] }
+toml = "1.1.2"
 uuid = { version = "1.0", features = ["v4"] }
 rpc-router = "0.2.0"
 derivative = "2"
