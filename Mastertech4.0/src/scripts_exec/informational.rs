@@ -30,6 +30,7 @@ const HANDLED: &[&str] = &[
     "is-hibernation-sleep-enabled",
     "are-there-scheduled-tasks-for-it",
     "any-recent-blue-screens",
+    "when-was-the-last-service-date",
 ];
 
 pub struct InformationalExecutor;
@@ -86,6 +87,9 @@ fn run(def: &ScriptDef, ctx: &ScriptContext) -> ScriptResult {
         "is-hibernation-sleep-enabled" => check_power(ctx, def),
         "are-there-scheduled-tasks-for-it" => check_sas_scheduled_tasks(ctx, def),
         "any-recent-blue-screens" => bsod_scan(ctx, def),
+        "when-was-the-last-service-date" => {
+            super::not_implemented(ctx, def, "Service date check not yet implemented")
+        }
         other => ScriptResult::Error(format!("informational executor does not run '{other}'")),
     }
 }
@@ -275,6 +279,10 @@ mod informational_executor_tests {
     use super::*;
     use displays::scripts::catalog::{CATALOG, Surface};
 
+    /// Catalog-known but implemented nowhere, so it is claimed only to turn a
+    /// legacy name into a declarative skip.
+    const STUBS: &[&str] = &["when-was-the-last-service-date"];
+
     #[test]
     fn every_claimed_id_is_a_real_informational_script() {
         for id in HANDLED {
@@ -287,9 +295,17 @@ mod informational_executor_tests {
                 "{id} is not an informational script"
             );
             assert!(
-                def.offered_on(Surface::Egui),
+                def.offered_on(Surface::Egui) || STUBS.contains(id),
                 "{id} is claimed but never offered in the tab"
             );
+        }
+    }
+
+    #[test]
+    fn the_stubs_are_offered_nowhere() {
+        for id in STUBS {
+            let def = CATALOG.get(&ScriptId::new(*id)).expect("catalog entry");
+            assert!(!def.offered_on(Surface::Egui), "{id} is offered in the tab");
         }
     }
 
