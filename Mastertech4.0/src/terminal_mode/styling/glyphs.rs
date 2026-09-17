@@ -44,3 +44,12 @@ pub const SCROLL_TRACK_H: &str = "\u{2500}"; // ─
 pub const SCROLL_THUMB: &str = "\u{2588}"; // █
 
 // Coverage of these glyphs is asserted by displays/tests/tui_font_coverage.rs.
+
+/// Speaker gutter on transcript headers.
+pub const GUTTER: &str = "\u{258c}"; // ▌
+/// List marker in rendered markdown.
+pub const BULLET: &str = "\u{25aa}"; // ▪
+/// A tool call that is still running.
+pub const AGENT_RUNNING: &str = "\u{25cc}"; // ◌
+/// Quarter-circle spinner frames.
+pub const SPINNER: [&str; 4] = ["\u{25d0}", "\u{25d3}", "\u{25d1}", "\u{25d2}"]; // ◐ ◓ ◑ ◒

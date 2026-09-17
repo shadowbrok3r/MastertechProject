@@ -59,6 +59,10 @@ pub struct AssistRequest {
     #[serde(default)]
     #[surreal(default)]
     pub dispatch_error: Option<String>,
+    /// The codex session the broker opened for this request.
+    #[serde(default)]
+    #[surreal(default)]
+    pub agent_thread: Option<RecordId>,
 }
 
 impl AssistRequest {

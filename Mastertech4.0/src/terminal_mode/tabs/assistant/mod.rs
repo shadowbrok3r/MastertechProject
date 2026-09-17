@@ -1,9 +1,16 @@
-//! Terminal-mode chat with a headless Claude Code session (subscription auth,
-//! Mastertech MCP on :9004) via `displays::ai::claude_code::ClaudeCodeSession`.
+//! Terminal-mode view of this machine's Codex agent session. The broker in
+//! admin-agent talks to codex; this page reads `agent_event`, queues
+//! `agent_turn` rows and decides `agent_approval` rows, like the desktop tab.
+
+use std::cell::Cell;
+use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 use crossbeam::channel::{unbounded, Receiver, Sender};
-use displays::ai::claude_code::{ClaudeCodeSession, TOOL_PREFIX};
-use displays::tabs::ai_playground::{ChatMessage, ChatMessageType, SentFrom};
+use database::schema::{
+    AgentApproval, AgentDecideOutcome, AgentEvent, AgentThread, AgentTurn, AssistRequest, RecordId, RecordIdExt,
+};
+use displays::{PlatformSpawner, Spawner};
 use ratatui::{
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind},
     layout::{Constraint, Layout, Rect},
@@ -13,165 +20,432 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
     Frame,
 };
-use std::cell::Cell;
+use serde_json::Value;
 
 use crate::terminal_mode::{
     events::action_handler::WidgetId,
-    styling::THEME,
+    styling::{glyphs, THEME},
     widgets::{button::ButtonState, input_field::InputField, ButtonType, HandleWidget, SHORTCUT_SET},
 };
 
-const THREAD_ID: &str = "terminal-assistant";
+mod transcript;
+
+const THREAD_POLL: Duration = Duration::from_secs(4);
+const THREAD_POLL_WAITING: Duration = Duration::from_secs(2);
+const EVENT_POLL: Duration = Duration::from_millis(1500);
+const APPROVAL_POLL: Duration = Duration::from_secs(2);
+const EVENT_PAGE: usize = 400;
+const SNOOZE: Duration = Duration::from_secs(60);
+/// Longest wait for the broker to open a requested session before it reads as a failure.
+const REQUEST_WAIT: Duration = Duration::from_secs(120);
+
+enum Msg {
+    Thread(Result<Option<AgentThread>, String>),
+    Events(RecordId, Result<Vec<AgentEvent>, String>),
+    Approvals(RecordId, Result<Vec<AgentApproval>, String>),
+    Turn(Result<(), String>),
+    Requested(Result<(), String>),
+    Decided(RecordId, Result<AgentDecideOutcome, String>),
+}
 
 pub struct AssistantTab<'a> {
     input: InputField<'a>,
-    messages: Vec<ChatMessage>,
+    connection_string: String,
+    hostname: String,
+    thread: Option<AgentThread>,
+    events: Vec<AgentEvent>,
+    last_seq: i64,
+    approvals: Vec<AgentApproval>,
+    snoozed: HashMap<RecordId, Instant>,
+    in_flight: HashSet<RecordId>,
+    show_reasoning: bool,
+    note: String,
+    requested_at: Option<Instant>,
     scroll_back: Cell<usize>,
-    user_seq: u64,
-    session: ClaudeCodeSession,
-    channel: (Sender<ChatMessage>, Receiver<ChatMessage>),
+    frame: Cell<usize>,
+    last_thread_poll: Option<Instant>,
+    last_event_poll: Option<Instant>,
+    last_approval_poll: Option<Instant>,
+    loading_thread: bool,
+    loading_events: bool,
+    loading_approvals: bool,
+    tx: Sender<Msg>,
+    rx: Receiver<Msg>,
 }
 
 impl<'a> AssistantTab<'a> {
     pub fn new() -> Self {
-        let input = InputField::new("Ask Claude Code", WidgetId("AssistantInput".to_string()));
+        let input = InputField::new("Message the agent", WidgetId("AssistantInput".to_string()));
         input.set_state(ButtonState::Active);
+        let connection_string = crate::filesystem::get_client_hash().connection_string;
+        let hostname = connection_string.split(':').next().unwrap_or_default().to_string();
+        let (tx, rx) = unbounded();
         Self {
             input,
-            messages: Vec::new(),
+            connection_string,
+            hostname,
+            thread: None,
+            events: Vec::new(),
+            last_seq: 0,
+            approvals: Vec::new(),
+            snoozed: HashMap::new(),
+            in_flight: HashSet::new(),
+            show_reasoning: false,
+            note: String::new(),
+            requested_at: None,
             scroll_back: Cell::new(0),
-            user_seq: 0,
-            session: ClaudeCodeSession::new(),
-            channel: unbounded(),
+            frame: Cell::new(0),
+            last_thread_poll: None,
+            last_event_poll: None,
+            last_approval_poll: None,
+            loading_thread: false,
+            loading_events: false,
+            loading_approvals: false,
+            tx,
+            rx,
         }
     }
 
-    fn poll(&mut self) {
-        while let Ok(msg) = self.channel.1.try_recv() {
-            match msg.content.clone() {
-                ChatMessageType::Done => {}
-                ChatMessageType::Error(_) => self.messages.push(msg),
-                ChatMessageType::Text(chunk) | ChatMessageType::Code(chunk) => {
-                    self.upsert(&msg.id, msg.from.clone(), chunk, false)
+    fn running(&self) -> bool {
+        self.thread
+            .as_ref()
+            .is_some_and(|t| matches!(t.status.as_str(), "running" | "waiting_approval"))
+    }
+
+    fn open_thread(&self) -> Option<&AgentThread> {
+        self.thread.as_ref().filter(|t| t.is_open())
+    }
+
+    /// The decision shown right now: the oldest pending one that is neither snoozed nor lapsed.
+    fn active_approval(&self) -> Option<AgentApproval> {
+        let now = Instant::now();
+        self.approvals
+            .iter()
+            .find(|r| r.secs_remaining() > 0 && !self.snoozed.get(&r.id).is_some_and(|until| *until > now))
+            .cloned()
+    }
+
+    fn poll_thread(&mut self) {
+        if self.loading_thread {
+            return;
+        }
+        self.loading_thread = true;
+        self.last_thread_poll = Some(Instant::now());
+        let tx = self.tx.clone();
+        let cs = self.connection_string.clone();
+        PlatformSpawner::spawn(async move {
+            let r = AgentThread::latest_for_connection(&cs).await.map_err(|e| e.to_string());
+            let _ = tx.send(Msg::Thread(r));
+        });
+    }
+
+    fn poll_events(&mut self) {
+        let Some(thread) = self.thread.as_ref().map(|t| t.id.clone()) else { return };
+        if self.loading_events {
+            return;
+        }
+        self.loading_events = true;
+        self.last_event_poll = Some(Instant::now());
+        let tx = self.tx.clone();
+        let after = self.last_seq;
+        PlatformSpawner::spawn(async move {
+            let r = AgentEvent::since(&thread, after, EVENT_PAGE).await.map_err(|e| e.to_string());
+            let _ = tx.send(Msg::Events(thread, r));
+        });
+    }
+
+    fn poll_approvals(&mut self) {
+        let Some(thread) = self.open_thread().map(|t| t.id.clone()) else { return };
+        if self.loading_approvals {
+            return;
+        }
+        self.loading_approvals = true;
+        self.last_approval_poll = Some(Instant::now());
+        let tx = self.tx.clone();
+        PlatformSpawner::spawn(async move {
+            let r = AgentApproval::list_pending_for_thread(&thread).await.map_err(|e| e.to_string());
+            let _ = tx.send(Msg::Approvals(thread, r));
+        });
+    }
+
+    fn drain(&mut self) {
+        while let Ok(msg) = self.rx.try_recv() {
+            match msg {
+                Msg::Thread(Ok(found)) => {
+                    self.loading_thread = false;
+                    let changed = found.as_ref().map(|t| &t.id) != self.thread.as_ref().map(|t| &t.id);
+                    if changed {
+                        self.events.clear();
+                        self.approvals.clear();
+                        self.last_seq = 0;
+                        self.last_event_poll = None;
+                        self.last_approval_poll = None;
+                        self.scroll_back.set(0);
+                    }
+                    if found.as_ref().is_some_and(AgentThread::is_open) {
+                        self.requested_at = None;
+                    }
+                    self.thread = found;
                 }
-                ChatMessageType::Reasoning(chunk) => self.upsert(&msg.id, msg.from.clone(), chunk, true),
-                ChatMessageType::FileId(_) | ChatMessageType::Image(_) => {}
+                Msg::Thread(Err(e)) => {
+                    self.loading_thread = false;
+                    self.note = e;
+                }
+                Msg::Events(thread, Ok(rows)) => {
+                    self.loading_events = false;
+                    if self.thread.as_ref().map(|t| &t.id) != Some(&thread) {
+                        continue;
+                    }
+                    for row in rows {
+                        self.last_seq = self.last_seq.max(row.seq);
+                        match self.events.iter_mut().find(|e| e.id == row.id) {
+                            Some(existing) => *existing = row,
+                            None => self.events.push(row),
+                        }
+                    }
+                    self.events.sort_by_key(|e| e.seq);
+                }
+                Msg::Events(_, Err(e)) => {
+                    self.loading_events = false;
+                    self.note = e;
+                }
+                Msg::Approvals(thread, Ok(rows)) => {
+                    self.loading_approvals = false;
+                    if self.thread.as_ref().map(|t| &t.id) != Some(&thread) {
+                        continue;
+                    }
+                    self.in_flight.retain(|id| rows.iter().any(|r| &r.id == id));
+                    self.approvals = rows;
+                }
+                Msg::Approvals(_, Err(e)) => {
+                    self.loading_approvals = false;
+                    self.note = e;
+                }
+                Msg::Turn(Ok(())) => self.note = "sent".into(),
+                Msg::Turn(Err(e)) => self.note = format!("send failed: {e}"),
+                Msg::Requested(Ok(())) => self.note = "asked for the agent; waiting for the host to open the session".into(),
+                Msg::Requested(Err(e)) => {
+                    self.requested_at = None;
+                    self.note = format!("request failed: {e}");
+                }
+                Msg::Decided(id, outcome) => {
+                    self.in_flight.remove(&id);
+                    self.note = match outcome {
+                        Ok(AgentDecideOutcome::Recorded) => "decision recorded".into(),
+                        Ok(AgentDecideOutcome::AlreadyResolved(held)) => format!("already {held} elsewhere"),
+                        Ok(AgentDecideOutcome::Missing) => "that request was withdrawn".into(),
+                        Err(e) => format!("decision failed: {e}"),
+                    };
+                    self.last_approval_poll = None;
+                }
             }
         }
     }
 
-    /// Appends a chunk to the message with the same id or starts a new one.
-    fn upsert(&mut self, id: &str, from: SentFrom, chunk: String, reasoning: bool) {
-        if let Some(m) = self.messages.iter_mut().find(|m| m.id == id) {
-            match &mut m.content {
-                ChatMessageType::Text(s) if !reasoning => s.push_str(&chunk),
-                ChatMessageType::Reasoning(s) if reasoning => s.push_str(&chunk),
-                _ => {}
-            }
-        } else {
-            let content = if reasoning {
-                ChatMessageType::Reasoning(chunk)
-            } else {
-                ChatMessageType::Text(chunk)
-            };
-            self.messages.push(ChatMessage {
-                id: id.to_string(),
-                thread_id: THREAD_ID.to_string(),
-                ts: displays::tabs::ai_playground::now_ts(),
-                from,
-                content,
-            });
+    /// Schedules the periodic reads; called once per frame.
+    fn tick(&mut self) {
+        self.drain();
+        self.frame.set(self.frame.get().wrapping_add(1));
+        let thread_every = if self.requested_at.is_some() { THREAD_POLL_WAITING } else { THREAD_POLL };
+        if self.last_thread_poll.is_none_or(|t| t.elapsed() >= thread_every) {
+            self.poll_thread();
         }
+        if self.thread.is_some() && self.last_event_poll.is_none_or(|t| t.elapsed() >= EVENT_POLL) {
+            self.poll_events();
+        }
+        if self.open_thread().is_some() && self.last_approval_poll.is_none_or(|t| t.elapsed() >= APPROVAL_POLL) {
+            self.poll_approvals();
+        }
+    }
+
+    fn turn(&mut self, thread: RecordId, kind: &'static str, text: String) {
+        let tx = self.tx.clone();
+        PlatformSpawner::spawn(async move {
+            let r = AgentTurn::ask(&thread, kind, &text).await.map(|_| ()).map_err(|e| e.to_string());
+            let _ = tx.send(Msg::Turn(r));
+        });
+    }
+
+    /// Files an assist request for this machine; the broker opens the session.
+    fn request_session(&mut self, text: String) {
+        let cs = self.connection_string.clone();
+        let user = displays::get_current_user_from_auth();
+        let tech = user.as_ref().map(|u| u.get_email().to_string());
+        let store = user
+            .as_ref()
+            .and_then(|u| serde_json::to_value(u).ok())
+            .and_then(|v| v.get("store").and_then(Value::as_str).map(str::to_string));
+        self.requested_at = Some(Instant::now());
+        self.note = "asking for the agent\u{2026}".into();
+        let tx = self.tx.clone();
+        PlatformSpawner::spawn(async move {
+            let r = AssistRequest::create_from_chat(&cs, tech.as_deref(), store.as_deref(), None, &text)
+                .await
+                .map(|_| ())
+                .map_err(|e| e.to_string());
+            let _ = tx.send(Msg::Requested(r));
+        });
+    }
+
+    fn decide(&mut self, id: RecordId, status: &'static str, note: Option<String>, answers: Option<Value>) {
+        if !self.in_flight.insert(id.clone()) {
+            return;
+        }
+        let by = displays::get_current_user_from_auth().map(|u| u.get_id());
+        let tx = self.tx.clone();
+        PlatformSpawner::spawn(async move {
+            let r = AgentApproval::decide(&id, status, by, note, answers).await.map_err(|e| e.to_string());
+            let _ = tx.send(Msg::Decided(id, r));
+        });
     }
 
     fn submit(&mut self) {
-        if self.session.is_busy() {
+        let text = self.input.get_raw_text().trim().to_string();
+        // Typed text answers the agent's open question before it is a message.
+        if let Some(req) = self.active_approval().filter(|r| r.kind == "question") {
+            if text.is_empty() {
+                return;
+            }
+            let answers = transcript::question_answers(req.questions.as_ref(), &text);
+            self.input.set_text("");
+            self.decide(req.id, "answered", None, Some(answers));
             return;
         }
-        let input = self.input.get_raw_text().trim().to_string();
-        if input.is_empty() {
+        if text.is_empty() {
             return;
         }
-        self.messages.push(ChatMessage {
-            id: format!("u{}", self.user_seq),
-            thread_id: THREAD_ID.to_string(),
-            ts: displays::tabs::ai_playground::now_ts(),
-            from: SentFrom::Me,
-            content: ChatMessageType::Text(input.clone()),
-        });
-        self.user_seq += 1;
         self.input.set_text("");
         self.scroll_back.set(0);
-        self.session.send(input, None, THREAD_ID.to_string(), self.channel.0.clone());
+        match self.open_thread().map(|t| (t.id.clone(), t.status.clone())) {
+            Some((id, status)) => {
+                // A message during a turn steers it; otherwise it starts the next one.
+                let kind = if matches!(status.as_str(), "running" | "waiting_approval") { "steer" } else { "start" };
+                self.turn(id, kind, text);
+            }
+            None => {
+                if self.requested_at.is_some_and(|t| t.elapsed() < REQUEST_WAIT) {
+                    self.note = "still waiting for the host to open the session".into();
+                    return;
+                }
+                self.request_session(text);
+            }
+        }
     }
 
-    /// Flattens messages into styled, wrapped lines for the viewport.
-    fn display_lines(&self, width: usize) -> Vec<Line<'static>> {
-        let width = width.max(8);
-        let bold = Modifier::BOLD;
-        let mut lines: Vec<Line> = Vec::new();
-        for m in &self.messages {
-            match (&m.from, &m.content) {
-                (SentFrom::Me, ChatMessageType::Text(t)) => {
-                    lines.push(Line::from(Span::styled(
-                        "\u{258C} You",
-                        Style::default().fg(THEME.accent).add_modifier(bold),
-                    )));
-                    for w in wrap(t, width) {
-                        lines.push(Line::from(w).style(Style::default().fg(THEME.text)));
-                    }
-                    lines.push(Line::from(""));
+    /// Single-key decisions while the composer is empty; `Ctrl+N` declines with the typed note.
+    fn approval_hotkey(&mut self, req: &AgentApproval, key: &KeyEvent) -> bool {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if key.modifiers.contains(KeyModifiers::ALT) {
+            return false;
+        }
+        let typed = self.input.get_raw_text().trim().to_string();
+        if req.kind == "question" {
+            let KeyCode::Char(c) = key.code else { return false };
+            if ctrl || !typed.is_empty() {
+                return false;
+            }
+            let Some(n) = c.to_digit(10) else { return false };
+            let Some(label) = transcript::option_label(req.questions.as_ref(), n as usize) else { return false };
+            let answers = transcript::question_answers(req.questions.as_ref(), &label);
+            self.decide(req.id.clone(), "answered", None, Some(answers));
+            return true;
+        }
+        match key.code {
+            KeyCode::Char('n') if ctrl => {
+                self.input.set_text("");
+                self.decide(req.id.clone(), "declined", (!typed.is_empty()).then_some(typed), None);
+                true
+            }
+            _ if ctrl || !typed.is_empty() => false,
+            KeyCode::Char('y') => {
+                self.decide(req.id.clone(), "accepted", None, None);
+                true
+            }
+            KeyCode::Char('s') => {
+                self.decide(req.id.clone(), "accepted_for_session", None, None);
+                true
+            }
+            KeyCode::Char('n') => {
+                self.decide(req.id.clone(), "declined", None, None);
+                true
+            }
+            KeyCode::Char('x') => {
+                self.decide(req.id.clone(), "cancelled", None, None);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn approval_lines(req: &AgentApproval, width: usize, busy: bool) -> Vec<Line<'static>> {
+        let warn = Style::default().fg(THEME.warning);
+        let muted = Style::default().fg(THEME.text_muted);
+        let strong = Style::default().fg(THEME.text).add_modifier(Modifier::BOLD);
+        let mut lines = Vec::new();
+        let secs = req.secs_remaining();
+        let expires = format!("expires in {}m {:02}s", secs / 60, secs % 60);
+        if req.kind == "question" {
+            for w in transcript::wrap(&req.summary, width) {
+                lines.push(Line::from(Span::styled(w, strong)));
+            }
+            let questions = req.questions.as_ref().and_then(Value::as_array).cloned().unwrap_or_default();
+            if let Some(q) = questions.first() {
+                for (i, opt) in q.get("options").and_then(Value::as_array).into_iter().flatten().enumerate().take(9) {
+                    let label = opt.get("label").and_then(Value::as_str).unwrap_or("");
+                    let desc = opt.get("description").and_then(Value::as_str).unwrap_or("");
+                    let text = if desc.is_empty() { format!("{}) {label}", i + 1) } else { format!("{}) {label} \u{2014} {desc}", i + 1) };
+                    lines.push(Line::from(Span::styled(transcript::clip(&text, width), Style::default().fg(THEME.text))));
                 }
-                (SentFrom::Assistant, ChatMessageType::Reasoning(t)) => {
-                    lines.push(Line::from(Span::styled(
-                        "\u{00B7} thinking",
-                        Style::default().fg(THEME.text_muted).add_modifier(Modifier::ITALIC),
-                    )));
-                    for w in wrap(t, width) {
-                        lines.push(Line::from(w).style(Style::default().fg(THEME.text_muted)));
-                    }
-                    lines.push(Line::from(""));
-                }
-                (SentFrom::Assistant, ChatMessageType::Text(t)) if t.starts_with(TOOL_PREFIX) => {
-                    // Result rides after the first newline; a TUI pane cannot
-                    // collapse it, so show the call and a one-line preview.
-                    let (head, body) = t.split_once('\n').unwrap_or((t.as_str(), ""));
-                    for w in wrap(head, width) {
-                        lines.push(Line::from(w).style(Style::default().fg(THEME.tertiary)));
-                    }
-                    let body = body.trim();
-                    if !body.is_empty() {
-                        let preview: String =
-                            body.chars().take(160).collect::<String>().replace('\n', " ");
-                        for w in wrap(&preview, width.saturating_sub(2)) {
-                            lines.push(
-                                Line::from(format!("  {w}"))
-                                    .style(Style::default().fg(THEME.text_muted)),
-                            );
-                        }
-                    }
-                }
-                (SentFrom::Assistant, ChatMessageType::Text(t)) => {
-                    lines.push(Line::from(Span::styled(
-                        "\u{258C} Claude",
-                        Style::default().fg(THEME.success).add_modifier(bold),
-                    )));
-                    for w in wrap(t, width) {
-                        lines.push(Line::from(w).style(Style::default().fg(THEME.text)));
-                    }
-                    lines.push(Line::from(""));
-                }
-                (_, ChatMessageType::Error(t)) => {
-                    lines.push(Line::from(Span::styled(
-                        "! error",
-                        Style::default().fg(THEME.error).add_modifier(bold),
-                    )));
-                    for w in wrap(t, width) {
-                        lines.push(Line::from(w).style(Style::default().fg(THEME.error)));
-                    }
-                    lines.push(Line::from(""));
-                }
-                _ => {}
+            }
+            lines.push(Line::from(Span::styled(
+                transcript::clip(&format!("digit picks an option \u{00b7} or type an answer and press Enter \u{00b7} Esc later \u{00b7} {expires}"), width),
+                muted,
+            )));
+        } else {
+            for w in transcript::wrap(&req.summary, width) {
+                lines.push(Line::from(Span::styled(w, strong)));
+            }
+            if let Some(args) = req.arguments.as_ref().filter(|a| !a.is_null()) {
+                lines.push(Line::from(Span::styled(transcript::clip(&args.to_string(), width), muted)));
+            }
+            lines.push(Line::from(Span::styled(
+                transcript::clip(&format!("[y] approve  [s] approve for session  [n] decline  [Ctrl+N] decline with the typed note  [x] stop agent  [Esc] later"), width),
+                warn,
+            )));
+            lines.push(Line::from(Span::styled(expires, muted)));
+        }
+        if busy {
+            lines.push(Line::from(Span::styled("sending\u{2026}", muted)));
+        }
+        lines
+    }
+
+    fn empty_lines(&self) -> Vec<Line<'static>> {
+        let muted = Style::default().fg(THEME.text_muted);
+        let mut lines = vec![Line::from("")];
+        match (&self.thread, self.requested_at) {
+            (_, Some(at)) if at.elapsed() >= REQUEST_WAIT => lines.push(Line::from(Span::styled(
+                "  No session opened after two minutes; check that admin-agent is running.",
+                Style::default().fg(THEME.error),
+            ))),
+            (_, Some(_)) => lines.push(Line::from(Span::styled(
+                "  Asking the agent host\u{2026} the broker opens the session within a few seconds.",
+                muted,
+            ))),
+            (Some(t), None) => lines.push(Line::from(Span::styled(
+                format!("  Session {} \u{00b7} {} \u{2014} the agent is starting up.", short_key(&t.id), status_word(&t.status)),
+                muted,
+            ))),
+            (None, None) => {
+                lines.push(Line::from(Span::styled("  This machine has no agent session yet.", muted)));
+                lines.push(Line::from(Span::styled(
+                    "  Type what you want checked and press Enter; the Codex agent on the admin host opens one.",
+                    muted,
+                )));
+                lines.push(Line::from(Span::styled(
+                    "  Anything that would run a command here waits for your approval in this pane.",
+                    muted,
+                )));
             }
         }
         lines
@@ -180,44 +454,48 @@ impl<'a> AssistantTab<'a> {
 
 impl<'a> HandleWidget<'a> for AssistantTab<'a> {
     fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
-        self.poll();
+        self.tick();
+        let approval = self.active_approval();
+        let busy = approval.as_ref().is_some_and(|r| self.in_flight.contains(&r.id));
+        let inner_w = area.width.saturating_sub(2) as usize;
+        let approval_lines = approval.as_ref().map(|r| Self::approval_lines(r, inner_w.max(8), busy));
+        let approval_h = approval_lines
+            .as_ref()
+            .map(|l| (l.len() as u16 + 2).min(area.height / 2))
+            .unwrap_or(0);
 
         let rows = Layout::vertical([
             Constraint::Fill(1),
+            Constraint::Length(approval_h),
             Constraint::Length(4),
             Constraint::Length(1),
         ])
         .split(area);
 
-        let busy = self.session.is_busy();
-        let title = if busy {
-            "Claude Code \u{00B7} working\u{2026}"
+        let running = self.running();
+        let spinner = glyphs::SPINNER[self.frame.get() % glyphs::SPINNER.len()];
+        let word = match (&self.thread, self.requested_at) {
+            (_, Some(_)) => "asking".to_string(),
+            (Some(t), None) => status_word(&t.status).to_string(),
+            (None, None) => "no session".to_string(),
+        };
+        let title = if running || self.requested_at.is_some() {
+            format!(" Agent \u{00b7} {} \u{00b7} {word} {spinner} ", self.hostname)
         } else {
-            "Claude Code"
+            format!(" Agent \u{00b7} {} \u{00b7} {word} ", self.hostname)
         };
         let block = Block::default()
             .borders(Borders::ALL)
             .border_set(SHORTCUT_SET)
-            .border_style(THEME.border(false))
+            .border_style(THEME.border(running))
             .title_style(THEME.title())
             .title(title);
 
-        let inner_w = rows[0].width.saturating_sub(2) as usize;
         let inner_h = rows[0].height.saturating_sub(2) as usize;
-        let lines = if self.messages.is_empty() {
-            vec![
-                Line::from(""),
-                Line::from(Span::styled(
-                    "  Ask about this machine, a customer, or a service order.",
-                    Style::default().fg(THEME.text_muted),
-                )),
-                Line::from(Span::styled(
-                    "  Claude Code answers with the Mastertech tools (needs `claude login` on this PC).",
-                    Style::default().fg(THEME.text_muted),
-                )),
-            ]
+        let lines = if self.events.is_empty() {
+            self.empty_lines()
         } else {
-            self.display_lines(inner_w)
+            transcript::render(&self.events, inner_w, self.show_reasoning, spinner)
         };
         let total = lines.len();
         let max_back = total.saturating_sub(inner_h);
@@ -226,32 +504,48 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
         let end = total.saturating_sub(back);
         let start = end.saturating_sub(inner_h);
         let view: Vec<Line> = lines[start..end].to_vec();
+        f.render_widget(Paragraph::new(view).block(block).style(Style::default().bg(THEME.bg)), rows[0]);
 
-        f.render_widget(
-            Paragraph::new(view).block(block).style(Style::default().bg(THEME.bg)),
-            rows[0],
+        if let (Some(req), Some(lines)) = (approval.as_ref(), approval_lines) {
+            let title = if req.kind == "question" { " The agent asks " } else { " Approval needed " };
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .border_set(SHORTCUT_SET)
+                .border_style(Style::default().fg(THEME.warning))
+                .title_style(Style::default().fg(THEME.warning).add_modifier(Modifier::BOLD))
+                .title(title);
+            f.render_widget(Paragraph::new(lines).block(block).style(Style::default().bg(THEME.bg)), rows[1]);
+        }
+
+        f.render_widget(&self.input, rows[2]);
+
+        let mut footer = String::from(
+            "Enter send  \u{00b7}  Alt+Enter newline  \u{00b7}  PgUp/PgDn scroll  \u{00b7}  Ctrl+T thinking  \u{00b7}  Ctrl+X close session",
         );
-
-        f.render_widget(&self.input, rows[1]);
-
-        let state = if busy { "  \u{00B7}  Esc stop  \u{00B7}  working\u{2026}" } else { "" };
-        let session = self
-            .session
-            .session_id()
-            .map(|s| format!("  \u{00B7}  session {}", s.chars().take(8).collect::<String>()))
-            .unwrap_or_default();
-        let footer = format!(
-            "Enter send  \u{00B7}  Alt+Enter newline  \u{00B7}  PgUp/PgDn scroll  \u{00B7}  Ctrl+L new session{session}{state}"
-        );
+        if running {
+            footer.push_str("  \u{00b7}  Esc stop");
+        }
+        if let Some(t) = &self.thread {
+            footer.push_str(&format!("  \u{00b7}  session {}", short_key(&t.id)));
+        }
+        if !self.note.is_empty() {
+            footer.push_str(&format!("  \u{00b7}  {}", self.note));
+        }
         f.render_widget(
-            Paragraph::new(footer).style(Style::default().fg(THEME.text_muted).bg(THEME.bg)),
-            rows[2],
+            Paragraph::new(transcript::clip(&footer, area.width as usize))
+                .style(Style::default().fg(THEME.text_muted).bg(THEME.bg)),
+            rows[3],
         );
     }
 
     fn handle_key_event(&mut self, key: KeyEvent) -> bool {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
+        if let Some(req) = self.active_approval() {
+            if self.approval_hotkey(&req, &key) {
+                return true;
+            }
+        }
         match key.code {
             KeyCode::Enter if alt => {
                 self.input
@@ -264,8 +558,14 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
                 self.submit();
                 true
             }
-            KeyCode::Esc if self.session.is_busy() => {
-                self.session.cancel();
+            KeyCode::Esc => {
+                if let Some(req) = self.active_approval() {
+                    self.snoozed.insert(req.id, Instant::now() + SNOOZE);
+                } else if self.running() {
+                    if let Some(id) = self.thread.as_ref().map(|t| t.id.clone()) {
+                        self.turn(id, "interrupt", String::new());
+                    }
+                }
                 true
             }
             KeyCode::PageUp => {
@@ -276,10 +576,14 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
                 self.scroll_back.set(self.scroll_back.get().saturating_sub(5));
                 true
             }
-            KeyCode::Char('l') if ctrl => {
-                self.session.reset();
-                self.messages.clear();
-                self.scroll_back.set(0);
+            KeyCode::Char('t') if ctrl => {
+                self.show_reasoning = !self.show_reasoning;
+                true
+            }
+            KeyCode::Char('x') if ctrl => {
+                if let Some(id) = self.open_thread().map(|t| t.id.clone()) {
+                    self.turn(id, "close", String::new());
+                }
                 true
             }
             _ => ButtonType::handle_key_event(&self.input, &key),
@@ -295,43 +599,19 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
     }
 }
 
-/// Word-wraps to `width` columns with hard breaks for overlong words.
-fn wrap(text: &str, width: usize) -> Vec<String> {
-    fn push_word(out: &mut Vec<String>, line: &mut String, width: usize, word: &str) {
-        let wlen = word.chars().count();
-        let llen = line.chars().count();
-        if llen > 0 && llen + 1 + wlen <= width {
-            line.push(' ');
-            line.push_str(word);
-            return;
-        }
-        if llen > 0 {
-            out.push(std::mem::take(line));
-        }
-        let mut chars = word.chars().peekable();
-        while chars.peek().is_some() {
-            let chunk: String = chars.by_ref().take(width).collect();
-            if chars.peek().is_some() {
-                out.push(chunk);
-            } else {
-                *line = chunk;
-            }
-        }
+fn status_word(status: &str) -> &'static str {
+    match status {
+        "queued" => "queued",
+        "starting" => "starting",
+        "idle" => "idle",
+        "running" => "working",
+        "waiting_approval" => "needs approval",
+        "closed" => "closed",
+        "failed" => "failed",
+        _ => "unknown",
     }
+}
 
-    let mut out = Vec::new();
-    for raw in text.split('\n') {
-        if raw.trim().is_empty() {
-            out.push(String::new());
-            continue;
-        }
-        let mut line = String::new();
-        for word in raw.split_whitespace() {
-            push_word(&mut out, &mut line, width, word);
-        }
-        if !line.is_empty() {
-            out.push(line);
-        }
-    }
-    out
+fn short_key(id: &RecordId) -> String {
+    id.key_string().chars().take(8).collect()
 }
