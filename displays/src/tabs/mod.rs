@@ -141,8 +141,7 @@ impl egui_dock::TabViewer for SharedContext {
             }
             #[cfg(not(target_arch = "wasm32"))]
             TabId::Ai => {
-                // Local self-diagnosis: chat about THIS machine via the
-                // in-process Mastertech MCP tools, no remote client.
+                // No client is focused here, so chat lands in the agent's records-only session.
                 self.enhanced_ai_playground.self_diagnosis = true;
                 self.enhanced_ai_playground.focused_client = None;
                 self.enhanced_ai_playground.enhanced_ai_playground(ui);

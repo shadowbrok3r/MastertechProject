@@ -21,6 +21,7 @@ mod prompt;
 mod runner;
 mod tools;
 mod turns;
+pub mod zeroclaw;
 
 pub use dispatch::dispatch;
 pub use runner::RunnerCmd;
@@ -45,6 +46,8 @@ pub struct Config {
     pub tool_timeout_secs: u64,
     /// Days a closed thread keeps its transcript, turns and approvals.
     pub retention_days: u64,
+    /// ZeroClaw's memory over its gateway, when `MTECH_ZC_GATEWAY`/`MTECH_ZC_TOKEN` are set.
+    pub zeroclaw: Option<Arc<zeroclaw::ZeroclawMemory>>,
 }
 
 fn env_trimmed(key: &str) -> Option<String> {
@@ -66,6 +69,11 @@ impl Config {
         let node = env_trimmed("MTECH_AGENT_NODE")
             .or_else(|| env_trimmed("HOSTNAME"))
             .unwrap_or_else(|| "admin-agent".to_string());
+        let zeroclaw = zeroclaw::ZeroclawMemory::from_env().map(Arc::new);
+        match &zeroclaw {
+            Some(m) => log::info!("codex: ZeroClaw memory via {}", m.base()),
+            None => log::warn!("codex: MTECH_ZC_GATEWAY/MTECH_ZC_TOKEN unset; sessions run without ZeroClaw memory"),
+        }
         Some(Self {
             url,
             token,
@@ -79,6 +87,7 @@ impl Config {
             tool_output_chars: env_parse("MTECH_CODEX_TOOL_OUTPUT_CHARS", 24_000usize).max(1_000),
             tool_timeout_secs: env_parse("MTECH_CODEX_TOOL_TIMEOUT_SECS", 320u64).max(10),
             retention_days: env_parse("MTECH_AGENT_EVENT_RETENTION_DAYS", 30u64).max(1),
+            zeroclaw,
         })
     }
 
@@ -91,6 +100,16 @@ impl Config {
             provenance_slug(&self.node, false)
         )
     }
+}
+
+/// Connection string of a technician's session with no machine in scope.
+pub fn general_connection(email: &str) -> String {
+    format!("general:{}", email.trim().to_lowercase())
+}
+
+/// A session with no machine in scope: records-only tools, no remote actions.
+pub fn is_general(connection_string: &str) -> bool {
+    connection_string.starts_with("general:")
 }
 
 /// Lowercases and replaces anything outside the grammar's segment alphabet.

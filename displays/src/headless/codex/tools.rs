@@ -74,6 +74,32 @@ pub const DIAGNOSTICIAN_TOOLS: &[&str] = &[
     "desktop_scroll",
 ];
 
+/// Tools of a session with no machine in scope: records only; `MTECH_CODEX_GENERAL_TOOLS` replaces the list.
+pub const GENERAL_TOOLS: &[&str] = &[
+    "query_surrealdb",
+    "search_diagnostics",
+    "get_diagnostic_session",
+    "get_computer_details",
+    "get_service_order",
+    "search_service_orders",
+    "get_customer_details",
+    "crash_intel_search",
+    "crash_intel_signature",
+    "known_bad_driver_list",
+    "driver_snapshots_list",
+    "driver_snapshot_diff",
+    "validate_connection_links",
+    "scripts_list",
+    "list_registry_plugins",
+    "get_ai_task_status",
+    "benchmark_results_query",
+    "create_ai_task",
+    "add_ai_task_steps",
+    "edit_ai_task_item",
+    "remove_ai_task_item",
+    "repair_entity_links",
+];
+
 /// Tools a technician must approve each time; `MTECH_CODEX_PROMPT_TOOLS` replaces the list.
 pub const PROMPT_TOOLS: &[&str] = &[
     "remote_exec_start",
@@ -103,6 +129,7 @@ fn env_list(key: &str, default: &[&str]) -> Vec<String> {
 #[derive(Debug, Clone)]
 pub struct ToolPolicy {
     pub allowed: Vec<String>,
+    pub general: Vec<String>,
     pub prompt: Vec<String>,
 }
 
@@ -110,8 +137,14 @@ impl ToolPolicy {
     pub fn from_env() -> Self {
         Self {
             allowed: env_list("MTECH_CODEX_TOOLS", DIAGNOSTICIAN_TOOLS),
+            general: env_list("MTECH_CODEX_GENERAL_TOOLS", GENERAL_TOOLS),
             prompt: env_list("MTECH_CODEX_PROMPT_TOOLS", PROMPT_TOOLS),
         }
+    }
+
+    /// The list a session draws from: machine tools, or records only when no machine is in scope.
+    pub fn list_for(&self, general: bool) -> &[String] {
+        if general { &self.general } else { &self.allowed }
     }
 
     pub fn needs_approval(&self, tool: &str) -> bool {
@@ -165,6 +198,7 @@ impl ToolHost {
         let missing: Vec<&String> = policy
             .allowed
             .iter()
+            .chain(policy.general.iter())
             .filter(|name| !catalog.iter().any(|t| t.name == name.as_str()))
             .collect();
         if !missing.is_empty() {
@@ -174,9 +208,9 @@ impl ToolHost {
     }
 
     /// Names actually offered to the model, in policy order.
-    pub fn offered(&self) -> Vec<String> {
+    pub fn offered(&self, general: bool) -> Vec<String> {
         self.policy
-            .allowed
+            .list_for(general)
             .iter()
             .filter(|name| self.catalog.iter().any(|t| t.name == name.as_str()))
             .cloned()
@@ -184,8 +218,8 @@ impl ToolHost {
     }
 
     /// `thread/start.dynamicTools` entries for the offered tools.
-    pub fn dynamic_specs(&self) -> Vec<Value> {
-        self.offered()
+    pub fn dynamic_specs(&self, general: bool) -> Vec<Value> {
+        self.offered(general)
             .into_iter()
             .filter_map(|name| self.catalog.iter().find(|t| t.name == name.as_str()))
             .map(|tool| {
@@ -201,8 +235,8 @@ impl ToolHost {
     }
 
     /// Runs one tool and renders its result as the text the model receives.
-    pub async fn call(&self, name: &str, arguments: Value) -> ToolOutcome {
-        if !self.offered().iter().any(|t| t == name) {
+    pub async fn call(&self, name: &str, arguments: Value, general: bool) -> ToolOutcome {
+        if !self.offered(general).iter().any(|t| t == name) {
             return ToolOutcome::failure(format!("tool `{name}` is not available in this session"));
         }
         let params: CallToolRequestParams = match serde_json::from_value(json!({
@@ -276,8 +310,12 @@ impl ToolOutcome {
     }
 }
 
-/// Refuses a machine-scoped call aimed at another client.
+/// Refuses a machine-scoped call aimed at another client; a general session has no
+/// machine to guard and relies on its records-only tool list instead.
 pub fn scope_violation(arguments: &Value, connection_string: &str) -> Option<String> {
+    if super::is_general(connection_string) {
+        return None;
+    }
     let target = arguments.get("connection_string").and_then(Value::as_str)?;
     if target.trim().eq_ignore_ascii_case(connection_string.trim()) {
         None
