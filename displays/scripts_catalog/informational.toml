@@ -1,0 +1,116 @@
+# Generated from displays::scripts::categories; display names are the wire contract.
+
+[[script]]
+id = "is-supereasybackup-installed"
+name = "Is SuperEasyBackup installed?"
+category = "informational"
+summary = ""
+pass = "Installed and active"
+warn = "Not installed OR not active"
+fail = "Script Failed To Run"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 10
+
+[[script]]
+id = "is-webroot-installed"
+name = "Is Webroot installed?"
+category = "informational"
+summary = ""
+pass = "Installed and active"
+warn = "Not installed OR not active"
+fail = "Script Failed To Run"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 20
+
+[[script]]
+id = "is-superantispyware-installed"
+name = "Is SuperAntiSpyware installed?"
+category = "informational"
+summary = ""
+pass = "Installed and active"
+warn = "Not installed OR not active"
+fail = "Script Failed To Run"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 30
+
+[[script]]
+id = "are-there-scheduled-tasks-for-it"
+name = "Are there scheduled tasks for it?"
+category = "informational"
+summary = "Check if SuperAntiSpyware has scheduled tasks"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 40
+
+[[script]]
+id = "is-windows-activated"
+name = "Is Windows Activated?"
+category = "informational"
+summary = "Check Windows activation status"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 50
+
+[[script]]
+id = "is-hibernation-sleep-enabled"
+name = "Is Hibernation/Sleep enabled?"
+category = "informational"
+summary = "Check power settings status"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 60
+
+[[script]]
+id = "any-recent-blue-screens"
+name = "Any Recent Blue Screens?"
+category = "informational"
+summary = "Provider-scoped 30-day scan for bugchecks, Kernel-Power 41 resets, WHEA errors, TDRs and crash dumps"
+pass = "No bugcheck record, no Kernel-Power 41 with a bugcheck code, no fatal WHEA, no TDR, no crash dumps in the window"
+warn = "Kernel-Power 41 with BugcheckCode 0 (power loss / hard reset, not a BSOD), EventLog 6008, TDR, corrected WHEA, or an incomplete event query"
+fail = "Any bugcheck record (WER-SystemErrorReporting / BugCheck 1001), Kernel-Power 41 with a non-zero bugcheck code, fatal WHEA, or a crash dump in the window"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 70
+
+[[script]]
+id = "when-was-the-last-service-date"
+name = "When Was The Last Service Date?"
+category = "informational"
+summary = "Query last service date from database"
+timeout_secs = 600
+surfaces = []
+order = 80
+
+[[script]]
+id = "windows-version"
+name = "Windows Version"
+category = "informational"
+summary = ""
+pass = "Windows 11"
+warn = "Windows 10"
+fail = "Script Failed To Run"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 90
+
+[[script]]
+id = "check-updates"
+name = "Check Updates"
+category = "informational"
+summary = "Check for available Windows updates"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 100
+
+[[script]]
+id = "run-prechecks"
+name = "Run Prechecks"
+category = "informational"
+summary = "Run all informational prechecks"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 110
+

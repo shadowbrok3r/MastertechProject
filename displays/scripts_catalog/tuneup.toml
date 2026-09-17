@@ -1,0 +1,155 @@
+# Generated from displays::scripts::categories; display names are the wire contract.
+
+[[script]]
+id = "data-transfer"
+name = "Data Transfer"
+category = "tuneup"
+summary = "Transfer user data to a backup location"
+timeout_secs = 7200
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 10
+
+[[script]]
+id = "activate-cps"
+name = "Activate CPS"
+category = "tuneup"
+summary = "Install and activate Webroot and SuperAntiSpyware"
+timeout_secs = 1800
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 20
+
+[[script]]
+id = "activate-seb"
+name = "Activate SEB"
+category = "tuneup"
+summary = "Install and activate SuperEasyBackup"
+timeout_secs = 1800
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 30
+
+[[script]]
+id = "install-windows-updates"
+name = "Install Windows Updates"
+category = "tuneup"
+summary = "Check for and install Windows updates"
+timeout_secs = 3600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 40
+
+[[script]]
+id = "disable-sleep-hibernation"
+name = "Disable Sleep / Hibernation"
+category = "tuneup"
+summary = "Disable sleep and hibernation power settings"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 50
+
+[[script]]
+id = "run-superantispyware-scan"
+name = "Run SuperAntiSpyware Scan"
+category = "tuneup"
+summary = "Run a full scan with SuperAntiSpyware"
+timeout_secs = 3600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 60
+
+[[script]]
+id = "run-webroot-scan"
+name = "Run Webroot Scan"
+category = "tuneup"
+summary = "Run a full scan with Webroot"
+timeout_secs = 3600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 70
+
+[[script]]
+id = "run-junkware-category"
+name = "Run Junkware Category"
+category = "tuneup"
+summary = "Remove all known junkware applications"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 80
+
+[[script]]
+id = "install-libreoffice"
+name = "Install LibreOffice"
+category = "tuneup"
+summary = "Install LibreOffice via Ninite"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 90
+
+[[script]]
+id = "disable-proxy-settings"
+name = "Disable proxy settings"
+category = "tuneup"
+summary = "Disable any configured proxy settings"
+timeout_secs = 600
+surfaces = []
+order = 100
+
+[[script]]
+id = "disable-notifications"
+name = "Disable Notifications"
+category = "tuneup"
+summary = "Disable Windows notifications and suggestions"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 110
+
+[[script]]
+id = "change-superantispyware-settings"
+name = "Change SuperAntiSpyware settings"
+category = "tuneup"
+summary = "Configure SuperAntiSpyware scheduled tasks"
+timeout_secs = 600
+surfaces = []
+order = 120
+
+[[script]]
+id = "disable-startup-apps"
+name = "Disable Startup Apps"
+category = "tuneup"
+summary = "Disable unnecessary startup applications"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 130
+
+[[script]]
+id = "unpin-copilot"
+name = "Unpin Copilot"
+category = "tuneup"
+summary = "Remove Copilot from taskbar"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 140
+
+[[script]]
+id = "align-taskbar-to-left"
+name = "Align Taskbar to left"
+category = "tuneup"
+summary = "Align Windows 11 taskbar to the left"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 150
+
+[[script]]
+id = "change-timezone-to-mountain"
+name = "Change Timezone to Mountain"
+category = "tuneup"
+summary = "Set system timezone to Mountain Standard Time"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 160
+
+[[script]]
+id = "disable-bitlocker"
+name = "Disable BitLocker"
+category = "tuneup"
+summary = "Detect and disable BitLocker encryption on all drives"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 170
+

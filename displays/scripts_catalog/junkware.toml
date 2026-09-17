@@ -1,0 +1,143 @@
+# Generated from displays::scripts::categories; display names are the wire contract.
+
+[[script]]
+id = "onelaunch"
+name = "OneLaunch"
+category = "junkware"
+summary = "Remove OneLaunch browser"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 10
+
+[[script]]
+id = "webnavigator-browser"
+name = "WebNavigator Browser"
+category = "junkware"
+summary = "Remove WebNavigator browser"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 20
+
+[[script]]
+id = "wave-browser"
+name = "Wave Browser"
+category = "junkware"
+summary = "Remove Wave Browser"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 30
+
+[[script]]
+id = "clear-browser"
+name = "Clear Browser"
+category = "junkware"
+summary = "Remove Clear Browser"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 40
+
+[[script]]
+id = "shift-browser"
+name = "Shift Browser"
+category = "junkware"
+summary = "Remove Shift Browser"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 50
+
+[[script]]
+id = "avast-browser"
+name = "Avast Browser"
+category = "junkware"
+summary = "Remove Avast Browser"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 60
+
+[[script]]
+id = "mcaffee-safe"
+name = "Mcaffee Safe"
+category = "junkware"
+summary = "Remove McAfee Safe Search"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 70
+
+[[script]]
+id = "driver-support"
+name = "Driver Support"
+category = "junkware"
+summary = "Remove Driver Support utility"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 80
+
+[[script]]
+id = "winzip"
+name = "Winzip"
+category = "junkware"
+summary = "Remove Winzip"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 90
+
+[[script]]
+id = "uninstall-microsoft-365"
+name = "Uninstall Microsoft 365"
+category = "junkware"
+summary = "Uninstall Microsoft 365 / Office apps"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 100
+
+[[script]]
+id = "uninstall-onedrive"
+name = "Uninstall OneDrive"
+category = "junkware"
+summary = "Uninstall Microsoft OneDrive"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 110
+
+[[script]]
+id = "disable-onedrive-startup"
+name = "Disable OneDrive Startup"
+category = "junkware"
+summary = "Prevent OneDrive from launching at startup"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 120
+
+[[script]]
+id = "disable-edge-startup-boost"
+name = "Disable Edge Startup Boost"
+category = "junkware"
+summary = "Disable Microsoft Edge startup boost and background running"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 130
+
+[[script]]
+id = "scan-for-browser-hijackers"
+name = "Scan For Browser Hijackers"
+category = "junkware"
+summary = "Read-only sweep of browser policy keys, shortcut arguments, autostart entries and profile homepage / search overrides"
+pass = "No hijack findings"
+warn = "Findings reported"
+fail = "Scan failed to run"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 140
+
+[[script]]
+id = "remove-browser-hijackers"
+name = "Remove Browser Hijackers"
+category = "junkware"
+summary = "Clear hijack policy values, strip URLs from browser shortcuts and remove browser autostart entries; profile overrides are reported for the tech"
+pass = "Nothing left to remove"
+warn = "Profile overrides still need a manual reset"
+fail = "Cleanup failed to run"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 150
+
