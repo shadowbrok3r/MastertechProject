@@ -270,6 +270,26 @@ impl AgentThread {
         Ok(rows.into_iter().next())
     }
 
+    /// Deletes the transcript, turns and approvals of threads closed longer ago
+    /// than `retention` (a duration such as `30d`); the thread rows stay, stamped `purged_at`.
+    pub async fn purge_closed_before(retention: &str) -> anyhow::Result<usize> {
+        let mut res = db()
+            .query(
+                "LET $old = (SELECT VALUE id FROM agent_thread WHERE status IN ['closed', 'failed'] \
+                 AND purged_at = NONE AND closed_at != NONE \
+                 AND closed_at < time::now() - type::duration($retention)); \
+                 DELETE agent_event WHERE thread IN $old; \
+                 DELETE agent_turn WHERE thread IN $old; \
+                 DELETE agent_approval WHERE thread IN $old; \
+                 UPDATE agent_thread SET purged_at = time::now() WHERE id IN $old; \
+                 RETURN array::len($old);",
+            )
+            .bind(("retention", retention.to_string()))
+            .await?;
+        let purged: Option<i64> = res.take(5).unwrap_or_default();
+        Ok(purged.unwrap_or(0).max(0) as usize)
+    }
+
     /// Newest threads for a session list; `include_closed` widens past the live ones.
     pub async fn list_recent(limit: usize, include_closed: bool) -> anyhow::Result<Vec<Self>> {
         let sql = if include_closed {

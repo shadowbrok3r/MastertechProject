@@ -43,7 +43,7 @@
     },
     {
       "path": "database/schema/assist_request.surql",
-      "hash": "2853ab39266c8979b2c319651fcef96251c65baa83f7d170f7e03cf0a32c2c4b"
+      "hash": "4b46be61b6d76859c6e78fb530c4e5a759d463e353368453240d4e0d5005a8ab"
     },
     {
       "path": "database/schema/audit_log.surql",

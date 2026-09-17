@@ -11,6 +11,7 @@ use crate::{
 
 use std::collections::HashMap;
 use crossbeam::channel::{Receiver, Sender};
+use database::schema::RecordIdExt;
 use serde::Serialize;
 
 /// A chat thread loaded from the database, delivered to the UI thread.
@@ -47,7 +48,7 @@ pub struct EnhancedAiPlayground {
     #[cfg(not(target_arch = "wasm32"))]
     #[serde(skip)]
     pub claude: crate::ai::claude_code::ClaudeCodeSession,
-    /// Threads whose turns run on the ZeroClaw agent channel. Input in one of
+    /// Threads whose turns run on the Codex agent broker. Input in one of
     /// these goes to the agent, never to the OpenAI-compatible endpoint.
     #[serde(skip)]
     pub agent_threads: std::collections::HashSet<String>,
@@ -58,13 +59,13 @@ pub struct EnhancedAiPlayground {
     agent_flag_tx: Sender<String>,
     #[serde(skip)]
     agent_flag_rx: Receiver<String>,
-    /// Agent conversations this user may open: their own, or every one for root.
+    /// Agent sessions this user may open: their own, or every one for root.
     #[serde(skip)]
-    agent_index: Vec<database::schema::AssistThread>,
+    agent_index: Vec<database::schema::AgentThread>,
     #[serde(skip)]
-    agent_index_tx: Sender<Vec<database::schema::AssistThread>>,
+    agent_index_tx: Sender<Vec<database::schema::AgentThread>>,
     #[serde(skip)]
-    agent_index_rx: Receiver<Vec<database::schema::AssistThread>>,
+    agent_index_rx: Receiver<Vec<database::schema::AgentThread>>,
     #[serde(skip)]
     last_index_poll: Option<web_time::Instant>,
     /// Threads already backfilled from the database, so a thread opened from the
@@ -100,7 +101,7 @@ impl Default for EnhancedAiPlayground {
         let (load_tx, load_rx) = crossbeam::channel::unbounded::<Vec<LoadedThread>>();
         let (agent_flag_tx, agent_flag_rx) = crossbeam::channel::unbounded::<String>();
         let (agent_index_tx, agent_index_rx) =
-            crossbeam::channel::unbounded::<Vec<database::schema::AssistThread>>();
+            crossbeam::channel::unbounded::<Vec<database::schema::AgentThread>>();
         Self {
             selected_thread: String::new(),
             chat_title: HashMap::new(),
@@ -171,18 +172,14 @@ impl EnhancedAiPlayground {
                     .to_string(),
                 None => "Run an initial diagnostic of this machine using the Mastertech tools.".to_string(),
             };
-            // ZeroClaw route: the message is queued for the agent channel, which
-            // keeps conversation history and a per-technician session.
+            // Broker route: a named machine goes to the Codex agent, whose session
+            // every Mastertech instance can follow; the local host stays on Claude Code.
             #[cfg(feature = "tokio")]
             {
-                if crate::ai::mcp_chat::zeroclaw_gateway().is_some() {
+                if connection_string.is_some() {
                     self.thread_engine
-                        .insert(thread_id.clone(), "ZeroClaw agent".to_string());
-                    let full = match &connection_string {
-                        Some(cs) => format!("DIAGNOSE mode. Target client connection_string = {cs}. {prompt}"),
-                        None => format!("DIAGNOSE mode, local host. {prompt}"),
-                    };
-                    self.send_to_agent(thread_id.clone(), full, connection_string);
+                        .insert(thread_id.clone(), "Codex agent".to_string());
+                    self.send_to_agent(thread_id.clone(), prompt, connection_string);
                     return;
                 }
             }
@@ -297,7 +294,7 @@ impl EnhancedAiPlayground {
                     #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
                     let agent_index = self.agent_index.clone();
                     #[cfg(not(all(not(target_arch = "wasm32"), feature = "tokio")))]
-                    let agent_index: Vec<database::schema::AssistThread> = Vec::new();
+                    let agent_index: Vec<database::schema::AgentThread> = Vec::new();
                     if self.threads.is_empty() && agent_index.is_empty() {
                         ui.label(RichText::new("No chats yet").weak());
                         return;
@@ -319,19 +316,23 @@ impl EnhancedAiPlayground {
                             return;
                         }
                         ui.separator();
-                        ui.label(RichText::new("Agent conversations").weak().small());
+                        ui.label(RichText::new("Agent sessions").weak().small());
                         for t in &agent_index {
-                            // A conversation the agent still owes a reply to is
-                            // the one a tech is waiting on, so it is marked.
-                            let mark = if t.awaiting_reply { icons::STATUS_WAIT } else { icons::ROBOT };
-                            let who = t.tech.as_deref().unwrap_or("unattributed");
-                            let line = format!("{mark}  {}  ({} msg)", t.label(), t.messages);
+                            // A session mid-turn or waiting on a decision is the one a tech is watching.
+                            let mark = match t.status.as_str() {
+                                "running" => icons::STATUS_ON,
+                                "waiting_approval" => icons::LOCK,
+                                _ => icons::ROBOT,
+                            };
+                            let who = t.requested_by.as_deref().unwrap_or("unattributed");
+                            let key = t.id.key_string();
+                            let line = format!("{mark}  {}  ({})", t.label(), t.status);
                             if ui
-                                .selectable_label(selected == t.thread, RichText::new(line))
-                                .on_hover_text(format!("{who}\nlast activity {}", t.last_at))
+                                .selectable_label(selected == key, RichText::new(line))
+                                .on_hover_text(format!("{who}\n{}", t.connection_string))
                                 .clicked()
                             {
-                                picked = Some(t.thread.clone());
+                                picked = Some(key);
                             }
                         }
                     });
@@ -759,7 +760,8 @@ impl EnhancedAiPlayground {
         }
     }
 
-    /// Queues one technician message for the agent and marks the thread agent-owned.
+    /// Queues one technician message for the agent: a turn on an open session, or a
+    /// request that opens one for the target machine.
     #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
     fn send_to_agent(
         &mut self,
@@ -767,32 +769,66 @@ impl EnhancedAiPlayground {
         text: String,
         connection_string: Option<String>,
     ) {
+        use database::schema::{AgentThread, AgentTurn, AssistRequest, RecordId};
+
         self.agent_threads.insert(thread_id.clone());
-        // Only a diagnosis names its target; plain chat passes None and is not gated.
-        let target = connection_string.clone();
-        let ctx = database::schema::AssistContext {
-            tech: crate::get_current_user_from_auth().map(|u| u.get_email().to_string()),
-            service_number: self.service_number.clone(),
-            connection_string: connection_string.or_else(|| self.focused_client.clone()),
-        };
+        let session = self.agent_index.iter().any(|t| t.id.key_string() == thread_id);
+        let target = connection_string.or_else(|| self.focused_client.clone());
+        let user = crate::get_current_user_from_auth();
+        let tech = user.as_ref().map(|u| u.get_email().to_string());
+        let store = user
+            .as_ref()
+            .and_then(|u| serde_json::to_value(u).ok())
+            .and_then(|v| v.get("store").and_then(serde_json::Value::as_str).map(str::to_string));
+        let service_number = self.service_number.clone();
         let tx = self.response_tx.clone();
         let tid = thread_id.clone();
         PlatformSpawner::spawn(async move {
-            let err = |text: String| ChatMessage {
+            let say = |content: ChatMessageType| ChatMessage {
                 id: uuid::Uuid::new_v4().to_string(),
                 thread_id: tid.clone(),
                 ts: crate::tabs::ai_playground::now_ts(),
                 from: SentFrom::Assistant,
-                content: ChatMessageType::Error(text),
+                content,
             };
-            if let Some(cs) = target.as_deref() {
-                if let Some(block) = database::schema::ConnectedClient::diagnosis_block(cs).await {
-                    let _ = tx.try_send(err(format!("Not dispatched — {cs}: {block}.")));
-                    return;
+            if session {
+                if let Err(e) = AgentTurn::ask(&RecordId::new("agent_thread", tid.as_str()), "start", &text).await {
+                    let _ = tx.try_send(say(ChatMessageType::Error(format!("could not queue the message: {e}"))));
                 }
+                return;
             }
-            if let Err(e) = database::schema::AssistMessage::ask(&tid, &text, &ctx).await {
-                let _ = tx.try_send(err(format!("could not reach the agent queue: {e}")));
+            let Some(cs) = target else {
+                let _ = tx.try_send(say(ChatMessageType::Error(
+                    "Agent diagnosis needs a target machine: focus a client in the admin console first.".into(),
+                )));
+                return;
+            };
+            if let Some(block) = database::schema::ConnectedClient::diagnosis_block(&cs).await {
+                let _ = tx.try_send(say(ChatMessageType::Error(format!("Not dispatched — {cs}: {block}."))));
+                return;
+            }
+            // A machine with a live session takes the message as a turn; otherwise a request opens one.
+            match AgentThread::active_for_connection(&cs).await {
+                Ok(Some(thread)) => match AgentTurn::ask(&thread.id, "start", &text).await {
+                    Ok(_) => {
+                        let _ = tx.try_send(say(ChatMessageType::Text(format!(
+                            "Sent to the live agent session for {cs}; open it under Agent sessions to follow along."
+                        ))));
+                    }
+                    Err(e) => {
+                        let _ = tx.try_send(say(ChatMessageType::Error(format!("could not queue the message: {e}"))));
+                    }
+                },
+                _ => match AssistRequest::create_from_chat(&cs, tech.as_deref(), store.as_deref(), service_number.as_deref(), &text).await {
+                    Ok(_) => {
+                        let _ = tx.try_send(say(ChatMessageType::Text(format!(
+                            "Diagnosis requested for {cs}. The agent session appears under Agent sessions within a minute."
+                        ))));
+                    }
+                    Err(e) => {
+                        let _ = tx.try_send(say(ChatMessageType::Error(format!("could not request a diagnosis: {e}"))));
+                    }
+                },
             }
         });
     }
@@ -817,7 +853,7 @@ impl EnhancedAiPlayground {
 
         let tx = self.agent_index_tx.clone();
         PlatformSpawner::spawn(async move {
-            use database::schema::{User, UserAuthorization};
+            use database::schema::{AgentThread, User, UserAuthorization};
             // Scope is derived here, not passed in: a stale cached flag would
             // widen what a technician can read.
             let me = User::get_current_user_from_auth().await.ok().flatten();
@@ -830,10 +866,14 @@ impl EnhancedAiPlayground {
                 let _ = tx.try_send(Vec::new());
                 return;
             }
-            match database::schema::AssistMessage::thread_index(scope.as_deref(), 500).await {
-                Ok(index) => {
+            match AgentThread::list_recent(200, true).await {
+                Ok(threads) => {
+                    let index: Vec<AgentThread> = threads
+                        .into_iter()
+                        .filter(|t| scope.as_deref().is_none_or(|me| t.requested_by.as_deref() == Some(me)))
+                        .collect();
                     let _ = tx.try_send(index);
-                },
+                }
                 Err(e) => log::warn!("poll_agent_index: {e}"),
             }
         });
@@ -883,33 +923,36 @@ impl EnhancedAiPlayground {
             self.hydrated.insert(thread.clone());
         }
         PlatformSpawner::spawn(async move {
-            use database::schema::RecordIdExt;
-            let rows =
-                database::schema::AssistMessage::thread_history(&thread, 200).await.unwrap_or_default();
+            use database::schema::{AgentEvent, RecordId};
+            let rows = AgentEvent::history(&RecordId::new("agent_thread", thread.as_str()), 0, 300)
+                .await
+                .unwrap_or_default();
             if !rows.is_empty() {
                 let _ = flag_tx.try_send(thread.clone());
             }
             for row in rows {
+                // A streaming row changes under one id; it lands once complete.
+                if !row.done {
+                    continue;
+                }
                 let id = row.id.key_string();
                 if seen.contains(&id) {
                     continue;
                 }
-                let (from, content) = if row.direction == "out" && row.error.is_some() {
-                    (SentFrom::Assistant, ChatMessageType::Error(row.text.clone()))
-                } else if row.direction == "out" {
-                    (SentFrom::Assistant, ChatMessageType::Text(row.text.clone()))
-                } else if row.status == "failed" {
-                    (
+                let (from, content) = match row.kind.as_str() {
+                    "agent" => (SentFrom::Assistant, ChatMessageType::Text(row.text.clone())),
+                    "error" => (SentFrom::Assistant, ChatMessageType::Error(row.text.clone())),
+                    "tool_call" | "command" => (
                         SentFrom::Assistant,
-                        ChatMessageType::Error(format!(
-                            "the agent never received this: {}",
-                            row.error.clone().unwrap_or_else(|| "unknown error".into())
+                        ChatMessageType::Text(format!(
+                            "{}{}",
+                            crate::ai::claude_code::TOOL_PREFIX,
+                            row.text.lines().next().unwrap_or_default()
                         )),
-                    )
-                } else if hydrate {
-                    (SentFrom::Me, ChatMessageType::Text(row.text.clone()))
-                } else {
-                    continue;
+                    ),
+                    "approval" => (SentFrom::Assistant, ChatMessageType::Text(format!("{} {}", icons::LOCK, row.text))),
+                    "user" if hydrate => (SentFrom::Me, ChatMessageType::Text(row.text.clone())),
+                    _ => continue,
                 };
                 let _ = tx.try_send(ChatMessage {
                     id,
