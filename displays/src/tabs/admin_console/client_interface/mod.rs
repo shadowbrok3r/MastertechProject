@@ -128,6 +128,10 @@ pub struct WebSocketClient {
     #[cfg(not(target_arch="wasm32"))]
     pub beta_terminal: BetaTerminal,
     pub use_beta_terminal: bool,
+    /// This session drives the machine the app is running on, over the in-process
+    /// transport. Hides the pages and menus that only mean something remotely, and
+    /// keeps the session out of the DB row the local agent already owns.
+    pub local_only: bool,
     #[cfg(not(target_arch="wasm32"))]
     stop_tx: Option<crossbeam::channel::Sender<()>>,
     #[cfg(not(target_arch="wasm32"))]
@@ -245,6 +249,25 @@ impl Drop for WebSocketClient {
 }
 
 impl WebSocketClient {
+    /// Builds the view for this machine over an in-process transport.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn new_local(
+        transport: AdminTransport,
+        client: ConnectedClient,
+        toolbox: FileSystem,
+    ) -> Self {
+        let mut view = Self::new(transport, client, toolbox);
+        view.local_only = true;
+        view
+    }
+
+    /// Prefix that distinguishes this session from an admin session to the same
+    /// machine, so their egui ids cannot collide when both are open. Empty for a
+    /// remote session, which keeps every existing console id byte-identical.
+    pub fn id_prefix(&self) -> &'static str {
+        if self.local_only { "local-" } else { "" }
+    }
+
     pub fn new(transport: AdminTransport, client: ConnectedClient, toolbox: FileSystem) -> Self {
         let display_state_channel = <WsDisplayState>::create_unbounded_channel();
         let (send_cmd_tx, send_cmd_rx) = crossbeam::channel::unbounded();
@@ -315,6 +338,7 @@ Get-WmiObject")
             #[cfg(not(target_arch="wasm32"))]
             beta_terminal: BetaTerminal::new(),
             use_beta_terminal: false,
+            local_only: false,
             #[cfg(not(target_arch="wasm32"))]
             stop_tx: if cfg!(not(target_arch="wasm32")) { Some(stop_tx) } else { None },
             client,

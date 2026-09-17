@@ -55,7 +55,9 @@ impl WebSocketClient {
     /// the live-query scope and the sidepanel list. Conditional on the row
     /// being `false` so healthy sessions produce no write or live fan-out.
     fn mark_row_connected(&mut self) {
-        if self.row_connected_written {
+        // The local agent's own check-in owns `connected` on this row; a second
+        // writer in the same process would race it.
+        if self.local_only || self.row_connected_written {
             return;
         }
         self.row_connected_written = true;

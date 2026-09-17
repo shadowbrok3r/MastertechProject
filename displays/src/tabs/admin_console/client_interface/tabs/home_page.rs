@@ -566,7 +566,11 @@ impl WebSocketClient {
             HomeSubTab::Overview => {
                 ScrollArea::vertical()
                     .auto_shrink([false, false])
-                    .id_salt(format!("home-overview-{}", self.client.connection_string))
+                    .id_salt(format!(
+                        "home-overview-{}{}",
+                        self.id_prefix(),
+                        self.client.connection_string
+                    ))
                     .show(ui, |ui| {
                         self.resource_monitor.show_compact_overview(ui);
                     });
@@ -577,7 +581,11 @@ impl WebSocketClient {
                 self.resource_monitor.pump_telemetry();
                 ScrollArea::vertical()
                     .auto_shrink([false, false])
-                    .id_salt(format!("home-processes-{}", self.client.connection_string))
+                    .id_salt(format!(
+                        "home-processes-{}{}",
+                        self.id_prefix(),
+                        self.client.connection_string
+                    ))
                     .show(ui, |ui| {
                         self.resource_monitor.process_table_viewer.show(ui);
                     });
