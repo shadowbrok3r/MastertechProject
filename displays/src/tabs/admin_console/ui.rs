@@ -85,6 +85,7 @@ pub(crate) fn transport_color(ui: &Ui, kind: super::client_interface::TransportK
         TransportKind::Tcp => theme::success(ui),
         TransportKind::Relay => theme::warn(ui),
         TransportKind::WebSocket => theme::info(ui),
+        TransportKind::Local => theme::success(ui),
     }
 }
 
@@ -273,6 +274,7 @@ impl AdminConsole {
                                         TransportKind::Tcp => ("TCP", "Direct TCP (same network)"),
                                         TransportKind::Relay => ("RELAY", "Relay tunnel via websocket server"),
                                         TransportKind::WebSocket => ("WS", "Legacy WebSocket relay room"),
+                                        TransportKind::Local => ("LOCAL", "This machine, in-process"),
                                     };
                                     let color = if session_up {
                                         transport_color(ui, kind)

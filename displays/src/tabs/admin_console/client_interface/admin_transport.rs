@@ -66,6 +66,8 @@ pub enum TransportKind {
     WebSocket,
     Tcp,
     Relay,
+    /// In-process: this app driving its own machine, with no socket.
+    Local,
 }
 
 pub struct AdminTransport {
@@ -109,6 +111,24 @@ enum AdminTransportInner {
         /// the live path.
         tunnel_active: Arc<AtomicBool>,
     },
+    /// In-process peer. Same channel pair as `Tcp` minus the socket, so there is
+    /// no dial, no handshake, no ping/pong and no retry loop.
+    #[cfg(not(target_arch = "wasm32"))]
+    Local {
+        out_tx: OutTx,
+        in_rx: InboundReceiver,
+        closed: bool,
+    },
+}
+
+/// The far end of a [`AdminTransportInner::Local`] pair, handed to the host so it
+/// can run commands in this process and write replies back.
+#[cfg(not(target_arch = "wasm32"))]
+pub struct LocalPeer {
+    /// Frames the admin side sent, for the host to execute.
+    pub out_rx: tokio::sync::mpsc::UnboundedReceiver<TcpFrame>,
+    /// Where the host writes replies; this is the admin side inbound queue.
+    pub in_tx: InboundSink,
 }
 
 #[derive(Debug)]
@@ -295,6 +315,44 @@ pub fn inbound_channel(label: impl Into<String>) -> (InboundSink, InboundReceive
     )
 }
 
+/// Outbound frame push shared by the `Tcp` and `Local` variants.
+fn push_outbound(out_tx: &OutTx, closed: bool, msg: WsMessage) {
+    if closed {
+        return;
+    }
+    match msg {
+        WsMessage::Binary(b) => {
+            let _ = out_tx.send(TcpFrame::Binary(b.into()));
+        }
+        WsMessage::Text(t) => {
+            let _ = out_tx.send(TcpFrame::Text(t.into()));
+        }
+        // Ping/Pong/Close are WS-framing concepts with no meaning on either path.
+        _ => {}
+    }
+}
+
+/// Inbound pop shared by the `Tcp` and `Local` variants.
+fn pop_inbound(in_rx: &InboundReceiver, closed: &mut bool) -> Option<WsEvent> {
+    match in_rx.try_recv() {
+        Ok(ev) => {
+            if matches!(&ev, WsEvent::Closed) {
+                *closed = true;
+            }
+            Some(ev)
+        }
+        Err(TryRecvError::Empty) => None,
+        Err(TryRecvError::Disconnected) => {
+            if *closed {
+                None
+            } else {
+                *closed = true;
+                Some(WsEvent::Closed)
+            }
+        }
+    }
+}
+
 impl Drop for AdminTransport {
     fn drop(&mut self) {
         if let AdminTransportInner::Tcp {
@@ -304,6 +362,10 @@ impl Drop for AdminTransport {
             // A replaced or dropped handle must not leave its background
             // session task dialing (or holding a phantom session).
             shutdown.store(true, Ordering::Relaxed);
+            let _ = out_tx.send(TcpFrame::Shutdown);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let AdminTransportInner::Local { out_tx, .. } = &self.inner {
             let _ = out_tx.send(TcpFrame::Shutdown);
         }
     }
@@ -329,6 +391,29 @@ impl AdminTransport {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn from_tcp(target_addr: String, connection_string: String) -> Self {
         Self::spawn_session(Some(target_addr), connection_string)
+    }
+
+    /// Build an in-process pair: this handle for the admin side, and a [`LocalPeer`]
+    /// for the host that runs the commands.
+    ///
+    /// The session is open the moment it exists, so `WsEvent::Opened` is queued
+    /// here rather than after a handshake. That is what lets the receive path
+    /// bootstrap a local session through exactly the same code as a remote one.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn from_local(label: &str) -> (Self, LocalPeer) {
+        let (out_tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<TcpFrame>();
+        let (in_tx, in_rx) = inbound_channel(format!("admin_transport.inbound[local:{label}]"));
+        let _ = in_tx.send(WsEvent::Opened);
+        (
+            Self {
+                inner: AdminTransportInner::Local {
+                    out_tx,
+                    in_rx,
+                    closed: false,
+                },
+            },
+            LocalPeer { out_rx, in_tx },
+        )
     }
 
     /// Spawn a session that runs over the relay tunnel from the start, never
@@ -416,6 +501,8 @@ impl AdminTransport {
                     TransportKind::Tcp
                 }
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            AdminTransportInner::Local { .. } => TransportKind::Local,
         }
     }
 
@@ -428,6 +515,8 @@ impl AdminTransport {
             AdminTransportInner::Tcp {
                 closed, shutdown, ..
             } => *closed || shutdown.load(Ordering::Relaxed),
+            #[cfg(not(target_arch = "wasm32"))]
+            AdminTransportInner::Local { closed, .. } => *closed,
         }
     }
 
@@ -435,21 +524,10 @@ impl AdminTransport {
     pub fn send(&mut self, msg: WsMessage) {
         match &mut self.inner {
             AdminTransportInner::WebSocket { sender, .. } => sender.send(msg),
-            AdminTransportInner::Tcp { out_tx, closed, .. } => {
-                if *closed {
-                    return;
-                }
-                match msg {
-                    WsMessage::Binary(b) => {
-                        let _ = out_tx.send(TcpFrame::Binary(b.into()));
-                    }
-                    WsMessage::Text(t) => {
-                        let _ = out_tx.send(TcpFrame::Text(t.into()));
-                    }
-                    // Ping/Pong/Close are WS-framing concepts; on TCP we
-                    // rely on the socket itself for liveness/teardown.
-                    _ => {}
-                }
+            AdminTransportInner::Tcp { out_tx, closed, .. } => push_outbound(out_tx, *closed, msg),
+            #[cfg(not(target_arch = "wasm32"))]
+            AdminTransportInner::Local { out_tx, closed, .. } => {
+                push_outbound(out_tx, *closed, msg)
             }
         }
     }
@@ -505,23 +583,9 @@ impl AdminTransport {
                     return Some(ev);
                 }
             },
-            AdminTransportInner::Tcp { in_rx, closed, .. } => match in_rx.try_recv() {
-                Ok(ev) => {
-                    if matches!(&ev, WsEvent::Closed) {
-                        *closed = true;
-                    }
-                    Some(ev)
-                }
-                Err(TryRecvError::Empty) => None,
-                Err(TryRecvError::Disconnected) => {
-                    if *closed {
-                        None
-                    } else {
-                        *closed = true;
-                        Some(WsEvent::Closed)
-                    }
-                }
-            },
+            AdminTransportInner::Tcp { in_rx, closed, .. } => pop_inbound(in_rx, closed),
+            #[cfg(not(target_arch = "wasm32"))]
+            AdminTransportInner::Local { in_rx, closed, .. } => pop_inbound(in_rx, closed),
         }
     }
 
@@ -546,6 +610,11 @@ impl AdminTransport {
                 // Still send Shutdown so an *active* writer task tears
                 // down cleanly (graceful FIN) instead of the retry loop
                 // observing the atomic.
+                let _ = out_tx.send(TcpFrame::Shutdown);
+                *closed = true;
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            AdminTransportInner::Local { out_tx, closed, .. } => {
                 let _ = out_tx.send(TcpFrame::Shutdown);
                 *closed = true;
             }
@@ -1484,5 +1553,127 @@ mod inbound_queue_tests {
 
         drop(tx2);
         assert!(matches!(rx.try_recv(), Err(TryRecvError::Disconnected)));
+    }
+}
+
+/// The in-process transport. These prove the admin side behaves identically to a
+/// socket session, which is what lets every viewer and the whole receive path stay
+/// unchanged.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod local_transport_tests {
+    use super::*;
+
+    fn binary(byte: u8, len: usize) -> WsMessage {
+        WsMessage::Binary(vec![byte; len])
+    }
+
+    /// A local session has no dial and no handshake, so it is open on arrival.
+    /// This is what makes the receive path bootstrap it through the remote code.
+    #[test]
+    fn a_local_session_is_open_before_any_traffic() {
+        let (mut transport, _peer) = AdminTransport::from_local("unit");
+        assert!(matches!(transport.try_recv(), Some(WsEvent::Opened)));
+        assert_eq!(transport.kind(), TransportKind::Local);
+        assert!(!transport.is_closed());
+    }
+
+    #[test]
+    fn frames_reach_the_peer_and_ws_only_kinds_are_dropped() {
+        let (mut transport, mut peer) = AdminTransport::from_local("unit");
+
+        transport.send(binary(0x42, 8));
+        transport.send(WsMessage::Text("hello".into()));
+        transport.send(WsMessage::Ping(Vec::new()));
+        transport.send(WsMessage::Pong(Vec::new()));
+
+        match peer.out_rx.try_recv() {
+            Ok(TcpFrame::Binary(b)) => assert_eq!(b, vec![0x42; 8]),
+            other => panic!("expected a binary frame, got {other:?}"),
+        }
+        match peer.out_rx.try_recv() {
+            Ok(TcpFrame::Text(t)) => assert_eq!(t, "hello"),
+            other => panic!("expected a text frame, got {other:?}"),
+        }
+        assert!(
+            peer.out_rx.try_recv().is_err(),
+            "ping/pong are WS framing and must not reach the host"
+        );
+    }
+
+    #[test]
+    fn peer_replies_arrive_on_try_recv() {
+        let (mut transport, peer) = AdminTransport::from_local("unit");
+        assert!(matches!(transport.try_recv(), Some(WsEvent::Opened)));
+
+        let _ = peer.in_tx.send(WsEvent::Message(binary(0x07, 4)));
+        match transport.try_recv() {
+            Some(WsEvent::Message(WsMessage::Binary(b))) => assert_eq!(b, vec![0x07; 4]),
+            other => panic!("expected the reply, got {other:?}"),
+        }
+        assert!(transport.try_recv().is_none());
+    }
+
+    #[test]
+    fn close_stops_the_pump_and_latches() {
+        let (mut transport, mut peer) = AdminTransport::from_local("unit");
+        transport.close();
+
+        assert!(transport.is_closed());
+        assert!(
+            matches!(peer.out_rx.try_recv(), Ok(TcpFrame::Shutdown)),
+            "the host pump must be told to exit"
+        );
+
+        transport.send(binary(0x42, 8));
+        assert!(
+            peer.out_rx.try_recv().is_err(),
+            "sends after close must be no-ops, not unbounded growth"
+        );
+    }
+
+    /// Closing the tab drops the handle; the pump must not outlive it.
+    #[test]
+    fn dropping_the_transport_stops_the_pump() {
+        let (transport, mut peer) = AdminTransport::from_local("unit");
+        drop(transport);
+        assert!(matches!(peer.out_rx.try_recv(), Ok(TcpFrame::Shutdown)));
+    }
+
+    /// A wedged host must surface as a closed session rather than a silent hang.
+    #[test]
+    fn a_dropped_peer_closes_the_session_once() {
+        let (mut transport, peer) = AdminTransport::from_local("unit");
+        assert!(matches!(transport.try_recv(), Some(WsEvent::Opened)));
+        drop(peer);
+
+        assert!(matches!(transport.try_recv(), Some(WsEvent::Closed)));
+        assert!(transport.is_closed());
+        assert!(
+            transport.try_recv().is_none(),
+            "Closed must be reported once, not on every poll"
+        );
+    }
+
+    /// The local queue is the same bounded queue as the socket path, so a viewer
+    /// frame flood cannot grow it without bound.
+    #[test]
+    fn the_local_queue_keeps_the_socket_drop_policy() {
+        let (mut transport, peer) = AdminTransport::from_local("unit");
+        assert!(matches!(transport.try_recv(), Some(WsEvent::Opened)));
+
+        for _ in 0..(MAX_INBOUND_FRAMES + 512) {
+            let _ = peer.in_tx.send(WsEvent::Message(binary(0x42, 64)));
+        }
+        let mut drained = 0;
+        while let Some(ev) = transport.try_recv() {
+            if matches!(ev, WsEvent::Closed) {
+                break;
+            }
+            drained += 1;
+        }
+        assert!(
+            drained <= MAX_INBOUND_FRAMES,
+            "queue grew past its cap: {drained}"
+        );
     }
 }
