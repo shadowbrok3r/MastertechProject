@@ -125,6 +125,9 @@ pub struct ResourceMonitor {
     telemetry: TelemetrySnapshot,
     #[cfg(feature = "native-telemetry")]
     source: TelemetrySource,
+    /// Latched once a local snapshot arrives, so the wire payload stops replacing it.
+    #[cfg(feature = "native-telemetry")]
+    prefer_local: bool,
     /// Lowest volts seen per rail label since telemetry started.
     #[cfg(feature = "native-telemetry")]
     rail_minimums: HashMap<String, f32>,
@@ -151,6 +154,8 @@ impl Default for ResourceMonitor {
             #[cfg(feature = "native-telemetry")]
             source: TelemetrySource::default(),
             #[cfg(feature = "native-telemetry")]
+            prefer_local: false,
+            #[cfg(feature = "native-telemetry")]
             rail_minimums: HashMap::new(),
             #[cfg(feature = "native-telemetry")]
             chart_board: chart_board::ChartBoard::default(),
@@ -168,6 +173,7 @@ impl ResourceMonitor {
     pub fn set_telemetry(&mut self, snapshot: TelemetrySnapshot) {
         self.telemetry = snapshot;
         self.source = TelemetrySource::Local;
+        self.prefer_local = true;
         self.track_rail_minimums();
     }
 
@@ -208,8 +214,12 @@ impl ResourceMonitor {
 
         #[cfg(feature = "native-telemetry")]
         {
-            self.telemetry = sysinfo_convert::sysinfo_to_telemetry(&sysinfo);
-            self.source = TelemetrySource::Wire;
+            // A local snapshot carries I/O rates, page-file figures and board rails
+            // that this payload never does, so once one has arrived it stands.
+            if !self.prefer_local {
+                self.telemetry = sysinfo_convert::sysinfo_to_telemetry(&sysinfo);
+                self.source = TelemetrySource::Wire;
+            }
             self.track_rail_minimums();
             // Paused charts stop taking samples; the panels keep refreshing.
             if !self.charts_paused {
@@ -619,5 +629,53 @@ impl ResourceMonitor {
                 );
             }
         });
+    }
+}
+
+#[cfg(all(test, feature = "native-telemetry"))]
+mod telemetry_source_tests {
+    use super::*;
+
+    /// The local agent snapshot is the only one carrying real I/O rates, page-file
+    /// figures and board rails, so a wire payload arriving afterwards must not
+    /// replace it. Both paths feed the same struct, which is what made this easy
+    /// to get wrong.
+    #[test]
+    fn a_wire_payload_does_not_replace_the_local_snapshot() {
+        let mut monitor = ResourceMonitor::default();
+
+        // With nothing better available, the wire payload is the telemetry.
+        monitor.set_sysinfo(SystemInformation::default());
+        assert_eq!(monitor.source, TelemetrySource::Wire);
+        assert!(!monitor.source.io_rates_measured());
+
+        monitor.set_telemetry(TelemetrySnapshot::default());
+        assert_eq!(monitor.source, TelemetrySource::Local);
+
+        monitor.set_sysinfo(SystemInformation::default());
+        assert_eq!(
+            monitor.source,
+            TelemetrySource::Local,
+            "a wire tick clobbered the richer local snapshot"
+        );
+        assert!(
+            monitor.source.io_rates_measured(),
+            "the panels would silently fall back to unmeasured rates"
+        );
+    }
+
+    /// The latch must only cover telemetry: the wire payload still owns the
+    /// machine facts and the process list that other views read.
+    #[test]
+    fn a_wire_payload_still_fills_the_facts_it_owns() {
+        let mut monitor = ResourceMonitor::default();
+        monitor.set_telemetry(TelemetrySnapshot::default());
+        monitor.set_sysinfo(SystemInformation::default());
+
+        assert!(
+            monitor.latest_sysinfo.is_some(),
+            "tasks/mod.rs reads latest_sysinfo for the client cards"
+        );
+        assert!(monitor.machine_info.is_some(), "the machine line went blank");
     }
 }
