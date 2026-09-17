@@ -24,7 +24,6 @@ pub use queue::*;
 pub enum ScriptStatus {
     #[default]
     Pending,
-    Selected,
     Running,
     Completed,
     Failed,
@@ -35,7 +34,6 @@ impl Display for ScriptStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ScriptStatus::Pending => write!(f, "Pending"),
-            ScriptStatus::Selected => write!(f, "Selected"),
             ScriptStatus::Running => write!(f, "Running"),
             ScriptStatus::Completed => write!(f, "Completed"),
             ScriptStatus::Failed => write!(f, "Failed"),
@@ -93,6 +91,10 @@ pub struct ScriptItem {
     pub name: String,
     pub category: ScriptCategory,
     pub status: ScriptStatus,
+    /// Ticked in the catalog list. Separate from `status` so a script that has
+    /// already run can be selected again.
+    #[serde(default)]
+    pub selected: bool,
     pub description: String,
     pub pass_criteria: Option<String>,
     pub warning_criteria: Option<String>,
@@ -106,6 +108,7 @@ impl Default for ScriptItem {
             name: String::new(),
             category: ScriptCategory::default(),
             status: ScriptStatus::default(),
+            selected: false,
             description: String::new(),
             pass_criteria: None,
             warning_criteria: None,
@@ -122,6 +125,7 @@ impl ScriptItem {
             name: name.clone(),
             category,
             status: ScriptStatus::Pending,
+            selected: false,
             description: String::new(),
             pass_criteria: None,
             warning_criteria: None,
@@ -150,27 +154,21 @@ impl ScriptItem {
     }
 
     pub fn is_selected(&self) -> bool {
-        self.status == ScriptStatus::Selected
+        self.selected
     }
 
     pub fn toggle_selection(&mut self) {
-        self.status = match self.status {
-            ScriptStatus::Pending => ScriptStatus::Selected,
-            ScriptStatus::Selected => ScriptStatus::Pending,
-            other => other,
-        };
+        self.selected = !self.selected;
     }
 
+    /// Unconditional: encoding selection in the status meant a completed or
+    /// failed script could never be ticked again, so a tech could not re-run one.
     pub fn select(&mut self) {
-        if self.status == ScriptStatus::Pending {
-            self.status = ScriptStatus::Selected;
-        }
+        self.selected = true;
     }
 
     pub fn deselect(&mut self) {
-        if self.status == ScriptStatus::Selected {
-            self.status = ScriptStatus::Pending;
-        }
+        self.selected = false;
     }
 }
 

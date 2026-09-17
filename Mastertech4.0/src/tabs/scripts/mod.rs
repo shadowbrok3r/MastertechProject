@@ -2950,7 +2950,6 @@ impl MastertechContext {
                                         ScriptStatus::Running => colors::RUNNING,
                                         ScriptStatus::Completed => colors::COMPLETED,
                                         ScriptStatus::Failed => colors::FAILED,
-                                        ScriptStatus::Selected => colors::SELECTED,
                                         _ => colors::PENDING,
                                     };
 
@@ -3027,8 +3026,8 @@ impl MastertechContext {
                             // Apply remove action after iteration
                             if let Some(idx) = remove_index {
                                 if let Some(item) = self.scripts_tab.state.queue.items().get(idx) {
-                                    let id = item.script.id.clone();
-                                    self.scripts_tab.state.queue.remove(&id);
+                                    let run_token = item.run_token;
+                                    self.scripts_tab.state.queue.remove(run_token);
                                 }
                             }
                         });
