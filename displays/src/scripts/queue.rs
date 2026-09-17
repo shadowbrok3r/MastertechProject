@@ -4,23 +4,32 @@ use super::{ScriptCategory, ScriptItem, ScriptLogEntry, ScriptStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// A queued script with its execution order
+/// A queued script with its execution order.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueuedScript {
     pub order: usize,
+    /// Identifies this entry for its whole life. The script's own id names which
+    /// script it is, so two copies of one script would be indistinguishable by it
+    /// and removing one would remove both.
+    #[serde(default)]
+    pub run_token: u64,
     pub script: ScriptItem,
 }
 
 impl std::hash::Hash for QueuedScript {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.script.id.hash(state);
+        self.run_token.hash(state);
         self.order.hash(state);
     }
 }
 
 impl QueuedScript {
-    pub fn new(order: usize, script: ScriptItem) -> Self {
-        Self { order, script }
+    pub fn new(order: usize, run_token: u64, script: ScriptItem) -> Self {
+        Self {
+            order,
+            run_token,
+            script,
+        }
     }
 }
 
@@ -33,6 +42,9 @@ pub struct ScriptQueue {
     current_index: Option<usize>,
     /// Is the queue currently running
     is_running: bool,
+    /// Source of `QueuedScript::run_token`; monotonic for the queue's lifetime.
+    #[serde(default)]
+    next_run_token: u64,
 }
 
 impl ScriptQueue {
@@ -43,7 +55,9 @@ impl ScriptQueue {
     /// Add a script to the queue
     pub fn add(&mut self, script: ScriptItem) {
         let order = self.items.len();
-        self.items.push(QueuedScript::new(order, script));
+        self.next_run_token += 1;
+        self.items
+            .push(QueuedScript::new(order, self.next_run_token, script));
         self.renumber();
     }
 
@@ -54,9 +68,10 @@ impl ScriptQueue {
         }
     }
 
-    /// Remove a script from the queue by id
-    pub fn remove(&mut self, script_id: &str) {
-        self.items.retain(|qs| qs.script.id != script_id);
+    /// Remove one queue entry. Keyed on the entry, not the script, so removing
+    /// one of two copies of the same script leaves the other alone.
+    pub fn remove(&mut self, run_token: u64) {
+        self.items.retain(|qs| qs.run_token != run_token);
         self.renumber();
     }
 
@@ -173,7 +188,7 @@ impl ScriptQueue {
         if let Some(current) = self.current_index {
             if let Some(item) = self.items.get_mut(current) {
                 if item.script.status == ScriptStatus::Running {
-                    item.script.status = ScriptStatus::Selected;
+                    item.script.status = ScriptStatus::Pending;
                 }
             }
         }
@@ -348,3 +363,83 @@ impl ScriptsState {
     }
 }
 
+
+#[cfg(test)]
+mod queue_identity_tests {
+    use super::*;
+    use crate::scripts::ScriptCategory;
+
+    fn item(name: &str) -> ScriptItem {
+        ScriptItem::new(name, ScriptCategory::Tuneup)
+    }
+
+    /// Queueing the same script twice is legitimate, and removing one copy must
+    /// leave the other. Keyed on the script instead of the entry, both would go.
+    #[test]
+    fn removing_one_copy_leaves_the_other() {
+        let mut queue = ScriptQueue::new();
+        queue.add(item("Run Webroot Scan"));
+        queue.add(item("Run Webroot Scan"));
+        assert_eq!(queue.len(), 2);
+
+        let first = queue.items()[0].run_token;
+        let second = queue.items()[1].run_token;
+        assert_ne!(first, second, "two entries must not share an identity");
+
+        queue.remove(first);
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue.items()[0].run_token, second);
+        assert_eq!(queue.items()[0].order, 0, "the survivor must be renumbered");
+    }
+
+    /// A run token is never handed out twice, even after the entry that held it
+    /// has been removed.
+    #[test]
+    fn run_tokens_are_not_reused() {
+        let mut queue = ScriptQueue::new();
+        queue.add(item("a"));
+        let first = queue.items()[0].run_token;
+        queue.remove(first);
+        queue.add(item("b"));
+        assert_ne!(queue.items()[0].run_token, first);
+    }
+
+    /// Selection used to be a status, so `select` refused to promote anything that
+    /// had already run: a tech could not re-tick a failed script to run it again.
+    #[test]
+    fn a_finished_script_can_be_selected_again() {
+        let mut script = item("Run Webroot Scan");
+        script.status = ScriptStatus::Failed;
+
+        script.select();
+        assert!(script.is_selected(), "a failed script must be re-runnable");
+        assert_eq!(script.status, ScriptStatus::Failed, "selecting is not a status change");
+
+        script.deselect();
+        assert!(!script.is_selected());
+
+        script.status = ScriptStatus::Completed;
+        script.toggle_selection();
+        assert!(script.is_selected());
+    }
+
+    /// Stopping clears the running mark without touching what the tech ticked.
+    #[test]
+    fn stopping_keeps_the_selection() {
+        let mut queue = ScriptQueue::new();
+        let mut script = item("Run Webroot Scan");
+        script.select();
+        queue.add(script);
+
+        queue.start();
+        assert_eq!(queue.items()[0].script.status, ScriptStatus::Running);
+
+        queue.stop();
+        assert!(!queue.is_running());
+        assert_eq!(queue.items()[0].script.status, ScriptStatus::Pending);
+        assert!(
+            queue.items()[0].script.is_selected(),
+            "stopping must not untick the script"
+        );
+    }
+}
