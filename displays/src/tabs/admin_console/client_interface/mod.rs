@@ -49,6 +49,8 @@ pub mod startup_apps_viewer;
 pub mod remote_scripts_viewer;
 
 pub use admin_transport::{AdminTransport, SessionEvent, TransportKind};
+#[cfg(not(target_arch = "wasm32"))]
+pub use admin_transport::{InboundSink, LocalPeer, TcpFrame};
 
 /// Viewer frames held between `receive` and the buffer-routing task.
 const VIEWER_HANDOFF_DEPTH: usize = 8;

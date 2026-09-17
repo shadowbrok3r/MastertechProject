@@ -565,6 +565,7 @@ impl WebSocketClient {
                         TransportKind::Tcp => ("TCP", "Direct TCP (same network)"),
                         TransportKind::Relay => ("RELAY", "Relay tunnel via websocket server"),
                         TransportKind::WebSocket => ("WS", "Legacy WebSocket relay room"),
+                        TransportKind::Local => ("LOCAL", "This machine, in-process"),
                     };
                     let badge_color = if !self.is_connected {
                         theme::weak_text(ui)
