@@ -4,11 +4,42 @@ use database::schema::AgentThread;
 
 use super::Config;
 
-/// Role, target machine, tool guidance and approval etiquette, followed by the
-/// MCP server's own diagnostic playbook so the agent reads the same rules any
+/// Role, scope, tool guidance and approval etiquette, followed by the MCP
+/// server's own diagnostic playbook so the agent reads the same rules any
 /// other harness gets from `initialize`.
-pub fn developer_instructions(cfg: &Config, thread: &AgentThread, offered: &[String], prompt_tools: &[String]) -> String {
+pub fn developer_instructions(
+    cfg: &Config,
+    thread: &AgentThread,
+    offered: &[String],
+    prompt_tools: &[String],
+    memory: bool,
+) -> String {
     let mut out = String::new();
+    if super::is_general(&thread.connection_string) {
+        general_scope(&mut out, thread);
+    } else {
+        machine_scope(&mut out, cfg, thread);
+    }
+    if memory {
+        out.push_str(
+            "ZEROCLAW MEMORY
+\n             - `zeroclaw_recall` searches this agent's long-term memory: fleet quirks, prior verdicts, \n               decisions, machine history. Recall before concluding about a machine or a signature.
+\n             - `zeroclaw_remember` stores a durable conclusion: key like `<hostname>/<topic>` or \n               `<signature>/verdict`, category `core` for lasting facts and `daily` for session notes. \n               Store what a future session would need; the broker files a closing note itself.
+
+",
+        );
+    }
+    out.push_str("TOOLS AVAILABLE IN THIS SESSION:\n");
+    for name in offered {
+        let gate = if prompt_tools.iter().any(|t| t == name) { "  (technician approval)" } else { "" };
+        out.push_str(&format!("- {name}{gate}\n"));
+    }
+    out.push_str("\n=== MASTERTECH DIAGNOSTIC PLAYBOOK ===\n");
+    out.push_str(crate::plugins::mcp_bridge::INSTRUCTIONS);
+    out
+}
+
+fn machine_scope(out: &mut String, cfg: &Config, thread: &AgentThread) {
     out.push_str(
         "You are the PC Laptops bench diagnostician, an AI agent working inside MasterTech for a \
          technician who is watching this session live and can answer you in chat.\n\n",
@@ -42,12 +73,28 @@ pub fn developer_instructions(cfg: &Config, thread: &AgentThread, offered: &[Str
          - Keep replies short and concrete: symptom, evidence, verdict, next step. The technician \
            reads you between jobs.\n\n",
     );
-    out.push_str("TOOLS AVAILABLE IN THIS SESSION:\n");
-    for name in offered {
-        let gate = if prompt_tools.iter().any(|t| t == name) { "  (technician approval)" } else { "" };
-        out.push_str(&format!("- {name}{gate}\n"));
-    }
-    out.push_str("\n=== MASTERTECH DIAGNOSTIC PLAYBOOK ===\n");
-    out.push_str(crate::plugins::mcp_bridge::INSTRUCTIONS);
-    out
+}
+
+fn general_scope(out: &mut String, thread: &AgentThread) {
+    out.push_str(
+        "You are the PC Laptops bench assistant, an AI agent working inside MasterTech for a \
+         technician who can answer you in chat.\n\n",
+    );
+    out.push_str(&format!(
+        "NO MACHINE IS IN SCOPE. This is {}'s standing session for questions answered from \
+         Mastertech's records: service orders, customers, computers, diagnostic history, crash \
+         intel, driver snapshots and AI task checklists.\n\n",
+        thread.requested_by.as_deref().unwrap_or("the technician")
+    ));
+    out.push_str(
+        "HOW THIS SESSION WORKS\n\
+         - Every tool you have is a MasterTech tool; there is no shell, no file system and no web \
+           here. Do not attempt to run commands on this host.\n\
+         - Nothing here touches a machine. When the technician wants a computer inspected, tell \
+           them to focus that client in the console (or accept the AI-help offer on the bench), \
+           which opens a session scoped to it.\n\
+         - Prefer a lookup over a guess whenever a question concerns live data, and say which \
+           record you read.\n\
+         - Keep replies short and concrete. The technician reads you between jobs.\n\n",
+    );
 }

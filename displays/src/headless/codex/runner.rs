@@ -14,7 +14,8 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use zc_codex_client::{decision, elicitation, Client, Event};
 
-use super::tools::{scope_violation, ToolHost, ToolPolicy};
+use super::tools::{scope_violation, ToolHost, ToolOutcome, ToolPolicy};
+use super::zeroclaw::{self, ZeroclawMemory};
 use super::{manager, prompt, register_runner, runner_for, unregister_runner, Config};
 
 /// What the outside world may ask a running thread to do.
@@ -72,6 +73,7 @@ struct Runner {
     remembered: HashSet<String>,
     /// Set once the first attach succeeds; a later attach is an in-process reconnect.
     attached: bool,
+    memory: Option<Arc<ZeroclawMemory>>,
 }
 
 impl Runner {
@@ -109,6 +111,7 @@ impl Runner {
         let mut me = Self {
             next_seq: thread.last_seq.unwrap_or(0),
             codex_thread_id: thread.codex_thread_id.clone(),
+            memory: cfg.zeroclaw.clone(),
             cfg,
             thread,
             tools,
@@ -124,6 +127,7 @@ impl Runner {
             return Err(e);
         }
         if let Some(text) = opening {
+            let text = me.with_memory_brief(text).await;
             me.send_turn("start", &text).await?;
         }
 
@@ -158,9 +162,26 @@ impl Runner {
         Client::connect_with_token(&cfg.url, "mastertech-broker", token).await
     }
 
+    fn general(&self) -> bool {
+        super::is_general(&self.thread.connection_string)
+    }
+
+    /// Mastertech tools plus the ZeroClaw memory tools when the gateway is configured.
+    fn dynamic_tools(&self, general: bool) -> Vec<Value> {
+        let mut specs = self.tools.dynamic_specs(general);
+        if self.memory.is_some() {
+            specs.extend(zeroclaw::tool_specs());
+        }
+        specs
+    }
+
     /// Parameters shared by `thread/start` and `thread/resume`.
     fn thread_params(&self) -> Value {
-        let offered = self.tools.offered();
+        let general = self.general();
+        let mut offered = self.tools.offered(general);
+        if self.memory.is_some() {
+            offered.extend(zeroclaw::TOOL_NAMES.iter().map(|s| s.to_string()));
+        }
         json!({
             "cwd": self.cfg.cwd,
             "model": self.cfg.model,
@@ -168,8 +189,8 @@ impl Runner {
             "approvalPolicy": "on-request",
             "sandbox": "read-only",
             "developerInstructions": prompt::developer_instructions(
-                &self.cfg, &self.thread, &offered, &self.tools.policy.prompt),
-            "dynamicTools": self.tools.dynamic_specs(),
+                &self.cfg, &self.thread, &offered, &self.tools.policy.prompt, self.memory.is_some()),
+            "dynamicTools": self.dynamic_tools(general),
             "config": {
                 "features.shell_tool": false,
                 "features.multi_agent": false,
@@ -449,6 +470,12 @@ impl Runner {
     async fn on_tool_call(&mut self, request_id: Value, params: Value) {
         let tool = params.get("tool").and_then(Value::as_str).unwrap_or("").to_string();
         let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+        if zeroclaw::is_memory_tool(&tool) {
+            let outcome = self.memory_tool(&tool, &arguments).await;
+            self.respond(&request_id, outcome.response()).await;
+            return;
+        }
+        let general = self.general();
         if let Some(refusal) = scope_violation(&arguments, &self.thread.connection_string) {
             self.marker("approval", &refusal, None).await;
             self.respond(&request_id, super::tools::ToolOutcome::failure(refusal).response()).await;
@@ -456,7 +483,7 @@ impl Runner {
         }
         let needs_human = self.tools.policy.needs_approval(&tool) && !self.remembered.contains(&tool);
         if !needs_human {
-            let outcome = self.tools.call(&tool, arguments).await;
+            let outcome = self.tools.call(&tool, arguments, general).await;
             self.after_tool(&tool, &outcome).await;
             self.respond(&request_id, outcome.response()).await;
             return;
@@ -511,7 +538,7 @@ impl Runner {
                     self.remembered.insert(tool.clone());
                 }
                 self.marker("approval", &format!("Approved: {summary}"), None).await;
-                let outcome = self.tools.call(&tool, arguments).await;
+                let outcome = self.tools.call(&tool, arguments, general).await;
                 self.after_tool(&tool, &outcome).await;
                 let _ = AgentApproval::resolve_by_broker(&approval_id, &status, Some(outcome.response())).await;
                 self.respond(&request_id, outcome.response()).await;
@@ -546,6 +573,97 @@ impl Runner {
                 self.respond(&request_id, outcome.response()).await;
             }
         }
+    }
+
+    /// Prepends what ZeroClaw remembers about the machine to the opening turn.
+    async fn with_memory_brief(&self, opening: String) -> String {
+        let Some(mem) = &self.memory else { return opening };
+        if self.general() {
+            return opening;
+        }
+        let query = format!(
+            "{} {}",
+            self.thread.hostname.clone().unwrap_or_default(),
+            self.thread.service_number.clone().unwrap_or_default()
+        )
+        .trim()
+        .to_string();
+        if query.is_empty() {
+            return opening;
+        }
+        match tokio::time::timeout(Duration::from_secs(10), mem.recall(zeroclaw::MACHINE_AGENT, &query)).await {
+            Ok(Ok(entries)) if !entries.is_empty() => format!(
+                "ZEROCLAW MEMORY BRIEF (agent {}; verify against this machine before acting):\n{}\n\n{opening}",
+                zeroclaw::MACHINE_AGENT,
+                zeroclaw::render_entries(&entries)
+            ),
+            Ok(Ok(_)) => opening,
+            Ok(Err(e)) => {
+                log::warn!("codex: memory brief failed: {e}");
+                opening
+            }
+            Err(_) => {
+                log::warn!("codex: memory brief timed out");
+                opening
+            }
+        }
+    }
+
+    /// `zeroclaw_recall` / `zeroclaw_remember` against the session's memory alias.
+    async fn memory_tool(&self, tool: &str, arguments: &Value) -> ToolOutcome {
+        let Some(mem) = &self.memory else {
+            return ToolOutcome::failure("ZeroClaw memory is not configured on this broker".into());
+        };
+        let agent = ZeroclawMemory::agent_for(&self.thread.connection_string);
+        let arg = |k: &str| arguments.get(k).and_then(Value::as_str).unwrap_or("").trim().to_string();
+        match tool {
+            "zeroclaw_recall" => {
+                let query = arg("query");
+                if query.is_empty() {
+                    return ToolOutcome::failure("query is required".into());
+                }
+                match mem.recall(agent, &query).await {
+                    Ok(entries) if entries.is_empty() => ToolOutcome { success: true, text: "no matching memories".into(), raw: None },
+                    Ok(entries) => ToolOutcome { success: true, text: zeroclaw::render_entries(&entries), raw: None },
+                    Err(e) => ToolOutcome::failure(format!("memory recall failed: {e}")),
+                }
+            }
+            "zeroclaw_remember" => {
+                let (key, content) = (arg("key"), arg("content"));
+                if key.is_empty() || content.is_empty() {
+                    return ToolOutcome::failure("key and content are required".into());
+                }
+                let category = match arg("category").as_str() {
+                    "" => "core".to_string(),
+                    c => c.to_string(),
+                };
+                match mem.store(agent, &key, &content, &category).await {
+                    Ok(()) => ToolOutcome { success: true, text: format!("remembered `{key}` ({category}) for agent {agent}"), raw: None },
+                    Err(e) => ToolOutcome::failure(format!("memory store failed: {e}")),
+                }
+            }
+            other => ToolOutcome::failure(format!("unknown memory tool {other}")),
+        }
+    }
+
+    /// Leaves a daily note in ZeroClaw's memory with the agent's last word on the session.
+    async fn remember_session(&self) {
+        let Some(mem) = self.memory.clone() else { return };
+        let Ok(rows) = AgentEvent::history(&self.thread.id, 0, 500).await else { return };
+        let Some(last) = rows.iter().rev().find(|e| e.kind == "agent" && !e.text.trim().is_empty()) else { return };
+        let agent = ZeroclawMemory::agent_for(&self.thread.connection_string);
+        let key = format!("codex/{}", self.thread.id.key_string());
+        let summary: String = last.text.chars().take(1200).collect();
+        let content = format!(
+            "{} ({}) session closed. Agent's last word:\n{summary}",
+            self.thread.label(),
+            self.thread.connection_string
+        );
+        tokio::spawn(async move {
+            if let Err(e) = mem.store(agent, &key, &content, "daily").await {
+                log::warn!("codex: memory write-back failed: {e}");
+            }
+        });
     }
 
     /// Side effects worth recording from a tool result.
@@ -668,6 +786,7 @@ impl Runner {
                 Flow::Continue
             }
             "close" => {
+                self.remember_session().await;
                 if let Some(t) = self.codex_thread_id.clone() {
                     let _ = self.client.request("thread/unsubscribe", json!({ "threadId": t })).await;
                 }

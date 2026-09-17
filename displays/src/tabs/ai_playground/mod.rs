@@ -21,6 +21,9 @@ pub fn now_ts() -> i64 {
         .unwrap_or(0)
 }
 
+/// Prefix on assistant lines that report tool activity rather than prose.
+pub const TOOL_PREFIX: &str = "\u{00BB} ";
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ChatMessage {
     pub id: String,

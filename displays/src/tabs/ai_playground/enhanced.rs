@@ -21,8 +21,9 @@ struct LoadedThread {
     messages: Vec<ChatMessage>,
 }
 
-/// Streaming chat against the user's OpenAI-compatible MCP endpoint, with
-/// collapsible reasoning ("thinking") and an optional Mastertech tool-calling loop.
+/// Chat with the Codex agent through the admin-agent broker: every thread is an
+/// agent session, scoped to the focused machine when there is one and to the
+/// technician's records otherwise.
 #[derive(Serialize)]
 pub struct EnhancedAiPlayground {
     pub selected_thread: String,
@@ -36,20 +37,13 @@ pub struct EnhancedAiPlayground {
     pub save_chats: bool,
     pub image_id: String,
     pub open_modal: bool,
-    /// Expose the Mastertech MCP tools to the model (native only).
-    pub use_mcp_tools: bool,
-    /// Connection string of the connected client the admin console is focused on; seeds Claude Code diagnostics.
+    /// Connection string of the connected client the admin console is focused on; typed input goes to its session.
     #[serde(skip)]
     pub focused_client: Option<String>,
-    /// When true, hides the close ✕ and the external Claude Code button and uses self-diagnosis empty-state copy.
+    /// When true, hides the close ✕ and uses self-diagnosis empty-state copy.
     #[serde(skip)]
     pub self_diagnosis: bool,
-    /// Multi-turn Claude Code session (subscription auth, :9004 MCP).
-    #[cfg(not(target_arch = "wasm32"))]
-    #[serde(skip)]
-    pub claude: crate::ai::claude_code::ClaudeCodeSession,
-    /// Threads whose turns run on the Codex agent broker. Input in one of
-    /// these goes to the agent, never to the OpenAI-compatible endpoint.
+    /// Threads known to be agent sessions, so their input is never treated as a fresh chat.
     #[serde(skip)]
     pub agent_threads: std::collections::HashSet<String>,
     #[serde(skip)]
@@ -77,17 +71,10 @@ pub struct EnhancedAiPlayground {
     agent_switch_tx: Sender<(String, String)>,
     #[serde(skip)]
     agent_switch_rx: Receiver<(String, String)>,
-    /// Typed input for a focused machine goes to its Codex agent session.
-    #[serde(default = "default_true")]
-    pub use_agent: bool,
     /// Service number the conversation is about, when the host knows one; joins
     /// the transcript to a service order.
     #[serde(skip)]
     pub service_number: Option<String>,
-    /// Thread the Claude Code session is bound to; input in that thread resumes it.
-    #[cfg(not(target_arch = "wasm32"))]
-    #[serde(skip)]
-    claude_thread: Option<String>,
     /// Per-thread label of the engine that answered it, shown in the top bar.
     #[serde(skip)]
     thread_engine: HashMap<String, String>,
@@ -121,7 +108,6 @@ impl Default for EnhancedAiPlayground {
             save_chats: false,
             image_id: String::new(),
             open_modal: false,
-            use_mcp_tools: true,
             focused_client: None,
             self_diagnosis: false,
             agent_threads: std::collections::HashSet::new(),
@@ -135,12 +121,7 @@ impl Default for EnhancedAiPlayground {
             hydrated: std::collections::HashSet::new(),
             agent_switch_tx,
             agent_switch_rx,
-            use_agent: true,
             service_number: None,
-            #[cfg(not(target_arch = "wasm32"))]
-            claude: crate::ai::claude_code::ClaudeCodeSession::new(),
-            #[cfg(not(target_arch = "wasm32"))]
-            claude_thread: None,
             thread_engine: HashMap::new(),
             close_requested: false,
             loaded: false,
@@ -156,9 +137,8 @@ impl EnhancedAiPlayground {
         std::mem::take(&mut self.close_requested)
     }
 
-    /// Start a Claude Code (subscription) session in a fresh thread, seeded with the focused
-    /// connected client. Later input in that thread resumes the same session.
-    pub fn start_claude_diagnosis(&mut self, connection_string: Option<String>) {
+    /// Opens a fresh thread that asks the agent for a first look at the focused machine.
+    pub fn start_agent_diagnosis(&mut self, connection_string: Option<String>) {
         let thread_id = uuid::Uuid::new_v4().to_string();
         self.selected_thread = thread_id.clone();
         self.threads.insert(
@@ -166,8 +146,8 @@ impl EnhancedAiPlayground {
             ChatThread { id: thread_id.clone(), messages: Vec::new(), images: Vec::new(), input: String::new() },
         );
         let label = match &connection_string {
-            Some(cs) => format!("Diagnose {cs} with the agent"),
-            None => "Diagnose with Claude Code".to_string(),
+            Some(cs) => format!("Diagnose {cs}"),
+            None => "What can you look up for me?".to_string(),
         };
         let _ = self.response_tx.try_send(ChatMessage {
             id: uuid::Uuid::new_v4().to_string(),
@@ -176,55 +156,18 @@ impl EnhancedAiPlayground {
             from: SentFrom::Me,
             content: ChatMessageType::Text(label),
         });
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
         {
             let prompt = match &connection_string {
                 Some(_) => "Diagnose that client. Pull its prior history and run an initial triage \
                      using the Mastertech tools."
                     .to_string(),
-                None => "Run an initial diagnostic of this machine using the Mastertech tools.".to_string(),
+                None => "In two lines, say what you can look up and do from here.".to_string(),
             };
-            // Broker route: a named machine goes to the Codex agent, whose session
-            // every Mastertech instance can follow; the local host stays on Claude Code.
-            #[cfg(feature = "tokio")]
-            {
-                if connection_string.is_some() {
-                    self.thread_engine
-                        .insert(thread_id.clone(), "Codex agent".to_string());
-                    self.send_to_agent(thread_id.clone(), prompt, connection_string);
-                    return;
-                }
-            }
-            let model = std::env::var("CC_MODEL").unwrap_or_else(|_| "default model".into());
-            self.thread_engine
-                .insert(thread_id.clone(), format!("Claude Code (local) \u{00B7} {model}"));
-            self.claude.reset();
-            self.claude_thread = Some(thread_id.clone());
-            // Same opt-out gate as the agent route. The session is Arc-backed, so
-            // the turn still runs against the one the tab holds.
-            let session = self.claude.clone();
-            let tx = self.response_tx.clone();
-            PlatformSpawner::spawn(async move {
-                if let Some(cs) = connection_string.as_deref() {
-                    if let Some(block) =
-                        database::schema::ConnectedClient::diagnosis_block(cs).await
-                    {
-                        let _ = tx.try_send(ChatMessage {
-                            id: uuid::Uuid::new_v4().to_string(),
-                            thread_id: thread_id.clone(),
-                            ts: crate::tabs::ai_playground::now_ts(),
-                            from: SentFrom::Assistant,
-                            content: ChatMessageType::Error(format!(
-                                "Not dispatched — {cs}: {block}."
-                            )),
-                        });
-                        return;
-                    }
-                }
-                session.send(prompt, connection_string, thread_id, tx);
-            });
+            self.thread_engine.insert(thread_id.clone(), "Codex agent".to_string());
+            self.send_to_agent(thread_id, prompt, connection_string);
         }
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(not(all(not(target_arch = "wasm32"), feature = "tokio")))]
         {
             let _ = connection_string;
         }
@@ -232,12 +175,6 @@ impl EnhancedAiPlayground {
 
     pub fn enhanced_ai_playground(&mut self, ui: &mut Ui) {
         self.ensure_loaded();
-
-        // Keep frames coming while Claude streams so the drain below runs without input.
-        #[cfg(not(target_arch = "wasm32"))]
-        if self.claude.is_busy() {
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
-        }
 
         eframe::egui::Panel::top("enhanced_ai_topbar")
             .frame(Frame::default().inner_margin(Margin::symmetric(6, 2)))
@@ -373,45 +310,23 @@ impl EnhancedAiPlayground {
                     self.close_requested = true;
                 }
                 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
-                if ui
-                    .selectable_label(self.use_mcp_tools, RichText::new(icons::WRENCH))
-                    .on_hover_text("Use Mastertech tools")
-                    .clicked()
-                {
-                    self.use_mcp_tools = !self.use_mcp_tools;
-                }
-                #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
-                if ui
-                    .selectable_label(self.use_agent, RichText::new("Agent").small())
-                    .on_hover_text("Send questions about the focused machine to its Codex agent session (off: local model with tools)")
-                    .clicked()
-                {
-                    self.use_agent = !self.use_agent;
-                }
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    if self.claude.is_busy() {
-                        if ui
-                            .button(RichText::new(icons::STOP).color(ui.visuals().error_fg_color))
-                            .on_hover_text("Stop Claude Code")
-                            .clicked()
-                        {
-                            self.claude.cancel();
-                        }
-                    } else if ui
+                if self.focused_client.is_some()
+                    && ui
                         .button(RichText::new(icons::ROBOT))
-                        .on_hover_text("Diagnose the focused machine with the agent")
+                        .on_hover_text("Ask the agent for a first look at the focused machine")
                         .clicked()
-                    {
-                        let cs = self.focused_client.clone();
-                        self.start_claude_diagnosis(cs);
-                    }
+                {
+                    let cs = self.focused_client.clone();
+                    self.start_agent_diagnosis(cs);
                 }
-                let engine = self.thread_engine.get(&self.selected_thread).cloned().unwrap_or_else(|| {
-                    format!("OpenRouter \u{00B7} {}", crate::ai::effective_model(crate::ai::gpts::MODEL))
-                });
-                ui.label(RichText::new(engine).weak().small())
-                    .on_hover_text("Which engine answers this thread. Claude Code runs locally; ZeroClaw runs on the agent host.");
+                let engine = self
+                    .thread_engine
+                    .get(&self.selected_thread)
+                    .cloned()
+                    .unwrap_or_else(|| "Codex agent".to_string());
+                ui.label(RichText::new(engine).weak().small()).on_hover_text(
+                    "Every thread runs on the Codex agent (Qwen on the shop pool) through the admin-agent broker.",
+                );
             });
         });
     }
@@ -502,7 +417,7 @@ impl EnhancedAiPlayground {
         #[cfg(not(target_arch = "wasm32"))]
         if let ChatMessageType::Text(t) = &message.content {
             return matches!(message.from, SentFrom::Assistant)
-                && t.starts_with(crate::ai::claude_code::TOOL_PREFIX);
+                && t.starts_with(crate::tabs::ai_playground::TOOL_PREFIX);
         }
         #[cfg(target_arch = "wasm32")]
         let _ = message;
@@ -536,7 +451,7 @@ impl EnhancedAiPlayground {
             None => (text, ""),
         };
         #[cfg(not(target_arch = "wasm32"))]
-        let body = text.trim_start_matches(crate::ai::claude_code::TOOL_PREFIX).trim_start();
+        let body = text.trim_start_matches(crate::tabs::ai_playground::TOOL_PREFIX).trim_start();
         #[cfg(target_arch = "wasm32")]
         let body = text.trim_start();
 
@@ -852,15 +767,18 @@ impl EnhancedAiPlayground {
                 }
                 return;
             }
+            // No machine in scope: the technician's standing records-only session.
+            let target = target.or_else(|| tech.as_deref().map(crate::headless::codex::general_connection));
             let Some(cs) = target else {
-                let _ = tx.try_send(say(ChatMessageType::Error(
-                    "Agent diagnosis needs a target machine: focus a client in the admin console first.".into(),
-                )));
+                let _ = tx.try_send(say(ChatMessageType::Error("Sign in to chat with the agent.".into())));
                 return;
             };
-            if let Some(block) = database::schema::ConnectedClient::diagnosis_block(&cs).await {
-                let _ = tx.try_send(say(ChatMessageType::Error(format!("Not dispatched — {cs}: {block}."))));
-                return;
+            let general = crate::headless::codex::is_general(&cs);
+            if !general {
+                if let Some(block) = database::schema::ConnectedClient::diagnosis_block(&cs).await {
+                    let _ = tx.try_send(say(ChatMessageType::Error(format!("Not dispatched — {cs}: {block}."))));
+                    return;
+                }
             }
             // A machine with a live session takes the message as a turn; otherwise a
             // request opens one. Either way this thread becomes that session.
@@ -875,8 +793,9 @@ impl EnhancedAiPlayground {
                 },
                 _ => match AssistRequest::create_from_chat(&cs, tech.as_deref(), store.as_deref(), service_number.as_deref(), &text).await {
                     Ok(request) => {
+                        let what = if general { "your records session".to_string() } else { format!("a session for {cs}") };
                         let _ = tx.try_send(say(ChatMessageType::Text(format!(
-                            "Asked the agent host to open a session for {cs}\u{2026}"
+                            "Asked the agent host to open {what}\u{2026}"
                         ))));
                         for _ in 0..45 {
                             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -1019,7 +938,7 @@ impl EnhancedAiPlayground {
                         SentFrom::Assistant,
                         ChatMessageType::Text(format!(
                             "{}{}",
-                            crate::ai::claude_code::TOOL_PREFIX,
+                            crate::tabs::ai_playground::TOOL_PREFIX,
                             row.text.lines().next().unwrap_or_default()
                         )),
                     ),
@@ -1075,57 +994,20 @@ impl EnhancedAiPlayground {
             content: ChatMessageType::Text(input.clone()),
         });
 
-        // Input in an agent thread continues that conversation. Without this the
-        // turn would silently fall through to the chat endpoint under a top bar
-        // still naming the agent.
-        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
-        if self.agent_threads.contains(&thread_id) {
-            self.send_to_agent(thread_id, input, None);
-            return;
-        }
-
-        // A focused machine is the agent's by default; the local model is the opt-out.
-        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
-        if self.use_agent {
-            if let Some(cs) = self.focused_client.clone() {
-                self.thread_engine.insert(thread_id.clone(), "Codex agent".to_string());
-                self.send_to_agent(thread_id, input, Some(cs));
-                return;
-            }
-        }
-
-        // Input in the Claude Code thread resumes that session instead of the OpenAI endpoint.
-        #[cfg(not(target_arch = "wasm32"))]
-        if self.claude_thread.as_deref() == Some(thread_id.as_str()) {
-            self.claude.send(input, None, thread_id, self.response_tx.clone());
-            return;
-        }
-
+        // Every message goes to the agent: a session thread continues, a focused
+        // machine gets its session, anything else the technician's records session.
         #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
         {
-            use crate::{PlatformSpawner, Spawner};
-            let prior = self
-                .threads
-                .get(&thread_id)
-                .map(|t| crate::ai::mcp_chat::history_json_from_messages(&t.messages))
-                .unwrap_or_default();
-            let tx = self.response_tx.clone();
-            let use_tools = self.use_mcp_tools;
-            PlatformSpawner::spawn(async move {
-                if let Err(e) = crate::ai::mcp_chat::stream_chat(input, prior, thread_id, use_tools, tx).await {
-                    log::error!("stream_chat error: {e:?}");
-                }
-            });
+            if !self.agent_threads.contains(&thread_id) {
+                self.thread_engine.insert(thread_id.clone(), "Codex agent".to_string());
+            }
+            self.send_to_agent(thread_id, input, None);
         }
         #[cfg(not(all(not(target_arch = "wasm32"), feature = "tokio")))]
         {
             let _ = (input, thread_id);
         }
     }
-}
-
-fn default_true() -> bool {
-    true
 }
 
 fn short_title(s: &str) -> String {

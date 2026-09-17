@@ -94,7 +94,7 @@ impl TabViewer for MastertechContext {
             #[cfg(not(target_os = "windows"))]
             TabId::MinidumpAnalysis => {}
             TabId::Ai => {
-                // Self-diagnosis chat about this machine via the in-process Mastertech MCP tools.
+                // Self-diagnosis chat about this machine through the Codex agent.
                 self.shared_ctx.enhanced_ai_playground.self_diagnosis = true;
                 self.shared_ctx.enhanced_ai_playground.focused_client =
                     Some(crate::filesystem::get_client_hash().connection_string);
