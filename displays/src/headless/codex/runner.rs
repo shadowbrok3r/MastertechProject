@@ -29,6 +29,9 @@ const RECONNECT_ATTEMPTS: u32 = 20;
 const APPROVAL_POLL: Duration = Duration::from_millis(750);
 /// Characters of tool output kept in a transcript row (the reply to codex is capped separately).
 const ROW_TEXT_CHARS: usize = 4_000;
+/// Page size and page cap when a resumed thread's items are backfilled.
+const BACKFILL_PAGE: u32 = 100;
+const BACKFILL_MAX_PAGES: usize = 20;
 
 /// Starts the thread's runner task and registers its command channel; a thread
 /// that already has a runner gets that runner's channel back instead.
@@ -67,6 +70,8 @@ struct Runner {
     buffers: HashMap<String, String>,
     turn_no: u32,
     remembered: HashSet<String>,
+    /// Set once the first attach succeeds; a later attach is an in-process reconnect.
+    attached: bool,
 }
 
 impl Runner {
@@ -112,6 +117,7 @@ impl Runner {
             buffers: HashMap::new(),
             turn_no: 0,
             remembered: HashSet::new(),
+            attached: false,
         };
         if let Err(e) = me.attach().await {
             AgentThread::set_status(&me.thread.id, "failed", Some(&format!("thread start: {e}"))).await?;
@@ -177,12 +183,18 @@ impl Runner {
 
     /// Resumes the recorded codex thread, or starts a new one.
     async fn attach(&mut self) -> anyhow::Result<()> {
+        let first = !self.attached;
         if let Some(existing) = self.codex_thread_id.clone() {
             let mut params = self.thread_params();
             params["threadId"] = json!(existing);
             match self.client.request("thread/resume", params).await {
                 Ok(_) => {
                     log::info!("codex: resumed codex thread {existing} for {}", self.thread.connection_string);
+                    self.backfill(&existing).await;
+                    if first && matches!(self.thread.status.as_str(), "running" | "waiting_approval") {
+                        self.reconcile_interrupted().await;
+                    }
+                    self.attached = true;
                     AgentThread::set_status(&self.thread.id, "idle", None).await?;
                     return Ok(());
                 }
@@ -197,7 +209,73 @@ impl Runner {
         AgentThread::set_status(&self.thread.id, "idle", None).await?;
         log::info!("codex: thread {} -> codex {id}", self.thread.id.key_string());
         self.codex_thread_id = Some(id);
+        self.attached = true;
         Ok(())
+    }
+
+    /// Records the items codex produced while no broker was attached.
+    async fn backfill(&mut self, codex_thread_id: &str) {
+        let known: HashSet<String> = match AgentEvent::item_ids(&self.thread.id).await {
+            Ok(ids) => ids.into_iter().collect(),
+            Err(e) => {
+                log::warn!("codex: backfill skipped, transcript unreadable: {e}");
+                return;
+            }
+        };
+        let mut cursor: Option<String> = None;
+        let mut added = 0usize;
+        for _ in 0..BACKFILL_MAX_PAGES {
+            let mut params = json!({ "threadId": codex_thread_id, "limit": BACKFILL_PAGE, "sortDirection": "asc" });
+            if let Some(c) = &cursor {
+                params["cursor"] = json!(c);
+            }
+            let page = match self.client.request("thread/items/list", params).await {
+                Ok(p) => p,
+                Err(e) => {
+                    log::warn!("codex: thread/items/list failed: {e}");
+                    break;
+                }
+            };
+            let entries = page.get("data").and_then(Value::as_array).cloned().unwrap_or_default();
+            for entry in &entries {
+                let Some(item) = entry.get("item") else { continue };
+                let Some(id) = item.get("id").and_then(Value::as_str).map(str::to_string) else { continue };
+                if known.contains(&id) || self.seqs.contains_key(&id) {
+                    continue;
+                }
+                let kind = kind_for(item.get("type").and_then(Value::as_str).unwrap_or(""));
+                let seq = self.seq_for(&id).await;
+                let turn = entry.get("turnId").and_then(Value::as_str).map(str::to_string);
+                let text = item_text(kind, item);
+                match AgentEvent::complete(&self.thread.id, &id, seq, turn.as_deref(), kind, &text, item.clone()).await {
+                    Ok(()) => added += 1,
+                    Err(e) => log::warn!("codex: backfill write failed: {e}"),
+                }
+            }
+            cursor = page.get("nextCursor").and_then(Value::as_str).map(str::to_string);
+            if cursor.is_none() || entries.is_empty() {
+                break;
+            }
+        }
+        if added > 0 {
+            log::info!("codex: backfilled {added} items for {}", self.thread.id.key_string());
+            self.marker("other", &format!("Recovered {added} transcript items produced while the broker was away."), None).await;
+        }
+    }
+
+    /// The previous broker died mid-turn: the decisions it was relaying cannot be answered any more.
+    async fn reconcile_interrupted(&mut self) {
+        match AgentApproval::fail_pending_for_thread(
+            &self.thread.id,
+            "The broker restarted before this decision could be relayed; the agent can ask again.",
+        )
+        .await
+        {
+            Ok(0) => {}
+            Ok(n) => self.marker("approval", &format!("{n} pending approval(s) were cancelled by a broker restart."), None).await,
+            Err(e) => log::warn!("codex: could not reconcile pending approvals: {e}"),
+        }
+        self.marker("other", "Broker restarted while the agent was working; send a message if it went quiet.", None).await;
     }
 
     async fn reconnect(&mut self) -> anyhow::Result<mpsc::Receiver<Event>> {

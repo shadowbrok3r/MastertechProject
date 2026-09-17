@@ -68,6 +68,32 @@ impl AssistRequest {
         Ok(rows.into_iter().next())
     }
 
+    /// Files a request from the chat rail; nobody confirmed the machine at the bench.
+    pub async fn create_from_chat(
+        connection_string: &str,
+        requested_by: Option<&str>,
+        store: Option<&str>,
+        service_number: Option<&str>,
+        tech_note: &str,
+    ) -> anyhow::Result<RecordId> {
+        let hostname = connection_string.split(':').next().filter(|h| !h.is_empty()).map(str::to_string);
+        let mut res = db()
+            .query(
+                "CREATE assist_request CONTENT { connection_string: $cs, hostname: $host, \
+                 requested_by: $by, store: $store, service_number: $sn, trigger_source: 'chat', \
+                 machine_confirmed: false, status: 'pending', tech_note: $note } RETURN VALUE id",
+            )
+            .bind(("cs", connection_string.to_string()))
+            .bind(("host", hostname))
+            .bind(("by", requested_by.map(str::to_string)))
+            .bind(("store", store.map(str::to_string)))
+            .bind(("sn", service_number.map(str::to_string)))
+            .bind(("note", tech_note.chars().take(500).collect::<String>()))
+            .await?;
+        let ids: Vec<RecordId> = res.take(0).unwrap_or_default();
+        ids.into_iter().next().ok_or_else(|| anyhow::anyhow!("assist_request was not created"))
+    }
+
     /// Records the codex session the broker opened for this request.
     pub async fn link_thread(id: &RecordId, thread: &RecordId) -> anyhow::Result<()> {
         db().query("UPDATE $id SET agent_thread = $thread")

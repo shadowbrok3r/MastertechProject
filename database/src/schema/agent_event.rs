@@ -142,6 +142,15 @@ impl AgentEvent {
         Ok(res.take(0).unwrap_or_default())
     }
 
+    /// Codex item ids already recorded for a thread.
+    pub async fn item_ids(thread: &RecordId) -> anyhow::Result<Vec<String>> {
+        let mut res = db()
+            .query("SELECT VALUE item_id FROM agent_event WHERE thread = $thread AND item_id != NONE")
+            .bind(("thread", thread.clone()))
+            .await?;
+        Ok(res.take(0).unwrap_or_default())
+    }
+
     /// Rows of one thread in order, starting after `after_seq`.
     pub async fn history(thread: &RecordId, after_seq: i64, limit: usize) -> anyhow::Result<Vec<Self>> {
         let mut res = db()

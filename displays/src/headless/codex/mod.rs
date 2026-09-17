@@ -43,6 +43,8 @@ pub struct Config {
     pub tool_output_chars: usize,
     /// Seconds a single tool call may run before the agent is told it timed out.
     pub tool_timeout_secs: u64,
+    /// Days a closed thread keeps its transcript, turns and approvals.
+    pub retention_days: u64,
 }
 
 fn env_trimmed(key: &str) -> Option<String> {
@@ -76,6 +78,7 @@ impl Config {
             approval_ttl_secs: env_parse("MTECH_APPROVAL_TTL_SECS", 600u64).max(30),
             tool_output_chars: env_parse("MTECH_CODEX_TOOL_OUTPUT_CHARS", 24_000usize).max(1_000),
             tool_timeout_secs: env_parse("MTECH_CODEX_TOOL_TIMEOUT_SECS", 320u64).max(10),
+            retention_days: env_parse("MTECH_AGENT_EVENT_RETENTION_DAYS", 30u64).max(1),
         })
     }
 
@@ -171,6 +174,7 @@ pub fn spawn_codex_broker(manager: Arc<RwLock<PluginManager>>) {
     tokio::spawn(resume_open_threads(cfg.clone()));
     turns::spawn_turn_watcher(cfg.clone());
     tokio::spawn(approval_reaper());
+    tokio::spawn(retention_sweeper(cfg.clone()));
     // Operator hook: start one session for a machine without an assist_request.
     if let Some(cs) = env_trimmed("MTECH_CODEX_START_CS") {
         let by = env_trimmed("MTECH_CODEX_START_BY");
@@ -211,6 +215,20 @@ async fn approval_reaper() {
     }
 }
 
+/// Drops the transcripts of long-closed threads every six hours; the thread rows stay.
+async fn retention_sweeper(cfg: Arc<Config>) {
+    let retention = format!("{}d", cfg.retention_days);
+    tokio::time::sleep(Duration::from_secs(90)).await;
+    loop {
+        match AgentThread::purge_closed_before(&retention).await {
+            Ok(0) => {}
+            Ok(n) => log::info!("codex: purged the transcripts of {n} threads closed over {retention} ago"),
+            Err(e) => log::warn!("codex: retention sweep failed: {e}"),
+        }
+        tokio::time::sleep(Duration::from_secs(6 * 3600)).await;
+    }
+}
+
 /// Starts queued threads as capacity frees up.
 async fn queue_pump(cfg: Arc<Config>) {
     loop {
@@ -232,7 +250,7 @@ async fn queue_pump(cfg: Arc<Config>) {
             // A queued thread never spoke to codex; its opening prompt is rebuilt from the request.
             let opening = match &thread.assist_request {
                 Some(req_id) => match AssistRequest::get(req_id).await {
-                    Ok(Some(req)) => Some(super::assist::compose_prompt(&req)),
+                    Ok(Some(req)) => Some(super::assist::compose_prompt(&req, &cfg.driven_by())),
                     _ => None,
                 },
                 None => None,
