@@ -12,6 +12,8 @@ use displays::scripts::executor::{
 };
 use displays::scripts::id::ScriptId;
 
+use super::powershell;
+
 #[cfg(target_os = "windows")]
 use crate::utilities::scripts::InstalledProgram;
 
@@ -68,28 +70,28 @@ impl ScriptExecutor for JunkwareExecutor {
 
 fn run(def: &ScriptDef, ctx: &ScriptContext) -> (ScriptResult, Option<i32>) {
     match def.id.as_str() {
-        "uninstall-microsoft-365" => ps_script(
+        "uninstall-microsoft-365" => powershell::logged(
             ctx,
             def,
             "Searching for Microsoft 365 / Office installations...",
             UNINSTALL_MICROSOFT_365,
             "Microsoft 365 uninstall script completed",
         ),
-        "uninstall-onedrive" => ps_script(
+        "uninstall-onedrive" => powershell::logged(
             ctx,
             def,
             "Uninstalling OneDrive...",
             UNINSTALL_ONEDRIVE,
             "OneDrive uninstall completed",
         ),
-        "disable-onedrive-startup" => ps_script(
+        "disable-onedrive-startup" => powershell::logged(
             ctx,
             def,
             "Disabling OneDrive startup...",
             DISABLE_ONEDRIVE_STARTUP,
             "OneDrive startup disabled",
         ),
-        "disable-edge-startup-boost" => ps_script(
+        "disable-edge-startup-boost" => powershell::logged(
             ctx,
             def,
             "Disabling Edge startup boost and background running...",
@@ -155,48 +157,6 @@ fn remove_program(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResult {
 }
 
 #[cfg(target_os = "windows")]
-fn ps_script(
-    ctx: &ScriptContext,
-    def: &ScriptDef,
-    starting: &str,
-    script: &str,
-    finished: &str,
-) -> (ScriptResult, Option<i32>) {
-    use powershell_script::{PsError, PsScriptBuilder};
-
-    let (category, name) = (def.category(), def.name.as_str());
-    ctx.log_info(category.clone(), name, starting);
-
-    let ps = PsScriptBuilder::new()
-        .no_profile(true)
-        .non_interactive(true)
-        .hidden(true)
-        .print_commands(false)
-        .build();
-
-    match ps.run(script) {
-        Ok(output) => {
-            let stdout = output.stdout().unwrap_or_default();
-            for line in stdout.lines() {
-                ctx.log_info(category.clone(), name, line.to_string());
-            }
-            let exit_code = output.into_inner().status.code();
-            ctx.log_success(category, name, finished);
-            (ScriptResult::Success(finished.into()), exit_code)
-        }
-        Err(e) => {
-            let exit_code = match &e {
-                PsError::Powershell(output) => output.clone().into_inner().status.code(),
-                _ => None,
-            };
-            let msg = format!("Failed: {e}");
-            ctx.log_error(category, name, msg.clone());
-            (ScriptResult::Error(msg), exit_code)
-        }
-    }
-}
-
-#[cfg(target_os = "windows")]
 fn browser_hijack(ctx: &ScriptContext, def: &ScriptDef, remove: bool) -> ScriptResult {
     use crate::utilities::windows::browser_hijack;
 
@@ -258,17 +218,6 @@ fn remove_program(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResult {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn ps_script(
-    ctx: &ScriptContext,
-    def: &ScriptDef,
-    _starting: &str,
-    _script: &str,
-    _finished: &str,
-) -> (ScriptResult, Option<i32>) {
-    (unsupported(ctx, def), None)
-}
-
-#[cfg(not(target_os = "windows"))]
 fn browser_hijack(ctx: &ScriptContext, def: &ScriptDef, _remove: bool) -> ScriptResult {
     unsupported(ctx, def)
 }
@@ -280,7 +229,6 @@ fn unsupported(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResult {
     ScriptResult::Skipped(msg.into())
 }
 
-#[cfg(target_os = "windows")]
 const UNINSTALL_MICROSOFT_365: &str = r#"
                     $paths = @(
                         "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
@@ -316,7 +264,6 @@ const UNINSTALL_MICROSOFT_365: &str = r#"
                     }
                 "#;
 
-#[cfg(target_os = "windows")]
 const UNINSTALL_ONEDRIVE: &str = r#"
                     taskkill /F /IM OneDrive.exe 2>$null
                     Start-Sleep -Seconds 1
@@ -334,7 +281,6 @@ const UNINSTALL_ONEDRIVE: &str = r#"
                     }
                 "#;
 
-#[cfg(target_os = "windows")]
 const DISABLE_ONEDRIVE_STARTUP: &str = r#"
                     $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
                     if (Get-ItemProperty -Path $runKey -Name "OneDrive" -ErrorAction SilentlyContinue) {
@@ -351,7 +297,6 @@ const DISABLE_ONEDRIVE_STARTUP: &str = r#"
                     "OneDrive process terminated"
                 "#;
 
-#[cfg(target_os = "windows")]
 const DISABLE_EDGE_STARTUP_BOOST: &str = r#"
                     $edgePolicy = "HKLM:\SOFTWARE\Policies\Microsoft\Edge"
                     if (-not (Test-Path $edgePolicy)) { New-Item -Path $edgePolicy -Force | Out-Null }
