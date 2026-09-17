@@ -167,6 +167,13 @@ impl MasterTechApp {
         self.context.poll_assist_offer();
         self.receive_database(ctx, frame);
         self.receive_github(ctx);
+        // Drained every frame, not only while the tab is visible: a UI-gated drain
+        // is how this queue would grow unbounded behind a hidden tab.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(session) = self.context.local_machine.as_mut() {
+            session.view.receive(ctx);
+        }
+
         self.context.scripts_tab.process_mcp_requests();
         self.context.scripts_tab.receive();
         self.context.scripts_tab.process_mcp_completions();
