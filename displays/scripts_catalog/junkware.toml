@@ -57,6 +57,7 @@ order = 60
 [[script]]
 id = "mcaffee-safe"
 name = "Mcaffee Safe"
+aliases = ["Mcaffee Safe Search"]
 category = "junkware"
 summary = "Remove McAfee Safe Search"
 timeout_secs = 600
@@ -141,3 +142,13 @@ timeout_secs = 600
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 150
 
+# Removed by the terminal junkware fan-out but listed nowhere, so it is offered
+# nowhere today either; Slice 3 decides whether it earns a surface.
+[[script]]
+id = "junk-eset"
+name = "ESET Security"
+category = "junkware"
+summary = "Remove ESET Security"
+timeout_secs = 600
+surfaces = []
+order = 160
