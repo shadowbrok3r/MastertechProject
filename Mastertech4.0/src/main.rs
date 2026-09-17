@@ -22,6 +22,7 @@ pub mod viewports;
 pub mod first_run;
 pub mod data;
 pub mod transport;
+pub mod local_session;
 pub mod tcp_listener;
 pub mod tunnel_session;
 pub mod relay_control;

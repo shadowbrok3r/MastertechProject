@@ -202,7 +202,7 @@ pub fn direct_tcp_listener_released() -> bool {
 const MAX_FRAME_BYTES: u32 = 64 * 1024 * 1024; // 64 MiB
 /// Bounded depth of the file-chunk writer channel (× 4 MiB chunk = in-flight
 /// cap). Small enough to bound RAM, deep enough to keep the socket busy.
-const FILE_CHANNEL_DEPTH: usize = 4;
+pub(crate) const FILE_CHANNEL_DEPTH: usize = 4;
 
 /// Bind a TCP listener for direct admin sessions and return the bound
 /// address. Tries [`PREFERRED_PORT`] first, falls back to
@@ -384,14 +384,14 @@ where
 }
 
 /// One inbound work item for a session's dispatch task.
-enum SessionWork {
+pub(crate) enum SessionWork {
     Command(displays::Cmd),
     Text(String),
 }
 
 /// Owns a session's client + transport and runs its inbound work strictly in
 /// arrival order, so handler duration never blocks the session loop.
-async fn dispatch_task(
+pub(crate) async fn dispatch_task(
     mut client: TerminalWebsocketClient,
     mut transport: ClientTransport,
     mut work_rx: UnboundedReceiver<SessionWork>,

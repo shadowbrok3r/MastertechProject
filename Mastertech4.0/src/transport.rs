@@ -7,6 +7,9 @@
 //! `&mut WsSender` to `&mut ClientTransport`.
 //!
 //! - `WebSocket` variant: forwards directly to ewebsock.
+//! - `Local` variant: this app driving its own machine. There is no socket and
+//!   no framing; the admin side inbound queue IS the writer, so a frame is just
+//!   pushed straight onto it.
 //! - `Tcp` variant: hands frames to a writer task via an unbounded channel;
 //!   the writer task length-prefixes (4-byte LE u32) and writes to the
 //!   TcpStream write half. Ping/Pong/Close `WsMessage` variants are
@@ -49,6 +52,14 @@ pub enum ClientTransport {
         ctrl: UnboundedSender<TcpFrame>,
         file: Sender<TcpFrame>,
     },
+    /// The in-process path. `ctrl` is the admin side inbound queue, so a reply is
+    /// enqueued directly rather than framed and written. `file` keeps the same
+    /// bounded channel as TCP, so a large download still paces itself instead of
+    /// taking the relay fallback that reads a whole file into RAM.
+    Local {
+        ctrl: displays::tabs::admin_console::client_interface::InboundSink,
+        file: Sender<TcpFrame>,
+    },
 }
 
 impl ClientTransport {
@@ -70,6 +81,13 @@ impl ClientTransport {
                 // TCP; quietly drop them rather than fabricating messages.
                 _ => {}
             },
+            ClientTransport::Local { ctrl, .. } => match msg {
+                WsMessage::Binary(_) | WsMessage::Text(_) => {
+                    let _ = ctrl.send(ewebsock::WsEvent::Message(msg));
+                }
+                // Ping/Pong/Close are WS framing with no meaning in-process.
+                _ => {}
+            },
         }
     }
 
@@ -77,7 +95,9 @@ impl ClientTransport {
     /// off the session loop with backpressure. `None` on the relay path.
     pub fn file_sender(&self) -> Option<Sender<TcpFrame>> {
         match self {
-            ClientTransport::Tcp { file, .. } => Some(file.clone()),
+            ClientTransport::Tcp { file, .. } | ClientTransport::Local { file, .. } => {
+                Some(file.clone())
+            }
             ClientTransport::WebSocket(_) => None,
         }
     }
