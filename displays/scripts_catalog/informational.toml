@@ -112,5 +112,6 @@ category = "informational"
 summary = "Run all informational prechecks"
 timeout_secs = 600
 surfaces = ["egui", "terminal", "remote", "mcp"]
+runs = ["is-windows-activated", "is-webroot-installed", "is-superantispyware-installed", "is-supereasybackup-installed", "align-taskbar-to-left"]
 order = 110
 
