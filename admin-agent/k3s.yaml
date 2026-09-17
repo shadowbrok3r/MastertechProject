@@ -60,6 +60,26 @@ spec:
             secretKeyRef:
               name: zeroclaw-gateway
               key: token
+        # Codex broker: zc-codexd on the zeroclaw box (LAN, bearer token). Setting
+        # the URL hands assist dispatch to the broker; unset falls back to the
+        # ZeroClaw channel/webhook paths below.
+        - name: MTECH_CODEXD_URL
+          value: "ws://192.168.22.7:7420"
+        - name: MTECH_CODEXD_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: zc-codexd
+              key: token
+        - name: MTECH_CODEX_MODEL
+          value: "zc-heavy"
+        - name: MTECH_CODEX_PROVIDER
+          value: "zcpool"
+        - name: MTECH_CODEX_CWD
+          value: "/home/shadowbroker/zc-sessions"
+        - name: MTECH_CODEX_MAX_THREADS
+          value: "2"
+        - name: MTECH_AGENT_NODE
+          value: "admin-agent"
         # Signin failure is non-fatal — the daemon continues as guest — so these
         # are optional. The assist tables are PERMISSIONS FULL, so guest works;
         # set them to attribute the daemon's writes to a service account.

@@ -1,42 +1,66 @@
-//! Browses ZeroClaw agent turns as readable transcripts.
+//! Codex agent sessions: the threads the admin-agent broker runs, their live
+//! transcripts from `agent_event`, and a composer that queues `agent_turn` rows.
+//!
+//! Everything comes from SurrealDB, so this instance sees the same sessions as
+//! every other one and never needs a socket to the agent host. Rows are polled
+//! incrementally (new seq or still streaming), which keeps the traffic small.
 
 use std::time::{Duration, Instant};
 
 use crossbeam::channel::{Receiver, Sender};
-use eframe::egui::{self, Align, Color32, Layout, RichText, ScrollArea, Ui, vec2};
+use database::schema::{AgentEvent, AgentThread, AgentTurn, RecordId, RecordIdExt};
+use eframe::egui::{self, Align, Layout, RichText, ScrollArea, TextEdit, Ui, vec2};
+use serde_json::Value;
 
-use crate::ai::zeroclaw_sessions::{AgentSession, Entry};
 use crate::markdown_editor::chat_markdown;
-use crate::ui_tools::hex_json;
+use crate::ui_tools::{hex_json, icons, theme};
 use crate::{PlatformSpawner, Spawner};
 
-const AUTO_REFRESH_SECS: u64 = 20;
+const THREADS_POLL: Duration = Duration::from_secs(5);
+const EVENTS_POLL: Duration = Duration::from_millis(1500);
+const EVENT_PAGE: usize = 400;
+
+enum Msg {
+    Threads(Result<Vec<AgentThread>, String>),
+    Events(RecordId, Result<Vec<AgentEvent>, String>),
+    Turn(Result<(), String>),
+}
 
 pub struct AgentSessions {
-    sessions: Vec<AgentSession>,
-    selected: Option<String>,
+    threads: Vec<AgentThread>,
+    selected: Option<RecordId>,
+    events: Vec<AgentEvent>,
+    last_seq: i64,
+    include_closed: bool,
+    show_reasoning: bool,
     filter: String,
-    failures_only: bool,
-    auto_refresh: bool,
-    last_poll: Option<Instant>,
-    loading: bool,
+    composer: String,
     status: String,
-    tx: Sender<Result<Vec<AgentSession>, String>>,
-    rx: Receiver<Result<Vec<AgentSession>, String>>,
+    loading_threads: bool,
+    loading_events: bool,
+    last_threads_poll: Option<Instant>,
+    last_events_poll: Option<Instant>,
+    tx: Sender<Msg>,
+    rx: Receiver<Msg>,
 }
 
 impl Default for AgentSessions {
     fn default() -> Self {
         let (tx, rx) = crossbeam::channel::unbounded();
         Self {
-            sessions: Vec::new(),
+            threads: Vec::new(),
             selected: None,
+            events: Vec::new(),
+            last_seq: 0,
+            include_closed: false,
+            show_reasoning: false,
             filter: String::new(),
-            failures_only: false,
-            auto_refresh: true,
-            last_poll: None,
-            loading: false,
+            composer: String::new(),
             status: String::new(),
+            loading_threads: false,
+            loading_events: false,
+            last_threads_poll: None,
+            last_events_poll: None,
             tx,
             rx,
         }
@@ -44,81 +68,136 @@ impl Default for AgentSessions {
 }
 
 impl AgentSessions {
-    fn refresh(&mut self) {
-        if self.loading {
+    /// Opens a thread from elsewhere in the app (the viewport, a notification).
+    pub fn select(&mut self, thread: RecordId) {
+        if self.selected.as_ref() != Some(&thread) {
+            self.selected = Some(thread);
+            self.events.clear();
+            self.last_seq = 0;
+            self.last_events_poll = None;
+        }
+    }
+
+    fn poll_threads(&mut self) {
+        if self.loading_threads {
             return;
         }
-        self.loading = true;
-        self.last_poll = Some(Instant::now());
+        self.loading_threads = true;
+        self.last_threads_poll = Some(Instant::now());
         let tx = self.tx.clone();
+        let include_closed = self.include_closed;
         PlatformSpawner::spawn(async move {
-            let _ = tx.send(crate::ai::zeroclaw_sessions::fetch().await.map_err(|e| e.to_string()));
+            let r = AgentThread::list_recent(150, include_closed).await.map_err(|e| e.to_string());
+            let _ = tx.send(Msg::Threads(r));
+        });
+    }
+
+    fn poll_events(&mut self) {
+        let Some(thread) = self.selected.clone() else { return };
+        if self.loading_events {
+            return;
+        }
+        self.loading_events = true;
+        self.last_events_poll = Some(Instant::now());
+        let tx = self.tx.clone();
+        let after = self.last_seq;
+        PlatformSpawner::spawn(async move {
+            let r = AgentEvent::since(&thread, after, EVENT_PAGE).await.map_err(|e| e.to_string());
+            let _ = tx.send(Msg::Events(thread, r));
         });
     }
 
     fn drain(&mut self) {
         while let Ok(msg) = self.rx.try_recv() {
-            self.loading = false;
             match msg {
-                Ok(sessions) => {
-                    self.status = format!("{} turns", sessions.len());
+                Msg::Threads(Ok(threads)) => {
+                    self.loading_threads = false;
+                    self.status = format!("{} sessions", threads.len());
                     if self.selected.is_none() {
-                        self.selected = sessions.first().map(|s| s.trace_id.clone());
+                        if let Some(first) = threads.first() {
+                            self.select(first.id.clone());
+                        }
                     }
-                    self.sessions = sessions;
+                    self.threads = threads;
                 }
-                Err(e) => self.status = e,
+                Msg::Threads(Err(e)) => {
+                    self.loading_threads = false;
+                    self.status = e;
+                }
+                Msg::Events(thread, Ok(rows)) => {
+                    self.loading_events = false;
+                    if self.selected.as_ref() != Some(&thread) {
+                        continue;
+                    }
+                    for row in rows {
+                        self.last_seq = self.last_seq.max(row.seq);
+                        match self.events.iter_mut().find(|e| e.id == row.id) {
+                            Some(existing) => *existing = row,
+                            None => self.events.push(row),
+                        }
+                    }
+                    self.events.sort_by_key(|e| e.seq);
+                }
+                Msg::Events(_, Err(e)) => {
+                    self.loading_events = false;
+                    self.status = e;
+                }
+                Msg::Turn(Ok(())) => self.status = "sent".into(),
+                Msg::Turn(Err(e)) => self.status = format!("send failed: {e}"),
             }
         }
     }
 
-    fn visible(&self) -> Vec<&AgentSession> {
-        let needle = self.filter.trim().to_lowercase();
-        self.sessions
-            .iter()
-            .filter(|s| !self.failures_only || s.failures > 0)
-            .filter(|s| {
-                needle.is_empty()
-                    || s.agent.to_lowercase().contains(&needle)
-                    || s.trace_id.contains(&needle)
-                    || s.entries.iter().any(|(_, e)| entry_text(e).to_lowercase().contains(&needle))
-            })
-            .collect()
+    fn send_turn(&mut self, kind: &str) {
+        let Some(thread) = self.selected.clone() else { return };
+        let text = self.composer.trim().to_string();
+        if matches!(kind, "start" | "steer") && text.is_empty() {
+            return;
+        }
+        if matches!(kind, "start" | "steer") {
+            self.composer.clear();
+        }
+        let tx = self.tx.clone();
+        let kind = kind.to_string();
+        PlatformSpawner::spawn(async move {
+            let r = AgentTurn::ask(&thread, &kind, &text).await.map(|_| ()).map_err(|e| e.to_string());
+            let _ = tx.send(Msg::Turn(r));
+        });
+    }
+
+    fn selected_thread(&self) -> Option<&AgentThread> {
+        let id = self.selected.as_ref()?;
+        self.threads.iter().find(|t| &t.id == id)
     }
 
     pub fn ui(&mut self, ui: &mut Ui) {
         self.drain();
-        if self.last_poll.is_none() {
-            self.refresh();
+        if self.last_threads_poll.is_none_or(|t| t.elapsed() >= THREADS_POLL) {
+            self.poll_threads();
         }
-        if self.auto_refresh
-            && !self.loading
-            && self.last_poll.is_some_and(|t| t.elapsed() >= Duration::from_secs(AUTO_REFRESH_SECS))
-        {
-            self.refresh();
+        if self.selected.is_some() && self.last_events_poll.is_none_or(|t| t.elapsed() >= EVENTS_POLL) {
+            self.poll_events();
         }
-        if self.loading {
-            ui.ctx().request_repaint();
-        } else if self.auto_refresh {
-            ui.ctx().request_repaint_after(Duration::from_secs(1));
-        }
+        ui.ctx().request_repaint_after(EVENTS_POLL);
 
         ui.horizontal(|ui| {
-            if ui.button("Refresh").clicked() {
-                self.refresh();
+            if ui.button(format!("{} Refresh", icons::REFRESH)).clicked() {
+                self.last_threads_poll = None;
+                self.last_events_poll = None;
             }
-            ui.checkbox(&mut self.auto_refresh, "Auto");
-            ui.checkbox(&mut self.failures_only, "Failures only");
+            if ui.checkbox(&mut self.include_closed, "Show closed").changed() {
+                self.last_threads_poll = None;
+            }
+            ui.checkbox(&mut self.show_reasoning, "Show thinking");
             ui.label("Search:");
-            ui.add(egui::TextEdit::singleline(&mut self.filter).desired_width(220.0));
+            ui.add(TextEdit::singleline(&mut self.filter).desired_width(200.0));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let text = if self.loading { "loading...".to_string() } else { self.status.clone() };
-                ui.label(RichText::new(text).weak());
+                ui.label(RichText::new(&self.status).weak());
             });
         });
         ui.separator();
 
-        let list_w = (ui.available_width() * 0.30).clamp(220.0, 380.0);
+        let list_w = (ui.available_width() * 0.28).clamp(220.0, 360.0);
         let height = ui.available_height();
         ui.horizontal_top(|ui| {
             ui.allocate_ui_with_layout(vec2(list_w, height), Layout::top_down(Align::Min), |ui| {
@@ -128,188 +207,237 @@ impl AgentSessions {
             ui.allocate_ui_with_layout(
                 vec2(ui.available_width(), height),
                 Layout::top_down(Align::Min),
-                |ui| self.transcript_ui(ui),
+                |ui| self.thread_ui(ui),
             );
         });
     }
 
     fn list_ui(&mut self, ui: &mut Ui) {
-        let visible: Vec<(String, String)> = self
-            .visible()
+        let needle = self.filter.trim().to_lowercase();
+        let rows: Vec<(RecordId, String, String, String, egui::Color32)> = self
+            .threads
             .iter()
-            .map(|s| (s.trace_id.clone(), summary_line(s)))
+            .filter(|t| {
+                needle.is_empty()
+                    || t.label().to_lowercase().contains(&needle)
+                    || t.connection_string.to_lowercase().contains(&needle)
+                    || t.requested_by.as_deref().unwrap_or("").to_lowercase().contains(&needle)
+                    || t.status.contains(&needle)
+            })
+            .map(|t| {
+                let (icon, color, word) = status_chip(ui, &t.status);
+                let who = t.requested_by.clone().unwrap_or_default();
+                (t.id.clone(), t.label(), format!("{icon} {word}"), who, color)
+            })
             .collect();
-        if visible.is_empty() {
-            ui.label(RichText::new("No turns match.").weak());
+        if rows.is_empty() {
+            ui.label(RichText::new("No agent sessions yet.").weak());
             return;
         }
-        ScrollArea::vertical().id_salt("agent_session_list").show(ui, |ui| {
-            for (trace_id, summary) in visible {
-                let selected = self.selected.as_deref() == Some(trace_id.as_str());
-                let failed = self
-                    .sessions
-                    .iter()
-                    .find(|s| s.trace_id == trace_id)
-                    .is_some_and(|s| s.failures > 0);
-                let mut text = RichText::new(summary);
-                if failed {
-                    text = text.color(Color32::from_rgb(220, 120, 120));
-                }
-                if ui.selectable_label(selected, text).clicked() {
-                    self.selected = Some(trace_id.clone());
+        ScrollArea::vertical().id_salt("agent_thread_list").show(ui, |ui| {
+            for (id, label, chip, who, color) in rows {
+                let selected = self.selected.as_ref() == Some(&id);
+                let text = format!("{label}\n{chip}  {who}");
+                let resp = ui.selectable_label(selected, RichText::new(text).color(color));
+                if resp.clicked() {
+                    self.select(id.clone());
                 }
             }
         });
     }
 
-    fn transcript_ui(&mut self, ui: &mut Ui) {
-        let Some(session) = self
-            .selected
-            .as_ref()
-            .and_then(|id| self.sessions.iter().find(|s| &s.trace_id == id))
-        else {
-            ui.label(RichText::new("Select a turn.").weak());
+    fn thread_ui(&mut self, ui: &mut Ui) {
+        let Some(thread) = self.selected_thread().cloned() else {
+            ui.label(RichText::new("Select a session.").weak());
             return;
         };
-
+        let (icon, color, word) = status_chip(ui, &thread.status);
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new(&session.agent).strong());
-            ui.label(RichText::new(format!("· {}", session.model)).weak());
-            ui.label(RichText::new(format!("· {}", session.short_id())).weak());
-            ui.label(RichText::new(format!("· {} tools", session.tool_calls())).weak());
-            if session.failures > 0 {
-                ui.label(
-                    RichText::new(format!("· {} failed", session.failures))
-                        .color(Color32::from_rgb(220, 120, 120)),
-                );
+            ui.label(RichText::new(format!("{icon} {word}")).color(color).strong());
+            ui.label(RichText::new(format!("· {}", thread.label())).strong());
+            ui.label(RichText::new(format!("· {}", thread.connection_string)).weak());
+            if let Some(m) = &thread.model {
+                ui.label(RichText::new(format!("· {m}")).weak());
             }
-            if session.input_tokens + session.output_tokens > 0 {
-                ui.label(
-                    RichText::new(format!(
-                        "· {}in/{}out",
-                        session.input_tokens, session.output_tokens
-                    ))
-                    .weak(),
-                );
-            }
-            if session.cost_usd > 0.0 {
-                ui.label(RichText::new(format!("· ${:.4}", session.cost_usd)).weak());
-            }
-        });
-        ui.label(RichText::new(format!("{} - {}", session.started, session.ended)).weak());
-        ui.separator();
-
-        ScrollArea::vertical().id_salt("agent_session_body").show(ui, |ui| {
-            // Consecutive tool activity collapses into one block.
-            let entries = &session.entries;
-            let mut i = 0;
-            while i < entries.len() {
-                if is_tool_entry(&entries[i].1) {
-                    let start = i;
-                    while i < entries.len() && is_tool_entry(&entries[i].1) {
-                        i += 1;
-                    }
-                    tool_group_ui(ui, &session.trace_id, start, &entries[start..i]);
-                } else {
-                    let (ts, entry) = &entries[i];
-                    entry_ui(ui, &session.trace_id, i, ts, entry);
-                    i += 1;
+            if let (Some(used), Some(window)) = (thread.tokens_used, thread.tokens_window) {
+                if window > 0 {
+                    ui.label(RichText::new(format!("· context {}%", used * 100 / window)).weak());
                 }
             }
-        });
-    }
-}
-
-fn summary_line(s: &AgentSession) -> String {
-    let clock = s.ended.split('T').nth(1).map(|t| &t[..t.len().min(8)]).unwrap_or("");
-    let head = s
-        .outcome()
-        .map(|t| t.lines().next().unwrap_or("").chars().take(48).collect::<String>())
-        .unwrap_or_default();
-    format!("{clock}  {}  ({})\n{head}", s.agent, s.short_id())
-}
-
-fn is_tool_entry(e: &Entry) -> bool {
-    matches!(e, Entry::ToolCall { .. } | Entry::ToolResult { .. })
-}
-
-/// Wraps a run of tool activity in one collapsible block, each call still
-/// collapsible inside it.
-fn tool_group_ui(ui: &mut Ui, trace: &str, offset: usize, group: &[(String, Entry)]) {
-    let calls = group.iter().filter(|(_, e)| matches!(e, Entry::ToolCall { .. })).count();
-    let failures = group.iter().filter(|(_, e)| e.is_failure()).count();
-    let plural = if calls == 1 { "" } else { "s" };
-    let title = if failures > 0 {
-        RichText::new(format!("{calls} tool call{plural} · {failures} failed"))
-            .color(Color32::from_rgb(220, 120, 120))
-    } else {
-        RichText::new(format!("{calls} tool call{plural}")).weak()
-    };
-    egui::CollapsingHeader::new(title)
-        .id_salt(format!("{trace}:group:{offset}"))
-        .default_open(failures > 0)
-        .show(ui, |ui| {
-            for (n, (ts, entry)) in group.iter().enumerate() {
-                entry_ui(ui, trace, offset + n, ts, entry);
+            if let Some(by) = &thread.requested_by {
+                ui.label(RichText::new(format!("· asked by {by}")).weak());
             }
         });
-}
-
-fn entry_text(e: &Entry) -> &str {
-    match e {
-        Entry::Prompt { text, .. } | Entry::Response { text } | Entry::Final { text } => text,
-        Entry::ToolCall { tool, .. } | Entry::ToolResult { tool, .. } => tool,
-    }
-}
-
-/// Renders `body` as a JSON tree when it parses, else as plain text.
-fn payload_ui(ui: &mut Ui, id_salt: &str, body: &str) {
-    match serde_json::from_str::<serde_json::Value>(body) {
-        Ok(v) if v.is_object() || v.is_array() => hex_json::json_tree(ui, id_salt, &v),
-        _ => {
-            ui.label(RichText::new(body).monospace());
+        if let Some(err) = thread.error.as_deref().filter(|e| !e.is_empty()) {
+            ui.label(RichText::new(format!("{} {err}", icons::STATUS_ERR)).color(theme::error(ui)).small());
         }
-    }
-}
+        ui.separator();
 
-fn entry_ui(ui: &mut Ui, trace: &str, idx: usize, ts: &str, entry: &Entry) {
-    let clock = ts.split('T').nth(1).map(|t| &t[..t.len().min(12)]).unwrap_or(ts);
-    let salt = format!("{trace}:{idx}");
-    match entry {
-        Entry::Response { text } | Entry::Final { text } => {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(entry.label()).strong());
-                ui.label(RichText::new(clock).weak().small());
+        let composer_h = 96.0;
+        let body_h = (ui.available_height() - composer_h).max(120.0);
+        let show_reasoning = self.show_reasoning;
+        let salt = thread.id.key_string();
+        ScrollArea::vertical()
+            .id_salt(("agent_transcript", &salt))
+            .stick_to_bottom(true)
+            .max_height(body_h)
+            .show(ui, |ui| {
+                if self.events.is_empty() {
+                    ui.label(RichText::new("Nothing yet — the agent is starting up.").weak());
+                }
+                transcript_ui(ui, &salt, &self.events, show_reasoning);
             });
-            chat_markdown::render(ui, text);
-            ui.add_space(6.0);
-        }
-        Entry::Prompt { text, truncated } => {
-            let title = if *truncated {
-                format!("{} · {clock} · truncated", entry.label())
-            } else {
-                format!("{} · {clock}", entry.label())
-            };
-            egui::CollapsingHeader::new(RichText::new(title).weak())
-                .id_salt(&salt)
-                .default_open(false)
-                .show(ui, |ui| payload_ui(ui, &salt, text));
-        }
-        Entry::ToolCall { tool, arguments } => {
-            egui::CollapsingHeader::new(RichText::new(format!("{tool} · {clock}")).strong())
-                .id_salt(&salt)
-                .default_open(false)
-                .show(ui, |ui| payload_ui(ui, &salt, arguments));
-        }
-        Entry::ToolResult { tool, output, error } => {
-            let title = match error {
-                Some(e) => RichText::new(format!("{tool} failed · {e}")).color(Color32::from_rgb(220, 120, 120)),
-                None => RichText::new(format!("{tool} result · {clock}")).weak(),
-            };
-            egui::CollapsingHeader::new(title)
-                .id_salt(&salt)
-                .default_open(error.is_some())
-                .show(ui, |ui| payload_ui(ui, &salt, output));
+
+        ui.separator();
+        let open = thread.is_open();
+        let running = matches!(thread.status.as_str(), "running" | "waiting_approval");
+        ui.add_enabled_ui(open, |ui| {
+            let resp = ui.add(
+                TextEdit::multiline(&mut self.composer)
+                    .desired_rows(2)
+                    .desired_width(f32::INFINITY)
+                    .hint_text(if running {
+                        "Tell the agent something while it works (Nudge), or queue a message for its next turn (Send)"
+                    } else {
+                        "Message the agent…"
+                    }),
+            );
+            let enter = resp.has_focus()
+                && ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.command);
+            ui.horizontal(|ui| {
+                if ui.button(format!("{} Send", icons::CHAT)).clicked() || enter {
+                    self.send_turn("start");
+                }
+                ui.add_enabled_ui(running, |ui| {
+                    if ui.button(format!("{} Nudge", icons::ARROW_RIGHT)).clicked() {
+                        self.send_turn("steer");
+                    }
+                    if ui
+                        .button(RichText::new(format!("{} Stop", icons::STOP)).color(theme::warn(ui)))
+                        .clicked()
+                    {
+                        self.send_turn("interrupt");
+                    }
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui
+                        .button(RichText::new(format!("{} Close session", icons::CLOSE)).color(theme::error(ui)))
+                        .clicked()
+                    {
+                        self.send_turn("close");
+                    }
+                });
+            });
+        });
+    }
+}
+
+/// Icon, colour and word for a thread status.
+pub fn status_chip(ui: &Ui, status: &str) -> (&'static str, egui::Color32, &'static str) {
+    match status {
+        "queued" => (icons::STATUS_QUEUED, theme::weak_text(ui), "Queued"),
+        "starting" => (icons::STATUS_WAIT, theme::info(ui), "Starting"),
+        "idle" => (icons::STATUS_READY, theme::success(ui), "Idle"),
+        "running" => (icons::STATUS_ON, theme::info(ui), "Working"),
+        "waiting_approval" => (icons::LOCK, theme::warn(ui), "Needs approval"),
+        "closed" => (icons::STATUS_OFF, theme::weak_text(ui), "Closed"),
+        "failed" => (icons::STATUS_ERR, theme::error(ui), "Failed"),
+        _ => (icons::STATUS_DOT, theme::weak_text(ui), "Unknown"),
+    }
+}
+
+fn item_str<'a>(item: &'a Option<Value>, key: &str) -> Option<&'a str> {
+    item.as_ref()?.get(key)?.as_str()
+}
+
+/// Renders a transcript; shared with the bench-side progress window.
+pub fn transcript_ui(ui: &mut Ui, salt: &str, events: &[AgentEvent], show_reasoning: bool) {
+    for ev in events {
+        let row_salt = format!("{salt}:{}", ev.seq);
+        match ev.kind.as_str() {
+            "turn_started" => {
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(format!("— {} —", ev.turn_id.clone().unwrap_or_else(|| "turn".into())))
+                        .weak()
+                        .small(),
+                );
+            }
+            "turn_completed" => ui.add_space(4.0),
+            "user" => {
+                ui.add_space(4.0);
+                egui::Frame::group(ui.style()).show(ui, |ui| {
+                    ui.label(RichText::new("Technician").strong().small());
+                    ui.label(&ev.text);
+                });
+            }
+            "agent" => {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(format!("{} Agent", icons::ROBOT)).strong().small());
+                    if !ev.done {
+                        ui.spinner();
+                    }
+                });
+                chat_markdown::render(ui, &ev.text);
+            }
+            "reasoning" => {
+                if show_reasoning && !ev.text.trim().is_empty() {
+                    egui::CollapsingHeader::new(RichText::new("thinking").weak().small())
+                        .id_salt(&row_salt)
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            ui.label(RichText::new(&ev.text).weak());
+                        });
+                }
+            }
+            "tool_call" => {
+                let tool = item_str(&ev.item, "tool").unwrap_or("tool").to_string();
+                let failed = ev.item.as_ref().and_then(|i| i.get("error")).is_some_and(|e| !e.is_null());
+                let title = if failed {
+                    RichText::new(format!("{} {tool} failed", icons::STATUS_ERR)).color(theme::error(ui))
+                } else if ev.done {
+                    RichText::new(format!("{} {tool}", icons::WRENCH)).weak()
+                } else {
+                    RichText::new(format!("{} {tool} running…", icons::WRENCH)).color(theme::info(ui))
+                };
+                egui::CollapsingHeader::new(title)
+                    .id_salt(&row_salt)
+                    .default_open(failed)
+                    .show(ui, |ui| {
+                        if let Some(args) = ev.item.as_ref().and_then(|i| i.get("arguments")) {
+                            ui.label(RichText::new("Arguments").strong().small());
+                            hex_json::json_tree(ui, &format!("{row_salt}:args"), args);
+                        }
+                        if let Some(err) = ev.item.as_ref().and_then(|i| i.pointer("/error/message")).and_then(Value::as_str) {
+                            ui.label(RichText::new(err).color(theme::error(ui)));
+                        } else if let Some(result) = ev.item.as_ref().and_then(|i| i.get("result")).filter(|r| !r.is_null()) {
+                            ui.label(RichText::new("Result").strong().small());
+                            hex_json::json_tree(ui, &format!("{row_salt}:result"), result);
+                        } else if !ev.text.is_empty() {
+                            ui.label(RichText::new(&ev.text).monospace().small());
+                        }
+                    });
+            }
+            "command" => {
+                egui::CollapsingHeader::new(RichText::new(format!("{} shell", icons::TERMINAL)).weak())
+                    .id_salt(&row_salt)
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(&ev.text).monospace().small());
+                    });
+            }
+            "approval" => {
+                ui.label(RichText::new(format!("{} {}", icons::LOCK, ev.text)).color(theme::warn(ui)));
+            }
+            "error" => {
+                ui.label(RichText::new(format!("{} {}", icons::STATUS_ERR, ev.text)).color(theme::error(ui)));
+            }
+            _ => {
+                if !ev.text.trim().is_empty() {
+                    ui.label(RichText::new(&ev.text).weak().small());
+                }
+            }
         }
     }
 }

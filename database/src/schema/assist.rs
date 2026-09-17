@@ -62,6 +62,21 @@ pub struct AssistRequest {
 }
 
 impl AssistRequest {
+    pub async fn get(id: &RecordId) -> anyhow::Result<Option<Self>> {
+        let mut res = db().query("SELECT * FROM $id").bind(("id", id.clone())).await?;
+        let rows: Vec<Self> = res.take(0).unwrap_or_default();
+        Ok(rows.into_iter().next())
+    }
+
+    /// Records the codex session the broker opened for this request.
+    pub async fn link_thread(id: &RecordId, thread: &RecordId) -> anyhow::Result<()> {
+        db().query("UPDATE $id SET agent_thread = $thread")
+            .bind(("id", id.clone()))
+            .bind(("thread", thread.clone()))
+            .await?;
+        Ok(())
+    }
+
     /// Claims a pending row; `false` means another dispatcher took it.
     pub async fn claim(id: &RecordId) -> anyhow::Result<bool> {
         let mut res = db()

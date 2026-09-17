@@ -9,6 +9,7 @@
 //! record id, so the window still finds the run after a client restart.
 
 use crossbeam::channel::{unbounded, Receiver, Sender};
+use database::schema::RecordIdExt;
 use displays::ui_tools::{icons, theme};
 use eframe::egui::{RichText, ScrollArea, Ui};
 use std::time::{Duration, Instant};
@@ -37,6 +38,10 @@ pub struct Snapshot {
     /// `(tool, succeeded, clock)` the agent ran against this machine, newest
     /// first. The only proof of life during the minutes before it speaks.
     pub tool_activity: Vec<(String, bool, String)>,
+    /// The Codex session the broker runs for this machine, when there is one.
+    pub thread: Option<database::schema::AgentThread>,
+    /// That session's transcript, oldest first.
+    pub events: Vec<database::schema::AgentEvent>,
 }
 
 /// How long a handed-over request may go without the agent saying anything or
@@ -97,6 +102,18 @@ impl AssistProgress {
     /// One line naming where the run has got to, plus a color for it.
     fn stage(&self) -> (&'static str, StageKind) {
         let s = &self.snapshot;
+        if let Some(thread) = &s.thread {
+            return match thread.status.as_str() {
+                "queued" => ("Queued for the AI agent", StageKind::Live),
+                "starting" => ("Starting the AI agent", StageKind::Live),
+                "running" => ("Agent working on this machine", StageKind::Live),
+                "waiting_approval" => ("Agent needs your approval — see the popup", StageKind::Live),
+                "idle" => ("Agent is waiting for you", StageKind::Done),
+                "closed" => ("Session closed", StageKind::Done),
+                "failed" => ("Agent session failed", StageKind::Bad),
+                _ => ("Agent session", StageKind::Live),
+            };
+        }
         if s.diagnosed {
             return ("Root cause identified", StageKind::Done);
         }
@@ -172,6 +189,26 @@ impl AssistProgress {
         ui.add_space(6.);
         ui.separator();
         ui.add_space(4.);
+
+        if let Some(thread) = self.snapshot.thread.clone() {
+            if let Some(err) = thread.error.as_deref().filter(|e| !e.is_empty()) {
+                ui.label(RichText::new(err.chars().take(300).collect::<String>()).small().color(theme::warn(ui)));
+            }
+            ui.label(
+                RichText::new("Reply to the agent, approve its tool calls and see every session in the Agent Sessions tab.")
+                    .small()
+                    .color(theme::weak_text(ui)),
+            );
+            ui.add_space(4.);
+            let salt = format!("assist:{}", thread.id.key_string());
+            ScrollArea::vertical().auto_shrink(false).stick_to_bottom(true).show(ui, |ui| {
+                if self.snapshot.events.is_empty() {
+                    ui.label(RichText::new("Nothing yet — the agent is starting up.").small().color(theme::weak_text(ui)));
+                }
+                displays::tabs::agent_sessions::transcript_ui(ui, &salt, &self.snapshot.events, false);
+            });
+            return;
+        }
 
         // Mirrors the AI tab rather than only the session records, so the two
         // never disagree about what the agent said.
@@ -273,6 +310,13 @@ fn category_color(ui: &Ui, category: &str) -> eframe::egui::Color32 {
 /// to `None` rather than failing the poll.
 async fn fetch(connection_string: &str) -> Option<Snapshot> {
     use database::schema::RecordIdExt;
+
+    // A Codex session owns the whole view; the legacy request/channel readout
+    // below only applies to hosts still dispatching through ZeroClaw.
+    if let Ok(Some(thread)) = database::schema::AgentThread::latest_for_connection(connection_string).await {
+        let events = database::schema::AgentEvent::history(&thread.id, 0, 300).await.unwrap_or_default();
+        return Some(Snapshot { thread: Some(thread), events, ..Default::default() });
+    }
 
     let mut res = database::db()
         .query(

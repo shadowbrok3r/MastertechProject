@@ -3302,6 +3302,7 @@ dependencies = [
  "wat",
  "web-sys",
  "web-time",
+ "zc-codex-client",
  "zstd",
 ]
 
@@ -15636,6 +15637,17 @@ dependencies = [
  "winnow 1.0.4",
  "zbus_names",
  "zvariant",
+]
+
+[[package]]
+name = "zc-codex-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures-util",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
 ]
 
 [[package]]

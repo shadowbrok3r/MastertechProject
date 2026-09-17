@@ -32,6 +32,8 @@ members = [
     # Vendored https://github.com/zakarumych/egui-snarl + egui-scale, ported to egui 0.36.
     "vendor/egui-snarl",
     "vendor/egui-scale",
+    # Vendored zc-codex bridge core (Codex app-server JSON-RPC client) for the admin-agent broker.
+    "vendor/zc-codex-client",
 ]
 # Targets of bare `cargo build`/`check`/`test` and rust-analyzer. Excludes the
 # wasm-only MtechServer2.0 (cdylib) so native commands don't try to compile it;
@@ -63,6 +65,7 @@ default-members = [
     "backdrop-blur/crates/backdrop-blur-egui",
     "vendor/egui-snarl",
     "vendor/egui-scale",
+    "vendor/zc-codex-client",
 ]
 # Standalone crates with their own toolchain/target; never part of this resolve.
 # uefi has its own [workspace] and builds standalone. MastertechMobile still

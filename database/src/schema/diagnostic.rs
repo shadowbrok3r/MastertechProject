@@ -306,7 +306,7 @@ pub struct DiagnosticSessionFull {
 }
 
 /// Sources `driven_by` and `diagnosed_by` accept, per the schema's ASSERT.
-const ACTOR_SOURCES: [&str; 5] = ["mcp", "zeroclaw", "cron", "tech", "legacy"];
+const ACTOR_SOURCES: [&str; 6] = ["mcp", "zeroclaw", "codex", "cron", "tech", "legacy"];
 
 /// Coerces an actor string into the `<source>/<name>` shape those two fields
 /// assert on, so a caller cannot write a value the database will reject.

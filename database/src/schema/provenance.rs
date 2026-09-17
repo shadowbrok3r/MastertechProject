@@ -27,6 +27,8 @@ pub enum Harness {
     Mcp,
     /// Spawned by the zeroclaw daemon (agent turn, webhook, or channel).
     Zeroclaw,
+    /// A Codex agent session driven by the admin-agent broker.
+    Codex,
     /// Unattended schedule.
     Cron,
     /// A human, no model involved.
@@ -36,12 +38,14 @@ pub enum Harness {
 }
 
 impl Harness {
-    pub const ALL: [Self; 5] = [Self::Mcp, Self::Zeroclaw, Self::Cron, Self::Tech, Self::Legacy];
+    pub const ALL: [Self; 6] =
+        [Self::Mcp, Self::Zeroclaw, Self::Codex, Self::Cron, Self::Tech, Self::Legacy];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Mcp => "mcp",
             Self::Zeroclaw => "zeroclaw",
+            Self::Codex => "codex",
             Self::Cron => "cron",
             Self::Tech => "tech",
             Self::Legacy => "legacy",
@@ -55,7 +59,10 @@ impl Harness {
     /// Maps an MCP client's advertised name to a harness. Anything that is not
     /// the zeroclaw daemon reached the server as a plain MCP client.
     pub fn from_mcp_client(client_name: &str) -> Self {
-        if client_name.trim().to_lowercase().contains("zeroclaw") {
+        let name = client_name.trim().to_lowercase();
+        if name.contains("codex") {
+            Self::Codex
+        } else if name.contains("zeroclaw") {
             Self::Zeroclaw
         } else {
             Self::Mcp
@@ -273,6 +280,7 @@ mod tests {
     fn client_name_decides_the_harness() {
         assert_eq!(Harness::from_mcp_client("zeroclaw"), Harness::Zeroclaw);
         assert_eq!(Harness::from_mcp_client("ZeroClaw-daemon"), Harness::Zeroclaw);
+        assert_eq!(Harness::from_mcp_client("codex-broker"), Harness::Codex);
         assert_eq!(Harness::from_mcp_client("claude-code"), Harness::Mcp);
         assert_eq!(Harness::from_mcp_client("Claude Desktop"), Harness::Mcp);
     }
