@@ -13,7 +13,9 @@ use displays::scripts::executor::ScriptExecutorRegistry;
 
 pub mod informational;
 pub mod junkware;
+pub(crate) mod powershell;
 pub mod stress;
+pub mod tuneup;
 
 static REGISTRY: OnceLock<ScriptExecutorRegistry> = OnceLock::new();
 
@@ -24,6 +26,7 @@ pub fn registry() -> &'static ScriptExecutorRegistry {
         registry.register(Box::new(informational::InformationalExecutor));
         registry.register(Box::new(junkware::JunkwareExecutor));
         registry.register(Box::new(stress::StressExecutor));
+        registry.register(Box::new(tuneup::TuneupExecutor));
         registry
     })
 }
