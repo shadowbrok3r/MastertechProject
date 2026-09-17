@@ -3,7 +3,6 @@ use crate::{filesystem::get_machine_instance, tabs::tur_sheet::get_ticket::reque
 use std::{collections::HashMap, time::Duration};
 use sysinfo::{Components, Disks, Motherboard, Networks, Product, System};
 use num_format::{Locale, ToFormattedString};
-use crossbeam::channel::Sender;
 use async_trait::async_trait;
 use database::schema::RecordId;
 use log::debug;
@@ -511,33 +510,6 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
 // Function to generate client ID
 pub fn generate_client_id(hostname: String, cpu: String) -> String {
     stress_runner::generate_client_hash(&hostname, &cpu)
-}
-
-pub async fn live_computer_stats(tx: Sender<SystemInformation>) -> anyhow::Result<(), anyhow::Error>{
-    // Holds the last sample error so an unchanged failure logs once, not every tick.
-    let mut last_err: Option<String> = None;
-    loop {
-        // A failed sample is skipped, not fatal: propagating it here used to
-        // end the loop and stop live telemetry for the life of the process.
-        match get_sysinfo().await {
-            Ok(info) => {
-                last_err = None;
-                if tx.send(info).is_err() {
-                    return Ok(());
-                }
-            }
-            Err(e) => {
-                let text = e.to_string();
-                if last_err.as_deref() == Some(text.as_str()) {
-                    debug!("live_computer_stats: sysinfo sample failed, retrying: {text}");
-                } else {
-                    log::warn!("live_computer_stats: sysinfo sample failed, retrying: {text}");
-                    last_err = Some(text);
-                }
-            }
-        }
-        tokio::time::sleep(std::time::Duration::from_secs_f32(0.1)).await;
-    }
 }
 
 /// Shared `stress-kit` telemetry agent for the Fleet Dashboard.

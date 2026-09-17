@@ -2,7 +2,7 @@ use eframe::egui::{Button, Color32, ComboBox, FontId, Frame, Layout, RichText, S
 use database::{schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, Store}, db};
 use egui::{PopupCloseBehavior, UiKind, containers::menu::{MenuButton, MenuConfig}, style::StyleModifier};
 use crate::{tabs::github::{get_github_releases, self_updater::run}};
-use displays::{app_state::{default_tree, AppState, MainPages}, pages::view_menu, plugins::push_widget_anchor, tabs::{TabContext, WorkMode}, ui_tools::{icons, theme}, TaskUiActions};
+use displays::{app_state::{default_tree, AppState, MainPages}, pages::view_menu, plugins::push_widget_anchor, tabs::{TabContext, WorkMode}, ui_tools::theme, TaskUiActions};
 use crate::app_state::MasterTechApp;
 use std::collections::BTreeSet;
 use log::{error, info};
