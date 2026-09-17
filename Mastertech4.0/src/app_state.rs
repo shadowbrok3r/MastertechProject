@@ -21,6 +21,40 @@ pub struct MasterTechApp {
     pub dock: DockSession,
 }
 
+/// This machine's own console session: the same per-machine view the admin console
+/// renders for a remote client, driven over the in-process transport.
+#[cfg(not(target_arch = "wasm32"))]
+pub struct LocalMachineSession {
+    pub view: displays::tabs::admin_console::client_interface::WebSocketClient,
+    /// Aborts the command pump when the session is dropped.
+    _pump: crate::local_session::LocalSessionHandle,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl LocalMachineSession {
+    /// Opens a session against this machine. Built lazily by the tab, because
+    /// `WebSocketClient::new` spawns an OpenAI bridge connect per instance.
+    pub fn open() -> Self {
+        use displays::tabs::admin_console::client_interface::{AdminTransport, WebSocketClient};
+
+        let mut client = crate::filesystem::get_client_hash();
+        // get_client_hash reports connected:false; without this the status dot in
+        // the nav row reads red for a session that is by definition up.
+        client.connected = true;
+
+        let (transport, peer) = AdminTransport::from_local(&client.connection_string);
+        let pump = crate::local_session::spawn(peer);
+        // Deliberately no start_receiving_buffers(): it only routes terminal, egui
+        // and desktop frames, which this session has no page for.
+        let view = WebSocketClient::new_local(
+            transport,
+            client,
+            displays::virtual_filesystem::FileSystem::new(),
+        );
+        Self { view, _pump: pump }
+    }
+}
+
 /// The operator's chosen job. `active: None` renders the picker instead of the dock.
 #[derive(Default)]
 pub struct WorkModeState {
@@ -99,6 +133,11 @@ pub struct MastertechContext {
     pub pending_activate_tab: Option<displays::tabs::TabId>,
     pub pending_tab_opens: Vec<displays::tabs::TabId>,
     pub work_mode: WorkModeState,
+    /// This machine's console session. `None` until the Resource Monitor tab is
+    /// first rendered; never cleared, because dropping it tears down MCP tool-log
+    /// and script-notify state keyed on this connection string.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub local_machine: Option<LocalMachineSession>,
 
     pub assist_offer_rx: Receiver<crate::tabs::tur_sheet::assist_prompt::PendingAssist>,
     pub assist_offer_tx: Sender<crate::tabs::tur_sheet::assist_prompt::PendingAssist>,
@@ -330,6 +369,8 @@ impl MasterTechApp {
             pending_activate_tab: None,
             pending_tab_opens: Vec::new(),
             work_mode: WorkModeState::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            local_machine: None,
 
             prestashop_api_tx, prestashop_api_rx,
             assist_offer_tx, assist_offer_rx,
