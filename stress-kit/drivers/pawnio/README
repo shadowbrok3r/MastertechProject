@@ -9,26 +9,28 @@ Windows with Secure Boot and Memory Integrity (HVCI) enabled.
 Provenance
 ----------
 
-PawnIO_setup.exe   2.1.0.0, redistributed from LibreHardwareMonitor
-                   (LibreHardwareMonitor.Windows.Forms/Resources/).
-                   sha256 a3a46226c5e2824f4cdd42be0eecbabfc672c86f7889710f5ab1e6ad385b47a0
-                   Upstream downloads: https://pawnio.eu
-                   Driver source:      https://github.com/namazso/PawnIO
-
-x64/               The x64 driver package carved out of that installer, renamed to the
-                   names its own INF and catalog reference. 149 KB against the
-                   installer's 3.2 MB, which is why the pawnio-triplet route exists.
+x64/               The x64 driver package, carved out of upstream's
+                   PawnIO_setup.exe 2.1.0.0 and renamed to the names its own INF
+                   and catalog reference. 149 KB against that installer's 3.2 MB.
                    sha256 PawnIO.sys f92de04e5a02256e86ffa1b4252fe669282198b7329227f40e51bca9267d133d
                    sha256 PawnIO.inf 13615792a75f85191bc3f2d19055a0292e47a1cc65f0d12b8631bcc0292b0e7f
                    sha256 PawnIO.cat b053f9301280b840a400a65a6f91eaa71f50cd74062ec17aa95f8968076ea9ee
+
+                   The installer it came from is no longer vendored here. To
+                   re-carve from a newer release, take the x64 official (not
+                   -unrestricted, not ARM64) set:
+                   sha256 PawnIO_setup.exe 2.1.0.0
+                          a3a46226c5e2824f4cdd42be0eecbabfc672c86f7889710f5ab1e6ad385b47a0
+                   Upstream downloads: https://pawnio.eu
+                   Driver source:      https://github.com/namazso/PawnIO
 
 *.bin              Signed modules from the official PawnIO.Modules 0.2.11
                    release, via LibreHardwareMonitorLib/Resources/PawnIo/.
                    Source: https://github.com/namazso/PawnIO.Modules
 
-The installer carries x64 and ARM64 builds of both the official (signed) and
-unrestricted (unsigned) editions. `-install` without `-unrestricted` selects the
-attestation-signed one. Verified on the x64 official set:
+Upstream's installer carries x64 and ARM64 builds of both the official (signed)
+and unrestricted (unsigned) editions; only the x64 official set is vendored
+here. Verified on it:
 
     signtool verify /kp /c pawnio.cat PawnIO.sys   ->  Successfully verified
     catalog signer: CN=Microsoft Windows Hardware Compatibility Publisher
@@ -70,19 +72,22 @@ invalidates it. Update by replacing whole files from an upstream release and
 refreshing the hashes above.
 
 
-Install routes
---------------
-
-Two cargo features pick how an absent driver gets installed; the backend uses an
-already-installed PawnIO with neither.
-
-pawnio-installer   Runs PawnIO_setup.exe -install -silent. Upstream's own path,
-                   and what LibreHardwareMonitor does. Costs 3.2 MB.
+Install route
+-------------
 
 pawnio-triplet     Installs x64/ through SetupAPI: SetupCopyOEMInfW to register
                    the catalog, a Root\PawnIO devnode, then
-                   UpdateDriverForPlugAndPlayDevicesW. Costs 149 KB.
+                   UpdateDriverForPlugAndPlayDevicesW. Costs 149 KB, and is
+                   enabled by the hw-sensors feature the apps use. Without it
+                   the backend uses an already-installed PawnIO and does nothing
+                   to a machine without one.
 
-Both compiled in, the triplet is tried first. MTECH_PAWNIO_INSTALL forces one
-route (triplet / installer / none) for bench comparison; a forced route that
-fails does not fall through.
+MTECH_PAWNIO_INSTALL=none leaves an absent driver absent; =triplet is the
+default and names the route explicitly.
+
+Upstream's PawnIO_setup.exe was a second route (pawnio-installer) until
+2026-09-17. It was dropped once the triplet had installed cleanly on two
+machines: it cost 3.2 MB of the portable binary, and the one time it ran it was
+as an unintended fallback that registered a second Root\PawnIO node beside the
+first, which leaves the device unreachable until both are removed. A single
+route is also what keeps that class of bug from returning.
