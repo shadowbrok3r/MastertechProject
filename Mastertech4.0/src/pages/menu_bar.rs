@@ -2,7 +2,7 @@ use eframe::egui::{Button, Color32, ComboBox, FontId, Frame, Layout, RichText, S
 use database::{schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, Store}, db};
 use egui::{PopupCloseBehavior, UiKind, containers::menu::{MenuButton, MenuConfig}, style::StyleModifier};
 use crate::{tabs::github::{get_github_releases, self_updater::run}};
-use displays::{app_state::{default_tree, AppState, MainPages}, pages::view_menu, plugins::push_widget_anchor, tabs::TabContext, ui_tools::theme, TaskUiActions};
+use displays::{app_state::{default_tree, AppState, MainPages}, pages::view_menu, plugins::push_widget_anchor, tabs::{TabContext, WorkMode}, ui_tools::{icons, theme}, TaskUiActions};
 use crate::app_state::MasterTechApp;
 use std::collections::BTreeSet;
 use log::{error, info};
@@ -18,6 +18,9 @@ impl MasterTechApp {
             inputs.insert(format!("{}", task.service_number.clone().unwrap_or_default()));
         }
         
+        let mut switch_to = None;
+        let mut back_to_picker = false;
+
         eframe::egui::Panel::top("egui_dock::MenuBar").show(ui, |ui| {
             eframe::egui::MenuBar::new()
             .config(
@@ -33,10 +36,37 @@ impl MasterTechApp {
                             ui,
                             &mut self.dock,
                             TabContext::MastertechNative,
+                            self.context.work_mode.active.unwrap_or_default(),
                             Some(&mut anchor),
                         );
                     });
                     push_widget_anchor("nav.menu.view", view_menu_button.response.rect);
+
+                    ui.add_space(6.0);
+
+                    let active = self.context.work_mode.active.unwrap_or_default();
+                    let mode_button = ui.menu_button(
+                        RichText::new(format!("{} {}", active.glyph(), active.title()))
+                            .color(theme::accent(ui))
+                            .heading(),
+                        |ui| {
+                            ui.set_min_width(190.0);
+                            for mode in WorkMode::ALL {
+                                let item = ui.selectable_label(*mode == active, mode.title());
+                                if item.on_hover_text(mode.blurb()).clicked() {
+                                    switch_to = Some(*mode);
+                                    ui.close_kind(UiKind::Menu);
+                                }
+                            }
+                            ui.separator();
+                            if ui.button("Choose again...").clicked() {
+                                back_to_picker = true;
+                                ui.close_kind(UiKind::Menu);
+                            }
+                        },
+                    );
+                    push_widget_anchor("nav.menu.work_mode", mode_button.response.rect);
+                    switch_to = switch_to.filter(|m| *m != active);
 
                     ui.add_space(10.0);
 
@@ -269,6 +299,9 @@ impl MasterTechApp {
                                         Err(e) => log::error!("*.enc File not found {e:?}"),
                                     };
 
+                                    self.context.get_settings = true;
+                                    self.context.work_mode = Default::default();
+
                                     let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::NoAuth("Login".to_string()));
                                     spawn(async move {
                                         let invalidation = db().invalidate().await;
@@ -307,13 +340,25 @@ impl MasterTechApp {
                                 // ui.set_height(60.0);
                                 ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_additive_luminance(60));
                                 ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_additive_luminance(120);
-                                let submit = Button::new(RichText::new(" Save Ui Layout ").monospace()).ui(ui);
+                                let layout_editable =
+                                    self.context.work_mode.active.unwrap_or_default() == WorkMode::Full;
+                                let hint = "Only available in Everything mode - presets always open their own layout.";
+                                let submit = ui
+                                    .add_enabled(
+                                        layout_editable,
+                                        Button::new(RichText::new(" Save Ui Layout ").monospace()),
+                                    );
+                                let submit = if layout_editable { submit } else { submit.on_disabled_hover_text(hint) };
                                 ui.add_space(5.0);
                                 let organize = Button::new(RichText::new(" Organize Windows ").monospace()).ui(ui);
                                 ui.add_space(10.0);
                                 ui.separator();
                                 ui.add_space(10.0);
-                                let reset_ui = Button::new(RichText::new(" Reset Ui Layout ").color(Color32::LIGHT_RED).monospace()).ui(ui);
+                                let reset_ui = ui.add_enabled(
+                                    layout_editable,
+                                    Button::new(RichText::new(" Reset Ui Layout ").color(Color32::LIGHT_RED).monospace()),
+                                );
+                                let reset_ui = if layout_editable { reset_ui } else { reset_ui.on_disabled_hover_text(hint) };
                                 ui.add_space(5.0);
                                 let reset_mem = Button::new(RichText::new(" Reset Memory ").monospace()).ui(ui);
                                 let default_dock = default_tree();
@@ -324,7 +369,7 @@ impl MasterTechApp {
                                     self.dock = default_dock;
                                     let mut user = usr.clone();
                                     spawn(async move {
-                                        match user.save_mtechserver_ui_layout(default_layout.clone()).await {
+                                        match user.save_mastertech_ui_layout(default_layout.clone()).await {
                                             Ok(_) => info!("Updated User Settings"),
                                             Err(e) => log::error!("Error updating User Settings: {e:?}"),
                                         }
@@ -397,6 +442,17 @@ impl MasterTechApp {
                 }
             })
         });
+
+        if let Some(mode) = switch_to {
+            let ctx = ui.ctx().clone();
+            self.apply_work_mode(mode, &ctx);
+        }
+        if back_to_picker {
+            if self.context.work_mode.active == Some(WorkMode::Full) {
+                self.context.work_mode.full_snapshot = Some(self.dock.tree.clone());
+            }
+            self.context.work_mode.active = None;
+        }
     }
 }
 

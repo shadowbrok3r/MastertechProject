@@ -5,6 +5,7 @@ use log::info;
 
 pub mod dock_session;
 pub mod tab_id;
+pub mod work_mode;
 pub mod tasks;
 pub mod task_audit;
 pub mod stock;
@@ -34,6 +35,7 @@ pub mod session_board;
 
 pub use dock_session::{default_dock_session_native, default_dock_session_wasm, DockSession};
 pub use tab_id::{TabContext, TabId, WAREHOUSE_DEFAULT_OPEN};
+pub use work_mode::WorkMode;
 
 impl SharedContext {
     pub fn tab_context(&self) -> TabContext {

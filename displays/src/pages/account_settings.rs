@@ -32,6 +32,19 @@ impl UserPreferences {
         self.user = user.clone();
     }
 
+    /// Persists the startup mode. `None` means the picker runs every launch.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn save_default_work_mode(&mut self, mode: Option<crate::tabs::WorkMode>) {
+        let slug = mode.map(|m| m.slug().to_owned());
+        self.user.set_default_work_mode_local(slug.clone());
+        let mut user = self.user.clone();
+        PlatformSpawner::spawn(async move {
+            if let Err(e) = user.save_default_work_mode(slug).await {
+                error!("Error saving the default work mode: {e:?}");
+            }
+        });
+    }
+
     pub fn save_mcp_settings(&mut self) {
         let to_opt = |s: &str| { let t = s.trim(); if t.is_empty() { None } else { Some(t.to_string()) } };
         let settings = McpSettings {
@@ -461,6 +474,60 @@ impl SharedContext {
                                     });
 
                                     ui.add_space(10.0);
+                                    #[cfg(not(target_arch = "wasm32"))]
+                                    {
+                                        use crate::tabs::WorkMode;
+
+                                        ui.heading(RichText::new("Startup").strong());
+                                        ui.add_space(10.0);
+
+                                        ui.group(|ui| {
+                                            ui.set_max_width(360.0);
+                                            ui.vertical_centered(|ui| {
+                                                let current = self
+                                                    .account_mod
+                                                    .user
+                                                    .get_user_settings()
+                                                    .get_default_work_mode()
+                                                    .as_deref()
+                                                    .and_then(WorkMode::from_slug);
+                                                let label = match current {
+                                                    Some(mode) => mode.title(),
+                                                    None => "Ask me every time",
+                                                };
+                                                let mut picked = current;
+                                                ComboBox::from_id_salt("default_work_mode")
+                                                    .width(330.0)
+                                                    .selected_text(label)
+                                                    .show_ui(ui, |ui| {
+                                                        ui.selectable_value(
+                                                            &mut picked,
+                                                            None,
+                                                            "Ask me every time",
+                                                        );
+                                                        for mode in WorkMode::ALL {
+                                                            ui.selectable_value(
+                                                                &mut picked,
+                                                                Some(*mode),
+                                                                mode.title(),
+                                                            );
+                                                        }
+                                                    });
+                                                if picked != current {
+                                                    self.account_mod.save_default_work_mode(picked);
+                                                }
+                                                ui.add_space(4.0);
+                                                ui.label(
+                                                    RichText::new("Which screen MasterTech opens into.")
+                                                        .small()
+                                                        .weak(),
+                                                );
+                                            });
+                                        });
+
+                                        ui.add_space(14.0);
+                                    }
+
                                     ui.heading(RichText::new("MCP / AI Endpoint").strong());
                                     ui.add_space(10.0);
 

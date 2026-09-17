@@ -1,6 +1,6 @@
 use database::{schema::{prestashop_schema::PrestashopPayload, CarboniteResponse, ComputerData, CustomerData, DuplicateCheckResult, GetKeysResponse, LiveTaskPayload, TaskNotePayload, TicketData, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}};
 use crate::{tabs::{file_browser::{FileBrowser, FilesPanelMode}, github::self_updater::GithubRelease, scripts::EguiScriptsTab, tur_sheet::{get_ticket::SendRequest,scaffold::{self, HardwareTest}}}};
-use displays::{app_state::{default_tree, SharedContext}, channel_manager::ChannelManager, modals::{DuplicateMergeModal, task_modal::SpecialPartOrder}, plugins::{DefaultEventDispatcher, PluginClientCommand, PluginManager}, tabs::DockSession, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
+use displays::{app_state::{default_tree, SharedContext}, channel_manager::ChannelManager, modals::{DuplicateMergeModal, task_modal::SpecialPartOrder}, plugins::{DefaultEventDispatcher, PluginClientCommand, PluginManager}, tabs::{DockSession, WorkMode}, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
 use std::{path::PathBuf,sync::{atomic::AtomicBool, Arc, Mutex, RwLock}};
 use egui_dock::{NodeIndex, SurfaceIndex};
 use crossbeam::channel::{Receiver, Sender};
@@ -19,6 +19,16 @@ use crate::tabs::minidump::MiniDumpApp;
 pub struct MasterTechApp {
     pub context: MastertechContext,
     pub dock: DockSession,
+}
+
+/// The operator's chosen job. `active: None` renders the picker instead of the dock.
+#[derive(Default)]
+pub struct WorkModeState {
+    pub active: Option<WorkMode>,
+    /// Picker checkbox: persist `active` as this operator's default.
+    pub remember: bool,
+    /// Full's arrangement as it was left, so leaving and returning is lossless.
+    pub full_snapshot: Option<egui_dock::DockState<displays::tabs::TabId>>,
 }
 
 pub struct MastertechContext {
@@ -88,6 +98,7 @@ pub struct MastertechContext {
     pub pending_tab_removes: Vec<displays::tabs::TabId>,
     pub pending_activate_tab: Option<displays::tabs::TabId>,
     pub pending_tab_opens: Vec<displays::tabs::TabId>,
+    pub work_mode: WorkModeState,
 
     pub assist_offer_rx: Receiver<crate::tabs::tur_sheet::assist_prompt::PendingAssist>,
     pub assist_offer_tx: Sender<crate::tabs::tur_sheet::assist_prompt::PendingAssist>,
@@ -318,6 +329,7 @@ impl MasterTechApp {
             pending_tab_removes: Vec::new(),
             pending_activate_tab: None,
             pending_tab_opens: Vec::new(),
+            work_mode: WorkModeState::default(),
 
             prestashop_api_tx, prestashop_api_rx,
             assist_offer_tx, assist_offer_rx,

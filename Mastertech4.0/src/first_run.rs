@@ -183,14 +183,15 @@ impl MasterTechApp {
         if let Some(user) = &self.context.shared_ctx.current_user {
             if self.context.get_settings {
                 self.context.get_settings = false;
-                let layout = user.get_user_settings().get_ui_layout_mastertech();
-                if let Ok(tree) = serde_json::from_value::<egui_dock::DockState<displays::tabs::TabId>>(layout.clone()) {
-                    self.dock.tree = tree;
-                } else {
-                    match serde_json::from_value::<egui_dock::DockState<String>>(layout) {
-                        Ok(legacy) => self.dock = displays::tabs::DockSession::from_legacy_tree(legacy),
-                        Err(e) => log::error!("Could not get UI layout from user: {e:?}"),
-                    }
+                let default_mode = user
+                    .get_user_settings()
+                    .get_default_work_mode()
+                    .as_deref()
+                    .and_then(displays::tabs::WorkMode::from_slug);
+                // Resolved here, inside `logic`, so the first painted frame is already correct.
+                match default_mode {
+                    Some(mode) => self.apply_work_mode(mode, ctx),
+                    None => self.context.work_mode.active = None,
                 }
                 #[cfg(target_os = "windows")]
                 {

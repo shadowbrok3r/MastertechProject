@@ -1,5 +1,5 @@
 -- ============================================================
--- TABLE: user                     last changed: user_tui_color_scheme
+-- TABLE: user                     last changed: user_default_work_mode
 -- Managed by surrealkit. Edit here, then `rollout plan`.
 -- ============================================================
 -- SCHEMAFULL. Rust source of truth: `database::schema::user::User`.
@@ -39,6 +39,10 @@ DEFINE FIELD user_settings.ui_layout            ON user TYPE none | object FLEXI
     DEFAULT { mastertech: {  }, mtechserver: {  } } PERMISSIONS FULL;
 DEFINE FIELD user_settings.ui_layout.mastertech  ON user TYPE none | object FLEXIBLE DEFAULT {  }        PERMISSIONS FULL;
 DEFINE FIELD user_settings.ui_layout.mtechserver ON user TYPE none | object FLEXIBLE DEFAULT {  }        PERMISSIONS FULL;
+-- Which work mode MasterTech opens into. No DEFAULT: NONE means show the picker,
+-- and an added non-none field without a backfill fails coercion on every old row.
+DEFINE FIELD user_settings.ui_layout.default_work_mode ON user TYPE none | string
+    ASSERT $value == NONE OR $value IN ['tuneup_qc', 'diagnostic', 'admin', 'full'] PERMISSIONS FULL;
 
 DEFINE FIELD user_statuses    ON user TYPE none | array<string> DEFAULT []               PERMISSIONS FULL;
 DEFINE FIELD user_statuses.*  ON user TYPE string                                        PERMISSIONS FULL;
