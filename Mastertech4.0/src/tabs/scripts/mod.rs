@@ -529,17 +529,16 @@ impl EguiScriptsTab {
             if let Some(def) = CATALOG
                 .id_for_legacy_name(&script.name)
                 .and_then(|id| CATALOG.get(id))
+                && crate::scripts_exec::registry().find(&def.id).is_some()
             {
-                if crate::scripts_exec::registry().find(&def.id).is_some() {
-                    let ctx = self.get_context();
-                    self.running = Some(crate::scripts_exec::registry().spawn(
-                        def,
-                        &ctx,
-                        run_token,
-                        CancelToken::new(),
-                    ));
-                    return;
-                }
+                let ctx = self.get_context();
+                self.running = Some(crate::scripts_exec::registry().spawn(
+                    def,
+                    &ctx,
+                    run_token,
+                    CancelToken::new(),
+                ));
+                return;
             }
             self.running = None;
 
