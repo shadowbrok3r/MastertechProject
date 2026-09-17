@@ -239,6 +239,18 @@ impl AgentApproval {
         Ok(res.take(0).unwrap_or_default())
     }
 
+    /// Open decisions of one thread, oldest first.
+    pub async fn list_pending_for_thread(thread: &RecordId) -> anyhow::Result<Vec<Self>> {
+        let mut res = db()
+            .query(
+                "SELECT * FROM agent_approval WHERE thread = $thread AND status = 'pending' \
+                 ORDER BY requested_at ASC",
+            )
+            .bind(("thread", thread.clone()))
+            .await?;
+        Ok(res.take(0).unwrap_or_default())
+    }
+
     /// Open decisions a technician may answer: their own, or their store's.
     pub async fn list_pending_for(user: &RecordId, store: Option<&str>) -> anyhow::Result<Vec<Self>> {
         let mut res = db()

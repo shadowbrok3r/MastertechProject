@@ -72,6 +72,14 @@ pub struct EnhancedAiPlayground {
     /// index renders both sides once without duplicating the author's own echo.
     #[serde(skip)]
     hydrated: std::collections::HashSet<String>,
+    /// Local threads re-keyed onto the agent session they turned out to be.
+    #[serde(skip)]
+    agent_switch_tx: Sender<(String, String)>,
+    #[serde(skip)]
+    agent_switch_rx: Receiver<(String, String)>,
+    /// Typed input for a focused machine goes to its Codex agent session.
+    #[serde(default = "default_true")]
+    pub use_agent: bool,
     /// Service number the conversation is about, when the host knows one; joins
     /// the transcript to a service order.
     #[serde(skip)]
@@ -102,6 +110,7 @@ impl Default for EnhancedAiPlayground {
         let (agent_flag_tx, agent_flag_rx) = crossbeam::channel::unbounded::<String>();
         let (agent_index_tx, agent_index_rx) =
             crossbeam::channel::unbounded::<Vec<database::schema::AgentThread>>();
+        let (agent_switch_tx, agent_switch_rx) = crossbeam::channel::unbounded::<(String, String)>();
         Self {
             selected_thread: String::new(),
             chat_title: HashMap::new(),
@@ -124,6 +133,9 @@ impl Default for EnhancedAiPlayground {
             agent_index_rx,
             last_index_poll: None,
             hydrated: std::collections::HashSet::new(),
+            agent_switch_tx,
+            agent_switch_rx,
+            use_agent: true,
             service_number: None,
             #[cfg(not(target_arch = "wasm32"))]
             claude: crate::ai::claude_code::ClaudeCodeSession::new(),
@@ -154,7 +166,7 @@ impl EnhancedAiPlayground {
             ChatThread { id: thread_id.clone(), messages: Vec::new(), images: Vec::new(), input: String::new() },
         );
         let label = match &connection_string {
-            Some(cs) => format!("Diagnose {cs} with Claude Code"),
+            Some(cs) => format!("Diagnose {cs} with the agent"),
             None => "Diagnose with Claude Code".to_string(),
         };
         let _ = self.response_tx.try_send(ChatMessage {
@@ -368,6 +380,14 @@ impl EnhancedAiPlayground {
                 {
                     self.use_mcp_tools = !self.use_mcp_tools;
                 }
+                #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+                if ui
+                    .selectable_label(self.use_agent, RichText::new("Agent").small())
+                    .on_hover_text("Send questions about the focused machine to its Codex agent session (off: local model with tools)")
+                    .clicked()
+                {
+                    self.use_agent = !self.use_agent;
+                }
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     if self.claude.is_busy() {
@@ -380,7 +400,7 @@ impl EnhancedAiPlayground {
                         }
                     } else if ui
                         .button(RichText::new(icons::ROBOT))
-                        .on_hover_text("Diagnose with Claude Code (subscription)")
+                        .on_hover_text("Diagnose the focused machine with the agent")
                         .clicked()
                     {
                         let cs = self.focused_client.clone();
@@ -444,7 +464,7 @@ impl EnhancedAiPlayground {
                 if self.self_diagnosis {
                     ui.heading(RichText::new("Diagnose this computer").strong());
                     ui.label(
-                        RichText::new("Ask about the PC Mastertech is running on — it inspects this machine with the Mastertech tools.")
+                        RichText::new("Ask about the PC Mastertech is running on. The Codex agent inspects it with the Mastertech tools; anything that would run a command here waits for a technician's approval.")
                             .weak(),
                     );
                 } else {
@@ -737,6 +757,10 @@ impl EnhancedAiPlayground {
             self.agent_threads.insert(thread);
         }
         #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        while let Ok((local, key)) = self.agent_switch_rx.try_recv() {
+            self.adopt_agent_thread(&local, key);
+        }
+        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
         {
             self.poll_agent_index(ui);
             self.poll_agent_replies(ui);
@@ -758,6 +782,36 @@ impl EnhancedAiPlayground {
                 }
             }
         }
+    }
+
+    /// Re-keys a local thread onto the agent session it became, keeping what was typed.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+    fn adopt_agent_thread(&mut self, local: &str, key: String) {
+        if local == key {
+            return;
+        }
+        if let Some(mut moved) = self.threads.remove(local) {
+            moved.id = key.clone();
+            match self.threads.get_mut(&key) {
+                Some(existing) => existing.messages.extend(moved.messages),
+                None => {
+                    self.threads.insert(key.clone(), moved);
+                }
+            }
+        }
+        if let Some(engine) = self.thread_engine.remove(local) {
+            self.thread_engine.insert(key.clone(), engine);
+        }
+        if let Some(title) = self.chat_title.remove(local) {
+            self.chat_title.insert(key.clone(), title);
+        }
+        self.agent_threads.remove(local);
+        self.agent_threads.insert(key.clone());
+        self.hydrated.insert(key.clone());
+        if self.selected_thread == local {
+            self.selected_thread = key;
+        }
+        self.last_agent_poll = None;
     }
 
     /// Queues one technician message for the agent: a turn on an open session, or a
@@ -782,6 +836,7 @@ impl EnhancedAiPlayground {
             .and_then(|v| v.get("store").and_then(serde_json::Value::as_str).map(str::to_string));
         let service_number = self.service_number.clone();
         let tx = self.response_tx.clone();
+        let switch_tx = self.agent_switch_tx.clone();
         let tid = thread_id.clone();
         PlatformSpawner::spawn(async move {
             let say = |content: ChatMessageType| ChatMessage {
@@ -807,23 +862,41 @@ impl EnhancedAiPlayground {
                 let _ = tx.try_send(say(ChatMessageType::Error(format!("Not dispatched — {cs}: {block}."))));
                 return;
             }
-            // A machine with a live session takes the message as a turn; otherwise a request opens one.
+            // A machine with a live session takes the message as a turn; otherwise a
+            // request opens one. Either way this thread becomes that session.
             match AgentThread::active_for_connection(&cs).await {
                 Ok(Some(thread)) => match AgentTurn::ask(&thread.id, "start", &text).await {
                     Ok(_) => {
-                        let _ = tx.try_send(say(ChatMessageType::Text(format!(
-                            "Sent to the live agent session for {cs}; open it under Agent sessions to follow along."
-                        ))));
+                        let _ = switch_tx.try_send((tid.clone(), thread.id.key_string()));
                     }
                     Err(e) => {
                         let _ = tx.try_send(say(ChatMessageType::Error(format!("could not queue the message: {e}"))));
                     }
                 },
                 _ => match AssistRequest::create_from_chat(&cs, tech.as_deref(), store.as_deref(), service_number.as_deref(), &text).await {
-                    Ok(_) => {
+                    Ok(request) => {
                         let _ = tx.try_send(say(ChatMessageType::Text(format!(
-                            "Diagnosis requested for {cs}. The agent session appears under Agent sessions within a minute."
+                            "Asked the agent host to open a session for {cs}\u{2026}"
                         ))));
+                        for _ in 0..45 {
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                            if let Ok(Some(req)) = AssistRequest::get(&request).await {
+                                if let Some(thread) = req.agent_thread {
+                                    let _ = switch_tx.try_send((tid.clone(), thread.key_string()));
+                                    return;
+                                }
+                                if req.status == "failed" {
+                                    let _ = tx.try_send(say(ChatMessageType::Error(format!(
+                                        "the agent host could not open a session: {}",
+                                        req.dispatch_error.unwrap_or_else(|| "unknown error".into())
+                                    ))));
+                                    return;
+                                }
+                            }
+                        }
+                        let _ = tx.try_send(say(ChatMessageType::Error(
+                            "no agent session opened within 90 seconds; is admin-agent running?".into(),
+                        )));
                     }
                     Err(e) => {
                         let _ = tx.try_send(say(ChatMessageType::Error(format!("could not request a diagnosis: {e}"))));
@@ -1011,6 +1084,16 @@ impl EnhancedAiPlayground {
             return;
         }
 
+        // A focused machine is the agent's by default; the local model is the opt-out.
+        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        if self.use_agent {
+            if let Some(cs) = self.focused_client.clone() {
+                self.thread_engine.insert(thread_id.clone(), "Codex agent".to_string());
+                self.send_to_agent(thread_id, input, Some(cs));
+                return;
+            }
+        }
+
         // Input in the Claude Code thread resumes that session instead of the OpenAI endpoint.
         #[cfg(not(target_arch = "wasm32"))]
         if self.claude_thread.as_deref() == Some(thread_id.as_str()) {
@@ -1039,6 +1122,10 @@ impl EnhancedAiPlayground {
             let _ = (input, thread_id);
         }
     }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn short_title(s: &str) -> String {
