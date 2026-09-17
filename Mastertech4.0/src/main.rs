@@ -493,6 +493,9 @@ async fn main() -> eframe::Result<()> {
     // connection) instead of its private fallback runtime.
     stress_runner::set_runtime_handle(tokio::runtime::Handle::current());
 
+    // Lets a script executor start async work from the thread it runs on.
+    scripts_exec::env::set_runtime_handle(tokio::runtime::Handle::current());
+
     #[cfg(target_os = "windows")]
     {
         use windows::Win32::System::Threading::GetCurrentProcess;

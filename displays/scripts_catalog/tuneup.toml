@@ -91,8 +91,9 @@ id = "run-junkware-category"
 name = "Run Junkware Category"
 category = "tuneup"
 summary = "Remove all known junkware applications"
-timeout_secs = 600
+timeout_secs = 1800
 surfaces = ["egui", "terminal", "remote", "mcp"]
+runs = ["onelaunch", "webnavigator-browser", "wave-browser", "clear-browser", "shift-browser", "avast-browser", "mcaffee-safe", "driver-support", "winzip"]
 order = 80
 
 [[script]]
