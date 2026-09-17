@@ -69,7 +69,7 @@ fn webhook_secret() -> Option<String> {
 /// diagnostic order, what create_diagnostic_session wants, and the identity
 /// rules — restating them here only gave the model a second, staler copy to
 /// disagree with, which is how it ended up inventing a customer id.
-fn compose_prompt(req: &AssistRequest) -> String {
+pub(super) fn compose_prompt(req: &AssistRequest) -> String {
     let mut out = format!("Check this computer: {}\n", req.connection_string);
     let agent = req.agent.as_deref().unwrap_or(DEFAULT_AGENT);
     out.push_str(&format!("driven_by: zeroclaw/{agent}\n"));
@@ -112,6 +112,11 @@ async fn open_conversation(req: &AssistRequest) -> anyhow::Result<()> {
 }
 
 async fn dispatch(req: AssistRequest) {
+    // A configured codex broker owns dispatch outright.
+    if super::codex::enabled() {
+        super::codex::dispatch(req).await;
+        return;
+    }
     // Checked before the claim so an unconfigured host leaves the row pending
     // rather than stranding it as dispatched.
     let channel = super::chat::channel().is_some();

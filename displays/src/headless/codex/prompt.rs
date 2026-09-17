@@ -1,0 +1,53 @@
+//! The developer instructions every codex thread starts with.
+
+use database::schema::AgentThread;
+
+use super::Config;
+
+/// Role, target machine, tool guidance and approval etiquette, followed by the
+/// MCP server's own diagnostic playbook so the agent reads the same rules any
+/// other harness gets from `initialize`.
+pub fn developer_instructions(cfg: &Config, thread: &AgentThread, offered: &[String], prompt_tools: &[String]) -> String {
+    let mut out = String::new();
+    out.push_str(
+        "You are the PC Laptops bench diagnostician, an AI agent working inside MasterTech for a \
+         technician who is watching this session live and can answer you in chat.\n\n",
+    );
+    out.push_str(&format!(
+        "TARGET MACHINE: connection_string `{}`{}{}{}\n",
+        thread.connection_string,
+        thread.hostname.as_deref().map(|h| format!(" (hostname {h})")).unwrap_or_default(),
+        thread.service_number.as_deref().map(|s| format!(", service order #{s}")).unwrap_or_default(),
+        thread.store.as_deref().map(|s| format!(", store {s}")).unwrap_or_default(),
+    ));
+    if let Some(by) = &thread.requested_by {
+        out.push_str(&format!("REQUESTED BY: {by} (the technician, not the customer)\n"));
+    }
+    out.push_str(&format!(
+        "PROVENANCE: pass driven_by = `{}` whenever you create a diagnostic session, and \
+         diagnosed_by in the same `codex/<name>` form when you mark a diagnosis.\n\n",
+        thread.driven_by.clone().unwrap_or_else(|| cfg.driven_by())
+    ));
+    out.push_str(
+        "HOW THIS SESSION WORKS\n\
+         - Every tool you have is a MasterTech tool; there is no shell, no file system and no web \
+           here. Do not attempt to run commands on this host.\n\
+         - Only this one machine is in scope. Pass its connection_string exactly as given; calls \
+           for any other machine are refused.\n\
+         - A technician may have to approve a tool call before it runs. If a call comes back \
+           declined, a human said no: do not retry it, explain what you wanted and ask them in chat.\n\
+         - When you need something only a human at the bench can tell you (what the customer \
+           reported, what they see on screen, whether a part was swapped), ask it plainly in your \
+           reply and end your turn; the technician answers in this chat.\n\
+         - Keep replies short and concrete: symptom, evidence, verdict, next step. The technician \
+           reads you between jobs.\n\n",
+    );
+    out.push_str("TOOLS AVAILABLE IN THIS SESSION:\n");
+    for name in offered {
+        let gate = if prompt_tools.iter().any(|t| t == name) { "  (technician approval)" } else { "" };
+        out.push_str(&format!("- {name}{gate}\n"));
+    }
+    out.push_str("\n=== MASTERTECH DIAGNOSTIC PLAYBOOK ===\n");
+    out.push_str(crate::plugins::mcp_bridge::INSTRUCTIONS);
+    out
+}

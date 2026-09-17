@@ -10,6 +10,8 @@
 DEFINE TABLE assist_request TYPE ANY SCHEMALESS PERMISSIONS FULL;
 
 DEFINE FIELD agent              ON assist_request TYPE none | string PERMISSIONS FULL;
+-- The codex session the broker opened for this request.
+DEFINE FIELD agent_thread       ON assist_request TYPE none | record<agent_thread> PERMISSIONS FULL;
 DEFINE FIELD computer           ON assist_request TYPE none | record<computer> PERMISSIONS FULL;
 DEFINE FIELD connection_string  ON assist_request TYPE string PERMISSIONS FULL;
 DEFINE FIELD created_at         ON assist_request TYPE datetime DEFAULT time::now() PERMISSIONS FULL;

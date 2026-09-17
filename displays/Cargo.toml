@@ -5,7 +5,7 @@ edition = "2024"
 
 [features]
 default = [ "wasm" ]
-tokio = ["dep:tokio"]
+tokio = ["dep:tokio", "dep:zc-codex-client"]
 native-telemetry = ["dep:stress-kit", "stress-kit/hw-sensors"]
 wasm = ["dep:wasm-bindgen-futures", "dep:web-time"]
 wasm-plugins = ["dep:wasmtime", "dep:wasmtime-wasi", "dep:wat"]
@@ -90,6 +90,8 @@ workspace = true
 tcp_protocol = { workspace = true, features = ["tunnel"] }
 ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tokio", "tls", "rustls_ring"]}
 tokio = { workspace = true, optional = true }
+# Codex app-server client for the headless broker; rides the `tokio` feature.
+zc-codex-client = { path = "../vendor/zc-codex-client", optional = true }
 dump-triage = { workspace = true, features = ["facet"] }
 mtech-plugin-sdk = { workspace = true }
 stress-kit = { workspace = true, optional = true }

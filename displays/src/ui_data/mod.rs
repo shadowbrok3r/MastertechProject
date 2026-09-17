@@ -148,6 +148,12 @@ impl crate::app_state::SharedContext {
         queue.ui(ctx);
     }
 
+    /// Polls the Codex agent's pending approvals and questions for this user
+    /// and draws the decision modal, on whichever tab is showing.
+    fn receive_agent_approvals(&mut self, ctx: &eframe::egui::Context) {
+        self.agent_approvals.tick_and_ui(ctx);
+    }
+
     /// Spawns the chat live streams (participant-filtered) once the chat tab
     /// has requested them; re-run after each reconnect generation.
     fn spawn_chat_streams(&mut self) {
@@ -715,6 +721,7 @@ impl crate::app_state::SharedContext {
         self.receive_prestashop();
         self.receive_extracted_specs();
         self.receive_sql_approvals(ctx);
+        self.receive_agent_approvals(ctx);
         self.filesystem.receive();
         
         // Deduplicate back-to-back identical toasts within a short

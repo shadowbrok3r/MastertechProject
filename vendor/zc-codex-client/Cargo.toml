@@ -1,0 +1,21 @@
+[package]
+name = "zc-codex-client"
+version = "0.1.0"
+edition = "2021"
+description = "Vendored zc-codex bridge core: a presenter-agnostic client for the Codex app-server JSON-RPC control plane"
+license = "MIT"
+publish = false
+
+# Vendored from WorkProjects/zc-codex `src/lib.rs` (the daemon module is left out).
+# Keep changes mirrored in that repo so the phone app and this broker stay in step.
+
+[lib]
+name = "zc_codex_client"
+path = "src/lib.rs"
+
+[dependencies]
+tokio = { workspace = true }
+tokio-tungstenite = "0.28"
+futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
+serde_json = { workspace = true }
+anyhow = { workspace = true }

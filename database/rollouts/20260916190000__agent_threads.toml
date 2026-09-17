@@ -1,0 +1,169 @@
+# Codex agent sessions: the broker's thread/transcript/turn/approval tables, the
+# back-link from assist_request, and the `codex` harness in the provenance ASSERT.
+#
+# All four tables are new and every added field is `none | <type>` with no
+# DEFAULT that needs a backfill. The provenance regex only widens, so existing
+# rows keep passing. Generated from database/schema/*.surql by a script; edit
+# the schema files and regenerate rather than hand-editing the DDL here.
+id = "20260916190000__agent_threads"
+name = "agent_threads"
+state = "completed"
+source_schema_hash = "c3040d90180b1f15fd27b6d0da265fe4f6f0459399c44d4db63bdcf41dbd9500"
+target_schema_hash = "c3040d90180b1f15fd27b6d0da265fe4f6f0459399c44d4db63bdcf41dbd9500"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "create_agent_tables"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE agent_thread TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE assist_request     ON agent_thread TYPE none | record<assist_request>     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE assignee           ON agent_thread TYPE none | record<user>               PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE allow_box_shell    ON agent_thread TYPE bool DEFAULT false                PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE broker_node        ON agent_thread TYPE none | string                     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE closed_at          ON agent_thread TYPE none | datetime                   PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE codex_thread_id    ON agent_thread TYPE none | string                     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE computer           ON agent_thread TYPE none | record<computer>           PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE connection_string  ON agent_thread TYPE string                            PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE created_at         ON agent_thread TYPE datetime DEFAULT time::now()      PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE customer           ON agent_thread TYPE none | record<customer>           PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE diagnostic_session ON agent_thread TYPE none | record<diagnostic_session> PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE driven_by          ON agent_thread TYPE none | string                     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE error              ON agent_thread TYPE none | string                     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE hostname           ON agent_thread TYPE none | string                     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE last_event_at      ON agent_thread TYPE none | datetime                   PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE last_seq           ON agent_thread TYPE none | int                        PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE model              ON agent_thread TYPE none | string                     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE provider           ON agent_thread TYPE none | string                     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE requested_by       ON agent_thread TYPE none | string                     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE service_number     ON agent_thread TYPE none | string                     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE service_order      ON agent_thread TYPE none | record<service_order>      PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE status             ON agent_thread TYPE string DEFAULT 'queued'
+    ASSERT $value IN ['queued', 'starting', 'idle', 'running', 'waiting_approval', 'closed', 'failed'] PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE store              ON agent_thread TYPE none | string                     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE title              ON agent_thread TYPE none | string                     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE tokens_used        ON agent_thread TYPE none | int                        PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE tokens_window      ON agent_thread TYPE none | int                        PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE tool_path          ON agent_thread TYPE none | string                     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE updated_at         ON agent_thread TYPE none | datetime                   PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE agent_thread_status_idx     ON agent_thread FIELDS status;
+DEFINE INDEX OVERWRITE agent_thread_assignee_idx   ON agent_thread FIELDS assignee;
+DEFINE INDEX OVERWRITE agent_thread_connection_idx ON agent_thread FIELDS connection_string;
+DEFINE INDEX OVERWRITE agent_thread_codex_idx      ON agent_thread FIELDS codex_thread_id;
+DEFINE EVENT OVERWRITE agent_thread_closed ON agent_thread
+    WHEN $event = 'UPDATE' AND $before.status != 'closed' AND $after.status = 'closed' AND $value.assignee != NONE
+    THEN {
+        CREATE notification CONTENT {
+            notification_description: string::concat('AI diagnostic finished for ', $value.service_number ?? $value.connection_string),
+            notification_type: 'Agent Done',
+            status: 'Unread',
+            user: $value.assignee
+        };
+    };
+
+DEFINE TABLE OVERWRITE agent_event TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE created_at ON agent_event TYPE datetime DEFAULT time::now() PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE done       ON agent_event TYPE bool DEFAULT false            PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE item       ON agent_event TYPE none | object                 PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE item_id    ON agent_event TYPE none | string                 PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE kind       ON agent_event TYPE string
+    ASSERT $value IN ['user', 'agent', 'reasoning', 'tool_call', 'command', 'file_change', 'approval', 'error', 'turn_started', 'turn_completed', 'other'] PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE seq        ON agent_event TYPE int                            PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE text       ON agent_event TYPE string DEFAULT ''              PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE thread     ON agent_event TYPE record<agent_thread>           PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE turn_id    ON agent_event TYPE none | string                 PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE updated_at ON agent_event TYPE none | datetime               PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE agent_event_thread_seq_idx  ON agent_event FIELDS thread, seq;
+DEFINE INDEX OVERWRITE agent_event_thread_kind_idx ON agent_event FIELDS thread, kind;
+
+DEFINE TABLE OVERWRITE agent_turn TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE created_at ON agent_turn TYPE datetime DEFAULT time::now()   PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE error      ON agent_turn TYPE none | string                  PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE kind       ON agent_turn TYPE string DEFAULT 'start'
+    ASSERT $value IN ['start', 'steer', 'interrupt', 'close'] PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE sent_at    ON agent_turn TYPE none | datetime                PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE status     ON agent_turn TYPE string DEFAULT 'pending'
+    ASSERT $value IN ['pending', 'sent', 'failed'] PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE tech       ON agent_turn TYPE none | string DEFAULT $auth.email PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE text       ON agent_turn TYPE string DEFAULT ''              PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE thread     ON agent_turn TYPE record<agent_thread>           PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE agent_turn_status_idx ON agent_turn FIELDS status;
+DEFINE INDEX OVERWRITE agent_turn_thread_idx ON agent_turn FIELDS thread;
+
+DEFINE TABLE OVERWRITE agent_approval TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE answers           ON agent_approval TYPE none | object             PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE arguments         ON agent_approval TYPE none | object             PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE assignee          ON agent_approval TYPE none | record<user>       PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE codex_request_id  ON agent_approval TYPE string                    PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE connection_string ON agent_approval TYPE none | string             PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE decided_at        ON agent_approval TYPE none | datetime           PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE decided_by        ON agent_approval TYPE none | record<user>       PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE deny_note         ON agent_approval TYPE none | string             PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE expires_at        ON agent_approval TYPE none | datetime           PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE kind              ON agent_approval TYPE string
+    ASSERT $value IN ['tool_call', 'command', 'file_change', 'permissions', 'question', 'elicitation'] PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE method            ON agent_approval TYPE string                    PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE params            ON agent_approval TYPE none | object             PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE questions         ON agent_approval TYPE none | array              PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE requested_at      ON agent_approval TYPE datetime DEFAULT time::now() PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE response_sent     ON agent_approval TYPE none | object             PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE sent_to_codex_at  ON agent_approval TYPE none | datetime           PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE server            ON agent_approval TYPE none | string             PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE status            ON agent_approval TYPE string DEFAULT 'pending'
+    ASSERT $value IN ['pending', 'accepted', 'accepted_for_session', 'declined', 'cancelled', 'answered', 'expired', 'auto_declined', 'auto_accepted', 'resolved_elsewhere', 'failed'] PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE store             ON agent_approval TYPE none | string             PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE summary           ON agent_approval TYPE string                    PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE thread            ON agent_approval TYPE record<agent_thread>      PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE tool              ON agent_approval TYPE none | string             PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE agent_approval_status_idx   ON agent_approval FIELDS status;
+DEFINE INDEX OVERWRITE agent_approval_thread_idx   ON agent_approval FIELDS thread;
+DEFINE INDEX OVERWRITE agent_approval_assignee_idx ON agent_approval FIELDS assignee, status;
+DEFINE EVENT OVERWRITE agent_approval_requested ON agent_approval
+    WHEN $event = 'CREATE' AND $value.status = 'pending' AND $value.assignee != NONE
+    THEN {
+        CREATE notification CONTENT {
+            notification_description: string::concat('AI agent asks: ', $value.summary, ' (', $value.connection_string ?? '', ')'),
+            notification_type: 'Agent Approval',
+            status: 'Unread',
+            user: $value.assignee
+        };
+    };
+DEFINE EVENT OVERWRITE agent_approval_decided ON agent_approval
+    WHEN $event = 'UPDATE' AND $before.status = 'pending' AND $after.status != 'pending' AND $after.decided_at = NONE
+    THEN {
+        UPDATE $value.id SET decided_at = time::now();
+    };
+"""
+
+[[steps]]
+id = "assist_request_agent_thread"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE agent_thread ON assist_request TYPE none | record<agent_thread> PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "provenance_codex"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE diagnosed_by ON diagnostic_session TYPE none | string ASSERT $value == NONE OR string::matches($value, '^(mcp|zeroclaw|codex|cron|tech|legacy)/[a-z0-9][a-z0-9._-]*(@[a-z0-9][a-z0-9._:-]*)?(#[a-z0-9][a-z0-9._-]*)?$') PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE driven_by ON diagnostic_session TYPE none | string ASSERT $value == NONE OR string::matches($value, '^(mcp|zeroclaw|codex|cron|tech|legacy)/[a-z0-9][a-z0-9._-]*(@[a-z0-9][a-z0-9._:-]*)?(#[a-z0-9][a-z0-9._-]*)?$') PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "drop_agent_tables"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE FIELD IF EXISTS agent_thread ON assist_request;
+REMOVE TABLE IF EXISTS agent_approval;
+REMOVE TABLE IF EXISTS agent_turn;
+REMOVE TABLE IF EXISTS agent_event;
+REMOVE TABLE IF EXISTS agent_thread;
+DEFINE FIELD OVERWRITE diagnosed_by ON diagnostic_session TYPE none | string ASSERT $value == NONE OR string::matches($value, '^(mcp|zeroclaw|cron|tech|legacy)/[a-z0-9][a-z0-9._-]*(@[a-z0-9][a-z0-9._:-]*)?(#[a-z0-9][a-z0-9._-]*)?$') PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE driven_by ON diagnostic_session TYPE none | string ASSERT $value == NONE OR string::matches($value, '^(mcp|zeroclaw|cron|tech|legacy)/[a-z0-9][a-z0-9._-]*(@[a-z0-9][a-z0-9._:-]*)?(#[a-z0-9][a-z0-9._-]*)?$') PERMISSIONS FULL;
+"""

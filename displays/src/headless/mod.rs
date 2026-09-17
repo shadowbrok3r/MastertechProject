@@ -17,11 +17,13 @@ use crate::Cmd;
 
 mod assist;
 mod chat;
+pub mod codex;
 mod notify;
 mod offer;
 
 pub use assist::spawn_assist_dispatcher;
 pub use chat::spawn_chat_bridge;
+pub use codex::spawn_codex_broker;
 pub use notify::spawn_shelf_notifier;
 
 /// Poll interval for the session pump.
@@ -241,6 +243,7 @@ pub async fn run(mcp_http: bool) -> anyhow::Result<()> {
     };
 
     tokio::spawn(run_session_engine());
+    spawn_codex_broker(manager.clone());
     spawn_assist_dispatcher();
     spawn_chat_bridge();
     spawn_shelf_notifier();
