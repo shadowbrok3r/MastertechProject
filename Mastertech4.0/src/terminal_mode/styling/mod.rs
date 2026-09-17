@@ -1,5 +1,5 @@
 mod color_cycle;
-mod glyphs;
+pub mod glyphs;
 
 pub use color_cycle::*;
 pub use glyphs::*;
