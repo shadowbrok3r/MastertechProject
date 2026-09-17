@@ -457,6 +457,7 @@ impl EguiScriptsTab {
                 Some(self.service_number_input.clone()) 
             },
             customer_email: self.customer_email.clone(),
+            diagnostic_session_id: self.mcp_diagnostic_session_id.clone(),
             channels: self.channels.clone(),
         }
     }

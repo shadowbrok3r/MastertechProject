@@ -12,6 +12,7 @@ use std::sync::OnceLock;
 use displays::scripts::executor::ScriptExecutorRegistry;
 
 pub mod informational;
+pub mod stress;
 
 static REGISTRY: OnceLock<ScriptExecutorRegistry> = OnceLock::new();
 
@@ -20,6 +21,7 @@ pub fn registry() -> &'static ScriptExecutorRegistry {
     REGISTRY.get_or_init(|| {
         let mut registry = ScriptExecutorRegistry::new();
         registry.register(Box::new(informational::InformationalExecutor));
+        registry.register(Box::new(stress::StressExecutor));
         registry
     })
 }

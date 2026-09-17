@@ -15,7 +15,9 @@ use displays::scripts::id::ScriptId;
 #[cfg(target_os = "windows")]
 use crate::terminal_mode::tabs::scripts::script_categories::check_windows_activation;
 #[cfg(target_os = "windows")]
-use crate::utilities::scripts::{AntiVirusProduct, InstalledProgram, check_power_options};
+use crate::utilities::scripts::{
+    AntiVirusProduct, InstalledProgram, ScheduledTask, check_power_options,
+};
 
 /// Ids this executor claims. Everything else stays on the legacy path until it
 /// is ported, which is what lets the two coexist.
@@ -26,6 +28,8 @@ const HANDLED: &[&str] = &[
     "is-webroot-installed",
     "is-superantispyware-installed",
     "is-hibernation-sleep-enabled",
+    "are-there-scheduled-tasks-for-it",
+    "any-recent-blue-screens",
 ];
 
 pub struct InformationalExecutor;
@@ -80,6 +84,8 @@ fn run(def: &ScriptDef, ctx: &ScriptContext) -> ScriptResult {
         "is-webroot-installed" => check_installed(ctx, def, "webroot"),
         "is-superantispyware-installed" => check_installed(ctx, def, "superantispyware"),
         "is-hibernation-sleep-enabled" => check_power(ctx, def),
+        "are-there-scheduled-tasks-for-it" => check_sas_scheduled_tasks(ctx, def),
+        "any-recent-blue-screens" => bsod_scan(ctx, def),
         other => ScriptResult::Error(format!("informational executor does not run '{other}'")),
     }
 }
@@ -150,11 +156,82 @@ fn check_power(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResult {
     let (category, name) = (def.category(), def.name.as_str());
     match check_power_options() {
         Ok(_) => {
-            ctx.log_success(category, name, "Power settings checked");
-            ScriptResult::Success("Power settings checked".into())
+            ctx.log_success(category, name, "Sleep/Hibernation is disabled");
+            ScriptResult::Success("Sleep/Hibernation is disabled".into())
         }
         Err(e) => {
-            let msg = format!("Power settings check failed: {e}");
+            let msg = format!("Power check: {e}");
+            ctx.log_warning(category, name, msg.clone());
+            ScriptResult::Warning(msg)
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn check_sas_scheduled_tasks(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResult {
+    let (category, name) = (def.category(), def.name.as_str());
+    ctx.log_info(category.clone(), name, "Checking scheduled tasks...");
+
+    match ScheduledTask::list_tasks() {
+        Ok(tasks) => {
+            let sas_tasks: Vec<String> = tasks
+                .iter()
+                .filter_map(|t| t.task_name.clone())
+                .filter(|n| n.contains("SUPERAntiSpyware"))
+                .collect();
+
+            if sas_tasks.is_empty() {
+                let msg = "No SAS scheduled tasks found";
+                ctx.log_warning(category, name, msg);
+                return ScriptResult::Warning(msg.into());
+            }
+
+            let msg = format!("Found {} SAS scheduled task(s)", sas_tasks.len());
+            ctx.log_success(category.clone(), name, msg.clone());
+            for task in &sas_tasks {
+                ctx.log_info(category.clone(), name, format!("  • {task}"));
+            }
+            ScriptResult::Success(msg)
+        }
+        Err(e) => {
+            let msg = format!("Failed to get tasks: {e}");
+            ctx.log_error(category, name, msg.clone());
+            ScriptResult::Error(msg)
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn bsod_scan(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResult {
+    use crate::utilities::scripts::bsod_scan::{self, BsodVerdict};
+
+    let (category, name) = (def.category(), def.name.as_str());
+    match bsod_scan::scan_blocking(bsod_scan::DEFAULT_DAYS) {
+        Ok(scan) => {
+            let verdict = scan.verdict();
+            let mut lines = scan.report_lines();
+            // The last line is the verdict, and it carries the entry severity.
+            let summary = lines.pop().unwrap_or_default();
+            for line in lines {
+                ctx.log_info(category.clone(), name, line);
+            }
+            match verdict {
+                BsodVerdict::Error => {
+                    ctx.log_error(category, name, summary.clone());
+                    ScriptResult::Error(summary)
+                }
+                BsodVerdict::Warning => {
+                    ctx.log_warning(category, name, summary.clone());
+                    ScriptResult::Warning(summary)
+                }
+                BsodVerdict::Clean => {
+                    ctx.log_success(category, name, summary.clone());
+                    ScriptResult::Success(summary)
+                }
+            }
+        }
+        Err(e) => {
+            let msg = format!("BSOD check failed: {e}");
             ctx.log_error(category, name, msg.clone());
             ScriptResult::Error(msg)
         }
@@ -173,6 +250,16 @@ fn check_installed(ctx: &ScriptContext, def: &ScriptDef, _search_term: &str) -> 
 
 #[cfg(not(target_os = "windows"))]
 fn check_power(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResult {
+    unsupported(ctx, def)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn check_sas_scheduled_tasks(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResult {
+    unsupported(ctx, def)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn bsod_scan(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResult {
     unsupported(ctx, def)
 }
 
