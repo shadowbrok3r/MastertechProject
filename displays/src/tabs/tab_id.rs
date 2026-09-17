@@ -11,7 +11,6 @@ pub enum TabId {
     FileBrowser,
     SysInfo,
     MinidumpAnalysis,
-    Qc,
     Ai,
     StoreTasks,
     MyTasks,
@@ -97,7 +96,6 @@ const MT_NATIVE: &[TabId] = &[
     TabId::Scripts,
     TabId::FileBrowser,
     TabId::MinidumpAnalysis,
-    TabId::Qc,
     TabId::Ai,
     TabId::StoreTasks,
     TabId::MyTasks,
@@ -160,7 +158,6 @@ impl TabId {
             Self::FileBrowser => "file_browser",
             Self::SysInfo => "sysinfo",
             Self::MinidumpAnalysis => "minidump_analysis",
-            Self::Qc => "qc",
             Self::Ai => "ai",
             Self::StoreTasks => "store_tasks",
             Self::MyTasks => "my_tasks",
@@ -206,7 +203,6 @@ impl TabId {
             Self::FileBrowser => "File Browser 📂",
             Self::SysInfo => "SysInfo",
             Self::MinidumpAnalysis => "Minidump Analysis",
-            Self::Qc => "QC ☑️",
             Self::Ai => "Ai",
             Self::StoreTasks => "Store Tasks",
             Self::MyTasks => "My Tasks",
@@ -270,7 +266,7 @@ impl TabId {
             "File Browser 📂" => Some(Self::FileBrowser),
             "SysInfo" => Some(Self::ResourceMonitor),
             "Minidump Analysis" => Some(Self::MinidumpAnalysis),
-            "QC ☑️" | "Qc" => Some(Self::Qc),
+            "QC ☑️" | "Qc" => None,
             "Ai" => Some(Self::Ai),
             "Store Tasks" => Some(Self::StoreTasks),
             "My Tasks" => Some(Self::MyTasks),
@@ -315,7 +311,7 @@ impl TabId {
             "file_browser" => Some(Self::FileBrowser),
             "sysinfo" => Some(Self::ResourceMonitor),
             "minidump_analysis" => Some(Self::MinidumpAnalysis),
-            "qc" => Some(Self::Qc),
+            "qc" => None,
             "ai" => Some(Self::Ai),
             "store_tasks" => Some(Self::StoreTasks),
             "my_tasks" => Some(Self::MyTasks),
@@ -399,5 +395,20 @@ mod tab_id_tests {
                 );
             }
         }
+    }
+
+    /// A retired tab must stop resolving, so old layouts drop it instead of keeping a dead pane.
+    #[test]
+    fn the_retired_qc_tab_is_dropped_from_old_layouts() {
+        assert_eq!(TabId::from_slug("qc"), None);
+        assert_eq!(TabId::from_legacy_title("qc"), None);
+        assert_eq!(TabId::from_legacy_title("QC ☑️"), None);
+        assert_eq!(TabId::from_legacy_title("Qc"), None);
+        assert!(
+            !TabId::visible_for(TabContext::MastertechNative)
+                .iter()
+                .any(|t| t.slug() == "qc"),
+            "the retired tab must not be listed in any visible set"
+        );
     }
 }
