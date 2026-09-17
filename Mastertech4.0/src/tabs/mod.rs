@@ -16,7 +16,6 @@ pub mod github;
 pub mod minidump;
 pub mod part_order;
 pub mod puffin_profiler;
-pub mod quality_check;
 pub mod resource_mon;
 pub mod scripts;
 pub mod shopify_orders;
@@ -94,7 +93,6 @@ impl TabViewer for MastertechContext {
             TabId::MinidumpAnalysis => self.mini_dump(ui),
             #[cfg(not(target_os = "windows"))]
             TabId::MinidumpAnalysis => {}
-            TabId::Qc => self.quality_check(ui),
             TabId::Ai => {
                 // Self-diagnosis chat about this machine via the in-process Mastertech MCP tools.
                 self.shared_ctx.enhanced_ai_playground.self_diagnosis = true;

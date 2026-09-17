@@ -59,9 +59,14 @@ impl DockSession {
             .ok()
             .and_then(|mut value| {
                 remap_legacy_tabs(&mut value);
-                serde_json::from_value(value).ok()
+                normalize_null_floats(&mut value);
+                serde_json::from_value::<DockState<TabId>>(value).ok()
             }) {
-            Some(tree) => Self { tree },
+            Some(mut tree) => {
+                // Drops leaves the remap emptied of retired tabs.
+                tree.retain_tabs(|_| true);
+                Self { tree }
+            }
             None => {
                 warn!("DockSession: legacy layout migration failed; using defaults");
                 if cfg!(target_arch = "wasm32") {
@@ -97,6 +102,28 @@ fn remap_legacy_tabs(value: &mut serde_json::Value) {
         serde_json::Value::Array(items) => {
             for item in items.iter_mut() {
                 remap_legacy_tabs(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Rewrites `null` numbers to `0.0`; serde_json writes a NaN rect coordinate as `null`,
+/// which no longer deserializes into `f32`.
+fn normalize_null_floats(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, child) in map.iter_mut() {
+                if matches!(key.as_str(), "x" | "y" | "fraction" | "scroll") && child.is_null() {
+                    *child = serde_json::json!(0.0);
+                } else {
+                    normalize_null_floats(child);
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items.iter_mut() {
+                normalize_null_floats(item);
             }
         }
         _ => {}
@@ -144,4 +171,55 @@ pub fn default_dock_session_native() -> DockSession {
     );
 
     session
+}
+
+
+#[cfg(test)]
+mod dock_session_tests {
+    use super::*;
+
+    fn empty_leaves(session: &DockSession) -> usize {
+        session.tree[SurfaceIndex::main()]
+            .iter()
+            .filter(|node| matches!(node, Node::Leaf(leaf) if leaf.tabs.is_empty()))
+            .count()
+    }
+
+    /// A leaf holding only a retired tab must be removed, not left as an empty pane.
+    #[test]
+    fn a_leaf_of_only_retired_tabs_is_dropped() {
+        let mut legacy = DockState::new(vec!["tur_sheet".to_owned(), "logs".to_owned()]);
+        legacy
+            .main_surface_mut()
+            .split_below(NodeIndex::root(), 0.5, vec!["qc".to_owned()]);
+
+        let session = DockSession::from_legacy_tree(legacy);
+        let open = session.open_set();
+
+        assert!(
+            !open.iter().any(|t| t.slug() == "qc"),
+            "the retired tab must not survive the migration"
+        );
+        assert!(
+            open.contains(&TabId::TurSheet) && open.contains(&TabId::Logs),
+            "the surviving tabs must be kept, got {open:?}"
+        );
+        assert_eq!(empty_leaves(&session), 0, "no empty leaf may be left behind");
+    }
+
+    /// An un-laid-out tree serializes its rects as `null`; the migration must still recover it.
+    #[test]
+    fn a_layout_with_null_rects_still_migrates() {
+        let legacy = DockState::new(vec!["tur_sheet".to_owned(), "scripts".to_owned()]);
+        let raw = serde_json::to_string(&legacy).expect("serialize");
+        assert!(raw.contains("null"), "this test is meaningless without a null rect");
+
+        let session = DockSession::from_legacy_tree(legacy);
+
+        assert_eq!(
+            session.open_set(),
+            [TabId::TurSheet, TabId::Scripts].into_iter().collect(),
+            "the migration fell back to defaults instead of recovering the layout"
+        );
+    }
 }
