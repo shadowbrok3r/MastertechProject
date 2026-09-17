@@ -8,6 +8,8 @@ use egui::{Button, Widget};
 use crate::app_state::MastertechContext;
 use crate::tabs::tur_sheet::get_ticket::SendRequest;
 use crate::tabs::file_browser::command::{run_robocopy, RobocopyMessage};
+use displays::scripts::catalog::CATALOG;
+use displays::scripts::executor::{CancelToken, ScriptHandle};
 use displays::scripts::{
     ScriptCategory, ScriptChannels, ScriptContext, ScriptItem, ScriptLogEntry,
     ScriptStatus, ScriptsState, LogLevel,
@@ -147,6 +149,10 @@ pub struct EguiScriptsTab {
     pub mcp_diagnostic_session_id: Option<String>,
     /// Completion tracking for the running queued script; None when idle.
     queue_run: Option<QueueRun>,
+    /// Set when the running script came from the executor registry, which
+    /// reports its own completion. `None` means the legacy path is running it
+    /// and the log still has to be read for a terminal line.
+    running: Option<ScriptHandle>,
 }
 
 /// Tracks one in-flight MCP-initiated script run inside `EguiScriptsTab`.
@@ -206,6 +212,7 @@ impl EguiScriptsTab {
             pending_mcp_runs: Vec::new(),
             mcp_diagnostic_session_id: None,
             queue_run: None,
+            running: None,
         }
     }
 
@@ -469,6 +476,19 @@ impl EguiScriptsTab {
     }
 
     /// Run all queued scripts
+    /// Stops the queue and, for a ported script, the work itself. The legacy path
+    /// has nothing to signal, so its thread still runs to completion.
+    pub fn stop_queue(&mut self) {
+        if let Some(handle) = self.running.as_ref() {
+            handle.cancel.cancel();
+            self.log_info("Queue", "Stop requested; waiting for the running script");
+        }
+        self.state.queue.stop();
+        self.running = None;
+        self.queue_run = None;
+        self.current_script_name = None;
+    }
+
     pub fn run_queue(&mut self) {
         if self.state.queue.is_empty() {
             self.log_warning("Queue", "Queue is empty");
@@ -485,8 +505,12 @@ impl EguiScriptsTab {
 
     /// Execute the next script in the queue
     fn execute_next_script(&mut self) {
-        if let Some(queued) = self.state.queue.current_script() {
-            let script = queued.script.clone();
+        if let Some((script, run_token)) = self
+            .state
+            .queue
+            .current_script()
+            .map(|q| (q.script.clone(), q.run_token))
+        {
             self.current_script_name = Some(script.name.clone());
 
             let now = std::time::Instant::now();
@@ -498,7 +522,26 @@ impl EguiScriptsTab {
             });
 
             self.log_info(&script.name, format!("Starting: {}", script.name));
-            
+
+            // Ported scripts run through the registry and report their own
+            // completion; everything else falls through to the original path.
+            if let Some(def) = CATALOG
+                .id_for_legacy_name(&script.name)
+                .and_then(|id| CATALOG.get(id))
+            {
+                if crate::scripts_exec::registry().find(&def.id).is_some() {
+                    let ctx = self.get_context();
+                    self.running = Some(crate::scripts_exec::registry().spawn(
+                        def,
+                        &ctx,
+                        run_token,
+                        CancelToken::new(),
+                    ));
+                    return;
+                }
+            }
+            self.running = None;
+
             // Execute based on category
             let ctx = self.get_context();
             let client = self.client.clone();
@@ -545,6 +588,13 @@ impl EguiScriptsTab {
         else {
             return;
         };
+
+        // A ported script tells us when it finished, so none of the log reading
+        // below applies to it.
+        if self.running.is_some() {
+            self.advance_on_outcome(&current_name);
+            return;
+        }
 
         let now = std::time::Instant::now();
         let logs_len = self.state.logs.len();
@@ -601,7 +651,66 @@ impl EguiScriptsTab {
             );
         }
 
-        self.state.queue.finish_current(is_failure);
+        self.advance_to_next(is_failure);
+    }
+
+    /// Completion for a script the registry is running: the outcome is reported,
+    /// never inferred. A dead worker is an error rather than a queue that sits
+    /// there until the timeout, which is what the log-reading path did.
+    fn advance_on_outcome(&mut self, current_name: &str) {
+        let Some(handle) = self.running.as_ref() else {
+            return;
+        };
+        match handle.done.try_recv() {
+            Ok(outcome) => {
+                let failed = outcome.result.is_failure();
+                let message = outcome.result.message().to_string();
+                if outcome.reboot_recommended {
+                    self.reboot_prompt_open = true;
+                }
+                if let Some(code) = outcome.exit_code {
+                    self.log_info(current_name, format!("exit code {code}"));
+                }
+                if failed {
+                    self.log_error(current_name, message);
+                } else {
+                    self.log_info(
+                        current_name,
+                        format!("Finished in {:.1}s", outcome.duration.as_secs_f32()),
+                    );
+                }
+                self.running = None;
+                self.advance_to_next(failed);
+            }
+            Err(crossbeam::channel::TryRecvError::Empty) => {
+                let started_at = self.queue_run.as_ref().map(|r| r.started_at);
+                let budget = CATALOG
+                    .timeout_secs(current_name)
+                    .map(std::time::Duration::from_secs)
+                    .unwrap_or(QUEUE_SCRIPT_TIMEOUT);
+                if started_at.is_some_and(|at| at.elapsed() >= budget) {
+                    self.log_warning(
+                        current_name,
+                        format!("No completion after {}s; cancelling", budget.as_secs()),
+                    );
+                    if let Some(handle) = self.running.as_ref() {
+                        handle.cancel.cancel();
+                    }
+                    self.running = None;
+                    self.advance_to_next(true);
+                }
+            }
+            Err(crossbeam::channel::TryRecvError::Disconnected) => {
+                self.log_error(current_name, "Script worker stopped without reporting");
+                self.running = None;
+                self.advance_to_next(true);
+            }
+        }
+    }
+
+    /// Mark the current entry finished and start whatever is next.
+    fn advance_to_next(&mut self, failed: bool) {
+        self.state.queue.finish_current(failed);
         self.state.queue.next();
         self.queue_run = None;
 
@@ -2526,6 +2635,14 @@ impl EguiScriptsTab {
             message,
         ));
     }
+
+    fn log_error(&mut self, script: &str, message: impl Into<String>) {
+        self.state.log(ScriptLogEntry::error(
+            ScriptCategory::Custom("System".to_string()),
+            script,
+            message,
+        ));
+    }
 }
 
 // ============================================================================
@@ -2709,7 +2826,7 @@ impl MastertechContext {
 
             if self.scripts_tab.state.queue.is_running() {
                 if ui.button(RichText::new("⏹ Stop").color(colors::FAILED)).clicked() {
-                    self.scripts_tab.state.queue.stop();
+                    self.scripts_tab.stop_queue();
                 }
             } else {
                 if ui.button(RichText::new("▶ Run Queue").color(colors::COMPLETED)).clicked() {
