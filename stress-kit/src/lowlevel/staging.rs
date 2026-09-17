@@ -1,4 +1,4 @@
-//! Staging directory for kernel images and driver installers.
+//! Staging directory for kernel images and driver packages.
 //!
 //! Windows loads whatever sits at the staged path, so a world-writable
 //! directory lets any non-admin process swap the file between the write and the

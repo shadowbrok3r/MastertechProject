@@ -6,8 +6,6 @@
 //! devnode: a staged image started through the service manager would fail
 //! signing policy, and even past that would create nothing openable.
 
-#[cfg(feature = "pawnio-installer")]
-mod setup_exe;
 #[cfg(feature = "pawnio-triplet")]
 mod triplet;
 
@@ -19,8 +17,8 @@ use crate::lowlevel::busmutex::NamedLease;
 use super::device::Absent;
 use super::{device, devnode};
 
-/// Forces one install route for bench comparison. An override that fails does
-/// not fall through, so a comparison never silently measures the other route.
+/// Selects the install route. `none` leaves an absent driver absent, which is
+/// how a machine opts out of ever having a driver installed on it.
 const OVERRIDE_ENV: &str = "MTECH_PAWNIO_INSTALL";
 
 /// Serializes provisioning across MasterTech instances. Several run at once on
@@ -51,19 +49,13 @@ static ATTEMPTED: OnceLock<Result<(), String>> = OnceLock::new();
 enum Route {
     /// Embedded x64 driver package, installed through SetupAPI.
     Triplet,
-    /// Embedded upstream installer.
-    Installer,
     /// Leave an absent driver absent.
     None,
 }
 
-/// Routes tried in turn, cheapest binary first.
-const ORDER: &[Route] = &[Route::Triplet, Route::Installer];
-
 fn parse_route(raw: &str) -> Option<Route> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "triplet" | "inf" => Some(Route::Triplet),
-        "installer" | "setup" | "exe" => Some(Route::Installer),
         "none" | "off" => Some(Route::None),
         _ => None,
     }
@@ -133,12 +125,7 @@ fn install_once(why: Absent) -> Result<(), String> {
     if cfg!(test) {
         return Err(format!("{why}, and tests do not install PawnIO"));
     }
-    // Gates every route, not just one. A node that already exists means the
-    // driver is installed and something else is wrong; no route can improve
-    // that, and each one would register another node beside it. Only one node
-    // can own the \Device\PawnIO symlink, so a duplicate leaves the device
-    // permanently unreachable and upstream's installer failing on the name
-    // collision.
+    // Only one node can own the \Device\PawnIO symlink, so an existing node blocks installing.
     let existing = devnode::count();
     if existing > 0 {
         return Err(format!(
@@ -149,48 +136,29 @@ fn install_once(why: Absent) -> Result<(), String> {
     }
     match std::env::var(OVERRIDE_ENV) {
         Ok(raw) => install_overridden(&raw),
-        Err(_) => install_in_order(),
+        Err(_) => run(Route::Triplet),
     }
 }
 
 fn install_overridden(raw: &str) -> Result<(), String> {
-    let Some(route) = parse_route(raw) else {
-        return Err(format!("{OVERRIDE_ENV}={raw} is not a known install route"));
-    };
-    run(route).unwrap_or_else(|| Err(format!("{OVERRIDE_ENV}={raw} is not compiled in")))
+    match parse_route(raw) {
+        Some(route) => run(route),
+        None => Err(format!("{OVERRIDE_ENV}={raw} is not a known install route")),
+    }
 }
 
-fn install_in_order() -> Result<(), String> {
-    let mut declined = Vec::new();
-    for &route in ORDER {
-        match run(route) {
-            Some(Ok(())) => return Ok(()),
-            Some(Err(reason)) => declined.push(reason),
-            None => {}
-        }
-    }
-    if declined.is_empty() {
-        return Err("no PawnIO install route is compiled in".to_string());
-    }
-    Err(declined.join("; "))
-}
-
-/// Runs one route. `None` when it is not compiled in, which is not a failure.
-fn run(route: Route) -> Option<Result<(), String>> {
+fn run(route: Route) -> Result<(), String> {
     match route {
-        Route::None => Some(Err(format!(
+        Route::None => Err(format!(
             "{OVERRIDE_ENV}=none, so an absent PawnIO was left absent"
-        ))),
+        )),
 
         #[cfg(feature = "pawnio-triplet")]
-        Route::Triplet => Some(triplet::install()),
+        Route::Triplet => triplet::install(),
         #[cfg(not(feature = "pawnio-triplet"))]
-        Route::Triplet => None,
-
-        #[cfg(feature = "pawnio-installer")]
-        Route::Installer => Some(setup_exe::install()),
-        #[cfg(not(feature = "pawnio-installer"))]
-        Route::Installer => None,
+        Route::Triplet => {
+            Err("no PawnIO install route is compiled in; enable pawnio-triplet".to_string())
+        }
     }
 }
 
@@ -202,19 +170,18 @@ mod tests {
     fn route_spellings_parse() {
         assert_eq!(parse_route("triplet"), Some(Route::Triplet));
         assert_eq!(parse_route("  INF "), Some(Route::Triplet));
-        assert_eq!(parse_route("installer"), Some(Route::Installer));
-        assert_eq!(parse_route("exe"), Some(Route::Installer));
         assert_eq!(parse_route("none"), Some(Route::None));
         assert_eq!(parse_route("msi"), None);
     }
 
-    /// The 150 KB package is preferred over the 3 MB installer, which is the
-    /// whole point of carrying it.
+    /// Upstream's setup.exe was dropped once the triplet proved out. Its
+    /// spellings must not silently parse as the surviving route: a bench asking
+    /// for the installer needs to be told it is gone, not handed the other one.
     #[test]
-    fn the_triplet_is_tried_before_the_installer() {
-        let triplet = ORDER.iter().position(|r| *r == Route::Triplet);
-        let installer = ORDER.iter().position(|r| *r == Route::Installer);
-        assert!(triplet < installer);
+    fn the_dropped_installer_spellings_do_not_parse() {
+        assert_eq!(parse_route("installer"), None);
+        assert_eq!(parse_route("setup"), None);
+        assert_eq!(parse_route("exe"), None);
     }
 
     /// Nothing may install a kernel driver on the machine running the tests.
