@@ -16,11 +16,11 @@ category = "tuneup"
 summary = "Install and activate Webroot and SuperAntiSpyware"
 timeout_secs = 1800
 surfaces = ["egui", "terminal", "remote", "mcp"]
-runs = ["activate-webroot", "activate-superanti"]
 order = 20
 
-# Named by the terminal catalog and implemented by the remote executor, but absent
-# from the shipped list, so only reachable through Activate CPS. Surfaces match that.
+# Named by the terminal catalog and implemented by the remote executor, each
+# fetching its own CPS keys. Activate CPS fetches once and installs both, so it is
+# not declared as their sequence. Never offered in the egui tab.
 [[script]]
 id = "activate-webroot"
 name = "Activate Webroot"
