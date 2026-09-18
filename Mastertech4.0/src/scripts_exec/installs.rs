@@ -21,7 +21,7 @@ use super::env;
 const LIBREOFFICE_URL: &str = "https://ninite.com/libreoffice/ninite.exe";
 
 /// Ids this executor claims.
-const HANDLED: &[&str] = &["activate-seb", "install-libreoffice"];
+const HANDLED: &[&str] = &["activate-cps", "activate-seb", "install-libreoffice"];
 
 pub struct InstallExecutor;
 
@@ -47,13 +47,10 @@ impl ScriptExecutor for InstallExecutor {
             let tx = tx.clone();
             let id = id.clone();
             async move {
-                let result = run(&def, &ctx).await;
-                let _ = tx.send(ScriptOutcome::plain(
-                    id,
-                    run_token,
-                    result,
-                    started.elapsed(),
-                ));
+                let (result, reboot_recommended) = run(&def, &ctx).await;
+                let mut outcome = ScriptOutcome::plain(id, run_token, result, started.elapsed());
+                outcome.reboot_recommended = reboot_recommended;
+                let _ = tx.send(outcome);
             }
         });
 
@@ -75,12 +72,160 @@ impl ScriptExecutor for InstallExecutor {
 }
 
 #[cfg(target_os = "windows")]
-async fn run(def: &ScriptDef, ctx: &ScriptContext) -> ScriptResult {
+async fn run(def: &ScriptDef, ctx: &ScriptContext) -> (ScriptResult, bool) {
     match def.id.as_str() {
-        "activate-seb" => activate_seb(ctx, def).await,
-        "install-libreoffice" => install_libreoffice(ctx, def).await,
-        other => ScriptResult::Error(format!("install executor does not run '{other}'")),
+        "activate-cps" => activate_cps(ctx, def).await,
+        "activate-seb" => (activate_seb(ctx, def).await, false),
+        "install-libreoffice" => (install_libreoffice(ctx, def).await, false),
+        other => (
+            ScriptResult::Error(format!("install executor does not run '{other}'")),
+            false,
+        ),
     }
+}
+
+/// One key fetch feeds both products, which is why this is not the sequence of
+/// `activate-webroot` and `activate-superanti` that each fetch their own.
+#[cfg(target_os = "windows")]
+async fn activate_cps(ctx: &ScriptContext, def: &ScriptDef) -> (ScriptResult, bool) {
+    use crate::tabs::tur_sheet::get_ticket::SendRequest;
+    use crate::utilities::scripts::{install_sas, install_webroot};
+
+    let (category, name) = (def.category(), def.name.as_str());
+
+    let Some(service_number) = ctx.service_number.clone().filter(|s| !s.is_empty()) else {
+        let msg = "Service number required for CPS activation";
+        ctx.log_warning(category, name, msg);
+        return (ScriptResult::Skipped(msg.into()), false);
+    };
+
+    kill_sas_processes(ctx, def).await;
+
+    ctx.log_info(category.clone(), name, "Fetching CPS keys...");
+
+    let keys = match SendRequest::get_cps(service_number, env::http()).await {
+        Ok(keys) if !keys.is_empty() => keys,
+        Ok(_) => {
+            let msg = "No CPS keys found for this service order";
+            ctx.log_warning(category, name, msg);
+            return (ScriptResult::Warning(msg.into()), false);
+        }
+        Err(e) => {
+            let msg = format!("Failed to fetch keys: {e}");
+            ctx.log_error(category, name, msg.clone());
+            return (ScriptResult::Error(msg), false);
+        }
+    };
+
+    let key = keys.first().cloned().unwrap_or_default();
+    let mut reboot_recommended = false;
+    let mut failed = Vec::new();
+
+    ctx.log_info(category.clone(), name, "Installing Webroot...");
+    match install_webroot(
+        key.webroot_key.clone(),
+        env::http(),
+        env::progress_sink(ctx, &def.id),
+    )
+    .await
+    {
+        Ok(outcome) => {
+            reboot_recommended = outcome.reboot_recommended();
+            ctx.log_success(
+                category.clone(),
+                name,
+                format!("Webroot licensed and active ({outcome})"),
+            );
+        }
+        Err(e) => {
+            failed.push("Webroot");
+            ctx.log_error(
+                category.clone(),
+                name,
+                format!("Webroot install failed: {e}"),
+            );
+        }
+    }
+
+    ctx.log_info(category.clone(), name, "Installing SuperAntiSpyware...");
+    match install_sas(
+        key.superanti_key,
+        env::http(),
+        env::progress_sink(ctx, &def.id),
+    )
+    .await
+    {
+        Ok(proof) => {
+            ctx.log_success(
+                category.clone(),
+                name,
+                format!("SuperAntiSpyware installed and activated: {proof}"),
+            );
+        }
+        Err(e) => {
+            failed.push("SuperAntiSpyware");
+            ctx.log_error(category.clone(), name, format!("SAS install failed: {e}"));
+        }
+    }
+
+    if reboot_recommended {
+        // The marker is the only reboot channel the wire has, so it is still
+        // logged even though the outcome now carries the same fact.
+        ctx.log_success(
+            category.clone(),
+            name,
+            format!(
+                "{} Webroot was re-keyed over an existing install — reboot to finalize activation",
+                displays::scripts::REBOOT_RECOMMENDED_MARKER
+            ),
+        );
+    }
+
+    if failed.is_empty() {
+        (
+            ScriptResult::Success("Webroot and SuperAntiSpyware licensed".into()),
+            reboot_recommended,
+        )
+    } else {
+        let msg = format!("{} install failed", failed.join(" and "));
+        (ScriptResult::Error(msg), reboot_recommended)
+    }
+}
+
+/// Clears SAS before the install so the running tray app does not hold its own
+/// files. Enumerating processes and `taskkill` both block, so they run off the
+/// runtime.
+#[cfg(target_os = "windows")]
+async fn kill_sas_processes(ctx: &ScriptContext, def: &ScriptDef) {
+    use crate::utilities::scripts::get_running_processes;
+
+    let ctx = ctx.clone();
+    let category = def.category();
+    let name = def.name.to_string();
+
+    let _ = tokio::task::spawn_blocking(move || {
+        let Ok(processes) = get_running_processes() else {
+            return;
+        };
+        for process in processes {
+            let process_name = process.process_name.to_lowercase();
+            let exe_path = process.exe_path.clone().unwrap_or_default().to_lowercase();
+            if process_name.contains("sascore")
+                || exe_path.contains("superanti")
+                || process_name.contains("superanti")
+            {
+                ctx.log_info(
+                    category.clone(),
+                    &name,
+                    format!("Killing SAS process (PID: {})", process.id),
+                );
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/PID", &format!("{}", process.id), "/F"])
+                    .output();
+            }
+        }
+    })
+    .await;
 }
 
 #[cfg(target_os = "windows")]
@@ -145,10 +290,10 @@ async fn install_libreoffice(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResu
 }
 
 #[cfg(not(target_os = "windows"))]
-async fn run(def: &ScriptDef, ctx: &ScriptContext) -> ScriptResult {
+async fn run(def: &ScriptDef, ctx: &ScriptContext) -> (ScriptResult, bool) {
     let msg = "Only available on Windows";
     ctx.log_warning(def.category(), def.name.as_str(), msg);
-    ScriptResult::Skipped(msg.into())
+    (ScriptResult::Skipped(msg.into()), false)
 }
 
 #[cfg(test)]
@@ -169,12 +314,33 @@ mod install_executor_tests {
         }
     }
 
-    /// Activate CPS fetches one key pair and installs two products from it, so
-    /// it is not two of these back to back.
+    /// Activate CPS fetches one key pair and installs both products from it. If
+    /// it ever declares those two as children, a composite would run it as two
+    /// scripts that each fetch their own keys.
     #[test]
-    fn activate_cps_is_still_unclaimed() {
+    fn activate_cps_is_not_declared_as_a_composite() {
+        let def = CATALOG
+            .get(&ScriptId::new("activate-cps"))
+            .expect("catalog entry");
+        assert!(
+            def.runs.is_empty(),
+            "activate-cps declares children, which would double the key fetch"
+        );
+    }
+
+    /// Its two products stay in the catalog for the remote path, which does run
+    /// them as separate scripts.
+    #[test]
+    fn the_two_products_are_still_their_own_entries() {
+        for id in ["activate-webroot", "activate-superanti"] {
+            let def = CATALOG.get(&ScriptId::new(id)).expect("catalog entry");
+            assert!(!def.offered_on(Surface::Egui), "{id} is offered in the tab");
+        }
+    }
+
+    #[test]
+    fn data_transfer_is_still_unclaimed() {
         let executor = InstallExecutor;
-        assert!(!executor.handles(&ScriptId::new("activate-cps")));
         assert!(!executor.handles(&ScriptId::new("data-transfer")));
     }
 }
