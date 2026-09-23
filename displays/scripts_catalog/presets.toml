@@ -1,0 +1,27 @@
+# Named, ordered script lists queued together. Mirrors the Tuneup Workflow in mcp_bridge.rs.
+
+[[preset]]
+id = "standard-tuneup"
+name = "Standard Tune-up"
+summary = "Baseline checks, junkware and AV scans, then the standard Windows cleanup"
+scripts = [
+    "check-updates",
+    "is-supereasybackup-installed",
+    "is-webroot-installed",
+    "is-superantispyware-installed",
+    "are-there-scheduled-tasks-for-it",
+    "is-windows-activated",
+    "is-hibernation-sleep-enabled",
+    "any-recent-blue-screens",
+    "windows-version",
+    "run-junkware-category",
+    "run-superantispyware-scan",
+    "run-webroot-scan",
+    "disable-sleep-hibernation",
+    "disable-startup-apps",
+    "disable-notifications",
+    "unpin-copilot",
+    "align-taskbar-to-left",
+    "disable-onedrive-startup",
+    "disable-edge-startup-boost",
+]
