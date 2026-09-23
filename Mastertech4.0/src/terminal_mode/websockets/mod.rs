@@ -2988,7 +2988,31 @@ if (Test-Path $path) {{
 
                     let allowed_secs =
                         displays::scripts::default_remote_script_timeout_secs(&script.name);
+                    let cancel = displays::scripts::executor::CancelToken::new();
                     let script_fut = async {
+                    if script.content.is_none()
+                        && let Some(def) = crate::scripts_exec::remote::ported(&script.name)
+                    {
+                        let ctx = crate::scripts_exec::remote::context(
+                            &service_number,
+                            &customer_email,
+                            &diagnostic_session_id,
+                        );
+                        let run = crate::scripts_exec::remote::run(def, ctx, cancel.clone(), |line| {
+                            send_log(&tx, line)
+                        })
+                        .await;
+                        if run.reboot_recommended {
+                            batch_reboot_recommended.store(true, std::sync::atomic::Ordering::SeqCst);
+                        }
+                        let status = if run.passed {
+                            RemoteScriptStatus::Success
+                        } else {
+                            RemoteScriptStatus::Failed
+                        };
+                        send_result(&tx, &script.name, status);
+                        return;
+                    }
                     match script.name.as_str() {
                         "Disable Sleep / Hibernation" => {
                             match crate::terminal_mode::tabs::script_categories::disable_hibernation_and_sleep() {
@@ -3946,6 +3970,7 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                         .await
                         .is_err()
                     {
+                        cancel.cancel();
                         send_log(
                             &tx,
                             format!(
