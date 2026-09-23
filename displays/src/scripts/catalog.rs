@@ -404,6 +404,23 @@ mod catalog_tests {
         }
     }
 
+    /// A stress run is cancelled when its budget runs out.
+    #[test]
+    fn stress_budgets_outlast_the_planned_run() {
+        let computer = database::schema::RecordId::new("computer", "budget-check");
+        for def in CATALOG.iter().filter(|d| stress_runner::is_stress_script(&d.name)) {
+            let planned = stress_runner::build_stress_script_spec(&def.name, computer.clone(), 60)
+                .and_then(|spec| spec.plan.expected_duration_secs())
+                .unwrap_or_else(|| panic!("'{}' has no planned duration", def.name));
+            assert!(
+                def.timeout_secs >= planned + 300,
+                "'{}' is budgeted {}s but plans {planned}s",
+                def.name,
+                def.timeout_secs
+            );
+        }
+    }
+
     /// Renaming a script silently dropped its budget to the 600s default before.
     #[test]
     fn timeouts_match_legacy() {
