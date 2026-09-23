@@ -21,7 +21,17 @@ use super::env;
 const LIBREOFFICE_URL: &str = "https://ninite.com/libreoffice/ninite.exe";
 
 /// Ids this executor claims.
-const HANDLED: &[&str] = &["activate-cps", "activate-seb", "install-libreoffice"];
+const HANDLED: &[&str] = &[
+    "activate-cps",
+    "activate-webroot",
+    "activate-superanti",
+    "activate-seb",
+    "install-libreoffice",
+];
+
+/// Offered remotely only; the tab activates both products through Activate CPS.
+#[cfg(test)]
+const REMOTE_ONLY: &[&str] = &["activate-webroot", "activate-superanti"];
 
 pub struct InstallExecutor;
 
@@ -75,6 +85,8 @@ impl ScriptExecutor for InstallExecutor {
 async fn run(def: &ScriptDef, ctx: &ScriptContext) -> (ScriptResult, bool) {
     match def.id.as_str() {
         "activate-cps" => activate_cps(ctx, def).await,
+        "activate-webroot" => activate_webroot(ctx, def).await,
+        "activate-superanti" => (activate_superanti(ctx, def).await, false),
         "activate-seb" => (activate_seb(ctx, def).await, false),
         "install-libreoffice" => (install_libreoffice(ctx, def).await, false),
         other => (
@@ -107,8 +119,8 @@ async fn activate_cps(ctx: &ScriptContext, def: &ScriptDef) -> (ScriptResult, bo
         Ok(keys) if !keys.is_empty() => keys,
         Ok(_) => {
             let msg = "No CPS keys found for this service order";
-            ctx.log_warning(category, name, msg);
-            return (ScriptResult::Warning(msg.into()), false);
+            ctx.log_error(category, name, msg);
+            return (ScriptResult::Error(msg.into()), false);
         }
         Err(e) => {
             let msg = format!("Failed to fetch keys: {e}");
@@ -189,6 +201,127 @@ async fn activate_cps(ctx: &ScriptContext, def: &ScriptDef) -> (ScriptResult, bo
     } else {
         let msg = format!("{} install failed", failed.join(" and "));
         (ScriptResult::Error(msg), reboot_recommended)
+    }
+}
+
+/// The first CPS key pair for the service order, or the failure already logged.
+#[cfg(target_os = "windows")]
+async fn fetch_cps_key(
+    ctx: &ScriptContext,
+    def: &ScriptDef,
+    service_number: String,
+) -> Result<database::schema::GetKeysResponse, ScriptResult> {
+    use crate::tabs::tur_sheet::get_ticket::SendRequest;
+
+    let (category, name) = (def.category(), def.name.as_str());
+    ctx.log_info(category.clone(), name, "Fetching CPS keys...");
+    match SendRequest::get_cps(service_number, env::http()).await {
+        Ok(keys) => match keys.into_iter().next() {
+            Some(key) => Ok(key),
+            None => {
+                let msg = "No CPS keys found for this service order";
+                ctx.log_error(category, name, msg);
+                Err(ScriptResult::Error(msg.into()))
+            }
+        },
+        Err(e) => {
+            let msg = format!("Failed to get CPS keys: {e}");
+            ctx.log_error(category, name, msg.clone());
+            Err(ScriptResult::Error(msg))
+        }
+    }
+}
+
+/// Installs and licenses Webroot alone, reporting whether a reboot finalizes it.
+#[cfg(target_os = "windows")]
+async fn activate_webroot(ctx: &ScriptContext, def: &ScriptDef) -> (ScriptResult, bool) {
+    use crate::utilities::scripts::install_webroot;
+
+    let (category, name) = (def.category(), def.name.as_str());
+    let Some(service_number) = ctx.service_number.clone().filter(|s| !s.is_empty()) else {
+        let msg = "Webroot activation requires SO number";
+        ctx.log_warning(category, name, msg);
+        return (ScriptResult::Skipped(msg.into()), false);
+    };
+    let key = match fetch_cps_key(ctx, def, service_number).await {
+        Ok(key) => key,
+        Err(result) => return (result, false),
+    };
+    ctx.log_info(
+        category.clone(),
+        name,
+        format!("Webroot key: {}", key.webroot_key),
+    );
+
+    match install_webroot(
+        key.webroot_key,
+        env::http(),
+        env::progress_sink(ctx, &def.id),
+    )
+    .await
+    {
+        Ok(outcome) => {
+            let msg = format!("Webroot licensed and active ({outcome})");
+            ctx.log_success(category, name, msg.clone());
+            (ScriptResult::Success(msg), outcome.reboot_recommended())
+        }
+        Err(e) => {
+            let msg = format!("Webroot install error: {e}");
+            ctx.log_error(category, name, msg.clone());
+            (ScriptResult::Error(msg), false)
+        }
+    }
+}
+
+/// Installs and activates SuperAntiSpyware alone.
+#[cfg(target_os = "windows")]
+async fn activate_superanti(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResult {
+    use crate::utilities::scripts::antivirus::kill_sas_processes;
+    use crate::utilities::scripts::install_sas;
+
+    let (category, name) = (def.category(), def.name.as_str());
+    let Some(service_number) = ctx.service_number.clone().filter(|s| !s.is_empty()) else {
+        let msg = "SuperAnti activation requires SO number";
+        ctx.log_warning(category, name, msg);
+        return ScriptResult::Skipped(msg.into());
+    };
+
+    let killed = tokio::task::spawn_blocking(kill_sas_processes)
+        .await
+        .unwrap_or(0);
+    ctx.log_info(
+        category.clone(),
+        name,
+        format!("Killed {killed} SAS processes"),
+    );
+
+    let key = match fetch_cps_key(ctx, def, service_number).await {
+        Ok(key) => key,
+        Err(result) => return result,
+    };
+    ctx.log_info(
+        category.clone(),
+        name,
+        format!("SuperAnti key: {}", key.superanti_key),
+    );
+
+    match install_sas(
+        key.superanti_key,
+        env::http(),
+        env::progress_sink(ctx, &def.id),
+    )
+    .await
+    {
+        Ok(proof) => {
+            let msg = format!("SAS installed and activated: {proof}");
+            ctx.log_success(category, name, msg.clone());
+            ScriptResult::Success(msg)
+        }
+        Err(e) => {
+            let msg = format!("SAS install error: {e}");
+            ctx.log_error(category, name, msg.clone());
+            ScriptResult::Error(msg)
+        }
     }
 }
 
@@ -307,10 +440,14 @@ mod install_executor_tests {
             let def = CATALOG
                 .get(&ScriptId::new(*id))
                 .unwrap_or_else(|| panic!("{id} is not in the catalog"));
-            assert!(
-                def.offered_on(Surface::Egui),
-                "{id} is claimed but never offered in the tab"
-            );
+            if REMOTE_ONLY.contains(id) {
+                assert!(def.offered_on(Surface::Remote), "{id} is offered nowhere");
+            } else {
+                assert!(
+                    def.offered_on(Surface::Egui),
+                    "{id} is claimed but never offered in the tab"
+                );
+            }
         }
     }
 
