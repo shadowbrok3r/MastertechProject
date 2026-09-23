@@ -1231,6 +1231,7 @@ impl TerminalWebsocketClient {
                                         // Handle master presence notifications
                                         if txt == "MASTER_CONNECTED" {
                                             log::info!("Master connected - resuming data transmission");
+                                            #[cfg(target_os = "windows")]
                                             crate::utilities::windows::power::ensure_awake("admin session");
                                             send_ws_shape_fp(&mut sender);
                                             let _ = connection_state_tx.send((true, "Master Connected".to_string()));
