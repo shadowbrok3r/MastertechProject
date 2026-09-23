@@ -105,13 +105,23 @@ timeout_secs = 600
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 100
 
+# A step of Run Prechecks; not offered on its own.
+[[script]]
+id = "network-status"
+name = "Network Status"
+category = "informational"
+summary = "Count visible Wi-Fi networks and report WLAN and network adapter status"
+timeout_secs = 600
+surfaces = []
+order = 105
+
 [[script]]
 id = "run-prechecks"
 name = "Run Prechecks"
 category = "informational"
-summary = "Run all informational prechecks"
+summary = "Activation and security-software checks, network status, then taskbar alignment"
 timeout_secs = 600
 surfaces = ["egui", "terminal", "remote", "mcp"]
-runs = ["is-windows-activated", "is-webroot-installed", "is-superantispyware-installed", "is-supereasybackup-installed", "align-taskbar-to-left"]
+runs = ["is-windows-activated", "is-webroot-installed", "is-superantispyware-installed", "is-supereasybackup-installed", "network-status", "align-taskbar-to-left"]
 order = 110
 
