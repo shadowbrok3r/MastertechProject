@@ -40,6 +40,7 @@ const PORTED: &[&str] = &[
     "disable-notifications",
     "disable-startup-apps",
     "change-superantispyware-settings",
+    "run-prechecks",
 ];
 
 /// A warning is a finding for these, which the remote code reported as FAIL.

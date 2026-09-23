@@ -305,7 +305,7 @@ mod catalog_tests {
                 toml::from_str(raw).unwrap_or_else(|e| panic!("{name}.toml does not parse: {e}"));
             assert!(!file.script.is_empty(), "{name}.toml is empty");
         }
-        assert_eq!(CATALOG.len(), 98, "every catalog entry must survive load");
+        assert_eq!(CATALOG.len(), 99, "every catalog entry must survive load");
     }
 
     #[test]
@@ -386,7 +386,8 @@ mod catalog_tests {
         );
         let added: std::collections::BTreeSet<&str> =
             catalog.difference(&shipped).map(|s| s.as_str()).collect();
-        let declared: std::collections::BTreeSet<&str> = RECOVERED.iter().copied().collect();
+        let declared: std::collections::BTreeSet<&str> =
+            RECOVERED.iter().chain(ADDED).copied().collect();
         assert_eq!(added, declared, "undeclared additions to the catalog");
     }
 
@@ -554,6 +555,9 @@ mod catalog_tests {
     /// Recovered by the three-way diff: implemented somewhere but listed in no
     /// catalog, so unreachable by name. Adding to this list is a deliberate act.
     const RECOVERED: &[&str] = &["Activate Webroot", "Activate SuperAnti", "ESET Security"];
+
+    /// New entries no earlier catalog had.
+    const ADDED: &[&str] = &["Network Status"];
 
     /// Three catalogs disagreed; this keeps them from drifting apart again. A name
     /// here that stops resolving means a surface can ask for a script nothing can name.

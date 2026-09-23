@@ -29,6 +29,7 @@ const HANDLED: &[&str] = &[
     "are-there-scheduled-tasks-for-it",
     "any-recent-blue-screens",
     "when-was-the-last-service-date",
+    "network-status",
 ];
 
 pub struct InformationalExecutor;
@@ -85,6 +86,7 @@ fn run(def: &ScriptDef, ctx: &ScriptContext) -> ScriptResult {
         "is-hibernation-sleep-enabled" => check_power(ctx, def),
         "are-there-scheduled-tasks-for-it" => check_sas_scheduled_tasks(ctx, def),
         "any-recent-blue-screens" => bsod_scan(ctx, def),
+        "network-status" => network_status(ctx, def),
         "when-was-the-last-service-date" => {
             super::not_implemented(ctx, def, "Service date check not yet implemented")
         }
@@ -259,6 +261,59 @@ fn bsod_scan(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResult {
     }
 }
 
+/// Wi-Fi networks in range, WLAN connection state and the adapter list.
+#[cfg(target_os = "windows")]
+fn network_status(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResult {
+    use crate::utilities::windows::net_adapter::{
+        check_network_adapters, get_wlan_status, scan_wifi_networks,
+    };
+
+    let (category, name) = (def.category(), def.name.as_str());
+    let mut failures = Vec::new();
+
+    match scan_wifi_networks() {
+        Ok(networks) => ctx.log_info(
+            category.clone(),
+            name,
+            format!("wifi networks visible: {}", networks.len()),
+        ),
+        Err(e) => {
+            let msg = format!("wifi scan error: {e}");
+            ctx.log_error(category.clone(), name, msg.clone());
+            failures.push(msg);
+        }
+    }
+    // A WLAN status error is logged, not counted as a failure.
+    match get_wlan_status() {
+        Ok(()) => ctx.log_info(category.clone(), name, "wlan status: OK"),
+        Err(e) => ctx.log_info(category.clone(), name, format!("wlan status: {e:?}")),
+    }
+    match check_network_adapters() {
+        Ok(adapters) => ctx.log_info(
+            category.clone(),
+            name,
+            format!("network adapters: {adapters:?}"),
+        ),
+        Err(e) => {
+            let msg = format!("adapter check error: {e}");
+            ctx.log_error(category.clone(), name, msg.clone());
+            failures.push(msg);
+        }
+    }
+
+    if failures.is_empty() {
+        ctx.log_success(category, name, "Network checks complete");
+        ScriptResult::Success("Network checks complete".into())
+    } else {
+        ScriptResult::Error(failures.join("; "))
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn network_status(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResult {
+    unsupported(ctx, def)
+}
+
 #[cfg(not(target_os = "windows"))]
 fn check_activation(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResult {
     unsupported(ctx, def)
@@ -333,6 +388,9 @@ mod informational_executor_tests {
     /// legacy name into a declarative skip.
     const STUBS: &[&str] = &["when-was-the-last-service-date"];
 
+    /// Run only as a step of a composite.
+    const STEPS: &[&str] = &["network-status"];
+
     #[test]
     fn every_claimed_id_is_a_real_informational_script() {
         for id in HANDLED {
@@ -345,7 +403,7 @@ mod informational_executor_tests {
                 "{id} is not an informational script"
             );
             assert!(
-                def.offered_on(Surface::Egui) || STUBS.contains(id),
+                def.offered_on(Surface::Egui) || STUBS.contains(id) || STEPS.contains(id),
                 "{id} is claimed but never offered in the tab"
             );
         }
