@@ -7,7 +7,7 @@ category = "stress"
 summary = "Cert tier ~1.5h: CPU, RAM and GPU verified; run as minimum sign-off on a stock build"
 pass = "All stages pass the cert rules (temps, WHEA, throughput stability)"
 fail = "Any rule violation, WHEA delta, or stressor error"
-timeout_secs = 600
+timeout_secs = 7200
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 10
 
@@ -18,7 +18,7 @@ category = "stress"
 summary = "Cert tier ~3.5h: CPU, RAM, GPU, PSU load; run as standard sign-off on a gaming build"
 pass = "All stages pass the cert rules (temps, WHEA, throughput stability)"
 fail = "Any rule violation, WHEA delta, or stressor error"
-timeout_secs = 600
+timeout_secs = 16200
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 20
 
@@ -29,7 +29,7 @@ category = "stress"
 summary = "Cert tier ~8h: CPU mix, Linpack, RAM, GPU, VRAM, PSU; run on high-end or OC builds"
 pass = "All stages pass the cert rules (temps, WHEA, throughput stability)"
 fail = "Any rule violation, WHEA delta, or stressor error"
-timeout_secs = 600
+timeout_secs = 32400
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 30
 
@@ -40,7 +40,7 @@ category = "stress"
 summary = "Cert tier ~12h: full CPU/RAM/GPU/disk/PSU mix; run on flagships or to chase intermittents"
 pass = "All stages pass the cert rules (temps, WHEA, throughput stability)"
 fail = "Any rule violation, WHEA delta, or stressor error"
-timeout_secs = 600
+timeout_secs = 46800
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 40
 
@@ -51,7 +51,7 @@ category = "stress"
 summary = "Concurrent CPU + GPU at max load, 30m; run to prove PSU and cooling survive worst case"
 pass = "Run completes within temp limits; no WHEA, no TDR"
 fail = "Any rule violation, WHEA delta, or TDR event"
-timeout_secs = 600
+timeout_secs = 2700
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 50
 
