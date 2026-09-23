@@ -644,11 +644,7 @@ fn detail_panel(ui: &mut Ui, tab: &mut EguiScriptsTab) {
                 .iter()
                 .find(|q| q.run_token == *token)
             {
-                Some(q) => (
-                    q.script.name.clone(),
-                    Some(q.script.status),
-                    Some(*token),
-                ),
+                Some(q) => (q.script.name.clone(), Some(q.script.status), Some(*token)),
                 None => {
                     tab.focus = None;
                     return;
@@ -815,7 +811,7 @@ fn log_panel(ui: &mut Ui, tab: &mut EguiScriptsTab) {
     let filter = tab.log_filter;
     let rows: Vec<usize> = tab
         .state
-        .logs
+        .logs()
         .iter()
         .enumerate()
         .filter(|(_, e)| filter.is_none_or(|level| level == e.level))
@@ -844,7 +840,7 @@ fn log_panel(ui: &mut Ui, tab: &mut EguiScriptsTab) {
         .stick_to_bottom(tab.auto_scroll_logs)
         .show_rows(ui, row_height, rows.len(), |ui, range| {
             for &index in &rows[range] {
-                let entry = &tab.state.logs[index];
+                let entry = &tab.state.logs()[index];
                 ui.allocate_ui_with_layout(
                     vec2(ui.available_width(), row_height),
                     Layout::left_to_right(Align::Center),
@@ -883,7 +879,7 @@ fn log_row(ui: &mut Ui, entry: &ScriptLogEntry) {
 
 fn export_log(tab: &EguiScriptsTab) -> String {
     tab.state
-        .logs
+        .logs()
         .iter()
         .filter(|e| tab.log_filter.is_none_or(|level| level == e.level))
         .map(|e| {
