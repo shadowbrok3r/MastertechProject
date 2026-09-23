@@ -8,7 +8,7 @@ use egui::{Button, Widget};
 use crate::app_state::MastertechContext;
 use crate::tabs::tur_sheet::get_ticket::SendRequest;
 use crate::tabs::file_browser::command::{run_robocopy, RobocopyMessage};
-use displays::scripts::catalog::CATALOG;
+use displays::scripts::catalog::{CATALOG, Surface};
 use displays::scripts::executor::{CancelToken, ScriptHandle};
 use displays::scripts::{
     ScriptCategory, ScriptChannels, ScriptContext, ScriptItem, ScriptLogEntry,
@@ -458,6 +458,7 @@ impl EguiScriptsTab {
             },
             customer_email: self.customer_email.clone(),
             diagnostic_session_id: self.mcp_diagnostic_session_id.clone(),
+            surface: Some(Surface::Egui),
             channels: self.channels.clone(),
         }
     }
