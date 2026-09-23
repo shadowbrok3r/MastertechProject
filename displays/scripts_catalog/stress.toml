@@ -8,6 +8,7 @@ summary = "Cert tier ~1.5h: CPU, RAM and GPU verified; run as minimum sign-off o
 pass = "All stages pass the cert rules (temps, WHEA, throughput stability)"
 fail = "Any rule violation, WHEA delta, or stressor error"
 timeout_secs = 7200
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 10
 
@@ -19,6 +20,7 @@ summary = "Cert tier ~3.5h: CPU, RAM, GPU, PSU load; run as standard sign-off on
 pass = "All stages pass the cert rules (temps, WHEA, throughput stability)"
 fail = "Any rule violation, WHEA delta, or stressor error"
 timeout_secs = 16200
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 20
 
@@ -30,6 +32,7 @@ summary = "Cert tier ~8h: CPU mix, Linpack, RAM, GPU, VRAM, PSU; run on high-end
 pass = "All stages pass the cert rules (temps, WHEA, throughput stability)"
 fail = "Any rule violation, WHEA delta, or stressor error"
 timeout_secs = 32400
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 30
 
@@ -41,6 +44,7 @@ summary = "Cert tier ~12h: full CPU/RAM/GPU/disk/PSU mix; run on flagships or to
 pass = "All stages pass the cert rules (temps, WHEA, throughput stability)"
 fail = "Any rule violation, WHEA delta, or stressor error"
 timeout_secs = 46800
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 40
 
@@ -52,6 +56,7 @@ summary = "Concurrent CPU + GPU at max load, 30m; run to prove PSU and cooling s
 pass = "Run completes within temp limits; no WHEA, no TDR"
 fail = "Any rule violation, WHEA delta, or TDR event"
 timeout_secs = 2700
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 50
 
@@ -64,6 +69,7 @@ pass = "All stages above throughput floors; no TDR, no ECC errors, no VRAM misma
 warn = "Corrected ECC errors or PCIe replay deltas"
 fail = "Uncorrected ECC, new TDR event, or VRAM mismatch"
 timeout_secs = 900
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 60
 
@@ -76,6 +82,7 @@ pass = "Every stage above qc_floor_for(stressor)"
 warn = "Stage throughput between 0.9× and 1.0× floor"
 fail = "Any stage below floor, WHEA delta, or BSOD"
 timeout_secs = 1200
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 70
 
@@ -87,6 +94,7 @@ summary = "MemTest86-style pattern write/verify; run when you suspect bad RAM"
 pass = "Zero mismatches across all patterns"
 fail = "Any data mismatch — treat as faulty RAM"
 timeout_secs = 1200
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 80
 
@@ -98,6 +106,7 @@ summary = "Runs the same work twice and compares digests; run when results are w
 pass = "Zero digest divergences"
 fail = "Any divergence — silent data corruption under load"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 90
 
@@ -109,6 +118,7 @@ summary = "LU solves with residual check; run when you need heavy FP load with c
 pass = "All residuals under the HPL threshold (16)"
 fail = "Any residual breach — compute error under load"
 timeout_secs = 900
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 100
 
@@ -121,6 +131,7 @@ pass = "Run completes; no WHEA delta; no thermal runaway"
 warn = "No GPU present — CPU-only load"
 fail = "WHEA events or reboot during the run"
 timeout_secs = 900
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 110
 
@@ -133,6 +144,7 @@ pass = "Run completes; no WHEA delta; no rail droop or shutdown across the load 
 warn = "No GPU present — CPU-only load, so no transient is generated"
 fail = "Reboot, shutdown, or power-off during the run (an unstable rail under load stepping — the point of this test), WHEA events, or a TDR"
 timeout_secs = 900
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 120
 
@@ -143,6 +155,7 @@ category = "stress"
 summary = "Float-op burst loop; run for a quick all-core load and thermal check"
 pass = "≥ 50 Mop/s sustained"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 130
 
@@ -153,6 +166,7 @@ category = "stress"
 summary = "Square f32 matmul; run when SIMD/FP throughput looks low for the part"
 pass = "≥ 200 Mflop/s sustained"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 140
 
@@ -163,6 +177,7 @@ category = "stress"
 summary = "FMA chains, the hottest per-core load; run when checking a cooler mount"
 pass = "≥ 200 Mflop/s sustained"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 150
 
@@ -173,6 +188,7 @@ category = "stress"
 summary = "Hot-loop popcount/ctlz/rotate; run when integer results look wrong"
 pass = "≥ 50 Mop/s sustained"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 160
 
@@ -183,6 +199,7 @@ category = "stress"
 summary = "Data-dependent branches; run when a fault needs unpredictable control flow"
 pass = "≥ 100 Mbranch/s sustained"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 170
 
@@ -193,6 +210,7 @@ category = "stress"
 summary = "Prime sieve; run for a light long soak that can sit on the bench"
 pass = "≥ 0.5 Mprime/s sustained"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 180
 
@@ -203,6 +221,7 @@ category = "stress"
 summary = "FNV-1a over a 1 MiB buffer; run for steady mixed integer and memory load"
 pass = "≥ 50 MiB/s sustained"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 190
 
@@ -213,6 +232,7 @@ category = "stress"
 summary = "Cache-line thrash with clflush; run when instability tracks cache or fabric clocks"
 pass = "≥ 50 Mref/s sustained"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 200
 
@@ -223,6 +243,7 @@ category = "stress"
 summary = "Sequential and striped reads; run when sequential memory reads underperform"
 pass = "≥ 50 Mref/s sustained"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 210
 
@@ -233,6 +254,7 @@ category = "stress"
 summary = "Indirect calls through a 64-fn table; run when crashes look like fetch faults"
 pass = "≥ 5 Mcall/s sustained"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 220
 
@@ -243,6 +265,7 @@ category = "stress"
 summary = "rdtsc read-rate loop; run when timers or timestamps drift"
 pass = "≥ 5 Mread/s sustained"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 230
 
@@ -253,6 +276,7 @@ category = "stress"
 summary = "Cores contending on one AtomicU64; run when multi-core sync faults or hangs"
 pass = "≥ 5 Mop/s sustained"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 240
 
@@ -263,6 +287,7 @@ category = "stress"
 summary = "Threads contending on one mutex; run when lock-heavy workloads stall"
 pass = "≥ 0.5 Mop/s sustained"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 250
 
@@ -273,6 +298,7 @@ category = "stress"
 summary = "Threads ping-ponging on condvars; run when the machine lags with many threads"
 pass = "≥ 0.05 Mctxsw/s sustained"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 260
 
@@ -283,6 +309,7 @@ category = "stress"
 summary = "Heap fill/touch up to the RAM cap; run to pressure capacity, not to verify data"
 pass = "≥ 2 MiB/s sustained"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 270
 
@@ -293,6 +320,7 @@ category = "stress"
 summary = "Bulk memcpy of paired buffers; run when large copies or file operations are slow"
 pass = "≥ 2 GB/s sustained"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 280
 
@@ -303,6 +331,7 @@ category = "stress"
 summary = "STREAM copy/scale/add/triad; run when RAM bandwidth or channel setup is the suspect"
 pass = "≥ 5 GB/s sustained"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 290
 
@@ -313,6 +342,7 @@ category = "stress"
 summary = "Page-touch churn on the working set; run when a low-RAM machine feels slow"
 pass = "≥ 200 MiB/s sustained"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 300
 
@@ -324,6 +354,7 @@ summary = "Temp-file write/read loop; run when a drive is slow, dropping out, or
 pass = "≥ 5 MiB/s sustained"
 fail = "Any I/O error during the run"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 310
 
@@ -335,6 +366,7 @@ summary = "Compute-shader FMA hammer; run when a GPU hangs, resets, or black-scr
 pass = "≥ 100 GFLOPS sustained; no TDR"
 fail = "TDR event or shader compile failure"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 320
 
@@ -346,6 +378,7 @@ summary = "GPU NxN fp32 matmul; run when GPU throughput looks low for the card"
 pass = "≥ 100 GFLOPS sustained; no TDR"
 fail = "TDR event during the run"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 330
 
@@ -357,6 +390,7 @@ summary = "VRAM write-verify pattern walker; run when artifacts or VRAM corrupti
 pass = "≥ 1000 MiB/s sustained; no mismatches"
 fail = "VRAM mismatch surfaced via last_error"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 340
 
@@ -369,6 +403,7 @@ pass = "≥ 1 GB/s sustained; zero mismatches"
 warn = "PCIe replay deltas during the run"
 fail = "Any round-trip data mismatch"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 350
 
@@ -381,6 +416,7 @@ pass = "Sustained present rate with no present timeouts, lost surfaces, or watch
 warn = "Only one output attached — the display path is barely exercised"
 fail = "Present timeout, lost surface, or a watchdog live dump"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 360
 
@@ -392,6 +428,7 @@ summary = "Fused CPU + RAM + GPU stressor; run for whole-system load when bench 
 pass = "Runs to completion with no errors or TDR"
 fail = "GPU device loss or any reported error"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 370
 
@@ -403,6 +440,7 @@ summary = "CPU, RAM and GPU as separate lanes; run when a fault needs all three 
 pass = "All lanes run to completion with no errors"
 fail = "Any lane reports errors or aborts"
 timeout_secs = 600
+requires = ["service_number"]
 surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 380
 
