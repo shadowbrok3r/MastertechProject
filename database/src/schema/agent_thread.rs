@@ -126,6 +126,16 @@ pub struct NewAgentThread {
     pub title: Option<String>,
 }
 
+/// Connection string of a technician's session with no machine in scope.
+pub fn general_connection(email: &str) -> String {
+    format!("general:{}", email.trim().to_lowercase())
+}
+
+/// A session with no machine in scope: records-only tools, no remote actions.
+pub fn is_general(connection_string: &str) -> bool {
+    connection_string.starts_with("general:")
+}
+
 impl AgentThread {
     pub fn is_open(&self) -> bool {
         AGENT_THREAD_OPEN_STATUSES.contains(&self.status.as_str())

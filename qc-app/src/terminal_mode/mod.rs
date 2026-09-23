@@ -2,7 +2,7 @@
 //! GUI. Launched in Windows PE where no graphics driver is available. Built on
 //! the shared `mtech-tui` infrastructure.
 
-pub mod ai_backend;
+pub mod agent_backend;
 pub mod charts;
 pub mod context;
 pub mod menu_bar;
@@ -313,7 +313,10 @@ impl QcTerminalApp {
             Tab::Settings => self.settings.draw::<B>(f, content),
             Tab::Logs => self.logs.draw::<B>(f, content),
             Tab::BugReport => self.bug_report.borrow_mut().draw::<B>(f, content),
-            Tab::Ai => self.ai.draw::<B>(f, content),
+            Tab::Ai => {
+                self.ai.set_tech_email(self.order.borrow().tech_email());
+                self.ai.draw::<B>(f, content)
+            }
         }
 
         self.menu_bar.draw_overlay(f);

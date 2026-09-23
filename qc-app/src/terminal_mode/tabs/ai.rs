@@ -1,6 +1,9 @@
 use std::cell::Cell;
+use std::collections::HashSet;
+use std::time::{Duration, Instant};
 
 use crossbeam::channel::{unbounded, Receiver, Sender};
+use database::schema::{AgentEvent, RecordId, RecordIdExt};
 use mtech_tui::events::action_handler::WidgetId;
 use mtech_tui::styling::{APP_BACKGROUND, THEME};
 use mtech_tui::widgets::{
@@ -16,21 +19,31 @@ use ratatui::{
     Frame,
 };
 
-use crate::terminal_mode::ai_backend::{self, ChatMessage, ChatMessageType, SentFrom, TOOL_PREFIX};
+use crate::terminal_mode::agent_backend::{self, BackendMsg, ChatMessage, ChatMessageType, SentFrom, TOOL_PREFIX};
 
 const INPUT_ID: &str = "AiPrompt";
+const POLL_EVERY: Duration = Duration::from_secs(2);
 
-/// In-process AI self-diagnosis chat for the local QC machine. Streams an
-/// OpenAI-compatible model that calls qc-app's own MCP tools (telemetry,
-/// stress, benchmarks, reports) — the TUI twin of the displays AI tab.
+/// Chat with the Codex agent about this machine: its Mastertech session when one is live, else the technician's records session.
 pub struct AiTab<'a> {
     input: InputField<'a>,
     messages: Vec<ChatMessage>,
     scroll_back: Cell<usize>,
     busy: bool,
-    use_tools: bool,
-    user_seq: u64,
-    channel: (Sender<ChatMessage>, Receiver<ChatMessage>),
+    replied: bool,
+    tech_email: Option<String>,
+    session: Option<Session>,
+    seen: HashSet<String>,
+    last_poll: Option<Instant>,
+    polling: bool,
+    channel: (Sender<BackendMsg>, Receiver<BackendMsg>),
+}
+
+/// The agent session this conversation lives in, and the event seq it started after.
+struct Session {
+    thread: RecordId,
+    after_seq: i64,
+    target: String,
 }
 
 impl<'a> AiTab<'a> {
@@ -42,41 +55,88 @@ impl<'a> AiTab<'a> {
             messages: Vec::new(),
             scroll_back: Cell::new(0),
             busy: false,
-            use_tools: true,
-            user_seq: 0,
+            replied: false,
+            tech_email: None,
+            session: None,
+            seen: HashSet::new(),
+            last_poll: None,
+            polling: false,
             channel: unbounded(),
         }
     }
 
-    fn poll(&mut self) {
-        while let Ok(msg) = self.channel.1.try_recv() {
-            match msg.content.clone() {
-                ChatMessageType::Done => self.busy = false,
-                ChatMessageType::Error(_) => {
-                    self.busy = false;
-                    self.messages.push(msg);
-                }
-                ChatMessageType::Text(chunk) => self.upsert(&msg.id, msg.from.clone(), chunk, false),
-                ChatMessageType::Reasoning(chunk) => self.upsert(&msg.id, msg.from.clone(), chunk, true),
-            }
-        }
+    /// The technician signed in on the Order QC tab, whose records session is the fallback.
+    pub fn set_tech_email(&mut self, email: Option<String>) {
+        self.tech_email = email;
     }
 
-    fn upsert(&mut self, id: &str, from: SentFrom, chunk: String, reasoning: bool) {
-        if let Some(m) = self.messages.iter_mut().find(|m| m.id == id) {
-            match &mut m.content {
-                ChatMessageType::Text(s) if !reasoning => s.push_str(&chunk),
-                ChatMessageType::Reasoning(s) if reasoning => s.push_str(&chunk),
-                _ => {}
+    fn poll(&mut self) {
+        while let Ok(msg) = self.channel.1.try_recv() {
+            match msg {
+                BackendMsg::Opened { thread, after_seq, target } => {
+                    if self.session.as_ref().is_none_or(|s| s.thread != thread) {
+                        self.session = Some(Session { thread, after_seq, target });
+                    }
+                    self.last_poll = None;
+                }
+                BackendMsg::Rows { rows, status } => {
+                    self.polling = false;
+                    for row in rows {
+                        self.absorb(row);
+                    }
+                    if let Some(status) = status {
+                        let settled = matches!(status.as_str(), "idle" | "closed" | "failed");
+                        if settled && (self.replied || status != "idle") {
+                            self.busy = false;
+                        }
+                    }
+                }
+                BackendMsg::Error(e) => {
+                    self.busy = false;
+                    self.push(SentFrom::Assistant, ChatMessageType::Error(e));
+                }
             }
-        } else {
-            let content = if reasoning {
-                ChatMessageType::Reasoning(chunk)
-            } else {
-                ChatMessageType::Text(chunk)
-            };
-            self.messages.push(ChatMessage { id: id.to_string(), from, content });
         }
+        self.schedule_poll();
+    }
+
+    /// Renders one finished agent row the first time it is seen.
+    fn absorb(&mut self, row: AgentEvent) {
+        if !row.done {
+            return;
+        }
+        let id = row.id.key_string();
+        if self.seen.contains(&id) {
+            return;
+        }
+        let first_line = row.text.lines().next().unwrap_or_default().to_string();
+        let content = match row.kind.as_str() {
+            "agent" => ChatMessageType::Text(row.text),
+            "error" => ChatMessageType::Error(row.text),
+            "tool_call" | "command" => ChatMessageType::Text(format!("{TOOL_PREFIX}{first_line}")),
+            "approval" => ChatMessageType::Text(format!("{TOOL_PREFIX}approval needed in Mastertech: {first_line}")),
+            _ => return,
+        };
+        if matches!(row.kind.as_str(), "agent" | "error") {
+            self.replied = true;
+        }
+        self.seen.insert(id);
+        self.messages.push(ChatMessage { from: SentFrom::Assistant, content });
+    }
+
+    fn push(&mut self, from: SentFrom, content: ChatMessageType) {
+        self.messages.push(ChatMessage { from, content });
+    }
+
+    fn schedule_poll(&mut self) {
+        let Some(session) = &self.session else { return };
+        if self.polling || self.last_poll.is_some_and(|t| t.elapsed() < POLL_EVERY) {
+            return;
+        }
+        self.polling = true;
+        self.last_poll = Some(Instant::now());
+        let tx = self.channel.0.clone();
+        tokio::spawn(agent_backend::poll(session.thread.clone(), session.after_seq, tx));
     }
 
     fn submit(&mut self) {
@@ -87,24 +147,15 @@ impl<'a> AiTab<'a> {
         if input.is_empty() {
             return;
         }
-        let prior = ai_backend::history_json_from_messages(&self.messages);
-        self.messages.push(ChatMessage {
-            id: format!("u{}", self.user_seq),
-            from: SentFrom::Me,
-            content: ChatMessageType::Text(input.clone()),
-        });
-        self.user_seq += 1;
+        self.push(SentFrom::Me, ChatMessageType::Text(input.clone()));
         self.input.set_text("");
         self.busy = true;
+        self.replied = false;
         self.scroll_back.set(0);
 
+        let first = self.session.is_none();
         let tx = self.channel.0.clone();
-        let use_tools = self.use_tools;
-        tokio::spawn(async move {
-            if let Err(e) = ai_backend::stream_chat(input, prior, use_tools, tx).await {
-                log::error!("ai_chat stream error: {e:?}");
-            }
-        });
+        tokio::spawn(agent_backend::send(self.tech_email.clone(), input, first, tx));
     }
 
     /// Render the conversation into a flat list of display lines, word-wrapped
@@ -118,7 +169,11 @@ impl<'a> AiTab<'a> {
                     Style::default().fg(THEME.text_muted),
                 )),
                 Line::from(Span::styled(
-                    "The assistant inspects this machine with the QC tools.",
+                    "The agent answers in this machine's Mastertech session when Mastertech runs here,",
+                    Style::default().fg(THEME.text_muted),
+                )),
+                Line::from(Span::styled(
+                    "otherwise in your own session, with a snapshot of this machine's telemetry.",
                     Style::default().fg(THEME.text_muted),
                 )),
             ];
@@ -138,16 +193,6 @@ impl<'a> AiTab<'a> {
                     }
                     lines.push(Line::from(""));
                 }
-                (SentFrom::Assistant, ChatMessageType::Reasoning(t)) => {
-                    lines.push(Line::from(Span::styled(
-                        "\u{00B7} thinking",
-                        Style::default().fg(THEME.text_muted).add_modifier(Modifier::ITALIC),
-                    )));
-                    for w in wrap(t, width) {
-                        lines.push(Line::from(w).style(Style::default().fg(THEME.text_muted)));
-                    }
-                    lines.push(Line::from(""));
-                }
                 (SentFrom::Assistant, ChatMessageType::Text(t)) if t.starts_with(TOOL_PREFIX) => {
                     for w in wrap(t, width) {
                         lines.push(Line::from(w).style(Style::default().fg(THEME.tertiary)));
@@ -155,7 +200,7 @@ impl<'a> AiTab<'a> {
                 }
                 (SentFrom::Assistant, ChatMessageType::Text(t)) => {
                     lines.push(Line::from(Span::styled(
-                        "\u{258C} Assistant",
+                        "\u{258C} Agent",
                         Style::default().fg(THEME.success).add_modifier(bold),
                     )));
                     for w in wrap(t, width) {
@@ -173,7 +218,6 @@ impl<'a> AiTab<'a> {
                     }
                     lines.push(Line::from(""));
                 }
-                _ => {}
             }
         }
         lines
@@ -253,10 +297,10 @@ impl<'a> HandleWidget<'a> for AiTab<'a> {
 
         self.input.render_ref(rows[1], f.buffer_mut());
 
-        let tools = if self.use_tools { "on" } else { "off" };
-        let state = if self.busy { "  thinking\u{2026}" } else { "" };
+        let state = if self.busy { "  agent working\u{2026}" } else { "" };
+        let target = self.session.as_ref().map(|s| format!("  \u{00B7}  {}", s.target)).unwrap_or_default();
         let footer = format!(
-            "Enter send  \u{00B7}  Alt+Enter newline  \u{00B7}  PgUp/PgDn scroll  \u{00B7}  Ctrl+T tools:{tools}  \u{00B7}  Ctrl+L clear{state}"
+            "Enter send  \u{00B7}  Alt+Enter newline  \u{00B7}  PgUp/PgDn scroll  \u{00B7}  Ctrl+L clear{target}{state}"
         );
         f.render_widget(
             Paragraph::new(footer).style(Style::default().fg(THEME.text_muted).bg(APP_BACKGROUND)),
@@ -285,10 +329,6 @@ impl<'a> HandleWidget<'a> for AiTab<'a> {
             }
             KeyCode::PageDown => {
                 self.scroll_back.set(self.scroll_back.get().saturating_sub(5));
-                true
-            }
-            KeyCode::Char('t') if ctrl => {
-                self.use_tools = !self.use_tools;
                 true
             }
             KeyCode::Char('l') if ctrl => {
