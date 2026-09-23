@@ -33,6 +33,13 @@ const PORTED: &[&str] = &[
     "install-libreoffice",
     "activate-cps",
     "run-junkware-category",
+    "is-hibernation-sleep-enabled",
+    "check-updates",
+    "install-windows-updates",
+    "unpin-copilot",
+    "disable-notifications",
+    "disable-startup-apps",
+    "change-superantispyware-settings",
 ];
 
 /// A warning is a finding for these, which the remote code reported as FAIL.

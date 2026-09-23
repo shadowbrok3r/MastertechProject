@@ -55,28 +55,47 @@ impl ScriptExecutor for WindowsUpdateExecutor {
 
 #[cfg(target_os = "windows")]
 fn run(def: &ScriptDef, ctx: &ScriptContext) -> ScriptResult {
+    use crate::utilities::windows::net_adapter::ensure_internet_connected;
     use crate::utilities::windows::windows_update::install_windows_updates;
 
     let (category, name) = (def.category(), def.name.as_str());
     let installing = def.id.as_str() == "install-windows-updates";
 
-    ctx.log_info(
-        category,
-        name,
-        if installing {
-            "Starting Windows Updates..."
-        } else {
-            "Checking for Windows Updates..."
-        },
-    );
+    let checking = if installing {
+        "Checking internet before Windows Updates..."
+    } else {
+        "Checking internet before Windows Update search..."
+    };
+    ctx.log_info(category.clone(), name, checking);
+    match super::env::block_on(ensure_internet_connected()) {
+        Some(Ok(())) => ctx.log_info(category.clone(), name, "Internet confirmed"),
+        Some(Err(e)) => {
+            let msg = format!("No internet: {e}");
+            ctx.log_error(category, name, msg.clone());
+            return ScriptResult::Error(msg);
+        }
+        None => {
+            let msg = "No async runtime is registered for script execution";
+            ctx.log_error(category, name, msg);
+            return ScriptResult::Error(msg.into());
+        }
+    }
+
+    let starting = if installing {
+        "Starting Windows Updates (search + install)..."
+    } else {
+        "Searching for available Windows updates (no install)..."
+    };
+    ctx.log_info(category.clone(), name, starting);
 
     let (event_tx, event_rx) = crossbeam::channel::unbounded();
     let forwarder = std::thread::spawn({
         let ctx = ctx.clone();
-        let id = def.id.as_str().to_string();
+        let def = def.clone();
         move || {
+            let mut milestones = Milestones::default();
             while let Ok(event) = event_rx.recv() {
-                forward(&ctx, &id, event);
+                forward(&ctx, &def, installing, &mut milestones, event);
             }
         }
     });
@@ -86,40 +105,109 @@ fn run(def: &ScriptDef, ctx: &ScriptContext) -> ScriptResult {
     let _ = forwarder.join();
 
     match result {
-        Ok(_) if installing => ScriptResult::Success("Windows updates installed".into()),
-        Ok(_) => ScriptResult::Success("Update check complete".into()),
+        Ok(_) => {
+            let msg = if installing {
+                "Windows Updates completed successfully"
+            } else {
+                "Windows update check finished"
+            };
+            ctx.log_success(category, name, msg);
+            ScriptResult::Success(msg.into())
+        }
         Err(e) => {
-            // The original path discarded this, so a failed run looked like a
-            // successful one that logged nothing.
-            let msg = format!("Windows Updates failed: {e}");
-            ctx.log_error(def.category(), def.name.as_str(), msg.clone());
+            let msg = if installing {
+                format!("Windows Updates error: {e:?}")
+            } else {
+                format!("Windows update check error: {e:?}")
+            };
+            ctx.log_error(category, name, msg.clone());
             ScriptResult::Error(msg)
         }
     }
 }
 
-/// Reproduces the tab's own pump: these lines are logged under "Windows
-/// Updates" rather than the script's name.
+/// Last logged quarter of each percentage, so progress reaches the log four times, not a hundred.
+#[cfg(target_os = "windows")]
+#[derive(Default)]
+struct Milestones {
+    download: Option<i32>,
+    install: Option<i32>,
+}
+
+#[cfg(target_os = "windows")]
+fn milestone(last: &mut Option<i32>, pct: i32) -> Option<i32> {
+    let quarter = pct.clamp(0, 100) / 25 * 25;
+    (*last != Some(quarter)).then(|| {
+        *last = Some(quarter);
+        quarter
+    })
+}
+
+/// Update log lines keep the tab's "Windows Updates" label; everything else is the script's own.
 #[cfg(target_os = "windows")]
 fn forward(
     ctx: &ScriptContext,
-    id: &str,
+    def: &ScriptDef,
+    installing: bool,
+    milestones: &mut Milestones,
     event: crate::utilities::windows::windows_update::WindowsUpdateEvent,
 ) {
     use crate::utilities::windows::windows_update::WindowsUpdateEvent;
     use displays::scripts::ScriptCategory;
 
-    let system = ScriptCategory::Custom("System".to_string());
+    let (category, name) = (def.category(), def.name.as_str());
     match event {
-        WindowsUpdateEvent::UpdateLogs(log) => ctx.log_info(system, "Windows Updates", log),
-        WindowsUpdateEvent::ReturnedUpdates(updates) => ctx.log_info(
-            system,
+        WindowsUpdateEvent::UpdateLogs(log) => ctx.log_info(
+            ScriptCategory::Custom("System".to_string()),
             "Windows Updates",
-            format!("Found {} updates", updates.updates.len()),
+            log,
         ),
-        WindowsUpdateEvent::DownloadPercentage(pct)
-        | WindowsUpdateEvent::InstallPercentage(pct) => {
-            ctx.report_progress(id, pct.max(0) as u64, 100);
+        WindowsUpdateEvent::ReturnedUpdates(updates) => {
+            if installing {
+                ctx.log_info(
+                    category.clone(),
+                    name,
+                    format!("{} updates processed", updates.updates.len()),
+                );
+                for update in &updates.updates {
+                    ctx.log_info(
+                        category.clone(),
+                        name,
+                        format!("  {} (installed: {})", update.title, update.is_installed),
+                    );
+                }
+            } else {
+                let pending: Vec<_> = updates.updates.iter().filter(|u| !u.is_installed).collect();
+                ctx.log_info(
+                    category.clone(),
+                    name,
+                    format!(
+                        "{} updates returned ({} pending, {} already installed)",
+                        updates.updates.len(),
+                        pending.len(),
+                        updates.updates.len() - pending.len()
+                    ),
+                );
+                for update in pending {
+                    ctx.log_info(
+                        category.clone(),
+                        name,
+                        format!("  [pending] {}", update.title),
+                    );
+                }
+            }
+        }
+        WindowsUpdateEvent::DownloadPercentage(pct) => {
+            ctx.report_progress(def.id.as_str(), pct.max(0) as u64, 100);
+            if let Some(quarter) = milestone(&mut milestones.download, pct) {
+                ctx.log_info(category, name, format!("Download: {quarter}%"));
+            }
+        }
+        WindowsUpdateEvent::InstallPercentage(pct) => {
+            ctx.report_progress(def.id.as_str(), pct.max(0) as u64, 100);
+            if let Some(quarter) = milestone(&mut milestones.install, pct) {
+                ctx.log_info(category, name, format!("Install: {quarter}%"));
+            }
         }
     }
 }
@@ -156,6 +244,17 @@ mod windows_update_executor_tests {
         let install = CATALOG.timeout_secs("Install Windows Updates");
         let check = CATALOG.timeout_secs("Check Updates");
         assert!(install > check, "install={install:?} check={check:?}");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn progress_is_logged_once_per_quarter() {
+        let mut last = None;
+        let logged: Vec<i32> = [0, 3, 24, 25, 26, 50, 99, 100, 100]
+            .into_iter()
+            .filter_map(|pct| milestone(&mut last, pct))
+            .collect();
+        assert_eq!(logged, [0, 25, 50, 75, 100]);
     }
 
     #[test]
