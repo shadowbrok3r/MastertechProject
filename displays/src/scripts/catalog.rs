@@ -339,9 +339,8 @@ mod catalog_tests {
         let names: Vec<&str> = items.values().flatten().map(|i| i.name.as_str()).collect();
         assert_eq!(names.len(), CATALOG.for_surface(Surface::Egui).count());
         assert!(!names.iter().any(|n| n.starts_with("Benchmark")), "a benchmark is listed");
-        for stub in ["Disable proxy settings", "Change SuperAntiSpyware settings"] {
-            assert!(!names.contains(&stub), "{stub} is listed");
-        }
+        assert!(!names.contains(&"Disable proxy settings"), "the proxy stub is listed");
+        assert!(names.contains(&"Change SuperAntiSpyware settings"));
     }
 
     #[test]
