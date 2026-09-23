@@ -1,7 +1,4 @@
 //! Tune-up changes to this machine.
-//!
-//! The entries that still need the HTTP client, a download progress channel or
-//! the data-transfer picker stay on the original path in `tabs::scripts`.
 
 use std::time::Instant;
 
@@ -602,10 +599,9 @@ mod tuneup_executor_tests {
         assert!(!executor.handles(&ScriptId::new("windows-version")));
     }
 
-    /// These still need the HTTP client, a progress channel or the transfer
-    /// picker, so they must keep falling through to the original path.
+    /// The install, update and composite executors run these; the tab runs Data Transfer itself.
     #[test]
-    fn the_client_bound_scripts_are_still_unclaimed() {
+    fn the_tuneup_executor_leaves_these_to_others() {
         let executor = TuneupExecutor;
         for id in [
             "data-transfer",
