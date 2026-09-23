@@ -131,14 +131,19 @@ impl ScriptEditor {
         }
     }
 
-    /// Spawns an async task that streams a script from the AI into the editor
-    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+    /// Asks the technician's agent session for a script and loads its code block into the editor.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
     pub fn generate_script_from_prompt(&mut self) {
         use crate::Spawner;
-        let prompt = self.ai_prompt.clone();
-        if prompt.trim().is_empty() {
+        let prompt = self.ai_prompt.trim().to_string();
+        if prompt.is_empty() {
             return;
         }
+        let Some(email) = crate::get_current_user_from_auth().map(|u| u.get_email().to_string()) else {
+            self.notification_text = "Sign in to ask the agent for a script.".to_string();
+            self.open_notification_modal = true;
+            return;
+        };
 
         let (tx, rx) = crossbeam::channel::unbounded();
         self.ai_result_rx = Some(rx);
@@ -146,68 +151,25 @@ impl ScriptEditor {
         self.code.clear();
 
         crate::PlatformSpawner::spawn(async move {
-            if let Err(e) = ai_generate_script_streaming(&prompt, tx.clone()).await {
-                let _ = tx.send(AiGenResult::Error(e.to_string()));
+            let session = database::schema::general_connection(&email);
+            let request = format!("{SCRIPT_BRIEF}\n\n{prompt}");
+            match database::agent_chat::ask(&session, Some(&email), &request, SCRIPT_TIMEOUT).await {
+                Ok(reply) => {
+                    let _ = tx.send(AiGenResult::Chunk(database::agent_chat::code_block(&reply)));
+                    let _ = tx.send(AiGenResult::Done);
+                }
+                Err(e) => {
+                    let _ = tx.send(AiGenResult::Error(e.to_string()));
+                }
             }
         });
     }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn generate_script_from_prompt(&mut self) {
-        self.notification_text = "AI generation not available in browser".to_string();
-        self.open_notification_modal = true;
-    }
 }
 
-#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
-async fn ai_generate_script_streaming(
-    prompt: &str,
-    tx: crossbeam::channel::Sender<AiGenResult>,
-) -> anyhow::Result<()> {
-    use crate::ai::oa_client::new_oa_client;
-    use crate::openai::types::chat::{
-        CreateChatCompletionRequestArgs, ChatCompletionRequestUserMessageArgs,
-        ChatCompletionRequestSystemMessageArgs,
-    };
-    use crate::ai::gpts::MODEL;
-    use futures::StreamExt;
+/// Instruction sent ahead of the technician's description.
+#[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+const SCRIPT_BRIEF: &str = "Write a PowerShell script for a Windows bench technician. Reply with only the script, \
+    clean and commented, in one ```powershell block. Write it; do not run anything.";
 
-    let client = new_oa_client()?;
-    let system_msg = ChatCompletionRequestSystemMessageArgs::default()
-        .content(
-            "You are a PowerShell script generator for Windows IT technicians. \
-             Output ONLY the raw script code, no markdown fences, no explanations. \
-             Write clean, commented PowerShell."
-        )
-        .build()?;
-    let user_msg = ChatCompletionRequestUserMessageArgs::default()
-        .content(prompt)
-        .build()?;
-
-    let request = CreateChatCompletionRequestArgs::default()
-        .model(MODEL)
-        .messages(vec![system_msg.into(), user_msg.into()])
-        .temperature(0.3f32)
-        .build()?;
-
-    let mut stream = client.chat().create_stream(request).await?;
-
-    while let Some(result) = stream.next().await {
-        match result {
-            Ok(response) => {
-                for choice in &response.choices {
-                    if let Some(ref content) = choice.delta.content {
-                        let _ = tx.send(AiGenResult::Chunk(content.clone()));
-                    }
-                }
-            }
-            Err(e) => {
-                let _ = tx.send(AiGenResult::Error(e.to_string()));
-                return Ok(());
-            }
-        }
-    }
-
-    let _ = tx.send(AiGenResult::Done);
-    Ok(())
-}
+#[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+const SCRIPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);

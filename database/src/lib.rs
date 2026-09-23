@@ -12,6 +12,7 @@ use std::fmt::Debug;
 use schema::User;
 use log::info;
 
+pub mod agent_chat;
 pub mod live_data;
 pub mod shape_walk;
 // SNTP-based startup clock correction; UdpSocket/SetSystemTime are native-only.

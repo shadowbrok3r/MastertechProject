@@ -26,7 +26,7 @@ pub mod agent_audit;
 pub mod ai_analytics;
 pub mod server_console;
 pub mod stress_lab;
-#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+#[cfg(any(target_arch = "wasm32", feature = "tokio"))]
 pub mod agent_sessions;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod plugins_tab;
@@ -133,26 +133,18 @@ impl egui_dock::TabViewer for SharedContext {
             TabId::ServerConsole => self.server_console.ui(ui),
             TabId::AgentAudit => self.agent_audit.ui(ui),
             TabId::AiAnalytics => self.ai_analytics.ui(ui),
-            #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+            #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
             TabId::AgentSessions => self.agent_sessions.ui(ui),
-            #[cfg(not(all(not(target_arch = "wasm32"), feature = "tokio")))]
+            #[cfg(not(any(target_arch = "wasm32", feature = "tokio")))]
             TabId::AgentSessions => {
                 ui.label("Agent Sessions is available in the native build.");
             }
-            #[cfg(not(target_arch = "wasm32"))]
             TabId::Ai => {
                 // No client is focused here, so chat lands in the agent's records-only session.
                 self.enhanced_ai_playground.self_diagnosis = true;
                 self.enhanced_ai_playground.focused_client = None;
                 self.enhanced_ai_playground.enhanced_ai_playground(ui);
                 let _ = self.enhanced_ai_playground.take_close_request();
-            }
-            #[cfg(target_arch = "wasm32")]
-            TabId::Ai => {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(40.0);
-                    ui.label("AI self-diagnosis is available in the desktop application.");
-                });
             }
             TabId::DatabaseEditor => self.database_viewer.ui(ui, self.current_user.clone()),
             TabId::QueryEditor => {

@@ -306,7 +306,6 @@ pub struct SharedContext {
     #[serde(skip)]
     pub database_viewer: DatabaseEditor,
     /// Enhanced AI playground with MCP diagnostic capabilities
-    #[cfg(not(target_arch = "wasm32"))]
     #[serde(skip)]
     pub enhanced_ai_playground: crate::tabs::ai_playground::enhanced::EnhancedAiPlayground,
     #[serde(skip)]
@@ -418,7 +417,7 @@ pub struct SharedContext {
     pub server_console: ServerConsole,
     /// ZeroClaw agent turns rendered as transcripts.
     #[serde(skip)]
-    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
     pub agent_sessions: crate::tabs::agent_sessions::AgentSessions,
     /// ZeroClaw webhook-audit tool-call trail; fetched only while drawn.
     #[serde(skip)]
@@ -794,7 +793,6 @@ impl SharedContext {
             stock_tables: StockTable::default(),
 
             // Other Components
-            #[cfg(not(target_arch = "wasm32"))]
             enhanced_ai_playground: crate::tabs::ai_playground::enhanced::EnhancedAiPlayground::default(),
             task_audit_table: TaskAuditViewer::new(),
             resource_mon: ResourceMonitor::default(),
@@ -823,7 +821,7 @@ impl SharedContext {
             #[cfg(not(target_arch = "wasm32"))]
             session_board: Default::default(),
             server_console: ServerConsole::default(),
-            #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+            #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
             agent_sessions: Default::default(),
             agent_audit: Default::default(),
             agent_approvals: Default::default(),

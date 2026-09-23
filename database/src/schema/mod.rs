@@ -90,7 +90,7 @@ pub use provenance::{Harness, Provenance, UNKNOWN_ACTOR};
 pub use business_calendar::{business_seconds, open_days_between, OPEN_SECS_PER_DAY};
 pub use roi::{DataGaps, RoiSummary, ShelfCandidate, TurnaroundStats, TECH_RATE_HIGH, TECH_RATE_LOW};
 pub use assist::{AssistRequest, ASSIST_REQUEST_TABLE};
-pub use agent_thread::{AgentThread, NewAgentThread, AGENT_THREAD_OPEN_STATUSES, AGENT_THREAD_TABLE};
+pub use agent_thread::{general_connection, is_general, AgentThread, NewAgentThread, AGENT_THREAD_OPEN_STATUSES, AGENT_THREAD_TABLE};
 pub use agent_event::{event_key, AgentEvent, AGENT_EVENT_TABLE};
 pub use agent_turn::{AgentTurn, AGENT_TURN_TABLE};
 pub use agent_approval::{AgentApproval, AgentDecideOutcome, NewAgentApproval, AGENT_APPROVAL_TABLE};

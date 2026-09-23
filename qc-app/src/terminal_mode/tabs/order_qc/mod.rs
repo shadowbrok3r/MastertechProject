@@ -225,6 +225,11 @@ pub struct OrderQcTab<'a> {
 }
 
 impl<'a> OrderQcTab<'a> {
+    /// Email of the technician signed in on this tab.
+    pub fn tech_email(&self) -> Option<String> {
+        self.tech.as_ref().map(|t| t.email.trim().to_string()).filter(|e| !e.is_empty())
+    }
+
     pub fn new(ctx: Arc<Mutex<QcContext>>) -> Self {
         let (tx, rx) = unbounded();
         let key_field = InputField::new("Order lookup", WidgetId(LOOKUP_ID.to_string()));

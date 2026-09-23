@@ -161,7 +161,7 @@ impl EnhancedAiPlayground {
             from: SentFrom::Me,
             content: ChatMessageType::Text(label),
         });
-        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
         {
             let prompt = match &connection_string {
                 Some(_) => "Diagnose that client. Pull its prior history and run an initial triage \
@@ -172,7 +172,7 @@ impl EnhancedAiPlayground {
             self.thread_engine.insert(thread_id.clone(), "Codex agent".to_string());
             self.send_to_agent(thread_id, prompt, connection_string);
         }
-        #[cfg(not(all(not(target_arch = "wasm32"), feature = "tokio")))]
+        #[cfg(not(any(target_arch = "wasm32", feature = "tokio")))]
         {
             let _ = connection_string;
         }
@@ -260,9 +260,9 @@ impl EnhancedAiPlayground {
                 .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
                 .show(|ui| {
                     ui.set_min_width(220.);
-                    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+                    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
                     let agent_index = self.agent_index.clone();
-                    #[cfg(not(all(not(target_arch = "wasm32"), feature = "tokio")))]
+                    #[cfg(not(any(target_arch = "wasm32", feature = "tokio")))]
                     let agent_index: Vec<database::schema::AgentThread> = Vec::new();
                     if self.threads.is_empty() && agent_index.is_empty() {
                         ui.label(RichText::new("No chats yet").weak());
@@ -309,7 +309,7 @@ impl EnhancedAiPlayground {
             let stored = popup.map(|r| r.response.rect).unwrap_or(eframe::egui::Rect::NOTHING);
             ui.memory_mut(|m| m.data.insert_temp(rect_id, stored));
             if let Some(id) = picked {
-                #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+                #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
                 if !self.threads.contains_key(&id) {
                     // Only an agent conversation can be picked without local
                     // state; opening it backfills the transcript.
@@ -329,7 +329,7 @@ impl EnhancedAiPlayground {
                 {
                     self.close_requested = true;
                 }
-                #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+                #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
                 if self.focused_client.is_some()
                     && ui
                         .button(RichText::new(icons::ROBOT))
@@ -452,14 +452,13 @@ impl EnhancedAiPlayground {
 
     /// True for assistant tool-activity lines emitted with `TOOL_PREFIX`.
     fn is_tool_line(message: &ChatMessage) -> bool {
-        #[cfg(not(target_arch = "wasm32"))]
-        if let ChatMessageType::Text(t) = &message.content {
-            return matches!(message.from, SentFrom::Assistant)
-                && t.starts_with(crate::tabs::ai_playground::TOOL_PREFIX);
+        match &message.content {
+            ChatMessageType::Text(t) => {
+                matches!(message.from, SentFrom::Assistant)
+                    && t.starts_with(crate::tabs::ai_playground::TOOL_PREFIX)
+            }
+            _ => false,
         }
-        #[cfg(target_arch = "wasm32")]
-        let _ = message;
-        false
     }
 
     fn render_tool_group(&self, ui: &mut Ui, group: &[ChatMessage]) {
@@ -488,10 +487,7 @@ impl EnhancedAiPlayground {
             Some((head, tail)) => (head, tail.trim()),
             None => (text, ""),
         };
-        #[cfg(not(target_arch = "wasm32"))]
         let body = text.trim_start_matches(crate::tabs::ai_playground::TOOL_PREFIX).trim_start();
-        #[cfg(target_arch = "wasm32")]
-        let body = text.trim_start();
 
         let (name, rest) = match body.find(" (") {
             Some(i) => (&body[..i], &body[i + 1..]),
@@ -705,15 +701,15 @@ impl EnhancedAiPlayground {
             ui.ctx().request_repaint();
         }
 
-        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
         while let Ok(thread) = self.agent_flag_rx.try_recv() {
             self.agent_threads.insert(thread);
         }
-        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
         while let Ok((local, key)) = self.agent_switch_rx.try_recv() {
             self.adopt_agent_thread(&local, key);
         }
-        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
         {
             self.poll_agent_index(ui);
             self.poll_agent_replies(ui);
@@ -738,7 +734,7 @@ impl EnhancedAiPlayground {
     }
 
     /// Re-keys a local thread onto the agent session it became, keeping what was typed.
-    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
     fn adopt_agent_thread(&mut self, local: &str, key: String) {
         if local == key {
             return;
@@ -769,7 +765,7 @@ impl EnhancedAiPlayground {
 
     /// Queues one technician message for the agent: a turn on an open session, or a
     /// request that opens one for the target machine.
-    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
     fn send_to_agent(
         &mut self,
         thread_id: String,
@@ -806,12 +802,12 @@ impl EnhancedAiPlayground {
                 return;
             }
             // No machine in scope: the technician's standing records-only session.
-            let target = target.or_else(|| tech.as_deref().map(crate::headless::codex::general_connection));
+            let target = target.or_else(|| tech.as_deref().map(database::schema::general_connection));
             let Some(cs) = target else {
                 let _ = tx.try_send(say(ChatMessageType::Error("Sign in to chat with the agent.".into())));
                 return;
             };
-            let general = crate::headless::codex::is_general(&cs);
+            let general = database::schema::is_general(&cs);
             if !general {
                 if let Some(block) = database::schema::ConnectedClient::diagnosis_block(&cs).await {
                     let _ = tx.try_send(say(ChatMessageType::Error(format!("Not dispatched — {cs}: {block}."))));
@@ -836,7 +832,7 @@ impl EnhancedAiPlayground {
                             "Asked the agent host to open {what}\u{2026}"
                         ))));
                         for _ in 0..45 {
-                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                            database::sleep_compat(std::time::Duration::from_secs(2)).await;
                             if let Ok(Some(req)) = AssistRequest::get(&request).await {
                                 if let Some(thread) = req.agent_thread {
                                     let _ = switch_tx.try_send((tid.clone(), thread.key_string()));
@@ -866,7 +862,7 @@ impl EnhancedAiPlayground {
     /// Refreshes the list of agent conversations this user may open. A
     /// technician sees only their own; root sees every one, which is the only
     /// way to answer a conversation the tech who opened it has gone home on.
-    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
     fn poll_agent_index(&mut self, ui: &Ui) {
         use std::time::Duration;
         const EVERY: Duration = Duration::from_secs(15);
@@ -910,7 +906,7 @@ impl EnhancedAiPlayground {
     }
 
     /// Opens a conversation from the index, backfilling both sides on first view.
-    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
     fn open_agent_thread(&mut self, thread: String) {
         self.agent_threads.insert(thread.clone());
         self.threads.entry(thread.clone()).or_insert_with(|| ChatThread {
@@ -926,7 +922,7 @@ impl EnhancedAiPlayground {
 
     /// Pulls agent replies for the open thread. Messages carry their row id, so
     /// the thread's own contents are the dedupe set and no extra state is kept.
-    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
     fn poll_agent_replies(&mut self, ui: &Ui) {
         use std::time::Duration;
         let gap = if self.agent_threads.contains(&self.selected_thread) { 2 } else { 8 };
@@ -1034,14 +1030,14 @@ impl EnhancedAiPlayground {
 
         // Every message goes to the agent: a session thread continues, a focused
         // machine gets its session, anything else the technician's records session.
-        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
         {
             if !self.agent_threads.contains(&thread_id) {
                 self.thread_engine.insert(thread_id.clone(), "Codex agent".to_string());
             }
             self.send_to_agent(thread_id, input, None);
         }
-        #[cfg(not(all(not(target_arch = "wasm32"), feature = "tokio")))]
+        #[cfg(not(any(target_arch = "wasm32", feature = "tokio")))]
         {
             let _ = (input, thread_id);
         }
