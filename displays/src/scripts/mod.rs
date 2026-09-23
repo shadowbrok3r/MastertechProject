@@ -57,6 +57,12 @@ pub fn default_remote_script_timeout_secs(script_name: &str) -> u64 {
         "Benchmark Suite" => 1800,
         "QC Benchmark" | "Memory Test" => 1200,
         "GPU Stress Test" | "Stress: PSU" | "Stress: PSU Transient" | "Stress: Linpack" => 900,
+        // Planned run length plus 30 minutes; Power Virus plus 15.
+        "Cert: Bronze" => 7200,
+        "Cert: Silver" => 16200,
+        "Cert: Gold" => 32400,
+        "Cert: Platinum" => 46800,
+        "Power Virus" => 2700,
         _ => 600,
     }
 }
