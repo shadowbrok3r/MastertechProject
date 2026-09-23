@@ -252,6 +252,11 @@ mod tests {
     }
 }
 
+/// Most log entries kept once trimming runs.
+pub const LOG_CAP: usize = 5_000;
+/// Overflow allowed before trimming, so the front is drained in batches rather than per push.
+const LOG_TRIM_BATCH: usize = 500;
+
 /// State manager for the scripts UI
 #[derive(Debug, Clone, Default)]
 pub struct ScriptsState {
@@ -259,8 +264,10 @@ pub struct ScriptsState {
     pub categories: HashMap<ScriptCategory, Vec<ScriptItem>>,
     /// The execution queue
     pub queue: ScriptQueue,
-    /// Log entries
-    pub logs: Vec<ScriptLogEntry>,
+    /// Log entries, oldest first; read through [`Self::logs`].
+    logs: Vec<ScriptLogEntry>,
+    /// Entries dropped from the front, so a cursor taken earlier still names the same entry.
+    log_base: usize,
     /// Category expansion state (for collapsible headers)
     pub category_expanded: HashMap<ScriptCategory, bool>,
     /// Service number input
@@ -350,16 +357,38 @@ impl ScriptsState {
     /// Add a log entry
     pub fn log(&mut self, entry: ScriptLogEntry) {
         self.logs.push(entry);
+        if self.logs.len() > LOG_CAP + LOG_TRIM_BATCH {
+            let excess = self.logs.len() - LOG_CAP;
+            self.logs.drain(..excess);
+            self.log_base += excess;
+        }
     }
 
-    /// Clear logs
     pub fn clear_logs(&mut self) {
+        self.log_base += self.logs.len();
         self.logs.clear();
     }
 
-    /// Get log entries for display (most recent last)
+    /// Log entries still held, oldest first.
     pub fn logs(&self) -> &[ScriptLogEntry] {
         &self.logs
+    }
+
+    /// Position just past the newest entry. Unlike a `Vec` index it survives trimming and clearing.
+    pub fn log_cursor(&self) -> usize {
+        self.log_base + self.logs.len()
+    }
+
+    /// Entries between two cursors; any already dropped are skipped.
+    pub fn logs_between(&self, start: usize, end: usize) -> &[ScriptLogEntry] {
+        let lo = start.saturating_sub(self.log_base).min(self.logs.len());
+        let hi = end.saturating_sub(self.log_base).min(self.logs.len());
+        &self.logs[lo..hi.max(lo)]
+    }
+
+    /// Entries at or after `start`.
+    pub fn logs_since(&self, start: usize) -> &[ScriptLogEntry] {
+        self.logs_between(start, self.log_cursor())
     }
 }
 
@@ -441,5 +470,54 @@ mod queue_identity_tests {
             queue.items()[0].script.is_selected(),
             "stopping must not untick the script"
         );
+    }
+}
+
+#[cfg(test)]
+mod log_cursor_tests {
+    use super::*;
+    use crate::scripts::ScriptCategory;
+
+    fn entry(message: &str) -> ScriptLogEntry {
+        ScriptLogEntry::info(ScriptCategory::Tuneup, "test", message)
+    }
+
+    #[test]
+    fn the_log_stays_bounded() {
+        let mut state = ScriptsState::new();
+        for i in 0..(LOG_CAP * 3) {
+            state.log(entry(&i.to_string()));
+        }
+        assert!(state.logs().len() <= LOG_CAP + LOG_TRIM_BATCH);
+        let newest = (LOG_CAP * 3 - 1).to_string();
+        assert_eq!(state.logs().last().map(|e| e.message.as_str()), Some(newest.as_str()));
+    }
+
+    /// A tracked run reads from its cursor; trimming must not shift it onto other entries.
+    #[test]
+    fn a_cursor_survives_trimming() {
+        let mut state = ScriptsState::new();
+        for i in 0..LOG_CAP {
+            state.log(entry(&i.to_string()));
+        }
+        let cursor = state.log_cursor();
+        state.log(entry("mine"));
+        for i in 0..(LOG_TRIM_BATCH * 2) {
+            state.log(entry(&format!("later {i}")));
+        }
+        let first = state.logs_since(cursor).first().map(|e| e.message.as_str());
+        assert_eq!(first, Some("mine"));
+    }
+
+    #[test]
+    fn clearing_keeps_cursors_valid() {
+        let mut state = ScriptsState::new();
+        state.log(entry("before"));
+        let cursor = state.log_cursor();
+        state.clear_logs();
+        state.log(entry("after"));
+        let since: Vec<&str> = state.logs_since(cursor).iter().map(|e| e.message.as_str()).collect();
+        assert_eq!(since, ["after"]);
+        assert!(state.logs_between(0, cursor).is_empty(), "dropped entries must not come back");
     }
 }

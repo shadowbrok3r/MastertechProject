@@ -122,7 +122,7 @@ pub struct EguiScriptsTab {
     pub selected_destination: Option<String>,
     /// In-flight script runs requested by the MCP `scripts_run` tool. Each
     /// entry tracks the request_id, the script the AI asked us to run, the
-    /// `state.logs` index at dispatch time, and the dispatch timestamp so we
+    /// log cursor at dispatch time, and the dispatch timestamp so we
     /// can time it out. Resolved when a Success / Error / Warning log entry
     /// for the matching script_name lands in `state.logs`.
     pub pending_mcp_runs: Vec<McpPendingRun>,
@@ -150,7 +150,7 @@ pub struct McpPendingRun {
     pub request_id: String,
     pub script_name: String,
     pub category: ScriptCategory,
-    /// Index into `state.logs` at the moment the script was dispatched.
+    /// Log cursor at dispatch; see `ScriptsState::log_cursor`.
     /// All log entries with index >= this value are candidates for completion
     /// detection and inclusion in the returned `ScriptRunResult.logs`.
     pub log_start_index: usize,
@@ -244,7 +244,7 @@ impl EguiScriptsTab {
             .clone()
             .filter(|s| !s.trim().is_empty());
 
-        let log_start_index = self.state.logs.len();
+        let log_start_index = self.state.log_cursor();
         self.log_info(
             "MCP",
             format!(
@@ -300,15 +300,13 @@ impl EguiScriptsTab {
         }
 
         let now = std::time::Instant::now();
-        let logs_snapshot_len = self.state.logs.len();
+        let logs_snapshot_len = self.state.log_cursor();
         let mut to_remove: Vec<usize> = Vec::new();
 
         for (idx, pending) in self.pending_mcp_runs.iter().enumerate() {
             let final_entry = self
                 .state
-                .logs
-                .get(pending.log_start_index..logs_snapshot_len)
-                .unwrap_or(&[])
+                .logs_between(pending.log_start_index, logs_snapshot_len)
                 .iter()
                 .rev()
                 .find(|e| {
@@ -351,9 +349,7 @@ impl EguiScriptsTab {
 
     fn collect_pending_logs(&self, pending: &McpPendingRun, end_index: usize) -> Vec<String> {
         self.state
-            .logs
-            .get(pending.log_start_index..end_index)
-            .unwrap_or(&[])
+            .logs_between(pending.log_start_index, end_index)
             .iter()
             .filter(|e| e.script_name == pending.script_name || e.script_name == "MCP")
             .map(|e| {
@@ -380,7 +376,7 @@ impl EguiScriptsTab {
             if log_entry.message.contains(displays::scripts::REBOOT_RECOMMENDED_MARKER) {
                 self.reboot_prompt_open = true;
             }
-            self.state.logs.push(log_entry);
+            self.state.log(log_entry);
         }
 
         // Receive progress updates
@@ -546,8 +542,8 @@ impl EguiScriptsTab {
 
             let now = std::time::Instant::now();
             self.queue_run = Some(QueueRun {
-                log_start: self.state.logs.len(),
-                seen_logs: self.state.logs.len(),
+                log_start: self.state.log_cursor(),
+                seen_logs: self.state.log_cursor(),
                 last_activity: now,
                 started_at: now,
             });
@@ -627,7 +623,7 @@ impl EguiScriptsTab {
         }
 
         let now = std::time::Instant::now();
-        let logs_len = self.state.logs.len();
+        let logs_len = self.state.log_cursor();
 
         if self.queue_run.is_none() {
             self.queue_run = Some(QueueRun {
@@ -650,9 +646,7 @@ impl EguiScriptsTab {
         let (is_terminal, is_failure) = {
             let latest = self
                 .state
-                .logs
-                .get(log_start..)
-                .unwrap_or(&[])
+                .logs_since(log_start)
                 .iter()
                 .rev()
                 .find(|e| e.script_name == current_name);
