@@ -205,11 +205,7 @@ impl MastertechContext {
             Some(TransferAction::Start(sources, destination)) => {
                 tab.start_data_transfer(sources, destination);
             }
-            Some(TransferAction::Cancel) => {
-                tab.show_data_transfer_ui = false;
-                tab.selected_sources.clear();
-                tab.selected_destination = None;
-            }
+            Some(TransferAction::Cancel) => tab.cancel_data_transfer(),
             None => {}
         }
     }
@@ -226,7 +222,21 @@ fn scripts_header(ui: &mut Ui, tab: &mut EguiScriptsTab) {
         ui.add_space(8.0);
 
         let queued = tab.state.queue.len();
-        if tab.state.queue.is_running() {
+        if let Some(name) = tab.stopping_name().map(str::to_owned) {
+            ui.label(
+                RichText::new(format!(
+                    "{} Stopping, waiting for {name}",
+                    icons::STATUS_WAIT
+                ))
+                .color(theme::warn(ui)),
+            );
+            let abandon = ui
+                .small_button("Abandon")
+                .on_hover_text("Stop waiting; the script may keep running in the background");
+            if abandon.clicked() {
+                tab.abandon_stopped_run();
+            }
+        } else if tab.state.queue.is_running() {
             let stop =
                 Button::new(RichText::new(format!("{} Stop", icons::STOP)).color(theme::error(ui)));
             if ui.add(stop).clicked() {
