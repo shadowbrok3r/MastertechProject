@@ -1,4 +1,7 @@
 use std::fmt::Display;
+use displays::scripts::ScriptCategory;
+use displays::scripts::catalog::{CATALOG, ScriptDef};
+use displays::scripts::id::ScriptId;
 use ratatui::widgets::ListState;
 // #[cfg(target_os="windows")]
 // use super::script_checks::{ScriptOutcome, ScriptTask};
@@ -41,21 +44,23 @@ pub struct TodoList {
 pub struct TodoItem {
     pub text: String,
     pub status: Status,
+    /// Catalog entry; `None` for a user script.
+    pub id: Option<ScriptId>,
     pass: String,
     warn: String,
     fail: String,
     error: String,
     tag: TodoItemTag,
-    category: Category, // Changed from tag to category
+    category: ScriptCategory,
 }
 
 #[allow(dead_code)]
 impl TodoItem {
-    pub fn new(text: &str,category: Category) -> Self {
-        // let tag = if let Some(tag) = tag { tag } else { TodoItemTag::default() };
+    pub fn new(text: &str, category: ScriptCategory) -> Self {
         Self {
             text: text.to_owned(),
             status: Status::Todo,
+            id: None,
             pass: String::new(),
             warn: String::new(),
             fail: String::new(),
@@ -63,6 +68,20 @@ impl TodoItem {
             tag: TodoItemTag::default(),
             category
         }
+    }
+
+    pub fn from_def(def: &ScriptDef) -> Self {
+        Self {
+            id: Some(def.id.clone()),
+            pass: def.pass.clone().unwrap_or_default(),
+            warn: def.warn.clone().unwrap_or_default(),
+            fail: def.fail.clone().unwrap_or_default(),
+            ..Self::new(&def.name, def.category())
+        }
+    }
+
+    pub fn def(&self) -> Option<&'static ScriptDef> {
+        self.id.as_ref().and_then(|id| CATALOG.get(id))
     }
 
     pub fn set_status(mut self, status: Status) -> Self {
@@ -106,7 +125,7 @@ impl TodoItem {
         self.fail.clone()
     }
 
-    pub fn category(&self) -> Category {
+    pub fn category(&self) -> ScriptCategory {
         self.category.clone()
     }
 }
@@ -118,24 +137,22 @@ pub enum Status {
     Completed,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq)]
-pub enum Category {
-    #[default]
-    Tuneup,
-    Informational,
-    JunkwareRemoval, // For "Junkware Removal" checklist
-    StressTests, // Stress-runner persisted scripts
-    UserScripts(String), // For flexibility
+/// The Job Builder list a category's scripts appear under.
+pub fn list_name(category: &ScriptCategory) -> Option<&'static str> {
+    match category {
+        ScriptCategory::Tuneup => Some("Tuneup / QC"),
+        ScriptCategory::Informational => Some("Informational"),
+        ScriptCategory::JunkwareRemoval => Some("Junkware Removal"),
+        ScriptCategory::StressTests => Some("Stress Tests"),
+        ScriptCategory::UserScripts(_) => Some("User Scripts"),
+        ScriptCategory::Custom(_) => None,
+    }
 }
 
 impl<'a> super::ScriptsTab<'a> {
-    pub fn update_checklist(&mut self, category: Category, item: &str, status: bool) {
-        let category_str = match category {
-            Category::Tuneup => "Tuneup / QC",
-            Category::Informational => "Informational",
-            Category::JunkwareRemoval => "Junkware Removal",
-            Category::StressTests => "Stress Tests",
-            Category::UserScripts(_) => "User Scripts",
+    pub fn update_checklist(&mut self, category: ScriptCategory, item: &str, status: bool) {
+        let Some(category_str) = list_name(&category) else {
+            return;
         };
 
         if let Some(todo_list) = self.checklists.get_mut(category_str) {
