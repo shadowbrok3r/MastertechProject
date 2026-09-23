@@ -18,6 +18,7 @@ pub mod informational;
 pub mod installs;
 pub mod junkware;
 pub(crate) mod powershell;
+pub mod remote;
 pub mod stress;
 pub mod tuneup;
 pub mod windows_update;
