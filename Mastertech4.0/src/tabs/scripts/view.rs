@@ -52,7 +52,6 @@ struct QueueRow {
 
 impl MastertechContext {
     pub fn scripts(&mut self, ui: &mut Ui) {
-        self.seed_script_context();
         self.reboot_modal(ui);
         self.data_transfer_modal(ui);
 
@@ -66,7 +65,7 @@ impl MastertechContext {
     }
 
     /// Copies the ticket's service number in only when the ticket changes, so the field stays editable.
-    fn seed_script_context(&mut self) {
+    pub(crate) fn seed_script_context(&mut self) {
         let ticket = &self.ticket_data.service_number;
         let tab = &mut self.scripts_tab;
         if !ticket.is_empty() && *ticket != tab.seeded_service_number {

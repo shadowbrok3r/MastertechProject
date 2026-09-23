@@ -174,6 +174,7 @@ impl MasterTechApp {
             session.view.receive(ctx);
         }
 
+        self.context.seed_script_context();
         self.context.scripts_tab.process_mcp_requests();
         self.context.scripts_tab.receive();
         self.context.scripts_tab.process_mcp_completions();
