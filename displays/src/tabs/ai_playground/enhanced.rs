@@ -1,7 +1,7 @@
 use eframe::egui::{
-    text::LayoutJob, Align, Button, CentralPanel, CollapsingHeader, Color32, FontId, Frame, Key,
-    KeyboardShortcut, Layout, Margin, Modifiers, Popup, PopupCloseBehavior, RichText, ScrollArea,
-    TextEdit, TextFormat, Ui,
+    text::LayoutJob, vec2, Align, Button, CentralPanel, CollapsingHeader, Color32, FontId, Frame,
+    Key, KeyboardShortcut, Layout, Margin, Modifiers, Popup, PopupCloseBehavior, RichText,
+    ScrollArea, TextEdit, TextFormat, TextStyle, Ui,
 };
 use crate::{
     tabs::ai_playground::{ChatMessage, ChatMessageType, ChatThread, SentFrom},
@@ -13,6 +13,11 @@ use std::collections::HashMap;
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::RecordIdExt;
 use serde::Serialize;
+
+/// Smallest outer height of the prompt box.
+const INPUT_MIN_HEIGHT: f32 = 92.0;
+const INPUT_PANEL_MARGIN: i8 = 6;
+const TEXT_EDIT_MARGIN: Margin = Margin::symmetric(4, 2);
 
 /// A chat thread loaded from the database, delivered to the UI thread.
 struct LoadedThread {
@@ -182,10 +187,25 @@ impl EnhancedAiPlayground {
             .show_separator_line(false)
             .show(ui, |ui| self.show_chat_topbar(ui));
 
+        // Sized from last frame's prompt, from the minimum up to half the chat.
+        let height_id = ui.id().with("enhanced_ai_input_height");
+        let max_height = (ui.available_height() * 0.5).max(INPUT_MIN_HEIGHT);
+        let height = ui
+            .memory(|m| m.data.get_temp::<f32>(height_id))
+            .unwrap_or(INPUT_MIN_HEIGHT)
+            .clamp(INPUT_MIN_HEIGHT, max_height);
         eframe::egui::Panel::bottom("enhanced_ai_input")
-            .frame(Frame::default().inner_margin(Margin::same(6)))
-            .exact_size(92.)
-            .show(ui, |ui| self.show_chat_input(ui));
+            .frame(Frame::default().inner_margin(Margin::same(INPUT_PANEL_MARGIN)))
+            .exact_size(height)
+            .show(ui, |ui| {
+                let text_height = self.show_chat_input(ui).unwrap_or(0.0);
+                let wanted = (text_height + 2.0 * f32::from(INPUT_PANEL_MARGIN))
+                    .clamp(INPUT_MIN_HEIGHT, max_height);
+                if (wanted - height).abs() > 0.5 {
+                    ui.memory_mut(|m| m.data.insert_temp(height_id, wanted));
+                    ui.ctx().request_repaint();
+                }
+            });
 
         CentralPanel::default()
             .frame(Frame::central_panel(ui.style()).inner_margin(Margin::same(10)))
@@ -331,29 +351,46 @@ impl EnhancedAiPlayground {
         });
     }
 
-    fn show_chat_input(&mut self, ui: &mut Ui) {
+    /// Draws the prompt box and returns the height its text needs.
+    fn show_chat_input(&mut self, ui: &mut Ui) -> Option<f32> {
         let mut send = false;
-        if self.threads.contains_key(&self.selected_thread) {
-            if let Some(thread) = self.threads.get_mut(&self.selected_thread) {
-                let row_h = ui.available_height();
-                let send_w = 38.0;
-                ui.horizontal(|ui| {
-                    let resp = ui.add_sized(
-                        [ui.available_width() - send_w - 6.0, row_h],
-                        TextEdit::multiline(&mut thread.input)
-                            .hint_text("Ask anything…  (Shift+Enter for newline)")
-                            .return_key(Some(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))),
-                    );
-                    let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-                    let clicked = ui
-                        .add_sized([send_w, row_h], Button::new(RichText::new(icons::UP).strong()))
-                        .on_hover_text("Send")
-                        .clicked();
-                    if (clicked || enter) && !thread.input.trim().is_empty() {
-                        send = true;
-                    }
-                });
-            }
+        let mut text_height = None;
+        if let Some(thread) = self.threads.get_mut(&self.selected_thread) {
+            let row_h = ui.available_height();
+            let send_w = 38.0;
+            let send_h = INPUT_MIN_HEIGHT - 2.0 * f32::from(INPUT_PANEL_MARGIN);
+            let margin_y = TEXT_EDIT_MARGIN.sum().y;
+            let line_h = ui.text_style_height(&TextStyle::Body) + ui.spacing().extra_text_line_spacing;
+            let rows = ((row_h - margin_y) / line_h).floor().max(1.0) as usize;
+            ui.with_layout(Layout::left_to_right(Align::Max), |ui| {
+                let edit_size = vec2(ui.available_width() - send_w - 6.0, row_h);
+                let output = ui
+                    .allocate_ui(edit_size, |ui| {
+                        ScrollArea::vertical()
+                            .id_salt("enhanced_ai_input_scroll")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                TextEdit::multiline(&mut thread.input)
+                                    .hint_text("Ask anything…  (Shift+Enter for newline)")
+                                    .return_key(Some(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter)))
+                                    .margin(TEXT_EDIT_MARGIN)
+                                    .desired_rows(rows)
+                                    .desired_width(f32::INFINITY)
+                                    .show(ui)
+                            })
+                            .inner
+                    })
+                    .inner;
+                text_height = Some(output.galley.rect.height() + margin_y);
+                let enter = output.response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                let clicked = ui
+                    .add_sized([send_w, send_h], Button::new(RichText::new(icons::UP).strong()))
+                    .on_hover_text("Send")
+                    .clicked();
+                if (clicked || enter) && !thread.input.trim().is_empty() {
+                    send = true;
+                }
+            });
         } else {
             ui.centered_and_justified(|ui| {
                 ui.label(RichText::new(format!("Start a new chat with  {}  above.", icons::PLUS)).weak());
@@ -363,6 +400,7 @@ impl EnhancedAiPlayground {
         if send {
             self.send_chat_message();
         }
+        text_height
     }
 
     fn show_chat_content(&mut self, ui: &mut Ui) {
