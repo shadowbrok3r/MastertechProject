@@ -326,6 +326,7 @@ where
             log::info!(
                 "tcp_listener -> admin session established with {peer_label} (id={expected_id})"
             );
+            #[cfg(target_os = "windows")]
             crate::utilities::windows::power::ensure_awake("admin session");
         }
         HandshakeOutcome::Probe => {
