@@ -4,7 +4,7 @@
 //! Windows-specific script executors.
 
 use crate::tabs::file_browser::command::{run_robocopy, RobocopyMessage};
-use displays::scripts::catalog::{CATALOG, Surface};
+use displays::scripts::catalog::{CATALOG, ScriptDef, Surface};
 use displays::scripts::executor::{CancelToken, ScriptHandle, ScriptOutcome, ScriptResult};
 use displays::scripts::id::ScriptId;
 use displays::scripts::{
@@ -222,20 +222,13 @@ impl EguiScriptsTab {
             });
         };
 
-        let Some(def) = CATALOG
-            .id_for_legacy_name(&req.script_name)
-            .and_then(|id| CATALOG.get(id))
-        else {
-            refuse(
-                req.request_id,
-                format!("'{}' is not in the script catalog", req.script_name),
-            );
-            return;
+        let def = match mcp_script(&req.script_name) {
+            Ok(def) => def,
+            Err(message) => {
+                refuse(req.request_id, message);
+                return;
+            }
         };
-        if def.category() == ScriptCategory::StressTests {
-            refuse(req.request_id, "Unsupported category: StressTests".into());
-            return;
-        }
 
         let handle = if def.id.as_str() == DATA_TRANSFER {
             if self.transfer_run.is_some() {
@@ -863,6 +856,18 @@ impl EguiScriptsTab {
 // Windows-specific helper functions
 // ============================================================================
 
+/// The catalog entry an MCP `scripts_run` request may start, or why it is refused.
+fn mcp_script(name: &str) -> Result<&'static ScriptDef, String> {
+    let def = CATALOG
+        .id_for_legacy_name(name)
+        .and_then(|id| CATALOG.get(id))
+        .ok_or_else(|| format!("'{name}' is not in the script catalog"))?;
+    if def.category() == ScriptCategory::StressTests {
+        return Err("Unsupported category: StressTests".into());
+    }
+    Ok(def)
+}
+
 /// Get data transfer candidates (user profiles with sizes)
 #[cfg(target_os = "windows")]
 pub fn get_data_transfer_candidates() -> anyhow::Result<Vec<(String, String)>> {
@@ -938,4 +943,30 @@ fn format_size(bytes: u64) -> String {
 #[cfg(not(target_os = "windows"))]
 pub fn get_data_transfer_candidates() -> anyhow::Result<Vec<(String, String)>> {
     Ok(Vec::new())
+}
+
+#[cfg(test)]
+mod mcp_dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn stress_scripts_are_refused() {
+        let gpu_probe = CATALOG.get(&ScriptId::new("gpu-probe")).expect("catalog entry");
+        assert!(mcp_script(&gpu_probe.name).is_err());
+        let cpu = CATALOG.get(&ScriptId::new("stress-cpu")).expect("catalog entry");
+        assert!(mcp_script(&cpu.name).is_err());
+    }
+
+    #[test]
+    fn an_unknown_name_is_refused() {
+        let refusal = mcp_script("Definitely Not A Script").expect_err("refused");
+        assert!(refusal.contains("not in the script catalog"));
+    }
+
+    #[test]
+    fn a_run_gets_its_own_budget() {
+        let def = mcp_script("Install Windows Updates").expect("allowed");
+        assert_eq!(def.timeout_secs, 3600);
+        assert!(mcp_script("Data Transfer").is_ok());
+    }
 }
