@@ -72,35 +72,25 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                 let id = widget_id.0.as_str();
                 match id {
                     "Run" => {
-                        if self.run_button_should_be_disabled() {
-                            self.log_message("Provide a service number — required for Activate Webroot / SuperAnti / SEB and every Stress Tests script (so stress_test_run rows carry service_order / customer / computer linkage).");
+                        if self.queue_busy() {
+                            self.stop_queue();
                             return;
                         }
-                        let text_area_input = self.service_number_field.input.borrow().clone();
-                        let user_input = &text_area_input.lines()[0];
-                        self.service_number = user_input.clone();
-
-                        if !self.service_number.is_empty() {
-                            if let Ok(ctx) = &mut self.ctx.lock() {
-                                let cust_email = ctx.service_data.customer_data.email.clone();
-                                let so_num = ctx.service_data.ticket_data.service_number.clone();
-                                
-                                self.log_message(format!("so_num and cust_email: {so_num} and {cust_email}"));
-
-                                if !cust_email.is_empty() && !so_num.is_empty() {
-                                    self.service_number = so_num;
-                                    self.customer_email = cust_email;
-                                    self.log_message(format!("both empty, assigned"));
-                                } else {
-                                    ctx.service_data.ticket_data.service_number = self.service_number.clone();
-                                    self.log_message(format!("Pulling ticket info: {:?}", self.service_number.clone()));
-                                    ctx.service_data.get_ticket();
-                                }
-                            }
+                        if self.run_button_should_be_disabled() {
+                            self.log_message("Provide a service number — required for Activate CPS / Webroot / SuperAnti / SEB and every Stress Tests script (so stress_test_run rows carry service_order / customer / computer linkage).");
+                            return;
                         }
-
-                        #[cfg(target_os="windows")]
-                        self.run_selected_scripts(false);
+                        let typed = self
+                            .service_number_field
+                            .get_text()
+                            .first()
+                            .map(|s| s.trim().to_string())
+                            .unwrap_or_default();
+                        if !typed.is_empty() {
+                            self.service_number = typed;
+                        }
+                        self.prepare_ticket();
+                        self.run_selected_scripts();
                     },
                     "Tuneup / QC" => {}
                     "Informational" => {}
@@ -179,10 +169,9 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
             WidgetEvent::Api(api_event) => {
                 match api_event {
                     ApiEvent::GetTicketResponse(presta_data) => {
-                        self.customer_email = presta_data.customer.email.clone();
-                        self.log_message(format!("self.customer_email: {:?}", self.customer_email));
-                        #[cfg(target_os="windows")]
-                        self.run_selected_scripts(true);
+                        self.customer_email = presta_data.customer.email.trim().to_string();
+                        self.awaiting_ticket = None;
+                        self.log_message(format!("Ticket loaded; customer email {:?}", self.customer_email));
                     }
                     ApiEvent::GetSebResponse(_carbonite_response) => {
                         

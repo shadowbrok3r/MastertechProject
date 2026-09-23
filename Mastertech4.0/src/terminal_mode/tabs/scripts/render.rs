@@ -19,7 +19,6 @@ pub struct Report {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Reporter {
     Tuneup,
-    RunPrechecks,
     Informational,
     JunkwareRemoval,
     UserScript,
@@ -827,7 +826,6 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         }
 
         let mut progress_mut = self.progress.borrow_mut();
-        let mut update_progress_mut = self.update_progress.borrow_mut();
         if let Some(progress) = *progress_mut {
             let gauge = Gauge::default()
                 .block(Block::bordered().title(format!("{script_name} Progress")))
@@ -840,27 +838,6 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
 
             if progress.0 == progress.1 {
                 *progress_mut = None;
-            }
-        } else if let Some(update_progress) = *update_progress_mut {
-            let mut install = self.windows_installation.borrow_mut();
-            let title = if *install {
-                "Windows update install %"
-            } else {
-                "Windows update download %"
-            };
-
-            let gauge = Gauge::default()
-                .block(Block::bordered().title(title))
-                .gauge_style(Style::new().fg(THEME.accent).bg(THEME.surface))
-                .ratio(update_progress as f64 / 100.0);
-
-            if slot_rects[3].height > 0 {
-                f.render_widget(&gauge, shrink_slot(slot_rects[3], 2, 1));
-            }
-
-            if update_progress == 100 {
-                *update_progress_mut = None;
-                *install = false;
             }
         } else {
             let total = self.filesystem.total_size;

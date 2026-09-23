@@ -108,14 +108,7 @@ impl<'a> TerminalApp<'a> {
         let tasks_tab = Rc::new(RefCell::new(TasksTab::new(client.clone(), ctx.clone())));
         let ncdu_tab = Rc::new(RefCell::new(NcduTab::new(ctx.clone())));
 
-        let scripts_tab = Rc::new(
-            RefCell::new(
-                ScriptsTab::new(
-                    client.clone(), 
-                    ctx.clone()
-                )
-            )
-        );
+        let scripts_tab = Rc::new(RefCell::new(ScriptsTab::new(ctx.clone())));
         
         let login_tab = Rc::new(RefCell::new(LoginTab::new(client.clone(), ctx.clone())));
         let webconsole_tab = Rc::new(RefCell::new(WebconsoleTab::new(client.clone(), ctx.clone())));
