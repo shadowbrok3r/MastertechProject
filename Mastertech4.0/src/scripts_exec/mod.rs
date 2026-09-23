@@ -12,6 +12,7 @@ use std::sync::OnceLock;
 use displays::scripts::catalog::ScriptDef;
 use displays::scripts::executor::{ScriptContext, ScriptExecutorRegistry, ScriptResult};
 
+pub mod benchmark;
 pub mod composite;
 pub mod env;
 pub mod informational;
@@ -29,6 +30,7 @@ static REGISTRY: OnceLock<ScriptExecutorRegistry> = OnceLock::new();
 pub fn registry() -> &'static ScriptExecutorRegistry {
     REGISTRY.get_or_init(|| {
         let mut registry = ScriptExecutorRegistry::new();
+        registry.register(Box::new(benchmark::BenchmarkExecutor));
         registry.register(Box::new(composite::CompositeExecutor));
         registry.register(Box::new(informational::InformationalExecutor));
         registry.register(Box::new(installs::InstallExecutor));
