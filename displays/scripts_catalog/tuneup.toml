@@ -129,7 +129,7 @@ name = "Change SuperAntiSpyware settings"
 category = "tuneup"
 summary = "Configure SuperAntiSpyware scheduled tasks"
 timeout_secs = 600
-surfaces = []
+surfaces = ["egui", "terminal", "remote", "mcp"]
 order = 120
 
 [[script]]
