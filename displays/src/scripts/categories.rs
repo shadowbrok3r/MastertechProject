@@ -348,19 +348,6 @@ pub fn category_display_name(category: &ScriptCategory) -> &'static str {
     }
 }
 
-/// Get category icon (for egui)
-pub fn category_icon(category: &ScriptCategory) -> &'static str {
-    match category {
-        ScriptCategory::Tuneup => "🔧",
-        ScriptCategory::Informational => "ℹ",
-        ScriptCategory::JunkwareRemoval => "🗑",
-        ScriptCategory::StressTests => "⚡",
-        ScriptCategory::UserScripts(_) => "📜",
-        ScriptCategory::Custom(_) => "⚙️",
-    }
-}
-
-
 #[cfg(test)]
 mod tests {
     use super::*;

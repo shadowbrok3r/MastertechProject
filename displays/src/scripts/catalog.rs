@@ -9,8 +9,8 @@ use std::sync::LazyLock;
 
 use serde::Deserialize;
 
-use super::ScriptCategory;
 use super::id::ScriptId;
+use super::{ScriptCategory, ScriptItem};
 
 const EMBEDDED: &[(&str, &str)] = &[
     ("tuneup", include_str!("../../scripts_catalog/tuneup.toml")),
@@ -28,6 +28,8 @@ const EMBEDDED: &[(&str, &str)] = &[
         include_str!("../../scripts_catalog/benchmarks.toml"),
     ),
 ];
+
+const PRESETS: &str = include_str!("../../scripts_catalog/presets.toml");
 
 /// Whether the script needs an elevated process.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -151,10 +153,27 @@ struct CatalogFile {
     script: Vec<ScriptDef>,
 }
 
+/// A named, ordered list of scripts queued together.
+#[derive(Clone, Debug, Deserialize)]
+pub struct PresetDef {
+    pub id: ScriptId,
+    pub name: String,
+    #[serde(default)]
+    pub summary: String,
+    pub scripts: Vec<ScriptId>,
+}
+
+#[derive(Deserialize)]
+struct PresetFile {
+    #[serde(default)]
+    preset: Vec<PresetDef>,
+}
+
 pub struct ScriptCatalog {
     defs: Vec<ScriptDef>,
     by_id: HashMap<ScriptId, usize>,
     by_legacy_name: HashMap<String, ScriptId>,
+    presets: Vec<PresetDef>,
 }
 
 impl ScriptCatalog {
@@ -192,10 +211,19 @@ impl ScriptCatalog {
             kept.push(def);
         }
 
+        let presets = match toml::from_str::<PresetFile>(PRESETS) {
+            Ok(file) => file.preset,
+            Err(e) => {
+                log::error!("script catalog: presets.toml failed to parse: {e}");
+                Vec::new()
+            }
+        };
+
         Self {
             defs: kept,
             by_id,
             by_legacy_name,
+            presets,
         }
     }
 
@@ -227,6 +255,34 @@ impl ScriptCatalog {
         self.defs.iter().filter(move |d| d.offered_on(surface))
     }
 
+    pub fn presets(&self) -> &[PresetDef] {
+        &self.presets
+    }
+
+    pub fn preset(&self, id: &str) -> Option<&PresetDef> {
+        self.presets.iter().find(|p| p.id.as_str() == id)
+    }
+
+    /// The entries offered on `surface`, as list items grouped by category.
+    pub fn items_for(&self, surface: Surface) -> HashMap<ScriptCategory, Vec<ScriptItem>> {
+        let mut items: HashMap<ScriptCategory, Vec<ScriptItem>> = HashMap::new();
+        for def in self.for_surface(surface) {
+            let mut item =
+                ScriptItem::new(def.name.clone(), def.category()).with_description(&def.summary);
+            if let Some(pass) = &def.pass {
+                item = item.with_pass_criteria(pass);
+            }
+            if let Some(warn) = &def.warn {
+                item = item.with_warning_criteria(warn);
+            }
+            if let Some(fail) = &def.fail {
+                item = item.with_error_criteria(fail);
+            }
+            items.entry(def.category()).or_default().push(item);
+        }
+        items
+    }
+
     pub fn timeout_secs(&self, name: &str) -> Option<u64> {
         self.id_for_legacy_name(name)
             .and_then(|id| self.get(id))
@@ -250,6 +306,42 @@ mod catalog_tests {
             assert!(!file.script.is_empty(), "{name}.toml is empty");
         }
         assert_eq!(CATALOG.len(), 98, "every catalog entry must survive load");
+    }
+
+    #[test]
+    fn presets_parse() {
+        let file: PresetFile = toml::from_str(PRESETS).expect("presets.toml parses");
+        assert!(!file.preset.is_empty(), "presets.toml is empty");
+        assert!(CATALOG.preset("standard-tuneup").is_some());
+    }
+
+    /// A preset naming a script the tab does not offer would queue something the
+    /// tech never chose and cannot see in the list.
+    #[test]
+    fn every_preset_script_is_offered_in_the_tab() {
+        for preset in CATALOG.presets() {
+            let mut seen = std::collections::HashSet::new();
+            for id in &preset.scripts {
+                let def = CATALOG
+                    .get(id)
+                    .unwrap_or_else(|| panic!("{} names {id}, which is not in the catalog", preset.id));
+                assert!(def.offered_on(Surface::Egui), "{} queues {id}, which the tab hides", preset.id);
+                assert!(seen.insert(id.clone()), "{} lists {id} twice", preset.id);
+            }
+        }
+    }
+
+    /// The tab is built from the catalog, so benchmarks and unimplemented stubs
+    /// stay out of it.
+    #[test]
+    fn the_tab_lists_only_what_the_catalog_offers_it() {
+        let items = CATALOG.items_for(Surface::Egui);
+        let names: Vec<&str> = items.values().flatten().map(|i| i.name.as_str()).collect();
+        assert_eq!(names.len(), CATALOG.for_surface(Surface::Egui).count());
+        assert!(!names.iter().any(|n| n.starts_with("Benchmark")), "a benchmark is listed");
+        for stub in ["Disable proxy settings", "Change SuperAntiSpyware settings"] {
+            assert!(!names.contains(&stub), "{stub} is listed");
+        }
     }
 
     #[test]

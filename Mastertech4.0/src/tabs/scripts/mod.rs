@@ -3,17 +3,13 @@
 //! Uses the shared scripts module from displays crate and adds 
 //! Windows-specific script executors.
 
-use eframe::egui::{self, vec2, Color32, ProgressBar, RichText, Ui};
-use egui::{Button, Widget};
-use crate::app_state::MastertechContext;
 use crate::tabs::tur_sheet::get_ticket::SendRequest;
 use crate::tabs::file_browser::command::{run_robocopy, RobocopyMessage};
-use displays::scripts::catalog::CATALOG;
-use displays::scripts::executor::{CancelToken, ScriptHandle};
+use displays::scripts::catalog::{CATALOG, Surface};
+use displays::scripts::executor::{CancelToken, ScriptHandle, ScriptOutcome};
 use displays::scripts::{
     ScriptCategory, ScriptChannels, ScriptContext, ScriptItem, ScriptLogEntry,
     ScriptStatus, ScriptsState, LogLevel,
-    CATEGORY_ORDER, category_display_name, category_icon,
     script_run_request_receiver, script_run_result_sender,
     ScriptRunRequest, ScriptRunResult,
 };
@@ -23,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use futures::StreamExt;
 use rust_embed::Embed;
 use reqwest::Client;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[allow(unused_imports)]
@@ -52,6 +49,8 @@ use crate::utilities::windows::windows_update::install_windows_updates;
 #[allow(unused_imports)]
 use crate::utilities::windows::antivirus::check_antivirus;
 
+mod view;
+
 #[derive(Embed)]
 #[folder = "src/assets/superanti/"]
 pub struct SasAsset;
@@ -65,24 +64,6 @@ use wmi::{WMIConnection, WMIError};
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// Colors for the scripts UI
-mod colors {
-    use eframe::egui::Color32;
-
-    pub const CATEGORY_HEADER: Color32 = Color32::from_rgb(138, 180, 248);
-    pub const SELECTED: Color32 = Color32::from_rgb(46, 160, 126);
-    pub const PENDING: Color32 = Color32::from_rgb(166, 172, 205);
-    pub const RUNNING: Color32 = Color32::from_rgb(249, 226, 175);
-    pub const COMPLETED: Color32 = Color32::from_rgb(166, 227, 161);
-    pub const FAILED: Color32 = Color32::from_rgb(243, 139, 168);
-    
-    pub const LOG_INFO: Color32 = Color32::from_rgb(205, 214, 244);
-    pub const LOG_SUCCESS: Color32 = Color32::from_rgb(166, 227, 161);
-    pub const LOG_WARNING: Color32 = Color32::from_rgb(249, 226, 175);
-    pub const LOG_ERROR: Color32 = Color32::from_rgb(243, 139, 168);
-
-    pub const PANEL_BG: Color32 = Color32::from_rgb(17, 17, 27);
-    pub const QUEUE_ITEM_BG: Color32 = Color32::from_rgb(30, 30, 46);
-}
 
 /// Quiet period after a queued script's last log before the queue advances.
 const QUEUE_ADVANCE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(1000);
@@ -153,6 +134,14 @@ pub struct EguiScriptsTab {
     /// reports its own completion. `None` means the legacy path is running it
     /// and the log still has to be read for a terminal line.
     running: Option<ScriptHandle>,
+    /// Last ticket service number copied into the input.
+    pub seeded_service_number: String,
+    pub search: String,
+    /// `None` shows every level.
+    pub log_filter: Option<LogLevel>,
+    pub focus: Option<view::ScriptFocus>,
+    /// Completed outcomes, keyed by queue entry.
+    pub outcomes: HashMap<u64, ScriptOutcome>,
 }
 
 /// Tracks one in-flight MCP-initiated script run inside `EguiScriptsTab`.
@@ -186,7 +175,11 @@ impl EguiScriptsTab {
         let (windows_update_tx, windows_update_rx) = crossbeam::channel::unbounded();
         
         Self {
-            state: ScriptsState::new(),
+            state: {
+                let mut state = ScriptsState::new();
+                state.categories = CATALOG.items_for(Surface::Egui);
+                state
+            },
             channels: ScriptChannels::default(),
             client: Client::new(),
             service_number_input: String::new(),
@@ -213,6 +206,11 @@ impl EguiScriptsTab {
             mcp_diagnostic_session_id: None,
             queue_run: None,
             running: None,
+            seeded_service_number: String::new(),
+            search: String::new(),
+            log_filter: None,
+            focus: None,
+            outcomes: HashMap::new(),
         }
     }
 
@@ -476,6 +474,38 @@ impl EguiScriptsTab {
         self.log_info("Queue", format!("Added {} scripts to queue", count));
     }
 
+    /// Queues each listed script the tab offers, skipping any already waiting in the queue.
+    pub fn queue_ids(&mut self, label: &str, ids: &[String]) {
+        let mut added = 0;
+        for id in ids {
+            let Some(item) = self
+                .state
+                .categories
+                .values()
+                .flatten()
+                .find(|s| CATALOG.id_for_legacy_name(&s.name).is_some_and(|i| i.as_str() == id))
+                .cloned()
+            else {
+                continue;
+            };
+            let waiting = self
+                .state
+                .queue
+                .items()
+                .iter()
+                .any(|q| q.script.name == item.name && q.script.status == ScriptStatus::Pending);
+            if waiting {
+                continue;
+            }
+            let mut item = item;
+            item.selected = false;
+            item.status = ScriptStatus::Pending;
+            self.state.queue.add(item);
+            added += 1;
+        }
+        self.log_info("Queue", format!("{label}: queued {added} scripts"));
+    }
+
     /// Run all queued scripts
     /// Stops the queue and, for a ported script, the work itself. The legacy path
     /// has nothing to signal, so its thread still runs to completion.
@@ -663,6 +693,7 @@ impl EguiScriptsTab {
         };
         match handle.done.try_recv() {
             Ok(outcome) => {
+                self.outcomes.insert(outcome.run_token, outcome.clone());
                 let failed = outcome.result.is_failure();
                 let message = outcome.result.message().to_string();
                 if outcome.reboot_recommended {
@@ -2758,464 +2789,4 @@ fn format_size(bytes: u64) -> String {
 #[cfg(not(target_os = "windows"))]
 pub fn get_data_transfer_candidates() -> anyhow::Result<Vec<(String, String)>> {
     Ok(Vec::new())
-}
-
-// ============================================================================
-// UI Integration with MastertechContext
-// ============================================================================
-
-impl MastertechContext {
-    /// Render the new scripts UI
-    pub fn scripts(&mut self, ui: &mut Ui) {
-        // Sync service number from ticket data
-        if !self.ticket_data.service_number.is_empty() {
-            self.scripts_tab.service_number_input = self.ticket_data.service_number.clone();
-        }
-        
-        // Sync customer email
-        if !self.customer_data.email.is_empty() {
-            self.scripts_tab.customer_email = Some(self.customer_data.email.clone());
-        }
-
-        // Show data transfer UI if needed
-        if self.scripts_tab.show_data_transfer_ui {
-            self.render_data_transfer_ui(ui);
-            return;
-        }
-
-        if self.scripts_tab.reboot_prompt_open {
-            egui::Window::new("Reboot required")
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .show(ui.ctx(), |ui| {
-                    ui.label("Webroot was re-keyed over an existing install.");
-                    ui.label("A reboot finalizes the new device identity. MasterTech will relaunch after login.");
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        if ui.button(RichText::new("Reboot now").color(colors::COMPLETED)).clicked() {
-                            #[cfg(target_os = "windows")]
-                            crate::utilities::windows::reboot::spawn_reboot_with_relaunch(
-                                false,
-                                "Mastertech reboot to finalize Webroot activation",
-                            );
-                            self.scripts_tab.reboot_prompt_open = false;
-                        }
-                        if ui.button("Later").clicked() {
-                            self.scripts_tab.reboot_prompt_open = false;
-                        }
-                    });
-                });
-        }
-
-        // Top bar with service number and controls
-        ui.horizontal(|ui| {
-            ui.add_space(8.0);
-            ui.label("Service #:");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.scripts_tab.service_number_input)
-                    .desired_width(120.0)
-                    .hint_text("Enter SO#"),
-            );
-
-            ui.add_space(16.0);
-
-            if ui.button(RichText::new("➕ Add Selected").color(colors::SELECTED)).clicked() {
-                self.scripts_tab.queue_selected();
-            }
-
-            if self.scripts_tab.state.queue.is_running() {
-                if ui.button(RichText::new("⏹ Stop").color(colors::FAILED)).clicked() {
-                    self.scripts_tab.stop_queue();
-                }
-            } else {
-                if ui.button(RichText::new("▶ Run Queue").color(colors::COMPLETED)).clicked() {
-                    self.scripts_tab.run_queue();
-                }
-            }
-
-            if ui.button(RichText::new("🗑 Clear").color(colors::PENDING)).clicked() {
-                self.scripts_tab.state.queue.clear();
-            }
-
-            // Progress bar
-            if let Some((current, total)) = self.scripts_tab.download_progress {
-                ui.add_space(16.0);
-                let progress = current as f32 / total as f32;
-                ui.add(
-                    ProgressBar::new(progress)
-                        .desired_width(150.0)
-                        .text(format!("{:.0}%", progress * 100.0))
-                        .fill(Color32::from_rgba_premultiplied(50, 160, 126, 200)),
-                );
-            }
-
-            // Queue status
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let (completed, total) = self.scripts_tab.state.queue.progress();
-                if total > 0 {
-                    ui.label(format!("Queue: {}/{}", completed, total));
-                }
-            });
-        });
-
-        ui.add_space(2.0);
-        ui.separator();
-        ui.add_space(2.0);
-
-        // Three-column layout
-        let available_width = ui.available_width() / 1.2;
-        let available_height = ui.available_height();
-        let left_width = available_width * 0.10;
-        let middle_width = available_width * 0.20;
-        let right_width = available_width * 0.5;
-        ui.horizontal(|ui| {
-            ui.add_space(8.0);
-            ui.columns(3, |ui| {
-                // Left: Categories
-                ui[0].vertical(|ui| {
-                    ui.set_min_size(vec2(left_width, available_height));
-                    self.render_categories_panel(ui);
-                });
-
-                // Middle: Queue
-                ui[1].vertical(|ui| {
-                    ui.set_min_size(vec2(middle_width, available_height));
-                    self.render_queue_panel(ui);
-                });
-
-                // Right: Logs
-                ui[2].vertical(|ui| {
-                    ui.set_min_size(vec2(right_width, available_height));
-                    self.render_logs_panel(ui);
-                });
-            });
-        });
-    }
-
-    /// Render Data Transfer UI
-    fn render_data_transfer_ui(&mut self, ui: &mut Ui) {
-        egui::Frame::default()
-            .fill(colors::PANEL_BG)
-            .inner_margin(16.0)
-            .corner_radius(8.0)
-            .show(ui, |ui| {
-                ui.heading(RichText::new("📂 Data Transfer").color(colors::CATEGORY_HEADER));
-                ui.add_space(8.0);
-                ui.label("Select source folders to transfer and a destination:");
-                ui.add_space(16.0);
-
-                // Sources
-                ui.label(RichText::new("Source Folders:").strong());
-                let candidates = self.scripts_tab.data_transfer_candidates.clone();
-                egui::ScrollArea::vertical()
-                    .max_height(200.0)
-                    .show(ui, |ui| {
-                        for (path, size) in &candidates {
-                            let is_selected = self.scripts_tab.selected_sources.contains(path);
-                            let text = format!("{} ({})", path, size);
-                            let mut checked = is_selected;
-                            if ui.checkbox(&mut checked, &text).changed() {
-                                if checked {
-                                    self.scripts_tab.selected_sources.push(path.clone());
-                                } else {
-                                    self.scripts_tab.selected_sources.retain(|p| p != path);
-                                }
-                            }
-                        }
-                    });
-
-                ui.add_space(16.0);
-
-                // Destination selection
-                ui.label(RichText::new("Destination:").strong());
-                let dest_display = self.scripts_tab.selected_destination.clone()
-                    .unwrap_or_else(|| "Select destination...".to_string());
-                ui.horizontal(|ui| {
-                    ui.label(&dest_display);
-                    if ui.button("Browse...").clicked() {
-                        if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                            self.scripts_tab.selected_destination = Some(path.to_string_lossy().to_string());
-                        }
-                    }
-                });
-
-                ui.add_space(24.0);
-
-                // Action buttons
-                ui.horizontal(|ui| {
-                    let can_start = !self.scripts_tab.selected_sources.is_empty() 
-                        && self.scripts_tab.selected_destination.is_some();
-                    
-                    if ui.add_enabled(can_start, egui::Button::new(
-                        RichText::new("▶ Start Transfer").color(colors::COMPLETED)
-                    )).clicked() {
-                        let sources = self.scripts_tab.selected_sources.clone();
-                        let dest = self.scripts_tab.selected_destination.clone().unwrap();
-                        self.scripts_tab.start_data_transfer(sources, dest);
-                    }
-
-                    if ui.button(RichText::new("✕ Cancel").color(colors::FAILED)).clicked() {
-                        self.scripts_tab.show_data_transfer_ui = false;
-                        self.scripts_tab.selected_sources.clear();
-                        self.scripts_tab.selected_destination = None;
-                    }
-                });
-            });
-    }
-
-    fn render_categories_panel(&mut self, ui: &mut Ui) {
-        egui::Frame::default()
-            .fill(colors::PANEL_BG)
-            .inner_margin(8.0)
-            .corner_radius(8.0)
-            .show(ui, |ui| {
-                ui.heading(RichText::new("📚 Script Categories").color(colors::CATEGORY_HEADER));
-                ui.add_space(8.0);
-
-                egui::ScrollArea::vertical()
-                    .id_salt("categories_scroll")
-                    .auto_shrink(false)
-                    .max_height(std::f32::INFINITY)
-                    .show(ui, |ui| {
-                        for category in CATEGORY_ORDER.iter() {
-                            self.render_category(ui, category);
-                            ui.add_space(8.0);
-                        }
-                    });
-            });
-    }
-
-    fn render_category(&mut self, ui: &mut Ui, category: &ScriptCategory) {
-        let icon = category_icon(category);
-        let name = category_display_name(category);
-        let expanded = self.scripts_tab.state.category_expanded.get(category).copied().unwrap_or(true);
-        ui.horizontal(|ui| {
-            let collapse_icon = if expanded { "⏷" } else { "⏵" };
-            if Button::new(
-                RichText::new(format!("{collapse_icon}  {icon}  {name} ")).strong().color(colors::CATEGORY_HEADER)
-            )
-            .min_size(vec2(100.0, 20.0))
-            .ui(ui)
-            .clicked() {
-                self.scripts_tab.state.category_expanded.insert(category.clone(), !expanded);
-            }
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if let Some(scripts) = self.scripts_tab.state.categories.get(category) {
-                    let any_selected = scripts.iter().any(|s| s.is_selected());
-                    let btn_text = if any_selected { " 🗙 " } else { " ✅ " };
-                    let btn_color = if any_selected { colors::FAILED } else { colors::COMPLETED };
-                    if ui.small_button(RichText::new(btn_text).color(btn_color)).clicked() {
-                        if any_selected {
-                            self.scripts_tab.state.deselect_category(category);
-                        } else {
-                            self.scripts_tab.state.select_category(category);
-                        }
-                    }
-                }
-            });
-        });
-        if expanded {
-            if let Some(scripts) = self.scripts_tab.state.categories.get_mut(category) {
-                ui.indent(format!("category_{:?}", category), |ui| {
-                    for script in scripts.iter_mut() {
-                        let mut selected = script.is_selected();
-                        let text_color = if selected { colors::SELECTED } else { colors::PENDING };
-                        
-                        if ui.checkbox(&mut selected, RichText::new(&script.name).color(text_color)).changed() {
-                            script.toggle_selection();
-                        }
-                    }
-                });
-            }
-        }
-    }
-
-    fn render_queue_panel(&mut self, ui: &mut Ui) {
-        egui::Frame::default()
-            .fill(colors::PANEL_BG)
-            .inner_margin(8.0)
-            .corner_radius(8.0)
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.heading(RichText::new("📋 Script Queue").color(colors::CATEGORY_HEADER));
-                    ui.add_space(8.0);
-                    ui.label(RichText::new(format!("({} scripts)", self.scripts_tab.state.queue.len())).small());
-                });
-                ui.add_space(8.0);
-
-                if self.scripts_tab.state.queue.is_empty() {
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(40.0);
-                        ui.label(RichText::new("Queue is empty").color(colors::PENDING).italics());
-                        ui.label(RichText::new("Select scripts and click 'Add Selected'").color(colors::PENDING).small());
-                    });
-                } else {
-                    egui::ScrollArea::vertical()
-                        .id_salt("queue_scroll")
-                        .auto_shrink(false)
-                        .max_height(std::f32::INFINITY)
-                        .show(ui, |ui| {
-                            let queue_len = self.scripts_tab.state.queue.len();
-                            let mut move_action: Option<(usize, usize)> = None;
-                            let mut remove_index: Option<usize> = None;
-
-                            for i in 0..queue_len {
-                                if let Some(item) = self.scripts_tab.state.queue.items().get(i) {
-                                    let border_color = match item.script.status {
-                                        ScriptStatus::Running => colors::RUNNING,
-                                        ScriptStatus::Completed => colors::COMPLETED,
-                                        ScriptStatus::Failed => colors::FAILED,
-                                        _ => colors::PENDING,
-                                    };
-
-                                    egui::Frame::new()
-                                        .fill(colors::QUEUE_ITEM_BG)
-                                        .stroke(egui::Stroke::new(1.0, border_color))
-                                        .inner_margin(8.0)
-                                        .outer_margin(2.0)
-                                        .corner_radius(4.0)
-                                        .show(ui, |ui| {
-                                            ui.horizontal(|ui| {
-                                                // Move up/down buttons
-                                                ui.vertical(|ui| {
-                                                    if i > 0 {
-                                                        if ui.small_button("⬆").clicked() {
-                                                            move_action = Some((i, i - 1));
-                                                        }
-                                                    } else {
-                                                        ui.add_enabled(false, egui::Button::new("⬆").small());
-                                                    }
-                                                    if i < queue_len - 1 {
-                                                        if ui.small_button("⬇").clicked() {
-                                                            move_action = Some((i, i + 1));
-                                                        }
-                                                    } else {
-                                                        ui.add_enabled(false, egui::Button::new("⬇").small());
-                                                    }
-                                                });
-
-                                                ui.label(
-                                                    RichText::new(format!("#{}", item.order + 1))
-                                                        .color(colors::CATEGORY_HEADER)
-                                                        .strong(),
-                                                );
-
-                                                ui.add_space(8.0);
-
-                                                ui.vertical(|ui| {
-                                                    ui.label(RichText::new(&item.script.name).color(border_color));
-                                                    ui.label(
-                                                        RichText::new(format!("{}", item.script.category))
-                                                            .color(colors::PENDING)
-                                                            .small(),
-                                                    );
-                                                });
-
-                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    // Remove button
-                                                    if ui.small_button("🗙").clicked() {
-                                                        remove_index = Some(i);
-                                                    }
-                                                    
-                                                    let status_text = match item.script.status {
-                                                        ScriptStatus::Running => "⏳",
-                                                        ScriptStatus::Completed => "✅",
-                                                        ScriptStatus::Failed => "🗙",
-                                                        ScriptStatus::Skipped => "⏩",
-                                                        _ => "",
-                                                    };
-                                                    if !status_text.is_empty() {
-                                                        ui.label(RichText::new(status_text).color(border_color).size(16.0));
-                                                    }
-                                                });
-                                            });
-                                        });
-                                }
-                            }
-
-                            // Apply move action after iteration
-                            if let Some((from, to)) = move_action {
-                                self.scripts_tab.state.queue.move_item(from, to);
-                            }
-
-                            // Apply remove action after iteration
-                            if let Some(idx) = remove_index {
-                                if let Some(item) = self.scripts_tab.state.queue.items().get(idx) {
-                                    let run_token = item.run_token;
-                                    self.scripts_tab.state.queue.remove(run_token);
-                                }
-                            }
-                        });
-                }
-            });
-    }
-
-    fn render_logs_panel(&mut self, ui: &mut Ui) {
-        egui::Frame::new()
-            .fill(colors::PANEL_BG)
-            .inner_margin(8.0)
-            .corner_radius(8.0)
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.heading(RichText::new("📜 Execution Log").color(colors::CATEGORY_HEADER));
-                    ui.add_space(8.0);
-                    
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.small_button("Clear").clicked() {
-                            self.scripts_tab.state.clear_logs();
-                        }
-                        ui.checkbox(&mut self.scripts_tab.auto_scroll_logs, "Auto-scroll");
-                    });
-                });
-                ui.add_space(8.0);
-
-                if self.scripts_tab.state.logs.is_empty() {
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(40.0);
-                        ui.label(RichText::new("No log entries yet").color(colors::PENDING).italics());
-                    });
-                } else {
-                    let scroll = egui::ScrollArea::vertical()
-                        .id_salt("logs_scroll")
-                        .auto_shrink(false)
-                        .max_height(std::f32::INFINITY)
-                        .stick_to_bottom(self.scripts_tab.auto_scroll_logs);
-
-                    scroll.show(ui, |ui| {
-                        let small = egui::TextStyle::Small.resolve(ui.style());
-                        let body = egui::TextStyle::Body.resolve(ui.style());
-                        let mono_small = egui::FontId::monospace(small.size);
-
-                        for entry in self.scripts_tab.state.logs.iter() {
-                            let color = match entry.level {
-                                LogLevel::Info => colors::LOG_INFO,
-                                LogLevel::Success => colors::LOG_SUCCESS,
-                                LogLevel::Warning => colors::LOG_WARNING,
-                                LogLevel::Error => colors::LOG_ERROR,
-                            };
-
-                            let icon = match entry.level {
-                                LogLevel::Info => "ℹ",
-                                LogLevel::Success => "✅",
-                                LogLevel::Warning => "⚠",
-                                LogLevel::Error => "🗙",
-                            };
-
-                            // Single galley; break_anywhere wraps long paths at the panel width.
-                            let mut job = egui::text::LayoutJob::default();
-                            job.wrap.break_anywhere = true;
-                            let time_str = entry.timestamp.format("%H:%M:%S").to_string();
-                            job.append(&time_str, 0.0, egui::TextFormat { font_id: mono_small.clone(), color: colors::PENDING, ..Default::default() });
-                            job.append(icon, 4.0, egui::TextFormat { font_id: body.clone(), color, ..Default::default() });
-                            job.append(&format!("[{}]", entry.script_name), 4.0, egui::TextFormat { font_id: small.clone(), color: colors::CATEGORY_HEADER, ..Default::default() });
-                            job.append(&entry.message, 4.0, egui::TextFormat { font_id: body.clone(), color, ..Default::default() });
-
-                            ui.label(job);
-                        }
-                    });
-                }
-            });
-    }
 }
