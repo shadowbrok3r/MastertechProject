@@ -24,6 +24,11 @@ pub fn set_runtime_handle(handle: Handle) {
     let _ = RUNTIME.set(handle);
 }
 
+/// Runs `fut` to completion on the host runtime, from a thread outside it.
+pub(crate) fn block_on<F: std::future::Future>(fut: F) -> Option<F::Output> {
+    RUNTIME.get().map(|handle| handle.block_on(fut))
+}
+
 pub(crate) fn http() -> Client {
     HTTP.clone()
 }

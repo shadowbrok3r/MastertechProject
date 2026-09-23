@@ -78,14 +78,7 @@ fn run(def: &ScriptDef, ctx: &ScriptContext) -> (ScriptResult, Option<i32>) {
             not_implemented(ctx, def, "Proxy settings disable not yet implemented"),
             None,
         ),
-        "change-superantispyware-settings" => (
-            not_implemented(
-                ctx,
-                def,
-                "SuperAntiSpyware settings change not yet implemented",
-            ),
-            None,
-        ),
+        "change-superantispyware-settings" => (sas_settings(ctx, def), None),
         other => (
             ScriptResult::Error(format!("tuneup executor does not run '{other}'")),
             None,
@@ -236,10 +229,11 @@ fn disable_notifications(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResult {
     }
 
     let msg = format!("Completed: {success_count} succeeded, {error_count} failed");
-    ctx.log_success(category, name, msg.clone());
     if error_count > 0 {
-        ScriptResult::Warning(msg)
+        ctx.log_error(category, name, msg.clone());
+        ScriptResult::Error(msg)
     } else {
+        ctx.log_success(category, name, msg.clone());
         ScriptResult::Success(msg)
     }
 }
@@ -292,33 +286,111 @@ fn disable_startup_apps(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResult {
             .args(["/F", "/IM", "OneDrive.exe"])
             .creation_flags(0x08000000)
             .output();
+        ctx.log_info(
+            category.clone(),
+            name,
+            "OneDrive not signed in: killed OneDrive.exe",
+        );
     }
 
-    ctx.log_success(category, name, "Startup apps processed");
     if failed {
-        ScriptResult::Warning("Startup apps processed".into())
+        let msg = "Startup apps processed with errors";
+        ctx.log_error(category, name, msg);
+        ScriptResult::Error(msg.into())
     } else {
+        ctx.log_success(category, name, "Startup apps processed");
         ScriptResult::Success("Startup apps processed".into())
     }
 }
 
+/// Unpins Copilot and removes its app package.
 #[cfg(target_os = "windows")]
 fn unpin_copilot(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResult {
+    use crate::utilities::scripts::remove_copilot_appx;
     use crate::utilities::windows::registry::disable_copilot;
 
     let (category, name) = (def.category(), def.name.as_str());
     ctx.log_info(category.clone(), name, "Unpinning Copilot from taskbar...");
 
+    let mut failures = Vec::new();
     match disable_copilot() {
         Ok(results) => {
             for result in results {
                 ctx.log_info(category.clone(), name, result);
             }
-            ctx.log_success(category, name, "Copilot unpinned successfully");
-            ScriptResult::Success("Copilot unpinned successfully".into())
         }
         Err(e) => {
             let msg = format!("Failed to unpin Copilot: {e}");
+            ctx.log_error(category.clone(), name, msg.clone());
+            failures.push(msg);
+        }
+    }
+    match remove_copilot_appx() {
+        Ok(messages) => {
+            for message in messages {
+                ctx.log_info(category.clone(), name, message);
+            }
+        }
+        Err(e) => {
+            let msg = format!("Copilot app removal: {e}");
+            ctx.log_error(category.clone(), name, msg.clone());
+            failures.push(msg);
+        }
+    }
+
+    if failures.is_empty() {
+        ctx.log_success(category, name, "Copilot unpinned successfully");
+        ScriptResult::Success("Copilot unpinned successfully".into())
+    } else {
+        ScriptResult::Error(failures.join("; "))
+    }
+}
+
+/// Writes the shop's SuperAntiSpyware scheduled tasks and settings, then relaunches the tray app.
+#[cfg(target_os = "windows")]
+fn sas_settings(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResult {
+    use crate::utilities::scripts::antivirus::{kill_sas_processes, launch_sas_tray, sas_tasks};
+
+    let (category, name) = (def.category(), def.name.as_str());
+    let sas_exe = std::path::Path::new(r"C:\Program Files\SUPERAntiSpyware\SUPERAntiSpyware.exe");
+    if !sas_exe.exists() {
+        ctx.log_error(category, name, "SAS not installed");
+        return ScriptResult::Error("SAS not installed".into());
+    }
+
+    let killed = kill_sas_processes();
+    ctx.log_info(
+        category.clone(),
+        name,
+        format!("Killed {killed} SAS processes"),
+    );
+    std::thread::sleep(std::time::Duration::from_secs(2));
+
+    match sas_tasks::configure_sas_scheduled_tasks() {
+        Ok((update_guid, scan_guid)) => {
+            ctx.log_info(
+                category.clone(),
+                name,
+                format!("SAS update task: {update_guid}"),
+            );
+            ctx.log_info(
+                category.clone(),
+                name,
+                format!("SAS scan task: {scan_guid}"),
+            );
+            match launch_sas_tray() {
+                Ok(()) => ctx.log_info(category.clone(), name, "Relaunched SUPERAntiSpyware"),
+                Err(e) => ctx.log_warning(
+                    category.clone(),
+                    name,
+                    format!("Could not relaunch SUPERAntiSpyware: {e}"),
+                ),
+            }
+            ctx.log_success(category, name, "SuperAntiSpyware settings applied");
+            ScriptResult::Success("SuperAntiSpyware settings applied".into())
+        }
+        Err(e) => {
+            let msg = format!("Error: {e}");
             ctx.log_error(category, name, msg.clone());
             ScriptResult::Error(msg)
         }
@@ -453,6 +525,11 @@ fn align_taskbar(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResult {
 }
 
 #[cfg(not(target_os = "windows"))]
+fn sas_settings(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResult {
+    unsupported(ctx, def)
+}
+
+#[cfg(not(target_os = "windows"))]
 fn unsupported(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResult {
     let msg = "Only available on Windows";
     ctx.log_warning(def.category(), def.name.as_str(), msg);
@@ -505,14 +582,13 @@ mod tuneup_executor_tests {
         }
     }
 
-    /// The two stubs are catalog-known so a legacy name still resolves, but they
-    /// are offered nowhere.
+    /// The stub is catalog-known so a legacy name still resolves, but it is offered nowhere.
     #[test]
-    fn the_unimplemented_stubs_are_not_offered() {
-        for id in ["disable-proxy-settings", "change-superantispyware-settings"] {
-            let def = CATALOG.get(&ScriptId::new(id)).expect("catalog entry");
-            assert!(!def.offered_on(Surface::Egui), "{id} is offered in the tab");
-        }
+    fn the_unimplemented_stub_is_not_offered() {
+        let def = CATALOG
+            .get(&ScriptId::new("disable-proxy-settings"))
+            .expect("catalog entry");
+        assert!(!def.offered_on(Surface::Egui), "the stub is offered in the tab");
     }
 
     #[test]

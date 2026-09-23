@@ -15,9 +15,7 @@ use displays::scripts::id::ScriptId;
 #[cfg(target_os = "windows")]
 use crate::terminal_mode::tabs::scripts::script_categories::check_windows_activation;
 #[cfg(target_os = "windows")]
-use crate::utilities::scripts::{
-    AntiVirusProduct, InstalledProgram, ScheduledTask, check_power_options,
-};
+use crate::utilities::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask};
 
 /// Ids this executor claims. Everything else stays on the legacy path until it
 /// is ported, which is what lets the two coexist.
@@ -156,17 +154,36 @@ fn check_installed(ctx: &ScriptContext, def: &ScriptDef, search_term: &str) -> S
 }
 
 #[cfg(target_os = "windows")]
+/// Reports the active plan and each sleep, hibernate and display timeout on AC and DC.
 fn check_power(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResult {
     let (category, name) = (def.category(), def.name.as_str());
-    match check_power_options() {
-        Ok(_) => {
-            ctx.log_success(category, name, "Sleep/Hibernation is disabled");
-            ScriptResult::Success("Sleep/Hibernation is disabled".into())
+    match super::powershell::run(POWER_REPORT) {
+        Ok(output) => {
+            let lines: Vec<String> = output
+                .lines
+                .into_iter()
+                .filter(|line| !line.trim().is_empty())
+                .collect();
+            let enabled = lines
+                .iter()
+                .any(|line| line.contains("ENABLED on at least one setting"));
+            let summary = lines.last().cloned().unwrap_or_default();
+            for line in lines {
+                ctx.log_info(category.clone(), name, line);
+            }
+            if enabled {
+                ScriptResult::Warning(summary)
+            } else {
+                ScriptResult::Success(summary)
+            }
         }
-        Err(e) => {
-            let msg = format!("Power check: {e}");
-            ctx.log_warning(category, name, msg.clone());
-            ScriptResult::Warning(msg)
+        Err(failure) => {
+            if let Some(code) = failure.exit_code {
+                ctx.log_info(category.clone(), name, format!("Exit code: {code:?}"));
+            }
+            let msg = format!("Error querying power options: {}", failure.message);
+            ctx.log_error(category, name, msg.clone());
+            ScriptResult::Error(msg)
         }
     }
 }
@@ -273,6 +290,39 @@ fn unsupported(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResult {
     ctx.log_warning(def.category(), def.name.as_str(), msg);
     ScriptResult::Skipped(msg.into())
 }
+
+#[cfg(target_os = "windows")]
+const POWER_REPORT: &str = r#"
+Write-Output ((powercfg /getactivescheme) -join '')
+$settings = @(
+    @{ Name='Sleep after';      Sub='238c9fa8-0aad-41ed-83f4-97be242c8f20'; Guid='29f6c1db-86da-48c5-9fdb-f2b67b1f44da'; Units='Seconds' },
+    @{ Name='Hibernate after';  Sub='238c9fa8-0aad-41ed-83f4-97be242c8f20'; Guid='9d7815a6-7ee4-497e-8888-515a05f02364'; Units='Seconds' },
+    @{ Name='Hybrid sleep';     Sub='238c9fa8-0aad-41ed-83f4-97be242c8f20'; Guid='94ac6d29-73ce-41a6-809f-6363ba21b47e'; Units='OnOff'   },
+    @{ Name='Turn off display'; Sub='7516b95f-f776-4464-8c53-06167f40cc99'; Guid='3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e'; Units='Seconds' }
+)
+$anyEnabled = $false
+foreach ($s in $settings) {
+    $out = powercfg /query SCHEME_CURRENT $s.Sub $s.Guid 2>$null
+    $acMatch = $out | Select-String 'Current AC Power Setting Index:\s*(0x[0-9a-fA-F]+)'
+    $dcMatch = $out | Select-String 'Current DC Power Setting Index:\s*(0x[0-9a-fA-F]+)'
+    $ac = if ($acMatch) { $acMatch.Matches[0].Groups[1].Value } else { '0x00000000' }
+    $dc = if ($dcMatch) { $dcMatch.Matches[0].Groups[1].Value } else { '0x00000000' }
+    if ($s.Units -eq 'Seconds') {
+        $acVal = [uint32]$ac
+        $dcVal = [uint32]$dc
+        Write-Output ("{0}: AC={1}s  DC={2}s" -f $s.Name, $acVal, $dcVal)
+        if ($acVal -gt 0 -or $dcVal -gt 0) { $anyEnabled = $true }
+    } else {
+        $acOn = if ($ac -ne '0x00000000') { 'On' } else { 'Off' }
+        $dcOn = if ($dc -ne '0x00000000') { 'On' } else { 'Off' }
+        Write-Output ("{0}: AC={1}  DC={2}" -f $s.Name, $acOn, $dcOn)
+        if ($acOn -eq 'On' -or $dcOn -eq 'On') { $anyEnabled = $true }
+    }
+}
+$states = (powercfg /availablesleepstates 2>&1) -join "`n"
+if ($states -match 'Hibernate') { Write-Output 'Hibernation available: YES' } else { Write-Output 'Hibernation available: NO' }
+if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one setting' } else { Write-Output 'Sleep/Hibernation: all timeouts at 0 (disabled)' }
+"#;
 
 #[cfg(test)]
 mod informational_executor_tests {
