@@ -250,7 +250,10 @@ impl EguiScriptsTab {
                 cancel: CancelToken::new(),
             }
         } else {
-            let ctx = self.get_context();
+            let ctx = ScriptContext {
+                surface: Some(Surface::Mcp),
+                ..self.get_context()
+            };
             crate::scripts_exec::registry().spawn(def, &ctx, 0, CancelToken::new())
         };
 
