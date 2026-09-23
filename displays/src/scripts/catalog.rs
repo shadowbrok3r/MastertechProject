@@ -404,6 +404,28 @@ mod catalog_tests {
         }
     }
 
+    /// The service-number rule the terminal tab hardcoded, now declared per entry.
+    #[test]
+    fn service_number_requirements_match_the_old_rule() {
+        for def in CATALOG.iter() {
+            let expected = stress_runner::is_stress_script(&def.name)
+                || matches!(
+                    def.id.as_str(),
+                    "activate-cps" | "activate-webroot" | "activate-superanti"
+                );
+            assert_eq!(
+                def.requires(Requirement::ServiceNumber),
+                expected,
+                "{} declares the wrong service-number requirement",
+                def.id
+            );
+        }
+        let seb = CATALOG
+            .get(&ScriptId::new("activate-seb"))
+            .expect("catalog entry");
+        assert!(seb.requires(Requirement::CustomerEmail));
+    }
+
     /// A stress run is cancelled when its budget runs out.
     #[test]
     fn stress_budgets_outlast_the_planned_run() {
