@@ -6,7 +6,8 @@
 use crate::tabs::tur_sheet::get_ticket::SendRequest;
 use crate::tabs::file_browser::command::{run_robocopy, RobocopyMessage};
 use displays::scripts::catalog::{CATALOG, Surface};
-use displays::scripts::executor::{CancelToken, ScriptHandle, ScriptOutcome};
+use displays::scripts::executor::{CancelToken, ScriptHandle, ScriptOutcome, ScriptResult};
+use displays::scripts::id::ScriptId;
 use displays::scripts::{
     ScriptCategory, ScriptChannels, ScriptContext, ScriptItem, ScriptLogEntry,
     ScriptStatus, ScriptsState, LogLevel,
@@ -63,19 +64,25 @@ use wmi::{WMIConnection, WMIError};
 #[allow(dead_code)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-/// Colors for the scripts UI
-
-/// Quiet period after a queued script's last log before the queue advances.
-const QUEUE_ADVANCE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(1000);
-/// Ceiling before the queue advances past a script that never emits a terminal log.
+/// Budget for a script the catalog gives no timeout.
 const QUEUE_SCRIPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+const DATA_TRANSFER: &str = "data-transfer";
 
-/// Tracks the currently running queued script for completion detection.
-struct QueueRun {
-    log_start: usize,
-    seen_logs: usize,
-    last_activity: std::time::Instant,
-    started_at: std::time::Instant,
+/// A Data Transfer entry, finished from the picker or when robocopy returns.
+#[derive(Clone)]
+struct TransferRun {
+    id: ScriptId,
+    run_token: u64,
+    started: std::time::Instant,
+    done: Sender<ScriptOutcome>,
+}
+
+impl TransferRun {
+    fn finish(&self, result: ScriptResult) {
+        let outcome =
+            ScriptOutcome::plain(self.id.clone(), self.run_token, result, self.started.elapsed());
+        let _ = self.done.try_send(outcome);
+    }
 }
 
 /// Egui Scripts Tab state
@@ -128,12 +135,14 @@ pub struct EguiScriptsTab {
     pub pending_mcp_runs: Vec<McpPendingRun>,
     /// diagnostic_session id from the latest MCP scripts_run request.
     pub mcp_diagnostic_session_id: Option<String>,
-    /// Completion tracking for the running queued script; None when idle.
-    queue_run: Option<QueueRun>,
-    /// Set when the running script came from the executor registry, which
-    /// reports its own completion. `None` means the legacy path is running it
-    /// and the log still has to be read for a terminal line.
+    /// Completion handle for the running entry.
     running: Option<ScriptHandle>,
+    /// When the running entry started, for its time budget.
+    run_started: Option<std::time::Instant>,
+    /// Entry still finishing after Stop, as (run token, name).
+    stopping: Option<(u64, String)>,
+    /// The Data Transfer entry waiting on the picker or on robocopy.
+    transfer_run: Option<TransferRun>,
     /// Last ticket service number copied into the input.
     pub seeded_service_number: String,
     pub search: String,
@@ -204,8 +213,10 @@ impl EguiScriptsTab {
             selected_destination: None,
             pending_mcp_runs: Vec::new(),
             mcp_diagnostic_session_id: None,
-            queue_run: None,
             running: None,
+            run_started: None,
+            stopping: None,
+            transfer_run: None,
             seeded_service_number: String::new(),
             search: String::new(),
             log_filter: None,
@@ -502,21 +513,113 @@ impl EguiScriptsTab {
         self.log_info("Queue", format!("{label}: queued {added} scripts"));
     }
 
-    /// Run all queued scripts
-    /// Stops the queue and, for a ported script, the work itself. The legacy path
-    /// has nothing to signal, so its thread still runs to completion.
+    /// Stops the queue and signals the running entry. Its outcome is still collected,
+    /// and nothing new starts until it has actually finished.
     pub fn stop_queue(&mut self) {
-        if let Some(handle) = self.running.as_ref() {
-            handle.cancel.cancel();
-            self.log_info("Queue", "Stop requested; waiting for the running script");
+        let current = self
+            .state
+            .queue
+            .current_script()
+            .map(|q| (q.run_token, q.script.name.clone()));
+        if self.show_data_transfer_ui {
+            self.cancel_data_transfer();
+        }
+        match (self.running.as_ref(), current) {
+            (Some(handle), Some(current)) => {
+                handle.cancel.cancel();
+                self.log_info(
+                    "Queue",
+                    format!("Stop requested; waiting for {} to finish", current.1),
+                );
+                self.stopping = Some(current);
+            }
+            _ => {
+                self.running = None;
+                self.run_started = None;
+            }
         }
         self.state.queue.stop();
-        self.running = None;
-        self.queue_run = None;
+        // Shows the stopping entry as running until it settles.
+        if let Some((token, _)) = self.stopping.clone() {
+            self.set_entry_status(token, ScriptStatus::Running);
+        }
         self.current_script_name = None;
     }
 
+    /// The entry still finishing after Stop, if any.
+    pub fn stopping_name(&self) -> Option<&str> {
+        self.stopping.as_ref().map(|(_, name)| name.as_str())
+    }
+
+    /// Stops waiting for an entry that ignores Stop. Its worker is left to finish on its own.
+    pub fn abandon_stopped_run(&mut self) {
+        let Some((token, name)) = self.stopping.take() else {
+            return;
+        };
+        self.set_entry_status(token, ScriptStatus::Failed);
+        self.running = None;
+        self.run_started = None;
+        self.transfer_run = None;
+        self.log_warning("Queue", format!("Stopped waiting for {name}; it may still be running"));
+    }
+
+    /// Collects the outcome of the entry that was running when Stop was pressed.
+    fn settle_stopped_run(&mut self) {
+        let Some((token, name)) = self.stopping.clone() else {
+            return;
+        };
+        let Some(handle) = self.running.as_ref() else {
+            self.stopping = None;
+            return;
+        };
+        let outcome = match handle.done.try_recv() {
+            Ok(outcome) => Some(outcome),
+            Err(crossbeam::channel::TryRecvError::Empty) => {
+                let budget = CATALOG
+                    .timeout_secs(&name)
+                    .map(std::time::Duration::from_secs)
+                    .unwrap_or(QUEUE_SCRIPT_TIMEOUT);
+                if self.run_started.is_some_and(|at| at.elapsed() >= budget) {
+                    self.abandon_stopped_run();
+                }
+                return;
+            }
+            Err(crossbeam::channel::TryRecvError::Disconnected) => None,
+        };
+        let status = match outcome.as_ref().map(|o| &o.result) {
+            Some(ScriptResult::Success(_) | ScriptResult::Warning(_)) => ScriptStatus::Completed,
+            Some(ScriptResult::Skipped(_)) => ScriptStatus::Skipped,
+            Some(ScriptResult::Error(_)) | None => ScriptStatus::Failed,
+        };
+        self.set_entry_status(token, status);
+        if let Some(outcome) = outcome {
+            self.outcomes.insert(token, outcome);
+        }
+        self.stopping = None;
+        self.running = None;
+        self.run_started = None;
+        self.transfer_run = None;
+        self.log_info("Queue", format!("Stopped; {name} finished"));
+    }
+
+    fn set_entry_status(&mut self, token: u64, status: ScriptStatus) {
+        if let Some(entry) = self
+            .state
+            .queue
+            .items_mut()
+            .iter_mut()
+            .find(|q| q.run_token == token)
+        {
+            entry.script.status = status;
+        }
+    }
+
     pub fn run_queue(&mut self) {
+        if let Some(name) = self.stopping_name() {
+            let msg = format!("{name} is still stopping; wait for it to finish");
+            self.log_warning("Queue", msg);
+            return;
+        }
         if self.state.queue.is_empty() {
             self.log_warning("Queue", "Queue is empty");
             return;
@@ -530,79 +633,76 @@ impl EguiScriptsTab {
         self.execute_next_script();
     }
 
-    /// Execute the next script in the queue
+    /// Starts the current entry. Every entry reports its own completion through `running`.
     fn execute_next_script(&mut self) {
-        if let Some((script, run_token)) = self
+        let Some((script, run_token)) = self
             .state
             .queue
             .current_script()
             .map(|q| (q.script.clone(), q.run_token))
-        {
-            self.current_script_name = Some(script.name.clone());
+        else {
+            return;
+        };
+        self.current_script_name = Some(script.name.clone());
+        self.run_started = Some(std::time::Instant::now());
+        self.log_info(&script.name, format!("Starting: {}", script.name));
 
-            let now = std::time::Instant::now();
-            self.queue_run = Some(QueueRun {
-                log_start: self.state.log_cursor(),
-                seen_logs: self.state.log_cursor(),
-                last_activity: now,
-                started_at: now,
+        let Some(def) = CATALOG
+            .id_for_legacy_name(&script.name)
+            .and_then(|id| CATALOG.get(id))
+        else {
+            let (tx, done) = crossbeam::channel::bounded(1);
+            let _ = tx.send(ScriptOutcome::plain(
+                ScriptId::new(script.name.as_str()),
+                run_token,
+                ScriptResult::Error(format!("'{}' is not in the script catalog", script.name)),
+                std::time::Duration::ZERO,
+            ));
+            self.running = Some(ScriptHandle {
+                run_token,
+                done,
+                cancel: CancelToken::new(),
             });
+            return;
+        };
 
-            self.log_info(&script.name, format!("Starting: {}", script.name));
-
-            // Ported scripts run through the registry and report their own
-            // completion; everything else falls through to the original path.
-            if let Some(def) = CATALOG
-                .id_for_legacy_name(&script.name)
-                .and_then(|id| CATALOG.get(id))
-                && crate::scripts_exec::registry().find(&def.id).is_some()
-            {
-                let ctx = self.get_context();
-                self.running = Some(crate::scripts_exec::registry().spawn(
-                    def,
-                    &ctx,
-                    run_token,
-                    CancelToken::new(),
-                ));
-                return;
-            }
-            self.running = None;
-
-            // Execute based on category
-            let ctx = self.get_context();
-            let client = self.client.clone();
+        if def.id.as_str() == DATA_TRANSFER {
+            let (tx, done) = crossbeam::channel::bounded(1);
+            self.transfer_run = Some(TransferRun {
+                id: def.id.clone(),
+                run_token,
+                started: std::time::Instant::now(),
+                done: tx,
+            });
+            self.running = Some(ScriptHandle {
+                run_token,
+                done,
+                cancel: CancelToken::new(),
+            });
             let log_tx = self.channels.log_tx.clone();
-            let progress_tx = self.channels.progress_tx.clone();
-            
-            match script.category {
-                ScriptCategory::Tuneup => {
-                    self.execute_tuneup_script(&script, ctx, client, log_tx, progress_tx);
-                },
-                ScriptCategory::Informational => {
-                    self.execute_informational_script(&script, ctx, log_tx);
-                },
-                ScriptCategory::JunkwareRemoval => {
-                    self.execute_junkware_script(&script, log_tx);
-                },
-                ScriptCategory::StressTests => {
-                    self.execute_stress_script(&script, log_tx);
-                },
-                _ => {
-                    self.log_warning(&script.name, "Unknown script category");
-                }
-            }
-        }
-    }
-
-    /// Advance the queue once the running script has finished. Completion is
-    /// inferred from the script's most recent terminal log entry after a short
-    /// quiet period, or from a hard timeout; then the next script is started.
-    pub fn advance_queue_if_ready(&mut self) {
-        if !self.state.queue.is_running() {
-            self.queue_run = None;
+            self.execute_data_transfer(log_tx);
             return;
         }
-        // Pause while the interactive data-transfer picker is open.
+
+        let ctx = self.get_context();
+        self.running = Some(crate::scripts_exec::registry().spawn(
+            def,
+            &ctx,
+            run_token,
+            CancelToken::new(),
+        ));
+    }
+
+    /// Advances the queue when the running entry reports its outcome.
+    pub fn advance_queue_if_ready(&mut self) {
+        if self.stopping.is_some() {
+            self.settle_stopped_run();
+            return;
+        }
+        if !self.state.queue.is_running() {
+            return;
+        }
+        // The picker waits on the tech, so the entry's time budget has not started.
         if self.show_data_transfer_ui {
             return;
         }
@@ -614,73 +714,10 @@ impl EguiScriptsTab {
         else {
             return;
         };
-
-        // A ported script tells us when it finished, so none of the log reading
-        // below applies to it.
-        if self.running.is_some() {
-            self.advance_on_outcome(&current_name);
-            return;
-        }
-
-        let now = std::time::Instant::now();
-        let logs_len = self.state.log_cursor();
-
-        if self.queue_run.is_none() {
-            self.queue_run = Some(QueueRun {
-                log_start: logs_len,
-                seen_logs: logs_len,
-                last_activity: now,
-                started_at: now,
-            });
-            return;
-        }
-        let run = self.queue_run.as_mut().unwrap();
-        if logs_len != run.seen_logs {
-            run.seen_logs = logs_len;
-            run.last_activity = now;
-        }
-        let log_start = run.log_start;
-        let last_activity = run.last_activity;
-        let started_at = run.started_at;
-
-        let (is_terminal, is_failure) = {
-            let latest = self
-                .state
-                .logs_since(log_start)
-                .iter()
-                .rev()
-                .find(|e| e.script_name == current_name);
-            (
-                latest.is_some_and(|e| {
-                    matches!(e.level, LogLevel::Success | LogLevel::Warning | LogLevel::Error)
-                }),
-                latest.is_some_and(|e| matches!(e.level, LogLevel::Error)),
-            )
-        };
-
-        let debounced = now.duration_since(last_activity) >= QUEUE_ADVANCE_DEBOUNCE;
-        let timed_out = now.duration_since(started_at) >= QUEUE_SCRIPT_TIMEOUT;
-
-        if !((is_terminal && debounced) || timed_out) {
-            return;
-        }
-
-        if timed_out && !is_terminal {
-            self.log_warning(
-                &current_name,
-                format!(
-                    "No completion detected after {} min; advancing to the next queued script",
-                    QUEUE_SCRIPT_TIMEOUT.as_secs() / 60
-                ),
-            );
-        }
-
-        self.advance_to_next(is_failure);
+        self.advance_on_outcome(&current_name);
     }
 
-    /// Completion for a script the registry is running: the outcome is reported,
-    /// never inferred. A dead worker is an error rather than a queue that sits
-    /// there until the timeout, which is what the log-reading path did.
+    /// Consumes the running entry's outcome. A dead worker is an error rather than a wait.
     fn advance_on_outcome(&mut self, current_name: &str) {
         let Some(handle) = self.running.as_ref() else {
             return;
@@ -708,7 +745,7 @@ impl EguiScriptsTab {
                 self.advance_to_next(failed);
             }
             Err(crossbeam::channel::TryRecvError::Empty) => {
-                let started_at = self.queue_run.as_ref().map(|r| r.started_at);
+                let started_at = self.run_started;
                 let budget = CATALOG
                     .timeout_secs(current_name)
                     .map(std::time::Duration::from_secs)
@@ -737,7 +774,8 @@ impl EguiScriptsTab {
     fn advance_to_next(&mut self, failed: bool) {
         self.state.queue.finish_current(failed);
         self.state.queue.next();
-        self.queue_run = None;
+        self.run_started = None;
+        self.transfer_run = None;
 
         if self.state.queue.is_running() {
             self.execute_next_script();
@@ -967,206 +1005,112 @@ impl EguiScriptsTab {
         });
     }
 
-    /// Run any StressTests-category script by name through the shared catalog.
-    /// Handles single stressors, scenarios, certs, the GPU probe, Combined, and
-    /// the Concurrent (CPU+RAM+GPU) plan. Scored "Benchmark: *" names are not
-    /// driven here.
-    fn execute_stress_script(&mut self, script: &ScriptItem, log_tx: Sender<ScriptLogEntry>) {
-        use std::sync::Arc;
-        use stress_kit::telemetry::TelemetryAgent;
-        use stress_runner::{build_stress_script_spec, drive_blocking, RunResult, RunUpdate};
-
-        let category = script.category.clone();
-        let script_name = script.name.clone();
-        let _ = log_tx.try_send(ScriptLogEntry::info(
-            category.clone(),
-            &script_name,
-            format!("Starting stress script: {script_name}"),
-        ));
-
-        let client = crate::filesystem::get_client_hash();
-        let service_number = self.service_number_input.clone();
-        let diagnostic_session_id = self.mcp_diagnostic_session_id.clone().unwrap_or_default();
-        let duration_secs = 60u64;
-        let log_tx2 = log_tx.clone();
-        let category2 = category.clone();
-        let script_name2 = script_name.clone();
-
-        std::thread::spawn(move || {
-            let Some(computer) = client.computer.clone() else {
-                let _ = log_tx2.try_send(ScriptLogEntry::error(
-                    category2,
-                    &script_name2,
-                    "no computer identity; cannot start stress run",
-                ));
-                return;
-            };
-            let Some(mut spec) = build_stress_script_spec(&script_name2, computer, duration_secs)
-            else {
-                let _ = log_tx2.try_send(ScriptLogEntry::warning(
-                    category2,
-                    &script_name2,
-                    format!("'{script_name2}' is not a runnable stress script here"),
-                ));
-                return;
-            };
-
-            let telemetry = Arc::new(TelemetryAgent::start(1000));
-            spec.tags.push("origin:scripts".into());
-            spec.hostname = std::env::var("COMPUTERNAME")
-                .or_else(|_| std::env::var("HOSTNAME"))
-                .ok();
-            spec.machine_id = Some(client.client_hash.clone());
-            if !service_number.is_empty() {
-                spec.service_order = Some(database::schema::RecordId::new(
-                    database::schema::TICKET_TABLE,
-                    service_number,
-                ));
-            }
-            if !diagnostic_session_id.is_empty() {
-                spec.session_ref = Some(database::schema::entity_link::parse_record_id(
-                    &diagnostic_session_id,
-                    database::schema::DIAGNOSTIC_SESSION_TABLE,
-                ));
-            }
-
-            let verdict = drive_blocking(spec, telemetry, |update| match update {
-                RunUpdate::Started { run_id } => {
-                    use database::schema::RecordIdExt;
-                    let _ = log_tx2.try_send(ScriptLogEntry::info(
-                        category2.clone(),
-                        &script_name2,
-                        format!("stress_test_run id: {}", run_id.key_string()),
-                    ));
-                }
-                RunUpdate::StageStarted { index, label, stage_count } => {
-                    let _ = log_tx2.try_send(ScriptLogEntry::info(
-                        category2.clone(),
-                        &script_name2,
-                        format!("Stage {}/{}: {label}", index + 1, stage_count),
-                    ));
-                }
-                RunUpdate::Tick { metrics, stage_label, throughput_unit, .. } => {
-                    if let Some(err) = metrics.last_error.as_ref() {
-                        let lane = stage_label.unwrap_or_else(|| "run".into());
-                        let _ = log_tx2.try_send(ScriptLogEntry::warning(
-                            category2.clone(),
-                            &script_name2,
-                            format!("{lane}: {err}"),
-                        ));
-                    } else if let Some(lane) = stage_label {
-                        let _ = log_tx2.try_send(ScriptLogEntry::info(
-                            category2.clone(),
-                            &script_name2,
-                            format!("{lane}: {:.2} {throughput_unit}", metrics.throughput),
-                        ));
-                    }
-                }
-                RunUpdate::StageFinished { .. } => {}
-                RunUpdate::StageVerdict { label, pass, violations, unevaluated, .. } => {
-                    if !pass {
-                        let _ = log_tx2.try_send(ScriptLogEntry::warning(
-                            category2.clone(),
-                            &script_name2,
-                            format!("Stage {label} FAIL: {}", violations.join("; ")),
-                        ));
-                    }
-                    for gap in &unevaluated {
-                        let _ = log_tx2.try_send(ScriptLogEntry::warning(
-                            category2.clone(),
-                            &script_name2,
-                            format!("Stage {label} ungraded: {gap}"),
-                        ));
-                    }
-                }
-                RunUpdate::Finished(v) => {
-                    let msg = format!(
-                        "{script_name2} {} in {:.1}s (run persisted)",
-                        match v.result {
-                            RunResult::Pass => "passed",
-                            RunResult::Fail => "failed",
-                            RunResult::Aborted => "aborted",
-                            RunResult::Inconclusive => "inconclusive",
-                            RunResult::InProgress => "in progress",
-                        },
-                        v.duration_secs
-                    );
-                    let entry = if v.result == RunResult::Pass {
-                        ScriptLogEntry::success(category2.clone(), &script_name2, msg)
-                    } else if v.result == RunResult::Aborted {
-                        ScriptLogEntry::warning(category2.clone(), &script_name2, msg)
-                    } else {
-                        ScriptLogEntry::error(category2.clone(), &script_name2, msg)
-                    };
-                    let _ = log_tx2.try_send(entry);
-                }
-                RunUpdate::Warning { message } => {
-                    let _ = log_tx2.try_send(ScriptLogEntry::warning(
-                        category2.clone(),
-                        &script_name2,
-                        message,
-                    ));
-                }
-                RunUpdate::Error { message } => {
-                    let _ = log_tx2.try_send(ScriptLogEntry::error(
-                        category2.clone(),
-                        &script_name2,
-                        message,
-                    ));
-                }
-            });
-
-            if verdict.is_none() {
-                let _ = log_tx2.try_send(ScriptLogEntry::error(
-                    category2,
-                    &script_name2,
-                    "stress run exited without a verdict",
-                ));
-            }
-        });
-    }
-
-    /// Execute Data Transfer script
+    /// Scans for user profiles and opens the picker. A failed or empty scan finishes the entry.
     fn execute_data_transfer(&mut self, log_tx: Sender<ScriptLogEntry>) {
         let _ = log_tx.try_send(ScriptLogEntry::info(
             ScriptCategory::Tuneup, "Data Transfer", "Scanning for user profiles..."
         ));
-        
+
         let tx = self.data_transfer_tx.clone();
-        std::thread::spawn(move || {
-            match get_data_transfer_candidates() {
-                Ok(paths) => { let _ = tx.try_send(paths); },
-                Err(e) => log::error!("Error getting data transfer candidates: {e:?}"),
+        let run = self.transfer_run.clone();
+        std::thread::spawn(move || match get_data_transfer_candidates() {
+            Ok(paths) if paths.is_empty() && run.is_some() => {
+                let msg = "No user profiles found to transfer";
+                let _ = log_tx.try_send(ScriptLogEntry::warning(
+                    ScriptCategory::Tuneup, "Data Transfer", msg,
+                ));
+                if let Some(run) = run {
+                    run.finish(ScriptResult::Skipped(msg.into()));
+                }
+            }
+            Ok(paths) => {
+                let _ = tx.try_send(paths);
+            }
+            Err(e) => {
+                log::error!("Error getting data transfer candidates: {e:?}");
+                let msg = format!("Could not list user profiles: {e}");
+                let _ = log_tx.try_send(ScriptLogEntry::error(
+                    ScriptCategory::Tuneup, "Data Transfer", msg.clone(),
+                ));
+                if let Some(run) = run {
+                    run.finish(ScriptResult::Error(msg));
+                }
             }
         });
     }
 
-    /// Start robocopy for data transfer
+    /// Closes the picker without transferring anything.
+    pub fn cancel_data_transfer(&mut self) {
+        self.show_data_transfer_ui = false;
+        self.selected_sources.clear();
+        self.selected_destination = None;
+        if let Some(run) = self.transfer_run.take() {
+            self.log_warning("Data Transfer", "Data transfer cancelled");
+            run.finish(ScriptResult::Skipped("Data transfer cancelled".into()));
+        }
+    }
+
+    /// Copies each source with robocopy, concurrently, and reports once every copy has returned.
     pub fn start_data_transfer(&mut self, sources: Vec<String>, destination: String) {
         let robocopy_tx = self.robocopy_tx.clone();
         let log_tx = self.channels.log_tx.clone();
-        
-        for source in sources {
-            let source_path = PathBuf::from(&source);
-            let dest_path = PathBuf::from(&destination);
-            let tx = robocopy_tx.clone();
-            let log = log_tx.clone();
-            
-            let _ = log.try_send(ScriptLogEntry::info(
-                ScriptCategory::Tuneup, "Data Transfer",
-                format!("Starting transfer: {} -> {}", source, destination)
-            ));
-            
-            tokio::spawn(async move {
-                if let Err(e) = run_robocopy(&source_path, &dest_path, tx).await {
-                    let _ = log.try_send(ScriptLogEntry::error(
-                        ScriptCategory::Tuneup, "Data Transfer",
-                        format!("Robocopy failed: {}", e)
-                    ));
-                }
-            });
+        let run = self.transfer_run.take();
+        if run.is_some() {
+            self.run_started = Some(std::time::Instant::now());
         }
-        
+
+        let total = sources.len();
+        let copies: Vec<_> = sources
+            .into_iter()
+            .map(|source| {
+                let source_path = PathBuf::from(&source);
+                let dest_path = PathBuf::from(&destination);
+                let tx = robocopy_tx.clone();
+                let log = log_tx.clone();
+                let _ = log.try_send(ScriptLogEntry::info(
+                    ScriptCategory::Tuneup, "Data Transfer",
+                    format!("Starting transfer: {} -> {}", source, destination)
+                ));
+                async move {
+                    match run_robocopy(&source_path, &dest_path, tx).await {
+                        Ok(()) => true,
+                        Err(e) => {
+                            let _ = log.try_send(ScriptLogEntry::error(
+                                ScriptCategory::Tuneup, "Data Transfer",
+                                format!("Robocopy failed: {}", e)
+                            ));
+                            false
+                        }
+                    }
+                }
+            })
+            .collect();
+
+        tokio::spawn(async move {
+            let failed = futures::future::join_all(copies)
+                .await
+                .into_iter()
+                .filter(|ok| !ok)
+                .count();
+            let (entry, result) = if failed == 0 {
+                let msg = format!("Transferred {total} folder(s)");
+                (
+                    ScriptLogEntry::success(ScriptCategory::Tuneup, "Data Transfer", msg.clone()),
+                    ScriptResult::Success(msg),
+                )
+            } else {
+                let msg = format!("{failed} of {total} transfers failed");
+                (
+                    ScriptLogEntry::error(ScriptCategory::Tuneup, "Data Transfer", msg.clone()),
+                    ScriptResult::Error(msg),
+                )
+            };
+            let _ = log_tx.try_send(entry);
+            if let Some(run) = run {
+                run.finish(result);
+            }
+        });
+
         self.show_data_transfer_ui = false;
         self.selected_sources.clear();
         self.selected_destination = None;
