@@ -3,48 +3,25 @@
 //! Uses the shared scripts module from displays crate and adds 
 //! Windows-specific script executors.
 
-use crate::tabs::tur_sheet::get_ticket::SendRequest;
 use crate::tabs::file_browser::command::{run_robocopy, RobocopyMessage};
 use displays::scripts::catalog::{CATALOG, Surface};
 use displays::scripts::executor::{CancelToken, ScriptHandle, ScriptOutcome, ScriptResult};
 use displays::scripts::id::ScriptId;
 use displays::scripts::{
-    ScriptCategory, ScriptChannels, ScriptContext, ScriptItem, ScriptLogEntry,
+    ScriptCategory, ScriptChannels, ScriptContext, ScriptLogEntry,
     ScriptStatus, ScriptsState, LogLevel,
     script_run_request_receiver, script_run_result_sender,
     ScriptRunRequest, ScriptRunResult,
 };
 use crossbeam::channel::{Receiver, Sender};
-use serde::{Deserialize, Serialize};
 #[allow(unused_imports)]
 use futures::StreamExt;
 use rust_embed::Embed;
-use reqwest::Client;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[allow(unused_imports)]
 use tokio::{fs, io::{self, AsyncWriteExt}, process::Command};
-
-#[cfg(target_os = "windows")]
-use crate::utilities::scripts::{
-    install_webroot, install_sas, install_supereasybackup, install_program,
-    InstalledProgram, AntiVirusProduct, ScheduledTask,
-    get_running_processes, check_power_options,
-};
-
-#[cfg(target_os = "windows")]
-use crate::utilities::windows::registry::{
-    align_taskbar_left, disable_notifications, disable_copilot,
-    disable_lockscreen_notifications, disable_content_delivery_allowed,
-    disable_silent_installed_apps_enabled, disable_subscribed_content_enabled,
-    disable_system_pane_suggestions_enabled, disable_account_notifications,
-    enable_more_pins_layout, disable_start_account_notifications,
-    disable_recent_items_tracking, remove_chat_from_taskbar,
-};
-
-#[cfg(target_os = "windows")]
-use crate::utilities::windows::windows_update::install_windows_updates;
 
 #[cfg(target_os = "windows")]
 #[allow(unused_imports)]
@@ -91,8 +68,6 @@ pub struct EguiScriptsTab {
     pub state: ScriptsState,
     /// Communication channels
     pub channels: ScriptChannels,
-    /// HTTP client for downloads
-    pub client: Client,
     /// Service number input
     pub service_number_input: String,
     /// Auto-scroll logs
@@ -111,14 +86,6 @@ pub struct EguiScriptsTab {
     /// Channel for robocopy messages
     pub robocopy_rx: Receiver<RobocopyMessage>,
     pub robocopy_tx: Sender<RobocopyMessage>,
-    /// Channel for install progress (used by install_webroot, install_sas, etc.)
-    pub install_progress_rx: Receiver<(u64, u64)>,
-    pub install_progress_tx: Sender<(u64, u64)>,
-    /// Windows update channel
-    #[cfg(target_os = "windows")]
-    pub windows_update_rx: Receiver<crate::utilities::windows::windows_update::WindowsUpdateEvent>,
-    #[cfg(target_os = "windows")]
-    pub windows_update_tx: Sender<crate::utilities::windows::windows_update::WindowsUpdateEvent>,
     /// Is data transfer UI showing
     pub show_data_transfer_ui: bool,
     /// A completed script recommends a reboot; drives the reboot prompt modal.
@@ -127,11 +94,7 @@ pub struct EguiScriptsTab {
     pub selected_sources: Vec<String>,
     /// Selected destination for data transfer
     pub selected_destination: Option<String>,
-    /// In-flight script runs requested by the MCP `scripts_run` tool. Each
-    /// entry tracks the request_id, the script the AI asked us to run, the
-    /// log cursor at dispatch time, and the dispatch timestamp so we
-    /// can time it out. Resolved when a Success / Error / Warning log entry
-    /// for the matching script_name lands in `state.logs`.
+    /// In-flight runs requested by the MCP `scripts_run` tool, resolved by their outcomes.
     pub pending_mcp_runs: Vec<McpPendingRun>,
     /// diagnostic_session id from the latest MCP scripts_run request.
     pub mcp_diagnostic_session_id: Option<String>,
@@ -153,20 +116,16 @@ pub struct EguiScriptsTab {
     pub outcomes: HashMap<u64, ScriptOutcome>,
 }
 
-/// Tracks one in-flight MCP-initiated script run inside `EguiScriptsTab`.
-#[derive(Debug, Clone)]
+/// One in-flight MCP-initiated script run.
 pub struct McpPendingRun {
     pub request_id: String,
     pub script_name: String,
-    pub category: ScriptCategory,
-    /// Log cursor at dispatch; see `ScriptsState::log_cursor`.
-    /// All log entries with index >= this value are candidates for completion
-    /// detection and inclusion in the returned `ScriptRunResult.logs`.
+    /// Log cursor at dispatch; the run's lines from here are returned with its result.
     pub log_start_index: usize,
     pub dispatched_at: std::time::Instant,
-    /// Hard ceiling: if this elapses without a Success/Error/Warning log for
-    /// `script_name`, we send back a timeout result and drop the entry.
+    /// The script's own budget from the catalog.
     pub timeout: std::time::Duration,
+    handle: ScriptHandle,
 }
 
 impl Default for EguiScriptsTab {
@@ -179,9 +138,6 @@ impl EguiScriptsTab {
     pub fn new() -> Self {
         let (data_transfer_tx, data_transfer_rx) = crossbeam::channel::unbounded();
         let (robocopy_tx, robocopy_rx) = crossbeam::channel::unbounded();
-        let (install_progress_tx, install_progress_rx) = crossbeam::channel::unbounded();
-        #[cfg(target_os = "windows")]
-        let (windows_update_tx, windows_update_rx) = crossbeam::channel::unbounded();
         
         Self {
             state: {
@@ -190,7 +146,6 @@ impl EguiScriptsTab {
                 state
             },
             channels: ScriptChannels::default(),
-            client: Client::new(),
             service_number_input: String::new(),
             auto_scroll_logs: true,
             download_progress: None,
@@ -201,12 +156,6 @@ impl EguiScriptsTab {
             data_transfer_tx,
             robocopy_rx,
             robocopy_tx,
-            install_progress_rx,
-            install_progress_tx,
-            #[cfg(target_os = "windows")]
-            windows_update_rx,
-            #[cfg(target_os = "windows")]
-            windows_update_tx,
             show_data_transfer_ui: false,
             reboot_prompt_open: false,
             selected_sources: Vec::new(),
@@ -240,15 +189,15 @@ impl EguiScriptsTab {
     }
 
     fn dispatch_mcp_request(&mut self, req: ScriptRunRequest) {
-        if let Some(sn) = req.service_number.as_deref() {
-            if !sn.is_empty() {
-                self.service_number_input = sn.to_string();
-            }
+        if let Some(sn) = req.service_number.as_deref()
+            && !sn.is_empty()
+        {
+            self.service_number_input = sn.to_string();
         }
-        if let Some(em) = req.customer_email.as_deref() {
-            if !em.is_empty() {
-                self.customer_email = Some(em.to_string());
-            }
+        if let Some(em) = req.customer_email.as_deref()
+            && !em.is_empty()
+        {
+            self.customer_email = Some(em.to_string());
         }
         self.mcp_diagnostic_session_id = req
             .diagnostic_session_id
@@ -264,96 +213,111 @@ impl EguiScriptsTab {
             ),
         );
 
-        let script = ScriptItem::new(req.script_name.clone(), req.category.clone());
-        let ctx = self.get_context();
-        let client = self.client.clone();
-        let log_tx = self.channels.log_tx.clone();
-        let progress_tx = self.channels.progress_tx.clone();
+        let refuse = |request_id: String, message: String| {
+            let _ = script_run_result_sender().send(ScriptRunResult {
+                request_id,
+                success: false,
+                message,
+                logs: Vec::new(),
+            });
+        };
 
-        match req.category {
-            ScriptCategory::Tuneup => {
-                self.execute_tuneup_script(&script, ctx, client, log_tx, progress_tx);
-            }
-            ScriptCategory::Informational => {
-                self.execute_informational_script(&script, ctx, log_tx);
-            }
-            ScriptCategory::JunkwareRemoval => {
-                self.execute_junkware_script(&script, log_tx);
-            }
-            other => {
-                let _ = script_run_result_sender().send(ScriptRunResult {
-                    request_id: req.request_id,
-                    success: false,
-                    message: format!("Unsupported category: {:?}", other),
-                    logs: Vec::new(),
-                });
+        let Some(def) = CATALOG
+            .id_for_legacy_name(&req.script_name)
+            .and_then(|id| CATALOG.get(id))
+        else {
+            refuse(
+                req.request_id,
+                format!("'{}' is not in the script catalog", req.script_name),
+            );
+            return;
+        };
+        if def.category() == ScriptCategory::StressTests {
+            refuse(req.request_id, "Unsupported category: StressTests".into());
+            return;
+        }
+
+        let handle = if def.id.as_str() == DATA_TRANSFER {
+            if self.transfer_run.is_some() {
+                refuse(req.request_id, "A data transfer is already waiting".into());
                 return;
             }
-        }
+            let (tx, done) = crossbeam::channel::bounded(1);
+            self.transfer_run = Some(TransferRun {
+                id: def.id.clone(),
+                run_token: 0,
+                started: std::time::Instant::now(),
+                done: tx,
+            });
+            let log_tx = self.channels.log_tx.clone();
+            self.execute_data_transfer(log_tx);
+            ScriptHandle {
+                run_token: 0,
+                done,
+                cancel: CancelToken::new(),
+            }
+        } else {
+            let ctx = self.get_context();
+            crate::scripts_exec::registry().spawn(def, &ctx, 0, CancelToken::new())
+        };
 
         self.pending_mcp_runs.push(McpPendingRun {
             request_id: req.request_id,
             script_name: req.script_name,
-            category: req.category,
             log_start_index,
             dispatched_at: std::time::Instant::now(),
-            timeout: std::time::Duration::from_secs(600),
+            timeout: std::time::Duration::from_secs(def.timeout_secs),
+            handle,
         });
     }
 
-    /// Walks `pending_mcp_runs` and reports completion to MCP for any run
-    /// whose script has emitted a final-state (Success / Error / Warning) log
-    /// entry, or whose `timeout` has elapsed. Call once per frame, AFTER
-    /// `receive()` has drained the latest log entries into `state.logs`.
+    /// Reports each MCP run whose outcome has arrived, or whose budget ran out.
     pub fn process_mcp_completions(&mut self) {
         if self.pending_mcp_runs.is_empty() {
             return;
         }
 
-        let now = std::time::Instant::now();
-        let logs_snapshot_len = self.state.log_cursor();
-        let mut to_remove: Vec<usize> = Vec::new();
-
+        let mut ready: Vec<(usize, bool, String)> = Vec::new();
         for (idx, pending) in self.pending_mcp_runs.iter().enumerate() {
-            let final_entry = self
-                .state
-                .logs_between(pending.log_start_index, logs_snapshot_len)
-                .iter()
-                .rev()
-                .find(|e| {
-                    e.script_name == pending.script_name
-                        && matches!(e.level, LogLevel::Success | LogLevel::Error | LogLevel::Warning)
-                });
-
-            let timed_out = now.duration_since(pending.dispatched_at) > pending.timeout;
-
-            if let Some(final_e) = final_entry {
-                let success = matches!(final_e.level, LogLevel::Success);
-                let logs = self.collect_pending_logs(pending, logs_snapshot_len);
-                let _ = script_run_result_sender().send(ScriptRunResult {
-                    request_id: pending.request_id.clone(),
-                    success,
-                    message: final_e.message.clone(),
-                    logs,
-                });
-                to_remove.push(idx);
-            } else if timed_out {
-                let logs = self.collect_pending_logs(pending, logs_snapshot_len);
-                let _ = script_run_result_sender().send(ScriptRunResult {
-                    request_id: pending.request_id.clone(),
-                    success: false,
-                    message: format!(
-                        "Script '{}' did not emit a Success/Error log within {}s. It may still be running on the host.",
-                        pending.script_name,
-                        pending.timeout.as_secs()
-                    ),
-                    logs,
-                });
-                to_remove.push(idx);
+            match pending.handle.done.try_recv() {
+                Ok(outcome) => {
+                    let message = outcome.result.message().to_string();
+                    ready.push((idx, outcome.result.is_success(), message));
+                }
+                Err(crossbeam::channel::TryRecvError::Empty) => {
+                    if pending.dispatched_at.elapsed() > pending.timeout {
+                        pending.handle.cancel.cancel();
+                        let message = format!(
+                            "Script '{}' did not finish within {}s. It may still be running on the host.",
+                            pending.script_name,
+                            pending.timeout.as_secs()
+                        );
+                        ready.push((idx, false, message));
+                    }
+                }
+                Err(crossbeam::channel::TryRecvError::Disconnected) => {
+                    let message = format!("Script '{}' stopped without reporting", pending.script_name);
+                    ready.push((idx, false, message));
+                }
             }
         }
+        if ready.is_empty() {
+            return;
+        }
 
-        for idx in to_remove.iter().rev() {
+        // Each worker logs before it reports, so its last lines are already queued.
+        self.drain_logs();
+        let end = self.state.log_cursor();
+        for (idx, success, message) in &ready {
+            let pending = &self.pending_mcp_runs[*idx];
+            let _ = script_run_result_sender().send(ScriptRunResult {
+                request_id: pending.request_id.clone(),
+                success: *success,
+                message: message.clone(),
+                logs: self.collect_pending_logs(pending, end),
+            });
+        }
+        for (idx, _, _) in ready.iter().rev() {
             self.pending_mcp_runs.remove(*idx);
         }
     }
@@ -381,25 +345,20 @@ impl EguiScriptsTab {
     }
 
     /// Process incoming channel messages
-    pub fn receive(&mut self) {
-        // Receive log messages
+    fn drain_logs(&mut self) {
         while let Ok(log_entry) = self.channels.log_rx.try_recv() {
             if log_entry.message.contains(displays::scripts::REBOOT_RECOMMENDED_MARKER) {
                 self.reboot_prompt_open = true;
             }
             self.state.log(log_entry);
         }
+    }
+
+    pub fn receive(&mut self) {
+        self.drain_logs();
 
         // Receive progress updates
         while let Ok((_script_id, current, total)) = self.channels.progress_rx.try_recv() {
-            self.download_progress = Some((current, total));
-            if current >= total {
-                self.download_progress = None;
-            }
-        }
-
-        // Receive install progress updates (from install_webroot, install_sas, etc.)
-        while let Ok((current, total)) = self.install_progress_rx.try_recv() {
             self.download_progress = Some((current, total));
             if current >= total {
                 self.download_progress = None;
@@ -429,28 +388,6 @@ impl EguiScriptsTab {
             }
         }
 
-        // Receive Windows update events
-        #[cfg(target_os = "windows")]
-        while let Ok(event) = self.windows_update_rx.try_recv() {
-            use crate::utilities::windows::windows_update::WindowsUpdateEvent;
-            match event {
-                WindowsUpdateEvent::UpdateLogs(log) => {
-                    self.log_info("Windows Updates", log);
-                },
-                WindowsUpdateEvent::ReturnedUpdates(updates) => {
-                    self.log_info("Windows Updates", format!("Found {} updates", updates.updates.len()));
-                },
-                WindowsUpdateEvent::DownloadPercentage(pct) => {
-                    self.download_progress = Some((pct as u64, 100));
-                },
-                WindowsUpdateEvent::InstallPercentage(pct) => {
-                    self.download_progress = Some((pct as u64, 100));
-                    if pct >= 100 {
-                        self.download_progress = None;
-                    }
-                },
-            }
-        }
     }
 
     /// Get script execution context
@@ -786,225 +723,6 @@ impl EguiScriptsTab {
         }
     }
 
-    /// Execute a tuneup script
-    fn execute_tuneup_script(
-        &mut self,
-        script: &ScriptItem,
-        ctx: ScriptContext,
-        client: Client,
-        log_tx: Sender<ScriptLogEntry>,
-        progress_tx: Sender<(String, u64, u64)>,
-    ) {
-        let script_name = script.name.clone();
-        let script_id = script.id.clone();
-        let category = script.category.clone();
-        let service_number = ctx.service_number.clone();
-        let customer_email = ctx.customer_email.clone();
-
-        match script_name.as_str() {
-            "Data Transfer" => {
-                self.execute_data_transfer(log_tx);
-            },
-            "Activate CPS" => {
-                self.execute_activate_cps(service_number, client, log_tx, progress_tx, script_id, category, script_name);
-            },
-            "Activate SEB" => {
-                self.execute_activate_seb(customer_email, client, log_tx, progress_tx, script_id, category, script_name);
-            },
-            "Install Windows Updates" => {
-                self.execute_install_windows_updates(log_tx, category, script_name);
-            },
-            "Disable Sleep / Hibernation" => {
-                self.execute_disable_sleep(log_tx, category, script_name);
-            },
-            "Run SuperAntiSpyware Scan" => {
-                self.execute_sas_scan(log_tx, category, script_name);
-            },
-            "Run Webroot Scan" => {
-                self.execute_webroot_scan(log_tx, category, script_name);
-            },
-            "Run Junkware Category" => {
-                self.execute_all_junkware(log_tx);
-            },
-            "Install LibreOffice" => {
-                self.execute_install_libreoffice(client, log_tx, progress_tx, script_id, category, script_name);
-            },
-            "Disable proxy settings" => {
-                let _ = log_tx.try_send(ScriptLogEntry::warning(
-                    category, &script_name, "Proxy settings disable not yet implemented"
-                ));
-            },
-            "Disable Notifications" => {
-                self.execute_disable_notifications(log_tx, category, script_name);
-            },
-            "Change SuperAntiSpyware settings" => {
-                let _ = log_tx.try_send(ScriptLogEntry::warning(
-                    category, &script_name, "SuperAntiSpyware settings change not yet implemented"
-                ));
-            },
-            "Disable Startup Apps" => {
-                self.execute_disable_startup_apps(log_tx, category, script_name);
-            },
-            "Unpin Copilot" => {
-                self.execute_unpin_copilot(log_tx, category, script_name);
-            },
-            "Align Taskbar to left" => {
-                self.execute_align_taskbar(log_tx, category, script_name);
-            },
-            "Change Timezone to Mountain" => {
-                self.execute_change_timezone(log_tx, category, script_name);
-            },
-            "Disable BitLocker" => {
-                self.execute_disable_bitlocker(log_tx, category, script_name);
-            },
-            "GPU Stress Test" => {
-                self.execute_gpu_probe(log_tx, category, script_name);
-            },
-            _ => {
-                let _ = log_tx.try_send(ScriptLogEntry::warning(
-                    category, &script_name, format!("Script '{}' not yet implemented", script_name)
-                ));
-            }
-        }
-    }
-
-    fn execute_gpu_probe(
-        &mut self,
-        log_tx: Sender<ScriptLogEntry>,
-        category: ScriptCategory,
-        script_name: String,
-    ) {
-        use std::sync::Arc;
-        use stress_kit::telemetry::TelemetryAgent;
-        use stress_runner::{drive_blocking, gpu_probe_spec, RunResult, RunUpdate};
-
-        let _ = log_tx.try_send(ScriptLogEntry::info(
-            category.clone(),
-            &script_name,
-            "Starting 4-stage GPU probe (compute → matmul → VRAM → PCIe)",
-        ));
-
-        let client = crate::filesystem::get_client_hash();
-        let service_number = self.service_number_input.clone();
-        let diagnostic_session_id = self.mcp_diagnostic_session_id.clone().unwrap_or_default();
-        let log_tx2 = log_tx.clone();
-        let category2 = category.clone();
-        let script_name2 = script_name.clone();
-
-        std::thread::spawn(move || {
-            let telemetry = Arc::new(TelemetryAgent::start(1000));
-            let mut spec = gpu_probe_spec(
-                client.computer.clone().expect("get_client_hash sets computer"),
-                1.0,
-            );
-            spec.tags.push("origin:scripts".into());
-            spec.hostname = std::env::var("COMPUTERNAME")
-                .or_else(|_| std::env::var("HOSTNAME"))
-                .ok();
-            spec.machine_id = Some(client.client_hash.clone());
-            if !service_number.is_empty() {
-                spec.service_order = Some(database::schema::RecordId::new(
-                    database::schema::TICKET_TABLE,
-                    service_number,
-                ));
-            }
-            if !diagnostic_session_id.is_empty() {
-                spec.session_ref = Some(database::schema::entity_link::parse_record_id(
-                    &diagnostic_session_id,
-                    database::schema::DIAGNOSTIC_SESSION_TABLE,
-                ));
-            }
-
-            let verdict = drive_blocking(spec, telemetry, |update| match update {
-                RunUpdate::Started { run_id } => {
-                    use database::schema::RecordIdExt;
-                    let _ = log_tx2.try_send(ScriptLogEntry::info(
-                        category2.clone(),
-                        &script_name2,
-                        format!("stress_test_run id: {}", run_id.key_string()),
-                    ));
-                }
-                RunUpdate::StageStarted { index, label, stage_count } => {
-                    let _ = log_tx2.try_send(ScriptLogEntry::info(
-                        category2.clone(),
-                        &script_name2,
-                        format!("Stage {}/{}: {label}", index + 1, stage_count),
-                    ));
-                }
-                RunUpdate::Tick { metrics, stage_label, .. } => {
-                    if let Some(err) = metrics.last_error.as_ref() {
-                        let stage = stage_label.unwrap_or_else(|| "gpu".into());
-                        let _ = log_tx2.try_send(ScriptLogEntry::warning(
-                            category2.clone(),
-                            &script_name2,
-                            format!("{stage}: {err}"),
-                        ));
-                    }
-                }
-                RunUpdate::StageFinished { .. } => {}
-                RunUpdate::StageVerdict { label, pass, violations, unevaluated, .. } => {
-                    if !pass {
-                        let _ = log_tx2.try_send(ScriptLogEntry::warning(
-                            category2.clone(),
-                            &script_name2,
-                            format!("Stage {label} FAIL: {}", violations.join("; ")),
-                        ));
-                    }
-                    for gap in &unevaluated {
-                        let _ = log_tx2.try_send(ScriptLogEntry::warning(
-                            category2.clone(),
-                            &script_name2,
-                            format!("Stage {label} ungraded: {gap}"),
-                        ));
-                    }
-                }
-                RunUpdate::Finished(v) => {
-                    let msg = format!(
-                        "GPU probe {} in {:.1}s (run persisted)",
-                        match v.result {
-                            RunResult::Pass => "passed",
-                            RunResult::Fail => "failed",
-                            RunResult::Aborted => "aborted",
-                            RunResult::Inconclusive => "inconclusive",
-                            RunResult::InProgress => "in progress",
-                        },
-                        v.duration_secs
-                    );
-                    let entry = if v.result == RunResult::Pass {
-                        ScriptLogEntry::success(category2.clone(), &script_name2, msg)
-                    } else if v.result == RunResult::Aborted {
-                        ScriptLogEntry::warning(category2.clone(), &script_name2, msg)
-                    } else {
-                        ScriptLogEntry::error(category2.clone(), &script_name2, msg)
-                    };
-                    let _ = log_tx2.try_send(entry);
-                }
-                RunUpdate::Warning { message } => {
-                    let _ = log_tx2.try_send(ScriptLogEntry::warning(
-                        category2.clone(),
-                        &script_name2,
-                        message,
-                    ));
-                }
-                RunUpdate::Error { message } => {
-                    let _ = log_tx2.try_send(ScriptLogEntry::error(
-                        category2.clone(),
-                        &script_name2,
-                        message,
-                    ));
-                }
-            });
-
-            if verdict.is_none() {
-                let _ = log_tx2.try_send(ScriptLogEntry::error(
-                    category2,
-                    &script_name2,
-                    "GPU probe exited without a verdict",
-                ));
-            }
-        });
-    }
-
     /// Scans for user profiles and opens the picker. A failed or empty scan finishes the entry.
     fn execute_data_transfer(&mut self, log_tx: Sender<ScriptLogEntry>) {
         let _ = log_tx.try_send(ScriptLogEntry::info(
@@ -1116,1479 +834,6 @@ impl EguiScriptsTab {
         self.selected_destination = None;
     }
 
-    /// Execute Activate CPS script
-    fn execute_activate_cps(
-        &self,
-        service_number: Option<String>,
-        client: Client,
-        log_tx: Sender<ScriptLogEntry>,
-        _progress_tx: Sender<(String, u64, u64)>,
-        _script_id: String,
-        category: ScriptCategory,
-        script_name: String,
-    ) {
-        if let Some(so_num) = service_number {
-            #[cfg(target_os = "windows")]
-            {
-                
-                // Kill any running SAS processes first
-                if let Ok(processes) = get_running_processes() {
-                    for process in processes {
-                        let name = process.process_name.to_lowercase();
-                        let exe_path = process.exe_path.clone().unwrap_or_default().to_lowercase();
-                        if name.contains("sascore") || exe_path.contains("superanti") || name.contains("superanti") {
-                            let _ = log_tx.try_send(ScriptLogEntry::info(
-                                category.clone(), &script_name,
-                                format!("Killing SAS process (PID: {})", process.id)
-                            ));
-                            let _ = std::process::Command::new("taskkill")
-                                .args(&["/PID", &format!("{}", process.id), "/F"])
-                                .output();
-                        }
-                    }
-                }
-            }
-            
-            // Use the persistent install progress channel from self
-            let install_progress_tx = self.install_progress_tx.clone();
-            let install_progress_tx2 = self.install_progress_tx.clone();
-            
-            tokio::spawn(async move {
-                let _ = log_tx.try_send(ScriptLogEntry::info(
-                    category.clone(), &script_name, "Fetching CPS keys..."
-                ));
-
-                match SendRequest::get_cps(so_num, client.clone()).await {
-                    Ok(keys) if !keys.is_empty() => {
-                        let key = keys.get(0).cloned().unwrap_or_default();
-                        #[allow(unused_mut, unused_variables)]
-                        let mut reboot_recommended = false;
-
-                        // Install Webroot
-                        let _ = log_tx.try_send(ScriptLogEntry::info(
-                            category.clone(), &script_name, "Installing Webroot..."
-                        ));
-
-                        #[cfg(target_os = "windows")]
-                        match install_webroot(key.webroot_key.clone(), client.clone(), install_progress_tx).await {
-                            Ok(outcome) => {
-                                reboot_recommended = outcome.reboot_recommended();
-                                let _ = log_tx.try_send(ScriptLogEntry::success(
-                                    category.clone(), &script_name,
-                                    format!("Webroot licensed and active ({outcome})")
-                                ));
-                            },
-                            Err(e) => {
-                                let _ = log_tx.try_send(ScriptLogEntry::error(
-                                    category.clone(), &script_name, format!("Webroot install failed: {}", e)
-                                ));
-                            }
-                        }
-
-                        // Install SAS
-                        let _ = log_tx.try_send(ScriptLogEntry::info(
-                            category.clone(), &script_name, "Installing SuperAntiSpyware..."
-                        ));
-
-                        #[cfg(target_os = "windows")]
-                        match install_sas(key.superanti_key, client, install_progress_tx2).await {
-                            Ok(proof) => {
-                                let _ = log_tx.try_send(ScriptLogEntry::success(
-                                    category.clone(), &script_name, format!("SuperAntiSpyware installed and activated: {proof}")
-                                ));
-                            },
-                            Err(e) => {
-                                let _ = log_tx.try_send(ScriptLogEntry::error(
-                                    category.clone(), &script_name, format!("SAS install failed: {}", e)
-                                ));
-                            }
-                        }
-
-                        if reboot_recommended {
-                            let _ = log_tx.try_send(ScriptLogEntry::success(
-                                category, &script_name,
-                                format!(
-                                    "{} Webroot was re-keyed over an existing install — reboot to finalize activation",
-                                    displays::scripts::REBOOT_RECOMMENDED_MARKER
-                                ),
-                            ));
-                        }
-                    },
-                    Ok(_) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::warning(
-                            category, &script_name, "No CPS keys found for this service order"
-                        ));
-                    },
-                    Err(e) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::error(
-                            category, &script_name, format!("Failed to fetch keys: {}", e)
-                        ));
-                    }
-                }
-            });
-        } else {
-            let _ = log_tx.try_send(ScriptLogEntry::warning(
-                category, &script_name, "Service number required for CPS activation"
-            ));
-        }
-    }
-
-    /// Execute Activate SEB script
-    fn execute_activate_seb(
-        &self,
-        customer_email: Option<String>,
-        client: Client,
-        log_tx: Sender<ScriptLogEntry>,
-        _progress_tx: Sender<(String, u64, u64)>,
-        _script_id: String,
-        category: ScriptCategory,
-        script_name: String,
-    ) {
-        if let Some(email) = customer_email {
-            #[cfg(target_os = "windows")]
-            {
-                // Use the persistent install progress channel from self
-                let install_progress_tx = self.install_progress_tx.clone();
-                tokio::spawn(async move {
-                    let _ = log_tx.try_send(ScriptLogEntry::info(
-                        category.clone(), &script_name, format!("Installing SuperEasyBackup for {}...", email)
-                    ));
-                    
-                    match install_supereasybackup(email, client, install_progress_tx).await {
-                        Ok(_) => {
-                            let _ = log_tx.try_send(ScriptLogEntry::success(
-                                category, &script_name, "SuperEasyBackup installed successfully"
-                            ));
-                        },
-                        Err(e) => {
-                            let _ = log_tx.try_send(ScriptLogEntry::error(
-                                category, &script_name, format!("SEB install failed: {}", e)
-                            ));
-                        }
-                    }
-                });
-            }
-            
-            #[cfg(not(target_os = "windows"))]
-            let _ = log_tx.try_send(ScriptLogEntry::warning(
-                category, &script_name, "SEB installation only available on Windows"
-            ));
-        } else {
-            let _ = log_tx.try_send(ScriptLogEntry::warning(
-                category, &script_name, "Customer email required for SEB activation"
-            ));
-        }
-    }
-
-    /// Execute Install Windows Updates script
-    fn execute_install_windows_updates(
-        &self,
-        log_tx: Sender<ScriptLogEntry>,
-        category: ScriptCategory,
-        script_name: String,
-    ) {
-        let _ = log_tx.try_send(ScriptLogEntry::info(
-            category.clone(), &script_name, "Starting Windows Updates..."
-        ));
-        
-        #[cfg(target_os = "windows")]
-        {
-            let tx = self.windows_update_tx.clone();
-            std::thread::spawn(move || {
-                let _ = install_windows_updates(tx, true, true);
-            });
-        }
-        
-        #[cfg(not(target_os = "windows"))]
-        let _ = log_tx.try_send(ScriptLogEntry::warning(
-            category, &script_name, "Windows Updates only available on Windows"
-        ));
-    }
-
-    /// Execute Disable Sleep script
-    fn execute_disable_sleep(
-        &self,
-        log_tx: Sender<ScriptLogEntry>,
-        category: ScriptCategory,
-        script_name: String,
-    ) {
-        #[cfg(target_os = "windows")]
-        {
-            let _ = log_tx.try_send(ScriptLogEntry::info(
-                category.clone(), &script_name, "Disabling sleep and hibernation..."
-            ));
-            
-            std::thread::spawn(move || {
-                match disable_hibernation_and_sleep() {
-                    Ok(true) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::success(
-                            category, &script_name, "Sleep/hibernation disabled"
-                        ));
-                    },
-                    Ok(false) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::info(
-                            category, &script_name, "Sleep/hibernation already disabled"
-                        ));
-                    },
-                    Err(e) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::error(
-                            category, &script_name, format!("Failed: {}", e)
-                        ));
-                    }
-                }
-            });
-        }
-        
-        #[cfg(not(target_os = "windows"))]
-        let _ = log_tx.try_send(ScriptLogEntry::warning(
-            category, &script_name, "Sleep/hibernation control only available on Windows"
-        ));
-    }
-
-    /// Execute SuperAntiSpyware Scan
-    fn execute_sas_scan(
-        &self,
-        log_tx: Sender<ScriptLogEntry>,
-        category: ScriptCategory,
-        script_name: String,
-    ) {
-        #[cfg(target_os = "windows")]
-        {
-            std::thread::spawn(move || {
-                let _ = log_tx.try_send(ScriptLogEntry::info(
-                    category.clone(), &script_name, "Starting SuperAntiSpyware quick scan..."
-                ));
-                match crate::utilities::scripts::antivirus::run_sas_quick_scan() {
-                    Ok(messages) => {
-                        for message in messages {
-                            let _ = log_tx.try_send(ScriptLogEntry::info(category.clone(), &script_name, message));
-                        }
-                        let _ = log_tx.try_send(ScriptLogEntry::success(
-                            category, &script_name, "SAS quick scan started"
-                        ));
-                    }
-                    Err(e) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::error(
-                            category, &script_name, format!("SAS scan failed: {e}")
-                        ));
-                    }
-                }
-            });
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        let _ = log_tx.try_send(ScriptLogEntry::warning(
-            category, &script_name, "SAS scan only available on Windows"
-        ));
-    }
-
-    /// Execute Webroot Scan
-    fn execute_webroot_scan(
-        &self,
-        log_tx: Sender<ScriptLogEntry>,
-        category: ScriptCategory,
-        script_name: String,
-    ) {
-        #[cfg(target_os = "windows")]
-        {
-            std::thread::spawn(move || {
-                match crate::utilities::scripts::antivirus::start_webroot_scan() {
-                    Ok(message) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::success(category, &script_name, message));
-                    }
-                    Err(e) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::error(
-                            category, &script_name, format!("Webroot scan failed: {e}")
-                        ));
-                    }
-                }
-            });
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        let _ = log_tx.try_send(ScriptLogEntry::warning(
-            category, &script_name, "Webroot scan only available on Windows"
-        ));
-    }
-
-    /// Execute Install LibreOffice
-    fn execute_install_libreoffice(
-        &self,
-        client: Client,
-        log_tx: Sender<ScriptLogEntry>,
-        _progress_tx: Sender<(String, u64, u64)>,
-        _script_id: String,
-        category: ScriptCategory,
-        script_name: String,
-    ) {
-        let _ = log_tx.try_send(ScriptLogEntry::info(
-            category.clone(), &script_name, "Downloading LibreOffice via Ninite..."
-        ));
-        
-        #[cfg(target_os = "windows")]
-        {
-            // Use the persistent install progress channel from self
-            let install_progress_tx = self.install_progress_tx.clone();
-            tokio::spawn(async move {
-                let download_url = "https://ninite.com/libreoffice/ninite.exe";
-                match install_program(download_url.to_string(), client, install_progress_tx).await {
-                    Ok(_) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::success(
-                            category, &script_name, "LibreOffice installed successfully"
-                        ));
-                    },
-                    Err(e) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::error(
-                            category, &script_name, format!("LibreOffice install failed: {}", e)
-                        ));
-                    }
-                }
-            });
-        }
-        
-        #[cfg(not(target_os = "windows"))]
-        let _ = log_tx.try_send(ScriptLogEntry::warning(
-            category, &script_name, "LibreOffice install only available on Windows"
-        ));
-    }
-
-    /// Execute Disable Notifications
-    fn execute_disable_notifications(
-        &self,
-        log_tx: Sender<ScriptLogEntry>,
-        category: ScriptCategory,
-        script_name: String,
-    ) {
-        #[cfg(target_os = "windows")]
-        {
-            std::thread::spawn(move || {
-                let _ = log_tx.try_send(ScriptLogEntry::info(
-                    category.clone(), &script_name, "Disabling Windows notifications..."
-                ));
-                
-                let mut success_count = 0;
-                let mut error_count = 0;
-                
-                macro_rules! run_reg_fn {
-                    ($fn:expr, $name:expr) => {
-                        match $fn() {
-                            Ok(_) => {
-                                success_count += 1;
-                                let _ = log_tx.try_send(ScriptLogEntry::info(
-                                    category.clone(), &script_name, format!("✓ {}", $name)
-                                ));
-                            },
-                            Err(e) => {
-                                error_count += 1;
-                                let _ = log_tx.try_send(ScriptLogEntry::warning(
-                                    category.clone(), &script_name, format!("✗ {}: {}", $name, e)
-                                ));
-                            }
-                        }
-                    };
-                }
-                
-                run_reg_fn!(disable_notifications, "Push Notifications");
-                run_reg_fn!(disable_lockscreen_notifications, "Lockscreen Notifications");
-                run_reg_fn!(disable_content_delivery_allowed, "Content Delivery");
-                run_reg_fn!(disable_silent_installed_apps_enabled, "Silent App Installs");
-                run_reg_fn!(disable_subscribed_content_enabled, "Subscribed Content");
-                run_reg_fn!(disable_system_pane_suggestions_enabled, "System Pane Suggestions");
-                run_reg_fn!(disable_account_notifications, "Account Notifications");
-                run_reg_fn!(enable_more_pins_layout, "More Pins Layout");
-                run_reg_fn!(disable_start_account_notifications, "Start Account Notifications");
-                run_reg_fn!(disable_recent_items_tracking, "Recent Items Tracking");
-                run_reg_fn!(remove_chat_from_taskbar, "Remove Chat from Taskbar");
-                
-                let _ = log_tx.try_send(ScriptLogEntry::success(
-                    category, &script_name,
-                    format!("Completed: {} succeeded, {} failed", success_count, error_count)
-                ));
-            });
-        }
-        
-        #[cfg(not(target_os = "windows"))]
-        let _ = log_tx.try_send(ScriptLogEntry::warning(
-            category, &script_name, "Notification control only available on Windows"
-        ));
-    }
-
-    /// Execute Disable Startup Apps
-    fn execute_disable_startup_apps(
-        &self,
-        log_tx: Sender<ScriptLogEntry>,
-        category: ScriptCategory,
-        script_name: String,
-    ) {
-                #[cfg(target_os = "windows")]
-                {
-            std::thread::spawn(move || {
-                use crate::utilities::scripts::{disable_hkcu_startup_entries, onedrive_in_use};
-
-                match disable_hkcu_startup_entries("msedge") {
-                    Ok(messages) => for message in messages {
-                        let _ = log_tx.try_send(ScriptLogEntry::info(
-                            category.clone(), &script_name, format!("Edge: {message}")
-                        ));
-                    },
-                    Err(e) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::error(
-                            category.clone(), &script_name, format!("Edge startup: {e}")
-                        ));
-                    }
-                }
-
-                if onedrive_in_use() {
-                    let _ = log_tx.try_send(ScriptLogEntry::info(
-                        category.clone(), &script_name,
-                        "OneDrive has a signed-in account; leaving its startup entry enabled."
-                    ));
-                } else {
-                    match disable_hkcu_startup_entries("onedrive") {
-                        Ok(messages) => for message in messages {
-                            let _ = log_tx.try_send(ScriptLogEntry::info(
-                                category.clone(), &script_name, format!("OneDrive: {message}")
-                            ));
-                        },
-                        Err(e) => {
-                            let _ = log_tx.try_send(ScriptLogEntry::error(
-                                category.clone(), &script_name, format!("OneDrive startup: {e}")
-                            ));
-                        }
-                    }
-                    // Stop the running instance so sign-in prompts end immediately.
-                    use std::os::windows::process::CommandExt;
-                    let _ = std::process::Command::new("taskkill")
-                        .args(["/F", "/IM", "OneDrive.exe"])
-                        .creation_flags(0x08000000)
-                        .output();
-                }
-
-                let _ = log_tx.try_send(ScriptLogEntry::success(
-                    category, &script_name, "Startup apps processed"
-                ));
-            });
-        }
-        
-        #[cfg(not(target_os = "windows"))]
-        let _ = log_tx.try_send(ScriptLogEntry::warning(
-            category, &script_name, "Startup apps control only available on Windows"
-        ));
-    }
-
-    /// Execute Unpin Copilot
-    fn execute_unpin_copilot(
-        &self,
-        log_tx: Sender<ScriptLogEntry>,
-        category: ScriptCategory,
-        script_name: String,
-    ) {
-        #[cfg(target_os = "windows")]
-        {
-            std::thread::spawn(move || {
-                let _ = log_tx.try_send(ScriptLogEntry::info(
-                    category.clone(), &script_name, "Unpinning Copilot from taskbar..."
-                ));
-                
-                match disable_copilot() {
-                    Ok(results) => {
-                        for result in results {
-                            let _ = log_tx.try_send(ScriptLogEntry::info(
-                                category.clone(), &script_name, result
-                            ));
-                        }
-                        let _ = log_tx.try_send(ScriptLogEntry::success(
-                            category, &script_name, "Copilot unpinned successfully"
-                        ));
-                    },
-                    Err(e) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::error(
-                            category, &script_name, format!("Failed to unpin Copilot: {}", e)
-                        ));
-                    }
-                }
-            });
-        }
-        
-        #[cfg(not(target_os = "windows"))]
-        let _ = log_tx.try_send(ScriptLogEntry::warning(
-            category, &script_name, "Copilot control only available on Windows"
-        ));
-    }
-
-    /// Execute Align Taskbar to Left
-    fn execute_align_taskbar(
-        &self,
-        log_tx: Sender<ScriptLogEntry>,
-        category: ScriptCategory,
-        script_name: String,
-    ) {
-        #[cfg(target_os = "windows")]
-        {
-            std::thread::spawn(move || {
-                let _ = log_tx.try_send(ScriptLogEntry::info(
-                    category.clone(), &script_name, "Aligning taskbar to left..."
-                ));
-                
-                match align_taskbar_left() {
-                    Ok(messages) => {
-                        for message in messages {
-                            let _ = log_tx.try_send(ScriptLogEntry::info(
-                                category.clone(), &script_name, message.trim().to_string()
-                            ));
-                        }
-                        let _ = log_tx.try_send(ScriptLogEntry::success(
-                            category, &script_name, "Taskbar aligned to left"
-                        ));
-                    },
-                    Err(e) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::error(
-                            category, &script_name, format!("Failed: {}", e)
-                        ));
-                    }
-                }
-            });
-        }
-        
-        #[cfg(not(target_os = "windows"))]
-        let _ = log_tx.try_send(ScriptLogEntry::warning(
-            category, &script_name, "Taskbar alignment only available on Windows"
-        ));
-    }
-
-    /// Execute an informational script
-    fn execute_informational_script(
-        &self,
-        script: &ScriptItem,
-        _ctx: ScriptContext,
-        log_tx: Sender<ScriptLogEntry>,
-    ) {
-        let script_name = script.name.clone();
-        let category = script.category.clone();
-
-        match script_name.as_str() {
-            "Windows Version" => {
-                let version = sysinfo::System::long_os_version().unwrap_or_default();
-                let _ = log_tx.try_send(ScriptLogEntry::info(
-                    category, &script_name, format!("Windows Version: {}", version)
-                ));
-            },
-            "Is Windows Activated?" => {
-                self.execute_check_windows_activation(log_tx, category, script_name);
-            },
-            "Is SuperEasyBackup installed?" => {
-                self.execute_check_program_installed(log_tx, category, script_name, "supereasybackup");
-            },
-            "Is Webroot installed?" => {
-                self.execute_check_program_installed(log_tx, category, script_name, "webroot");
-            },
-            "Is SuperAntiSpyware installed?" => {
-                self.execute_check_program_installed(log_tx, category, script_name, "superantispyware");
-            },
-            "Are there scheduled tasks for it?" => {
-                self.execute_check_sas_scheduled_tasks(log_tx, category, script_name);
-            },
-            "Is Hibernation/Sleep enabled?" => {
-                self.execute_check_power_settings(log_tx, category, script_name);
-            },
-            "Any Recent Blue Screens?" => {
-                self.execute_bsod_scan(log_tx, category, script_name);
-            },
-            "When Was The Last Service Date?" => {
-                let _ = log_tx.try_send(ScriptLogEntry::warning(
-                    category, &script_name, "Service date check not yet implemented"
-                ));
-            },
-            "Check Updates" => {
-                self.execute_check_updates(log_tx, category, script_name);
-            },
-            "Run Prechecks" => {
-                self.execute_run_prechecks(log_tx, category, script_name);
-            },
-            _ => {
-                let _ = log_tx.try_send(ScriptLogEntry::warning(
-                    category, &script_name, format!("Script '{}' not yet implemented", script_name)
-                ));
-            }
-        }
-    }
-
-    /// Check Windows Activation
-    fn execute_check_windows_activation(
-        &self,
-        log_tx: Sender<ScriptLogEntry>,
-        category: ScriptCategory,
-        script_name: String,
-    ) {
-                #[cfg(target_os = "windows")]
-                {
-            std::thread::spawn(move || {
-                match check_windows_activation() {
-                    Ok(status) => {
-                        if status.license_status == 1 {
-                            let _ = log_tx.try_send(ScriptLogEntry::success(
-                                category, &script_name, "Windows is activated"
-                            ));
-                        } else {
-                            let _ = log_tx.try_send(ScriptLogEntry::warning(
-                                category, &script_name, "Windows is NOT activated"
-                            ));
-                        }
-                    },
-                    Err(e) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::error(
-                            category, &script_name, format!("Check failed: {}", e)
-                        ));
-                    }
-                }
-            });
-        }
-        
-        #[cfg(not(target_os = "windows"))]
-        let _ = log_tx.try_send(ScriptLogEntry::warning(
-            category, &script_name, "Windows activation check only available on Windows"
-        ));
-    }
-
-    /// Check if a program is installed
-    fn execute_check_program_installed(
-        &self,
-        log_tx: Sender<ScriptLogEntry>,
-        category: ScriptCategory,
-        script_name: String,
-        search_term: &str,
-    ) {
-        let search = search_term.to_lowercase();
-        
-        #[cfg(target_os = "windows")]
-        {
-            std::thread::spawn(move || {
-                let _ = log_tx.try_send(ScriptLogEntry::info(
-                    category.clone(), &script_name, format!("Searching for {}...", search)
-                ));
-                
-                if let Ok(programs) = InstalledProgram::get_installed_programs() {
-                    for program in &programs {
-                        let display_name = program.display_name.clone().unwrap_or_default().to_lowercase();
-                        let publisher = program.publisher.clone().unwrap_or_default().to_lowercase();
-                        
-                        if display_name.contains(&search) || publisher.contains(&search) {
-                            let _ = log_tx.try_send(ScriptLogEntry::success(
-                                category.clone(), &script_name, format!("{} Found!", search)
-                            ));
-                            let _ = log_tx.try_send(ScriptLogEntry::info(
-                                category.clone(), &script_name,
-                                format!("  Display Name: {}", program.display_name.clone().unwrap_or_default())
-                            ));
-                            let _ = log_tx.try_send(ScriptLogEntry::info(
-                                category.clone(), &script_name,
-                                format!("  Version: {}", program.display_version.clone().unwrap_or_default())
-                            ));
-                            return;
-                        }
-                    }
-                }
-                
-                // Check antivirus products if not found in installed programs
-                if let Ok(av_products) = AntiVirusProduct::query_installed() {
-                    for product in &av_products {
-                        if product.display_name.to_lowercase().contains(&search) {
-                            let _ = log_tx.try_send(ScriptLogEntry::success(
-                                category.clone(), &script_name,
-                                format!("{} Found (AV): {}", search, product.display_name)
-                            ));
-                            return;
-                        }
-                    }
-                }
-                
-                let _ = log_tx.try_send(ScriptLogEntry::warning(
-                    category, &script_name, format!("{} not installed", search)
-                ));
-            });
-        }
-        
-        #[cfg(not(target_os = "windows"))]
-        let _ = log_tx.try_send(ScriptLogEntry::warning(
-            category, &script_name, "Program check only available on Windows"
-        ));
-    }
-
-    /// Check SAS Scheduled Tasks
-    fn execute_check_sas_scheduled_tasks(
-        &self,
-        log_tx: Sender<ScriptLogEntry>,
-        category: ScriptCategory,
-        script_name: String,
-    ) {
-        #[cfg(target_os = "windows")]
-        {
-            std::thread::spawn(move || {
-                let _ = log_tx.try_send(ScriptLogEntry::info(
-                    category.clone(), &script_name, "Checking scheduled tasks..."
-                ));
-                
-                match ScheduledTask::list_tasks() {
-                    Ok(tasks) => {
-                        let sas_tasks: Vec<_> = tasks.iter()
-                            .filter(|t| t.task_name.clone().unwrap_or_default().contains("SUPERAntiSpyware"))
-                            .collect();
-                        
-                        if !sas_tasks.is_empty() {
-                            let _ = log_tx.try_send(ScriptLogEntry::success(
-                                category.clone(), &script_name,
-                                format!("Found {} SAS scheduled task(s)", sas_tasks.len())
-                            ));
-                            for task in sas_tasks {
-                                let _ = log_tx.try_send(ScriptLogEntry::info(
-                                    category.clone(), &script_name,
-                                    format!("  • {}", task.task_name.clone().unwrap_or_default())
-                                ));
-            }
-        } else {
-                            let _ = log_tx.try_send(ScriptLogEntry::warning(
-                                category, &script_name, "No SAS scheduled tasks found"
-                            ));
-                        }
-                    },
-                    Err(e) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::error(
-                            category, &script_name, format!("Failed to get tasks: {}", e)
-                        ));
-                    }
-                }
-            });
-        }
-        
-        #[cfg(not(target_os = "windows"))]
-        let _ = log_tx.try_send(ScriptLogEntry::warning(
-            category, &script_name, "Scheduled task check only available on Windows"
-        ));
-    }
-
-    /// Check Power Settings
-    /// Provider-scoped BSOD / instability event scan.
-    fn execute_bsod_scan(
-        &self,
-        log_tx: Sender<ScriptLogEntry>,
-        category: ScriptCategory,
-        script_name: String,
-    ) {
-        #[cfg(target_os = "windows")]
-        {
-            use crate::utilities::scripts::bsod_scan::{self, BsodVerdict};
-            std::thread::spawn(move || {
-                match bsod_scan::scan_blocking(bsod_scan::DEFAULT_DAYS) {
-                    Ok(scan) => {
-                        let verdict = scan.verdict();
-                        let mut lines = scan.report_lines();
-                        // Last line is the verdict; it carries the entry's severity.
-                        let summary = lines.pop().unwrap_or_default();
-                        for line in lines {
-                            let _ = log_tx.try_send(ScriptLogEntry::info(
-                                category.clone(), &script_name, line
-                            ));
-                        }
-                        let entry = match verdict {
-                            BsodVerdict::Error => ScriptLogEntry::error(category, &script_name, summary),
-                            BsodVerdict::Warning => ScriptLogEntry::warning(category, &script_name, summary),
-                            BsodVerdict::Clean => ScriptLogEntry::success(category, &script_name, summary),
-                        };
-                        let _ = log_tx.try_send(entry);
-                    }
-                    Err(e) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::error(
-                            category, &script_name, format!("BSOD check failed: {}", e)
-                        ));
-                    }
-                }
-            });
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        let _ = log_tx.try_send(ScriptLogEntry::warning(
-            category, &script_name, "BSOD check only available on Windows"
-        ));
-    }
-
-    fn execute_check_power_settings(
-        &self,
-        log_tx: Sender<ScriptLogEntry>,
-        category: ScriptCategory,
-        script_name: String,
-    ) {
-        #[cfg(target_os = "windows")]
-        {
-            std::thread::spawn(move || {
-                match check_power_options() {
-                    Ok(_) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::success(
-                            category, &script_name, "Sleep/Hibernation is disabled"
-                        ));
-                    },
-                    Err(e) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::warning(
-                            category, &script_name, format!("Power check: {}", e)
-                        ));
-                    }
-                }
-            });
-        }
-        
-        #[cfg(not(target_os = "windows"))]
-        let _ = log_tx.try_send(ScriptLogEntry::warning(
-            category, &script_name, "Power check only available on Windows"
-        ));
-    }
-
-    /// Check for Windows Updates
-    fn execute_check_updates(
-        &self,
-        log_tx: Sender<ScriptLogEntry>,
-        category: ScriptCategory,
-        script_name: String,
-    ) {
-        let _ = log_tx.try_send(ScriptLogEntry::info(
-            category.clone(), &script_name, "Checking for Windows Updates..."
-        ));
-        
-        #[cfg(target_os = "windows")]
-        {
-            let tx = self.windows_update_tx.clone();
-            std::thread::spawn(move || {
-                let _ = install_windows_updates(tx, false, false); // Check only, don't install
-            });
-        }
-        
-        #[cfg(not(target_os = "windows"))]
-        let _ = log_tx.try_send(ScriptLogEntry::warning(
-            category, &script_name, "Windows Updates only available on Windows"
-        ));
-    }
-
-    /// Run all prechecks
-    fn execute_run_prechecks(
-        &self,
-        log_tx: Sender<ScriptLogEntry>,
-        category: ScriptCategory,
-        script_name: String,
-    ) {
-        let _ = log_tx.try_send(ScriptLogEntry::info(
-            category.clone(), &script_name, "Running all prechecks..."
-        ));
-        
-        // Run multiple checks
-        self.execute_check_windows_activation(log_tx.clone(), category.clone(), "Windows Activation".to_string());
-        self.execute_check_program_installed(log_tx.clone(), category.clone(), "Webroot Check".to_string(), "webroot");
-        self.execute_check_program_installed(log_tx.clone(), category.clone(), "SAS Check".to_string(), "superantispyware");
-        self.execute_check_program_installed(log_tx.clone(), category.clone(), "SEB Check".to_string(), "supereasybackup");
-        self.execute_align_taskbar(log_tx.clone(), ScriptCategory::Tuneup, "Taskbar Alignment".to_string());
-    }
-
-    /// Execute a junkware removal script
-    fn execute_junkware_script(
-        &self,
-        script: &ScriptItem,
-        log_tx: Sender<ScriptLogEntry>,
-    ) {
-        let script_name = script.name.clone();
-        let category = script.category.clone();
-
-        match script_name.as_str() {
-            "Uninstall Microsoft 365" => {
-                self.execute_uninstall_microsoft365(log_tx, category, script_name);
-            },
-            "Uninstall OneDrive" => {
-                self.execute_uninstall_onedrive(log_tx, category, script_name);
-            },
-            "Disable OneDrive Startup" => {
-                self.execute_disable_onedrive_startup(log_tx, category, script_name);
-            },
-            "Disable Edge Startup Boost" => {
-                self.execute_disable_edge_startup_boost(log_tx, category, script_name);
-            },
-            "Scan For Browser Hijackers" => {
-                self.execute_browser_hijack(log_tx, category, script_name, false);
-            },
-            "Remove Browser Hijackers" => {
-                self.execute_browser_hijack(log_tx, category, script_name, true);
-            },
-            _ => {
-                self.execute_remove_junkware(log_tx, category, script_name.clone(), &script_name);
-            }
-        }
-    }
-
-    /// Scan for (and optionally clean) browser hijacks.
-    fn execute_browser_hijack(
-        &self,
-        log_tx: Sender<ScriptLogEntry>,
-        category: ScriptCategory,
-        script_name: String,
-        remove: bool,
-    ) {
-        #[cfg(target_os = "windows")]
-        {
-            std::thread::spawn(move || {
-                use crate::utilities::windows::browser_hijack;
-
-                let _ = log_tx.try_send(ScriptLogEntry::info(
-                    category.clone(),
-                    &script_name,
-                    "Checking browser policies, shortcuts, autostart entries and profiles...",
-                ));
-
-                let findings = browser_hijack::scan();
-                for finding in &findings {
-                    let _ = log_tx.try_send(ScriptLogEntry::info(
-                        category.clone(),
-                        &script_name,
-                        finding.line(),
-                    ));
-                }
-
-                if findings.is_empty() {
-                    let _ = log_tx.try_send(ScriptLogEntry::success(
-                        category, &script_name, "No browser hijacks found",
-                    ));
-                    return;
-                }
-
-                if !remove {
-                    let _ = log_tx.try_send(ScriptLogEntry::warning(
-                        category,
-                        &script_name,
-                        format!("{} hijack finding(s) — run Remove Browser Hijackers to clean", findings.len()),
-                    ));
-                    return;
-                }
-
-                for action in browser_hijack::remediate() {
-                    let _ = log_tx.try_send(ScriptLogEntry::info(
-                        category.clone(),
-                        &script_name,
-                        action,
-                    ));
-                }
-
-                let left = browser_hijack::scan();
-                let unresolved = left.iter().filter(|f| f.kind.is_removable()).count();
-                if unresolved > 0 {
-                    let _ = log_tx.try_send(ScriptLogEntry::error(
-                        category,
-                        &script_name,
-                        format!("{unresolved} hijack entr(ies) survived cleanup — check permissions and rerun elevated"),
-                    ));
-                } else if left.is_empty() {
-                    let _ = log_tx.try_send(ScriptLogEntry::success(
-                        category, &script_name, "Browser hijacks removed",
-                    ));
-                } else {
-                    let _ = log_tx.try_send(ScriptLogEntry::warning(
-                        category,
-                        &script_name,
-                        format!("Cleaned; {} profile override(s) still need a manual reset", left.len()),
-                    ));
-                }
-            });
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        let _ = log_tx.try_send(ScriptLogEntry::warning(
-            category, &script_name, "Browser hijack cleanup only available on Windows"
-        ));
-    }
-
-    /// Execute all junkware removal
-    fn execute_all_junkware(&self, log_tx: Sender<ScriptLogEntry>) {
-        let junkware_list = [
-            "OneLaunch", "WebNavigator Browser", "Wave Browser", "Clear Browser",
-            "Shift Browser", "Avast Browser", "Mcaffee Safe", "Driver Support", "Winzip"
-        ];
-        
-        for junkware in junkware_list {
-            self.execute_remove_junkware(
-                log_tx.clone(),
-                ScriptCategory::JunkwareRemoval,
-                junkware.to_string(),
-                junkware
-            );
-        }
-    }
-
-    /// Remove specific junkware
-    fn execute_remove_junkware(
-        &self,
-        log_tx: Sender<ScriptLogEntry>,
-        category: ScriptCategory,
-        script_name: String,
-        junkware_name: &str,
-    ) {
-        let junkware = junkware_name.to_string();
-        
-        #[cfg(target_os = "windows")]
-        {
-            std::thread::spawn(move || {
-                let _ = log_tx.try_send(ScriptLogEntry::info(
-                    category.clone(), &script_name, format!("Searching for {}...", junkware)
-                ));
-                
-                let publisher_match = match junkware.as_str() {
-                    "OneLaunch" => "onelaunch",
-                    "WebNavigator Browser" => "webnavigator",
-                    "Wave Browser" => "wavesor",
-                    "Clear Browser" => "clear browser",
-                    "Shift Browser" => "shift technologies",
-                    "Avast Browser" => "avast",
-                    "Mcaffee Safe" => "mcafee",
-                    "Driver Support" => "driver support",
-                    "Winzip" => "winzip",
-                    _ => &junkware.to_lowercase(),
-                };
-                
-                if let Ok(mut programs) = InstalledProgram::get_installed_programs() {
-                    for program in &mut programs {
-                        if let Some(publisher) = &program.publisher {
-                            let publisher_lower = publisher.to_lowercase();
-                            if publisher_lower.contains(publisher_match) {
-                                let _ = log_tx.try_send(ScriptLogEntry::info(
-                                    category.clone(), &script_name,
-                                    format!("Found {}, attempting uninstall...", junkware)
-                                ));
-                                
-                                match program.uninstall() {
-                                    Ok(_) => {
-                                        let _ = log_tx.try_send(ScriptLogEntry::success(
-                                            category.clone(), &script_name,
-                                            format!("Uninstalled {}", junkware)
-                                        ));
-                                    },
-                                    Err(e) => {
-                                        let _ = log_tx.try_send(ScriptLogEntry::error(
-                                            category.clone(), &script_name,
-                                            format!("Failed to uninstall {}: {}", junkware, e)
-                                        ));
-                                    }
-                                }
-                                return;
-                            }
-                        }
-                    }
-                }
-                
-                let _ = log_tx.try_send(ScriptLogEntry::info(
-                    category, &script_name, format!("{} not found (OK)", junkware)
-                ));
-            });
-        }
-        
-        #[cfg(not(target_os = "windows"))]
-        let _ = log_tx.try_send(ScriptLogEntry::warning(
-            category, &script_name, "Junkware removal only available on Windows"
-        ));
-    }
-
-    /// Execute Change Timezone to Mountain script
-    fn execute_change_timezone(
-        &self,
-        log_tx: Sender<ScriptLogEntry>,
-        category: ScriptCategory,
-        script_name: String,
-    ) {
-        #[cfg(target_os = "windows")]
-        {
-            std::thread::spawn(move || {
-                use powershell_script::PsScriptBuilder;
-                let _ = log_tx.try_send(ScriptLogEntry::info(
-                    category.clone(), &script_name, "Setting timezone to Mountain Standard Time..."
-                ));
-                let ps = PsScriptBuilder::new()
-                    .no_profile(true)
-                    .non_interactive(true)
-                    .hidden(true)
-                    .print_commands(false)
-                    .build();
-                match ps.run("tzutil /s \"Mountain Standard Time\"") {
-                    Ok(_) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::success(
-                            category, &script_name, "Timezone set to Mountain Standard Time"
-                        ));
-                    },
-                    Err(e) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::error(
-                            category, &script_name, format!("Failed to set timezone: {}", e)
-                        ));
-                    }
-                }
-            });
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        let _ = log_tx.try_send(ScriptLogEntry::warning(
-            category, &script_name, "Timezone change only available on Windows"
-        ));
-    }
-
-    /// Execute Disable BitLocker script
-    fn execute_disable_bitlocker(
-        &self,
-        log_tx: Sender<ScriptLogEntry>,
-        category: ScriptCategory,
-        script_name: String,
-    ) {
-        #[cfg(target_os = "windows")]
-        {
-            std::thread::spawn(move || {
-                use powershell_script::PsScriptBuilder;
-                let _ = log_tx.try_send(ScriptLogEntry::info(
-                    category.clone(), &script_name, "Checking BitLocker status on all drives..."
-                ));
-                let ps = PsScriptBuilder::new()
-                    .no_profile(true)
-                    .non_interactive(true)
-                    .hidden(true)
-                    .print_commands(false)
-                    .build();
-                let check_script = r#"
-                    $volumes = Get-BitLockerVolume -ErrorAction SilentlyContinue
-                    if ($volumes) {
-                        $volumes | ForEach-Object {
-                            "$($_.MountPoint): $($_.VolumeStatus) / $($_.ProtectionStatus)"
-                        }
-                    } else {
-                        "BitLocker not available or no encrypted volumes found"
-                    }
-                "#;
-                match ps.run(check_script) {
-                    Ok(output) => {
-                        let stdout = output.stdout().unwrap_or_default();
-                        for line in stdout.lines() {
-                            let _ = log_tx.try_send(ScriptLogEntry::info(
-                                category.clone(), &script_name, line.to_string()
-                            ));
-                        }
-                    },
-                    Err(e) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::warning(
-                            category.clone(), &script_name,
-                            format!("Could not query BitLocker volumes: {}", e)
-                        ));
-                    }
-                }
-
-                let disable_script = r#"
-                    $volumes = Get-BitLockerVolume -ErrorAction SilentlyContinue |
-                        Where-Object { $_.ProtectionStatus -eq 'On' -or $_.VolumeStatus -ne 'FullyDecrypted' }
-                    if ($volumes) {
-                        foreach ($vol in $volumes) {
-                            Disable-BitLocker -MountPoint $vol.MountPoint -ErrorAction SilentlyContinue | Out-Null
-                            "Disabling BitLocker on $($vol.MountPoint)"
-                        }
-                    } else {
-                        "No BitLocker-protected volumes found"
-                    }
-                "#;
-                let ps2 = PsScriptBuilder::new()
-                    .no_profile(true)
-                    .non_interactive(true)
-                    .hidden(true)
-                    .print_commands(false)
-                    .build();
-                match ps2.run(disable_script) {
-                    Ok(output) => {
-                        let stdout = output.stdout().unwrap_or_default();
-                        for line in stdout.lines() {
-                            let _ = log_tx.try_send(ScriptLogEntry::info(
-                                category.clone(), &script_name, line.to_string()
-                            ));
-                        }
-                        let _ = log_tx.try_send(ScriptLogEntry::success(
-                            category, &script_name, "BitLocker disable command completed"
-                        ));
-                    },
-                    Err(e) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::error(
-                            category, &script_name, format!("Failed to disable BitLocker: {}", e)
-                        ));
-                    }
-                }
-            });
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        let _ = log_tx.try_send(ScriptLogEntry::warning(
-            category, &script_name, "BitLocker control only available on Windows"
-        ));
-    }
-
-    /// Execute Uninstall Microsoft 365 script
-    fn execute_uninstall_microsoft365(
-        &self,
-        log_tx: Sender<ScriptLogEntry>,
-        category: ScriptCategory,
-        script_name: String,
-    ) {
-        #[cfg(target_os = "windows")]
-        {
-            std::thread::spawn(move || {
-                use powershell_script::PsScriptBuilder;
-                let _ = log_tx.try_send(ScriptLogEntry::info(
-                    category.clone(), &script_name, "Searching for Microsoft 365 / Office installations..."
-                ));
-                let ps = PsScriptBuilder::new()
-                    .no_profile(true)
-                    .non_interactive(true)
-                    .hidden(true)
-                    .print_commands(false)
-                    .build();
-                let script = r#"
-                    $paths = @(
-                        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
-                        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
-                        "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
-                    )
-                    $office = $paths | ForEach-Object {
-                        if (Test-Path $_) {
-                            Get-ItemProperty $_ -ErrorAction SilentlyContinue |
-                                Where-Object { $_.DisplayName -match "Microsoft 365|Microsoft Office" }
-                        }
-                    }
-                    if ($office) {
-                        foreach ($app in $office) {
-                            if ($app.UninstallString) {
-                                "Found: $($app.DisplayName) — uninstalling..."
-                                $cmd = $app.UninstallString
-                                if ($cmd -match "OfficeClickToRun") {
-                                    & "$env:CommonProgramFiles\Microsoft Shared\ClickToRun\OfficeC2RClient.exe" /update user displaylevel=false forceappshutdown=true updatepromptuser=false
-                                    Start-Sleep -Seconds 2
-                                    & "$env:CommonProgramFiles\Microsoft Shared\ClickToRun\OfficeC2RClient.exe" /uninstall displaylevel=false
-                                } elseif ($cmd -match "MsiExec") {
-                                    $productCode = ([regex]'\{[A-F0-9-]+\}').Match($cmd).Value
-                                    if ($productCode) { msiexec /x $productCode /quiet /norestart }
-                                } else {
-                                    Invoke-Expression "& $cmd /silent /norestart" 2>$null
-                                }
-                            }
-                        }
-                        "Microsoft 365/Office uninstall initiated"
-                    } else {
-                        "Microsoft 365/Office not found"
-                    }
-                "#;
-                match ps.run(script) {
-                    Ok(output) => {
-                        let stdout = output.stdout().unwrap_or_default();
-                        for line in stdout.lines() {
-                            let _ = log_tx.try_send(ScriptLogEntry::info(
-                                category.clone(), &script_name, line.to_string()
-                            ));
-                        }
-                        let _ = log_tx.try_send(ScriptLogEntry::success(
-                            category, &script_name, "Microsoft 365 uninstall script completed"
-                        ));
-                    },
-                    Err(e) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::error(
-                            category, &script_name, format!("Failed: {}", e)
-                        ));
-                    }
-                }
-            });
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        let _ = log_tx.try_send(ScriptLogEntry::warning(
-            category, &script_name, "Microsoft 365 uninstall only available on Windows"
-        ));
-    }
-
-    /// Execute Uninstall OneDrive script
-    fn execute_uninstall_onedrive(
-        &self,
-        log_tx: Sender<ScriptLogEntry>,
-        category: ScriptCategory,
-        script_name: String,
-    ) {
-        #[cfg(target_os = "windows")]
-        {
-            std::thread::spawn(move || {
-                use powershell_script::PsScriptBuilder;
-                let _ = log_tx.try_send(ScriptLogEntry::info(
-                    category.clone(), &script_name, "Uninstalling OneDrive..."
-                ));
-                let ps = PsScriptBuilder::new()
-                    .no_profile(true)
-                    .non_interactive(true)
-                    .hidden(true)
-                    .print_commands(false)
-                    .build();
-                let script = r#"
-                    taskkill /F /IM OneDrive.exe 2>$null
-                    Start-Sleep -Seconds 1
-                    $setup64 = "$env:SystemRoot\SysWOW64\OneDriveSetup.exe"
-                    $setup32 = "$env:SystemRoot\System32\OneDriveSetup.exe"
-                    if (Test-Path $setup64) {
-                        & $setup64 /uninstall
-                        "OneDrive (64-bit) uninstall initiated"
-                    } elseif (Test-Path $setup32) {
-                        & $setup32 /uninstall
-                        "OneDrive (32-bit) uninstall initiated"
-                    } else {
-                        "OneDriveSetup.exe not found, trying winget..."
-                        winget uninstall "Microsoft.OneDrive" --silent --accept-source-agreements 2>$null
-                    }
-                "#;
-                match ps.run(script) {
-                    Ok(output) => {
-                        let stdout = output.stdout().unwrap_or_default();
-                        for line in stdout.lines() {
-                            let _ = log_tx.try_send(ScriptLogEntry::info(
-                                category.clone(), &script_name, line.to_string()
-                            ));
-                        }
-                        let _ = log_tx.try_send(ScriptLogEntry::success(
-                            category, &script_name, "OneDrive uninstall completed"
-                        ));
-                    },
-                    Err(e) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::error(
-                            category, &script_name, format!("Failed: {}", e)
-                        ));
-                    }
-                }
-            });
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        let _ = log_tx.try_send(ScriptLogEntry::warning(
-            category, &script_name, "OneDrive uninstall only available on Windows"
-        ));
-    }
-
-    /// Execute Disable OneDrive Startup script
-    fn execute_disable_onedrive_startup(
-        &self,
-        log_tx: Sender<ScriptLogEntry>,
-        category: ScriptCategory,
-        script_name: String,
-    ) {
-        #[cfg(target_os = "windows")]
-        {
-            std::thread::spawn(move || {
-                use powershell_script::PsScriptBuilder;
-                let _ = log_tx.try_send(ScriptLogEntry::info(
-                    category.clone(), &script_name, "Disabling OneDrive startup..."
-                ));
-                let ps = PsScriptBuilder::new()
-                    .no_profile(true)
-                    .non_interactive(true)
-                    .hidden(true)
-                    .print_commands(false)
-                    .build();
-                let script = r#"
-                    $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-                    if (Get-ItemProperty -Path $runKey -Name "OneDrive" -ErrorAction SilentlyContinue) {
-                        Remove-ItemProperty -Path $runKey -Name "OneDrive" -ErrorAction SilentlyContinue
-                        "Removed OneDrive from HKCU Run key"
-                    } else {
-                        "OneDrive not found in Run key"
-                    }
-                    $odPolicies = "HKLM:\SOFTWARE\Policies\Microsoft\OneDrive"
-                    if (-not (Test-Path $odPolicies)) { New-Item -Path $odPolicies -Force | Out-Null }
-                    Set-ItemProperty -Path $odPolicies -Name "KFMBlockOptIn" -Value 1 -Type DWord
-                    "OneDrive Known Folder Move blocked via policy"
-                    taskkill /F /IM OneDrive.exe 2>$null
-                    "OneDrive process terminated"
-                "#;
-                match ps.run(script) {
-                    Ok(output) => {
-                        let stdout = output.stdout().unwrap_or_default();
-                        for line in stdout.lines() {
-                            let _ = log_tx.try_send(ScriptLogEntry::info(
-                                category.clone(), &script_name, line.to_string()
-                            ));
-                        }
-                        let _ = log_tx.try_send(ScriptLogEntry::success(
-                            category, &script_name, "OneDrive startup disabled"
-                        ));
-                    },
-                    Err(e) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::error(
-                            category, &script_name, format!("Failed: {}", e)
-                        ));
-                    }
-                }
-            });
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        let _ = log_tx.try_send(ScriptLogEntry::warning(
-            category, &script_name, "OneDrive startup control only available on Windows"
-        ));
-    }
-
-    /// Execute Disable Edge Startup Boost script
-    fn execute_disable_edge_startup_boost(
-        &self,
-        log_tx: Sender<ScriptLogEntry>,
-        category: ScriptCategory,
-        script_name: String,
-    ) {
-        #[cfg(target_os = "windows")]
-        {
-            std::thread::spawn(move || {
-                use powershell_script::PsScriptBuilder;
-                let _ = log_tx.try_send(ScriptLogEntry::info(
-                    category.clone(), &script_name, "Disabling Edge startup boost and background running..."
-                ));
-                let ps = PsScriptBuilder::new()
-                    .no_profile(true)
-                    .non_interactive(true)
-                    .hidden(true)
-                    .print_commands(false)
-                    .build();
-                let script = r#"
-                    $edgePolicy = "HKLM:\SOFTWARE\Policies\Microsoft\Edge"
-                    if (-not (Test-Path $edgePolicy)) { New-Item -Path $edgePolicy -Force | Out-Null }
-                    Set-ItemProperty -Path $edgePolicy -Name "StartupBoostEnabled" -Value 0 -Type DWord
-                    "Edge StartupBoost disabled via policy"
-                    Set-ItemProperty -Path $edgePolicy -Name "BackgroundModeEnabled" -Value 0 -Type DWord
-                    "Edge BackgroundMode disabled via policy"
-                    $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-                    if (Get-ItemProperty -Path $runKey -Name "MicrosoftEdge*" -ErrorAction SilentlyContinue) {
-                        Remove-ItemProperty -Path $runKey -Name "MicrosoftEdge*" -ErrorAction SilentlyContinue
-                        "Removed Edge from HKCU Run key"
-                    }
-                    taskkill /F /IM msedge.exe 2>$null
-                    "Edge process terminated"
-                "#;
-                match ps.run(script) {
-                    Ok(output) => {
-                        let stdout = output.stdout().unwrap_or_default();
-                        for line in stdout.lines() {
-                            let _ = log_tx.try_send(ScriptLogEntry::info(
-                                category.clone(), &script_name, line.to_string()
-                            ));
-                        }
-                        let _ = log_tx.try_send(ScriptLogEntry::success(
-                            category, &script_name, "Edge startup boost disabled"
-                        ));
-                    },
-                    Err(e) => {
-                        let _ = log_tx.try_send(ScriptLogEntry::error(
-                            category, &script_name, format!("Failed: {}", e)
-                        ));
-                    }
-                }
-            });
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        let _ = log_tx.try_send(ScriptLogEntry::warning(
-            category, &script_name, "Edge startup boost control only available on Windows"
-        ));
-    }
-
     /// Log helper methods
     fn log_info(&mut self, script: &str, message: impl Into<String>) {        self.state.log(ScriptLogEntry::info(
             ScriptCategory::Custom("System".to_string()),
@@ -2617,40 +862,6 @@ impl EguiScriptsTab {
 // ============================================================================
 // Windows-specific helper functions
 // ============================================================================
-
-#[cfg(target_os = "windows")]
-fn disable_hibernation_and_sleep() -> anyhow::Result<bool> {
-    crate::terminal_mode::tabs::script_categories::disable_hibernation_and_sleep()
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
-pub struct LicenseStatus {
-    #[serde(rename = "Description")]
-    pub description: String,
-    #[serde(rename = "LicenseStatus")]
-    pub license_status: i32,
-}
-
-#[cfg(target_os = "windows")]
-fn check_windows_activation() -> anyhow::Result<LicenseStatus> {
-    use powershell_script::PsScriptBuilder;
-    
-    let script = r#"
-        Get-CimInstance SoftwareLicensingProduct -Filter "Name like 'Windows%'" | 
-        where { $_.PartialProductKey } | select Description, LicenseStatus | ConvertTo-Json
-    "#;
-
-    let output = PsScriptBuilder::new()
-        .no_profile(true)
-        .non_interactive(true)
-        .hidden(false)
-        .print_commands(false)
-        .build()
-        .run(script)?;
-
-    let result: LicenseStatus = serde_json::from_str(&output.stdout().unwrap_or_default())?;
-    Ok(result)
-}
 
 /// Get data transfer candidates (user profiles with sizes)
 #[cfg(target_os = "windows")]
