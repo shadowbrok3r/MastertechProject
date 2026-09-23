@@ -20,7 +20,7 @@ use crossbeam::channel::Receiver;
 
 use super::id::ScriptId;
 use super::{ScriptCategory, ScriptChannels, ScriptLogEntry};
-use crate::scripts::catalog::ScriptDef;
+use crate::scripts::catalog::{ScriptDef, Surface};
 
 /// How a script finished.
 #[derive(Debug, Clone)]
@@ -143,6 +143,8 @@ pub struct ScriptContext {
     pub customer_email: Option<String>,
     /// Session a run links itself to, when one is open.
     pub diagnostic_session_id: Option<String>,
+    /// Where the run was started.
+    pub surface: Option<Surface>,
     pub channels: ScriptChannels,
 }
 

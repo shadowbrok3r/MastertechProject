@@ -14,7 +14,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use displays::scripts::ScriptCategory;
-use displays::scripts::catalog::{CATALOG, ScriptDef};
+use displays::scripts::catalog::{CATALOG, ScriptDef, Surface};
 use displays::scripts::executor::{
     CancelToken, ScriptContext, ScriptExecutor, ScriptHandle, ScriptOutcome, ScriptResult,
 };
@@ -71,24 +71,29 @@ fn run(
     ctx.log_info(
         category.clone(),
         &name,
-        format!("Starting stress script: {name}"),
+        format!("{name}: running via stress-runner (persisted)"),
     );
 
     let client = crate::filesystem::get_client_hash();
     let Some(computer) = client.computer.clone() else {
-        let msg = "no computer identity; cannot start stress run";
+        let msg = "get_client_hash returned no computer record";
         ctx.log_error(category, &name, msg);
         return (ScriptResult::Error(msg.into()), None);
     };
 
     const DURATION_SECS: u64 = 60;
     let Some(mut spec) = build_stress_script_spec(&name, computer, DURATION_SECS) else {
-        let msg = format!("'{name}' is not a runnable stress script here");
+        let msg = format!("Unknown stress script '{name}'");
         ctx.log_warning(category, &name, msg.clone());
         return (ScriptResult::Skipped(msg), None);
     };
 
-    spec.tags.push("origin:scripts".into());
+    let origin = if ctx.surface == Some(Surface::Remote) {
+        "origin:remote_scripts"
+    } else {
+        "origin:scripts"
+    };
+    spec.tags.push(origin.into());
     spec.hostname = std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
         .ok();
@@ -128,76 +133,87 @@ fn run(
             label,
             stage_count,
         } => {
-            ctx.log_info(
-                category.clone(),
-                &name,
-                format!("Stage {}/{stage_count}: {label}", index + 1),
-            );
+            if stage_count > 1 {
+                ctx.log_info(
+                    category.clone(),
+                    &name,
+                    format!("Stage {}/{stage_count}: {label}", index + 1),
+                );
+            }
         }
         RunUpdate::Tick {
             metrics,
             stage_label,
-            throughput_unit,
             ..
         } => {
             if let Some(err) = metrics.last_error.as_ref() {
-                let lane = stage_label.unwrap_or_else(|| "run".into());
-                ctx.log_warning(category.clone(), &name, format!("{lane}: {err}"));
-            } else if let Some(lane) = stage_label {
-                ctx.log_info(
-                    category.clone(),
-                    &name,
-                    format!("{lane}: {:.2} {throughput_unit}", metrics.throughput),
-                );
+                let stage = stage_label.unwrap_or_else(|| "single".into());
+                ctx.log_warning(category.clone(), &name, format!("{stage}: {err}"));
             }
         }
         RunUpdate::StageFinished { .. } => {}
         RunUpdate::StageVerdict {
+            index,
             label,
             pass,
             violations,
             unevaluated,
             ..
         } => {
-            if !pass {
+            let line = format!(
+                "{name} stage {} '{label}': {}",
+                index + 1,
+                stress_runner::stage_verdict_token(pass, &unevaluated)
+            );
+            if pass {
+                ctx.log_info(category.clone(), &name, line);
+            } else {
+                ctx.log_warning(category.clone(), &name, line);
+            }
+            for violation in violations {
                 ctx.log_warning(
                     category.clone(),
                     &name,
-                    format!("Stage {label} FAIL: {}", violations.join("; ")),
+                    format!("{name} stage {} violation: {violation}", index + 1),
                 );
             }
-            for gap in &unevaluated {
+            for gap in unevaluated {
                 ctx.log_warning(
                     category.clone(),
                     &name,
-                    format!("Stage {label} ungraded: {gap}"),
+                    format!("{name} stage {} ungraded: {gap}", index + 1),
                 );
             }
         }
         RunUpdate::Finished(_) => {}
-        RunUpdate::Warning { message } => ctx.log_warning(category.clone(), &name, message),
-        RunUpdate::Error { message } => ctx.log_error(category.clone(), &name, message),
+        RunUpdate::Warning { message } => {
+            ctx.log_warning(
+                category.clone(),
+                &name,
+                format!("{name} warning: {message}"),
+            );
+        }
+        RunUpdate::Error { message } => {
+            ctx.log_error(category.clone(), &name, format!("{name} error: {message}"));
+        }
     });
 
     let run_id = captured_run_id.lock().ok().and_then(|slot| slot.clone());
 
     let Some(v) = verdict else {
-        let msg = "stress run exited without a verdict";
-        ctx.log_error(category, &name, msg);
-        return (ScriptResult::Error(msg.into()), run_id);
+        let msg = format!("{name}: stress-runner exited without a verdict");
+        ctx.log_error(category, &name, msg.clone());
+        return (ScriptResult::Error(msg), run_id);
     };
 
-    let outcome = format!(
-        "{name} {} in {:.1}s (run persisted)",
-        match v.result {
-            RunResult::Pass => "passed",
-            RunResult::Fail => "failed",
-            RunResult::Aborted => "aborted",
-            RunResult::Inconclusive => "inconclusive",
-            RunResult::InProgress => "in progress",
-        },
-        v.duration_secs
-    );
+    let token = match v.result {
+        RunResult::Pass => "PASSED",
+        RunResult::Fail => "FAILED",
+        RunResult::Aborted => "ABORTED",
+        RunResult::Inconclusive => "INCONCLUSIVE",
+        RunResult::InProgress => "IN_PROGRESS",
+    };
+    let outcome = format!("{name} {token} in {:.1}s (run persisted)", v.duration_secs);
 
     let result = match v.result {
         RunResult::Pass => {

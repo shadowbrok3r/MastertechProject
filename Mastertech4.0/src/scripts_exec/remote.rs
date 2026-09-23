@@ -7,14 +7,14 @@
 use std::time::Duration;
 
 use displays::scripts::ScriptCategory;
-use displays::scripts::catalog::{CATALOG, ScriptDef};
+use displays::scripts::catalog::{CATALOG, ScriptDef, Surface};
 use displays::scripts::executor::{CancelToken, ScriptContext, ScriptResult};
 use displays::scripts::{ScriptChannels, ScriptLogEntry};
 
 /// Set to `1` to run every remote script through the original remote code.
 pub const LEGACY_ENV: &str = "MASTERTECH_SCRIPTS_LEGACY_REMOTE";
 
-/// Ids a remote request runs through the shared executors, beyond the junkware family.
+/// Ids a remote request runs through the shared executors, beyond the junkware and stress families.
 const PORTED: &[&str] = &[
     "windows-version",
     "is-windows-activated",
@@ -59,8 +59,11 @@ pub fn ported(name: &str) -> Option<&'static ScriptDef> {
     let def = CATALOG
         .id_for_legacy_name(name)
         .and_then(|id| CATALOG.get(id))?;
-    let listed =
-        PORTED.contains(&def.id.as_str()) || def.category() == ScriptCategory::JunkwareRemoval;
+    let listed = PORTED.contains(&def.id.as_str())
+        || matches!(
+            def.category(),
+            ScriptCategory::JunkwareRemoval | ScriptCategory::StressTests
+        );
     (listed && super::registry().find(&def.id).is_some()).then_some(def)
 }
 
@@ -74,6 +77,7 @@ pub fn context(
         service_number: present(service_number),
         customer_email: present(customer_email),
         diagnostic_session_id: present(diagnostic_session_id),
+        surface: Some(Surface::Remote),
         channels: ScriptChannels::default(),
     }
 }
@@ -87,6 +91,18 @@ pub async fn run(
     cancel: CancelToken,
     log: impl Fn(String) + Send + Sync,
 ) -> RemoteRun {
+    // A remote stress run must link to a service order.
+    if def.category() == ScriptCategory::StressTests && ctx.service_number.is_none() {
+        log(format!(
+            "{}: service_number is required so stress_test_run carries service_order / customer / computer linkage \u{2014} aborting.",
+            def.name
+        ));
+        return RemoteRun {
+            passed: false,
+            reboot_recommended: false,
+        };
+    }
+
     let log_rx = ctx.channels.log_rx.clone();
     let handle = super::registry().spawn(def, &ctx, 0, cancel);
     drop(ctx);
@@ -160,6 +176,12 @@ mod remote_tests {
     #[test]
     fn data_transfer_keeps_its_remote_refusal() {
         assert!(ported("Data Transfer").is_none());
+    }
+
+    #[test]
+    fn stress_is_ported_but_benchmarks_are_not() {
+        assert!(ported(&def("stress-cpu").name).is_some());
+        assert!(ported("Benchmark Suite").is_none());
     }
 
     #[test]
