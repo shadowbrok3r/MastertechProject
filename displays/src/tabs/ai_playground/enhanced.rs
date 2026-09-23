@@ -344,7 +344,7 @@ impl EnhancedAiPlayground {
                     .get(&self.selected_thread)
                     .cloned()
                     .unwrap_or_else(|| "Codex agent".to_string());
-                ui.label(RichText::new(engine).weak().small()).on_hover_text(
+                ui.add(eframe::egui::Label::new(RichText::new(engine).weak().small()).truncate()).on_hover_text(
                     "Every thread runs on the Codex agent (Qwen on the shop pool) through the admin-agent broker.",
                 );
             });

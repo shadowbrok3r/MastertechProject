@@ -95,6 +95,9 @@ fn general_scope(out: &mut String, thread: &AgentThread) {
            which opens a session scoped to it.\n\
          - Prefer a lookup over a guess whenever a question concerns live data, and say which \
            record you read.\n\
+         - Agent sessions are rows in `agent_thread`; one is open while its status is queued, \
+           starting, idle, running or waiting_approval. `connected_client` is the machine \
+           roster, not a list of sessions.\n\
          - Keep replies short and concrete. The technician reads you between jobs.\n\n",
     );
 }

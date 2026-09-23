@@ -16,7 +16,11 @@ const LIVE_QUERY: &str = "LIVE SELECT * FROM assist_request WHERE status = 'pend
 /// behind the request, and the tech's own words, fenced so they cannot read as
 /// instructions. The developer instructions carry the diagnostic playbook.
 pub(super) fn compose_prompt(req: &AssistRequest, driven_by: &str) -> String {
-    let mut out = format!("Check this computer: {}\n", req.connection_string);
+    let mut out = if database::schema::is_general(&req.connection_string) {
+        format!("Records session, no machine in scope: {}\n", req.connection_string)
+    } else {
+        format!("Check this computer: {}\n", req.connection_string)
+    };
     out.push_str(&format!("driven_by: {driven_by}\n"));
     if let Some(by) = &req.requested_by {
         out.push_str(&format!("requested_by: {by}  (the technician, not the customer)\n"));
