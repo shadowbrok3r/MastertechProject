@@ -128,20 +128,23 @@ jobs:
           prefix-key: "v1-mastertech"
           shared-key: "native-${{ matrix.target }}"
 
-      # tar:none/zip:none uploads the raw binary, not an archive. `asset:` names
-      # the built binary to upload; the action appends the platform extension, so
-      # windows uploads `MasterTech.exe`. Without `asset:` the action uploads
-      # nothing and `gh release upload` fails with "requires at least 2 args".
+      - name: Build
+        shell: bash
+        run: >-
+          cargo build --release --bin "${{ matrix.bin }}" --target "${{ matrix.target }}"
+          ${{ matrix.features && format('--features {0}', matrix.features) || '' }}
+
+      # The self-updater wants a `.exe` asset whose name starts with the package
+      # name on Windows and a `-linux` suffix on Linux, so upload as `artifact`.
       - name: Upload Binary to GitHub Release
-        uses: taiki-e/upload-rust-binary-action@v1.27.0
-        with:
-          bin: ${{ matrix.bin }}
-          target: ${{ matrix.target }}
-          features: ${{ matrix.features }}
-          tar: none
-          zip: none
-          asset: target/${{ matrix.target }}/release/${{ matrix.bin }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          src="target/${{ matrix.target }}/release/${{ matrix.bin }}"
+          if [[ "${{ matrix.target }}" == *windows* ]]; then src="${src}.exe"; fi
+          cp "${src}" "${{ matrix.artifact }}"
+          gh release upload "${GITHUB_REF_NAME}" "${{ matrix.artifact }}" --clobber
 
   trunk:
     name: Build WASM frontend (Trunk)
