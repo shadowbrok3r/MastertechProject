@@ -393,6 +393,7 @@ impl EguiScriptsTab {
             },
             customer_email: self.customer_email.clone(),
             diagnostic_session_id: self.mcp_diagnostic_session_id.clone(),
+            surface: Some(Surface::Egui),
             channels: self.channels.clone(),
         }
     }
