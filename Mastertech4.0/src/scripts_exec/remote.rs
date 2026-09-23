@@ -62,10 +62,8 @@ pub fn ported(name: &str) -> Option<&'static ScriptDef> {
         .id_for_legacy_name(name)
         .and_then(|id| CATALOG.get(id))?;
     let listed = PORTED.contains(&def.id.as_str())
-        || matches!(
-            def.category(),
-            ScriptCategory::JunkwareRemoval | ScriptCategory::StressTests
-        );
+        || def.category() == ScriptCategory::JunkwareRemoval
+        || stress_runner::is_stress_script(&def.name);
     (listed && super::registry().find(&def.id).is_some()).then_some(def)
 }
 
