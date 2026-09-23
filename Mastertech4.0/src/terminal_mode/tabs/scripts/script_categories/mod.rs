@@ -1,186 +1,29 @@
 use {
-    crate::terminal_mode::tabs::scripts::{
-        checklist::{Category, TodoItem}, 
-        render::Reporter, ScriptsTab
-    }, 
-    powershell_script::PsScriptBuilder, 
-    serde::Deserialize, 
-    std::path::{Path, PathBuf}, 
-    sysinfo::Disks, 
+    crate::terminal_mode::tabs::scripts::ScriptsTab,
+    displays::scripts::ScriptCategory,
+    powershell_script::PsScriptBuilder,
+    serde::Deserialize,
+    std::path::{Path, PathBuf},
+    sysinfo::Disks,
     walkdir::WalkDir
 };
 
-pub mod informational;
-pub mod tuneup;
-pub mod junkware;
-pub mod prechecks;
-pub mod stress_tests;
-
-// pub trait ScriptTask: Send + 'static {
-//     fn name(&self) -> &'static str;
-//     fn run(&self) -> ScriptOutcome;
-// }
-
-// pub enum ScriptOutcome {
-//     Passed,
-//     Warning(String),
-//     Failed(String),
-//     Error(String),
-// }
-
-impl <'a> ScriptsTab <'a> {
-    pub fn run_selected_scripts(&mut self, rerun: bool) {
-        let selected = if rerun {
-            let scripts = self.scripts_waiting_for_data.clone();
-            if scripts.is_empty() {
-                self.log_message("No scripts selected to run.");
-                return;
-            } else {
-                scripts
-            }
-        } else {
-            let scripts = self.get_selected_scripts();
-
-            self.scripts_waiting_for_data = scripts.iter().filter(|s| {
-                matches!(s.text.as_str(), "Activate Webroot" | "Activate SuperAnti" | "Activate SEB")
-            }).cloned().collect::<Vec<TodoItem>>();
-
-            if scripts.is_empty() {
-                self.log_message("No scripts selected to run.");
-                return;
-            } else {
-                scripts
-            }
-        };
-
-        // Track scripts that report back via checklist_completion_tx; stress tests do not.
-        {
-            let mut batch = self.batch_pending.borrow_mut();
-            for item in &selected {
-                if !matches!(item.category(), Category::StressTests) {
-                    batch.insert(item.text.clone());
-                }
-            }
-        }
-
-        for item in selected {
-            let category = item.category().clone();
-            self.current_script.replace(Some((category.clone(), item.text.clone())));
-            log::info!("Set current script: {:?}", *self.current_script.borrow());
-
-            match category {
-                Category::Tuneup => self.handle_tuneup(item.text.as_str(), &category),
-                Category::Informational => self.handle_informational(item.text.as_str(), &category),
-                Category::JunkwareRemoval => self.handle_junkware_removal(item.text.as_str(), &category),
-                Category::StressTests => self.handle_stress_tests(item.text.as_str(), &category),
-                Category::UserScripts(ref script) => self.handle_custom(&script, item.text.as_str(), &category),
-            }
-
-            self.current_reporter.replace(match category {
-                Category::Tuneup => {
-                    if item.text.as_str() == "Data Transfer" {
-                        Reporter::Robocopy
-                    } else {
-                        Reporter::Tuneup
-                    }
-                },
-                Category::Informational => Reporter::Informational,
-                Category::JunkwareRemoval => Reporter::JunkwareRemoval,
-                Category::StressTests => Reporter::StressTest,
-                Category::UserScripts(_) => Reporter::UserScript,
-            });
-      
-            log::info!("Cleared current script");
-        }
-        self.log_message("All selected scripts completed.");
-        if !rerun {
-            self.clear_selected_scripts();
-        }
-        self.current_script.replace(None);
-    }
-
-
-
-    /// Runs a user script from the SurrealDB bucket via PowerShell.
-    pub fn handle_custom(&mut self, full_path: &str, item_text: &str, category: &Category) {
-        self.current_reporter.replace(Reporter::UserScript);
-        self.log_message(format!("Running custom script '{item_text}'"));
-
-        let bucket = self.filesystem.user.get_user_bucket_name();
-        let path = full_path.to_string();
-        let log_tx = self.script_log_tx.clone();
-        let checklist_tx = self.checklist_completion_tx.clone();
-        let category_clone = category.clone();
-        let item_clone = item_text.to_string();
-
-        tokio::spawn(async move {
-            use database::schema::file_storage;
-
-            let script_content = match file_storage::get_file_as_string(&bucket, &path).await {
-                Ok(Some(content)) => content,
-                Ok(None) => {
-                    let _ = log_tx.try_send(format!("Script not found: {path}"));
-                    let _ = checklist_tx.try_send((category_clone, item_clone, false));
-                    return;
-                }
-                Err(e) => {
-                    let _ = log_tx.try_send(format!("Failed to load script: {e}"));
-                    let _ = checklist_tx.try_send((category_clone, item_clone, false));
-                    return;
-                }
+impl ScriptsTab<'_> {
+    /// Scans user profiles and opens the destination picker.
+    pub fn data_transfer(&mut self, item_text: &str, category: &ScriptCategory) {
+        self.loading = true;
+        self.data_path_buttons.clear();
+        self.log_message("Finding Data transfer candidates");
+        let tx = self.path_size_tx.clone();
+        std::thread::spawn(move || {
+            match get_data_transfer_candidates() {
+                Ok(paths) => { let _ = tx.try_send(paths); },
+                Err(e) => log::error!("Error getting paths: {e:?}"),
             };
-
-            #[cfg(target_os = "windows")]
-            {
-                let result = tokio::task::spawn_blocking(move || {
-                    PsScriptBuilder::new()
-                        .no_profile(true)
-                        .non_interactive(true)
-                        .hidden(true)
-                        .print_commands(false)
-                        .build()
-                        .run(&script_content)
-                })
-                .await;
-
-                match result {
-                    Ok(Ok(output)) => {
-                        if let Some(stdout) = output.stdout() {
-                            let trimmed = stdout.trim();
-                            if !trimmed.is_empty() {
-                                let _ = log_tx.try_send(trimmed.to_string());
-                            }
-                        }
-                        if let Some(stderr) = output.stderr() {
-                            let trimmed = stderr.trim();
-                            if !trimmed.is_empty() {
-                                let _ = log_tx.try_send(format!("stderr: {trimmed}"));
-                            }
-                        }
-                        let success = output.success();
-                        let _ = checklist_tx.try_send((category_clone, item_clone, success));
-                    }
-                    Ok(Err(e)) => {
-                        let _ = log_tx.try_send(format!("Script error: {e}"));
-                        let _ = checklist_tx.try_send((category_clone, item_clone, false));
-                    }
-                    Err(e) => {
-                        let _ = log_tx.try_send(format!("Script task failed: {e}"));
-                        let _ = checklist_tx.try_send((category_clone, item_clone, false));
-                    }
-                }
-            }
-
-            #[cfg(not(target_os = "windows"))]
-            {
-                let _ = log_tx.try_send("User scripts require Windows".into());
-                let _ = checklist_tx.try_send((category_clone, item_clone, false));
-            }
         });
+        self.update_checklist(category.clone(), item_text, true);
     }
 }
-
-
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct LicenseStatus {
