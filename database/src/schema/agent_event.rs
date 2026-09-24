@@ -127,12 +127,12 @@ impl AgentEvent {
         Ok(())
     }
 
-    /// Rows a follower has not seen: everything past `after_seq`, plus rows still
-    /// streaming (`done = false`), whose text changes under the same seq.
+    /// Rows past `after_seq`, rows still streaming, and rows written in the last 15 seconds.
     pub async fn since(thread: &RecordId, after_seq: i64, limit: usize) -> anyhow::Result<Vec<Self>> {
         let mut res = db()
             .query(
-                "SELECT * FROM agent_event WHERE thread = $thread AND (seq > $after OR done = false) \
+                "SELECT * FROM agent_event WHERE thread = $thread \
+                 AND (seq > $after OR done = false OR updated_at > time::now() - 15s) \
                  ORDER BY seq ASC LIMIT $limit",
             )
             .bind(("thread", thread.clone()))
