@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "MasterTech"
-version = "4.8.1"
+version = "4.8.2"
 dependencies = [
  "anyhow",
  "arboard",
@@ -3231,7 +3231,7 @@ dependencies = [
 
 [[package]]
 name = "displays"
-version = "4.8.1"
+version = "4.8.2"
 dependencies = [
  "anyhow",
  "arboard",
