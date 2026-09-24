@@ -6,7 +6,6 @@ use log::info;
 
 impl eframe::App for MtechServer {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        displays::ui_tools::font_atlas_watch::watch(ctx);
         self.receive(frame, ctx);
 
         if let AppState::NoAuth(reason) = &self.shared_ctx.state {
@@ -27,6 +26,7 @@ impl eframe::App for MtechServer {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        displays::ui_tools::font_atlas_watch::watch(ui.ctx());
         ui.options_mut(|options| {
             options.max_passes = std::num::NonZeroUsize::new(2).unwrap();
         });
