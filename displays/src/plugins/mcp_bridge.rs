@@ -300,6 +300,67 @@ async fn customer_display_name(id: &database::schema::RecordId) -> Option<String
         .map(str::to_string)
 }
 
+/// The per-dump objects of a remote triage payload: `data.dumps[]`, else the one-dump payload.
+fn remote_dump_entries(result: &mut serde_json::Value) -> Vec<&mut serde_json::Map<String, serde_json::Value>> {
+    let data = if result.get("data").is_some() { &mut result["data"] } else { result };
+    if data.get("dumps").is_some_and(serde_json::Value::is_array) {
+        return data["dumps"]
+            .as_array_mut()
+            .map(|dumps| dumps.iter_mut().filter_map(serde_json::Value::as_object_mut).collect())
+            .unwrap_or_default();
+    }
+    match data.as_object_mut() {
+        Some(one) if ["dump_name", "triage", "bugcheck_code"].iter().any(|k| one.contains_key(*k)) => vec![one],
+        _ => Vec::new(),
+    }
+}
+
+fn remote_dump_names(result: &mut serde_json::Value) -> Vec<String> {
+    remote_dump_entries(result)
+        .iter()
+        .filter_map(|dump| dump.get("dump_name").and_then(serde_json::Value::as_str))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Sets `already_recorded` on every dump and returns the names of those not recorded before.
+fn mark_recorded(result: &mut serde_json::Value, recorded: &std::collections::HashSet<String>) -> Vec<String> {
+    let mut fresh = Vec::new();
+    for dump in remote_dump_entries(result) {
+        let name = dump.get("dump_name").and_then(serde_json::Value::as_str).map(str::to_string);
+        let seen = name.as_ref().is_some_and(|n| recorded.contains(n));
+        dump.insert("already_recorded".into(), serde_json::json!(seen));
+        if !seen {
+            fresh.push(name.unwrap_or_else(|| "(unnamed dump)".to_string()));
+        }
+    }
+    fresh
+}
+
+/// Which of `names` this client had sighted before `before`, in one read.
+async fn dumps_recorded_before(
+    connection_string: &str,
+    names: &[String],
+    before: &database::schema::Datetime,
+) -> Result<std::collections::HashSet<String>, ErrorData> {
+    if names.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+    let recorded: Vec<String> = database::db()
+        .query(
+            "SELECT VALUE dump_name FROM crash_sighting WHERE connection_string = $cs \
+             AND dump_name IN $names AND created_at < $before",
+        )
+        .bind(("cs", connection_string.to_string()))
+        .bind(("names", names.to_vec()))
+        .bind(("before", before.clone()))
+        .await
+        .map_err(to_internal)?
+        .take(0)
+        .map_err(to_internal)?;
+    Ok(recorded.into_iter().collect())
+}
+
 async fn resolve_entity_links_mcp(
     connection_string: Option<String>,
     customer_id_str: &str,
@@ -7444,7 +7505,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "minidump_analyze",
-        description = "Analyze Windows kernel crash dumps (BSOD) — no cdb/WinDbg needed. Open a diagnostic_session for the client FIRST so the recorded sightings link to it; running this before a session exists records them unlinked (a later create_diagnostic_session / intel_links_reap can claim them). LOCAL (path, no connection_string): parse a .dmp on this admin machine — pass link_connection_string so sightings link and dedup stays on. REMOTE (connection_string): run the CLIENT's built-in parser over ALL its dumps (MEMORY.DMP + Minidump + LiveKernelReports), or a single `path` on the client — no plugin deploy required. Handles triage minidumps plus full/BMP/kernel/live dumps: bugcheck code/name, decoded parameters, crash-time RIP, driver-list blame, and fleet matches (prior verdicts, known-bad drivers). Results ALWAYS auto-log to fleet crash intel (crash_signature/crash_sighting). This is the primary BSOD triage tool; use com.mastertech.dump-decode only for a deep cdb `!analyze` pass or Microsoft FAILURE_BUCKET_ID."
+        description = "Analyze Windows kernel crash dumps (BSOD) — no cdb/WinDbg needed. Open a diagnostic_session for the client FIRST so the recorded sightings link to it; running this before a session exists records them unlinked (a later create_diagnostic_session / intel_links_reap can claim them). LOCAL (path, no connection_string): parse a .dmp on this admin machine — pass link_connection_string so sightings link and dedup stays on. REMOTE (connection_string): run the CLIENT's built-in parser over ALL its dumps (MEMORY.DMP + Minidump + LiveKernelReports), or a single `path` on the client — no plugin deploy required. Handles triage minidumps plus full/BMP/kernel/live dumps: bugcheck code/name, decoded parameters, crash-time RIP, driver-list blame, and fleet matches (prior verdicts, known-bad drivers). Results ALWAYS auto-log to fleet crash intel (crash_signature/crash_sighting). REMOTE results mark every dump `already_recorded` (true when an earlier call already recorded that dump for this client) and give `new_dumps` / `new_dump_names` for the rest: a repeat or scheduled pass should log, verdict or open tasks only for dumps with already_recorded: false. This is the primary BSOD triage tool; use com.mastertech.dump-decode only for a deep cdb `!analyze` pass or Microsoft FAILURE_BUCKET_ID."
     )]
     async fn minidump_analyze(
         &self,
@@ -7456,6 +7517,7 @@ impl PluginToolProvider {
         // own dumps. The result arrives as a RemotePluginToolResult whose
         // receive hook auto-ingests into fleet crash intel.
         if let Some(cs) = p.connection_string.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            let started: database::schema::Datetime = chrono::Utc::now().into();
             let request_id = format!("acd-{}", uuid::Uuid::new_v4());
             let cmd = crate::Cmd::AnalyzeCrashDumps {
                 request_id: request_id.clone(),
@@ -7485,12 +7547,24 @@ impl PluginToolProvider {
                         )))
                     }
                 };
-            let result: serde_json::Value =
+            let mut result: serde_json::Value =
                 serde_json::from_str(&result_json).unwrap_or(serde_json::json!(result_json));
 
             // Fleet enrichment + completeness warnings (parity with LOCAL mode).
             use super::tool_warnings::{attach_warnings, ToolWarning};
             let mut warnings: Vec<ToolWarning> = Vec::new();
+
+            let names = remote_dump_names(&mut result);
+            let new_dumps = match dumps_recorded_before(cs, &names, &started).await {
+                Ok(recorded) => Some(mark_recorded(&mut result, &recorded)),
+                Err(e) => {
+                    warnings.push(ToolWarning::warn(
+                        "recorded_check_failed",
+                        format!("Could not tell new dumps from recorded ones ({}); already_recorded is absent.", e.message),
+                    ));
+                    None
+                }
+            };
             // Same resolution the ingest hook uses: registry pin, then the open
             // session for the connection or its client's computer.
             let open_session =
@@ -7574,6 +7648,8 @@ impl PluginToolProvider {
                     "connection_string": cs,
                     "success": success,
                     "ingested": "auto → crash_signature/crash_sighting",
+                    "new_dumps": new_dumps.as_ref().map(Vec::len),
+                    "new_dump_names": new_dumps,
                     "session_ref": open_session.as_ref().map(|s| s.id.key_string()),
                     "fleet": {
                         "signatures": fleet,
@@ -10729,7 +10805,7 @@ Open the session BEFORE running analyzers so every record links to it (analyzers
   1. remote_channel_health — confirm the client responds.
   2. create_diagnostic_session — FIRST. Auto-resolves the service task and claims any pre-session orphan records. Everything after inherits its session/task link. Pass requested_by (who asked for the work), store (RIV/LTN/MUR/SAN/ORE), and driven_by (schema requires <source>/<name>: 'mcp/desktop' when an operator drives you from Claude Desktop, 'zeroclaw/<alias>' for a zeroclaw agent, 'codex/<alias>' for a Codex agent; a colon is rejected) — outcome reporting segments on them. Pass connection_string and NOTHING else identifying: it resolves customer and computer itself. Never pass customer_id, customer_name or computer_id — requested_by and tech name the TECHNICIAN, not the customer, and reusing either as a customer_id fails link validation with CustomerNotFound. If it reports a link problem anyway, call validate_connection_links with the connection_string alone and report what it says.
   3. driver_snapshot_take {label:'intake'} — baseline the driver inventory.
-  4. minidump_analyze {connection_string} — triage all dumps; sightings auto-link to the open session. The result carries a fleet block (prior verdicts, known-bad hits) and warnings.
+  4. minidump_analyze {connection_string} — triage all dumps; sightings auto-link to the open session. The result carries a fleet block (prior verdicts, known-bad hits) and warnings. Each dump carries already_recorded; a repeat pass acts only on the dumps marked false (new_dump_names).
   5. Escalate to com.mastertech.dump-decode (cdb) only when triage blame is ambiguous.
   6. log_diagnostic_entry as you go — findings, actions, observations, and anything informational live HERE.
   7. crash_verdict_record / known_bad_driver_add — pass session_id or connection_string so the verdict links to the task.
@@ -12408,6 +12484,33 @@ mod broker_tool_tests {
             assert!(parse_script_category(raw).is_some(), "{raw}");
         }
         assert!(parse_script_category("Benchmarks").is_none());
+    }
+
+    #[test]
+    fn remote_dumps_are_marked_by_whether_an_earlier_call_recorded_them() {
+        let mut result = serde_json::json!({ "status": "done", "data": { "dumps": [
+            { "dump_name": "091326-1.dmp", "triage": {} },
+            { "dump_name": "092426-2.dmp", "triage": {} },
+            { "triage": {} },
+        ]}});
+        assert_eq!(remote_dump_names(&mut result), vec!["091326-1.dmp", "092426-2.dmp"]);
+        let recorded: std::collections::HashSet<String> = ["091326-1.dmp".to_string()].into_iter().collect();
+        let fresh = mark_recorded(&mut result, &recorded);
+        assert_eq!(fresh, vec!["092426-2.dmp", "(unnamed dump)"]);
+        let dumps = &result["data"]["dumps"];
+        assert_eq!(dumps[0]["already_recorded"], true);
+        assert_eq!(dumps[1]["already_recorded"], false);
+        assert_eq!(dumps[2]["already_recorded"], false);
+    }
+
+    #[test]
+    fn a_single_dump_payload_is_marked_in_place() {
+        let mut result = serde_json::json!({ "dump_name": "MEMORY.DMP", "bugcheck_code": "0x133" });
+        let recorded: std::collections::HashSet<String> = ["MEMORY.DMP".to_string()].into_iter().collect();
+        assert!(mark_recorded(&mut result, &recorded).is_empty());
+        assert_eq!(result["already_recorded"], true);
+        let mut empty = serde_json::json!({ "status": "done", "data": { "message": "no dumps" } });
+        assert!(mark_recorded(&mut empty, &recorded).is_empty());
     }
 
     #[test]
