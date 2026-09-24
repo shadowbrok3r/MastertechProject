@@ -22,6 +22,7 @@ mod prompt;
 mod runner;
 mod tools;
 mod turns;
+mod wait;
 pub mod zeroclaw;
 
 pub use dispatch::dispatch;
