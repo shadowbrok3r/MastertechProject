@@ -177,9 +177,7 @@ jobs:
       # `ORCHESTRATOR_URL` (prod) and `ORCHESTRATOR_URL_DEV` (dev) to enable.
       ORCHESTRATOR_URL: ${{ secrets.ORCHESTRATOR_URL }}
       ORCHESTRATOR_URL_DEV: ${{ secrets.ORCHESTRATOR_URL_DEV }}
-      # build_hash.rs prefers `git rev-parse`, which works here because
-      # actions/checkout leaves a real repo. This is the explicit belt-and-braces
-      # so the stamp survives even if the checkout ever becomes gitless.
+      # Commit stamp for build_hash.rs when git is unavailable.
       BUILD_GIT_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
@@ -198,28 +196,15 @@ jobs:
       - name: Download and Install Trunk
         run: wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.22.0-beta.1/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf-
 
-      # `--locked` matches the Dockerfile, so this check and the image build
-      # resolve dependencies identically. If this starts failing, Cargo.lock is
-      # stale and needs committing — do not drop the flag.
-      #
-      # This job currently builds the WASM and uploads nothing, while the
-      # `docker` job below builds it again from scratch. Uploading `dist/` here
-      # and having `docker` consume it would remove that duplication and make
-      # the image build near-instant.
+      # `--locked` fails the build when Cargo.lock is stale.
       - name: Build with Trunk
         working-directory: ./MtechServer2.0
         run: ../trunk build --release --locked --config Trunk.toml
 
-      # Same script the Dockerfile's from-source stage runs, so both paths ship
-      # identical bytes.
       - name: Pre-compress dist for nginx gzip_static
         working-directory: ./MtechServer2.0
         run: ../deploy/precompress.sh dist
 
-      # This job used to build the WASM and throw it away while the `docker` job
-      # rebuilt the identical thing from scratch. Publishing it here means the
-      # image build is a copy instead of a ~25 minute compile, and this job's
-      # warm Swatinem cache is what makes it fast.
       - name: Upload dist for the image build
         uses: actions/upload-artifact@v4
         with:
@@ -227,8 +212,7 @@ jobs:
           path: MtechServer2.0/dist
           retention-days: 1
           if-no-files-found: error
-          # Contents are already gzip-compressed; re-zipping them at the default
-          # level burns minutes for no gain.
+          # Contents are already gzipped.
           compression-level: 1
 
   docker:
@@ -241,7 +225,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Built by the `trunk` job above (this job already `needs:` it).
       - name: Download prebuilt dist
         uses: actions/download-artifact@v4
         with:
@@ -263,15 +246,11 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          # Copy the already-built dist rather than compiling in-image. A named
-          # build context is used so `.dockerignore` can keep excluding
-          # `**/dist/` for every other image built from this repo root.
+          # Serves the trunk job's dist; a named context bypasses the `**/dist/` ignore.
           target: prebuilt
           build-contexts: |
             dist=./MtechServer2.0/dist
-          # Only consumed by the from-source `runtime` target, which this job no
-          # longer selects — BUILD_HASH is stamped in the `trunk` job instead.
-          # Kept so a manual switch back to `runtime` still records the commit.
+          # Read only by the from-source `runtime` target.
           build-args: |
             GIT_SHA=${{ github.sha }}
           push: true
