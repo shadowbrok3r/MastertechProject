@@ -117,6 +117,11 @@ impl AgentApproval {
         self.status == "pending"
     }
 
+    /// Whether "approve for this session" applies: a tool call outside [`NEVER_REMEMBER_TOOLS`].
+    pub fn may_approve_for_session(&self) -> bool {
+        self.kind != "question" && !self.tool.as_deref().is_some_and(|t| NEVER_REMEMBER_TOOLS.contains(&t))
+    }
+
     /// Seconds left before this request expires; 0 once it has lapsed or has no deadline.
     pub fn secs_remaining(&self) -> i64 {
         let Some(expires) = self.expires_at.as_ref() else { return 0 };
@@ -265,5 +270,56 @@ impl AgentApproval {
             .bind(("store", store.map(str::to_string)))
             .await?;
         Ok(res.take(0).unwrap_or_default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn approval(kind: &str, tool: Option<&str>) -> AgentApproval {
+        AgentApproval {
+            id: RecordId::new(AGENT_APPROVAL_TABLE, "a"),
+            thread: RecordId::new("agent_thread", "t"),
+            kind: kind.to_string(),
+            method: String::new(),
+            codex_request_id: String::new(),
+            summary: String::new(),
+            server: None,
+            tool: tool.map(str::to_string),
+            arguments: None,
+            params: None,
+            questions: None,
+            answers: None,
+            response_sent: None,
+            status: "pending".to_string(),
+            assignee: None,
+            connection_string: None,
+            store: None,
+            requested_at: None,
+            expires_at: None,
+            decided_at: None,
+            sent_to_codex_at: None,
+            decided_by: None,
+            deny_note: None,
+        }
+    }
+
+    #[test]
+    fn never_remember_tools_offer_no_session_approval() {
+        for tool in NEVER_REMEMBER_TOOLS {
+            assert!(!approval("tool_call", Some(tool)).may_approve_for_session(), "{tool}");
+        }
+    }
+
+    #[test]
+    fn other_tool_calls_offer_session_approval() {
+        assert!(approval("tool_call", Some("desktop_click")).may_approve_for_session());
+        assert!(approval("tool_call", None).may_approve_for_session());
+    }
+
+    #[test]
+    fn questions_offer_no_session_approval() {
+        assert!(!approval("question", Some("request_user_input")).may_approve_for_session());
     }
 }
