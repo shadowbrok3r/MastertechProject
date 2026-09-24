@@ -54,13 +54,18 @@ fn machine_scope(out: &mut String, cfg: &Config, thread: &AgentThread) {
     if let Some(by) = &thread.requested_by {
         out.push_str(&format!("REQUESTED BY: {by} (the technician, not the customer)\n"));
     }
+    let actor = thread
+        .driven_by
+        .as_deref()
+        .map(|by| database::schema::normalize_actor(by, "codex"))
+        .unwrap_or_else(|| cfg.agent_actor());
     out.push_str(&format!(
-        "PROVENANCE: pass driven_by = `{}` whenever you create a diagnostic session, and \
-         diagnosed_by in the same `codex/<name>` form when you mark a diagnosis.\n\n",
-        thread.driven_by.clone().unwrap_or_else(|| cfg.driven_by())
+        "PROVENANCE: pass driven_by = `{actor}` whenever you create a diagnostic session, and \
+         diagnosed_by = `{actor}` when you mark a diagnosis.\n"
     ));
+    out.push_str(&session_call(thread, &actor));
     out.push_str(
-        "HOW THIS SESSION WORKS\n\
+        "\nHOW THIS SESSION WORKS\n\
          - Every tool you have is a MasterTech tool; there is no shell, no file system and no web \
            here. Do not attempt to run commands on this host.\n\
          - Only this one machine is in scope. Pass its connection_string exactly as given; calls \
@@ -73,6 +78,24 @@ fn machine_scope(out: &mut String, cfg: &Config, thread: &AgentThread) {
          - Keep replies short and concrete: symptom, evidence, verdict, next step. The technician \
            reads you between jobs.\n\n",
     );
+}
+
+/// The exact `create_diagnostic_session` arguments for this machine.
+fn session_call(thread: &AgentThread, actor: &str) -> String {
+    let mut args = vec![format!("connection_string `{}`", thread.connection_string)];
+    if let Some(by) = &thread.requested_by {
+        args.push(format!("requested_by `{by}`"));
+    }
+    if let Some(store) = &thread.store {
+        args.push(format!("store `{store}`"));
+    }
+    args.push(format!("driven_by `{actor}`"));
+    format!(
+        "DIAGNOSTIC SESSION: call create_diagnostic_session with {} and nothing else identifying (no \
+         customer_id, computer_id, customer_name, hostname or tech); it resolves the customer and the \
+         computer from the connection_string itself.\n",
+        args.join(", ")
+    )
 }
 
 fn general_scope(out: &mut String, thread: &AgentThread) {

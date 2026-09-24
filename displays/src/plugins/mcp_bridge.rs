@@ -283,6 +283,23 @@ fn optional_record_id(input: &str, table: &'static str) -> Option<database::sche
     (!trimmed.is_empty()).then(|| parse_record_id(trimmed, table))
 }
 
+/// `customer.name` of a resolved customer; `None` when it is blank or unreadable.
+async fn customer_display_name(id: &database::schema::RecordId) -> Option<String> {
+    let rows: Vec<serde_json::Value> = database::db()
+        .query("SELECT name FROM $id")
+        .bind(("id", id.clone()))
+        .await
+        .ok()?
+        .take(0)
+        .ok()?;
+    rows.first()
+        .and_then(|row| row.get("name"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+}
+
 async fn resolve_entity_links_mcp(
     connection_string: Option<String>,
     customer_id_str: &str,
@@ -1437,27 +1454,30 @@ pub struct LinkConnectedClientParams {
 
 #[derive(Deserialize, Debug, Clone, Serialize, JsonSchema)]
 pub struct CreateDiagnosticSessionParams {
-    #[schemars(description = "Web Console connection_string of the client being diagnosed")]
+    #[schemars(description = "Web Console connection_string of the client being diagnosed. The customer, computer and hostname are resolved from it.")]
     pub connection_string: String,
-    #[schemars(description = "Hostname of the machine being diagnosed")]
-    pub hostname: String,
-    #[schemars(description = "REQUIRED. Customer record id — `customer:197987`, bare `197987`, or SurrealQL `customer:`197987`` / `customer:`DESKTOP-HQAF13L:b57a7e8f9`` when copied from query results. Backticks are stripped automatically.")]
-    pub customer_id: String,
-    #[schemars(description = "REQUIRED. Computer record id — canonical `computer:HOSTNAME:hash9`, bare key, or SurrealQL backtick-quoted form from SurrealDB. Backticks are stripped automatically.")]
-    pub computer_id: String,
+    #[schemars(description = "Omit: taken from connection_string.")]
+    #[serde(default)]
+    pub hostname: Option<String>,
+    #[schemars(description = "Omit: resolved from connection_string. Pass one only when validate_connection_links names it for a client whose links are broken.")]
+    #[serde(default)]
+    pub customer_id: Option<String>,
+    #[schemars(description = "Omit: resolved from connection_string. Pass one only when validate_connection_links names it for a client whose links are broken.")]
+    #[serde(default)]
+    pub computer_id: Option<String>,
     #[schemars(description = "Optional task record id (`task:key` or SurrealQL `task:`key``).")]
     pub task_id: Option<String>,
     #[schemars(description = "Optional service order record id (`service_order:key` or SurrealQL quoted form).")]
     pub service_order_id: Option<String>,
-    #[schemars(description = "Customer display name (if known)")]
+    #[schemars(description = "Omit: filled from the resolved customer.")]
     pub customer_name: Option<String>,
-    #[schemars(description = "Technician performing the diagnosis")]
+    #[schemars(description = "Technician doing hands-on work, when one is. Leave unset when an agent drives the session; driven_by records that.")]
     pub tech: Option<String>,
-    #[schemars(description = "Who asked for this diagnostic — a tech's name, or 'customer' for walk-in work. Attribution only; pass it when known.")]
+    #[schemars(description = "Who asked for this diagnostic: the technician's email, or 'customer' for walk-in work.")]
     pub requested_by: Option<String>,
     #[schemars(description = "PCL store code the machine belongs to (RIV, LTN, MUR, SAN, ORE).")]
     pub store: Option<String>,
-    #[schemars(description = "Surface driving this session: 'desktop' for operator-driven Claude Desktop work, or the zeroclaw agent alias ('zeroclaw:diagnostician', 'zeroclaw:sweeper'). Outcome reporting segments on it.")]
+    #[schemars(description = "Who drives this session, as <source>/<name>: 'mcp/desktop' for Claude Desktop, 'zeroclaw/<alias>' for a ZeroClaw agent, 'codex/<alias>' for a Codex agent. A colon is rewritten to a slash. Outcome reporting segments on it.")]
     pub driven_by: Option<String>,
     #[schemars(description = "Initial tags for categorizing this session")]
     #[serde(default, deserialize_with = "deserialize_optional_string_vec")]
@@ -5801,7 +5821,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "create_diagnostic_session",
-        description = "Start a new diagnostic session. Call at the beginning of any diagnostic engagement. customer_id and computer_id are REQUIRED — every diagnostic must belong to a known customer and computer. Resolve them first via find_customer_by_email/phone, get_computer_details, or by following connected_client.computer.customer; if you cannot resolve, ASK THE USER instead of fabricating. EXCEPTION: on a machine flagged as a staff/bench box (computer.is_internal) there is no owner to find — pass customer_id: '' and the session opens against the flagged computer with no customer. Returns a session_id to use with log_diagnostic_entry and close_diagnostic_session."
+        description = "Start a new diagnostic session. Call at the beginning of any diagnostic engagement. Pass connection_string, requested_by, store and driven_by, and nothing else identifying: the customer, computer and hostname are resolved from the connection_string (a staff/bench machine opens with no customer). Never pass a technician's name or email as customer_id. If it reports a link problem, call validate_connection_links with the connection_string alone and report what it says. Returns a session_id to use with log_diagnostic_entry and close_diagnostic_session."
     )]
     async fn create_diagnostic_session(
         &self,
@@ -5828,14 +5848,13 @@ impl PluginToolProvider {
             .await
             .ok()
             .flatten();
+        let customer_arg = p.customer_id.as_deref().unwrap_or_default();
+        let computer_arg = p.computer_id.as_deref().unwrap_or_default();
         let (customer_id, computer_id) = match &staff_computer {
             Some(computer) => {
-                let customer = match optional_record_id(
-                    &p.customer_id,
-                    database::schema::CUSTOMER_TABLE,
-                ) {
+                let customer = match optional_record_id(customer_arg, database::schema::CUSTOMER_TABLE) {
                     Some(_) => database::schema::entity_link::resolve_record_id(
-                        &p.customer_id,
+                        customer_arg,
                         database::schema::CUSTOMER_TABLE,
                     )
                     .await
@@ -5847,18 +5866,30 @@ impl PluginToolProvider {
             None => {
                 let (customer, computer) = resolve_entity_links_mcp(
                     Some(p.connection_string.clone()),
-                    &p.customer_id,
-                    &p.computer_id,
+                    customer_arg,
+                    computer_arg,
                 )
                 .await?;
                 (Some(customer), computer)
             }
         };
+        let hostname = p
+            .hostname
+            .map(|h| h.trim().to_string())
+            .filter(|h| !h.is_empty())
+            .unwrap_or_else(|| p.connection_string.split(':').next().unwrap_or_default().to_string());
+        let customer_name = match p.customer_name.filter(|n| !n.trim().is_empty()) {
+            Some(name) => Some(name),
+            None => match &customer_id {
+                Some(id) => customer_display_name(id).await,
+                None => None,
+            },
+        };
 
         let session = database::schema::DiagnosticSession {
             connection_string: p.connection_string,
-            hostname: p.hostname,
-            customer_name: p.customer_name,
+            hostname,
+            customer_name,
             customer_id,
             computer_id: Some(computer_id),
             task_ref,
@@ -10696,7 +10727,7 @@ pub const INSTRUCTIONS: &str = r#"Mastertech Plugin System MCP (MasterTech deskt
 === Diagnostic Flow (crash/hardware engagements — follow this ORDER) ===
 Open the session BEFORE running analyzers so every record links to it (analyzers that run first are recorded unlinked and only get claimed retroactively).
   1. remote_channel_health — confirm the client responds.
-  2. create_diagnostic_session — FIRST. Auto-resolves the service task and claims any pre-session orphan records. Everything after inherits its session/task link. Pass requested_by (who asked for the work), store (RIV/LTN/MUR/SAN/ORE), and driven_by (schema requires <source>/<name>: 'mcp/desktop' when an operator drives you from Claude Desktop, 'zeroclaw/<alias>' for a zeroclaw agent; a colon is rejected) — outcome reporting segments on them. Pass connection_string and NOTHING else identifying: it resolves customer and computer itself. Never pass customer_id, customer_name or computer_id — requested_by and tech name the TECHNICIAN, not the customer, and reusing either as a customer_id fails link validation with CustomerNotFound. If it reports a link problem anyway, call validate_connection_links with the connection_string alone and report what it says.
+  2. create_diagnostic_session — FIRST. Auto-resolves the service task and claims any pre-session orphan records. Everything after inherits its session/task link. Pass requested_by (who asked for the work), store (RIV/LTN/MUR/SAN/ORE), and driven_by (schema requires <source>/<name>: 'mcp/desktop' when an operator drives you from Claude Desktop, 'zeroclaw/<alias>' for a zeroclaw agent, 'codex/<alias>' for a Codex agent; a colon is rejected) — outcome reporting segments on them. Pass connection_string and NOTHING else identifying: it resolves customer and computer itself. Never pass customer_id, customer_name or computer_id — requested_by and tech name the TECHNICIAN, not the customer, and reusing either as a customer_id fails link validation with CustomerNotFound. If it reports a link problem anyway, call validate_connection_links with the connection_string alone and report what it says.
   3. driver_snapshot_take {label:'intake'} — baseline the driver inventory.
   4. minidump_analyze {connection_string} — triage all dumps; sightings auto-link to the open session. The result carries a fleet block (prior verdicts, known-bad hits) and warnings.
   5. Escalate to com.mastertech.dump-decode (cdb) only when triage blame is ambiguous.
@@ -10910,15 +10941,13 @@ running anything. Common signals to watch for:
 When the Service Context Identification step routes to Diagnostic (or the operator
 explicitly asks for diagnosis):
   1. Complete the Prior-History Lookup above.
-  2. Resolve `customer_id` and `computer_id` BEFORE calling create_diagnostic_session — both are required.
-     - Try connected_client.computer (and computer.customer) first if you have a connection_string.
-     - Fall back to find_customer_by_email / find_customer_by_phone, then get_computer_details.
-     - If you still cannot resolve, ASK THE USER. Never fabricate ids.
-     - Staff/bench machines are the one exception: a machine flagged
-       `computer.is_internal` has no owner. Pass `customer_id: ''` and the session
-       opens against the flagged computer alone. Never invent an owner for one, and
-       never link_connected_client a staff machine to a customer.
-  3. Call create_diagnostic_session with the resolved ids (and optional task_id / service_order_id if a check-in exists).
+  2. Call create_diagnostic_session with connection_string, requested_by, store and driven_by
+     only. It resolves the customer and computer from the connection_string; a staff/bench
+     machine (`computer.is_internal`) opens with no customer. Never invent an owner for one,
+     and never link_connected_client a staff machine to a customer.
+     - If it reports a link problem, call validate_connection_links with the connection_string
+       alone and report what it says. Never fabricate ids.
+  3. Add task_id / service_order_id only when a check-in exists that it did not find itself.
   4. Call log_diagnostic_entry for each finding, action taken, or resolution. Use the
      allowed category vocabulary: finding, action, note, error, system_info,
      network_info, security_alert, performance_note, customer_note, recommendation.
@@ -11285,7 +11314,7 @@ Use query_surrealdb for any ad-hoc read-only data needs (SELECT/RETURN only).
 - fetch_plugin — download WASM from registry into local artifact store for deploy.
 
 === Diagnostic Knowledge Base ===
-- create_diagnostic_session — start logging a diagnostic engagement (REQUIRES customer_id + computer_id).
+- create_diagnostic_session — start logging a diagnostic engagement (connection_string resolves the customer and computer).
 - log_diagnostic_entry — append entries with structured category vocabulary + optional data.
 - close_diagnostic_session — finalize with status and summary.
 - link_diagnostic_to_task — retroactively link a session to an in-house task / service_order.
@@ -12379,5 +12408,16 @@ mod broker_tool_tests {
             assert!(parse_script_category(raw).is_some(), "{raw}");
         }
         assert!(parse_script_category("Benchmarks").is_none());
+    }
+
+    #[test]
+    fn a_session_opens_from_the_connection_string_alone() {
+        let p: CreateDiagnosticSessionParams =
+            serde_json::from_value(serde_json::json!({ "connection_string": "DESKTOP-1:abc" })).expect("parses");
+        assert!(p.customer_id.is_none() && p.computer_id.is_none() && p.hostname.is_none());
+        let schema = serde_json::to_value(schemars::schema_for!(CreateDiagnosticSessionParams)).expect("schema");
+        assert_eq!(schema["required"], serde_json::json!(["connection_string"]));
+        let driven_by = schema["properties"]["driven_by"]["description"].as_str().unwrap_or_default();
+        assert!(driven_by.contains("codex/<alias>") && !driven_by.contains("zeroclaw:"), "{driven_by}");
     }
 }

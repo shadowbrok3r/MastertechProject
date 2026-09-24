@@ -36,7 +36,7 @@ pub async fn start_for_connection(cfg: std::sync::Arc<super::Config>, connection
         }
     };
     let Ok(Some(thread)) = AgentThread::get(&thread_id).await else { return };
-    let mut opening = format!("Check this computer: {connection_string}\ndriven_by: {}\n", cfg.driven_by());
+    let mut opening = format!("Check this computer: {connection_string}\ndriven_by: {}\n", cfg.agent_actor());
     if let Some(by) = requested_by {
         opening.push_str(&format!("requested_by: {by}  (the technician, not the customer)\n"));
     }
@@ -55,7 +55,7 @@ pub async fn dispatch(req: AssistRequest) {
             return;
         }
     }
-    let opening = super::super::assist::compose_prompt(&req, &cfg.driven_by());
+    let opening = super::super::assist::compose_prompt(&req, &cfg.agent_actor());
 
     // One live thread per machine: a second request joins it as a new turn.
     match AgentThread::active_for_connection(&req.connection_string).await {
