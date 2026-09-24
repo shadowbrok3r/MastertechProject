@@ -100,6 +100,11 @@ impl Config {
             provenance_slug(&self.node, false)
         )
     }
+
+    /// `codex/<alias>`, the `<source>/<name>` stamp the diagnostic tools take.
+    pub fn agent_actor(&self) -> String {
+        format!("codex/{}", provenance_slug(&self.agent_alias, false))
+    }
 }
 
 pub use database::schema::{general_connection, is_general};
@@ -261,7 +266,7 @@ async fn queue_pump(cfg: Arc<Config>) {
             // A queued thread never spoke to codex; its opening prompt is rebuilt from the request.
             let opening = match &thread.assist_request {
                 Some(req_id) => match AssistRequest::get(req_id).await {
-                    Ok(Some(req)) => Some(super::assist::compose_prompt(&req, &cfg.driven_by())),
+                    Ok(Some(req)) => Some(super::assist::compose_prompt(&req, &cfg.agent_actor())),
                     _ => None,
                 },
                 None => None,
