@@ -12,11 +12,12 @@ use database::schema::{
     RecordIdExt,
 };
 use serde_json::{json, Value};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use zc_codex_client::{decision, elicitation, Client, Event};
 
 use super::coalesce::{self, Partial, ThreadRow, TranscriptBuffer};
 use super::tools::{scope_violation, ToolHost, ToolOutcome, ToolPolicy};
+use super::wait;
 use super::zeroclaw::{self, ZeroclawMemory};
 use super::{manager, prompt, register_runner, runner_for, unregister_runner, Config};
 
@@ -66,6 +67,12 @@ enum Flow {
     Closed,
 }
 
+/// A `wait` call answered by its own task.
+struct PendingWait {
+    request_id: Value,
+    cancel: oneshot::Sender<String>,
+}
+
 struct Runner {
     cfg: Arc<Config>,
     thread: AgentThread,
@@ -78,6 +85,7 @@ struct Runner {
     completed: HashSet<String>,
     transcript: TranscriptBuffer,
     row: ThreadRow,
+    waits: Vec<PendingWait>,
     turn_no: u32,
     remembered: HashSet<String>,
     /// Set once the first attach succeeds; a later attach is an in-process reconnect.
@@ -133,6 +141,7 @@ impl Runner {
             completed: HashSet::new(),
             transcript: TranscriptBuffer::new(coalesce::ITEM_FLUSH),
             row,
+            waits: Vec::new(),
             turn_no: 0,
             remembered: HashSet::new(),
             attached: false,
@@ -188,9 +197,12 @@ impl Runner {
         super::is_general(&self.thread.connection_string)
     }
 
-    /// Mastertech tools plus the ZeroClaw memory tools when the gateway is configured.
+    /// Mastertech tools, `wait` on a machine session, and the ZeroClaw memory tools when configured.
     fn dynamic_tools(&self, general: bool) -> Vec<Value> {
         let mut specs = self.tools.dynamic_specs(general);
+        if !general {
+            specs.push(wait::tool_spec());
+        }
         if self.memory.is_some() {
             specs.extend(zeroclaw::tool_specs());
         }
@@ -201,6 +213,9 @@ impl Runner {
     fn thread_params(&self) -> Value {
         let general = self.general();
         let mut offered = self.tools.offered(general);
+        if !general {
+            offered.push(wait::TOOL_NAME.to_string());
+        }
         if self.memory.is_some() {
             offered.extend(zeroclaw::TOOL_NAMES.iter().map(|s| s.to_string()));
         }
@@ -327,6 +342,7 @@ impl Runner {
     }
 
     async fn reconnect(&mut self) -> anyhow::Result<mpsc::Receiver<Event>> {
+        self.stop_waits("the connection to the agent host dropped");
         self.flush_all().await;
         self.marker("error", "Connection to the agent host dropped; reconnecting.", None).await;
         let mut delay = Duration::from_secs(2);
@@ -468,13 +484,16 @@ impl Runner {
             Event::Ask { request_id, method, params, .. } => {
                 self.on_ask(request_id, &method, params).await;
             }
-            Event::AskResolved { .. } => {}
+            Event::AskResolved { request_id } => {
+                self.stop_wait(&request_id, "the request was settled elsewhere");
+            }
             Event::TurnStarted { .. } => {
                 self.turn_no += 1;
                 self.marker("turn_started", "", None).await;
                 self.set_status("running").await;
             }
             Event::TurnCompleted { .. } => {
+                self.stop_waits("the turn ended");
                 self.flush_transcript().await;
                 self.transcript.clear();
                 self.marker("turn_completed", "", None).await;
@@ -568,6 +587,50 @@ impl Runner {
         }
     }
 
+    /// Starts a task that runs the `wait` and answers the call itself.
+    async fn start_wait(&mut self, request_id: Value, arguments: &Value) {
+        let spec = match wait::WaitSpec::parse(arguments) {
+            Ok(spec) => spec,
+            Err(e) => {
+                self.respond(&request_id, ToolOutcome::failure(e).response()).await;
+                return;
+            }
+        };
+        if spec.needs_machine() && self.general() {
+            let refusal = ToolOutcome::failure("no machine is in scope in this session; only a plain wait works here".into());
+            self.respond(&request_id, refusal.response()).await;
+            return;
+        }
+        self.waits.retain(|w| !w.cancel.is_closed());
+        let (cancel, cancelled) = oneshot::channel();
+        let observer = wait::SessionTools {
+            tools: self.tools.clone(),
+            connection_string: self.thread.connection_string.clone(),
+        };
+        let client = self.client.clone();
+        let reply_to = request_id.clone();
+        tokio::spawn(async move {
+            let outcome = wait::run(observer, spec, wait::CHECK_EVERY, cancelled).await;
+            if let Err(e) = client.respond(&reply_to, outcome.response()).await {
+                log::warn!("codex: wait reply failed: {e}");
+            }
+        });
+        self.waits.push(PendingWait { request_id, cancel });
+    }
+
+    /// Ends every running wait with `reason`.
+    fn stop_waits(&mut self, reason: &str) {
+        for wait in self.waits.drain(..) {
+            let _ = wait.cancel.send(reason.to_string());
+        }
+    }
+
+    fn stop_wait(&mut self, request_id: &Value, reason: &str) {
+        if let Some(i) = self.waits.iter().position(|w| &w.request_id == request_id) {
+            let _ = self.waits.swap_remove(i).cancel.send(reason.to_string());
+        }
+    }
+
     /// Runs a tool, writing buffered transcript text once it has run for one flush interval.
     async fn call_tool(&mut self, tool: &str, arguments: Value, general: bool) -> ToolOutcome {
         let tools = self.tools.clone();
@@ -584,6 +647,10 @@ impl Runner {
     async fn on_tool_call(&mut self, request_id: Value, params: Value) {
         let tool = params.get("tool").and_then(Value::as_str).unwrap_or("").to_string();
         let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+        if tool == wait::TOOL_NAME {
+            self.start_wait(request_id, &arguments).await;
+            return;
+        }
         if zeroclaw::is_memory_tool(&tool) {
             let outcome = self.memory_tool(&tool, &arguments).await;
             self.respond(&request_id, outcome.response()).await;
@@ -879,6 +946,7 @@ impl Runner {
     async fn on_turn(&mut self, turn: AgentTurn) -> Flow {
         match turn.kind.as_str() {
             "start" | "steer" => {
+                self.stop_waits("the technician sent a message");
                 if let Err(e) = self.send_turn(&turn.kind, &turn.text).await {
                     log::warn!("codex: turn {} failed: {e}", turn.id.key_string());
                     let _ = AgentTurn::mark_failed(&turn.id, &e.to_string()).await;
@@ -887,6 +955,7 @@ impl Runner {
                 Flow::Continue
             }
             "interrupt" => {
+                self.stop_waits("the technician stopped the agent");
                 if let Some(t) = self.codex_thread_id.clone() {
                     if let Err(e) = self.client.turn_interrupt(&t).await {
                         let _ = AgentTurn::mark_failed(&turn.id, &e.to_string()).await;
@@ -896,6 +965,7 @@ impl Runner {
                 Flow::Continue
             }
             "close" => {
+                self.stop_waits("the session was closed");
                 self.remember_session().await;
                 if let Some(t) = self.codex_thread_id.clone() {
                     let _ = self.client.request("thread/unsubscribe", json!({ "threadId": t })).await;

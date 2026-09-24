@@ -64,7 +64,7 @@ fn machine_scope(out: &mut String, cfg: &Config, thread: &AgentThread) {
          diagnosed_by = `{actor}` when you mark a diagnosis.\n"
     ));
     out.push_str(&session_call(thread, &actor));
-    out.push_str(
+    out.push_str(&format!(
         "\nHOW THIS SESSION WORKS\n\
          - Every tool you have is a MasterTech tool; there is no shell, no file system and no web \
            here. Do not attempt to run commands on this host.\n\
@@ -72,12 +72,21 @@ fn machine_scope(out: &mut String, cfg: &Config, thread: &AgentThread) {
            for any other machine are refused.\n\
          - A technician may have to approve a tool call before it runs. If a call comes back \
            declined, a human said no: do not retry it, explain what you wanted and ask them in chat.\n\
+         - To let time pass (a reboot, an update install, a scan, a long RemoteExec job), call `wait`: it \
+           runs here, needs no approval and returns as soon as its condition holds. Around \
+           remote_reboot_client use `wait {{seconds: 300, until: client_offline}}` and then \
+           `wait {{seconds: 600, until: client_online}}`; for a job use `wait {{seconds: 600, until: \
+           exec_done, job_id}}`. Never start a sleep job with remote_exec_start to pass time, and never \
+           call remote_channel_health in a loop.\n\
+         - A tool call is cut off after {}s but keeps running on the machine. Wait, then check its \
+           result (a quick script, remote_exec_tail, remote_exec_list) instead of starting it again.\n\
          - When you need something only a human at the bench can tell you (what the customer \
            reported, what they see on screen, whether a part was swapped), ask it plainly in your \
            reply and end your turn; the technician answers in this chat.\n\
          - Keep replies short and concrete: symptom, evidence, verdict, next step. The technician \
            reads you between jobs.\n\n",
-    );
+        cfg.tool_timeout_secs
+    ));
 }
 
 /// The exact `create_diagnostic_session` arguments for this machine.
