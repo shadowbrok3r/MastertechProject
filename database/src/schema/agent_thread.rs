@@ -16,6 +16,10 @@ pub const AGENT_THREAD_TABLE: &str = "agent_thread";
 pub const AGENT_THREAD_OPEN_STATUSES: [&str; 5] =
     ["queued", "starting", "idle", "running", "waiting_approval"];
 
+/// Threads of the signed-in technician: assigned to them, or asked for with their email.
+const SIGNED_IN_TECH_THREADS: &str =
+    "$auth != NONE AND (assignee = $auth.id OR requested_by = $auth.email)";
+
 /// A token count in thousands, or millions past a million.
 fn compact_tokens(n: i64) -> String {
     match n {
@@ -331,6 +335,24 @@ impl AgentThread {
         };
         let mut res = db().query(sql).bind(("limit", limit)).await?;
         Ok(res.take(0).unwrap_or_default())
+    }
+
+    /// `LIVE SELECT` over the signed-in technician's threads.
+    pub fn live_query_for_signed_in_tech() -> String {
+        format!("LIVE SELECT * FROM agent_thread WHERE {SIGNED_IN_TECH_THREADS}")
+    }
+
+    /// The signed-in technician's threads that are open or changed in the last hour, newest first.
+    pub async fn list_for_signed_in_tech(limit: usize) -> anyhow::Result<Vec<Self>> {
+        let mut res = db()
+            .query(format!(
+                "SELECT * FROM agent_thread WHERE {SIGNED_IN_TECH_THREADS} \
+                 AND (status NOT IN ['closed', 'failed'] OR updated_at > time::now() - 1h) \
+                 ORDER BY updated_at DESC LIMIT $limit"
+            ))
+            .bind(("limit", limit))
+            .await?;
+        Ok(res.take(0)?)
     }
 }
 

@@ -142,6 +142,20 @@ impl AgentEvent {
         Ok(res.take(0).unwrap_or_default())
     }
 
+    /// The newest row of `kind` on a thread.
+    pub async fn latest_of_kind(thread: &RecordId, kind: &str) -> anyhow::Result<Option<Self>> {
+        let mut res = db()
+            .query(
+                "SELECT * FROM agent_event WHERE thread = $thread AND kind = $kind \
+                 ORDER BY seq DESC LIMIT 1",
+            )
+            .bind(("thread", thread.clone()))
+            .bind(("kind", kind.to_string()))
+            .await?;
+        let rows: Vec<Self> = res.take(0)?;
+        Ok(rows.into_iter().next())
+    }
+
     /// Codex item ids already recorded for a thread.
     pub async fn item_ids(thread: &RecordId) -> anyhow::Result<Vec<String>> {
         let mut res = db()
