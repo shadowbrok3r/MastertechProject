@@ -24,6 +24,7 @@ use database::schema::{
     BuildJob, ClientKind, ConnectedClient, RecordId, CONNECTED_CLIENT_TABLE,
 };
 use database::db;
+use tokio::task::JoinSet;
 
 use crate::compile::{compile_one, BuildArtifact, BuildFailure};
 use crate::Config;
@@ -51,11 +52,14 @@ pub async fn run(cfg: Config) -> Result<()> {
     // Drain any pending jobs queued before our LIVE subscription was active.
     drain_pending(&worker_id, &cfg).await;
 
+    // Heartbeat and LIVE subscription, aborted when this run returns.
+    let mut session_tasks: JoinSet<()> = JoinSet::new();
+
     // Spawn the heartbeat task. It owns its own clone of the record id;
     // failures are logged and retried — a missed heartbeat won't crash
     // the worker.
     let hb_worker_id = worker_id.clone();
-    tokio::spawn(async move {
+    session_tasks.spawn(async move {
         loop {
             tokio::time::sleep(HEARTBEAT_INTERVAL).await;
             if let Err(e) = touch_last_update(&hb_worker_id).await {
@@ -76,7 +80,7 @@ pub async fn run(cfg: Config) -> Result<()> {
     // The live subscription itself is async — spawn it so the result-
     // loop below can process events synchronously without blocking the
     // tokio runtime.
-    tokio::spawn(async move {
+    session_tasks.spawn(async move {
         if let Err(e) = database::live_data::listen_data_filtered::<BuildJob>(
             tx, live_query, bindings, None,
         )
