@@ -416,10 +416,8 @@ impl AgentSessions {
             if let Some(m) = &thread.model {
                 ui.label(RichText::new(format!("· {m}")).weak());
             }
-            if let (Some(used), Some(window)) = (thread.tokens_used, thread.tokens_window) {
-                if window > 0 {
-                    ui.label(RichText::new(format!("· context {}%", used * 100 / window)).weak());
-                }
+            if let Some(context) = thread.context_usage() {
+                ui.label(RichText::new(format!("· {context}")).weak());
             }
             if let Some(by) = &thread.requested_by {
                 ui.label(RichText::new(format!("· asked by {by}")).weak());

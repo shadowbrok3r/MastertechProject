@@ -16,6 +16,15 @@ pub const AGENT_THREAD_TABLE: &str = "agent_thread";
 pub const AGENT_THREAD_OPEN_STATUSES: [&str; 5] =
     ["queued", "starting", "idle", "running", "waiting_approval"];
 
+/// A token count in thousands, or millions past a million.
+fn compact_tokens(n: i64) -> String {
+    match n {
+        n if n >= 1_000_000 => format!("{:.1}M", n as f64 / 1_000_000.0),
+        n if n >= 1_000 => format!("{}k", n / 1_000),
+        n => n.to_string(),
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
 pub struct AgentThread {
     pub id: RecordId,
@@ -148,6 +157,18 @@ impl AgentThread {
             (_, Some(sn)) => format!("#{sn} {}", self.hostname.clone().unwrap_or_default()).trim().to_string(),
             _ => self.connection_string.clone(),
         }
+    }
+
+    /// `context 45% · 58k/124k`, once both token counts are known.
+    pub fn context_usage(&self) -> Option<String> {
+        let used = self.tokens_used.filter(|u| *u >= 0)?;
+        let window = self.tokens_window.filter(|w| *w > 0)?;
+        Some(format!(
+            "context {}% \u{00b7} {}/{}",
+            used * 100 / window,
+            compact_tokens(used),
+            compact_tokens(window)
+        ))
     }
 
     /// Inserts a `starting` row; the assignee is the user whose email matches the requester.
@@ -310,5 +331,67 @@ impl AgentThread {
         };
         let mut res = db().query(sql).bind(("limit", limit)).await?;
         Ok(res.take(0).unwrap_or_default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn thread(used: Option<i64>, window: Option<i64>) -> AgentThread {
+        AgentThread {
+            id: RecordId::new(AGENT_THREAD_TABLE, "t"),
+            status: "idle".to_string(),
+            connection_string: String::new(),
+            hostname: None,
+            service_number: None,
+            store: None,
+            requested_by: None,
+            assignee: None,
+            assist_request: None,
+            service_order: None,
+            computer: None,
+            customer: None,
+            diagnostic_session: None,
+            codex_thread_id: None,
+            model: None,
+            provider: None,
+            driven_by: None,
+            tool_path: None,
+            title: None,
+            error: None,
+            broker_node: None,
+            allow_box_shell: false,
+            tokens_used: used,
+            tokens_window: window,
+            last_seq: None,
+            created_at: None,
+            updated_at: None,
+            last_event_at: None,
+            closed_at: None,
+        }
+    }
+
+    #[test]
+    fn context_usage_reads_percent_and_thousands() {
+        assert_eq!(
+            thread(Some(58_000), Some(124_518)).context_usage().as_deref(),
+            Some("context 46% \u{00b7} 58k/124k")
+        );
+    }
+
+    #[test]
+    fn context_usage_keeps_small_and_million_counts_readable() {
+        assert_eq!(
+            thread(Some(640), Some(1_048_576)).context_usage().as_deref(),
+            Some("context 0% \u{00b7} 640/1.0M")
+        );
+    }
+
+    #[test]
+    fn context_usage_needs_both_counts() {
+        assert_eq!(thread(None, Some(124_518)).context_usage(), None);
+        assert_eq!(thread(Some(58_000), None).context_usage(), None);
+        assert_eq!(thread(Some(58_000), Some(0)).context_usage(), None);
     }
 }
