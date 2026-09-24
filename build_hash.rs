@@ -14,10 +14,8 @@
 // ```
 //
 // Hash format: `{git7}{dirty}.{ts6}`
-// - `git7` — `git rev-parse --short=7 HEAD`; falling back to the first 7
-//   chars of `$BUILD_GIT_SHA` when git isn't reachable (Docker builds, where
-//   `.dockerignore` excludes `.git/`); finally `"nogit"` if neither is
-//   available.
+// - `git7` — `git rev-parse --short=7 HEAD`, else the first 7 chars of
+//   `$BUILD_GIT_SHA`, else `"nogit"`.
 // - `dirty` — single `d` if the working tree has uncommitted changes,
 //   empty otherwise. Lets you instantly see "I'm running an
 //   uncommitted local build."
@@ -40,13 +38,7 @@ fn emit_build_hash() {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .filter(|s| !s.is_empty())
         .or_else(|| {
-            // Docker builds cannot reach git: `.dockerignore` excludes `.git/`,
-            // so the command above fails and every image used to stamp itself
-            // `nogit` — leaving no way to trace a running pod to a commit. CI
-            // passes the SHA in as the `GIT_SHA` build arg, which the Dockerfile
-            // exports as BUILD_GIT_SHA. Fully qualified `std::env` on purpose:
-            // this file is `include!`d into build scripts that already
-            // `use std::env;`, and a second import here would not compile.
+            // Commit from CI when git is unavailable, as in Docker builds.
             std::env::var("BUILD_GIT_SHA")
                 .ok()
                 .map(|s| s.trim().to_lowercase())
@@ -83,6 +75,5 @@ fn emit_build_hash() {
     // git-short component stays correct without a manual touch.
     println!("cargo:rerun-if-changed=../.git/HEAD");
     println!("cargo:rerun-if-changed=../.git/index");
-    // Docker/CI builds get the commit through this instead of git.
     println!("cargo:rerun-if-env-changed=BUILD_GIT_SHA");
 }
