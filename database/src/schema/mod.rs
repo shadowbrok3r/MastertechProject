@@ -93,7 +93,7 @@ pub use assist::{AssistRequest, ASSIST_REQUEST_TABLE};
 pub use agent_thread::{general_connection, is_general, AgentThread, NewAgentThread, AGENT_THREAD_OPEN_STATUSES, AGENT_THREAD_TABLE};
 pub use agent_event::{event_key, AgentEvent, AGENT_EVENT_TABLE};
 pub use agent_turn::{AgentTurn, AGENT_TURN_TABLE};
-pub use agent_approval::{AgentApproval, AgentDecideOutcome, NewAgentApproval, AGENT_APPROVAL_TABLE};
+pub use agent_approval::{AgentApproval, AgentDecideOutcome, NewAgentApproval, AGENT_APPROVAL_TABLE, NEVER_REMEMBER_TOOLS};
 pub use waiting_services::WaitingService;
 pub use service_match::*;
 pub use entity_link::*;

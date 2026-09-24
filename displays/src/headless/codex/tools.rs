@@ -6,6 +6,7 @@
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
+use database::schema::NEVER_REMEMBER_TOOLS;
 use rmcp::model::{CallToolRequestParams, CallToolResult, ClientInfo, Implementation, Tool};
 use rmcp::service::RunningService;
 use rmcp::{RoleClient, ServiceExt};
@@ -112,9 +113,6 @@ pub const PROMPT_TOOLS: &[&str] = &[
     "desktop_scroll",
     "desktop_activate_window",
 ];
-
-/// Approving once covers the rest of the thread for these; the others ask every time.
-pub const NEVER_REMEMBER_TOOLS: &[&str] = &["remote_reboot_client", "remote_exec_start"];
 
 fn env_list(key: &str, default: &[&str]) -> Vec<String> {
     match std::env::var(key) {
