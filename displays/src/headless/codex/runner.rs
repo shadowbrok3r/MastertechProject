@@ -40,6 +40,8 @@ const BACKFILL_MAX_PAGES: usize = 20;
 const FLUSH_TICK: Duration = Duration::from_millis(250);
 /// Longest `data:` URL kept verbatim in a stored row.
 const DATA_URL_KEEP: usize = 256;
+/// Idle time after which a runner frees its pool slot; the thread's next turn brings one up again.
+const IDLE_RELEASE: Duration = Duration::from_secs(10 * 60);
 
 /// Starts the thread's runner task and registers its command channel; a thread
 /// that already has a runner gets that runner's channel back instead.
@@ -52,11 +54,12 @@ pub fn spawn(cfg: Arc<Config>, thread: AgentThread, opening: Option<String>) -> 
     if !register_runner(&key, tx.clone()) {
         return runner_for(&key).unwrap_or(tx);
     }
+    let own = tx.clone();
     tokio::spawn(async move {
-        if let Err(e) = Runner::run(cfg, thread, opening, rx).await {
+        if let Err(e) = Runner::run(cfg, thread, opening, rx, own.clone()).await {
             log::warn!("codex: thread {key} ended with error: {e}");
         }
-        unregister_runner(&key);
+        unregister_runner(&key, &own);
     });
     tx
 }
@@ -65,6 +68,8 @@ enum Flow {
     Continue,
     Reconnect,
     Closed,
+    /// Idle past [`IDLE_RELEASE`]: the runner hands its pool slot back.
+    Release,
 }
 
 /// A `wait` call answered by its own task.
@@ -91,6 +96,8 @@ struct Runner {
     /// Set once the first attach succeeds; a later attach is an in-process reconnect.
     attached: bool,
     memory: Option<Arc<ZeroclawMemory>>,
+    /// When the thread last went idle; `None` while a turn is in progress.
+    idle_since: Option<Instant>,
 }
 
 impl Runner {
@@ -99,6 +106,7 @@ impl Runner {
         thread: AgentThread,
         opening: Option<String>,
         mut rx: mpsc::Receiver<RunnerCmd>,
+        own: mpsc::Sender<RunnerCmd>,
     ) -> anyhow::Result<()> {
         let Some(manager) = manager() else {
             AgentThread::set_status(&thread.id, "failed", Some("plugin manager not initialised")).await?;
@@ -145,6 +153,7 @@ impl Runner {
             turn_no: 0,
             remembered: HashSet::new(),
             attached: false,
+            idle_since: None,
         };
         if let Err(e) = me.attach().await {
             me.write_status("failed", Some(&format!("thread start: {e}"))).await?;
@@ -169,12 +178,16 @@ impl Runner {
                 },
                 _ = tick.tick() => {
                     me.flush_due().await;
-                    Flow::Continue
+                    if me.idle_expired() { Flow::Release } else { Flow::Continue }
                 }
             };
             match flow {
                 Flow::Continue => {}
                 Flow::Closed => break,
+                Flow::Release => {
+                    me.release(rx, &own).await;
+                    return Ok(());
+                }
                 Flow::Reconnect => match me.reconnect().await {
                     Ok(new_events) => events = new_events,
                     Err(e) => {
@@ -437,6 +450,10 @@ impl Runner {
 
     /// Writes buffered transcript text, then the status when it changed or carries an error.
     async fn write_status(&mut self, status: &str, error: Option<&str>) -> anyhow::Result<()> {
+        self.idle_since = match status {
+            "idle" => self.idle_since.or_else(|| Some(Instant::now())),
+            _ => None,
+        };
         self.flush_transcript().await;
         let Some(state) = self.row.status(status, error, Instant::now()) else { return Ok(()) };
         let written = AgentThread::save_state(&self.thread.id, &state).await;
@@ -449,6 +466,33 @@ impl Runner {
     async fn set_status(&mut self, status: &str) {
         if let Err(e) = self.write_status(status, None).await {
             log::warn!("codex: status write failed: {e}");
+        }
+    }
+
+    fn idle_expired(&self) -> bool {
+        self.waits.is_empty() && self.idle_since.is_some_and(|t| t.elapsed() >= IDLE_RELEASE)
+    }
+
+    /// Frees the pool slot; a turn that reached this runner first goes to a fresh runner.
+    async fn release(mut self, mut rx: mpsc::Receiver<RunnerCmd>, own: &mpsc::Sender<RunnerCmd>) {
+        let key = self.thread.id.key_string();
+        unregister_runner(&key, own);
+        rx.close();
+        let raced: Vec<RunnerCmd> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        self.flush_all().await;
+        log::info!("codex: released idle runner for thread {key}");
+        if raced.is_empty() {
+            return;
+        }
+        let thread = match AgentThread::get(&self.thread.id).await {
+            Ok(Some(t)) => t,
+            _ => self.thread.clone(),
+        };
+        let tx = spawn(self.cfg.clone(), thread, None);
+        for cmd in raced {
+            if let Err(mpsc::error::SendError(RunnerCmd::Turn(turn))) = tx.send(cmd).await {
+                let _ = AgentTurn::mark_failed(&turn.id, "runner did not accept the turn").await;
+            }
         }
     }
 

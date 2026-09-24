@@ -64,7 +64,7 @@ spec:
         - name: MTECH_CODEX_CWD
           value: "/home/shadowbroker/zc-sessions"
         - name: MTECH_CODEX_MAX_THREADS
-          value: "2"
+          value: "6"
         - name: MTECH_AGENT_NODE
           value: "admin-agent"
         # Transcripts, turns and approvals of closed sessions are purged after this.
