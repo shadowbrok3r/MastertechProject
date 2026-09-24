@@ -162,9 +162,12 @@ pub(super) fn register_runner(thread_key: &str, tx: mpsc::Sender<RunnerCmd>) -> 
     }
 }
 
-pub(super) fn unregister_runner(thread_key: &str) {
+/// Drops the thread's registration when it still belongs to the runner behind `tx`.
+pub(super) fn unregister_runner(thread_key: &str, tx: &mpsc::Sender<RunnerCmd>) {
     if let Ok(mut m) = runners().lock() {
-        m.remove(thread_key);
+        if m.get(thread_key).is_some_and(|held| held.same_channel(tx)) {
+            m.remove(thread_key);
+        }
     }
 }
 
@@ -202,7 +205,7 @@ pub fn spawn_codex_broker(manager: Arc<RwLock<PluginManager>>) {
     tokio::spawn(queue_pump(cfg));
 }
 
-/// Reattaches to every thread that was live when the broker last stopped.
+/// Reattaches to threads that had a turn in progress; an idle thread gets a runner on its next turn.
 async fn resume_open_threads(cfg: Arc<Config>) {
     let threads = match AgentThread::open_threads().await {
         Ok(t) => t,
@@ -212,7 +215,9 @@ async fn resume_open_threads(cfg: Arc<Config>) {
         }
     };
     for thread in threads {
-        if thread.status == "queued" || runner_for(&thread.id.key_string()).is_some() {
+        if !matches!(thread.status.as_str(), "starting" | "running" | "waiting_approval")
+            || runner_for(&thread.id.key_string()).is_some()
+        {
             continue;
         }
         if running_count() >= cfg.max_threads {
