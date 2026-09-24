@@ -44,9 +44,9 @@ pub fn connected_client_live_query(scope: ClientScope, user: &User) -> String {
              (assigned_user.store == $auth.store AND connected == true) \
              OR (client_kind IN ['qc_agent', 'uefi'] AND connected == true)"
             .to_string(),
-        ClientScope::AllClients => {
-            "LIVE SELECT * FROM connected_client WHERE connected == true".to_string()
-        }
+        ClientScope::AllClients => "LIVE SELECT * FROM connected_client WHERE \
+             connected == true AND client_kind != 'build_worker'"
+            .to_string(),
     }
 }
 
