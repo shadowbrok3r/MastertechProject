@@ -23,6 +23,8 @@ pub const DIAGNOSTICIAN_TOOLS: &[&str] = &[
     "get_service_order",
     "search_service_orders",
     "get_customer_details",
+    "search_prestashop_orders",
+    "search_odoo_inventory",
     "remote_channel_health",
     "telemetry_snapshot_remote",
     "minidump_analyze",
@@ -83,6 +85,8 @@ pub const GENERAL_TOOLS: &[&str] = &[
     "get_service_order",
     "search_service_orders",
     "get_customer_details",
+    "search_prestashop_orders",
+    "search_odoo_inventory",
     "crash_intel_search",
     "crash_intel_signature",
     "known_bad_driver_list",
@@ -323,5 +327,23 @@ pub fn scope_violation(arguments: &Value, connection_string: &str) -> Option<Str
         Some(format!(
             "this session is scoped to {connection_string}; a call for {target} was refused"
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_order_and_inventory_searches_are_offered_without_approval_or_machine_scope() {
+        for tool in ["search_prestashop_orders", "search_odoo_inventory"] {
+            assert!(DIAGNOSTICIAN_TOOLS.contains(&tool), "{tool} missing from machine sessions");
+            assert!(GENERAL_TOOLS.contains(&tool), "{tool} missing from general sessions");
+            assert!(!PROMPT_TOOLS.contains(&tool), "{tool} must not need approval");
+        }
+        let args = json!({ "query": "brendt@example.com", "limit": 5 });
+        assert_eq!(scope_violation(&args, "DESKTOP-EOA4FR0:3a1e473a3"), None);
+        assert_eq!(scope_violation(&json!({ "query": "RTX 4070" }), "DESKTOP-EOA4FR0:3a1e473a3"), None);
+        assert!(scope_violation(&json!({ "connection_string": "OTHER:1" }), "DESKTOP-EOA4FR0:3a1e473a3").is_some());
     }
 }
