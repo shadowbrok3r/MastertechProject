@@ -24,6 +24,30 @@ use stress_runner::{RunResult, RunUpdate, build_stress_script_spec, drive_blocki
 
 pub struct StressExecutor;
 
+/// Name of the stress run holding this machine.
+static ACTIVE: Mutex<Option<String>> = Mutex::new(None);
+
+/// The machine's single stress slot, freed on drop.
+struct StressSlot;
+
+impl StressSlot {
+    /// Takes the slot for `name`; `Err` names the run that holds it.
+    fn take(name: &str) -> Result<Self, String> {
+        let mut active = ACTIVE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(running) = active.as_ref() {
+            return Err(running.clone());
+        }
+        *active = Some(name.to_string());
+        Ok(Self)
+    }
+}
+
+impl Drop for StressSlot {
+    fn drop(&mut self) {
+        *ACTIVE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+}
+
 impl ScriptExecutor for StressExecutor {
     fn handles(&self, id: &ScriptId) -> bool {
         CATALOG.get(id).is_some_and(|def| {
@@ -68,6 +92,16 @@ fn run(
 ) -> (ScriptResult, Option<String>) {
     let category = def.category();
     let name = def.name.clone();
+    let _slot = match StressSlot::take(&name) {
+        Ok(slot) => slot,
+        Err(running) => {
+            let msg = format!(
+                "{name} not started: '{running}' is still running on this machine, which runs one stress script at a time"
+            );
+            ctx.log_error(category, &name, msg.clone());
+            return (ScriptResult::Error(msg), None);
+        }
+    };
     ctx.log_info(
         category.clone(),
         &name,

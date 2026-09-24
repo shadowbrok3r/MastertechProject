@@ -2186,18 +2186,28 @@ pub struct ScriptsRunStressSuiteRemoteParams {
     )]
     pub skip: Option<Vec<String>>,
     #[schemars(
-        description = "Per-script timeout override in seconds. When omitted, QC Benchmark uses 900s and all other stress scripts use 300s."
+        description = "Per-script timeout override in seconds. When omitted, each script gets its catalog budget (its planned run plus margin)."
     )]
     #[serde(default, deserialize_with = "deserialize_lenient_u64")]
     pub timeout_secs: Option<u64>,
+    #[schemars(
+        description = "Also run the four certifications (Cert: Bronze/Silver/Gold/Platinum, 1.5 to 7+ hours each). Default false; for one certification call scripts_run_remote instead."
+    )]
+    #[serde(default)]
+    pub include_certs: Option<bool>,
 }
 
-fn stress_suite_script_names(skip: &[String]) -> Vec<String> {
+/// True for the certification presets, which run for hours.
+fn is_cert_script(name: &str) -> bool {
+    name.starts_with("Cert: ")
+}
+
+fn stress_suite_script_names(skip: &[String], include_certs: bool) -> Vec<String> {
     let skip_set: std::collections::HashSet<&str> =
         skip.iter().map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
     let mut names: Vec<String> = stress_runner::STRESS_SCRIPT_NAMES
         .iter()
-        .filter(|n| !skip_set.contains(*n))
+        .filter(|n| !skip_set.contains(*n) && (include_certs || !is_cert_script(n)))
         .map(|n| (*n).to_string())
         .collect();
     if !skip_set.contains("QC Benchmark") {
@@ -2211,15 +2221,9 @@ fn stress_suite_script_names(skip: &[String]) -> Vec<String> {
     names
 }
 
+/// The caller's override, else the script's catalog budget.
 fn default_stress_script_timeout_secs(script_name: &str, override_secs: Option<u64>) -> u64 {
-    if let Some(t) = override_secs {
-        return t;
-    }
-    if script_name == "QC Benchmark" {
-        900
-    } else {
-        300
-    }
+    override_secs.unwrap_or_else(|| crate::scripts::default_remote_script_timeout_secs(script_name))
 }
 
 /// Outcome of awaiting a remote script/stress completion frame.
@@ -2401,6 +2405,17 @@ fn script_line(def: &crate::scripts::catalog::ScriptDef, detail: bool) -> String
     line
 }
 
+/// Refuses a stress run while another on the same machine is still inside its budget.
+fn refuse_if_stress_busy(connection_string: &str) -> Result<(), ErrorData> {
+    match super::remote_script_notify::stress_busy(connection_string) {
+        Some((running, secs_left)) => Err(to_internal(format!(
+            "Stress script '{running}' is still running on {connection_string}, for up to {} more minutes of its budget; \n             a machine runs one stress script at a time. Follow it in stress_test_run instead of starting another.",
+            secs_left.div_ceil(60)
+        ))),
+        None => Ok(()),
+    }
+}
+
 async fn execute_one_remote_script(
     p: ScriptsRunRemoteParams,
 ) -> Result<serde_json::Value, ErrorData> {
@@ -2419,11 +2434,15 @@ async fn execute_one_remote_script(
         }
     };
 
-    if stress_runner::is_stress_script(&p.script_name) && service_number.trim().is_empty() {
+    let stress = stress_runner::is_stress_script(&p.script_name);
+    if stress && service_number.trim().is_empty() {
         return Err(to_internal(format!(
             "service_number is required for StressTests scripts (so stress_test_run carries service_order / customer / computer linkage). Pass service_number with script '{}'.",
             p.script_name
         )));
+    }
+    if stress {
+        refuse_if_stress_busy(&p.connection_string)?;
     }
 
     let cmd = Cmd::RunRemoteScripts {
@@ -2467,19 +2486,31 @@ async fn execute_one_remote_script(
     super::remote_egui_control::hub()
         .send_raw_binary(&p.connection_string, serialized)
         .map_err(to_internal)?;
+    if stress {
+        super::remote_script_notify::mark_stress_busy(
+            &p.connection_string,
+            &p.script_name,
+            std::time::Duration::from_secs(crate::scripts::default_remote_script_timeout_secs(&p.script_name)),
+        );
+    }
 
     let timeout = std::time::Duration::from_secs(p.timeout_secs.unwrap_or_else(|| {
         crate::scripts::default_remote_script_timeout_secs(&p.script_name)
     }));
     let probe_db = super::stress_test_verify::is_persisted_stress_script(&p.script_name);
     let session = match await_remote_script_completion(&p.connection_string, rx, timeout, probe_db).await {
-        RemoteScriptWait::Session(s) => s,
+        RemoteScriptWait::Session(s) => {
+            super::remote_script_notify::clear_stress_busy(&p.connection_string);
+            s
+        }
         RemoteScriptWait::ChannelClosed => {
             let _ = super::remote_script_notify::REMOTE_SCRIPT_PENDING.lock().map(|mut g| g.remove(&p.connection_string));
+            super::remote_script_notify::clear_stress_busy(&p.connection_string);
             return Err(to_internal("Remote script channel closed unexpectedly"));
         }
         RemoteScriptWait::DbTerminal { run_id, result } => {
             let _ = super::remote_script_notify::REMOTE_SCRIPT_PENDING.lock().map(|mut g| g.remove(&p.connection_string));
+            super::remote_script_notify::clear_stress_busy(&p.connection_string);
             let partial_logs = super::remote_script_notify::REMOTE_SCRIPT_ACCUM
                 .lock()
                 .ok()
@@ -2685,6 +2716,7 @@ async fn execute_remote_stress_plan(
             "service_number is required (stress_test_run.service_order linkage).",
         ));
     }
+    refuse_if_stress_busy(&connection_string)?;
     let serialized = bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
         .map_err(|e| to_internal(format!("bincode serialize: {e}")))?;
 
@@ -2716,19 +2748,25 @@ async fn execute_remote_stress_plan(
         .map_err(to_internal)?;
 
     let timeout = std::time::Duration::from_secs(budget_secs + 300);
+    super::remote_script_notify::mark_stress_busy(&connection_string, result_name, timeout);
     let session = match await_remote_script_completion(&connection_string, rx, timeout, true).await
     {
-        RemoteScriptWait::Session(s) => s,
+        RemoteScriptWait::Session(s) => {
+            super::remote_script_notify::clear_stress_busy(&connection_string);
+            s
+        }
         RemoteScriptWait::ChannelClosed => {
             let _ = super::remote_script_notify::REMOTE_SCRIPT_PENDING
                 .lock()
                 .map(|mut g| g.remove(&connection_string));
+            super::remote_script_notify::clear_stress_busy(&connection_string);
             return Err(to_internal("Remote stress channel closed unexpectedly"));
         }
         RemoteScriptWait::DbTerminal { run_id, result } => {
             let _ = super::remote_script_notify::REMOTE_SCRIPT_PENDING
                 .lock()
                 .map(|mut g| g.remove(&connection_string));
+            super::remote_script_notify::clear_stress_busy(&connection_string);
             let partial_logs = super::remote_script_notify::REMOTE_SCRIPT_ACCUM
                 .lock()
                 .ok()
@@ -10394,7 +10432,7 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
 
     #[tool(
         name = "scripts_run_stress_suite_remote",
-        description = "Run the full StressTests catalog sequentially on a remote client (GPU Stress Test, QC Benchmark, and every 'Stress: …' single). Each script persists stress_test_run, stress_test_event, stress_test_metric, and hardware_component via stress-runner. Use `skip` to omit scripts that already ran. Returns per-script results plus suite summary counts."
+        description = "Run the StressTests catalog one script at a time on a remote client (GPU Stress Test, QC Benchmark, and every 'Stress: …' single). The certifications (Cert: Bronze/Silver/Gold/Platinum, 1.5 to 7+ hours each) are left out unless include_certs is true; for a certification run ONE with scripts_run_remote. Each script gets its catalog budget and the machine runs one stress script at a time, so the suite takes as long as its scripts. A caller that stops waiting does not stop the suite; follow it in stress_test_run and do not start it again. Each script persists stress_test_run, stress_test_event, stress_test_metric, and hardware_component via stress-runner. Use `skip` to omit scripts that already ran. Returns per-script results plus suite summary counts."
     )]
     async fn scripts_run_stress_suite_remote(
         &self,
@@ -10407,7 +10445,7 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
         }
 
         let skip = p.skip.unwrap_or_default();
-        let scripts = stress_suite_script_names(&skip);
+        let scripts = stress_suite_script_names(&skip, p.include_certs.unwrap_or(false));
         if scripts.is_empty() {
             return Err(to_internal(
                 "No stress scripts left to run after applying skip list.",
@@ -12533,5 +12571,32 @@ mod broker_tool_tests {
         assert_eq!(schema["required"], serde_json::json!(["connection_string"]));
         let driven_by = schema["properties"]["driven_by"]["description"].as_str().unwrap_or_default();
         assert!(driven_by.contains("codex/<alias>") && !driven_by.contains("zeroclaw:"), "{driven_by}");
+    }
+}
+
+#[cfg(test)]
+mod stress_suite_tests {
+    use super::{default_stress_script_timeout_secs, is_cert_script, stress_suite_script_names};
+
+    #[test]
+    fn the_suite_leaves_certifications_out_unless_asked() {
+        let quick = stress_suite_script_names(&[], false);
+        assert!(!quick.iter().any(|n| is_cert_script(n)), "{quick:?}");
+        assert!(quick.iter().any(|n| n == "QC Benchmark"));
+        let full = stress_suite_script_names(&[], true);
+        assert!(full.iter().any(|n| n == "Cert: Bronze"), "{full:?}");
+    }
+
+    #[test]
+    fn suite_budgets_come_from_the_catalog() {
+        for name in stress_suite_script_names(&[], true) {
+            assert_eq!(
+                default_stress_script_timeout_secs(&name, None),
+                crate::scripts::default_remote_script_timeout_secs(&name),
+                "{name}"
+            );
+        }
+        assert!(default_stress_script_timeout_secs("Cert: Bronze", None) >= 5400 + 300);
+        assert_eq!(default_stress_script_timeout_secs("Cert: Bronze", Some(42)), 42);
     }
 }
