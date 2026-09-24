@@ -4003,22 +4003,33 @@ impl PluginToolProvider {
 
         let shot: crate::remote_desktop::DesktopShot = serde_json::from_value(value)
             .map_err(|e| to_internal(format!("malformed screenshot from client: {e}")))?;
-        remember_shot(&p.connection_string, shot.width, shot.height);
+        let crate::remote_desktop::DesktopShot {
+            monitor_id, width, height, monitor_width, monitor_height, jpeg, ..
+        } = shot;
+        let fitted = tokio::task::spawn_blocking(move || super::image_fit::fit(jpeg, "image/jpeg"))
+            .await
+            .map_err(to_internal)?
+            .map_err(|e| to_internal(format!("screenshot could not be prepared: {e}")))?;
+        remember_shot(&p.connection_string, fitted.width, fitted.height);
 
         use base64::Engine;
-        let b64 = base64::engine::general_purpose::STANDARD.encode(&shot.jpeg);
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&fitted.bytes);
+        let mut meta = serde_json::json!({
+            "monitor_id": monitor_id,
+            "image_width": fitted.width,
+            "image_height": fitted.height,
+            "monitor_width": monitor_width,
+            "monitor_height": monitor_height,
+            "jpeg_bytes": fitted.bytes.len(),
+            "note": "desktop_click / desktop_scroll take pixel coordinates in THIS image's space.",
+        });
+        if (fitted.width, fitted.height) != (width, height) {
+            meta["captured_width"] = serde_json::json!(width);
+            meta["captured_height"] = serde_json::json!(height);
+        }
         Ok(CallToolResult::success(vec![
-            ContentBlock::json(serde_json::json!({
-                "monitor_id": shot.monitor_id,
-                "image_width": shot.width,
-                "image_height": shot.height,
-                "monitor_width": shot.monitor_width,
-                "monitor_height": shot.monitor_height,
-                "jpeg_bytes": shot.jpeg.len(),
-                "note": "desktop_click / desktop_scroll take pixel coordinates in THIS image's space.",
-            }))
-            .map_err(to_internal)?,
-            ContentBlock::image(b64, "image/jpeg".to_string()),
+            ContentBlock::json(meta).map_err(to_internal)?,
+            ContentBlock::image(b64, fitted.mime),
         ]))
     }
 

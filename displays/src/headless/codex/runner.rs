@@ -37,6 +37,8 @@ const BACKFILL_PAGE: u32 = 100;
 const BACKFILL_MAX_PAGES: usize = 20;
 /// How often buffered transcript text and thread fields are checked for a due write.
 const FLUSH_TICK: Duration = Duration::from_millis(250);
+/// Longest `data:` URL kept verbatim in a stored row.
+const DATA_URL_KEEP: usize = 256;
 
 /// Starts the thread's runner task and registers its command channel; a thread
 /// that already has a runner gets that runner's channel back instead.
@@ -281,13 +283,14 @@ impl Runner {
             let exhausted = entries.is_empty();
             for mut entry in entries {
                 let turn = entry.get("turnId").and_then(Value::as_str).map(str::to_string);
-                let Some(item) = entry.get_mut("item").map(Value::take) else { continue };
+                let Some(mut item) = entry.get_mut("item").map(Value::take) else { continue };
                 let Some(id) = item.get("id").and_then(Value::as_str).map(str::to_string) else { continue };
                 if known.contains(&id) || self.seqs.contains_key(&id) {
                     continue;
                 }
                 let kind = kind_for(item.get("type").and_then(Value::as_str).unwrap_or(""));
                 let seq = self.seq_for(&id);
+                redact_images(&mut item);
                 let text = item_text(kind, &item);
                 match AgentEvent::complete(&self.thread.id, &id, seq, turn.as_deref(), kind, &text, item).await {
                     Ok(()) => {
@@ -506,7 +509,7 @@ impl Runner {
         Flow::Continue
     }
 
-    async fn on_item(&mut self, item_type: &str, completed: bool, item: Value) {
+    async fn on_item(&mut self, item_type: &str, completed: bool, mut item: Value) {
         let Some(item_id) = item.get("id").and_then(Value::as_str).map(str::to_string) else { return };
         let kind = kind_for(item_type);
         let now = Instant::now();
@@ -524,6 +527,7 @@ impl Runner {
         for partial in self.transcript.unwritten_before(seq, now) {
             self.write_partial(partial).await;
         }
+        redact_images(&mut item);
         let text = item_text(kind, &item);
         let turn = self.turn_label();
         if let Err(e) = AgentEvent::complete(&self.thread.id, &item_id, seq, turn.as_deref(), kind, &text, item).await {
@@ -648,13 +652,13 @@ impl Runner {
                 self.marker("approval", &format!("Approved: {summary}"), None).await;
                 let outcome = self.call_tool(&tool, arguments, general).await;
                 self.after_tool(&tool, &outcome).await;
-                let _ = AgentApproval::resolve_by_broker(&approval_id, &status, Some(outcome.response())).await;
+                let _ = AgentApproval::resolve_by_broker(&approval_id, &status, Some(outcome.record())).await;
                 self.respond(&request_id, outcome.response()).await;
             }
             "cancelled" => {
                 self.marker("approval", &format!("Stopped by the technician: {summary}"), None).await;
                 let outcome = ToolOutcome::failure("The technician stopped the agent; the call was not run.".into());
-                let _ = AgentApproval::resolve_by_broker(&approval_id, "cancelled", Some(outcome.response())).await;
+                let _ = AgentApproval::resolve_by_broker(&approval_id, "cancelled", Some(outcome.record())).await;
                 self.respond(&request_id, outcome.response()).await;
                 if let Some(t) = self.codex_thread_id.clone() {
                     let _ = self.client.turn_interrupt(&t).await;
@@ -666,7 +670,7 @@ impl Runner {
                 let outcome = ToolOutcome::failure(format!(
                     "Declined by the technician{why}. Do not retry this call; explain what you needed and ask them in chat."
                 ));
-                let _ = AgentApproval::resolve_by_broker(&approval_id, "declined", Some(outcome.response())).await;
+                let _ = AgentApproval::resolve_by_broker(&approval_id, "declined", Some(outcome.record())).await;
                 self.respond(&request_id, outcome.response()).await;
             }
             _ => {
@@ -675,7 +679,7 @@ impl Runner {
                 let outcome = ToolOutcome::failure(format!(
                     "No technician answered within {mins} minutes, so the call was not run. Continue with what you can do without it and ask the technician in chat."
                 ));
-                let _ = AgentApproval::resolve_by_broker(&approval_id, "expired", Some(outcome.response())).await;
+                let _ = AgentApproval::resolve_by_broker(&approval_id, "expired", Some(outcome.record())).await;
                 self.respond(&request_id, outcome.response()).await;
             }
         }
@@ -729,8 +733,8 @@ impl Runner {
                     return ToolOutcome::failure("query is required".into());
                 }
                 match mem.recall(agent, &query).await {
-                    Ok(entries) if entries.is_empty() => ToolOutcome { success: true, text: "no matching memories".into(), raw: None },
-                    Ok(entries) => ToolOutcome { success: true, text: zeroclaw::render_entries(&entries), raw: None },
+                    Ok(entries) if entries.is_empty() => ToolOutcome::ok("no matching memories".into()),
+                    Ok(entries) => ToolOutcome::ok(zeroclaw::render_entries(&entries)),
                     Err(e) => ToolOutcome::failure(format!("memory recall failed: {e}")),
                 }
             }
@@ -744,7 +748,7 @@ impl Runner {
                     c => c.to_string(),
                 };
                 match mem.store(agent, &key, &content, &category).await {
-                    Ok(()) => ToolOutcome { success: true, text: format!("remembered `{key}` ({category}) for agent {agent}"), raw: None },
+                    Ok(()) => ToolOutcome::ok(format!("remembered `{key}` ({category}) for agent {agent}")),
                     Err(e) => ToolOutcome::failure(format!("memory store failed: {e}")),
                 }
             }
@@ -924,6 +928,29 @@ fn kind_for(item_type: &str) -> &'static str {
     }
 }
 
+/// Replaces embedded image data in a stored item with a note of its size.
+fn redact_images(value: &mut Value) {
+    match value {
+        Value::String(s) if s.starts_with("data:") && s.len() > DATA_URL_KEEP => {
+            let mime: String = s[5..].split([';', ',']).next().unwrap_or_default().chars().take(40).collect();
+            *s = format!("[{mime} omitted, {} bytes]", s.len());
+        }
+        Value::Array(items) => items.iter_mut().for_each(redact_images),
+        Value::Object(map) => {
+            let raw_image = map.get("type").and_then(Value::as_str) == Some("image");
+            for (key, v) in map.iter_mut() {
+                match v {
+                    Value::String(s) if raw_image && key == "data" && s.len() > DATA_URL_KEEP => {
+                        *s = format!("[image omitted, {} bytes]", s.len());
+                    }
+                    other => redact_images(other),
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 fn join_texts(v: Option<&Value>) -> String {
     match v {
         Some(Value::Array(items)) => items
@@ -1057,4 +1084,24 @@ mod tests {
         assert!(text.ends_with("error: boom"));
     }
 
+    #[test]
+    fn stored_items_keep_no_image_data() {
+        let url = format!("data:image/jpeg;base64,{}", "A".repeat(4000));
+        let mut item = json!({
+            "type": "dynamicToolCall",
+            "contentItems": [
+                { "type": "inputText", "text": "{\"image_width\":1280}" },
+                { "type": "inputImage", "imageUrl": url },
+            ],
+            "result": { "content": [{ "type": "image", "mimeType": "image/png", "data": "B".repeat(4000) }] },
+            "note": "data:short",
+        });
+        redact_images(&mut item);
+        let stored = item.to_string();
+        assert!(!stored.contains("AAAA") && !stored.contains("BBBB"), "{stored}");
+        assert_eq!(item["contentItems"][1]["imageUrl"], json!(format!("[image/jpeg omitted, {} bytes]", url.len())));
+        assert_eq!(item["result"]["content"][0]["data"], json!("[image omitted, 4000 bytes]"));
+        assert_eq!(item["contentItems"][0]["text"], json!("{\"image_width\":1280}"));
+        assert_eq!(item["note"], json!("data:short"));
+    }
 }
