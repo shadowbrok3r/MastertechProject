@@ -13,7 +13,7 @@ use database::schema::{
 use displays::{PlatformSpawner, Spawner};
 use ratatui::{
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind},
-    layout::{Constraint, Layout, Rect},
+    layout::{Alignment, Constraint, Layout, Rect},
     prelude::Backend,
     style::{Modifier, Style},
     text::{Line, Span},
@@ -532,11 +532,14 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
         if !self.note.is_empty() {
             footer.push_str(&format!("  \u{00b7}  {}", self.note));
         }
-        f.render_widget(
-            Paragraph::new(transcript::clip(&footer, area.width as usize))
-                .style(Style::default().fg(THEME.text_muted).bg(THEME.bg)),
-            rows[3],
-        );
+        let muted = Style::default().fg(THEME.text_muted).bg(THEME.bg);
+        let context = self.thread.as_ref().and_then(AgentThread::context_usage);
+        let context_w = context.as_ref().map_or(0, |c| c.chars().count() as u16 + 1);
+        let [hints, usage] = Layout::horizontal([Constraint::Fill(1), Constraint::Length(context_w)]).areas(rows[3]);
+        f.render_widget(Paragraph::new(transcript::clip(&footer, hints.width as usize)).style(muted), hints);
+        if let Some(context) = context {
+            f.render_widget(Paragraph::new(context).alignment(Alignment::Right).style(muted), usage);
+        }
     }
 
     fn handle_key_event(&mut self, key: KeyEvent) -> bool {
