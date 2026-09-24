@@ -12,6 +12,9 @@ use crate::db;
 
 pub const AGENT_APPROVAL_TABLE: &str = "agent_approval";
 
+/// Tools whose approval never carries over to the rest of the session.
+pub const NEVER_REMEMBER_TOOLS: &[&str] = &["remote_reboot_client", "remote_exec_start"];
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
 pub struct AgentApproval {
     pub id: RecordId,
