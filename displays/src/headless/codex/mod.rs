@@ -16,6 +16,7 @@ use tokio::sync::mpsc;
 
 use crate::plugins::PluginManager;
 
+mod coalesce;
 mod dispatch;
 mod prompt;
 mod runner;
