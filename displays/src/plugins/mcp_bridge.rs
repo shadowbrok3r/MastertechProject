@@ -2026,7 +2026,17 @@ pub struct BenchmarkResultsQueryParams {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
-pub struct ScriptsListParams {}
+pub struct ScriptsListParams {
+    #[schemars(description = "Only this category: Tuneup, Informational, JunkwareRemoval or StressTests. Without a category or query, StressTests is counted rather than listed.")]
+    #[serde(default)]
+    pub category: Option<String>,
+    #[schemars(description = "Only scripts whose id, name or summary contains this text (case-insensitive), in every category.")]
+    #[serde(default)]
+    pub query: Option<String>,
+    #[schemars(description = "Add each script's pass / warn / fail criteria, timeout and reboot hint.")]
+    #[serde(default)]
+    pub detail: Option<bool>,
+}
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct ScriptsRunParams {
@@ -2197,6 +2207,117 @@ async fn await_remote_script_completion(
             None => terminal_since = None,
         }
     }
+}
+
+/// The categories scripts_list groups by, in order, with the name scripts_run takes.
+fn script_categories() -> [(crate::scripts::ScriptCategory, &'static str); 4] {
+    use crate::scripts::ScriptCategory as C;
+    [
+        (C::Tuneup, "Tuneup"),
+        (C::Informational, "Informational"),
+        (C::JunkwareRemoval, "JunkwareRemoval"),
+        (C::StressTests, "StressTests"),
+    ]
+}
+
+/// A script category from any spelling scripts_run accepts.
+fn parse_script_category(raw: &str) -> Option<crate::scripts::ScriptCategory> {
+    use crate::scripts::ScriptCategory as C;
+    match raw.trim() {
+        "Tuneup" | "tuneup" | "Tuneup / QC" => Some(C::Tuneup),
+        "Informational" | "informational" => Some(C::Informational),
+        "JunkwareRemoval" | "junkware" | "Junkware Removal" => Some(C::JunkwareRemoval),
+        "StressTests" | "stresstests" | "Stress Tests" | "stress" => Some(C::StressTests),
+        _ => None,
+    }
+}
+
+/// The scripts_list payload: one line per script, StressTests counted unless asked for.
+fn script_listing(
+    category: Option<&crate::scripts::ScriptCategory>,
+    query: Option<&str>,
+    detail: bool,
+) -> serde_json::Value {
+    use crate::scripts::catalog::{Surface, CATALOG};
+    use crate::scripts::ScriptCategory;
+
+    let needle = query.map(str::to_lowercase);
+    let mut groups: Vec<serde_json::Value> = Vec::new();
+    for (cat, name) in script_categories() {
+        if category.is_some_and(|c| *c != cat) {
+            continue;
+        }
+        let defs: Vec<&crate::scripts::catalog::ScriptDef> =
+            CATALOG.for_surface(Surface::Mcp).filter(|d| d.category() == cat).collect();
+        if category.is_none() && needle.is_none() && cat == ScriptCategory::StressTests {
+            groups.push(serde_json::json!({
+                "category": name,
+                "count": defs.len(),
+                "note": "not listed here: call scripts_list with category 'StressTests', or a query",
+            }));
+            continue;
+        }
+        let lines: Vec<String> = defs
+            .iter()
+            .filter(|d| needle.as_deref().is_none_or(|n| script_matches(d, n)))
+            .map(|d| script_line(d, detail))
+            .collect();
+        if lines.is_empty() && needle.is_some() {
+            continue;
+        }
+        groups.push(serde_json::json!({ "category": name, "count": lines.len(), "scripts": lines }));
+    }
+    serde_json::json!({
+        "columns": "id | name (pass verbatim as script_name) | summary | params | needs",
+        "categories": groups,
+    })
+}
+
+fn script_matches(def: &crate::scripts::catalog::ScriptDef, needle: &str) -> bool {
+    [def.id.as_str(), def.name.as_str(), def.summary.as_str()]
+        .iter()
+        .any(|field| field.to_lowercase().contains(needle))
+}
+
+/// One compact catalog line; `detail` appends criteria, timeout and reboot hint.
+fn script_line(def: &crate::scripts::catalog::ScriptDef, detail: bool) -> String {
+    use crate::scripts::catalog::{RebootHint, Requirement, Surface};
+
+    let mut line = format!("{} | {} | {}", def.id.as_str(), def.name, def.summary.trim());
+    let (params, needs): (Vec<Requirement>, Vec<Requirement>) = def
+        .requires
+        .iter()
+        .copied()
+        .partition(|r| matches!(r, Requirement::ServiceNumber | Requirement::CustomerEmail));
+    let label = |r: &Requirement| match r {
+        Requirement::ServiceNumber => "service_number",
+        Requirement::CustomerEmail => "customer_email",
+        Requirement::Internet => "internet",
+        Requirement::Gpu => "gpu",
+    };
+    if !params.is_empty() {
+        line.push_str(&format!(" | params: {}", params.iter().map(label).collect::<Vec<_>>().join(", ")));
+    }
+    if !needs.is_empty() {
+        line.push_str(&format!(" | needs: {}", needs.iter().map(label).collect::<Vec<_>>().join(", ")));
+    }
+    if !def.offered_on(Surface::Remote) {
+        line.push_str(" | local only");
+    }
+    if detail {
+        for (tag, text) in [("pass", &def.pass), ("warn", &def.warn), ("fail", &def.fail)] {
+            if let Some(text) = text.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+                line.push_str(&format!(" | {tag}: {text}"));
+            }
+        }
+        line.push_str(&format!(" | timeout {}s", def.timeout_secs));
+        match def.reboot {
+            RebootHint::Never => {}
+            RebootHint::Maybe => line.push_str(" | may reboot"),
+            RebootHint::Always => line.push_str(" | reboots"),
+        }
+    }
+    line
 }
 
 async fn execute_one_remote_script(
@@ -9926,55 +10047,24 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
 
     #[tool(
         name = "scripts_list",
-        description = "List every script available in the host Mastertech Scripts tab catalog (Tuneup / QC, Informational, Junkware Removal, Stress Tests). Use the returned `category` + `script_name` values verbatim with scripts_run. Works whether or not the host is currently running — it's a static catalog. The Stress Tests category exposes the persisted stress catalog (GPU Stress Test, QC Benchmark, Memory Test, verified CPU/Linpack/PSU tests, singles for every stress-kit stressor) plus the scored 'Benchmark Suite' / 'Benchmark: ...' entries that persist benchmark_result rows readable via benchmark_results_query."
+        description = "List the Mastertech Scripts catalog compactly: one line per script, `id | name | summary`, plus `params:` the run needs (service_number, customer_email), `needs:` its preconditions, and `local only` when scripts_run_remote cannot run it. Pass the category and the name verbatim to scripts_run / scripts_run_remote. Without arguments it lists Tuneup, Informational and JunkwareRemoval and only counts StressTests (stress singles, cert tiers and 'Benchmark: ...' entries that persist benchmark_result rows); pass category 'StressTests', or a query that matches id, name or summary in every category, to list those. detail:true adds pass / warn / fail criteria, timeout and reboot hint. It is a static catalog, so it works whether or not a client is connected."
     )]
     async fn scripts_list(
         &self,
-        Parameters(_p): Parameters<ScriptsListParams>,
+        Parameters(p): Parameters<ScriptsListParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        use crate::scripts::catalog::{CATALOG, Surface};
-        use crate::scripts::ScriptCategory;
-
-        let cats = CATALOG.items_for(Surface::Mcp);
-        let mut out: Vec<serde_json::Value> = Vec::new();
-        for cat_key in [
-            ScriptCategory::Tuneup,
-            ScriptCategory::Informational,
-            ScriptCategory::JunkwareRemoval,
-            ScriptCategory::StressTests,
-        ] {
-            let cat_name = match cat_key {
-                ScriptCategory::Tuneup => "Tuneup",
-                ScriptCategory::Informational => "Informational",
-                ScriptCategory::JunkwareRemoval => "JunkwareRemoval",
-                ScriptCategory::StressTests => "StressTests",
-                _ => continue,
-            };
-            if let Some(scripts) = cats.get(&cat_key) {
-                let items: Vec<serde_json::Value> = scripts
-                    .iter()
-                    .map(|s| {
-                        serde_json::json!({
-                            "name": s.name,
-                            "description": s.description,
-                            "pass_criteria": s.pass_criteria,
-                            "warning_criteria": s.warning_criteria,
-                            "error_criteria": s.error_criteria,
-                        })
-                    })
-                    .collect();
-                out.push(serde_json::json!({
-                    "category": cat_name,
-                    "display_name": format!("{}", cat_key),
-                    "scripts": items,
-                }));
-            }
-        }
-
-        Ok(CallToolResult::success(vec![ContentBlock::json(
-            serde_json::json!({ "categories": out }),
-        )
-        .map_err(to_internal)?]))
+        let category = match p.category.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+            Some(raw) => Some(parse_script_category(raw).ok_or_else(|| {
+                ErrorData::invalid_params(
+                    format!("unknown category '{raw}'; use Tuneup, Informational, JunkwareRemoval or StressTests"),
+                    None,
+                )
+            })?),
+            None => None,
+        };
+        let query = p.query.as_deref().map(str::trim).filter(|q| !q.is_empty());
+        let listing = script_listing(category.as_ref(), query, p.detail.unwrap_or(false));
+        Ok(CallToolResult::success(vec![ContentBlock::json(listing).map_err(to_internal)?]))
     }
 
     #[tool(
@@ -9987,17 +10077,12 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
     ) -> Result<CallToolResult, ErrorData> {
         use crate::scripts::{script_run_request_sender, ScriptCategory, ScriptRunRequest};
 
-        let category = match p.category.as_str() {
-            "Tuneup" | "tuneup" | "Tuneup / QC" => ScriptCategory::Tuneup,
-            "Informational" | "informational" => ScriptCategory::Informational,
-            "JunkwareRemoval" | "junkware" | "Junkware Removal" => ScriptCategory::JunkwareRemoval,
-            "StressTests" | "stresstests" | "Stress Tests" | "stress" => ScriptCategory::StressTests,
-            other => {
-                return Err(to_internal(format!(
-                    "Unknown category '{other}'. Expected one of: Tuneup, Informational, JunkwareRemoval, StressTests."
-                )));
-            }
-        };
+        let category = parse_script_category(&p.category).ok_or_else(|| {
+            to_internal(format!(
+                "Unknown category '{}'. Expected one of: Tuneup, Informational, JunkwareRemoval, StressTests.",
+                p.category
+            ))
+        })?;
 
         // Benchmark scripts are exempt: scores are machine-keyed, not order-keyed.
         if category == ScriptCategory::StressTests
@@ -12227,5 +12312,72 @@ mod desktop_control_tests {
         assert!(parse_button(None).is_ok());
         assert!(parse_button(Some("Right")).is_ok());
         assert!(parse_button(Some("scroll")).is_err());
+    }
+}
+
+#[cfg(test)]
+mod broker_tool_tests {
+    use super::*;
+
+    fn listing_bytes(listing: &serde_json::Value) -> usize {
+        serde_json::to_string(listing).map(|s| s.len()).unwrap_or(usize::MAX)
+    }
+
+    fn lines(listing: &serde_json::Value) -> Vec<String> {
+        listing["categories"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|c| c["scripts"].as_array())
+            .flatten()
+            .filter_map(|l| l.as_str().map(str::to_string))
+            .collect()
+    }
+
+    #[test]
+    fn the_default_listing_counts_stress_tests_and_stays_small() {
+        let listing = script_listing(None, None, false);
+        let stress = &listing["categories"][3];
+        assert_eq!(stress["category"], "StressTests");
+        assert!(stress["count"].as_u64().unwrap_or(0) > 30);
+        assert!(stress.get("scripts").is_none());
+        assert!(lines(&listing).iter().all(|l| !l.starts_with("stress-")));
+        assert!(listing_bytes(&listing) < 8_000, "{} bytes", listing_bytes(&listing));
+    }
+
+    #[test]
+    fn every_category_listing_fits_the_model_budget() {
+        for (cat, _) in script_categories() {
+            let listing = script_listing(Some(&cat), None, false);
+            assert!(listing_bytes(&listing) < 10_000, "{cat:?}: {} bytes", listing_bytes(&listing));
+            assert!(!lines(&listing).is_empty(), "{cat:?} lists nothing");
+        }
+    }
+
+    #[test]
+    fn lines_name_the_params_a_run_needs() {
+        let seb = lines(&script_listing(None, Some("activate seb"), false));
+        assert_eq!(seb.len(), 1, "{seb:?}");
+        assert!(seb[0].starts_with("activate-seb | Activate SEB | "), "{}", seb[0]);
+        assert!(seb[0].ends_with(" | params: customer_email"), "{}", seb[0]);
+        let transfer = lines(&script_listing(None, Some("data-transfer"), false));
+        assert!(!transfer.is_empty() && transfer.iter().all(|l| l.ends_with("local only")), "{transfer:?}");
+    }
+
+    #[test]
+    fn a_query_reaches_into_stress_tests_and_detail_adds_criteria() {
+        let found = lines(&script_listing(None, Some("VRAM"), false));
+        assert!(found.iter().any(|l| l.starts_with("stress-gpu-vram |")), "{found:?}");
+        let detailed = lines(&script_listing(parse_script_category("Informational").as_ref(), None, true));
+        assert!(detailed.iter().all(|l| l.contains("| timeout ")), "{detailed:?}");
+        assert!(detailed.iter().any(|l| l.contains("| pass: ")));
+    }
+
+    #[test]
+    fn categories_parse_every_spelling_scripts_run_takes() {
+        for raw in ["Tuneup", "tuneup", "Tuneup / QC", " Informational ", "junkware", "Stress Tests", "stress"] {
+            assert!(parse_script_category(raw).is_some(), "{raw}");
+        }
+        assert!(parse_script_category("Benchmarks").is_none());
     }
 }
