@@ -330,7 +330,7 @@ impl MtechServer {
         // do some initial setting up
         if self.shared_ctx.first_run { self.first_run(ctx, frame); }
         
-        self.shared_ctx.receive_shared(frame, ctx);
+        self.shared_ctx.receive_shared_logic(frame, ctx);
         
         // Reconnects are fully automatic: `receive_shared_logic` drains
         // stream errors / canary timeouts, rebuilds the connection with
