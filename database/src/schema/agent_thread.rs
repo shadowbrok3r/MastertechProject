@@ -139,6 +139,22 @@ pub struct NewAgentThread {
     pub title: Option<String>,
 }
 
+/// Thread-row fields written together; `None` leaves a field as it is.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AgentThreadState {
+    pub status: Option<String>,
+    pub error: Option<String>,
+    pub last_seq: Option<i64>,
+    pub tokens_used: Option<i64>,
+    pub tokens_window: Option<i64>,
+}
+
+impl AgentThreadState {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// Connection string of a technician's session with no machine in scope.
 pub fn general_connection(email: &str) -> String {
     format!("general:{}", email.trim().to_lowercase())
@@ -223,40 +239,35 @@ impl AgentThread {
 
     /// Moves the thread to `status`; terminal statuses also stamp `closed_at`.
     pub async fn set_status(id: &RecordId, status: &str, error: Option<&str>) -> anyhow::Result<()> {
-        let terminal = matches!(status, "closed" | "failed");
+        let state = AgentThreadState {
+            status: Some(status.to_string()),
+            error: error.map(str::to_string),
+            ..Default::default()
+        };
+        Self::save_state(id, &state).await
+    }
+
+    /// Writes the set fields of `state` in one update; `last_seq` never moves backwards.
+    pub async fn save_state(id: &RecordId, state: &AgentThreadState) -> anyhow::Result<()> {
+        let terminal = matches!(state.status.as_deref(), Some("closed" | "failed"));
         db().query(
-            "UPDATE $id SET status = $status, error = $error ?? error, updated_at = time::now(), \
-             closed_at = IF $terminal THEN time::now() ELSE closed_at END",
+            "UPDATE $id SET status = $status ?? status, \
+             error = $error ?? error, \
+             closed_at = IF $terminal THEN time::now() ELSE closed_at END, \
+             last_seq = IF $seq != NONE THEN math::max([last_seq ?? 0, $seq]) ELSE last_seq END, \
+             last_event_at = IF $seq != NONE THEN time::now() ELSE last_event_at END, \
+             tokens_used = $used ?? tokens_used, tokens_window = $window ?? tokens_window, \
+             updated_at = time::now()",
         )
         .bind(("id", id.clone()))
-        .bind(("status", status.to_string()))
-        .bind(("error", error.map(|e| e.chars().take(800).collect::<String>())))
+        .bind(("status", state.status.clone()))
+        .bind(("error", state.error.as_ref().map(|e| e.chars().take(800).collect::<String>())))
         .bind(("terminal", terminal))
-        .await?;
-        Ok(())
-    }
-
-    pub async fn set_tokens(id: &RecordId, used: Option<i64>, window: Option<i64>) -> anyhow::Result<()> {
-        db().query(
-            "UPDATE $id SET tokens_used = $used ?? tokens_used, tokens_window = $window ?? tokens_window, \
-             updated_at = time::now()",
-        )
-        .bind(("id", id.clone()))
-        .bind(("used", used))
-        .bind(("window", window))
-        .await?;
-        Ok(())
-    }
-
-    /// Records that a transcript row landed, keeping `last_seq` monotonic.
-    pub async fn touch_event(id: &RecordId, seq: i64) -> anyhow::Result<()> {
-        db().query(
-            "UPDATE $id SET last_seq = math::max([last_seq ?? 0, $seq]), last_event_at = time::now(), \
-             updated_at = time::now()",
-        )
-        .bind(("id", id.clone()))
-        .bind(("seq", seq))
-        .await?;
+        .bind(("seq", state.last_seq))
+        .bind(("used", state.tokens_used))
+        .bind(("window", state.tokens_window))
+        .await?
+        .check()?;
         Ok(())
     }
 
@@ -415,5 +426,17 @@ mod tests {
         assert_eq!(thread(None, Some(124_518)).context_usage(), None);
         assert_eq!(thread(Some(58_000), None).context_usage(), None);
         assert_eq!(thread(Some(58_000), Some(0)).context_usage(), None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AgentThreadState;
+
+    #[test]
+    fn an_empty_state_writes_nothing() {
+        assert!(AgentThreadState::default().is_empty());
+        let seq_only = AgentThreadState { last_seq: Some(3), ..Default::default() };
+        assert!(!seq_only.is_empty());
     }
 }

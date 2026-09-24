@@ -4,8 +4,9 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use database::schema::agent_thread::AgentThreadState;
 use database::schema::{
     AgentApproval, AgentEvent, AgentThread, AgentTurn, AssistRequest, NewAgentApproval, RecordId,
     RecordIdExt,
@@ -14,6 +15,7 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use zc_codex_client::{decision, elicitation, Client, Event};
 
+use super::coalesce::{self, Partial, ThreadRow, TranscriptBuffer};
 use super::tools::{scope_violation, ToolHost, ToolOutcome, ToolPolicy};
 use super::zeroclaw::{self, ZeroclawMemory};
 use super::{manager, prompt, register_runner, runner_for, unregister_runner, Config};
@@ -33,6 +35,8 @@ const ROW_TEXT_CHARS: usize = 4_000;
 /// Page size and page cap when a resumed thread's items are backfilled.
 const BACKFILL_PAGE: u32 = 100;
 const BACKFILL_MAX_PAGES: usize = 20;
+/// How often buffered transcript text and thread fields are checked for a due write.
+const FLUSH_TICK: Duration = Duration::from_millis(250);
 
 /// Starts the thread's runner task and registers its command channel; a thread
 /// that already has a runner gets that runner's channel back instead.
@@ -63,12 +67,15 @@ enum Flow {
 struct Runner {
     cfg: Arc<Config>,
     thread: AgentThread,
-    tools: ToolHost,
+    tools: Arc<ToolHost>,
     client: Client,
     codex_thread_id: Option<String>,
     next_seq: i64,
     seqs: HashMap<String, i64>,
-    buffers: HashMap<String, String>,
+    /// Items whose authoritative row is written; later deltas for them are dropped.
+    completed: HashSet<String>,
+    transcript: TranscriptBuffer,
+    row: ThreadRow,
     turn_no: u32,
     remembered: HashSet<String>,
     /// Set once the first attach succeeds; a later attach is an in-process reconnect.
@@ -95,7 +102,7 @@ impl Runner {
         )
         .await
         {
-            Ok(t) => t,
+            Ok(t) => Arc::new(t),
             Err(e) => {
                 AgentThread::set_status(&thread.id, "failed", Some(&format!("tool host: {e}"))).await?;
                 return Err(e);
@@ -108,8 +115,12 @@ impl Runner {
                 return Err(e);
             }
         };
+        let recorded_seq = database::agent_chat::last_seq(&thread.id).await.unwrap_or(0);
+        let stored_seq = thread.last_seq.unwrap_or(0);
+        let mut row = ThreadRow::new(stored_seq, (thread.tokens_used, thread.tokens_window), coalesce::THREAD_FLUSH);
+        row.touch(recorded_seq);
         let mut me = Self {
-            next_seq: thread.last_seq.unwrap_or(0),
+            next_seq: stored_seq.max(recorded_seq),
             codex_thread_id: thread.codex_thread_id.clone(),
             memory: cfg.zeroclaw.clone(),
             cfg,
@@ -117,13 +128,15 @@ impl Runner {
             tools,
             client,
             seqs: HashMap::new(),
-            buffers: HashMap::new(),
+            completed: HashSet::new(),
+            transcript: TranscriptBuffer::new(coalesce::ITEM_FLUSH),
+            row,
             turn_no: 0,
             remembered: HashSet::new(),
             attached: false,
         };
         if let Err(e) = me.attach().await {
-            AgentThread::set_status(&me.thread.id, "failed", Some(&format!("thread start: {e}"))).await?;
+            me.write_status("failed", Some(&format!("thread start: {e}"))).await?;
             return Err(e);
         }
         if let Some(text) = opening {
@@ -131,6 +144,8 @@ impl Runner {
             me.send_turn("start", &text).await?;
         }
 
+        let mut tick = tokio::time::interval(FLUSH_TICK);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             let flow = tokio::select! {
                 ev = events.recv() => match ev {
@@ -141,6 +156,10 @@ impl Runner {
                     Some(RunnerCmd::Turn(turn)) => me.on_turn(turn).await,
                     None => Flow::Closed,
                 },
+                _ = tick.tick() => {
+                    me.flush_due().await;
+                    Flow::Continue
+                }
             };
             match flow {
                 Flow::Continue => {}
@@ -148,12 +167,13 @@ impl Runner {
                 Flow::Reconnect => match me.reconnect().await {
                     Ok(new_events) => events = new_events,
                     Err(e) => {
-                        AgentThread::set_status(&me.thread.id, "failed", Some(&e.to_string())).await?;
+                        me.write_status("failed", Some(&e.to_string())).await?;
                         return Err(e);
                     }
                 },
             }
         }
+        me.flush_all().await;
         Ok(())
     }
 
@@ -216,7 +236,7 @@ impl Runner {
                         self.reconcile_interrupted().await;
                     }
                     self.attached = true;
-                    AgentThread::set_status(&self.thread.id, "idle", None).await?;
+                    self.write_status("idle", None).await?;
                     return Ok(());
                 }
                 Err(e) => {
@@ -227,7 +247,7 @@ impl Runner {
         }
         let id = self.client.thread_start(self.thread_params()).await?;
         AgentThread::set_codex_thread(&self.thread.id, &id).await?;
-        AgentThread::set_status(&self.thread.id, "idle", None).await?;
+        self.write_status("idle", None).await?;
         log::info!("codex: thread {} -> codex {id}", self.thread.id.key_string());
         self.codex_thread_id = Some(id);
         self.attached = true;
@@ -250,31 +270,35 @@ impl Runner {
             if let Some(c) = &cursor {
                 params["cursor"] = json!(c);
             }
-            let page = match self.client.request("thread/items/list", params).await {
+            let mut page = match self.client.request("thread/items/list", params).await {
                 Ok(p) => p,
                 Err(e) => {
                     log::warn!("codex: thread/items/list failed: {e}");
                     break;
                 }
             };
-            let entries = page.get("data").and_then(Value::as_array).cloned().unwrap_or_default();
-            for entry in &entries {
-                let Some(item) = entry.get("item") else { continue };
+            let entries = page.get_mut("data").and_then(Value::as_array_mut).map(std::mem::take).unwrap_or_default();
+            let exhausted = entries.is_empty();
+            for mut entry in entries {
+                let turn = entry.get("turnId").and_then(Value::as_str).map(str::to_string);
+                let Some(item) = entry.get_mut("item").map(Value::take) else { continue };
                 let Some(id) = item.get("id").and_then(Value::as_str).map(str::to_string) else { continue };
                 if known.contains(&id) || self.seqs.contains_key(&id) {
                     continue;
                 }
                 let kind = kind_for(item.get("type").and_then(Value::as_str).unwrap_or(""));
-                let seq = self.seq_for(&id).await;
-                let turn = entry.get("turnId").and_then(Value::as_str).map(str::to_string);
-                let text = item_text(kind, item);
-                match AgentEvent::complete(&self.thread.id, &id, seq, turn.as_deref(), kind, &text, item.clone()).await {
-                    Ok(()) => added += 1,
+                let seq = self.seq_for(&id);
+                let text = item_text(kind, &item);
+                match AgentEvent::complete(&self.thread.id, &id, seq, turn.as_deref(), kind, &text, item).await {
+                    Ok(()) => {
+                        added += 1;
+                        self.completed.insert(id);
+                    }
                     Err(e) => log::warn!("codex: backfill write failed: {e}"),
                 }
             }
             cursor = page.get("nextCursor").and_then(Value::as_str).map(str::to_string);
-            if cursor.is_none() || entries.is_empty() {
+            if cursor.is_none() || exhausted {
                 break;
             }
         }
@@ -300,6 +324,7 @@ impl Runner {
     }
 
     async fn reconnect(&mut self) -> anyhow::Result<mpsc::Receiver<Event>> {
+        self.flush_all().await;
         self.marker("error", "Connection to the agent host dropped; reconnecting.", None).await;
         let mut delay = Duration::from_secs(2);
         for attempt in 1..=RECONNECT_ATTEMPTS {
@@ -327,51 +352,115 @@ impl Runner {
     }
 
     /// The transcript position of an item, assigned on first sight.
-    async fn seq_for(&mut self, item_id: &str) -> i64 {
+    fn seq_for(&mut self, item_id: &str) -> i64 {
         if let Some(seq) = self.seqs.get(item_id) {
             return *seq;
         }
         self.next_seq += 1;
         let seq = self.next_seq;
         self.seqs.insert(item_id.to_string(), seq);
-        let _ = AgentThread::touch_event(&self.thread.id, seq).await;
+        self.row.touch(seq);
         seq
     }
 
-    /// A standalone transcript row with no codex item behind it.
+    /// A standalone transcript row with no codex item behind it, written after any buffered text.
     async fn marker(&mut self, kind: &str, text: &str, item: Option<Value>) {
+        self.flush_transcript().await;
         self.next_seq += 1;
         let seq = self.next_seq;
         let turn = self.turn_label();
         if let Err(e) = AgentEvent::marker(&self.thread.id, seq, turn.as_deref(), kind, text, item).await {
             log::warn!("codex: marker write failed: {e}");
         }
-        let _ = AgentThread::touch_event(&self.thread.id, seq).await;
+        self.row.touch(seq);
     }
 
-    async fn set_status(&self, status: &str) {
-        if let Err(e) = AgentThread::set_status(&self.thread.id, status, None).await {
-            log::warn!("codex: status write failed: {e}");
-        }
-    }
-
-    async fn stream_text(&mut self, item_id: &str, kind: &str, delta: &str) {
-        self.buffers.entry(item_id.to_string()).or_default().push_str(delta);
-        let full = self.buffers.get(item_id).cloned().unwrap_or_default();
-        let seq = self.seq_for(item_id).await;
-        let turn = self.turn_label();
+    async fn write_partial(&self, partial: Partial) {
+        let Partial { item_id, seq, kind, turn, text } = partial;
         if let Err(e) =
-            AgentEvent::upsert_text(&self.thread.id, item_id, seq, turn.as_deref(), kind, &full, false).await
+            AgentEvent::upsert_text(&self.thread.id, &item_id, seq, turn.as_deref(), kind, &text, false).await
         {
             log::warn!("codex: transcript write failed: {e}");
         }
     }
 
+    async fn save_row(&self, state: AgentThreadState) {
+        if let Err(e) = AgentThread::save_state(&self.thread.id, &state).await {
+            log::warn!("codex: thread write failed: {e}");
+        }
+    }
+
+    /// Writes every buffered transcript change.
+    async fn flush_transcript(&mut self) {
+        for partial in self.transcript.drain(Instant::now()) {
+            self.write_partial(partial).await;
+        }
+    }
+
+    /// Writes buffered text and thread fields whose interval has passed.
+    async fn flush_due(&mut self) {
+        let now = Instant::now();
+        for partial in self.transcript.due(now) {
+            self.write_partial(partial).await;
+        }
+        if let Some(state) = self.row.due(now) {
+            self.save_row(state).await;
+        }
+    }
+
+    /// Writes everything buffered.
+    async fn flush_all(&mut self) {
+        self.flush_transcript().await;
+        if let Some(state) = self.row.drain(Instant::now()) {
+            self.save_row(state).await;
+        }
+    }
+
+    /// Writes buffered transcript text, then the status when it changed or carries an error.
+    async fn write_status(&mut self, status: &str, error: Option<&str>) -> anyhow::Result<()> {
+        self.flush_transcript().await;
+        let Some(state) = self.row.status(status, error, Instant::now()) else { return Ok(()) };
+        let written = AgentThread::save_state(&self.thread.id, &state).await;
+        if written.is_err() {
+            self.row.forget_status();
+        }
+        written
+    }
+
+    async fn set_status(&mut self, status: &str) {
+        if let Err(e) = self.write_status(status, None).await {
+            log::warn!("codex: status write failed: {e}");
+        }
+    }
+
+    async fn stream_text(&mut self, item_id: &str, kind: &'static str, delta: &str, final_chunk: bool) {
+        if self.completed.contains(item_id) {
+            return;
+        }
+        let now = Instant::now();
+        if !self.transcript.contains(item_id) {
+            let seq = self.seq_for(item_id);
+            let turn = self.turn_label();
+            self.transcript.open(item_id, seq, kind, turn, String::new(), now);
+        }
+        if final_chunk {
+            self.transcript.append(item_id, delta);
+        } else if let Some(partial) = self.transcript.push(item_id, delta, now) {
+            self.write_partial(partial).await;
+        }
+    }
+
     async fn on_event(&mut self, ev: Event) -> Flow {
         match ev {
-            Event::Text { item_id, text, .. } => self.stream_text(&item_id, "agent", &text).await,
-            Event::Reasoning { item_id, text, .. } => self.stream_text(&item_id, "reasoning", &text).await,
-            Event::CommandOutput { item_id, text, .. } => self.stream_text(&item_id, "command", &text).await,
+            Event::Text { item_id, text, final_chunk, .. } => {
+                self.stream_text(&item_id, "agent", &text, final_chunk).await
+            }
+            Event::Reasoning { item_id, text, final_chunk, .. } => {
+                self.stream_text(&item_id, "reasoning", &text, final_chunk).await
+            }
+            Event::CommandOutput { item_id, text, final_chunk, .. } => {
+                self.stream_text(&item_id, "command", &text, final_chunk).await
+            }
             Event::Item { item_type, completed, item, .. } => self.on_item(&item_type, completed, item).await,
             Event::Ask { request_id, method, params, .. } => {
                 self.on_ask(request_id, &method, params).await;
@@ -379,13 +468,14 @@ impl Runner {
             Event::AskResolved { .. } => {}
             Event::TurnStarted { .. } => {
                 self.turn_no += 1;
-                self.set_status("running").await;
                 self.marker("turn_started", "", None).await;
+                self.set_status("running").await;
             }
             Event::TurnCompleted { .. } => {
-                self.buffers.clear();
-                self.set_status("idle").await;
+                self.flush_transcript().await;
+                self.transcript.clear();
                 self.marker("turn_completed", "", None).await;
+                self.set_status("idle").await;
             }
             Event::Error { message, will_retry, .. } => {
                 let text = if will_retry {
@@ -395,11 +485,16 @@ impl Runner {
                 };
                 self.marker("error", &text, None).await;
                 if !will_retry {
-                    let _ = AgentThread::set_status(&self.thread.id, "idle", Some(&message)).await;
+                    if let Err(e) = self.write_status("idle", Some(&message)).await {
+                        log::warn!("codex: status write failed: {e}");
+                    }
                 }
             }
             Event::TokenUsage { used, window, .. } => {
-                let _ = AgentThread::set_tokens(&self.thread.id, used.map(|u| u as i64), window.map(|w| w as i64)).await;
+                self.row.set_tokens(
+                    used.and_then(|u| i64::try_from(u).ok()),
+                    window.and_then(|w| i64::try_from(w).ok()),
+                );
             }
             Event::Other { method, .. } => {
                 if method == "connection/closed" {
@@ -414,23 +509,25 @@ impl Runner {
     async fn on_item(&mut self, item_type: &str, completed: bool, item: Value) {
         let Some(item_id) = item.get("id").and_then(Value::as_str).map(str::to_string) else { return };
         let kind = kind_for(item_type);
-        let seq = self.seq_for(&item_id).await;
+        let now = Instant::now();
+        if !completed {
+            if !self.transcript.contains(&item_id) && !self.completed.contains(&item_id) {
+                let seq = self.seq_for(&item_id);
+                let turn = self.turn_label();
+                self.transcript.open(&item_id, seq, kind, turn, item_text(kind, &item), now);
+            }
+            return;
+        }
+        let seq = self.seq_for(&item_id);
+        self.transcript.close(&item_id);
+        self.completed.insert(item_id.clone());
+        for partial in self.transcript.unwritten_before(seq, now) {
+            self.write_partial(partial).await;
+        }
+        let text = item_text(kind, &item);
         let turn = self.turn_label();
-        if completed {
-            let text = item_text(kind, &item);
-            self.buffers.remove(&item_id);
-            if let Err(e) =
-                AgentEvent::complete(&self.thread.id, &item_id, seq, turn.as_deref(), kind, &text, item).await
-            {
-                log::warn!("codex: item write failed: {e}");
-            }
-        } else {
-            let text = self.buffers.get(&item_id).cloned().unwrap_or_else(|| item_text(kind, &item));
-            if let Err(e) =
-                AgentEvent::upsert_text(&self.thread.id, &item_id, seq, turn.as_deref(), kind, &text, false).await
-            {
-                log::warn!("codex: item write failed: {e}");
-            }
+        if let Err(e) = AgentEvent::complete(&self.thread.id, &item_id, seq, turn.as_deref(), kind, &text, item).await {
+            log::warn!("codex: item write failed: {e}");
         }
     }
 
@@ -467,6 +564,19 @@ impl Runner {
         }
     }
 
+    /// Runs a tool, writing buffered transcript text once it has run for one flush interval.
+    async fn call_tool(&mut self, tool: &str, arguments: Value, general: bool) -> ToolOutcome {
+        let tools = self.tools.clone();
+        let call = tools.call(tool, arguments, general);
+        tokio::pin!(call);
+        tokio::select! {
+            outcome = &mut call => return outcome,
+            _ = tokio::time::sleep(coalesce::ITEM_FLUSH) => {}
+        }
+        self.flush_transcript().await;
+        call.await
+    }
+
     async fn on_tool_call(&mut self, request_id: Value, params: Value) {
         let tool = params.get("tool").and_then(Value::as_str).unwrap_or("").to_string();
         let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
@@ -478,12 +588,12 @@ impl Runner {
         let general = self.general();
         if let Some(refusal) = scope_violation(&arguments, &self.thread.connection_string) {
             self.marker("approval", &refusal, None).await;
-            self.respond(&request_id, super::tools::ToolOutcome::failure(refusal).response()).await;
+            self.respond(&request_id, ToolOutcome::failure(refusal).response()).await;
             return;
         }
         let needs_human = self.tools.policy.needs_approval(&tool) && !self.remembered.contains(&tool);
         if !needs_human {
-            let outcome = self.tools.call(&tool, arguments, general).await;
+            let outcome = self.call_tool(&tool, arguments, general).await;
             self.after_tool(&tool, &outcome).await;
             self.respond(&request_id, outcome.response()).await;
             return;
@@ -513,9 +623,7 @@ impl Runner {
             Ok(id) => id,
             Err(e) => {
                 log::warn!("codex: could not record approval: {e}");
-                let outcome = super::tools::ToolOutcome::failure(
-                    "approval could not be requested; the call was not run".into(),
-                );
+                let outcome = ToolOutcome::failure("approval could not be requested; the call was not run".into());
                 self.respond(&request_id, outcome.response()).await;
                 return;
             }
@@ -538,16 +646,14 @@ impl Runner {
                     self.remembered.insert(tool.clone());
                 }
                 self.marker("approval", &format!("Approved: {summary}"), None).await;
-                let outcome = self.tools.call(&tool, arguments, general).await;
+                let outcome = self.call_tool(&tool, arguments, general).await;
                 self.after_tool(&tool, &outcome).await;
                 let _ = AgentApproval::resolve_by_broker(&approval_id, &status, Some(outcome.response())).await;
                 self.respond(&request_id, outcome.response()).await;
             }
             "cancelled" => {
                 self.marker("approval", &format!("Stopped by the technician: {summary}"), None).await;
-                let outcome = super::tools::ToolOutcome::failure(
-                    "The technician stopped the agent; the call was not run.".into(),
-                );
+                let outcome = ToolOutcome::failure("The technician stopped the agent; the call was not run.".into());
                 let _ = AgentApproval::resolve_by_broker(&approval_id, "cancelled", Some(outcome.response())).await;
                 self.respond(&request_id, outcome.response()).await;
                 if let Some(t) = self.codex_thread_id.clone() {
@@ -557,7 +663,7 @@ impl Runner {
             "declined" => {
                 let why = if note.trim().is_empty() { String::new() } else { format!(": {}", note.trim()) };
                 self.marker("approval", &format!("Declined by the technician{why}: {summary}"), None).await;
-                let outcome = super::tools::ToolOutcome::failure(format!(
+                let outcome = ToolOutcome::failure(format!(
                     "Declined by the technician{why}. Do not retry this call; explain what you needed and ask them in chat."
                 ));
                 let _ = AgentApproval::resolve_by_broker(&approval_id, "declined", Some(outcome.response())).await;
@@ -566,7 +672,7 @@ impl Runner {
             _ => {
                 let mins = self.cfg.approval_ttl_secs / 60;
                 self.marker("approval", &format!("No technician answered within {mins} min: {summary}"), None).await;
-                let outcome = super::tools::ToolOutcome::failure(format!(
+                let outcome = ToolOutcome::failure(format!(
                     "No technician answered within {mins} minutes, so the call was not run. Continue with what you can do without it and ask the technician in chat."
                 ));
                 let _ = AgentApproval::resolve_by_broker(&approval_id, "expired", Some(outcome.response())).await;
@@ -667,7 +773,7 @@ impl Runner {
     }
 
     /// Side effects worth recording from a tool result.
-    async fn after_tool(&self, tool: &str, outcome: &super::tools::ToolOutcome) {
+    async fn after_tool(&self, tool: &str, outcome: &ToolOutcome) {
         if tool == "create_diagnostic_session" && outcome.success {
             if let Some(key) = session_key_in(&outcome.text) {
                 let session = RecordId::new("diagnostic_session", key.as_str());
@@ -791,7 +897,7 @@ impl Runner {
                     let _ = self.client.request("thread/unsubscribe", json!({ "threadId": t })).await;
                 }
                 self.marker("other", "Session closed by the technician.", None).await;
-                let _ = AgentThread::set_status(&self.thread.id, "closed", None).await;
+                self.set_status("closed").await;
                 if let Some(req) = &self.thread.assist_request {
                     let _ = AssistRequest::finish(req, "completed", None).await;
                 }
@@ -950,4 +1056,5 @@ mod tests {
         assert!(text.starts_with("query_surrealdb("));
         assert!(text.ends_with("error: boom"));
     }
+
 }
