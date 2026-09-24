@@ -5,6 +5,7 @@ use crate::app_state::ReconnectOutcome;
 use crossbeam::channel::Sender;
 use std::sync::Arc;
 
+pub mod agent_session_notify;
 pub mod receive_notes;
 pub mod receive_notifications;
 pub mod receive_ai_task;
@@ -152,6 +153,11 @@ impl crate::app_state::SharedContext {
     /// and draws the decision modal, on whichever tab is showing.
     fn receive_agent_approvals(&mut self, ctx: &eframe::egui::Context) {
         self.agent_approvals.tick_and_ui(ctx);
+    }
+
+    /// Queues toasts for the signed-in user's agent sessions that replied, failed or wait on them.
+    fn receive_agent_notifications(&mut self, ctx: &eframe::egui::Context) {
+        self.agent_notify.tick(ctx, self.current_user.as_ref(), self.live_epoch, &mut self.toasts);
     }
 
     /// Spawns the chat live streams (participant-filtered) once the chat tab
@@ -722,6 +728,7 @@ impl crate::app_state::SharedContext {
         self.receive_extracted_specs();
         self.receive_sql_approvals(ctx);
         self.receive_agent_approvals(ctx);
+        self.receive_agent_notifications(ctx);
         self.filesystem.receive();
         
         // Deduplicate back-to-back identical toasts within a short

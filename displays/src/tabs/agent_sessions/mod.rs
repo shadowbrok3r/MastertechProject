@@ -135,6 +135,15 @@ impl AgentSessions {
         }
     }
 
+    /// Selects `thread`, listing closed sessions too when it is no longer open.
+    pub fn open(&mut self, thread: RecordId, is_open: bool) {
+        if !is_open {
+            self.include_closed = true;
+        }
+        self.last_threads_poll = None;
+        self.select(thread);
+    }
+
     fn start_thread_stream(&mut self) {
         self.thread_stream.stop();
         self.thread_stream.generation += 1;
@@ -408,6 +417,7 @@ impl AgentSessions {
             ui.label(RichText::new("Select a session.").weak());
             return;
         };
+        crate::ui_data::agent_session_notify::mark_in_view(&thread.id);
         let (icon, color, word) = status_chip(ui, &thread.status);
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(format!("{icon} {word}")).color(color).strong());

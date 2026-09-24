@@ -191,6 +191,7 @@ impl AssistProgress {
         ui.add_space(4.);
 
         if let Some(thread) = self.snapshot.thread.clone() {
+            displays::ui_data::agent_session_notify::mark_in_view(&thread.id);
             if let Some(err) = thread.error.as_deref().filter(|e| !e.is_empty()) {
                 ui.label(RichText::new(err.chars().take(300).collect::<String>()).small().color(theme::warn(ui)));
             }
