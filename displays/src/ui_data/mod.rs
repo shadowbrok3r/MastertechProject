@@ -449,17 +449,13 @@ impl crate::app_state::SharedContext {
         }
     }
 
-    pub fn receive_shared(&mut self, frame: &mut eframe::Frame, ctx: &eframe::egui::Context) {
-        self.receive_shared_logic(frame, ctx);
-        self.receive_shared_ui(ctx);
-    }
-
     /// All channel polling and state mutations -- no UI rendering.
     /// Called from `fn logic` so it runs even when the window is hidden.
     pub fn receive_shared_logic(&mut self, frame: &mut eframe::Frame, ctx: &eframe::egui::Context) {
         if !self.user_theme_loaded {
             crate::ui_tools::theme_config::bootstrap_startup_theme(ctx);
         }
+        self.drain_reachability_events();
 
         ctx.request_repaint_after(web_time::Duration::from_secs(1));
 
@@ -998,7 +994,6 @@ impl crate::app_state::SharedContext {
         self.handle_viewports(ctx);
         self.handle_modals(ctx);
         self.client_diagnostics_popup_ui(ctx);
-        self.drain_reachability_events();
         self.connection_status_pill(ctx);
         for text in self.toasts.show(ctx) {
             if let Some(target) = admin_tcp_toast_target(&text) {

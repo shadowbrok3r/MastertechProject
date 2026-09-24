@@ -30,6 +30,7 @@ impl eframe::App for MtechServer {
         ui.options_mut(|options| {
             options.max_passes = std::num::NonZeroUsize::new(2).unwrap();
         });
+        self.shared_ctx.receive_shared_ui(ui.ctx());
 
         self.shared_ctx.menu_bar(ui);
 
