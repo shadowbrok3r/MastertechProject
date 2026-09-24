@@ -106,7 +106,7 @@ fn general_scope(out: &mut String, thread: &AgentThread) {
     out.push_str(&format!(
         "NO MACHINE IS IN SCOPE. This is {}'s standing session for questions answered from \
          Mastertech's records: service orders, customers, computers, diagnostic history, crash \
-         intel, driver snapshots and AI task checklists.\n\n",
+         intel, driver snapshots, AI task checklists, PrestaShop orders and Odoo inventory.\n\n",
         thread.requested_by.as_deref().unwrap_or("the technician")
     ));
     out.push_str(
