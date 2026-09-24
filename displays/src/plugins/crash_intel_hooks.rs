@@ -36,6 +36,8 @@ static LATEST_INGESTS: Lazy<Mutex<HashMap<String, Vec<CrashIngest>>>> =
 /// Pending per-client notice lines drained into the session history each frame.
 static NOTICES: Lazy<Mutex<HashMap<String, Vec<String>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
+/// Notices kept per client while nothing drains them; the oldest go first.
+const MAX_NOTICES_PER_CLIENT: usize = 50;
 
 /// True for dump-decode (cdb `!analyze`) results worth ingesting.
 pub fn is_dump_analysis_result(plugin_id: &str, tool_name: &str) -> bool {
@@ -51,9 +53,10 @@ pub fn is_kernel_triage_result(plugin_id: &str, tool_name: &str) -> bool {
 
 fn push_notice(connection_string: &str, notice: String) {
     if let Ok(mut map) = NOTICES.lock() {
-        map.entry(connection_string.to_string())
-            .or_default()
-            .push(notice);
+        let queue = map.entry(connection_string.to_string()).or_default();
+        queue.push(notice);
+        let excess = queue.len().saturating_sub(MAX_NOTICES_PER_CLIENT);
+        queue.drain(..excess);
     }
 }
 
