@@ -43,6 +43,7 @@ struct Session {
     /// MCP-injected bytes bound for this client.
     inbox: Receiver<Vec<u8>>,
     connection_string: String,
+    computer: Option<database::schema::RecordId>,
     last_ping: std::time::Instant,
 }
 
@@ -52,7 +53,13 @@ impl Session {
         let connection_string = client.connection_string.clone();
         let inbox = crate::plugins::remote_egui_control::hub().register(connection_string.clone());
         log::info!("headless: opened session -> {connection_string}");
-        Some(Self { transport, inbox, connection_string, last_ping: std::time::Instant::now() })
+        Some(Self {
+            transport,
+            inbox,
+            connection_string,
+            computer: client.computer.clone(),
+            last_ping: std::time::Instant::now(),
+        })
     }
 
     /// Drains MCP-bound bytes to the client and routes replies back.
@@ -80,13 +87,19 @@ impl Session {
                 SessionEvent::Text(_) => {}
             }
         }
+        for notice in crate::plugins::crash_intel_hooks::drain_notices(&self.connection_string) {
+            log::info!("headless: {}: {notice}", self.connection_string);
+        }
     }
 
     /// Every reply route the MCP tools block on; a missing arm is a tool timeout.
     fn route(&self, cmd: Cmd) {
         use crate::plugins::{mcp_bridge, remote_script_notify};
         match cmd {
-            Cmd::RemotePluginToolResult { request_id, success, result_json, .. } => {
+            Cmd::RemotePluginToolResult { request_id, plugin_id, tool_name, success, result_json } => {
+                if success {
+                    self.ingest(&plugin_id, &tool_name, &result_json);
+                }
                 mcp_bridge::resolve_pending_request(&request_id, success, result_json);
             }
             Cmd::LoadWasmPluginResult { plugin_id, success, message } => {
@@ -128,6 +141,22 @@ impl Session {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Passes crash and driver results to the fleet-intel ingest hooks.
+    fn ingest(&self, plugin_id: &str, tool_name: &str, result_json: &str) {
+        use crate::plugins::{crash_intel_hooks as crash, driver_intel_hooks as drivers};
+        let (cs, computer) = (self.connection_string.clone(), self.computer.clone());
+        let (tool, json) = (tool_name.to_string(), result_json.to_string());
+        if crash::is_dump_analysis_result(plugin_id, tool_name) {
+            crash::ingest_dump_decode_result(cs, computer, tool, json);
+        } else if crash::is_kernel_triage_result(plugin_id, tool_name) {
+            crash::ingest_kernel_triage_result(cs, computer, tool, json);
+        } else if crash::is_gpu_crash_result(plugin_id, tool_name) {
+            crash::ingest_gpu_crash_result(cs, computer, tool, json);
+        } else if drivers::is_driver_snapshot_result(plugin_id, tool_name) {
+            drivers::ingest_driver_snapshot(cs, computer, json);
         }
     }
 
@@ -201,8 +230,12 @@ async fn roster() -> Vec<database::schema::ConnectedClient> {
 pub async fn run_session_engine() {
     let mut sessions: HashMap<String, Session> = HashMap::new();
     let mut last_roster = std::time::Instant::now() - Duration::from_secs(ROSTER_SECS);
+    let toasts = crate::get_toast_receiver();
 
     loop {
+        while let Ok(toast) = toasts.try_recv() {
+            log::info!("headless: {toast:?}");
+        }
         if last_roster.elapsed() >= Duration::from_secs(ROSTER_SECS) {
             last_roster = std::time::Instant::now();
             let clients = roster().await;
