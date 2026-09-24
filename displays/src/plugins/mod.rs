@@ -20,6 +20,8 @@ pub mod intake_autopilot;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub mod mcp_bridge;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+pub mod image_fit;
+#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub mod sdk_vendor;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub mod remote_egui_control;

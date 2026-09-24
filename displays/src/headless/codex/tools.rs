@@ -6,11 +6,15 @@
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use rmcp::model::{CallToolRequestParams, CallToolResult, ClientInfo, Implementation, Tool};
+use base64::Engine;
+use rmcp::model::{
+    CallToolRequestParams, CallToolResult, ClientInfo, ContentBlock, Implementation, ResourceContents, Tool,
+};
 use rmcp::service::RunningService;
 use rmcp::{RoleClient, ServiceExt};
 use serde_json::{json, Value};
 
+use crate::plugins::image_fit;
 use crate::plugins::mcp_bridge::PluginToolProvider;
 use crate::plugins::PluginManager;
 
@@ -238,20 +242,20 @@ impl ToolHost {
             .collect()
     }
 
-    /// Runs one tool and renders its result as the text the model receives.
-    pub async fn call(&self, name: &str, arguments: Value, general: bool) -> ToolOutcome {
+    /// Runs one tool and renders its result as the text and images the model receives.
+    pub async fn call(&self, name: &str, mut arguments: Value, general: bool) -> ToolOutcome {
         if !self.offered(general).iter().any(|t| t == name) {
             return ToolOutcome::failure(format!("tool `{name}` is not available in this session"));
         }
-        let params: CallToolRequestParams = match serde_json::from_value(json!({
-            "name": name,
-            "arguments": if arguments.is_object() { arguments } else { json!({}) },
-        })) {
+        if !arguments.is_object() {
+            arguments = json!({});
+        }
+        let params: CallToolRequestParams = match serde_json::from_value(json!({ "name": name, "arguments": arguments })) {
             Ok(p) => p,
             Err(e) => return ToolOutcome::failure(format!("bad tool arguments: {e}")),
         };
         match tokio::time::timeout(self.timeout, self.client.call_tool(params)).await {
-            Ok(Ok(result)) => self.render(result),
+            Ok(Ok(result)) => self.render(result).await,
             Ok(Err(e)) => ToolOutcome::failure(format!("tool `{name}` failed: {e}")),
             Err(_) => ToolOutcome::failure(format!(
                 "tool `{name}` did not finish within {}s; it may still be running",
@@ -260,26 +264,29 @@ impl ToolHost {
         }
     }
 
-    fn render(&self, result: CallToolResult) -> ToolOutcome {
-        let is_error = result.is_error.unwrap_or(false);
-        let raw = serde_json::to_value(&result).unwrap_or(Value::Null);
-        let mut parts: Vec<String> = Vec::new();
-        if let Some(blocks) = raw.get("content").and_then(Value::as_array) {
-            for block in blocks {
-                match block.get("text").and_then(Value::as_str) {
-                    Some(text) => parts.push(text.to_string()),
-                    None => parts.push(serde_json::to_string(block).unwrap_or_default()),
-                }
-            }
-        }
-        if let Some(structured) = raw.get("structuredContent").filter(|v| !v.is_null()) {
-            if parts.is_empty() {
-                parts.push(serde_json::to_string_pretty(structured).unwrap_or_default());
+    async fn render(&self, result: CallToolResult) -> ToolOutcome {
+        let CallToolResult { content, structured_content, is_error, .. } = result;
+        let success = !is_error.unwrap_or(false);
+        let (mut parts, images) = split_content(content);
+        if parts.is_empty() {
+            if let Some(structured) = structured_content.filter(|v| !v.is_null()) {
+                parts.push(serde_json::to_string_pretty(&structured).unwrap_or_default());
             }
         }
         let mut text = parts.join("\n");
-        if text.is_empty() {
-            text = if is_error { "tool returned an error with no message".into() } else { "(no output)".into() };
+        let mut fitted = Vec::new();
+        for image in fit_images(images).await {
+            match image {
+                Ok(image) => fitted.push(image),
+                Err(note) => text.push_str(&format!("\n[{note}]")),
+            }
+        }
+        if text.trim().is_empty() {
+            text = match (success, fitted.is_empty()) {
+                (false, _) => "tool returned an error with no message".into(),
+                (true, true) => "(no output)".into(),
+                (true, false) => "(image output)".into(),
+            };
         }
         if text.chars().count() > self.output_chars {
             let kept: String = text.chars().take(self.output_chars).collect();
@@ -288,8 +295,70 @@ impl ToolHost {
                 self.output_chars
             );
         }
-        ToolOutcome { success: !is_error, text, raw: Some(raw) }
+        ToolOutcome { success, text, images: fitted }
     }
+}
+
+/// Text blocks, and images as `(base64, mime)`, from a tool result's content.
+fn split_content(content: Vec<ContentBlock>) -> (Vec<String>, Vec<(String, String)>) {
+    let mut parts = Vec::new();
+    let mut images = Vec::new();
+    for block in content {
+        match block {
+            ContentBlock::Text(t) => parts.push(t.text),
+            ContentBlock::Image(image) => images.push((image.data, image.mime_type)),
+            ContentBlock::Resource(embedded) => match embedded.resource {
+                ResourceContents::BlobResourceContents { blob, mime_type: Some(mime), .. }
+                    if mime.starts_with("image/") =>
+                {
+                    images.push((blob, mime))
+                }
+                other => parts.push(serde_json::to_string(&other).unwrap_or_default()),
+            },
+            other => parts.push(serde_json::to_string(&other).unwrap_or_default()),
+        }
+    }
+    (parts, images)
+}
+
+/// Decodes, fits and labels tool images off the async runtime.
+async fn fit_images(raw: Vec<(String, String)>) -> Vec<Result<ToolImage, String>> {
+    if raw.is_empty() {
+        return Vec::new();
+    }
+    tokio::task::spawn_blocking(move || {
+        raw.into_iter()
+            .enumerate()
+            .map(|(i, (data, mime))| prepare_image(i + 1, &data, &mime))
+            .collect()
+    })
+    .await
+    .unwrap_or_else(|e| vec![Err(format!("images could not be prepared: {e}"))])
+}
+
+fn prepare_image(n: usize, data: &str, mime: &str) -> Result<ToolImage, String> {
+    let engine = base64::engine::general_purpose::STANDARD;
+    let bytes = engine.decode(data.trim()).map_err(|e| format!("image {n} is not valid base64: {e}"))?;
+    let fitted = image_fit::fit(bytes, mime).map_err(|e| format!("image {n} could not be prepared: {e}"))?;
+    Ok(ToolImage {
+        label: format!(
+            "[image {n}: {}x{} {}, {} KB]",
+            fitted.width,
+            fitted.height,
+            fitted.mime,
+            fitted.bytes.len().div_ceil(1024)
+        ),
+        url: format!("data:{};base64,{}", fitted.mime, engine.encode(&fitted.bytes)),
+    })
+}
+
+/// One image a tool returned, fitted and encoded for the model.
+#[derive(Debug, Clone)]
+pub struct ToolImage {
+    /// `data:` URL carrying the encoded image.
+    pub url: String,
+    /// Short text sent next to the image.
+    pub label: String,
 }
 
 /// What one tool call produced, ready for the codex reply and the transcript.
@@ -297,20 +366,37 @@ impl ToolHost {
 pub struct ToolOutcome {
     pub success: bool,
     pub text: String,
-    pub raw: Option<Value>,
+    pub images: Vec<ToolImage>,
 }
 
 impl ToolOutcome {
+    pub fn ok(text: String) -> Self {
+        Self { success: true, text, images: Vec::new() }
+    }
+
     pub fn failure(text: String) -> Self {
-        Self { success: false, text, raw: None }
+        Self { success: false, text, images: Vec::new() }
     }
 
     /// The `item/tool/call` response body.
     pub fn response(&self) -> Value {
-        json!({
-            "contentItems": [{ "type": "inputText", "text": self.text }],
-            "success": self.success,
-        })
+        self.body(true)
+    }
+
+    /// The response as stored in the database, each image reduced to its label.
+    pub fn record(&self) -> Value {
+        self.body(false)
+    }
+
+    fn body(&self, with_images: bool) -> Value {
+        let mut items = vec![json!({ "type": "inputText", "text": self.text })];
+        for image in &self.images {
+            items.push(json!({ "type": "inputText", "text": image.label }));
+            if with_images {
+                items.push(json!({ "type": "inputImage", "imageUrl": image.url }));
+            }
+        }
+        json!({ "contentItems": items, "success": self.success })
     }
 }
 
@@ -333,6 +419,48 @@ pub fn scope_violation(arguments: &Value, connection_string: &str) -> Option<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tiny_png() -> String {
+        use image::{DynamicImage, ImageFormat, RgbImage};
+        let mut out = Vec::new();
+        DynamicImage::ImageRgb8(RgbImage::new(64, 32))
+            .write_to(&mut std::io::Cursor::new(&mut out), ImageFormat::Png)
+            .expect("png encodes");
+        base64::engine::general_purpose::STANDARD.encode(out)
+    }
+
+    #[test]
+    fn image_blocks_become_images_and_text_stays_text() {
+        let content = vec![ContentBlock::text("{\"image_width\":64}"), ContentBlock::image(tiny_png(), "image/png")];
+        let (parts, images) = split_content(content);
+        assert_eq!(parts, vec!["{\"image_width\":64}".to_string()]);
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].1, "image/png");
+    }
+
+    #[test]
+    fn a_response_carries_each_image_after_its_label_and_the_record_keeps_only_labels() {
+        let image = prepare_image(1, &tiny_png(), "image/png").expect("prepares");
+        assert_eq!(image.label, "[image 1: 64x32 image/png, 1 KB]");
+        assert!(image.url.starts_with("data:image/png;base64,"));
+        let outcome = ToolOutcome { success: true, text: "{\"image_width\":64}".into(), images: vec![image] };
+        let response = outcome.response();
+        let items = response["contentItems"].as_array().expect("items");
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0]["type"], "inputText");
+        assert_eq!(items[1]["text"], "[image 1: 64x32 image/png, 1 KB]");
+        assert_eq!(items[2]["type"], "inputImage");
+        assert!(items[2]["imageUrl"].as_str().is_some_and(|u| u.starts_with("data:image/png;base64,")));
+        let record = outcome.record();
+        assert_eq!(record["contentItems"].as_array().map(Vec::len), Some(2));
+        assert!(!record.to_string().contains("base64"));
+    }
+
+    #[test]
+    fn a_bad_image_is_reported_instead_of_sent() {
+        let err = prepare_image(2, "not base64!", "image/png").unwrap_err();
+        assert!(err.starts_with("image 2 is not valid base64"), "{err}");
+    }
 
     #[test]
     fn the_order_and_inventory_searches_are_offered_without_approval_or_machine_scope() {
