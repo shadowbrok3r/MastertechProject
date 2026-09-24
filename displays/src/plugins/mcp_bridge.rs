@@ -9932,10 +9932,10 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
         &self,
         Parameters(_p): Parameters<ScriptsListParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        use crate::scripts::categories::get_all_categories;
+        use crate::scripts::catalog::{CATALOG, Surface};
         use crate::scripts::ScriptCategory;
 
-        let cats = get_all_categories();
+        let cats = CATALOG.items_for(Surface::Mcp);
         let mut out: Vec<serde_json::Value> = Vec::new();
         for cat_key in [
             ScriptCategory::Tuneup,

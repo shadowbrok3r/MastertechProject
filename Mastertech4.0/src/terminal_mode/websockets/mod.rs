@@ -2896,7 +2896,8 @@ if (Test-Path $path) {{
 
             Cmd::GetRemoteScriptList => {
                 log::info!("websockets -> GetRemoteScriptList");
-                let all = displays::scripts::get_all_categories();
+                let all = displays::scripts::catalog::CATALOG
+                    .items_for(displays::scripts::catalog::Surface::Remote);
                 let categories: Vec<(String, Vec<RemoteScriptItem>)> = displays::scripts::CATEGORY_ORDER
                     .iter()
                     .filter_map(|cat| {

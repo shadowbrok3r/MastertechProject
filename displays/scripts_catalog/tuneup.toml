@@ -6,7 +6,7 @@ name = "Data Transfer"
 category = "tuneup"
 summary = "Transfer user data to a backup location"
 timeout_secs = 7200
-surfaces = ["egui", "terminal", "remote", "mcp"]
+surfaces = ["egui", "terminal", "mcp"]
 order = 10
 
 [[script]]

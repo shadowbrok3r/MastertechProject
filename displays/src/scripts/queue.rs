@@ -281,7 +281,7 @@ pub struct ScriptsState {
 impl ScriptsState {
     pub fn new() -> Self {
         let mut state = Self::default();
-        state.categories = super::get_all_categories();
+        state.categories = super::catalog::CATALOG.items_for(super::catalog::Surface::Egui);
         // Expand all categories by default
         for category in super::CATEGORY_ORDER.iter() {
             state.category_expanded.insert(category.clone(), true);

@@ -9,12 +9,10 @@ use crossbeam::channel::{Receiver, Sender};
 
 pub mod catalog;
 pub mod id;
-pub mod categories;
 pub mod executor;
 pub mod mcp_channel;
 pub mod queue;
 
-pub use categories::*;
 pub use executor::*;
 pub use mcp_channel::*;
 pub use queue::*;
@@ -45,25 +43,33 @@ impl Display for ScriptStatus {
 /// Log-line marker emitted when a script finished but needs a reboot to take full effect.
 pub const REBOOT_RECOMMENDED_MARKER: &str = "[reboot recommended]";
 
-/// Planned wall-clock budget in seconds for one remote script run.
+/// Budget for a script name the catalog does not know.
+pub const DEFAULT_SCRIPT_TIMEOUT_SECS: u64 = 600;
+
+/// Planned wall-clock budget in seconds for one script run.
 pub fn default_remote_script_timeout_secs(script_name: &str) -> u64 {
-    match script_name {
-        "Data Transfer" => 7200,
-        "Install Windows Updates" | "Run SuperAntiSpyware Scan" | "Run Webroot Scan" => 3600,
-        "Activate CPS" | "Activate Webroot" | "Activate SuperAnti" | "Activate SEB" => 1800,
-        // Nine uninstalls, one at a time.
-        "Run Junkware Category" => 1800,
-        // 12+ benchmarks at ~15 s each plus warmup and persistence.
-        "Benchmark Suite" => 1800,
-        "QC Benchmark" | "Memory Test" => 1200,
-        "GPU Stress Test" | "Stress: PSU" | "Stress: PSU Transient" | "Stress: Linpack" => 900,
-        // Planned run length plus 30 minutes; Power Virus plus 15.
-        "Cert: Bronze" => 7200,
-        "Cert: Silver" => 16200,
-        "Cert: Gold" => 32400,
-        "Cert: Platinum" => 46800,
-        "Power Virus" => 2700,
-        _ => 600,
+    catalog::CATALOG
+        .timeout_secs(script_name)
+        .unwrap_or(DEFAULT_SCRIPT_TIMEOUT_SECS)
+}
+
+/// Category display order
+pub const CATEGORY_ORDER: [ScriptCategory; 4] = [
+    ScriptCategory::Tuneup,
+    ScriptCategory::Informational,
+    ScriptCategory::JunkwareRemoval,
+    ScriptCategory::StressTests,
+];
+
+/// Get category display name
+pub fn category_display_name(category: &ScriptCategory) -> &'static str {
+    match category {
+        ScriptCategory::Tuneup => "Tuneup / QC",
+        ScriptCategory::Informational => "Informational",
+        ScriptCategory::JunkwareRemoval => "Junkware Removal",
+        ScriptCategory::StressTests => "Stress Tests",
+        ScriptCategory::UserScripts(_) => "User Scripts",
+        ScriptCategory::Custom(_) => "Custom",
     }
 }
 

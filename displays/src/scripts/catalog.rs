@@ -373,11 +373,7 @@ mod catalog_tests {
         let catalog: std::collections::BTreeSet<String> =
             CATALOG.iter().map(|d| d.name.clone()).collect();
         let shipped: std::collections::BTreeSet<String> =
-            crate::scripts::categories::get_all_categories()
-                .values()
-                .flatten()
-                .map(|s| s.name.clone())
-                .collect();
+            SHIPPED_NAMES.iter().map(|s| s.to_string()).collect();
         let missing: Vec<&String> = shipped.difference(&catalog).collect();
         assert!(
             missing.is_empty(),
@@ -443,17 +439,45 @@ mod catalog_tests {
         }
     }
 
-    /// Renaming a script silently dropped its budget to the 600s default before.
+    /// Remote and MCP budgets come from the catalog, legacy names included.
     #[test]
-    fn timeouts_match_legacy() {
+    fn remote_budgets_come_from_the_catalog() {
         for def in CATALOG.iter() {
             assert_eq!(
-                def.timeout_secs,
                 crate::scripts::default_remote_script_timeout_secs(&def.name),
-                "timeout drifted for '{}'",
+                def.timeout_secs,
+                "'{}' gets the wrong budget",
                 def.name
             );
         }
+        assert_eq!(crate::scripts::default_remote_script_timeout_secs("Webroot TEST"), 1800);
+        assert_eq!(
+            crate::scripts::default_remote_script_timeout_secs("Not A Script"),
+            crate::scripts::DEFAULT_SCRIPT_TIMEOUT_SECS
+        );
+    }
+
+    /// Every benchmark script except the suite resolves to a kind.
+    #[test]
+    fn benchmark_scripts_resolve_to_kinds() {
+        for n in stress_runner::BENCHMARK_SCRIPT_NAMES {
+            let kind = stress_runner::benchmark_kind_for_script(n);
+            if *n == "Benchmark Suite" {
+                assert!(kind.is_none());
+            } else {
+                assert!(kind.is_some(), "no BenchmarkKind for script: {n}");
+            }
+        }
+    }
+
+    /// Scripts that cannot run on a remote client stay out of its list.
+    #[test]
+    fn data_transfer_is_not_offered_remotely() {
+        let def = CATALOG
+            .get(&ScriptId::new("data-transfer"))
+            .expect("catalog entry");
+        assert!(!def.offered_on(Surface::Remote));
+        assert!(def.offered_on(Surface::Egui));
     }
 
     /// The runner is the contract; the catalog conforms to it, not the reverse.
@@ -571,6 +595,105 @@ mod catalog_tests {
         "Scan For Browser Hijackers",
         "Unpin Copilot",
         "Windows Version",
+    ];
+
+    /// Every display name shipped before the catalog existed.
+    const SHIPPED_NAMES: &[&str] = &[
+        "Activate CPS",
+        "Activate SEB",
+        "Align Taskbar to left",
+        "Any Recent Blue Screens?",
+        "Are there scheduled tasks for it?",
+        "Avast Browser",
+        "Benchmark Suite",
+        "Benchmark: CPU Multi",
+        "Benchmark: CPU Single",
+        "Benchmark: Disk",
+        "Benchmark: GPU Compute",
+        "Benchmark: GPU Matmul",
+        "Benchmark: GPU PCIe",
+        "Benchmark: GPU VRAM",
+        "Benchmark: Linpack",
+        "Benchmark: Matrix Multi",
+        "Benchmark: Matrix Single",
+        "Benchmark: Memcpy",
+        "Benchmark: Memory Bandwidth",
+        "Benchmark: Memory Latency",
+        "Cert: Bronze",
+        "Cert: Gold",
+        "Cert: Platinum",
+        "Cert: Silver",
+        "Change SuperAntiSpyware settings",
+        "Change Timezone to Mountain",
+        "Check Updates",
+        "Clear Browser",
+        "Concurrent: CPU+RAM+GPU",
+        "Data Transfer",
+        "Disable BitLocker",
+        "Disable Edge Startup Boost",
+        "Disable Notifications",
+        "Disable OneDrive Startup",
+        "Disable Sleep / Hibernation",
+        "Disable Startup Apps",
+        "Disable proxy settings",
+        "Driver Support",
+        "GPU Stress Test",
+        "Install LibreOffice",
+        "Install Windows Updates",
+        "Is Hibernation/Sleep enabled?",
+        "Is SuperAntiSpyware installed?",
+        "Is SuperEasyBackup installed?",
+        "Is Webroot installed?",
+        "Is Windows Activated?",
+        "Mcaffee Safe",
+        "Memory Test",
+        "OneLaunch",
+        "Power Virus",
+        "QC Benchmark",
+        "Remove Browser Hijackers",
+        "Run Junkware Category",
+        "Run Prechecks",
+        "Run SuperAntiSpyware Scan",
+        "Run Webroot Scan",
+        "Scan For Browser Hijackers",
+        "Shift Browser",
+        "Stress: Atomic",
+        "Stress: Bitops",
+        "Stress: Branch",
+        "Stress: CPU",
+        "Stress: CPU Verify",
+        "Stress: Cache",
+        "Stress: Combined",
+        "Stress: Context Switch",
+        "Stress: Disk",
+        "Stress: FP/FMA",
+        "Stress: GPU Compute",
+        "Stress: GPU Display",
+        "Stress: GPU Matmul",
+        "Stress: GPU PCIe",
+        "Stress: GPU VRAM",
+        "Stress: Hash",
+        "Stress: I-Cache",
+        "Stress: Linpack",
+        "Stress: Matrix",
+        "Stress: Memcpy",
+        "Stress: Memory",
+        "Stress: Mutex",
+        "Stress: PSU",
+        "Stress: PSU Transient",
+        "Stress: Prefetch",
+        "Stress: Prime",
+        "Stress: Stream",
+        "Stress: TSC",
+        "Stress: VM",
+        "Uninstall Microsoft 365",
+        "Uninstall OneDrive",
+        "Unpin Copilot",
+        "Wave Browser",
+        "WebNavigator Browser",
+        "When Was The Last Service Date?",
+        "Windows Version",
+        "Winzip",
     ];
 
     /// Recovered by the three-way diff: implemented somewhere but listed in no
