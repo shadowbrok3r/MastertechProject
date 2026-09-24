@@ -55,6 +55,13 @@ impl crate::app_state::SharedContext {
             }
         }
 
+        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+        if let Some(request) = crate::ui_data::agent_session_notify::take_open_request() {
+            self.agent_sessions.open(request.thread, request.is_open);
+            self.pending_tab_opens.push(TabId::AgentSessions);
+            self.pending_activate_tab = Some(TabId::AgentSessions);
+        }
+
         for tab in self.pending_tab_opens.drain(..) {
             if tree.find_tab(&tab).is_none() {
                 tree.push_to_focused_leaf(tab);

@@ -44,6 +44,12 @@ impl MasterTechApp {
             }
         }
 
+        if let Some(request) = displays::ui_data::agent_session_notify::take_open_request() {
+            self.context.shared_ctx.agent_sessions.open(request.thread, request.is_open);
+            self.context.pending_tab_opens.push(TabId::AgentSessions);
+            self.context.pending_activate_tab = Some(TabId::AgentSessions);
+        }
+
         for tab in std::mem::take(&mut self.context.pending_tab_opens) {
             if !mode.allows(tab) {
                 refuse(&mut self.context, mode, tab);

@@ -404,6 +404,10 @@ impl EnhancedAiPlayground {
     }
 
     fn show_chat_content(&mut self, ui: &mut Ui) {
+        if self.agent_threads.contains(&self.selected_thread) {
+            let thread = database::schema::RecordId::new("agent_thread", self.selected_thread.as_str());
+            crate::ui_data::agent_session_notify::mark_in_view(&thread);
+        }
         let messages = self
             .threads
             .get(&self.selected_thread)

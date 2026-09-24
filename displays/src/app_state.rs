@@ -425,6 +425,9 @@ pub struct SharedContext {
     /// Decisions the Codex agent is waiting on, shown on every tab.
     #[serde(skip)]
     pub agent_approvals: crate::modals::agent_approval_modal::AgentApprovalQueue,
+    /// Toasts for the signed-in user's agent sessions that replied, failed or wait on them.
+    #[serde(skip)]
+    pub agent_notify: crate::ui_data::agent_session_notify::AgentSessionNotifier,
     /// AI diagnostics ROI aggregates; fetched only while drawn.
     #[serde(skip)]
     pub ai_analytics: crate::tabs::ai_analytics::AiAnalytics,
@@ -731,6 +734,10 @@ impl SharedContext {
                 .custom_contents(
                     crate::tabs::tasks::pending::UNDO_TOAST_KIND,
                     crate::tabs::tasks::pending::undo_toast_contents,
+                )
+                .custom_contents(
+                    crate::ui_data::agent_session_notify::AGENT_TOAST_KIND,
+                    crate::ui_data::agent_session_notify::toast_contents,
                 ),
             undo_toasts_shown: HashSet::new(),
             db_tx, db_rx,
@@ -825,6 +832,7 @@ impl SharedContext {
             agent_sessions: Default::default(),
             agent_audit: Default::default(),
             agent_approvals: Default::default(),
+            agent_notify: Default::default(),
             ai_analytics: Default::default(),
             notification_center: NotificationCenter::default(),
             user_settings: UserSettings::default(),

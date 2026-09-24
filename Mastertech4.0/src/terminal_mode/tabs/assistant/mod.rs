@@ -456,6 +456,9 @@ impl<'a> AssistantTab<'a> {
 impl<'a> HandleWidget<'a> for AssistantTab<'a> {
     fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
         self.tick();
+        if let Some(thread) = &self.thread {
+            displays::ui_data::agent_session_notify::mark_in_view(&thread.id);
+        }
         let approval = self.active_approval();
         let busy = approval.as_ref().is_some_and(|r| self.in_flight.contains(&r.id));
         let inner_w = area.width.saturating_sub(2) as usize;
