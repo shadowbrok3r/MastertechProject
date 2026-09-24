@@ -433,11 +433,6 @@ mod tests {
         assert_eq!(thread(Some(58_000), None).context_usage(), None);
         assert_eq!(thread(Some(58_000), Some(0)).context_usage(), None);
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::AgentThreadState;
 
     fn state(status: Option<&str>, error: Option<&str>) -> AgentThreadState {
         AgentThreadState {
