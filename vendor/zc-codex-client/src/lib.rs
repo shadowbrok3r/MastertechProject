@@ -488,7 +488,7 @@ async fn dispatch(
         }),
         "thread/tokenUsage/updated" => Some(Event::TokenUsage {
             thread_id,
-            used: params.pointer("/tokenUsage/total").and_then(|v| v.as_u64()),
+            used: context_tokens(&params["tokenUsage"]),
             window: params.pointer("/tokenUsage/modelContextWindow").and_then(|v| v.as_u64()),
         }),
         "serverRequest/resolved" => Some(Event::AskResolved { request_id: params["requestId"].clone() }),
@@ -497,6 +497,14 @@ async fn dispatch(
     if let Some(e) = out {
         let _ = ev.send(e).await;
     }
+}
+
+/// Tokens the last request held in the context window, less its reasoning output.
+fn context_tokens(usage: &Value) -> Option<u64> {
+    let last = usage.get("last")?;
+    let total = last.get("totalTokens")?.as_u64()?;
+    let reasoning = last.get("reasoningOutputTokens").and_then(Value::as_u64).unwrap_or(0);
+    Some(total.saturating_sub(reasoning))
 }
 
 /// Decisions for `item/commandExecution/requestApproval` and
@@ -521,4 +529,23 @@ pub mod decision {
     pub fn accept_for_session() -> Value { json!({ "decision": "acceptForSession" }) }
     pub fn decline() -> Value { json!({ "decision": "decline" }) }
     pub fn cancel() -> Value { json!({ "decision": "cancel" }) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::context_tokens;
+    use serde_json::json;
+
+    #[test]
+    fn context_tokens_reads_the_last_request() {
+        let usage = json!({
+            "total": { "totalTokens": 900_000, "inputTokens": 880_000, "cachedInputTokens": 0,
+                       "outputTokens": 20_000, "reasoningOutputTokens": 5_000 },
+            "last": { "totalTokens": 61_000, "inputTokens": 58_000, "cachedInputTokens": 50_000,
+                      "outputTokens": 3_000, "reasoningOutputTokens": 1_000 },
+            "modelContextWindow": 131_072
+        });
+        assert_eq!(context_tokens(&usage), Some(60_000));
+        assert_eq!(context_tokens(&json!({ "total": { "totalTokens": 5 } })), None);
+    }
 }
