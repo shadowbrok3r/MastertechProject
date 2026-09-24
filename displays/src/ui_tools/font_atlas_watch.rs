@@ -23,7 +23,7 @@ struct WatchState {
 const HEAL_SHORTCUT: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::F);
 
-/// Call once per frame. Logs atlas growth, imminent-rebuild warnings, rebuild
+/// Call once per pass, from `App::ui`. Logs atlas growth, imminent-rebuild warnings, rebuild
 /// events, and pixels-per-point changes; Ctrl+Shift+F reinstalls fonts.
 pub fn watch(ctx: &Context) {
     let id = Id::new("font_atlas_watch");
