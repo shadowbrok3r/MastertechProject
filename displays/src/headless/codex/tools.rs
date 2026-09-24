@@ -19,6 +19,9 @@ use crate::plugins::image_fit;
 use crate::plugins::mcp_bridge::PluginToolProvider;
 use crate::plugins::PluginManager;
 
+/// Seconds a `remote_exec_wait` keeps between its own timeout and the tool timeout.
+const WAIT_MARGIN_SECS: u64 = 15;
+
 /// Tools the diagnostician role may call; the env `MTECH_CODEX_TOOLS` replaces the list.
 pub const DIAGNOSTICIAN_TOOLS: &[&str] = &[
     "query_surrealdb",
@@ -248,6 +251,7 @@ impl ToolHost {
         if !arguments.is_object() {
             arguments = json!({});
         }
+        cap_blocking_wait(name, &mut arguments, self.timeout);
         let params: CallToolRequestParams = match serde_json::from_value(json!({ "name": name, "arguments": arguments })) {
             Ok(p) => p,
             Err(e) => return ToolOutcome::failure(format!("bad tool arguments: {e}")),
@@ -317,6 +321,18 @@ fn split_content(content: Vec<ContentBlock>) -> (Vec<String>, Vec<(String, Strin
         }
     }
     (parts, images)
+}
+
+/// Caps `remote_exec_wait`'s `timeout_secs` below the tool timeout.
+fn cap_blocking_wait(name: &str, arguments: &mut Value, budget: Duration) {
+    if name != "remote_exec_wait" {
+        return;
+    }
+    let cap = budget.as_secs().saturating_sub(WAIT_MARGIN_SECS).max(1);
+    let Some(args) = arguments.as_object_mut() else { return };
+    if args.get("timeout_secs").and_then(Value::as_u64).unwrap_or(300) > cap {
+        args.insert("timeout_secs".into(), json!(cap));
+    }
 }
 
 /// Decodes, fits and labels tool images off the async runtime.
@@ -458,6 +474,23 @@ mod tests {
     fn a_bad_image_is_reported_instead_of_sent() {
         let err = prepare_image(2, "not base64!", "image/png").unwrap_err();
         assert!(err.starts_with("image 2 is not valid base64"), "{err}");
+    }
+
+    #[test]
+    fn remote_exec_wait_is_capped_under_the_tool_timeout() {
+        let budget = Duration::from_secs(320);
+        let mut args = json!({ "job_id": "job-1", "timeout_secs": 900 });
+        cap_blocking_wait("remote_exec_wait", &mut args, budget);
+        assert_eq!(args["timeout_secs"], 305);
+        let mut defaulted = json!({ "job_id": "job-1" });
+        cap_blocking_wait("remote_exec_wait", &mut defaulted, Duration::from_secs(120));
+        assert_eq!(defaulted["timeout_secs"], 105);
+        let mut short = json!({ "timeout_secs": 60 });
+        cap_blocking_wait("remote_exec_wait", &mut short, budget);
+        assert_eq!(short["timeout_secs"], 60);
+        let mut other = json!({ "timeout_secs": 900 });
+        cap_blocking_wait("scripts_run_remote", &mut other, budget);
+        assert_eq!(other["timeout_secs"], 900);
     }
 
     #[test]
