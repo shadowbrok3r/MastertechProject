@@ -361,7 +361,7 @@ impl<'a> AssistantTab<'a> {
                 self.decide(req.id.clone(), "accepted", None, None);
                 true
             }
-            KeyCode::Char('s') => {
+            KeyCode::Char('s') if req.may_approve_for_session() => {
                 self.decide(req.id.clone(), "accepted_for_session", None, None);
                 true
             }
@@ -408,8 +408,9 @@ impl<'a> AssistantTab<'a> {
             if let Some(args) = req.arguments.as_ref().filter(|a| !a.is_null()) {
                 lines.push(Line::from(Span::styled(transcript::clip(&args.to_string(), width), muted)));
             }
+            let session = if req.may_approve_for_session() { "  [s] approve for session" } else { "" };
             lines.push(Line::from(Span::styled(
-                transcript::clip(&format!("[y] approve  [s] approve for session  [n] decline  [Ctrl+N] decline with the typed note  [x] stop agent  [Esc] later"), width),
+                transcript::clip(&format!("[y] approve{session}  [n] decline  [Ctrl+N] decline with the typed note  [x] stop agent  [Esc] later"), width),
                 warn,
             )));
             lines.push(Line::from(Span::styled(expires, muted)));

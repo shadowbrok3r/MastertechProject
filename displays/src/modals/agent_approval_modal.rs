@@ -236,9 +236,11 @@ impl AgentApprovalQueue {
                         if ui.button(RichText::new(format!("{} Approve once", icons::STATUS_ON)).color(theme::success(ui))).clicked() {
                             decision = Some(("accepted", None, None));
                         }
-                        ui.add_space(4.0);
-                        if ui.button(format!("{} Approve for this session", icons::CHECK)).clicked() {
-                            decision = Some(("accepted_for_session", None, None));
+                        if req.may_approve_for_session() {
+                            ui.add_space(4.0);
+                            if ui.button(format!("{} Approve for this session", icons::CHECK)).clicked() {
+                                decision = Some(("accepted_for_session", None, None));
+                            }
                         }
                         ui.add_space(6.0);
                         if ui.button(RichText::new(format!("{} Decline", icons::STATUS_ERR)).color(theme::error(ui))).clicked() {
