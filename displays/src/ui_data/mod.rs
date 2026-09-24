@@ -157,7 +157,8 @@ impl crate::app_state::SharedContext {
 
     /// Queues toasts for the signed-in user's agent sessions that replied, failed or wait on them.
     fn receive_agent_notifications(&mut self, ctx: &eframe::egui::Context) {
-        self.agent_notify.tick(ctx, self.current_user.as_ref(), self.live_epoch, &mut self.toasts);
+        let live_epoch = (self.live_queries_active && !self.reconnect_in_progress).then_some(self.live_epoch);
+        self.agent_notify.tick(ctx, self.current_user.as_ref(), live_epoch, &mut self.toasts);
     }
 
     /// Spawns the chat live streams (participant-filtered) once the chat tab

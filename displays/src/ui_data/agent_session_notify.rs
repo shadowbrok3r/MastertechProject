@@ -316,14 +316,14 @@ impl Default for AgentSessionNotifier {
 }
 
 impl AgentSessionNotifier {
-    /// Follows the signed-in user's sessions and queues toasts; draws nothing.
-    pub fn tick(&mut self, ctx: &Context, user: Option<&User>, live_epoch: u64, toasts: &mut Toasts) {
+    /// Follows the signed-in user's sessions and queues toasts; reads nothing while `live_epoch` is `None`.
+    pub fn tick(&mut self, ctx: &Context, user: Option<&User>, live_epoch: Option<u64>, toasts: &mut Toasts) {
         if user.map(User::get_id).as_ref() != self.viewer.as_ref().map(|v| &v.id) {
             self.reset(user.map(Viewer::of));
         }
         let Some(viewer) = self.viewer.clone() else { return };
 
-        if self.stream.is_some() && self.stream_epoch != Some(live_epoch) {
+        if self.stream.is_some() && self.stream_epoch != live_epoch {
             self.stop_stream();
         }
 
@@ -355,15 +355,16 @@ impl AgentSessionNotifier {
             }
         }
 
-        if self.stream.is_none() && self.stream_retry_at.is_none_or(|t| Instant::now() >= t) {
-            self.start_stream(live_epoch);
-        }
-        if self.last_snapshot.is_none_or(|t| t.elapsed() >= SNAPSHOT_EVERY) {
-            self.request_snapshot();
-        }
         if self.unseen > 0 && app_focused(ctx) {
             self.unseen = 0;
             clear_attention();
+        }
+        let Some(epoch) = live_epoch else { return };
+        if self.stream.is_none() && self.stream_retry_at.is_none_or(|t| Instant::now() >= t) {
+            self.start_stream(epoch);
+        }
+        if self.last_snapshot.is_none_or(|t| t.elapsed() >= SNAPSHOT_EVERY) {
+            self.request_snapshot();
         }
     }
 
@@ -376,6 +377,10 @@ impl AgentSessionNotifier {
         self.last_snapshot = None;
         self.unseen = 0;
         clear_attention();
+        with_board(|b| {
+            b.notices.clear();
+            b.open = None;
+        });
     }
 
     fn stop_stream(&mut self) {
