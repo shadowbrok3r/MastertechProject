@@ -140,6 +140,11 @@ impl AgentThreadState {
     pub fn is_empty(&self) -> bool {
         *self == Self::default()
     }
+
+    /// True for a starting or running write without an error; saving it clears the stored error.
+    pub fn clears_error(&self) -> bool {
+        self.error.is_none() && matches!(self.status.as_deref(), Some("starting" | "running"))
+    }
 }
 
 /// Connection string of a technician's session with no machine in scope.
@@ -227,7 +232,7 @@ impl AgentThread {
         let terminal = matches!(state.status.as_deref(), Some("closed" | "failed"));
         db().query(
             "UPDATE $id SET status = $status ?? status, \
-             error = $error ?? error, \
+             error = IF $clear_error THEN NONE ELSE ($error ?? error) END, \
              closed_at = IF $terminal THEN time::now() ELSE closed_at END, \
              last_seq = IF $seq != NONE THEN math::max([last_seq ?? 0, $seq]) ELSE last_seq END, \
              last_event_at = IF $seq != NONE THEN time::now() ELSE last_event_at END, \
@@ -237,6 +242,7 @@ impl AgentThread {
         .bind(("id", id.clone()))
         .bind(("status", state.status.clone()))
         .bind(("error", state.error.as_ref().map(|e| e.chars().take(800).collect::<String>())))
+        .bind(("clear_error", state.clears_error()))
         .bind(("terminal", terminal))
         .bind(("seq", state.last_seq))
         .bind(("used", state.tokens_used))
@@ -327,6 +333,23 @@ impl AgentThread {
 #[cfg(test)]
 mod tests {
     use super::AgentThreadState;
+
+    fn state(status: Option<&str>, error: Option<&str>) -> AgentThreadState {
+        AgentThreadState {
+            status: status.map(str::to_string),
+            error: error.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn starting_or_running_again_clears_the_last_error() {
+        assert!(state(Some("running"), None).clears_error());
+        assert!(state(Some("starting"), None).clears_error());
+        assert!(!state(Some("idle"), None).clears_error());
+        assert!(!state(Some("running"), Some("429 Too Many Requests")).clears_error());
+        assert!(!state(None, None).clears_error());
+    }
 
     #[test]
     fn an_empty_state_writes_nothing() {
