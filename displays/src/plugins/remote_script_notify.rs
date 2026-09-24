@@ -26,6 +26,40 @@ pub static REMOTE_SCRIPT_PENDING: Lazy<
     Mutex<HashMap<String, (String, tokio::sync::oneshot::Sender<RemoteScriptSession>)>>,
 > = Lazy::new(|| Mutex::new(HashMap::new()));
 
+/// Stress runs dispatched per connection_string: (script, when its budget runs out).
+#[cfg(not(target_arch = "wasm32"))]
+static STRESS_BUSY: Lazy<Mutex<HashMap<String, (String, std::time::Instant)>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// The stress run still inside its budget on `connection_string`, with its seconds left.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn stress_busy(connection_string: &str) -> Option<(String, u64)> {
+    let mut map = STRESS_BUSY.lock().ok()?;
+    let (name, until) = map.get(connection_string)?.clone();
+    let now = std::time::Instant::now();
+    if until <= now {
+        map.remove(connection_string);
+        return None;
+    }
+    Some((name, (until - now).as_secs()))
+}
+
+/// Marks `connection_string` as running `script` for up to `budget`.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn mark_stress_busy(connection_string: &str, script: &str, budget: std::time::Duration) {
+    if let Ok(mut map) = STRESS_BUSY.lock() {
+        map.insert(connection_string.to_string(), (script.to_string(), std::time::Instant::now() + budget));
+    }
+}
+
+/// Ends the busy mark once the stress run is known to be over.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn clear_stress_busy(connection_string: &str) {
+    if let Ok(mut map) = STRESS_BUSY.lock() {
+        map.remove(connection_string);
+    }
+}
+
 /// One-shot waiters fulfilled (with the category count) by the next `RemoteScriptListResponse`.
 #[cfg(not(target_arch = "wasm32"))]
 pub static SCRIPT_LIST_WAITERS: Lazy<Mutex<Vec<tokio::sync::oneshot::Sender<usize>>>> =
@@ -152,5 +186,25 @@ pub fn notify_remote_scripts_complete(conn: &str) {
     #[cfg(target_arch = "wasm32")]
     {
         drop(session);
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn a_stress_run_keeps_its_machine_busy_until_cleared_or_expired() {
+        let cs = "BUSY-TEST:0000000aa";
+        assert!(stress_busy(cs).is_none());
+        mark_stress_busy(cs, "Cert: Bronze", Duration::from_secs(5700));
+        let (name, left) = stress_busy(cs).expect("busy after dispatch");
+        assert_eq!(name, "Cert: Bronze");
+        assert!(left > 5600 && left <= 5700, "{left}");
+        clear_stress_busy(cs);
+        assert!(stress_busy(cs).is_none());
+        mark_stress_busy(cs, "Stress: CPU", Duration::ZERO);
+        assert!(stress_busy(cs).is_none(), "an expired budget frees the machine");
     }
 }
