@@ -6,6 +6,8 @@
 //! streams push thread and transcript changes; slow snapshot polls fill the
 //! gap a dropped stream leaves.
 
+mod transcript;
+
 use std::time::Duration;
 
 use crossbeam::channel::{Receiver, Sender};
@@ -13,12 +15,12 @@ use database::live_data::{listen_data_filtered, Action};
 use database::schema::{AgentEvent, AgentThread, AgentTurn, RecordId, RecordIdExt};
 use eframe::egui::{self, Align, Layout, RichText, ScrollArea, TextEdit, Ui, vec2};
 use futures::future::AbortHandle;
-use serde_json::Value;
 use web_time::Instant;
 
-use crate::markdown_editor::chat_markdown;
-use crate::ui_tools::{hex_json, icons, theme};
+use crate::ui_tools::{icons, theme};
 use crate::{PlatformSpawner, Spawner};
+
+pub use transcript::transcript_ui;
 
 /// Snapshot polls behind the live streams.
 const THREADS_POLL: Duration = Duration::from_secs(30);
@@ -508,101 +510,5 @@ pub fn status_chip(ui: &Ui, status: &str) -> (&'static str, egui::Color32, &'sta
         "closed" => (icons::STATUS_OFF, theme::weak_text(ui), "Closed"),
         "failed" => (icons::STATUS_ERR, theme::error(ui), "Failed"),
         _ => (icons::STATUS_DOT, theme::weak_text(ui), "Unknown"),
-    }
-}
-
-fn item_str<'a>(item: &'a Option<Value>, key: &str) -> Option<&'a str> {
-    item.as_ref()?.get(key)?.as_str()
-}
-
-/// Renders a transcript; shared with the bench-side progress window.
-pub fn transcript_ui(ui: &mut Ui, salt: &str, events: &[AgentEvent], show_reasoning: bool) {
-    for ev in events {
-        let row_salt = format!("{salt}:{}", ev.seq);
-        match ev.kind.as_str() {
-            "turn_started" => {
-                ui.add_space(6.0);
-                ui.label(
-                    RichText::new(format!("— {} —", ev.turn_id.clone().unwrap_or_else(|| "turn".into())))
-                        .weak()
-                        .small(),
-                );
-            }
-            "turn_completed" => ui.add_space(4.0),
-            "user" => {
-                ui.add_space(4.0);
-                egui::Frame::group(ui.style()).show(ui, |ui| {
-                    ui.label(RichText::new("Technician").strong().small());
-                    ui.label(&ev.text);
-                });
-            }
-            "agent" => {
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(format!("{} Agent", icons::ROBOT)).strong().small());
-                    if !ev.done {
-                        ui.spinner();
-                    }
-                });
-                chat_markdown::render(ui, &ev.text);
-            }
-            "reasoning" => {
-                if show_reasoning && !ev.text.trim().is_empty() {
-                    egui::CollapsingHeader::new(RichText::new("thinking").weak().small())
-                        .id_salt(&row_salt)
-                        .default_open(false)
-                        .show(ui, |ui| {
-                            ui.label(RichText::new(&ev.text).weak());
-                        });
-                }
-            }
-            "tool_call" => {
-                let tool = item_str(&ev.item, "tool").unwrap_or("tool").to_string();
-                let failed = ev.item.as_ref().and_then(|i| i.get("error")).is_some_and(|e| !e.is_null());
-                let title = if failed {
-                    RichText::new(format!("{} {tool} failed", icons::STATUS_ERR)).color(theme::error(ui))
-                } else if ev.done {
-                    RichText::new(format!("{} {tool}", icons::WRENCH)).weak()
-                } else {
-                    RichText::new(format!("{} {tool} running…", icons::WRENCH)).color(theme::info(ui))
-                };
-                egui::CollapsingHeader::new(title)
-                    .id_salt(&row_salt)
-                    .default_open(failed)
-                    .show(ui, |ui| {
-                        if let Some(args) = ev.item.as_ref().and_then(|i| i.get("arguments")) {
-                            ui.label(RichText::new("Arguments").strong().small());
-                            hex_json::json_tree(ui, &format!("{row_salt}:args"), args);
-                        }
-                        if let Some(err) = ev.item.as_ref().and_then(|i| i.pointer("/error/message")).and_then(Value::as_str) {
-                            ui.label(RichText::new(err).color(theme::error(ui)));
-                        } else if let Some(result) = ev.item.as_ref().and_then(|i| i.get("result")).filter(|r| !r.is_null()) {
-                            ui.label(RichText::new("Result").strong().small());
-                            hex_json::json_tree(ui, &format!("{row_salt}:result"), result);
-                        } else if !ev.text.is_empty() {
-                            ui.label(RichText::new(&ev.text).monospace().small());
-                        }
-                    });
-            }
-            "command" => {
-                egui::CollapsingHeader::new(RichText::new(format!("{} shell", icons::TERMINAL)).weak())
-                    .id_salt(&row_salt)
-                    .default_open(false)
-                    .show(ui, |ui| {
-                        ui.label(RichText::new(&ev.text).monospace().small());
-                    });
-            }
-            "approval" => {
-                ui.label(RichText::new(format!("{} {}", icons::LOCK, ev.text)).color(theme::warn(ui)));
-            }
-            "error" => {
-                ui.label(RichText::new(format!("{} {}", icons::STATUS_ERR, ev.text)).color(theme::error(ui)));
-            }
-            _ => {
-                if !ev.text.trim().is_empty() {
-                    ui.label(RichText::new(&ev.text).weak().small());
-                }
-            }
-        }
     }
 }
