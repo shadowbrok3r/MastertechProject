@@ -227,8 +227,7 @@ impl Client {
                 let Ok(v) = serde_json::from_str::<Value>(&txt) else {
                     continue;
                 };
-                // Record the ID before exposing TurnStarted to presenters: Stop can be tapped
-                // as soon as that event is drawn. A late completion cannot clear a newer turn.
+                // Records the turn id before TurnStarted reaches the presenter; only that turn's completion clears it.
                 if let (Some(thread), Some(turn)) = (
                     v.pointer("/params/threadId").and_then(Value::as_str),
                     v.pointer("/params/turn/id").and_then(Value::as_str),
@@ -376,8 +375,7 @@ impl Client {
         let turn_id = match known_turn {
             Some(id) => id,
             None => {
-                // A resumed connection may have missed turn/started. Read the live turn rather
-                // than omitting the required ID or sending an untargeted startup interrupt.
+                // Reads the thread's in-progress turn when turn/started was missed.
                 let snapshot = self.request("thread/read", json!({
                     "threadId": thread_id, "includeTurns": true,
                 })).await?;
