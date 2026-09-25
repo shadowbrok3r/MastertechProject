@@ -57,6 +57,7 @@ pub const DIAGNOSTICIAN_TOOLS: &[&str] = &[
     "remote_exec_signal",
     "remote_exec_list",
     "create_diagnostic_session",
+    "ensure_service_task",
     "log_diagnostic_entry",
     "set_current_theory",
     "mark_diagnosed",
@@ -491,6 +492,14 @@ mod tests {
         let mut other = json!({ "timeout_secs": 900 });
         cap_blocking_wait("scripts_run_remote", &mut other, budget);
         assert_eq!(other["timeout_secs"], 900);
+    }
+
+    #[test]
+    fn a_machine_session_can_file_the_missing_service_task_without_approval() {
+        assert!(DIAGNOSTICIAN_TOOLS.contains(&"ensure_service_task"));
+        assert!(!PROMPT_TOOLS.contains(&"ensure_service_task"));
+        let args = json!({ "service_number": "2155467", "connection_string": "OTHER:1" });
+        assert!(scope_violation(&args, "DESKTOP-787KAB8:8d3db801f").is_some());
     }
 
     #[test]

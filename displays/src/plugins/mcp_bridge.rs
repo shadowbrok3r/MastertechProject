@@ -283,6 +283,169 @@ fn optional_record_id(input: &str, table: &'static str) -> Option<database::sche
     (!trimmed.is_empty()).then(|| parse_record_id(trimmed, table))
 }
 
+/// How a diagnostic session took an ensured service task.
+enum SessionTaskLink {
+    Linked,
+    /// The session already names this other task or service order.
+    Conflict(database::schema::RecordId),
+    Failed(String),
+}
+
+/// The session's task, else its service order, when it differs from the given one.
+fn conflicting_link(
+    session: &database::schema::DiagnosticSession,
+    task: &database::schema::RecordId,
+    order: &database::schema::RecordId,
+) -> Option<database::schema::RecordId> {
+    session
+        .task_ref
+        .clone()
+        .filter(|t| t != task)
+        .or_else(|| session.service_order.clone().filter(|so| so != order))
+}
+
+/// Points `session` at the ensured task and its order unless it already names another one.
+async fn adopt_service_task(
+    session: &mut database::schema::DiagnosticSession,
+    ensured: &database::schema::EnsuredServiceTask,
+    with_customer: bool,
+) -> SessionTaskLink {
+    let order = &ensured.order;
+    if let Some(other) = conflicting_link(session, &ensured.task, &order.id) {
+        return SessionTaskLink::Conflict(other);
+    }
+    let customer = order.customer.as_ref().filter(|_| with_customer);
+    if let Err(e) = database::schema::DiagnosticSession::adopt_service_links(
+        &session.id,
+        &ensured.task,
+        &order.id,
+        customer,
+        order.customer_name.as_deref(),
+    )
+    .await
+    {
+        return SessionTaskLink::Failed(e.to_string());
+    }
+    session.task_ref = Some(ensured.task.clone());
+    session.service_order = Some(order.id.clone());
+    if session.customer_id.is_none() {
+        if let Some(customer) = customer {
+            session.customer_id = Some(customer.clone());
+            session.customer_name = session.customer_name.take().or_else(|| order.customer_name.clone());
+        }
+    }
+    SessionTaskLink::Linked
+}
+
+/// Gives the machine's open agent thread the order's links it lacks.
+async fn adopt_thread_order(
+    connection_string: &str,
+    service_number: &str,
+    order: &database::schema::ServiceOrderRow,
+) {
+    if let Err(e) = database::schema::AgentThread::adopt_service_links(
+        connection_string,
+        service_number,
+        &order.id,
+        order.customer.as_ref(),
+    )
+    .await
+    {
+        log::warn!("agent thread links for {connection_string} not written: {e}");
+    }
+}
+
+/// Warnings for an ensured task: a creation, a session left on another link, unwritten order links, a customer mismatch.
+fn service_task_warnings(
+    ensured: &database::schema::EnsuredServiceTask,
+    session: Option<&database::schema::DiagnosticSession>,
+    link: Option<&SessionTaskLink>,
+) -> Vec<super::tool_warnings::ToolWarning> {
+    use super::tool_warnings::ToolWarning;
+    use database::schema::RecordIdExt;
+
+    let order = &ensured.order;
+    let service_number = order.service_number.clone().unwrap_or_default();
+    let task_key = ensured.task.key_string();
+    let mut warnings = Vec::new();
+    if ensured.created {
+        warnings.push(ToolWarning::info(
+            "service_task_created",
+            format!(
+                "No task existed for service #{service_number}, so task '{}' (task:{task_key}) was created and assigned to {}.",
+                ensured.task_name.as_deref().unwrap_or("?"),
+                ensured.assignee.as_ref().map(|a| a.label()).unwrap_or_else(|| "the requesting technician".into()),
+            ),
+        ));
+    }
+    let session_key = session.map(|s| s.id.key_string()).unwrap_or_default();
+    match link {
+        Some(SessionTaskLink::Conflict(other)) => warnings.push(
+            ToolWarning::warn(
+                "session_linked_elsewhere",
+                format!(
+                    "Session {session_key} already links {}:{}, so it was left as is and its records keep that link.",
+                    other.table,
+                    other.key_string()
+                ),
+            )
+            .with_fix(format!(
+                "Only if that link is wrong: link_diagnostic_to_task {{ session_id: \"{session_key}\", task_id: \"task:{task_key}\" }}"
+            )),
+        ),
+        Some(SessionTaskLink::Failed(e)) => warnings.push(
+            ToolWarning::warn("session_link_failed", format!("Session {session_key} was not linked to task:{task_key}: {e}"))
+                .with_fix(format!(
+                    "link_diagnostic_to_task {{ session_id: \"{session_key}\", task_id: \"task:{task_key}\" }}"
+                )),
+        ),
+        Some(SessionTaskLink::Linked) | None => {}
+    }
+    if let Some(e) = &ensured.order_links_error {
+        warnings.push(ToolWarning::warn(
+            "order_links_not_written",
+            format!("service_order:{} kept its missing computer/customer link: {e}", order.id.key_string()),
+        ));
+    }
+    let mismatch = match (session.and_then(|s| s.customer_id.as_ref()), order.customer.as_ref()) {
+        (Some(machine), Some(owner)) if machine != owner => Some((machine, owner)),
+        _ => None,
+    };
+    if let Some((machine, owner)) = mismatch {
+        warnings.push(
+            ToolWarning::warn(
+                "order_customer_mismatch",
+                format!(
+                    "Service #{service_number} belongs to customer:{}, but this machine resolves to customer:{}.",
+                    owner.key_string(),
+                    machine.key_string()
+                ),
+            )
+            .with_fix("Ask the technician to confirm this machine is the one on that order before relying on the link."),
+        );
+    }
+    warnings
+}
+
+/// Tool error for a service task that could not be ensured.
+fn service_task_error(tool: &str, e: database::schema::ServiceTaskError) -> ErrorData {
+    use database::schema::ServiceTaskError as E;
+    match e {
+        E::NoRequester | E::UnknownRequester(_) => ErrorData::invalid_params(format!("{tool}: {e}"), None),
+        E::Db(e) => to_internal(format!("{tool}: {e}")),
+    }
+}
+
+/// The first candidate with text after trimming.
+fn first_non_blank<'a>(candidates: impl IntoIterator<Item = Option<&'a str>>) -> Option<String> {
+    candidates
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
 /// `customer.name` of a resolved customer; `None` when it is blank or unreadable.
 async fn customer_display_name(id: &database::schema::RecordId) -> Option<String> {
     let rows: Vec<serde_json::Value> = database::db()
@@ -1605,6 +1768,21 @@ pub struct CreateDiagnosticSessionParams {
     #[schemars(description = "Initial tags for categorizing this session")]
     #[serde(default, deserialize_with = "deserialize_optional_string_vec")]
     pub tags: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct EnsureServiceTaskParams {
+    #[schemars(description = "Service number of the order the machine is in for (e.g. '2155467').")]
+    pub service_number: String,
+    #[schemars(description = "Web Console connection_string of the machine. Its open diagnostic session is linked to the task.")]
+    #[serde(default)]
+    pub connection_string: Option<String>,
+    #[schemars(description = "Diagnostic session to link, instead of the connection's open one.")]
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[schemars(description = "Email of the technician who asked for the work. A created task is assigned to them. Defaults to the session's requested_by.")]
+    #[serde(default)]
+    pub requested_by: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
@@ -6350,6 +6528,164 @@ impl PluginToolProvider {
                 "task_id": p.task_id,
                 "service_order_id": p.service_order_id,
                 "linked": true,
+                "reconciled": reconciled,
+            }),
+            warnings,
+        ))
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "ensure_service_task",
+        description = "Make sure the service order has a Mastertech task, and link this machine's diagnostic session to it so every record you produce carries its task_ref. Call it BEFORE producing records whenever create_diagnostic_session reports session_unlinked (or any tool reports no task) and you know the service number: technicians often skip creating the task. Idempotent: an existing task for the order, in any status, is returned and linked, never duplicated. Otherwise it creates the task the way the Create Task flow does - '<customer> - <service number>', status Todo, priority Normal, due now, linked to the order, assigned to requested_by (which puts it in that technician's store), origin 'ai' and a description naming the agent - writing Mastertech rows only: no PrestaShop or Odoo write, no note, no email. When Mastertech has no row for the order yet it pulls the order from PrestaShop read-only to create the customer and service_order. The session is linked only where its task and order links are empty, then the session's orphan records are claimed; the machine's open agent thread gets the order too. Returns task_ref, service_order, and created (true) or found (false)."
+    )]
+    async fn ensure_service_task(
+        &self,
+        Parameters(p): Parameters<EnsureServiceTaskParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        use super::tool_warnings::{attach_warnings, ToolWarning};
+        use database::schema::RecordIdExt;
+
+        let service_number = database::schema::normalize_service_number(&p.service_number).ok_or_else(|| {
+            ErrorData::invalid_params(
+                format!("ensure_service_task: '{}' is not a service number", p.service_number),
+                None,
+            )
+        })?;
+        let connection_arg = p.connection_string.as_deref().map(str::trim).filter(|c| !c.is_empty());
+        let session = match (p.session_id.as_deref(), connection_arg) {
+            (Some(sid), _) => {
+                let key = parse_record_id(sid, database::schema::DIAGNOSTIC_SESSION_TABLE).key_string();
+                match database::schema::DiagnosticSession::get(&key).await {
+                    Ok(Some(s)) => Some(s),
+                    Ok(None) => {
+                        return Err(ErrorData::invalid_params(
+                            format!("ensure_service_task: diagnostic_session '{sid}' not found"),
+                            None,
+                        ))
+                    }
+                    Err(e) => {
+                        return Err(to_internal(format!(
+                            "ensure_service_task: diagnostic_session '{sid}' is unreadable: {e}"
+                        )))
+                    }
+                }
+            }
+            (None, Some(cs)) => super::diagnostic_session_registry::resolve_open_session(cs).await,
+            (None, None) => None,
+        };
+        let connection = connection_arg
+            .map(str::to_string)
+            .or_else(|| session.as_ref().map(|s| s.connection_string.clone()));
+        let hints = match connection.as_deref() {
+            Some(cs) => database::schema::engagement_hints(cs).await,
+            None => Default::default(),
+        };
+        let staff = match connection.as_deref() {
+            Some(cs) => database::schema::internal_computer_for_client(cs).await.ok().flatten().is_some(),
+            None => false,
+        };
+        let requested_by = first_non_blank([
+            p.requested_by.as_deref(),
+            session.as_ref().and_then(|s| s.requested_by.as_deref()),
+            hints.requested_by.as_deref(),
+        ]);
+
+        let machine = |f: fn(&database::schema::DiagnosticSession) -> Option<database::schema::RecordId>| {
+            session.as_ref().filter(|_| !staff).and_then(f)
+        };
+        let computer = machine(|s| s.computer_id.clone());
+        let mut order_created = false;
+        let order = match database::schema::service_order_by_number(&service_number).await.map_err(to_internal)? {
+            Some(order) => order,
+            None => {
+                let pulled = database::schema::materialize_order_read_only(&service_number, computer.as_ref())
+                    .await
+                    .map_err(|e| {
+                        ErrorData::invalid_params(
+                            format!(
+                                "ensure_service_task: service #{service_number} is not in Mastertech and could not be pulled from PrestaShop: {e}"
+                            ),
+                            None,
+                        )
+                    })?;
+                order_created = pulled.is_some_and(|o| !o.reused_order);
+                database::schema::service_order_by_number(&service_number)
+                    .await
+                    .map_err(to_internal)?
+                    .ok_or_else(|| to_internal(format!("service_order for #{service_number} is missing after the pull")))?
+            }
+        };
+        let request = database::schema::ServiceTaskRequest {
+            requested_by: requested_by.clone(),
+            computer,
+            customer: machine(|s| s.customer_id.clone()),
+            customer_name: session.as_ref().filter(|_| !staff).and_then(|s| s.customer_name.clone()),
+        };
+        let ensured = database::schema::ensure_service_task(&order, &request)
+            .await
+            .map_err(|e| service_task_error("ensure_service_task", e))?;
+
+        let mut session = session;
+        let link = match session.as_mut() {
+            Some(s) => Some(adopt_service_task(s, &ensured, !staff).await),
+            None => None,
+        };
+        let reconciled = match (&session, &link) {
+            (Some(s), Some(SessionTaskLink::Linked)) => {
+                database::schema::crash_intel::reconcile_session_links(s).await.unwrap_or_else(|e| {
+                    log::warn!("ensure_service_task: reconcile failed: {e}");
+                    Default::default()
+                })
+            }
+            _ => Default::default(),
+        };
+        if let Some(cs) = connection.as_deref() {
+            adopt_thread_order(cs, &service_number, &ensured.order).await;
+        }
+
+        let mut warnings = service_task_warnings(&ensured, session.as_ref(), link.as_ref());
+        if order_created {
+            warnings.push(ToolWarning::info(
+                "service_order_created",
+                format!("Mastertech had no row for service #{service_number}; the customer and service_order were created from PrestaShop (read only)."),
+            ));
+        }
+        if session.is_none() {
+            warnings.push(
+                ToolWarning::warn(
+                    "no_session_linked",
+                    "No diagnostic session was found to link; records you create will not carry this task.",
+                )
+                .with_fix(format!(
+                    "link_diagnostic_to_task {{ session_id: \"<session>\", task_id: \"task:{}\" }}",
+                    ensured.task.key_string()
+                )),
+            );
+        }
+        if reconciled.total() > 0 {
+            warnings.push(ToolWarning::info(
+                "orphans_claimed",
+                format!("Reconcile on task link: {}.", reconciled.summary()),
+            ));
+        }
+
+        Ok(CallToolResult::success(vec![ContentBlock::json(attach_warnings(
+            serde_json::json!({
+                "task_ref": ensured.task.key_string(),
+                "service_order": ensured.order.id.key_string(),
+                "service_number": service_number,
+                "created": ensured.created,
+                "outcome": if ensured.created { "created" } else { "found" },
+                "task_name": ensured.task_name,
+                "assignee": ensured.assignee.as_ref().map(|a| serde_json::json!({
+                    "id": a.id.key_string(),
+                    "name": a.label(),
+                    "store": a.store,
+                })),
+                "order_links_filled": ensured.order_links_filled,
+                "session_id": session.as_ref().map(|s| s.id.key_string()),
+                "session_linked": matches!(link, Some(SessionTaskLink::Linked)),
                 "reconciled": reconciled,
             }),
             warnings,
@@ -12707,6 +13043,84 @@ mod broker_tool_tests {
         assert_eq!(schema["required"], serde_json::json!(["connection_string"]));
         let driven_by = schema["properties"]["driven_by"]["description"].as_str().unwrap_or_default();
         assert!(driven_by.contains("codex/<alias>") && !driven_by.contains("zeroclaw:"), "{driven_by}");
+    }
+
+    #[test]
+    fn a_service_task_needs_only_the_service_number() {
+        let p: EnsureServiceTaskParams =
+            serde_json::from_value(serde_json::json!({ "service_number": "2155467" })).expect("parses");
+        assert!(p.connection_string.is_none() && p.session_id.is_none() && p.requested_by.is_none());
+        let schema = serde_json::to_value(schemars::schema_for!(EnsureServiceTaskParams)).expect("schema");
+        assert_eq!(schema["required"], serde_json::json!(["service_number"]));
+    }
+
+    fn ensured(created: bool, customer: Option<&str>) -> database::schema::EnsuredServiceTask {
+        use database::schema::{RecordId, ServiceOrderRow};
+        database::schema::EnsuredServiceTask {
+            task: RecordId::new("task", "t1"),
+            task_name: Some("Barbara Baker - 2155467".into()),
+            created,
+            order: ServiceOrderRow {
+                id: RecordId::new("service_order", "2155467"),
+                service_number: Some("2155467".into()),
+                customer: customer.map(|c| RecordId::new("customer", c)),
+                customer_name: Some("Barbara Baker".into()),
+                computer: None,
+                checkin_notes: None,
+            },
+            assignee: created.then(|| database::schema::service_task::Requester {
+                id: RecordId::new("user", "derek"),
+                name: Some("Derek Anderson".into()),
+                email: Some("derek.anderson@pclaptops.com".into()),
+                store: Some("MUR".into()),
+            }),
+            order_links_filled: Vec::new(),
+            order_links_error: None,
+        }
+    }
+
+    fn session(task: Option<&str>, order: Option<&str>, customer: Option<&str>) -> database::schema::DiagnosticSession {
+        use database::schema::RecordId;
+        database::schema::DiagnosticSession {
+            id: RecordId::new("diagnostic_session", "s1"),
+            task_ref: task.map(|t| RecordId::new("task", t)),
+            service_order: order.map(|o| RecordId::new("service_order", o)),
+            customer_id: customer.map(|c| RecordId::new("customer", c)),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_session_on_another_task_or_order_is_left_alone() {
+        use database::schema::RecordId;
+        let (task, order) = (RecordId::new("task", "t1"), RecordId::new("service_order", "2155467"));
+        assert_eq!(conflicting_link(&session(None, None, None), &task, &order), None);
+        assert_eq!(conflicting_link(&session(Some("t1"), Some("2155467"), None), &task, &order), None);
+        assert_eq!(
+            conflicting_link(&session(Some("t0"), None, None), &task, &order),
+            Some(RecordId::new("task", "t0"))
+        );
+        assert_eq!(
+            conflicting_link(&session(None, Some("2100000"), None), &task, &order),
+            Some(RecordId::new("service_order", "2100000"))
+        );
+    }
+
+    #[test]
+    fn warnings_name_a_created_task_a_kept_link_and_a_customer_mismatch() {
+        let codes = |w: &[super::super::tool_warnings::ToolWarning]| w.iter().map(|w| w.code).collect::<Vec<_>>();
+        let quiet = service_task_warnings(&ensured(false, Some("4215")), Some(&session(None, None, Some("4215"))), Some(&SessionTaskLink::Linked));
+        assert!(quiet.is_empty(), "{:?}", codes(&quiet));
+
+        let created = service_task_warnings(&ensured(true, Some("4215")), None, None);
+        assert_eq!(codes(&created), vec!["service_task_created"]);
+        assert!(created[0].message.contains("task:t1") && created[0].message.contains("Derek Anderson"), "{}", created[0].message);
+
+        let conflict = SessionTaskLink::Conflict(database::schema::RecordId::new("task", "t0"));
+        let kept = service_task_warnings(&ensured(false, Some("4215")), Some(&session(Some("t0"), None, Some("1"))), Some(&conflict));
+        assert_eq!(codes(&kept), vec!["session_linked_elsewhere", "order_customer_mismatch"]);
+        assert!(kept[0].message.contains("task:t0"), "{}", kept[0].message);
+        assert!(kept[0].fix.as_deref().is_some_and(|f| f.contains("task:t1")));
     }
 }
 
