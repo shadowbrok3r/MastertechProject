@@ -1,6 +1,4 @@
-//! `agent_event` rows as terminal transcript rows, like the desktop agent chat:
-//! a header per row in its kind's colour with the time, folding tool, shell,
-//! file-change, approval and thinking rows, and markdown bodies.
+//! `agent_event` rows drawn as terminal transcript rows with headers, folding and markdown.
 
 use std::collections::HashMap;
 use std::rc::Rc;
