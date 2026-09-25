@@ -27,9 +27,8 @@ compact_str = { version = "0.9.0", features = ["serde"] }
 toml = "1.1.2"
 uuid = { version = "1.0", features = ["v4"] }
 rpc-router = "0.2.0"
-derivative = "2"
 schemars = "1"
-zstd = "0.13"
+zstd.workspace = true
 tap = "1"
 jiff = "0.2"
 
@@ -96,12 +95,8 @@ mtech-plugin-sdk = { workspace = true }
 stress-kit = { workspace = true, optional = true }
 stress-runner = { workspace = true }
 ratatui = { workspace = true }
-dotenv = { version = "0.15" }
 rmcp = { workspace = true }
 axum = { workspace = true }
-hmac = "0.12"
-sha2 = "0.10"
-hex = "0.4"
 wasmtime = { workspace = true, optional = true }
 wasmtime-wasi = { workspace = true, optional = true }
 wat = { workspace = true, optional = true }

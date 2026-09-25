@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use tokio::sync::Mutex;
 use std::sync::Arc;
-use dotenv::dotenv;
+use dotenvy::dotenv;
 use log::info;
 
 pub mod middleware;
@@ -37,8 +37,8 @@ async fn main() -> anyhow::Result<()> {
         std::process::id()
     );
 
-    let server_url = dotenv::var("SERVER_URL").unwrap_or("0.0.0.0".to_string());
-    let server_port = dotenv::var("SERVER_PORT").unwrap_or("8082".to_string());
+    let server_url = dotenvy::var("SERVER_URL").unwrap_or("0.0.0.0".to_string());
+    let server_port = dotenvy::var("SERVER_PORT").unwrap_or("8082".to_string());
     let addr: SocketAddr = format!("{server_url}:{server_port}")
         .parse()
         .expect("Can not parse address and port");
