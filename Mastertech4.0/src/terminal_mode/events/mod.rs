@@ -134,7 +134,7 @@ impl <'a>TerminalApp<'a> {
                         log::info!("Quitting from remote key event");
                         *quit = true;
                     }
-                    KeyCode::Char('n') if ctrl_key => {
+                    KeyCode::Char('n') if ctrl_key && current_tab != Tab::Assistant => {
                         let notification = Notification::new(
                             NotificationType::Info,
                             "Remote Key Event",
@@ -218,7 +218,7 @@ impl <'a>TerminalApp<'a> {
                                 log::info!("Quitting");
                                 *quit = true;
                             }
-                            KeyCode::Char('n') if ctrl_key => { // Pressing 'n' triggers a notification
+                            KeyCode::Char('n') if ctrl_key && current_tab != Tab::Assistant => { // Pressing 'n' triggers a notification
                                 let notification = Notification::new(
                                     NotificationType::Info, 
                                     "Some Shit Has Happened.", 
