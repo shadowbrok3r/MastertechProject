@@ -1553,6 +1553,15 @@ pub async fn get_prestashop_payload_from_phone(phone: &str) -> anyhow::Result<Pr
 }
 
 pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<PrestashopPayload, anyhow::Error> {
+    prestashop_payload(order_number, true).await
+}
+
+/// `get_prestashop_payload` without the invoice-address write back to PrestaShop.
+pub async fn get_prestashop_payload_read_only(order_number: &str) -> anyhow::Result<PrestashopPayload, anyhow::Error> {
+    prestashop_payload(order_number, false).await
+}
+
+async fn prestashop_payload(order_number: &str, fix_invoice_address: bool) -> anyhow::Result<PrestashopPayload, anyhow::Error> {
     if order_number.trim().is_empty() {
         return Err(anyhow::anyhow!("get_prestashop_payload -> order number is empty"));
     }
@@ -1660,7 +1669,7 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
         *customer_address = address.clone();
     }
 
-    if order.id_address_invoice == order.id_address_delivery {
+    if fix_invoice_address && order.id_address_invoice == order.id_address_delivery {
         log::error!(
             "ADDRESS MISMATCH, order.id_address_invoice: {} == data.order.id_address_delivery: {}\nUpdating {} to {}", 
             order.id_address_invoice,
