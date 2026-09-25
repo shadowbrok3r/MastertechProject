@@ -174,7 +174,7 @@ pub(crate) fn append(job: &mut LayoutJob, cmd: &str, font: &FontId, colors: &She
 }
 
 /// True for a JSON key whose string value is a command line.
-pub(crate) fn is_command_key(key: &str) -> bool {
+pub fn is_command_key(key: &str) -> bool {
     matches!(
         key.to_ascii_lowercase().as_str(),
         "command"
