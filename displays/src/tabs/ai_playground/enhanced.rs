@@ -237,7 +237,11 @@ impl EnhancedAiPlayground {
             .show_separator_line(false)
             .show(ui, |ui| self.show_chat_topbar(ui));
 
-        if let Some(row) = self.open_row.clone().filter(|r| r.id.key_string() == self.selected_thread) {
+        if let Some(row) = self
+            .open_row
+            .clone()
+            .filter(|r| r.id.key_string() == self.selected_thread)
+        {
             eframe::egui::Panel::top("enhanced_ai_context")
                 .frame(Frame::default().inner_margin(Margin::symmetric(8, 1)))
                 .show_separator_line(false)
@@ -260,7 +264,8 @@ impl EnhancedAiPlayground {
             .exact_size(height)
             .show(ui, |ui| {
                 let used = self.show_chat_input(ui, max_height);
-                let wanted = (used + 2.0 * f32::from(INPUT_PANEL_MARGIN)).clamp(INPUT_MIN_HEIGHT, max_height);
+                let wanted = (used + 2.0 * f32::from(INPUT_PANEL_MARGIN))
+                    .clamp(INPUT_MIN_HEIGHT, max_height);
                 if (wanted - height).abs() > 0.5 {
                     ui.memory_mut(|m| m.data.insert_temp(height_id, wanted));
                     ui.ctx().request_repaint();
@@ -273,7 +278,10 @@ impl EnhancedAiPlayground {
 
         if self.threads.contains_key(&self.selected_thread) {
             let id = composer_id(&self.selected_thread);
-            self.composers.entry(self.selected_thread.clone()).or_default().drop_zone(ui, id, rail);
+            self.composers
+                .entry(self.selected_thread.clone())
+                .or_default()
+                .drop_zone(ui, id, rail);
         }
         self.handle_enhanced_ai_events(ui);
     }
@@ -283,17 +291,25 @@ impl EnhancedAiPlayground {
             .open_row
             .iter()
             .chain(&self.agent_index)
-            .find(|t| t.id.key_string() == id && t.title.as_deref().is_some_and(|t| !t.trim().is_empty()))
+            .find(|t| {
+                t.id.key_string() == id && t.title.as_deref().is_some_and(|t| !t.trim().is_empty())
+            })
             .map(AgentThread::label);
-        session.or_else(|| self.chat_title.get(id).cloned()).unwrap_or_else(|| {
-            self.threads
-                .get(id)
-                .and_then(|t| t.messages.iter().find_map(|m| match &m.content {
-                    ChatMessageType::Text(s) if matches!(m.from, SentFrom::Me) => Some(short_title(s)),
-                    _ => None,
-                }))
-                .unwrap_or_else(|| "New chat".to_string())
-        })
+        session
+            .or_else(|| self.chat_title.get(id).cloned())
+            .unwrap_or_else(|| {
+                self.threads
+                    .get(id)
+                    .and_then(|t| {
+                        t.messages.iter().find_map(|m| match &m.content {
+                            ChatMessageType::Text(s) if matches!(m.from, SentFrom::Me) => {
+                                Some(short_title(s))
+                            }
+                            _ => None,
+                        })
+                    })
+                    .unwrap_or_else(|| "New chat".to_string())
+            })
     }
 
     fn current_thread_title(&self) -> String {
@@ -457,10 +473,10 @@ impl EnhancedAiPlayground {
     #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
     fn index_with_open_row(&self) -> Vec<AgentThread> {
         let mut index = self.agent_index.clone();
-        if let Some(row) = &self.open_row {
-            if let Some(listed) = index.iter_mut().find(|t| t.id == row.id) {
-                *listed = row.clone();
-            }
+        if let Some(row) = &self.open_row
+            && let Some(listed) = index.iter_mut().find(|t| t.id == row.id)
+        {
+            *listed = row.clone();
         }
         index
     }
@@ -482,21 +498,32 @@ impl EnhancedAiPlayground {
     /// The title field in the top bar; saving renames the session through the broker, or the local chat.
     fn rename_field(&mut self, ui: &mut Ui) {
         let width = (ui.available_width() - 40.0).clamp(80.0, 280.0);
-        let Some(edit) = self.renaming.as_mut() else { return };
+        let Some(edit) = self.renaming.as_mut() else {
+            return;
+        };
         match edit.show(ui, width) {
             RenameOutcome::Editing => {}
             RenameOutcome::Cancel => self.renaming = None,
             RenameOutcome::Save(key, title) => {
                 self.renaming = None;
                 self.chat_title.insert(key.clone(), title.clone());
-                if let Some(t) = self.agent_index.iter_mut().find(|t| t.id.key_string() == key) {
+                if let Some(t) = self
+                    .agent_index
+                    .iter_mut()
+                    .find(|t| t.id.key_string() == key)
+                {
                     t.title = Some(title.clone());
                 }
                 if let Some(t) = self.open_row.as_mut().filter(|t| t.id.key_string() == key) {
                     t.title = Some(title.clone());
                 }
                 if self.agent_threads.contains(&key) {
-                    self.ask_agent(&RecordId::new("agent_thread", key.as_str()), "rename", title, Vec::new());
+                    self.ask_agent(
+                        &RecordId::new("agent_thread", key.as_str()),
+                        "rename",
+                        title,
+                        Vec::new(),
+                    );
                 } else {
                     self.save_thread(&key);
                 }
@@ -522,16 +549,31 @@ impl EnhancedAiPlayground {
         let open = row.is_none_or(AgentThread::is_open);
         let text_max = (max_height - 72.0).max(40.0);
         let composer = self.composers.entry(tid.clone()).or_default();
-        let Some(thread) = self.threads.get_mut(&tid) else { return INPUT_MIN_HEIGHT };
-        let action = composer.show(ui, composer_id(&tid), &mut thread.input, busy, open, text_max);
+        let Some(thread) = self.threads.get_mut(&tid) else {
+            return INPUT_MIN_HEIGHT;
+        };
+        let action = composer.show(
+            ui,
+            composer_id(&tid),
+            &mut thread.input,
+            busy,
+            open,
+            text_max,
+        );
         match action {
-            Some(ComposerAction::Send { kind, text, images, staged }) => self.send_chat_message(kind, text, images, staged),
-            Some(ComposerAction::Stop) => {
-                if self.agent_threads.contains(&tid) {
-                    self.ask_agent(&RecordId::new("agent_thread", tid.as_str()), "interrupt", String::new(), Vec::new());
-                }
-            }
-            None => {}
+            Some(ComposerAction::Send {
+                kind,
+                text,
+                images,
+                staged,
+            }) => self.send_chat_message(kind, text, images, staged),
+            Some(ComposerAction::Stop) if self.agent_threads.contains(&tid) => self.ask_agent(
+                &RecordId::new("agent_thread", tid.as_str()),
+                "interrupt",
+                String::new(),
+                Vec::new(),
+            ),
+            Some(ComposerAction::Stop) | None => {}
         }
         ui.min_rect().bottom() - top
     }
@@ -698,7 +740,10 @@ impl EnhancedAiPlayground {
         }
         while let Ok((thread, turn)) = self.taken_back_rx.try_recv() {
             let ctx = ui.ctx().clone();
-            if let (Some(composer), Some(chat)) = (self.composers.get_mut(&thread), self.threads.get_mut(&thread)) {
+            if let (Some(composer), Some(chat)) = (
+                self.composers.get_mut(&thread),
+                self.threads.get_mut(&thread),
+            ) {
                 composer.restore(&ctx, &mut chat.input, turn);
             }
             self.last_state_poll = None;
@@ -769,7 +814,11 @@ impl EnhancedAiPlayground {
 
         self.agent_threads.insert(thread_id.clone());
         self.last_state_poll = None;
-        let session = self.agent_index.iter().chain(&self.open_row).any(|t| t.id.key_string() == thread_id);
+        let session = self
+            .agent_index
+            .iter()
+            .chain(&self.open_row)
+            .any(|t| t.id.key_string() == thread_id);
         let target = connection_string.or_else(|| self.focused_client.clone());
         let user = crate::get_current_user_from_auth();
         let tech = user.as_ref().map(|u| u.get_email().to_string());
@@ -790,8 +839,17 @@ impl EnhancedAiPlayground {
                 content,
             };
             if session {
-                if let Err(e) = AgentTurn::ask_with(&RecordId::new("agent_thread", tid.as_str()), kind, &text, &images).await {
-                    let _ = tx.try_send(say(ChatMessageType::Error(format!("could not queue the message: {e}"))));
+                if let Err(e) = AgentTurn::ask_with(
+                    &RecordId::new("agent_thread", tid.as_str()),
+                    kind,
+                    &text,
+                    &images,
+                )
+                .await
+                {
+                    let _ = tx.try_send(say(ChatMessageType::Error(format!(
+                        "could not queue the message: {e}"
+                    ))));
                 }
                 return;
             }
@@ -812,13 +870,19 @@ impl EnhancedAiPlayground {
             // request opens one. Either way this thread becomes that session.
             match AgentThread::active_for_connection(&cs).await {
                 Ok(Some(thread)) => {
-                    let kind = if thread.is_busy() && kind == "start" { "queue" } else { kind };
+                    let kind = if thread.is_busy() && kind == "start" {
+                        "queue"
+                    } else {
+                        kind
+                    };
                     match AgentTurn::ask_with(&thread.id, kind, &text, &images).await {
                         Ok(_) => {
                             let _ = switch_tx.try_send((tid.clone(), thread.id.key_string()));
                         }
                         Err(e) => {
-                            let _ = tx.try_send(say(ChatMessageType::Error(format!("could not queue the message: {e}"))));
+                            let _ = tx.try_send(say(ChatMessageType::Error(format!(
+                                "could not queue the message: {e}"
+                            ))));
                         }
                     }
                 }
@@ -826,9 +890,21 @@ impl EnhancedAiPlayground {
                     // A long message or pictures follow the opener as a queued turn.
                     let whole = images.is_empty() && text.chars().count() <= REQUEST_NOTE_MAX;
                     let note = if whole { text.as_str() } else { OPENER };
-                    match AssistRequest::create_from_chat(&cs, tech.as_deref(), store.as_deref(), service_number.as_deref(), note).await {
+                    match AssistRequest::create_from_chat(
+                        &cs,
+                        tech.as_deref(),
+                        store.as_deref(),
+                        service_number.as_deref(),
+                        note,
+                    )
+                    .await
+                    {
                         Ok(request) => {
-                            let what = if general { "your records session".to_string() } else { format!("a session for {cs}") };
+                            let what = if general {
+                                "your records session".to_string()
+                            } else {
+                                format!("a session for {cs}")
+                            };
                             let _ = tx.try_send(say(ChatMessageType::Text(format!(
                                 "Asked the agent host to open {what}\u{2026}"
                             ))));
@@ -836,18 +912,25 @@ impl EnhancedAiPlayground {
                                 database::sleep_compat(std::time::Duration::from_secs(2)).await;
                                 if let Ok(Some(req)) = AssistRequest::get(&request).await {
                                     if let Some(thread) = req.agent_thread {
-                                        if !whole {
-                                            if let Err(e) = AgentTurn::ask_with(&thread, "queue", &text, &images).await {
-                                                let _ = tx.try_send(say(ChatMessageType::Error(format!("could not queue the message: {e}"))));
-                                            }
+                                        if !whole
+                                            && let Err(e) = AgentTurn::ask_with(
+                                                &thread, "queue", &text, &images,
+                                            )
+                                            .await
+                                        {
+                                            let _ = tx.try_send(say(ChatMessageType::Error(
+                                                format!("could not queue the message: {e}"),
+                                            )));
                                         }
-                                        let _ = switch_tx.try_send((tid.clone(), thread.key_string()));
+                                        let _ =
+                                            switch_tx.try_send((tid.clone(), thread.key_string()));
                                         return;
                                     }
                                     if req.status == "failed" {
                                         let _ = tx.try_send(say(ChatMessageType::Error(format!(
                                             "the agent host could not open a session: {}",
-                                            req.dispatch_error.unwrap_or_else(|| "unknown error".into())
+                                            req.dispatch_error
+                                                .unwrap_or_else(|| "unknown error".into())
                                         ))));
                                         return;
                                     }
@@ -858,7 +941,9 @@ impl EnhancedAiPlayground {
                             )));
                         }
                         Err(e) => {
-                            let _ = tx.try_send(say(ChatMessageType::Error(format!("could not request a diagnosis: {e}"))));
+                            let _ = tx.try_send(say(ChatMessageType::Error(format!(
+                                "could not request a diagnosis: {e}"
+                            ))));
                         }
                     }
                 }
@@ -867,7 +952,13 @@ impl EnhancedAiPlayground {
     }
 
     /// Writes one turn row for a session, reporting a failure in its chat.
-    fn ask_agent(&mut self, thread: &RecordId, kind: &'static str, text: String, images: Vec<TurnImage>) {
+    fn ask_agent(
+        &mut self,
+        thread: &RecordId,
+        kind: &'static str,
+        text: String,
+        images: Vec<TurnImage>,
+    ) {
         self.last_state_poll = None;
         let tx = self.response_tx.clone();
         let (thread, tid) = (thread.clone(), thread.key_string());
@@ -878,7 +969,9 @@ impl EnhancedAiPlayground {
                     thread_id: tid,
                     ts: crate::tabs::ai_playground::now_ts(),
                     from: SentFrom::Assistant,
-                    content: ChatMessageType::Error(format!("could not send the {kind} request: {e}")),
+                    content: ChatMessageType::Error(format!(
+                        "could not send the {kind} request: {e}"
+                    )),
                 });
             }
         });
@@ -924,7 +1017,10 @@ impl EnhancedAiPlayground {
             return;
         }
         let now = web_time::Instant::now();
-        if self.last_state_poll.is_some_and(|t| now.duration_since(t) < EVERY) {
+        if self
+            .last_state_poll
+            .is_some_and(|t| now.duration_since(t) < EVERY)
+        {
             return;
         }
         self.last_state_poll = Some(now);
@@ -933,8 +1029,16 @@ impl EnhancedAiPlayground {
         let thread = self.selected_thread.clone();
         PlatformSpawner::spawn(async move {
             let id = RecordId::new("agent_thread", thread.as_str());
-            let (Ok(row), Ok(waiting)) = (AgentThread::get(&id).await, AgentTurn::waiting(&id).await) else { return };
-            let _ = tx.send(AgentState { thread, row, waiting });
+            let (Ok(row), Ok(waiting)) =
+                (AgentThread::get(&id).await, AgentTurn::waiting(&id).await)
+            else {
+                return;
+            };
+            let _ = tx.send(AgentState {
+                thread,
+                row,
+                waiting,
+            });
         });
     }
 
@@ -1054,10 +1158,14 @@ impl EnhancedAiPlayground {
                             crate::tabs::agent_sessions::chat_line(&row).unwrap_or_default()
                         )),
                     ),
-                    "approval" => (SentFrom::Assistant, ChatMessageType::Text(format!("{} {}", icons::LOCK, row.text))),
-                    "other" if !row.text.trim().is_empty() => {
-                        (SentFrom::Assistant, ChatMessageType::Text(format!("{NOTICE_PREFIX} {}", row.text)))
-                    }
+                    "approval" => (
+                        SentFrom::Assistant,
+                        ChatMessageType::Text(format!("{} {}", icons::LOCK, row.text)),
+                    ),
+                    "other" if !row.text.trim().is_empty() => (
+                        SentFrom::Assistant,
+                        ChatMessageType::Text(format!("{NOTICE_PREFIX} {}", row.text)),
+                    ),
                     "user" if hydrate => (SentFrom::Me, ChatMessageType::Text(row.text.clone())),
                     _ => continue,
                 };
@@ -1065,11 +1173,27 @@ impl EnhancedAiPlayground {
                     .created_at
                     .map(|at| DateTime::<Utc>::from(at).timestamp())
                     .unwrap_or_else(crate::tabs::ai_playground::now_ts);
-                let pictures = if from == SentFrom::Me { agent_chat::attach::image_names(row.item.as_ref()) } else { Vec::new() };
-                let _ = tx.try_send(ChatMessage { id: id.clone(), thread_id: thread.clone(), ts, from, content });
+                let pictures = if from == SentFrom::Me {
+                    agent_chat::attach::image_names(row.item.as_ref())
+                } else {
+                    Vec::new()
+                };
+                let _ = tx.try_send(ChatMessage {
+                    id: id.clone(),
+                    thread_id: thread.clone(),
+                    ts,
+                    from,
+                    content,
+                });
                 for (n, name) in pictures.into_iter().enumerate() {
                     let content = ChatMessageType::Image((name, bytes::Bytes::new()));
-                    let _ = tx.try_send(ChatMessage { id: format!("{id}:image{n}"), thread_id: thread.clone(), ts, from: SentFrom::Me, content });
+                    let _ = tx.try_send(ChatMessage {
+                        id: format!("{id}:image{n}"),
+                        thread_id: thread.clone(),
+                        ts,
+                        from: SentFrom::Me,
+                        content,
+                    });
                 }
             }
         });
@@ -1087,7 +1211,13 @@ impl EnhancedAiPlayground {
     }
 
     /// Echoes a composed message and its pictures into the open thread and sends it to the agent.
-    fn send_chat_message(&mut self, kind: &'static str, text: String, images: Vec<TurnImage>, staged: Vec<String>) {
+    fn send_chat_message(
+        &mut self,
+        kind: &'static str,
+        text: String,
+        images: Vec<TurnImage>,
+        staged: Vec<String>,
+    ) {
         if !self.threads.contains_key(&self.selected_thread) {
             self.create_new_chat_thread();
         }
@@ -1100,9 +1230,13 @@ impl EnhancedAiPlayground {
             from: SentFrom::Me,
             content,
         };
-        let _ = self.response_tx.try_send(echo(ChatMessageType::Text(text.clone())));
+        let _ = self
+            .response_tx
+            .try_send(echo(ChatMessageType::Text(text.clone())));
         for name in staged {
-            let _ = self.response_tx.try_send(echo(ChatMessageType::Image((name, bytes::Bytes::new()))));
+            let _ = self
+                .response_tx
+                .try_send(echo(ChatMessageType::Image((name, bytes::Bytes::new()))));
         }
 
         // Every message goes to the agent: a session thread continues, a focused
@@ -1172,7 +1306,11 @@ fn chat_rows(
             while end < messages.len() && picture_name(&messages[end]).is_some() {
                 end += 1;
             }
-            let pictures: Vec<String> = messages[i + 1..end].iter().filter_map(picture_name).map(str::to_string).collect();
+            let pictures: Vec<String> = messages[i + 1..end]
+                .iter()
+                .filter_map(picture_name)
+                .map(str::to_string)
+                .collect();
             chat_message(ui, style, scope, now, &messages[i], &pictures);
             i = end;
         }
@@ -1233,7 +1371,10 @@ fn chat_message(
                     });
                 return;
             }
-            if let Some(notice) = text.strip_prefix(NOTICE_PREFIX).filter(|_| message.from == SentFrom::Assistant) {
+            if let Some(notice) = text
+                .strip_prefix(NOTICE_PREFIX)
+                .filter(|_| message.from == SentFrom::Assistant)
+            {
                 chat_bubble::notice(ui, style, notice, time.as_deref());
                 return;
             }
@@ -1243,19 +1384,25 @@ fn chat_message(
                         .time(time)
                         .copy(text)
                         .has_body(!text.trim().is_empty() || !pictures.is_empty())
-                        .show(ui, style, scope, |ui, id| agent_chat::user_body(ui, style, text, pictures, id));
+                        .show(ui, style, scope, |ui, id| {
+                            agent_chat::user_body(ui, style, text, pictures, id)
+                        });
                 }
                 SentFrom::Assistant => {
                     ChatRow::new(ChatKind::Agent, key, "Assistant")
                         .time(time)
                         .copy(text)
                         .has_body(!text.trim().is_empty())
-                        .show(ui, style, scope, |ui, id| chat_bubble::markdown(ui, style, text, style.text, id));
+                        .show(ui, style, scope, |ui, id| {
+                            chat_bubble::markdown(ui, style, text, style.text, id)
+                        });
                 }
             }
         }
         ChatMessageType::Image((name, _)) => {
-            let names: Vec<String> = std::iter::once(name.clone()).chain(pictures.iter().cloned()).collect();
+            let names: Vec<String> = std::iter::once(name.clone())
+                .chain(pictures.iter().cloned())
+                .collect();
             agent_chat::sent_images(ui, &names);
         }
         ChatMessageType::Done => {}

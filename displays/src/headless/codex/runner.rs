@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 use base64::Engine;
 use database::schema::agent_thread::AgentThreadState;
 use database::schema::{
-    upload_name, AgentActivity, AgentApproval, AgentEvent, AgentThread, AgentTurn, AssistRequest,
-    NewAgentApproval, RecordId, RecordIdExt, TurnImage, DEFAULT_UPLOAD_DIR,
+    AgentActivity, AgentApproval, AgentEvent, AgentThread, AgentTurn, AssistRequest,
+    DEFAULT_UPLOAD_DIR, NewAgentApproval, RecordId, RecordIdExt, TurnImage, upload_name,
 };
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot};
@@ -29,7 +29,10 @@ use super::{manager, prompt, register_runner, runner_for, unregister_runner, Con
 pub enum RunnerCmd {
     Turn(AgentTurn),
     /// A stop request, sent from its own task, got its answer.
-    Stopped { turn: Option<RecordId>, result: Result<(), String> },
+    Stopped {
+        turn: Option<RecordId>,
+        result: Result<(), String>,
+    },
 }
 
 /// Reconnect attempts before a thread is marked failed.
@@ -345,7 +348,11 @@ impl Runner {
     async fn turn_in_progress(&self) -> Option<bool> {
         let id = self.codex_thread_id.as_deref()?;
         let params = json!({ "threadId": id, "includeTurns": true });
-        let snapshot = match self.client.request_with_timeout("thread/read", params, READ_TIMEOUT).await {
+        let snapshot = match self
+            .client
+            .request_with_timeout("thread/read", params, READ_TIMEOUT)
+            .await
+        {
             Ok(s) => s,
             Err(e) => {
                 log::debug!("codex: thread/read failed: {e}");
@@ -361,7 +368,10 @@ impl Runner {
         let rows = match AgentTurn::queue_of(&self.thread.id).await {
             Ok(rows) => rows,
             Err(e) => {
-                log::warn!("codex: could not read the queue of {}: {e}", self.thread.id.key_string());
+                log::warn!(
+                    "codex: could not read the queue of {}: {e}",
+                    self.thread.id.key_string()
+                );
                 return;
             }
         };
@@ -374,10 +384,14 @@ impl Runner {
             held |= turn.status == "held";
             self.queue.push(turn);
         }
-        if held && self.queue.hold(queue::STOPPED) {
-            if let Err(e) = AgentTurn::hold_queue(&self.thread.id).await {
-                log::warn!("codex: could not hold the queue of {}: {e}", self.thread.id.key_string());
-            }
+        if held
+            && self.queue.hold(queue::STOPPED)
+            && let Err(e) = AgentTurn::hold_queue(&self.thread.id).await
+        {
+            log::warn!(
+                "codex: could not hold the queue of {}: {e}",
+                self.thread.id.key_string()
+            );
         }
     }
 
@@ -662,7 +676,8 @@ impl Runner {
             }
             Event::Reasoning { item_id, text, final_chunk, .. } => {
                 if !final_chunk {
-                    self.signal(Signal::Streaming(AgentActivity::Thinking)).await;
+                    self.signal(Signal::Streaming(AgentActivity::Thinking))
+                        .await;
                 }
                 self.stream_text(&item_id, "reasoning", &text, final_chunk).await
             }
@@ -672,7 +687,12 @@ impl Runner {
                 }
                 self.stream_text(&item_id, "command", &text, final_chunk).await
             }
-            Event::Item { item_type, completed, item, .. } => {
+            Event::Item {
+                item_type,
+                completed,
+                item,
+                ..
+            } => {
                 if let Some(signal) = busy::item_signal(&item_type, completed, &item) {
                     self.signal(signal).await;
                 }
@@ -704,7 +724,10 @@ impl Runner {
                     self.turn_failed = true;
                     self.busy = self.busy.after(&Signal::Error { will_retry });
                     self.row.set_activity(self.busy.activity.to_db());
-                    if let Err(e) = self.write_status(self.busy.phase.status(), Some(&message)).await {
+                    if let Err(e) = self
+                        .write_status(self.busy.phase.status(), Some(&message))
+                        .await
+                    {
                         log::warn!("codex: status write failed: {e}");
                     }
                 }
@@ -758,7 +781,11 @@ impl Runner {
             if !self.transcript.contains(&item_id) && !self.completed.contains(&item_id) {
                 let seq = self.seq_for(&item_id);
                 let turn = self.turn_label();
-                let text = if item_type == "contextCompaction" { COMPACTING.to_string() } else { item_text(kind, &item) };
+                let text = if item_type == "contextCompaction" {
+                    COMPACTING.to_string()
+                } else {
+                    item_text(kind, &item)
+                };
                 self.transcript.open(&item_id, seq, kind, turn, text, now);
             }
             return;
@@ -783,7 +810,13 @@ impl Runner {
         }
     }
 
-    async fn on_ask(&mut self, request_id: Value, method: &str, params: Value, rx: &mut mpsc::Receiver<RunnerCmd>) {
+    async fn on_ask(
+        &mut self,
+        request_id: Value,
+        method: &str,
+        params: Value,
+        rx: &mut mpsc::Receiver<RunnerCmd>,
+    ) {
         match method {
             "item/tool/call" => self.on_tool_call(request_id, params, rx).await,
             "item/tool/requestUserInput" => self.on_question(request_id, params, rx).await,
@@ -877,7 +910,8 @@ impl Runner {
         general: bool,
         rx: &mut mpsc::Receiver<RunnerCmd>,
     ) -> ToolOutcome {
-        self.signal(Signal::Working(AgentActivity::Tool(tool.to_string()))).await;
+        self.signal(Signal::Working(AgentActivity::Tool(tool.to_string())))
+            .await;
         let tools = self.tools.clone();
         let call = tools.call(tool, arguments, general);
         tokio::pin!(call);
@@ -892,9 +926,21 @@ impl Runner {
         }
     }
 
-    async fn on_tool_call(&mut self, request_id: Value, params: Value, rx: &mut mpsc::Receiver<RunnerCmd>) {
-        let tool = params.get("tool").and_then(Value::as_str).unwrap_or("").to_string();
-        let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+    async fn on_tool_call(
+        &mut self,
+        request_id: Value,
+        params: Value,
+        rx: &mut mpsc::Receiver<RunnerCmd>,
+    ) {
+        let tool = params
+            .get("tool")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let arguments = params
+            .get("arguments")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
         if tool == wait::TOOL_NAME {
             self.start_wait(request_id, &arguments).await;
             return;
@@ -1106,8 +1152,16 @@ impl Runner {
         }
     }
 
-    async fn on_question(&mut self, request_id: Value, params: Value, rx: &mut mpsc::Receiver<RunnerCmd>) {
-        let questions = params.get("questions").cloned().unwrap_or_else(|| json!([]));
+    async fn on_question(
+        &mut self,
+        request_id: Value,
+        params: Value,
+        rx: &mut mpsc::Receiver<RunnerCmd>,
+    ) {
+        let questions = params
+            .get("questions")
+            .cloned()
+            .unwrap_or_else(|| json!([]));
         let first = questions
             .as_array()
             .and_then(|a| a.first())
@@ -1174,8 +1228,13 @@ impl Runner {
     }
 
     /// Polls the approval row until a technician decides, the deadline passes, or a stop arrives.
-    async fn wait_for_decision(&mut self, approval_id: &RecordId, rx: &mut mpsc::Receiver<RunnerCmd>) -> Option<AgentApproval> {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(self.cfg.approval_ttl_secs + 15);
+    async fn wait_for_decision(
+        &mut self,
+        approval_id: &RecordId,
+        rx: &mut mpsc::Receiver<RunnerCmd>,
+    ) -> Option<AgentApproval> {
+        let deadline =
+            tokio::time::Instant::now() + Duration::from_secs(self.cfg.approval_ttl_secs + 15);
         let mut poll = tokio::time::interval(APPROVAL_POLL);
         poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         poll.tick().await;
@@ -1208,11 +1267,18 @@ impl Runner {
             anyhow::bail!("no codex thread yet");
         };
         let input = vec![json!({ "type": "text", "text": text })];
-        self.send_inputs(&thread_id, kind, input).await.map_err(anyhow::Error::msg)
+        self.send_inputs(&thread_id, kind, input)
+            .await
+            .map_err(anyhow::Error::msg)
     }
 
     /// `turn/steer` into a running turn, else `turn/start`, which marks the thread running.
-    async fn send_inputs(&mut self, thread_id: &str, kind: &str, input: Vec<Value>) -> Result<(), String> {
+    async fn send_inputs(
+        &mut self,
+        thread_id: &str,
+        kind: &str,
+        input: Vec<Value>,
+    ) -> Result<(), String> {
         let steer = kind == "steer" && !self.busy.is_idle();
         let sent = if steer {
             self.client.turn_steer_with_inputs(thread_id, input).await
@@ -1228,13 +1294,19 @@ impl Runner {
 
     /// Stages the turn's pictures and sends it with its text.
     async fn deliver(&mut self, turn: &AgentTurn, kind: &str) -> Result<(), String> {
-        let thread_id = self.codex_thread_id.clone().ok_or_else(|| "no codex thread yet".to_string())?;
+        let thread_id = self
+            .codex_thread_id
+            .clone()
+            .ok_or_else(|| "no codex thread yet".to_string())?;
         let mut input = Vec::new();
         if !turn.images.is_empty() {
             let (items, staged) = self.stage_images(&turn.images).await?;
             input = items;
             if let Err(e) = AgentTurn::record_staged(&turn.id, &staged).await {
-                log::warn!("codex: could not trim the staged pictures of {}: {e}", turn.id.key_string());
+                log::warn!(
+                    "codex: could not trim the staged pictures of {}: {e}",
+                    turn.id.key_string()
+                );
             }
         }
         if !turn.text.trim().is_empty() || input.is_empty() {
@@ -1248,8 +1320,17 @@ impl Runner {
         if let Some(dir) = &self.upload_dir {
             return dir.clone();
         }
-        let reported = match self.client.request_with_timeout("daemon/hello", json!({}), READ_TIMEOUT).await {
-            Ok(hello) => hello.get("uploadDir").and_then(Value::as_str).map(str::trim).filter(|d| !d.is_empty()).map(str::to_string),
+        let reported = match self
+            .client
+            .request_with_timeout("daemon/hello", json!({}), READ_TIMEOUT)
+            .await
+        {
+            Ok(hello) => hello
+                .get("uploadDir")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|d| !d.is_empty())
+                .map(str::to_string),
             Err(e) => {
                 log::debug!("codex: daemon/hello failed: {e}");
                 None
@@ -1261,7 +1342,10 @@ impl Runner {
     }
 
     /// Writes each picture into the upload directory; returns the turn's image inputs and the trimmed rows.
-    async fn stage_images(&mut self, images: &[TurnImage]) -> Result<(Vec<Value>, Vec<TurnImage>), String> {
+    async fn stage_images(
+        &mut self,
+        images: &[TurnImage],
+    ) -> Result<(Vec<Value>, Vec<TurnImage>), String> {
         let dir = self.upload_dir().await;
         let mut inputs = Vec::with_capacity(images.len());
         let mut staged = Vec::with_capacity(images.len());
@@ -1286,9 +1370,18 @@ impl Runner {
             return Err(format!("{} is empty", image.name));
         }
         if bytes.len() > IMAGE_MAX_BYTES {
-            return Err(format!("{} is {} KB; the limit is {} KB", image.name, bytes.len() / 1024, IMAGE_MAX_BYTES / 1024));
+            return Err(format!(
+                "{} is {} KB; the limit is {} KB",
+                image.name,
+                bytes.len() / 1024,
+                IMAGE_MAX_BYTES / 1024
+            ));
         }
-        let path = format!("{}/{}", dir.trim_end_matches('/'), upload_name(&image.name, &bytes));
+        let path = format!(
+            "{}/{}",
+            dir.trim_end_matches('/'),
+            upload_name(&image.name, &bytes)
+        );
         self.client
             .request("fs/writeFile", json!({ "path": path, "dataBase64": data }))
             .await
@@ -1305,11 +1398,19 @@ impl Runner {
 
     async fn write_hold(&mut self) {
         if let Err(e) = AgentTurn::hold_queue(&self.thread.id).await {
-            log::warn!("codex: could not hold the queue of {}: {e}", self.thread.id.key_string());
+            log::warn!(
+                "codex: could not hold the queue of {}: {e}",
+                self.thread.id.key_string()
+            );
         }
         let why = self.queue.held().unwrap_or_default().to_string();
         let waiting = self.queue.len();
-        self.marker("other", &format!("Queue held with {waiting} waiting: {why}"), None).await;
+        self.marker(
+            "other",
+            &format!("Queue held with {waiting} waiting: {why}"),
+            None,
+        )
+        .await;
     }
 
     /// Queues a message behind the running turn; one with no text or pictures resumes a held queue.
@@ -1318,14 +1419,21 @@ impl Runner {
             let _ = AgentTurn::take_queued(&turn.id).await;
             if self.queue.resume() {
                 if let Err(e) = AgentTurn::release_queue(&self.thread.id).await {
-                    log::warn!("codex: could not release the queue of {}: {e}", self.thread.id.key_string());
+                    log::warn!(
+                        "codex: could not release the queue of {}: {e}",
+                        self.thread.id.key_string()
+                    );
                 }
                 self.marker("other", "Queue resumed.", None).await;
             }
-        } else if self.queue.push(turn) && self.queue.held().is_some() {
-            if let Err(e) = AgentTurn::hold_queue(&self.thread.id).await {
-                log::warn!("codex: could not hold the queue of {}: {e}", self.thread.id.key_string());
-            }
+        } else if self.queue.push(turn)
+            && self.queue.held().is_some()
+            && let Err(e) = AgentTurn::hold_queue(&self.thread.id).await
+        {
+            log::warn!(
+                "codex: could not hold the queue of {}: {e}",
+                self.thread.id.key_string()
+            );
         }
         self.pump().await;
     }
@@ -1340,12 +1448,17 @@ impl Runner {
             return;
         }
         while self.busy.is_idle() {
-            let Some(turn) = self.queue.next() else { return };
+            let Some(turn) = self.queue.next() else {
+                return;
+            };
             match AgentTurn::take_queued(&turn.id).await {
                 Ok(true) => {}
                 Ok(false) => continue,
                 Err(e) => {
-                    log::warn!("codex: could not take queued turn {}: {e}", turn.id.key_string());
+                    log::warn!(
+                        "codex: could not take queued turn {}: {e}",
+                        turn.id.key_string()
+                    );
                     self.queue.undelivered(turn, "the database did not answer");
                     self.write_hold().await;
                     return;
@@ -1353,7 +1466,12 @@ impl Runner {
             }
             if let Err(e) = self.deliver(&turn, "start").await {
                 let _ = AgentTurn::mark_failed(&turn.id, &e).await;
-                self.marker("error", &format!("Could not send a queued message: {e}"), None).await;
+                self.marker(
+                    "error",
+                    &format!("Could not send a queued message: {e}"),
+                    None,
+                )
+                .await;
                 self.hold_queue("A queued message could not be sent.").await;
                 return;
             }
@@ -1366,9 +1484,15 @@ impl Runner {
             return;
         }
         if let Some(earlier) = self.pending_compact.replace(turn) {
-            let _ = AgentTurn::mark_failed(&earlier.id, "a later compaction request replaced it").await;
+            let _ =
+                AgentTurn::mark_failed(&earlier.id, "a later compaction request replaced it").await;
         }
-        self.marker("other", "Compaction requested; it starts when this turn ends.", None).await;
+        self.marker(
+            "other",
+            "Compaction requested; it starts when this turn ends.",
+            None,
+        )
+        .await;
     }
 
     async fn compact(&mut self, turn: &AgentTurn) {
@@ -1379,12 +1503,15 @@ impl Runner {
         match self.client.compact(&thread_id).await {
             Ok(_) => {
                 self.compact_unstarted = true;
-                self.signal(Signal::Working(AgentActivity::Compacting)).await;
-                self.marker("other", "Compaction requested by the technician.", None).await;
+                self.signal(Signal::Working(AgentActivity::Compacting))
+                    .await;
+                self.marker("other", "Compaction requested by the technician.", None)
+                    .await;
             }
             Err(e) => {
                 let _ = AgentTurn::mark_failed(&turn.id, &e.to_string()).await;
-                self.marker("error", &format!("Could not start compaction: {e}"), None).await;
+                self.marker("error", &format!("Could not start compaction: {e}"), None)
+                    .await;
             }
         }
     }
@@ -1394,7 +1521,8 @@ impl Runner {
         self.stop_waits("the technician stopped the agent");
         self.hold_queue(queue::STOPPED).await;
         if let Some(compact) = self.pending_compact.take() {
-            let _ = AgentTurn::mark_failed(&compact.id, "stopped before the compaction started").await;
+            let _ =
+                AgentTurn::mark_failed(&compact.id, "stopped before the compaction started").await;
         }
         if self.codex_thread_id.is_none() {
             let _ = AgentTurn::mark_failed(&turn.id, "no codex thread yet").await;
@@ -1404,7 +1532,8 @@ impl Runner {
             if self.turn_in_progress().await != Some(true) {
                 self.row.forget_status();
                 self.set_status("idle").await;
-                self.marker("other", "Nothing was running; the session is idle.", None).await;
+                self.marker("other", "Nothing was running; the session is idle.", None)
+                    .await;
                 return;
             }
             self.signal(Signal::Attached { in_progress: true }).await;
@@ -1413,20 +1542,24 @@ impl Runner {
             return;
         }
         self.begin_stop(Some(turn.id.clone()));
-        self.marker("other", "Technician stopped the agent.", None).await;
+        self.marker("other", "Technician stopped the agent.", None)
+            .await;
     }
 
     /// Sends `turn/interrupt` from its own task, which reports back as [`RunnerCmd::Stopped`].
     fn begin_stop(&mut self, turn: Option<RecordId>) {
-        let Some(thread_id) = self.codex_thread_id.clone() else { return };
+        let Some(thread_id) = self.codex_thread_id.clone() else {
+            return;
+        };
         self.stopping = true;
         let (client, own) = (self.client.clone(), self.own.clone());
         tokio::spawn(async move {
-            let result = match tokio::time::timeout(STOP_TIMEOUT, client.turn_interrupt(&thread_id)).await {
-                Ok(Ok(_)) => Ok(()),
-                Ok(Err(e)) => Err(e.to_string()),
-                Err(_) => Err(format!("no answer within {} s", STOP_TIMEOUT.as_secs())),
-            };
+            let result =
+                match tokio::time::timeout(STOP_TIMEOUT, client.turn_interrupt(&thread_id)).await {
+                    Ok(Ok(_)) => Ok(()),
+                    Ok(Err(e)) => Err(e.to_string()),
+                    Err(_) => Err(format!("no answer within {} s", STOP_TIMEOUT.as_secs())),
+                };
             let _ = own.send(RunnerCmd::Stopped { turn, result }).await;
         });
     }
@@ -1440,10 +1573,12 @@ impl Runner {
         self.stopping = false;
         if self.turn_in_progress().await == Some(false) {
             self.signal(Signal::TurnEnded).await;
-            self.marker("other", "Nothing was running; the session is idle.", None).await;
+            self.marker("other", "Nothing was running; the session is idle.", None)
+                .await;
             self.pump().await;
         } else {
-            self.marker("error", &format!("Stop did not reach the agent: {e}"), None).await;
+            self.marker("error", &format!("Stop did not reach the agent: {e}"), None)
+                .await;
         }
     }
 
@@ -1480,8 +1615,13 @@ impl Runner {
                     self.begin_stop(None);
                 }
                 self.remember_session().await;
-                if let Err(e) = AgentTurn::cancel_waiting(&self.thread.id, "the session closed").await {
-                    log::warn!("codex: could not cancel the queue of {}: {e}", self.thread.id.key_string());
+                if let Err(e) =
+                    AgentTurn::cancel_waiting(&self.thread.id, "the session closed").await
+                {
+                    log::warn!(
+                        "codex: could not cancel the queue of {}: {e}",
+                        self.thread.id.key_string()
+                    );
                 }
                 if let Some(t) = self.codex_thread_id.clone() {
                     let _ = self.client.request("thread/unsubscribe", json!({ "threadId": t })).await;
@@ -1676,7 +1816,13 @@ mod tests {
 
     #[test]
     fn a_compaction_reads_as_a_sentence() {
-        assert_eq!(item_text(kind_for("contextCompaction"), &json!({ "type": "contextCompaction", "id": "c" })), COMPACTED);
+        assert_eq!(
+            item_text(
+                kind_for("contextCompaction"),
+                &json!({ "type": "contextCompaction", "id": "c" })
+            ),
+            COMPACTED
+        );
         assert_eq!(item_text("other", &json!({ "type": "plan" })), "plan");
     }
 
