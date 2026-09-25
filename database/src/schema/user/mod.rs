@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt::Display};
+use std::{collections::{HashMap, HashSet}, fmt::Display};
 use serde_json::Value;
 use crate::db;
 
@@ -162,6 +162,23 @@ pub fn assignable_users(users: &[User], store: Store) -> Vec<&User> {
     let mut sorted: Vec<&User> = users.iter().filter(|u| u.is_active()).collect();
     sorted.sort_by_key(|u| (u.get_store() != store, u.get_username().to_lowercase()));
     sorted
+}
+
+/// Unique usernames of [`assignable_users`] in its order, and the set of those at `store`.
+pub fn assignee_names(users: &[User], store: Store) -> (Vec<String>, HashSet<String>) {
+    let mut names: Vec<String> = Vec::new();
+    let mut local = HashSet::new();
+    for user in assignable_users(users, store) {
+        let name = user.get_username().to_string();
+        if names.contains(&name) {
+            continue;
+        }
+        if user.get_store() == store {
+            local.insert(name.clone());
+        }
+        names.push(name);
+    }
+    (names, local)
 }
 
 impl User {
@@ -781,6 +798,29 @@ impl User {
         Ok(user_threads)
     }
 }
+#[cfg(test)]
+mod assignee_tests {
+    use super::*;
+
+    fn user(email: &str, store: Store, active: bool) -> User {
+        User { email: email.into(), store, active, ..Default::default() }
+    }
+
+    #[test]
+    fn names_list_the_store_first_without_duplicates_or_inactive_users() {
+        let users = [
+            user("zoe@x.com", Store::RIV, true),
+            user("adam@x.com", Store::LTN, true),
+            user("tyler@x.com", Store::RIV, true),
+            user("tyler@y.com", Store::LTN, true),
+            user("gone@x.com", Store::RIV, false),
+        ];
+        let (names, local) = assignee_names(&users, Store::RIV);
+        assert_eq!(names, ["tyler", "zoe", "adam"]);
+        assert_eq!(local, HashSet::from(["tyler".to_string(), "zoe".to_string()]));
+    }
+}
+
 #[cfg(test)]
 mod user_settings_tests {
     use super::*;
