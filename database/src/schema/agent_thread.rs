@@ -101,6 +101,7 @@ impl AgentActivity {
             Self::Command => "Running a command".into(),
             Self::Compacting => "Compacting".into(),
             Self::Approval(name) if name.is_empty() => "Needs approval".into(),
+            Self::Approval(name) if name == "question" => "Waiting for an answer".into(),
             Self::Approval(name) => format!("Needs approval: {name}"),
             Self::Retrying => "Retrying".into(),
         }
