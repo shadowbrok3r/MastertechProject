@@ -11,6 +11,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
 use crate::app_state::MasterTechApp;
+use crate::tabs::minidump::MinidumpArgs;
 
 // Idle redraw floor; input redraws immediately and egui animations drive faster.
 const TICK: Duration = Duration::from_millis(100);
@@ -21,19 +22,21 @@ struct SoftwareApp {
     skia_surface: Option<Surface>,
     egui_skia: Option<EguiSkiaWinit>,
     mt: Option<MasterTechApp>,
+    minidump: MinidumpArgs,
     // Left button held; suppresses CursorLeft so egui keeps the pointer pos
     // (and the release) when a drag crosses the window edge.
     left_down: bool,
 }
 
 impl SoftwareApp {
-    fn new() -> Self {
+    fn new(minidump: MinidumpArgs) -> Self {
         Self {
             window: None,
             softbuffer_surface: None,
             skia_surface: None,
             egui_skia: None,
             mt: None,
+            minidump,
             left_down: false,
         }
     }
@@ -58,7 +61,8 @@ impl ApplicationHandler for SoftwareApp {
         // Construct once; rebuilding would reset the one-time MCP/plugin bootstrap
         // in logic_inner and re-bind the :9003/:9004 servers.
         if self.mt.is_none() {
-            self.mt = Some(MasterTechApp::new_software(&egui_skia.egui_skia.egui_ctx));
+            let minidump = std::mem::take(&mut self.minidump);
+            self.mt = Some(MasterTechApp::new_software(&egui_skia.egui_skia.egui_ctx, minidump));
         }
 
         let size = window.inner_size();
@@ -162,10 +166,10 @@ fn present(
 }
 
 /// Software-rendered (skia raster) host for machines with no working GPU GL stack.
-pub fn run() -> anyhow::Result<()> {
+pub fn run(minidump: MinidumpArgs) -> anyhow::Result<()> {
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + TICK));
-    let mut app = SoftwareApp::new();
+    let mut app = SoftwareApp::new(minidump);
     event_loop.run_app(&mut app)?;
     Ok(())
 }

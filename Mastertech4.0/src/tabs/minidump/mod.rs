@@ -1,5 +1,4 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
-use clap::Parser;
 use eframe::egui::{self, scroll_area::ScrollBarVisibility, ScrollArea};
 use egui::{Color32, Ui};
 use egui_extras::{Column, TableBuilder};
@@ -86,28 +85,65 @@ pub enum Tab {
     Kernel,
 }
 
-#[derive(Parser)]
-pub struct Cli {
-    #[clap(action, long)]
-    symbols_url: Vec<String>,
-    #[clap(action, long)]
-    symbols_path: Vec<String>,
-    #[clap(action)]
-    minidumps: Vec<PathBuf>,
+/// Minidump tab inputs parsed by the top-level command line.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MinidumpArgs {
+    pub minidumps: Vec<PathBuf>,
+    pub symbols_path: Vec<String>,
+    pub symbols_url: Vec<String>,
+}
+
+impl MinidumpArgs {
+    /// Arguments to register on the top-level `clap::Command`.
+    pub fn clap_args() -> [clap::Arg; 3] {
+        [
+            clap::Arg::new("minidumps")
+                .value_name("MINIDUMP")
+                .help("Minidump files to list in the Minidump tab")
+                .value_parser(clap::value_parser!(PathBuf))
+                .action(clap::ArgAction::Append),
+            clap::Arg::new("symbols-path")
+                .long("symbols-path")
+                .value_name("PATH")
+                .help("Symbol directory for the Minidump tab (repeatable)")
+                .action(clap::ArgAction::Append),
+            clap::Arg::new("symbols-url")
+                .long("symbols-url")
+                .value_name("URL")
+                .help("Symbol server for the Minidump tab (repeatable)")
+                .action(clap::ArgAction::Append),
+        ]
+    }
+
+    pub fn from_matches(matches: &clap::ArgMatches) -> Self {
+        fn all<T: Clone + Send + Sync + 'static>(matches: &clap::ArgMatches, id: &str) -> Vec<T> {
+            matches.get_many::<T>(id).into_iter().flatten().cloned().collect()
+        }
+        Self {
+            minidumps: all(matches, "minidumps"),
+            symbols_path: all(matches, "symbols-path"),
+            symbols_url: all(matches, "symbols-url"),
+        }
+    }
 }
 
 const DEFAULT_HTTP_TIMEOUT_SECS: u64 = 1000;
 
-impl Default for MiniDumpApp{
-    fn default() -> Self{
-        let cli = Cli::parse();
-        let available_paths = cli.minidumps;
-        let symbol_paths = if cli.symbols_path.is_empty() {
+impl Default for MiniDumpApp {
+    fn default() -> Self {
+        Self::new(MinidumpArgs::default())
+    }
+}
+
+impl MiniDumpApp {
+    pub fn new(args: MinidumpArgs) -> Self {
+        let available_paths = args.minidumps;
+        let symbol_paths = if args.symbols_path.is_empty() {
             vec![(String::new(), true)] // C:\ProgramData\dbg\sym
         } else {
-            cli.symbols_path.into_iter().map(|p| (p, true)).collect()
+            args.symbols_path.into_iter().map(|p| (p, true)).collect()
         };
-        let symbol_urls = if cli.symbols_url.is_empty() {
+        let symbol_urls = if args.symbols_url.is_empty() {
             vec![
                 ("https://symbols.mozilla.org/".to_string(), true),
                 (
@@ -117,7 +153,7 @@ impl Default for MiniDumpApp{
                 (String::new(), true),
             ]
         } else {
-            cli.symbols_url.into_iter().map(|p| (p, true)).collect()
+            args.symbols_url.into_iter().map(|p| (p, true)).collect()
         };
     
         let logger = MapLogger::new();
@@ -552,4 +588,70 @@ pub fn frame_signature(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ARGV_CHILD_ENV: &str = "MTECH_MINIDUMP_ARGV_CHILD";
+
+    /// Re-runs this test in a child whose argv carries flags the minidump tab never defined.
+    #[test]
+    fn default_ignores_unknown_argv_flags() {
+        if std::env::var_os(ARGV_CHILD_ENV).is_some() {
+            let app = MiniDumpApp::default();
+            assert!(app.settings.available_paths.is_empty());
+            return;
+        }
+        let exe = std::env::current_exe().expect("test binary path");
+        let out = std::process::Command::new(exe)
+            .args([
+                "tabs::minidump::tests::default_ignores_unknown_argv_flags",
+                "--exact",
+                "--test-threads=1",
+            ])
+            .env(ARGV_CHILD_ENV, "1")
+            .output()
+            .expect("spawn test binary");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success(),
+            "child exited with {}\nstdout:\n{stdout}\nstderr:\n{}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr),
+        );
+        assert!(stdout.contains("1 passed"), "child ran no test:\n{stdout}");
+    }
+
+    #[test]
+    fn minidump_args_parse_alongside_gui_flags() {
+        let matches = crate::cli()
+            .try_get_matches_from([
+                "MasterTech", "--cpu", "--no-frost", "-l", "-c", "a.dmp", "b.dmp",
+                "--symbols-path", r"C:\sym", "--symbols-url", "https://sym.example/",
+            ])
+            .expect("GUI flags and minidump args parse together");
+        assert!(matches.get_flag("no-frost"));
+        assert_eq!(
+            MinidumpArgs::from_matches(&matches),
+            MinidumpArgs {
+                minidumps: vec![PathBuf::from("a.dmp"), PathBuf::from("b.dmp")],
+                symbols_path: vec![r"C:\sym".to_string()],
+                symbols_url: vec!["https://sym.example/".to_string()],
+            }
+        );
+    }
+
+    #[test]
+    fn new_fills_settings_from_args() {
+        let app = MiniDumpApp::new(MinidumpArgs {
+            minidumps: vec![PathBuf::from("a.dmp")],
+            symbols_path: vec![r"C:\sym".to_string()],
+            symbols_url: vec!["https://sym.example/".to_string()],
+        });
+        assert_eq!(app.settings.available_paths, [PathBuf::from("a.dmp")]);
+        assert_eq!(app.settings.symbol_paths, [(r"C:\sym".to_string(), true)]);
+        assert_eq!(app.settings.symbol_urls, [("https://sym.example/".to_string(), true)]);
+    }
 }
