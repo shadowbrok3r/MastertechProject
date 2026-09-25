@@ -31,12 +31,10 @@ pub fn lines(v: &Value, width: usize) -> Vec<Line<'static>> {
         .into_iter()
         .take(MAX_LINES)
         .flat_map(|p| {
-            wrap::mono(
-                &p.runs,
-                width,
-                &[wrap::pad(p.indent)],
-                &[wrap::pad(p.indent + INDENT)],
-            )
+            let most = width / 2;
+            let first = [wrap::pad(p.indent.min(most))];
+            let rest = [wrap::pad((p.indent + INDENT).min(most))];
+            wrap::mono(&p.runs, width, &first, &rest)
         })
         .collect();
     if total > MAX_LINES {

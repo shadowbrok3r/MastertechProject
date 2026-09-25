@@ -49,13 +49,19 @@ pub const SCROLL_THUMB: &str = "\u{2588}"; // █
 pub const GUTTER: &str = "\u{258c}"; // ▌
 /// List marker in rendered markdown.
 pub const BULLET: &str = "\u{25aa}"; // ▪
-/// A tool call that is still running.
-pub const AGENT_RUNNING: &str = "\u{25cc}"; // ◌
 /// Quarter-circle spinner frames.
 pub const SPINNER: [&str; 4] = ["\u{25d0}", "\u{25d3}", "\u{25d1}", "\u{25d2}"]; // ◐ ◓ ◑ ◒
+/// Header marker of a folded transcript row.
+pub const ROW_CLOSED: &str = "\u{25b8}"; // ▸
+/// Header marker of an unfolded transcript row.
+pub const ROW_OPEN: &str = "\u{25be}"; // ▾
 /// Left rule of a code block or quote.
 pub const CODE_RULE: &str = "\u{258e}"; // ▎
+/// Left rule of an unfolded row's body.
+pub const DETAIL_RULE: &str = "\u{2502}"; // │
 /// Horizontal rule and divider stroke.
 pub const RULE: &str = "\u{2500}"; // ─
 /// Marks text that was cut.
 pub const ELLIPSIS: &str = "\u{2026}"; // …
+/// Separator between inline items.
+pub const DOT: &str = "\u{00b7}"; // ·

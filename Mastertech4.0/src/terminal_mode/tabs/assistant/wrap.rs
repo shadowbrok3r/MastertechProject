@@ -51,6 +51,46 @@ fn clip_marked(s: &str, max: usize) -> String {
     out
 }
 
+/// `spans` cut to `max` cells, the cut marked with an ellipsis in the style of the span it falls in.
+pub fn fit(spans: Vec<Span<'static>>, max: usize) -> Line<'static> {
+    if spans_width(&spans) <= max {
+        return Line::from(spans);
+    }
+    let mut out = Vec::new();
+    let mut used = 0;
+    for span in spans {
+        let w = width(&span.content);
+        if used + w < max {
+            used += w;
+            out.push(span);
+        } else {
+            out.push(Span::styled(
+                clip_marked(&span.content, max - used),
+                span.style,
+            ));
+            break;
+        }
+    }
+    Line::from(out)
+}
+
+/// `s` on one line, every run of whitespace as one space.
+pub fn one_line(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// `lines` with `prefix` in front of each.
+pub fn indent(lines: Vec<Line<'static>>, prefix: &[Span<'static>]) -> Vec<Line<'static>> {
+    lines
+        .into_iter()
+        .map(|line| {
+            let mut spans = prefix.to_vec();
+            spans.extend(line.spans);
+            Line::from(spans)
+        })
+        .collect()
+}
+
 /// `text` with tabs as four spaces and without escape sequences, carriage returns or other control characters.
 pub fn sanitize(text: &str) -> Cow<'_, str> {
     if !text.chars().any(|c| c.is_control() && c != '\n') {
@@ -283,6 +323,19 @@ mod tests {
         assert_eq!(clip("abcdefgh", 5), "abcd\u{2026}");
         assert_eq!(clip("\u{65e5}\u{672c}\u{8a9e}", 4), "\u{65e5}\u{2026}");
         assert_eq!(clip("abc", 0), "");
+    }
+
+    #[test]
+    fn fit_cuts_the_span_that_overflows() {
+        let red = Style::default().fg(Color::Red);
+        let line = fit(
+            vec![Span::raw("head "), Span::styled("summary text", red)],
+            10,
+        );
+        assert_eq!(text(&line), "head summ\u{2026}");
+        assert_eq!(line.spans[1].style, red);
+        assert_eq!(text(&fit(vec![Span::raw("fits")], 10)), "fits");
+        assert_eq!(one_line("a\n  b\tc"), "a b c");
     }
 
     #[test]
