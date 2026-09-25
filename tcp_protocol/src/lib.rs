@@ -196,7 +196,29 @@ pub fn apply_tcp_options(stream: &tokio::net::TcpStream) -> std::io::Result<()> 
 /// mirror types under dedicated frame tags instead. Encoded with bincode
 /// (the same codec displays already uses), uncompressed.
 pub mod preboot {
+    use bincode::config::{Configuration, Limit, LittleEndian, Varint};
+    use serde::de::DeserializeOwned;
     use serde::{Deserialize, Serialize};
+
+    /// Decode budget per payload, counted in bincode's in-memory widths rather than wire bytes.
+    pub const MAX_DECODE_BYTES: usize = 16 << 20;
+
+    /// Largest JSON document the firmware puts in a [`PbQueryResult`].
+    pub const MAX_QUERY_ANSWER_BYTES: usize = 4 << 20;
+
+    /// `standard()` bounded to [`MAX_DECODE_BYTES`]; encodes byte-for-byte like `standard()`.
+    pub const WIRE: Configuration<LittleEndian, Varint, Limit<MAX_DECODE_BYTES>> =
+        bincode::config::standard().with_limit::<MAX_DECODE_BYTES>();
+
+    fn encode<T: Serialize>(v: &T) -> Vec<u8> {
+        bincode::serde::encode_to_vec(v, WIRE).unwrap_or_default()
+    }
+
+    fn decode<T: DeserializeOwned>(b: &[u8]) -> Option<T> {
+        bincode::serde::decode_from_slice(b, WIRE)
+            .ok()
+            .map(|(v, _)| v)
+    }
 
     /// A ratatui buffer frame streamed from firmware, row-major `cols*rows`.
     pub const FRAME_TAG_PREBOOT_FRAME: u8 = 0x05;
@@ -379,22 +401,22 @@ pub mod preboot {
     }
 
     pub fn encode_plugin_run(p: &PbPluginRun) -> Vec<u8> {
-        bincode::serde::encode_to_vec(p, bincode::config::standard()).unwrap_or_default()
+        encode(p)
     }
     pub fn decode_plugin_run(b: &[u8]) -> Option<PbPluginRun> {
-        bincode::serde::decode_from_slice(b, bincode::config::standard()).ok().map(|(v, _)| v)
+        decode(b)
     }
     pub fn encode_plugin_result(p: &PbPluginResult) -> Vec<u8> {
-        bincode::serde::encode_to_vec(p, bincode::config::standard()).unwrap_or_default()
+        encode(p)
     }
     pub fn decode_plugin_result(b: &[u8]) -> Option<PbPluginResult> {
-        bincode::serde::decode_from_slice(b, bincode::config::standard()).ok().map(|(v, _)| v)
+        decode(b)
     }
     pub fn encode_stream_ctl(p: &PbStreamCtl) -> Vec<u8> {
-        bincode::serde::encode_to_vec(p, bincode::config::standard()).unwrap_or_default()
+        encode(p)
     }
     pub fn decode_stream_ctl(b: &[u8]) -> Option<PbStreamCtl> {
-        bincode::serde::decode_from_slice(b, bincode::config::standard()).ok().map(|(v, _)| v)
+        decode(b)
     }
     /// Firmware → console: entering or leaving a blocking child image.
     #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -412,23 +434,23 @@ pub mod preboot {
     }
 
     pub fn encode_busy(p: &PbBusy) -> Vec<u8> {
-        bincode::serde::encode_to_vec(p, bincode::config::standard()).unwrap_or_default()
+        encode(p)
     }
     pub fn decode_busy(b: &[u8]) -> Option<PbBusy> {
-        bincode::serde::decode_from_slice(b, bincode::config::standard()).ok().map(|(v, _)| v)
+        decode(b)
     }
 
     pub fn encode_query(p: &PbQuery) -> Vec<u8> {
-        bincode::serde::encode_to_vec(p, bincode::config::standard()).unwrap_or_default()
+        encode(p)
     }
     pub fn decode_query(b: &[u8]) -> Option<PbQuery> {
-        bincode::serde::decode_from_slice(b, bincode::config::standard()).ok().map(|(v, _)| v)
+        decode(b)
     }
     pub fn encode_query_result(p: &PbQueryResult) -> Vec<u8> {
-        bincode::serde::encode_to_vec(p, bincode::config::standard()).unwrap_or_default()
+        encode(p)
     }
     pub fn decode_query_result(b: &[u8]) -> Option<PbQueryResult> {
-        bincode::serde::decode_from_slice(b, bincode::config::standard()).ok().map(|(v, _)| v)
+        decode(b)
     }
 
     /// UDP port a console broadcasts direct-link discovery beacons on, and the
@@ -539,23 +561,19 @@ pub mod preboot {
     }
 
     pub fn encode_frame(f: &PreBootFrame) -> Vec<u8> {
-        bincode::serde::encode_to_vec(f, bincode::config::standard()).unwrap_or_default()
+        encode(f)
     }
 
     pub fn decode_frame(b: &[u8]) -> Option<PreBootFrame> {
-        bincode::serde::decode_from_slice(b, bincode::config::standard())
-            .ok()
-            .map(|(v, _)| v)
+        decode(b)
     }
 
     pub fn encode_event(e: &PreBootEvent) -> Vec<u8> {
-        bincode::serde::encode_to_vec(e, bincode::config::standard()).unwrap_or_default()
+        encode(e)
     }
 
     pub fn decode_event(b: &[u8]) -> Option<PreBootEvent> {
-        bincode::serde::decode_from_slice(b, bincode::config::standard())
-            .ok()
-            .map(|(v, _)| v)
+        decode(b)
     }
 
     /// Pack queued event bodies as `[u32 LE count][(u32 LE len)(body)]*` for the
@@ -807,6 +825,126 @@ mod tests {
         assert_eq!(decode_shape_fp(&encode_shape_fp(1, 7, "")), Some((1, 7, String::new())));
         assert!(decode_shape_fp(&[]).is_none());
         assert!(decode_shape_fp(&[0u8; 8]).is_none());
+    }
+
+    /// `head` followed by a varint length prefix of 2^62.
+    fn with_huge_len(head: &[u8]) -> Vec<u8> {
+        let mut v = head.to_vec();
+        v.push(0xFD);
+        v.extend_from_slice(&(1u64 << 62).to_le_bytes());
+        v
+    }
+
+    fn assert_limit_exceeded<T: serde::de::DeserializeOwned + core::fmt::Debug>(bytes: &[u8]) {
+        let err = bincode::serde::decode_from_slice::<T, _>(bytes, preboot::WIRE).unwrap_err();
+        assert!(
+            matches!(err, bincode::error::DecodeError::LimitExceeded),
+            "{err:?}"
+        );
+    }
+
+    fn widest_frame(cols: u16, rows: u16) -> preboot::PreBootFrame {
+        use super::preboot::*;
+        let cell = PreBootCell {
+            symbol: "\u{1F5A5}".into(),
+            fg: PbColor::Rgb(255, 255, 255),
+            bg: PbColor::Rgb(255, 255, 255),
+            mods: u16::MAX,
+        };
+        PreBootFrame {
+            frame: u64::MAX,
+            cols,
+            rows,
+            cells: vec![cell; cols as usize * rows as usize],
+        }
+    }
+
+    #[test]
+    fn preboot_huge_length_prefix_is_rejected() {
+        use super::preboot::*;
+        // frame, cols, rows, one cell, then the cell's symbol length.
+        let frame = with_huge_len(&[0, 0, 0, 1]);
+        assert_limit_exceeded::<PreBootFrame>(&frame);
+        assert!(decode_frame(&frame).is_none());
+
+        let run = with_huge_len(&[]);
+        assert_limit_exceeded::<PbPluginRun>(&run);
+        assert!(decode_plugin_run(&run).is_none());
+
+        let result = with_huge_len(&[1]);
+        assert_limit_exceeded::<PbPluginResult>(&result);
+        assert!(decode_plugin_result(&result).is_none());
+
+        // ok, six empty strings, one log line, then that line's length.
+        let log = with_huge_len(&[1, 0, 0, 0, 0, 0, 0, 1]);
+        assert_limit_exceeded::<PbPluginResult>(&log);
+        assert!(decode_plugin_result(&log).is_none());
+
+        let busy = with_huge_len(&[1]);
+        assert_limit_exceeded::<PbBusy>(&busy);
+        assert!(decode_busy(&busy).is_none());
+
+        let query = with_huge_len(&[]);
+        assert_limit_exceeded::<PbQuery>(&query);
+        assert!(decode_query(&query).is_none());
+
+        let answer = with_huge_len(&[]);
+        assert_limit_exceeded::<PbQueryResult>(&answer);
+        assert!(decode_query_result(&answer).is_none());
+
+        assert!(decode_frame(&with_huge_len(&[0, 0, 0])).is_none());
+        assert!(decode_event(&with_huge_len(&[])).is_none());
+        assert!(decode_stream_ctl(&with_huge_len(&[])).is_none());
+    }
+
+    #[test]
+    fn preboot_max_screen_frame_decodes() {
+        use super::preboot::*;
+        // 7680x4320 GOP console at 8x16 glyphs.
+        let f = widest_frame(960, 270);
+        let back = decode_frame(&encode_frame(&f)).expect("max screen frame decodes");
+        assert_eq!(
+            (back.cols, back.rows, back.cells.len()),
+            (960, 270, f.cells.len())
+        );
+        assert_eq!(
+            back.cells.last().map(|c| (c.symbol.as_str(), c.mods)),
+            Some(("\u{1F5A5}", u16::MAX))
+        );
+    }
+
+    #[test]
+    fn preboot_max_query_answer_decodes() {
+        use super::preboot::*;
+        let r = PbQueryResult {
+            topic: "logs".into(),
+            ok: true,
+            json: "x".repeat(MAX_QUERY_ANSWER_BYTES),
+            error: String::new(),
+            truncated: true,
+        };
+        let back = decode_query_result(&encode_query_result(&r)).expect("max answer decodes");
+        assert_eq!(back.json.len(), MAX_QUERY_ANSWER_BYTES);
+    }
+
+    #[test]
+    fn preboot_wire_matches_standard_encoding() {
+        use super::preboot::*;
+        let standard = bincode::config::standard();
+        let f = widest_frame(80, 25);
+        assert_eq!(
+            encode_frame(&f),
+            bincode::serde::encode_to_vec(&f, standard).unwrap()
+        );
+        let r = PbPluginResult {
+            ok: true,
+            log: vec!["line".into(); 3],
+            ..Default::default()
+        };
+        assert_eq!(
+            encode_plugin_result(&r),
+            bincode::serde::encode_to_vec(&r, standard).unwrap()
+        );
     }
 
     #[test]

@@ -6699,7 +6699,7 @@ fn answer_query(
     };
     // The link streams ~250 KB TUI frames routinely, so this is generous; it
     // exists so one pathological answer can't stall the main loop mid-send.
-    const MAX_ANSWER_BYTES: usize = 4 << 20;
+    const MAX_ANSWER_BYTES: usize = tcp_protocol::preboot::MAX_QUERY_ANSWER_BYTES;
     if json.len() > MAX_ANSWER_BYTES {
         out.error = format!(
             "'{}' is {} bytes, over the {MAX_ANSWER_BYTES}-byte answer cap; request a section or a smaller limit",
