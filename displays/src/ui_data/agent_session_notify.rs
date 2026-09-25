@@ -559,6 +559,7 @@ mod tests {
             tokens_used: None,
             tokens_window: None,
             last_seq: None,
+            activity: None,
             created_at: None,
             updated_at: Datetime::from_timestamp(1_790_000_000 + updated_secs, 0),
             last_event_at: None,

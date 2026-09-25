@@ -1,0 +1,39 @@
+# Agent chat controls: agent_turn admits the queue/compact/rename kinds, the
+# queued/held/cancelled statuses and an `images` array; agent_thread gets an
+# optional `activity` string the broker writes on transitions.
+#
+# Widened ASSERTs and new `none | <type>` fields only, with no DEFAULT, so no
+# row needs a backfill and every existing row stays writable.
+id = "20260925150000__agent_chat_controls"
+name = "agent_chat_controls"
+state = "planned"
+source_schema_hash = "4b8bbfd52b77ad3b7c2325166a25891311501ba4f07f6e1479578a0d13ed9f47"
+target_schema_hash = "c487577c5f5bc1b54d1a806b6175ecac10994ecdbfd789ea69f546a1b71b4d13"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "widen_agent_turn_and_thread"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE images   ON agent_turn TYPE none | array<object> PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE kind     ON agent_turn TYPE string DEFAULT 'start'
+    ASSERT $value IN ['start', 'steer', 'interrupt', 'close', 'queue', 'compact', 'rename'] PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE status   ON agent_turn TYPE string DEFAULT 'pending'
+    ASSERT $value IN ['pending', 'sent', 'failed', 'queued', 'held', 'cancelled'] PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE activity ON agent_thread TYPE none | string PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "narrow_agent_turn_and_thread"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE FIELD IF EXISTS activity ON agent_thread;
+REMOVE FIELD IF EXISTS images ON agent_turn;
+DEFINE FIELD OVERWRITE kind   ON agent_turn TYPE string DEFAULT 'start'
+    ASSERT $value IN ['start', 'steer', 'interrupt', 'close'] PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE status ON agent_turn TYPE string DEFAULT 'pending'
+    ASSERT $value IN ['pending', 'sent', 'failed'] PERMISSIONS FULL;
+"""
