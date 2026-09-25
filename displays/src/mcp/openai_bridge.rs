@@ -2,65 +2,26 @@
 
 use anyhow::Result;
 use serde_json;
-use std::collections::{VecDeque, HashSet};
+use std::collections::HashSet;
 use crossbeam::channel::Sender as CrossbeamSender;
 
-use crate::{ai::{effective_api_base, effective_api_key, effective_model}, mcp::mcp::ShellType, openai::{
-    config::OpenAIConfig,
-    types::chat::{
-        ChatCompletionRequestMessage,
-        ChatCompletionRequestSystemMessageArgs,
-        ChatCompletionTool,
-    },
-    Client as OpenAIClient,
-}};
+use crate::{ai::{effective_api_base, effective_api_key, effective_model}, mcp::mcp::ShellType};
 use futures::StreamExt;
 
 /// A bridge session that connects Gemini Chat Completions to an MCP server over TCP.
 pub struct OpenAiMcpSession {
-    pub oa_client: OpenAIClient<OpenAIConfig>,
     pub model: String,
-    #[allow(dead_code)]
-    mcp_addr: String,
-    #[allow(dead_code)]
-    openai_tools: Vec<ChatCompletionTool>,
-    #[allow(dead_code)]
-    history: VecDeque<ChatCompletionRequestMessage>,
-    keepalive: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl OpenAiMcpSession {
-    pub async fn connect(addr: &str, model: String, system_prompt: Option<String>) -> Result<Self> {
+    pub async fn connect(addr: &str, model: String) -> Result<Self> {
         let api_key = effective_api_key();
         if api_key.is_empty() { log::warn!("No OpenAI/Gemini API key set – completions will fail until provided"); }
 
-        let api_base = effective_api_base();
         let model = effective_model(&model);
 
-        let config = OpenAIConfig::new()
-            .with_api_key(&api_key)
-            .with_api_base(&api_base);
-        let oa_client = OpenAIClient::with_config(config);
-
-        let mut history: VecDeque<ChatCompletionRequestMessage> = VecDeque::new();
-        if let Some(sp) = system_prompt {
-            history.push_back(
-                ChatCompletionRequestSystemMessageArgs::default()
-                    .content(sp)
-                    .build()?
-                    .into(),
-            );
-        }
-
         log::debug!("Initialized GeminiMcpSession (addr='{}', model='{}')", addr, model);
-        Ok(Self {
-            oa_client,
-            model,
-            mcp_addr: addr.to_string(),
-            openai_tools: Vec::new(),
-            history,
-            keepalive: None,
-        })
+        Ok(Self { model })
     }
 
     /// Stream command completions from the Responses API, emitting suggestions as
@@ -290,20 +251,5 @@ impl OpenAiMcpSession {
         let _ = progress_tx.try_send(crate::mcp::DiagnosticResponse::CommandCompletions { completions: out, context_info: None });
         log::debug!("emitted streaming suggestions ({} chars raw)", raw.len());
         Ok(())
-    }
-
-    pub async fn request_command_completions(&self, _partial: &str, _shell: &ShellType, _context: Option<&str>) -> Result<Vec<crate::mcp::CommandCompletion>> { Ok(Vec::new()) }
-
-    pub async fn ai_command_completions(&mut self, _partial: &str, _shell: &ShellType) -> Result<Vec<crate::mcp::CommandCompletion>> { Ok(Vec::new()) }
-
-    #[allow(dead_code)]
-    fn extract_completions_from_history(&self) -> Result<Vec<crate::mcp::CommandCompletion>> { Ok(Vec::new()) }
-}
-
-impl Drop for OpenAiMcpSession {
-    fn drop(&mut self) {
-        if let Some(handle) = self.keepalive.take() {
-            handle.abort();
-        }
     }
 }

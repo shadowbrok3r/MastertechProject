@@ -4,7 +4,7 @@
 //! named `build_worker_<hostname>`, then talks to the admin/MCP side
 //! using bincode-serialized [`BuilderWire`] messages. The big
 //! `displays::Cmd` enum is **not** used here on purpose — pulling it
-//! in would drag eframe, surrealdb, async-openai, and the entire
+//! in would drag eframe, surrealdb, and the entire
 //! desktop dep tree into the worker's Docker image.
 //!
 //! Slice 1 only exercises Hello / CompileRequest / CompileResult; the

@@ -299,14 +299,7 @@ impl WebSocketClient {
             // model can be overridden later; default to lightweight model
 
             use crate::mcp::run_mcp_server_tcp;
-            mcp_service.spawn_openai_connect("127.0.0.1:9002", crate::ai::gpts::MODEL, Some(
-                format!("You are a command-line completion assistant. Provide a list of up to 5 command completions for a Powershell shell.
-Each completion should be on a new line. Do not add any extra text, explanations, or formatting.
-The user wants to append the completion to their existing input, so provide the remaining part of the command.
-For example, if the user types 'get' you should return suggestions like: 
-Get-CimClass
-Get-WmiObject")
-            ));
+            mcp_service.spawn_openai_connect("127.0.0.1:9002", crate::ai::gpts::MODEL);
             if let Err(e) = run_mcp_server_tcp() {
                 log::warn!("run_mcp_server_tcp failed: {e}");
             }

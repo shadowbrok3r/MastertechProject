@@ -45,16 +45,8 @@ pub fn effective_model(default: &str) -> String {
 
 // region:    --- Modules
 
-pub mod chat;
-
-pub mod conv;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub mod mcp_chat;
 pub mod gpts;
-pub mod model;
-pub mod oa_client;
-pub mod tool_call;
-pub mod tools;
-pub mod utils;
 
 // endregion: --- Modules

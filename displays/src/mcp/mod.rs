@@ -43,12 +43,12 @@ impl Default for McpService {
 impl McpService {
     /// Spawn an async task to connect the OpenAI bridge to the MCP TCP server and store the session.
     #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
-    pub fn spawn_openai_connect(&self, addr: &str, model: &str, system_prompt: Option<String>) {
+    pub fn spawn_openai_connect(&self, addr: &str, model: &str) {
         let addr = addr.to_string();
         let model = model.to_string();
         let session_slot = self.openai_session.clone();
         <crate::PlatformSpawner as crate::Spawner>::spawn(async move {
-            match OpenAiMcpSession::connect(&addr, model, system_prompt).await {
+            match OpenAiMcpSession::connect(&addr, model).await {
                 Ok(sess) => {
                     let mut guard = session_slot.lock().await;
                     *guard = Some(sess);
