@@ -6174,7 +6174,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "create_diagnostic_session",
-        description = "Start a new diagnostic session. Call at the beginning of any diagnostic engagement. Pass connection_string, requested_by, store and driven_by, and nothing else identifying: the customer, computer and hostname are resolved from the connection_string (a staff/bench machine opens with no customer). Never pass a technician's name or email as customer_id. If it reports a link problem, call validate_connection_links with the connection_string alone and report what it says. Returns a session_id to use with log_diagnostic_entry and close_diagnostic_session."
+        description = "Start a new diagnostic session. Call at the beginning of any diagnostic engagement. Pass connection_string, requested_by, store and driven_by, plus service_number when you know it, and nothing else identifying: the customer, computer and hostname are resolved from the connection_string (a staff/bench machine opens with no customer). Never pass a technician's name or email as customer_id. The session links to the service order's task, and when the order has none a task is created and assigned to requested_by (task_created: true), so every record you produce carries the task. If it reports session_unlinked and you know or learn the service number, call ensure_service_task with it before producing any records. If it reports a link problem, call validate_connection_links with the connection_string alone and report what it says. Returns a session_id to use with log_diagnostic_entry and close_diagnostic_session."
     )]
     async fn create_diagnostic_session(
         &self,
@@ -11357,7 +11357,8 @@ pub const INSTRUCTIONS: &str = r#"Mastertech Plugin System MCP (MasterTech deskt
 === Diagnostic Flow (crash/hardware engagements — follow this ORDER) ===
 Open the session BEFORE running analyzers so every record links to it (analyzers that run first are recorded unlinked and only get claimed retroactively).
   1. remote_channel_health — confirm the client responds.
-  2. create_diagnostic_session — FIRST. Auto-resolves the service task and claims any pre-session orphan records. Everything after inherits its session/task link. Pass requested_by (who asked for the work), store (RIV/LTN/MUR/SAN/ORE), and driven_by (schema requires <source>/<name>: 'mcp/desktop' when an operator drives you from Claude Desktop, 'zeroclaw/<alias>' for a zeroclaw agent, 'codex/<alias>' for a Codex agent; a colon is rejected) — outcome reporting segments on them. Pass connection_string and NOTHING else identifying: it resolves customer and computer itself. Never pass customer_id, customer_name or computer_id — requested_by and tech name the TECHNICIAN, not the customer, and reusing either as a customer_id fails link validation with CustomerNotFound. If it reports a link problem anyway, call validate_connection_links with the connection_string alone and report what it says.
+  2. create_diagnostic_session — FIRST. Auto-resolves the service task and claims any pre-session orphan records. Everything after inherits its session/task link. Pass requested_by (who asked for the work), store (RIV/LTN/MUR/SAN/ORE), and driven_by (schema requires <source>/<name>: 'mcp/desktop' when an operator drives you from Claude Desktop, 'zeroclaw/<alias>' for a zeroclaw agent, 'codex/<alias>' for a Codex agent; a colon is rejected) — outcome reporting segments on them. Pass connection_string and NOTHING else identifying: it resolves customer and computer itself. Never pass customer_id, customer_name or computer_id — requested_by and tech name the TECHNICIAN, not the customer, and reusing either as a customer_id fails link validation with CustomerNotFound. If it reports a link problem anyway, call validate_connection_links with the connection_string alone and report what it says. Pass service_number too when you know it: the session links to that order's task, and a task is created (assigned to requested_by) when the order has none.
+  2a. session_unlinked on create means your records would carry no task. As soon as the service number is known (the request, get_service_order, the technician), call ensure_service_task {service_number, connection_string, requested_by} BEFORE producing records. It returns the existing task or creates it, links the session and claims the records already made.
   3. driver_snapshot_take {label:'intake'} — baseline the driver inventory.
   4. minidump_analyze {connection_string} — triage all dumps; sightings auto-link to the open session. The result carries a fleet block (prior verdicts, known-bad hits) and warnings. Each dump carries already_recorded; a repeat pass acts only on the dumps marked false (new_dump_names).
   5. Escalate to com.mastertech.dump-decode (cdb) only when triage blame is ambiguous.
@@ -11510,7 +11511,8 @@ Step 1 — Pull the order:
     - customer / computer — already linked records
 
 Step 2 — Pull the linked task(s) for tech-specific instructions:
-  SELECT * FROM task WHERE service_ticket = ticket:`<SERVICE_NUMBER>`
+  SELECT * FROM task WHERE service_ticket = service_order:`<SERVICE_NUMBER>` OR service_number = '<SERVICE_NUMBER>'
+  No row means nobody created the task: call ensure_service_task so your records link to one.
   New computer builds almost always have a task assigned to the build tech with a
   `description` field that names the exact work (e.g. "Customer wants OneDrive removed,
   no LibreOffice, transfer data from old drive on the bench"). Read it carefully — it

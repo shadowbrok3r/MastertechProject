@@ -89,7 +89,7 @@ fn machine_scope(out: &mut String, cfg: &Config, thread: &AgentThread) {
     ));
 }
 
-/// The exact `create_diagnostic_session` arguments for this machine.
+/// The exact `create_diagnostic_session` arguments for this machine, and when to call `ensure_service_task`.
 fn session_call(thread: &AgentThread, actor: &str) -> String {
     let mut args = vec![format!("connection_string `{}`", thread.connection_string)];
     if let Some(by) = &thread.requested_by {
@@ -98,12 +98,28 @@ fn session_call(thread: &AgentThread, actor: &str) -> String {
     if let Some(store) = &thread.store {
         args.push(format!("store `{store}`"));
     }
+    if let Some(sn) = &thread.service_number {
+        args.push(format!("service_number `{sn}`"));
+    }
     args.push(format!("driven_by `{actor}`"));
+    let mut task_args = vec![
+        format!("service_number `{}`", thread.service_number.as_deref().unwrap_or("<number>")),
+        format!("connection_string `{}`", thread.connection_string),
+    ];
+    if let Some(by) = &thread.requested_by {
+        task_args.push(format!("requested_by `{by}`"));
+    }
     format!(
         "DIAGNOSTIC SESSION: call create_diagnostic_session with {} and nothing else identifying (no \
          customer_id, computer_id, customer_name, hostname or tech); it resolves the customer and the \
-         computer from the connection_string itself.\n",
-        args.join(", ")
+         computer from the connection_string itself, and links the service order's task, creating it \
+         when the order has none.\n\
+         SERVICE TASK: if the session comes back with a session_unlinked warning and you know the service \
+         number (or learn it later from the technician or the records), call ensure_service_task with {} \
+         before you produce any records, so every record carries the task. It never creates a second \
+         task for an order.\n",
+        args.join(", "),
+        task_args.join(", ")
     )
 }
 
@@ -132,4 +148,65 @@ fn general_scope(out: &mut String, thread: &AgentThread) {
            roster, not a list of sessions.\n\
          - Keep replies short and concrete. The technician reads you between jobs.\n\n",
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use database::schema::RecordId;
+
+    fn thread(service_number: Option<&str>) -> AgentThread {
+        AgentThread {
+            id: RecordId::new("agent_thread", "t"),
+            status: "running".into(),
+            connection_string: "DESKTOP-787KAB8:8d3db801f".into(),
+            hostname: Some("DESKTOP-787KAB8".into()),
+            service_number: service_number.map(str::to_string),
+            store: Some("MUR".into()),
+            requested_by: Some("derek.anderson@pclaptops.com".into()),
+            assignee: None,
+            assist_request: None,
+            service_order: None,
+            computer: None,
+            customer: None,
+            diagnostic_session: None,
+            codex_thread_id: None,
+            model: None,
+            provider: None,
+            driven_by: None,
+            tool_path: None,
+            title: None,
+            error: None,
+            broker_node: None,
+            allow_box_shell: false,
+            tokens_used: None,
+            tokens_window: None,
+            activity: None,
+            last_seq: None,
+            created_at: None,
+            updated_at: None,
+            last_event_at: None,
+            closed_at: None,
+        }
+    }
+
+    #[test]
+    fn a_known_service_number_goes_into_the_session_call_and_the_task_fallback() {
+        let text = session_call(&thread(Some("2155467")), "codex/diagnostician");
+        assert!(text.contains("service_number `2155467`, driven_by `codex/diagnostician`"), "{text}");
+        assert!(text.contains("session_unlinked"), "{text}");
+        assert!(
+            text.contains(
+                "ensure_service_task with service_number `2155467`, connection_string `DESKTOP-787KAB8:8d3db801f`, requested_by `derek.anderson@pclaptops.com`"
+            ),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn without_a_service_number_the_task_fallback_asks_for_one() {
+        let text = session_call(&thread(None), "codex/diagnostician");
+        assert!(!text.contains("service_number `2155467`"), "{text}");
+        assert!(text.contains("ensure_service_task with service_number `<number>`"), "{text}");
+    }
 }
