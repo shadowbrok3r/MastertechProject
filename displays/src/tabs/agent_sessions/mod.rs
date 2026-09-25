@@ -40,6 +40,10 @@ const TICK: Duration = Duration::from_millis(400);
 const EVENT_PAGE: usize = 400;
 /// Tallest the message box grows before it scrolls.
 const COMPOSER_TEXT_MAX: f32 = 140.0;
+/// Composer height assumed until one has been measured.
+const COMPOSER_H_GUESS: f32 = 64.0;
+/// Width of the close button inside a session card.
+const CLOSE_W: f32 = 22.0;
 
 enum Msg {
     Threads(Result<Vec<AgentThread>, String>),
@@ -507,6 +511,7 @@ impl AgentSessions {
         }
         let mut picked = None;
         let mut rename_to = None;
+        let mut close = None;
         ScrollArea::vertical()
             .id_salt("agent_thread_list")
             .show(ui, |ui| {
@@ -523,22 +528,47 @@ impl AgentSessions {
                         continue;
                     }
                     let selected = self.selected.as_ref() == Some(&t.id);
+                    let open = t.is_open();
                     let card = selectable_card(ui, &key, selected, |ui| {
                         ui.horizontal(|ui| {
-                            if agent_chat::is_active(t) {
-                                ui.add(egui::Spinner::new().size(12.0));
-                            }
-                            ui.add(egui::Label::new(RichText::new(t.label()).strong()).truncate());
-                        });
-                        ui.horizontal(|ui| {
-                            agent_chat::status_badge(ui, t);
-                            if let Some(who) = &t.requested_by {
-                                ui.add(
-                                    egui::Label::new(RichText::new(who).small().weak()).truncate(),
-                                );
-                            }
-                        });
+                            let reserve = if open {
+                                CLOSE_W + ui.spacing().item_spacing.x
+                            } else {
+                                0.0
+                            };
+                            let rows = ui.vertical(|ui| {
+                                ui.set_max_width((ui.available_width() - reserve).max(0.0));
+                                ui.horizontal(|ui| {
+                                    if agent_chat::is_active(t) {
+                                        ui.add(egui::Spinner::new().size(12.0));
+                                    }
+                                    ui.add(
+                                        egui::Label::new(RichText::new(t.label()).strong())
+                                            .truncate(),
+                                    );
+                                });
+                                ui.horizontal(|ui| {
+                                    agent_chat::status_badge(ui, t);
+                                    if let Some(who) = &t.requested_by {
+                                        ui.add(
+                                            egui::Label::new(RichText::new(who).small().weak())
+                                                .truncate(),
+                                        );
+                                    }
+                                });
+                            });
+                            let height = rows.response.rect.height();
+                            open && ui
+                                .with_layout(Layout::right_to_left(Align::Min), |ui| {
+                                    close_button(ui, height)
+                                })
+                                .inner
+                        })
+                        .inner
                     });
+                    if card.inner {
+                        close = Some(t.id.clone());
+                    }
                     if card.response.clicked() {
                         picked = Some(t.id.clone());
                     }
@@ -556,6 +586,9 @@ impl AgentSessions {
         if let Some((id, title)) = rename_to {
             self.renaming = None;
             self.rename(id, title);
+        }
+        if let Some(id) = close {
+            self.ask(id, "close", String::new(), Vec::new());
         }
     }
 
@@ -600,23 +633,18 @@ impl AgentSessions {
         }
         ui.separator();
 
-        let queue_h = if self.waiting.is_empty() {
-            0.0
-        } else {
-            26.0 + 22.0 * self.waiting.len().min(4) as f32
-        };
-        let attach_h = if self.attachments.attachments.is_empty() {
-            0.0
-        } else {
-            70.0
-        };
-        let composer_h = 110.0 + queue_h + attach_h;
-        let body_h = (ui.available_height() - composer_h).max(120.0);
         let show_reasoning = self.show_reasoning;
         let salt = thread.id.key_string();
+        // Transcript height leaves room for last frame's composer.
+        let composer_key = Id::new(("agent_sessions_composer_h", &salt));
+        let composer_h = ui
+            .data(|d| d.get_temp::<f32>(composer_key))
+            .unwrap_or(COMPOSER_H_GUESS);
+        let body_h = (ui.available_height() - composer_h).max(120.0);
         ScrollArea::vertical()
             .id_salt(("agent_transcript", &salt))
             .stick_to_bottom(true)
+            .auto_shrink([false, false])
             .max_height(body_h)
             .show(ui, |ui| {
                 if self.events.is_empty() {
@@ -625,6 +653,7 @@ impl AgentSessions {
                 transcript_ui(ui, &salt, &self.events, show_reasoning);
             });
 
+        let composer_top = ui.min_rect().bottom();
         ui.separator();
         if let Some(action) = agent_chat::queue_strip(ui, &self.waiting) {
             self.apply_queue_action(action);
@@ -646,21 +675,37 @@ impl AgentSessions {
             Some(ComposerAction::Stop) => self.send_turn("interrupt"),
             None => {}
         }
-        ui.add_enabled_ui(open, |ui| {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui
-                    .small_button(
-                        RichText::new(format!("{} Close session", icons::CLOSE))
-                            .color(theme::error(ui)),
-                    )
-                    .clicked()
-                {
-                    self.send_turn("close");
-                }
-            });
-        });
+        let used = ui.min_rect().bottom() - composer_top;
+        if (used - composer_h).abs() > 0.5 {
+            ui.data_mut(|d| d.insert_temp(composer_key, used));
+            ui.ctx().request_repaint();
+        }
         if open {
             self.attachments.drop_zone(ui, composer_id, pane);
         }
     }
+}
+
+/// A close glyph `height` tall; true when it is double-clicked.
+fn close_button(ui: &mut Ui, height: f32) -> bool {
+    let (rect, response) = ui.allocate_exact_size(vec2(CLOSE_W, height), egui::Sense::click());
+    let response = response.on_hover_text("Double-click to close this session");
+    if ui.is_rect_visible(rect) {
+        let color = if response.hovered() {
+            let radius = ui.visuals().widgets.hovered.corner_radius;
+            ui.painter()
+                .rect_filled(rect, radius, theme::error(ui).gamma_multiply(0.18));
+            theme::error(ui)
+        } else {
+            theme::weak_text(ui)
+        };
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            icons::CLOSE,
+            egui::TextStyle::Body.resolve(ui.style()),
+            color,
+        );
+    }
+    response.double_clicked()
 }
