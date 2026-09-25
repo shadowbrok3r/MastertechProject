@@ -17,7 +17,7 @@ use ratatui::{
     prelude::Backend,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, BorderType, Borders, Paragraph},
     Frame,
 };
 use serde_json::Value;
@@ -42,12 +42,17 @@ const EVENT_PAGE: usize = 400;
 const SNOOZE: Duration = Duration::from_secs(60);
 /// Longest wait for the broker to open a requested session before it reads as a failure.
 const REQUEST_WAIT: Duration = Duration::from_secs(120);
+/// How long a first Ctrl+L waits for the second that closes the session.
+const CONFIRM_WINDOW: Duration = Duration::from_secs(3);
+/// How long a status note stays in the footer.
+const NOTE_SHOWN: Duration = Duration::from_secs(10);
+const START_HINT: &str = "Type a message and press Enter to start a new session";
 
 enum Msg {
     Thread(Result<Option<AgentThread>, String>),
     Events(RecordId, Result<Vec<AgentEvent>, String>),
     Approvals(RecordId, Result<Vec<AgentApproval>, String>),
-    Turn(Result<(), String>),
+    Turn(&'static str, Result<(), String>),
     Requested(Result<(), String>),
     Decided(RecordId, Result<AgentDecideOutcome, String>),
 }
@@ -65,6 +70,37 @@ struct Anchor {
     key: String,
     line: usize,
     at: usize,
+}
+
+/// A new session the technician asked for with Ctrl+L: the thread it replaces and when.
+struct Fresh {
+    replaces: Option<RecordId>,
+    at: Instant,
+}
+
+/// What Ctrl+L does.
+#[derive(Debug, PartialEq)]
+enum NewSession {
+    /// A request for a session is already in flight.
+    Requesting,
+    /// The session being replaced has not closed yet.
+    Closing,
+    /// First press over an open session.
+    Confirm,
+    /// Close this session and clear the view.
+    Close(RecordId),
+    /// Nothing is open; clear the view.
+    Clear,
+}
+
+fn new_session_step(requesting: bool, closing: bool, open: Option<&RecordId>, confirmed: bool) -> NewSession {
+    match open {
+        _ if requesting => NewSession::Requesting,
+        _ if closing => NewSession::Closing,
+        Some(id) if confirmed => NewSession::Close(id.clone()),
+        Some(_) => NewSession::Confirm,
+        None => NewSession::Clear,
+    }
 }
 
 pub struct AssistantTab<'a> {
@@ -92,8 +128,14 @@ pub struct AssistantTab<'a> {
     last_back: Cell<usize>,
     view: Cell<Rect>,
     page: Cell<usize>,
+    fresh: Option<Fresh>,
+    /// When Ctrl+L was first pressed over an open session.
+    armed_at: Option<Instant>,
     note: String,
+    note_at: Option<Instant>,
     requested_at: Option<Instant>,
+    /// The message that asked for the new session.
+    requested_text: String,
     scroll_back: Cell<usize>,
     frame: Cell<usize>,
     last_thread_poll: Option<Instant>,
@@ -108,9 +150,12 @@ pub struct AssistantTab<'a> {
 
 impl<'a> AssistantTab<'a> {
     pub fn new() -> Self {
+        Self::for_connection(crate::filesystem::get_client_hash().connection_string)
+    }
+
+    fn for_connection(connection_string: String) -> Self {
         let input = InputField::new("Message the agent", WidgetId("AssistantInput".to_string()));
         input.set_state(ButtonState::Active);
-        let connection_string = crate::filesystem::get_client_hash().connection_string;
         let hostname = connection_string.split(':').next().unwrap_or_default().to_string();
         let (tx, rx) = unbounded();
         Self {
@@ -133,8 +178,12 @@ impl<'a> AssistantTab<'a> {
             last_back: Cell::new(0),
             view: Cell::new(Rect::default()),
             page: Cell::new(5),
+            fresh: None,
+            armed_at: None,
             note: String::new(),
+            note_at: None,
             requested_at: None,
+            requested_text: String::new(),
             scroll_back: Cell::new(0),
             frame: Cell::new(0),
             last_thread_poll: None,
@@ -158,8 +207,33 @@ impl<'a> AssistantTab<'a> {
         self.thread.as_ref().filter(|t| t.is_open())
     }
 
+    /// True while the latest thread is the one a new session replaces.
+    fn replacing(&self) -> bool {
+        self.fresh
+            .as_ref()
+            .is_some_and(|f| f.replaces.as_ref() == self.thread.as_ref().map(|t| &t.id))
+    }
+
+    /// True while the thread a new session replaces is still open.
+    fn closing(&self) -> bool {
+        self.replacing() && self.open_thread().is_some()
+    }
+
+    /// True when the next message starts a new session.
+    fn starts_session(&self) -> bool {
+        self.open_thread().is_none() || self.replacing()
+    }
+
+    fn set_note(&mut self, note: impl Into<String>) {
+        self.note = note.into();
+        self.note_at = Some(Instant::now());
+    }
+
     /// The decision shown right now: the oldest pending one that is neither snoozed nor lapsed.
     fn active_approval(&self) -> Option<AgentApproval> {
+        if self.replacing() {
+            return None;
+        }
         let now = Instant::now();
         self.approvals
             .iter()
@@ -221,6 +295,7 @@ impl<'a> AssistantTab<'a> {
                         self.approvals.clear();
                         self.transcript.clear();
                         self.toggled.borrow_mut().clear();
+                        self.fresh = None;
                         self.last_seq = 0;
                         self.last_event_poll = None;
                         self.last_approval_poll = None;
@@ -233,7 +308,7 @@ impl<'a> AssistantTab<'a> {
                 }
                 Msg::Thread(Err(e)) => {
                     self.loading_thread = false;
-                    self.note = e;
+                    self.set_note(e);
                 }
                 Msg::Events(thread, Ok(rows)) => {
                     self.loading_events = false;
@@ -255,7 +330,7 @@ impl<'a> AssistantTab<'a> {
                 }
                 Msg::Events(_, Err(e)) => {
                     self.loading_events = false;
-                    self.note = e;
+                    self.set_note(e);
                 }
                 Msg::Approvals(thread, Ok(rows)) => {
                     self.loading_approvals = false;
@@ -267,23 +342,40 @@ impl<'a> AssistantTab<'a> {
                 }
                 Msg::Approvals(_, Err(e)) => {
                     self.loading_approvals = false;
-                    self.note = e;
+                    self.set_note(e);
                 }
-                Msg::Turn(Ok(())) => self.note = "sent".into(),
-                Msg::Turn(Err(e)) => self.note = format!("send failed: {e}"),
-                Msg::Requested(Ok(())) => self.note = "asked for the agent; waiting for the host to open the session".into(),
+                Msg::Turn(kind, Ok(())) => self.set_note(match kind {
+                    "close" => "closing the session",
+                    "interrupt" => "asked the agent to stop",
+                    _ => "sent",
+                }),
+                Msg::Turn(kind, Err(e)) => {
+                    if kind == "close" {
+                        self.fresh = None;
+                    }
+                    let what = match kind {
+                        "close" => "close",
+                        "interrupt" => "stop",
+                        _ => "send",
+                    };
+                    self.set_note(format!("{what} failed: {e}"));
+                }
+                Msg::Requested(Ok(())) => self.set_note("asked for the agent; waiting for the host to open the session"),
                 Msg::Requested(Err(e)) => {
                     self.requested_at = None;
-                    self.note = format!("request failed: {e}");
+                    if self.input.get_raw_text().is_empty() {
+                        self.input.set_text(&self.requested_text);
+                    }
+                    self.set_note(format!("request failed: {e}"));
                 }
                 Msg::Decided(id, outcome) => {
                     self.in_flight.remove(&id);
-                    self.note = match outcome {
+                    self.set_note(match outcome {
                         Ok(AgentDecideOutcome::Recorded) => "decision recorded".into(),
                         Ok(AgentDecideOutcome::AlreadyResolved(held)) => format!("already {held} elsewhere"),
                         Ok(AgentDecideOutcome::Missing) => "that request was withdrawn".into(),
                         Err(e) => format!("decision failed: {e}"),
-                    };
+                    });
                     self.last_approval_poll = None;
                 }
             }
@@ -294,7 +386,12 @@ impl<'a> AssistantTab<'a> {
     fn tick(&mut self) {
         self.drain();
         self.frame.set(self.frame.get().wrapping_add(1));
-        let thread_every = if self.requested_at.is_some() { THREAD_POLL_WAITING } else { THREAD_POLL };
+        if self.closing() && self.fresh.as_ref().is_some_and(|f| f.at.elapsed() >= REQUEST_WAIT) {
+            self.fresh = None;
+            self.set_note("the session did not close; check that admin-agent is running");
+        }
+        let waiting = self.requested_at.is_some() || self.closing();
+        let thread_every = if waiting { THREAD_POLL_WAITING } else { THREAD_POLL };
         if self.last_thread_poll.is_none_or(|t| t.elapsed() >= thread_every) {
             self.poll_thread();
         }
@@ -310,7 +407,7 @@ impl<'a> AssistantTab<'a> {
         let tx = self.tx.clone();
         PlatformSpawner::spawn(async move {
             let r = AgentTurn::ask(&thread, kind, &text).await.map(|_| ()).map_err(|e| e.to_string());
-            let _ = tx.send(Msg::Turn(r));
+            let _ = tx.send(Msg::Turn(kind, r));
         });
     }
 
@@ -324,7 +421,8 @@ impl<'a> AssistantTab<'a> {
             .and_then(|u| serde_json::to_value(u).ok())
             .and_then(|v| v.get("store").and_then(Value::as_str).map(str::to_string));
         self.requested_at = Some(Instant::now());
-        self.note = "asking for the agent\u{2026}".into();
+        self.requested_text = text.clone();
+        self.set_note("asking for the agent\u{2026}");
         let tx = self.tx.clone();
         PlatformSpawner::spawn(async move {
             let r = AssistRequest::create_from_chat(&cs, tech.as_deref(), store.as_deref(), None, &text)
@@ -362,22 +460,59 @@ impl<'a> AssistantTab<'a> {
         if text.is_empty() {
             return;
         }
-        self.input.set_text("");
-        self.scroll_back.set(0);
+        if self.closing() {
+            self.set_note("the previous session is still closing; press Enter again in a moment");
+            return;
+        }
         match self.open_thread().map(|t| (t.id.clone(), t.status.clone())) {
             Some((id, status)) => {
                 // A message during a turn steers it; otherwise it starts the next one.
                 let kind = if matches!(status.as_str(), "running" | "waiting_approval") { "steer" } else { "start" };
+                self.input.set_text("");
+                self.scroll_back.set(0);
                 self.turn(id, kind, text);
             }
             None => {
                 if self.requested_at.is_some_and(|t| t.elapsed() < REQUEST_WAIT) {
-                    self.note = "still waiting for the host to open the session".into();
+                    self.set_note("still waiting for the host to open the session");
                     return;
                 }
+                self.input.set_text("");
+                self.scroll_back.set(0);
                 self.request_session(text);
             }
         }
+    }
+
+    /// Ctrl+L: closes the open session on a second press within [`CONFIRM_WINDOW`], then clears the view for a new one.
+    fn new_session(&mut self) {
+        let requesting = self.requested_at.is_some_and(|t| t.elapsed() < REQUEST_WAIT);
+        let armed = self.armed_at.is_some_and(|t| t.elapsed() < CONFIRM_WINDOW);
+        let open = self.open_thread().map(|t| t.id.clone());
+        match new_session_step(requesting, self.closing(), open.as_ref(), armed) {
+            NewSession::Requesting => self.set_note("a new session is already being opened"),
+            NewSession::Closing => self.set_note("the previous session is still closing"),
+            NewSession::Confirm => {
+                self.armed_at = Some(Instant::now());
+                self.set_note("press Ctrl+L again to close this session and start a new one");
+            }
+            NewSession::Close(id) => {
+                self.turn(id, "close", String::new());
+                self.last_thread_poll = None;
+                self.clear_for_new_session();
+            }
+            NewSession::Clear => {
+                self.set_note("new session: type a message and press Enter");
+                self.clear_for_new_session();
+            }
+        }
+    }
+
+    fn clear_for_new_session(&mut self) {
+        self.armed_at = None;
+        self.requested_at = None;
+        self.fresh = Some(Fresh { replaces: self.thread.as_ref().map(|t| t.id.clone()), at: Instant::now() });
+        self.scroll_back.set(0);
     }
 
     /// Single-key decisions while the composer is empty; `Ctrl+N` declines with the typed note.
@@ -477,35 +612,105 @@ impl<'a> AssistantTab<'a> {
         lines
     }
 
-    fn empty_lines(&self) -> Vec<Line<'static>> {
+    /// Lines under the transcript: a request in flight, a closing or ended session, or the first-run text.
+    fn tail_lines(&self, width: usize, spinner: &str) -> Vec<Line<'static>> {
         let muted = Style::default().fg(THEME.text_muted);
-        let mut lines = vec![Line::from("")];
-        match (&self.thread, self.requested_at) {
-            (_, Some(at)) if at.elapsed() >= REQUEST_WAIT => lines.push(Line::from(Span::styled(
-                "  No session opened after two minutes; check that admin-agent is running.",
-                Style::default().fg(THEME.error),
-            ))),
-            (_, Some(_)) => lines.push(Line::from(Span::styled(
-                "  Asking the agent host\u{2026} the broker opens the session within a few seconds.",
-                muted,
-            ))),
-            (Some(t), None) => lines.push(Line::from(Span::styled(
-                format!("  Session {} \u{00b7} {} \u{2014} the agent is starting up.", short_key(&t.id), status_word(&t.status)),
-                muted,
-            ))),
-            (None, None) => {
-                lines.push(Line::from(Span::styled("  This machine has no agent session yet.", muted)));
-                lines.push(Line::from(Span::styled(
-                    "  Type what you want checked and press Enter; the Codex agent on the admin host opens one.",
+        let error = Style::default().fg(THEME.error);
+        let say = |text: &str, style: Style| wrap::words(&[(style, text)], width, &[], &[]);
+        let start = || say(START_HINT, Style::default().fg(THEME.accent).add_modifier(Modifier::BOLD));
+        let mut out = Vec::new();
+        if let Some(at) = self.requested_at {
+            if at.elapsed() >= REQUEST_WAIT {
+                out.extend(say("No session opened after two minutes; check that admin-agent is running.", error));
+                out.extend(start());
+            } else {
+                out.push(transcript::divider("New session", width));
+                out.extend(transcript::draft(&self.requested_text, width));
+                out.push(Line::default());
+                let waiting = format!("{spinner} Opening a new session; the agent host picks it up within a few seconds.");
+                out.extend(say(&waiting, muted));
+            }
+            return out;
+        }
+        if self.closing() {
+            out.extend(say(&format!("{spinner} Closing the previous session{}", glyphs::ELLIPSIS), muted));
+            out.extend(start());
+            return out;
+        }
+        if self.replacing() {
+            out.extend(start());
+            return out;
+        }
+        match &self.thread {
+            Some(t) if !t.is_open() => {
+                let caption = if t.status == "failed" { "Session failed" } else { "Session closed" };
+                out.push(transcript::divider(caption, width));
+                if let Some(e) = t.error.as_deref().filter(|e| !e.trim().is_empty()) {
+                    out.extend(say(e, error));
+                }
+                out.extend(start());
+            }
+            Some(t) if self.events.is_empty() => {
+                let starting = format!(
+                    "Session {} {} {} \u{2014} the agent is starting up.",
+                    short_key(&t.id),
+                    glyphs::DOT,
+                    status_word(&t.status)
+                );
+                out.extend(say(&starting, muted));
+            }
+            Some(_) => {}
+            None => {
+                out.extend(say("This machine has no agent session yet.", muted));
+                out.extend(say(
+                    "The Codex agent on the admin host opens one for your first message. Anything that would run a command here waits for your approval in this pane.",
                     muted,
-                )));
-                lines.push(Line::from(Span::styled(
-                    "  Anything that would run a command here waits for your approval in this pane.",
-                    muted,
-                )));
+                ));
+                out.extend(start());
             }
         }
-        lines
+        out
+    }
+
+    /// Key hints that fit in `width` cells, after the new-session hint when the next message starts one.
+    fn footer_line(&self, width: usize, running: bool) -> Line<'static> {
+        let key = Style::default().fg(THEME.text).add_modifier(Modifier::BOLD);
+        let action = Style::default().fg(THEME.text_muted);
+        let starts = self.starts_session() && self.requested_at.is_none();
+        let mut spans = Vec::new();
+        if starts {
+            spans.push(Span::styled(START_HINT, Style::default().fg(THEME.accent).add_modifier(Modifier::BOLD)));
+        }
+        let mut hints = Vec::new();
+        if !starts {
+            hints.push(("Enter", "send"));
+        }
+        if running && !self.replacing() {
+            hints.push(("Esc", "stop"));
+        }
+        hints.push(("Ctrl+O", if self.expand { "collapse tools" } else { "expand tools" }));
+        hints.push(("Ctrl+T", if self.show_reasoning { "hide thinking" } else { "show thinking" }));
+        hints.push(("Ctrl+L", "new session"));
+        if self.open_thread().is_some() && !self.replacing() {
+            hints.push(("Ctrl+X", "close session"));
+        }
+        hints.push(("PgUp/PgDn", "scroll"));
+        hints.push(("Alt+Enter", "newline"));
+        let mut used = wrap::spans_width(&spans);
+        for (k, a) in hints {
+            let sep = if spans.is_empty() { 0 } else { 3 };
+            let w = sep + wrap::width(k) + 1 + wrap::width(a);
+            if used + w > width {
+                break;
+            }
+            if sep > 0 {
+                spans.push(Span::styled(format!(" {} ", glyphs::DOT), action));
+            }
+            spans.push(Span::styled(k, key));
+            spans.push(Span::styled(format!(" {a}"), action));
+            used += w;
+        }
+        Line::from(spans)
     }
 
     /// Drops click toggles after a fold mode changes, keeping the top row in place when scrolled back.
@@ -557,12 +762,19 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
 
         let running = self.running();
         let spinner = glyphs::SPINNER[self.frame.get() % glyphs::SPINNER.len()];
-        let word = match (&self.thread, self.requested_at) {
-            (_, Some(_)) => "asking".to_string(),
-            (Some(t), None) => status_word(&t.status).to_string(),
-            (None, None) => "no session".to_string(),
+        let word = if self.requested_at.is_some() {
+            "opening a new session".to_string()
+        } else if self.closing() {
+            "closing".to_string()
+        } else if self.replacing() {
+            "new session".to_string()
+        } else {
+            match &self.thread {
+                Some(t) => format!("{} {} {}", status_word(&t.status), glyphs::DOT, short_key(&t.id)),
+                None => "no session".to_string(),
+            }
         };
-        let title = if running || self.requested_at.is_some() {
+        let title = if running || self.requested_at.is_some() || self.closing() {
             format!(" Agent \u{00b7} {} \u{00b7} {word} {spinner} ", self.hostname)
         } else {
             format!(" Agent \u{00b7} {} \u{00b7} {word} ", self.hostname)
@@ -582,10 +794,11 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
             expand: self.expand,
             spinner,
         };
-        let (body, tail) = if self.events.is_empty() {
-            (Vec::new(), self.empty_lines())
+        let tail = self.tail_lines(inner_w.max(8), spinner);
+        let body = if self.replacing() {
+            Vec::new()
         } else {
-            (self.transcript.rows(&self.events, &opts, &self.toggled.borrow()), Vec::new())
+            self.transcript.rows(&self.events, &opts, &self.toggled.borrow())
         };
         let blank = Line::default();
         let slots = transcript::flatten(&body, &tail, &blank);
@@ -640,29 +853,40 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
             f.render_widget(Paragraph::new(lines).block(block).style(Style::default().bg(THEME.bg)), rows[1]);
         }
 
+        let input_title = if approval.as_ref().is_some_and(|r| r.kind == "question") {
+            "Answer the agent"
+        } else if self.starts_session() {
+            "Start a new session"
+        } else if running {
+            "Message the agent while it works"
+        } else {
+            "Message the agent"
+        };
+        let (_, title_color, _, _) = self.input.colors();
+        self.input.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title(Line::styled(input_title, Style::default().fg(title_color))),
+        );
         f.render_widget(&self.input, rows[2]);
 
-        let expand = if self.expand { "Ctrl+O collapse tools" } else { "Ctrl+O expand tools" };
-        let mut footer = format!(
-            "Enter send  \u{00b7}  Alt+Enter newline  \u{00b7}  {expand}  \u{00b7}  Ctrl+T thinking  \u{00b7}  PgUp/PgDn scroll  \u{00b7}  Ctrl+X close session",
-        );
-        if running {
-            footer.push_str("  \u{00b7}  Esc stop");
-        }
-        if let Some(t) = &self.thread {
-            footer.push_str(&format!("  \u{00b7}  session {}", short_key(&t.id)));
-        }
-        if !self.note.is_empty() {
-            footer.push_str(&format!("  \u{00b7}  {}", self.note));
-        }
         let muted = Style::default().fg(THEME.text_muted).bg(THEME.bg);
-        let context = self.thread.as_ref().and_then(AgentThread::context_usage);
-        let context_w = context.as_ref().map_or(0, |c| c.chars().count() as u16 + 1);
-        let [hints, usage] = Layout::horizontal([Constraint::Fill(1), Constraint::Length(context_w)]).areas(rows[3]);
-        f.render_widget(Paragraph::new(wrap::clip(&footer, hints.width as usize)).style(muted), hints);
-        if let Some(context) = context {
-            f.render_widget(Paragraph::new(context).alignment(Alignment::Right).style(muted), usage);
+        let mut right = Vec::new();
+        if let Some(note) = self.note_at.filter(|t| t.elapsed() < NOTE_SHOWN).map(|_| self.note.as_str()) {
+            let note = wrap::clip(&wrap::one_line(note), (rows[3].width / 2) as usize);
+            right.push(Span::styled(note, Style::default().fg(THEME.accent_soft)));
         }
+        if let Some(context) = self.thread.as_ref().and_then(AgentThread::context_usage) {
+            if !right.is_empty() {
+                right.push(Span::styled(format!(" {} ", glyphs::DOT), muted));
+            }
+            right.push(Span::styled(context, muted));
+        }
+        let right_w = if right.is_empty() { 0 } else { wrap::spans_width(&right) as u16 + 1 };
+        let [hints, usage] = Layout::horizontal([Constraint::Fill(1), Constraint::Length(right_w)]).areas(rows[3]);
+        f.render_widget(Paragraph::new(self.footer_line(hints.width as usize, running)).style(muted), hints);
+        f.render_widget(Paragraph::new(Line::from(right)).alignment(Alignment::Right).style(muted), usage);
     }
 
     fn handle_key_event(&mut self, key: KeyEvent) -> bool {
@@ -719,6 +943,10 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
                 }
                 true
             }
+            KeyCode::Char('l') if ctrl => {
+                self.new_session();
+                true
+            }
             _ => ButtonType::handle_key_event(&self.input, &key),
         }
     }
@@ -759,11 +987,153 @@ fn short_key(id: &RecordId) -> String {
 mod tests {
     use super::*;
 
+    fn thread(key: &str, status: &str) -> AgentThread {
+        AgentThread {
+            id: RecordId::new("agent_thread", key),
+            status: status.into(),
+            connection_string: "PC-1:abc".into(),
+            hostname: None,
+            service_number: None,
+            store: None,
+            requested_by: None,
+            assignee: None,
+            assist_request: None,
+            service_order: None,
+            computer: None,
+            customer: None,
+            diagnostic_session: None,
+            codex_thread_id: None,
+            model: None,
+            provider: None,
+            driven_by: None,
+            tool_path: None,
+            title: None,
+            error: None,
+            broker_node: None,
+            allow_box_shell: false,
+            tokens_used: None,
+            tokens_window: None,
+            last_seq: None,
+            created_at: None,
+            updated_at: None,
+            last_event_at: None,
+            closed_at: None,
+        }
+    }
+
+    fn event(thread: &AgentThread) -> AgentEvent {
+        AgentEvent {
+            id: RecordId::new("agent_event", "e1"),
+            thread: thread.id.clone(),
+            seq: 1,
+            turn_id: None,
+            item_id: None,
+            kind: "agent".into(),
+            text: "hello".into(),
+            done: true,
+            item: None,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    fn tab(thread: Option<AgentThread>) -> AssistantTab<'static> {
+        let mut tab = AssistantTab::for_connection("PC-1:abc".into());
+        if let Some(t) = &thread {
+            tab.events.push(event(t));
+        }
+        tab.thread = thread;
+        tab
+    }
+
+    fn text(lines: &[Line<'_>]) -> String {
+        lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn footer(tab: &AssistantTab<'_>) -> String {
+        text(&[tab.footer_line(400, tab.running())])
+    }
+
     #[test]
     fn an_anchored_line_stays_on_its_view_row() {
         assert_eq!(anchored_back(100, 10, 50, 3), 43);
         assert_eq!(anchored_back(100, 10, 95, 0), 0);
         assert_eq!(anchored_back(8, 10, 2, 5), 0);
         assert_eq!(anchored_back(100, 10, 2, 5), 90);
+    }
+
+    #[test]
+    fn ctrl_l_confirms_before_closing_and_waits_while_busy() {
+        let id = RecordId::new("agent_thread", "t1");
+        assert_eq!(new_session_step(false, false, Some(&id), false), NewSession::Confirm);
+        assert_eq!(new_session_step(false, false, Some(&id), true), NewSession::Close(id.clone()));
+        assert_eq!(new_session_step(false, false, None, false), NewSession::Clear);
+        assert_eq!(new_session_step(true, false, Some(&id), true), NewSession::Requesting);
+        assert_eq!(new_session_step(false, true, Some(&id), true), NewSession::Closing);
+    }
+
+    #[test]
+    fn an_open_session_sends_and_lists_its_keys() {
+        let tab = tab(Some(thread("t1", "idle")));
+        assert!(!tab.starts_session());
+        let keys = footer(&tab);
+        for hint in ["Enter send", "Ctrl+O expand tools", "Ctrl+T show thinking", "Ctrl+L new session", "Ctrl+X close session"] {
+            assert!(keys.contains(hint), "{keys}");
+        }
+        assert!(!keys.contains(START_HINT));
+        assert!(tab.tail_lines(80, "*").is_empty());
+        let busy = self::tab(Some(thread("t1", "running")));
+        assert!(footer(&busy).contains("Esc stop"));
+    }
+
+    #[test]
+    fn a_closed_or_failed_session_says_how_to_start_a_new_one() {
+        let closed = tab(Some(thread("t1", "closed")));
+        assert!(closed.starts_session());
+        assert!(footer(&closed).starts_with(START_HINT));
+        assert!(footer(&closed).contains("Ctrl+L new session"));
+        let tail = text(&closed.tail_lines(80, "*"));
+        assert!(tail.contains(" Session closed "), "{tail}");
+        assert!(tail.contains(START_HINT), "{tail}");
+
+        let mut failed = thread("t2", "failed");
+        failed.error = Some("codex exited".into());
+        let tail = text(&tab(Some(failed)).tail_lines(80, "*"));
+        assert!(tail.contains(" Session failed ") && tail.contains("codex exited"), "{tail}");
+
+        let none = tab(None);
+        assert!(text(&none.tail_lines(80, "*")).contains(START_HINT));
+        assert!(footer(&none).starts_with(START_HINT));
+    }
+
+    #[test]
+    fn a_new_session_hides_the_old_one_until_it_has_closed() {
+        let mut tab = tab(Some(thread("t1", "idle")));
+        tab.fresh = Some(Fresh { replaces: tab.thread.as_ref().map(|t| t.id.clone()), at: Instant::now() });
+        assert!(tab.replacing() && tab.closing() && tab.starts_session());
+        assert!(tab.active_approval().is_none());
+        let tail = text(&tab.tail_lines(80, "*"));
+        assert!(tail.contains("Closing the previous session") && tail.contains(START_HINT), "{tail}");
+        assert!(!footer(&tab).contains("Ctrl+X"));
+
+        tab.thread = Some(thread("t1", "closed"));
+        assert!(tab.replacing() && !tab.closing());
+        assert_eq!(text(&tab.tail_lines(80, "*")), START_HINT);
+    }
+
+    #[test]
+    fn a_requested_session_echoes_the_message_while_it_opens() {
+        let mut tab = tab(Some(thread("t1", "closed")));
+        tab.requested_at = Some(Instant::now());
+        tab.requested_text = "fans are **loud**".into();
+        let tail = text(&tab.tail_lines(80, "*"));
+        assert!(tail.contains(" New session "), "{tail}");
+        assert!(tail.contains("You") && tail.contains("fans are loud"), "{tail}");
+        assert!(tail.contains("Opening a new session"), "{tail}");
+        assert!(!footer(&tab).contains(START_HINT));
     }
 }
