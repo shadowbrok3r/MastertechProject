@@ -315,9 +315,62 @@ pub(crate) fn as_json(text: &str) -> Option<Vec<Value>> {
     let mut stream = serde_json::Deserializer::from_str(t).into_iter::<Value>();
     let mut out = Vec::new();
     for v in stream.by_ref() {
-        out.push(v.ok()?);
+        match v {
+            Ok(v) => out.push(v),
+            Err(_) => return repair_cut_json(t).map(|v| vec![v]),
+        }
     }
     (stream.byte_offset() >= t.len() && !out.is_empty()).then_some(out)
+}
+
+/// True when `text` ends in the `…` a recorder appends to text it cut short.
+pub(crate) fn ends_cut(text: &str) -> bool {
+    text.trim_end().ends_with('\u{2026}')
+}
+
+/// JSON cut short with a trailing `…`, closed back up: the open string, then each open bracket.
+fn repair_cut_json(text: &str) -> Option<Value> {
+    let body = text.trim_end().strip_suffix('\u{2026}')?.trim_end();
+    let mut open: Vec<char> = Vec::new();
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut last_comma: Option<(usize, Vec<char>)> = None;
+    for (i, c) in body.char_indices() {
+        if in_string {
+            match c {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            '"' => in_string = true,
+            '{' => open.push('}'),
+            '[' => open.push(']'),
+            '}' | ']' => {
+                open.pop();
+            }
+            ',' => last_comma = Some((i, open.clone())),
+            _ => {}
+        }
+    }
+    let mut whole = body.to_string();
+    if in_string {
+        if escaped {
+            whole.pop();
+        }
+        whole.push('"');
+    }
+    whole.extend(open.iter().rev());
+    serde_json::from_str(&whole).ok().or_else(|| {
+        // Drops the member after the last comma when that member itself was cut.
+        let (at, open) = last_comma?;
+        let mut head = body[..at].to_string();
+        head.extend(open.iter().rev());
+        serde_json::from_str(&head).ok()
+    })
 }
 
 /// The prose in front of a trailing JSON value, and the values themselves.
@@ -817,6 +870,20 @@ mod tests {
         assert!(as_json("here is {\"a\":1}").is_none());
         assert!(as_json("{not json").is_none());
         assert!(as_json("{\"a\":1}\nthen some words").is_none());
+    }
+
+    #[test]
+    fn json_cut_short_by_an_ellipsis_is_closed_back_up() {
+        let v = as_json("{\"query\": \"select:a,b,cre\u{2026}").expect("open string");
+        assert_eq!(v[0]["query"], "select:a,b,cre");
+        let v = as_json("{\"cs\": \"D:1\", \"hostname\": \"D\"\u{2026}").expect("open object");
+        assert_eq!(v[0]["hostname"], "D");
+        let v = as_json("{\"a\": 1, \"b\": [1, 2\u{2026}").expect("open array");
+        assert_eq!(v[0]["b"], serde_json::json!([1, 2]));
+        let v = as_json("{\"a\": 1, \"b\"\u{2026}").expect("cut member dropped");
+        assert_eq!(v[0], serde_json::json!({ "a": 1 }));
+        assert!(as_json("{\"a\": tr\u{2026}").is_none());
+        assert!(ends_cut("{\"a\": 1\u{2026} ") && !ends_cut("{\"a\": 1}"));
     }
 
     #[test]

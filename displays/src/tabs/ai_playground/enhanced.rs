@@ -1083,16 +1083,20 @@ struct ToolLine<'a> {
 }
 
 impl<'a> ToolLine<'a> {
-    /// Reads both `name (args) status` and the older `name(args)` spelling.
+    /// Reads `name (args) status`, the older `name(args)`, and the legacy `name (args) → status`.
     fn parse(text: &'a str) -> Self {
         let (head, detail) = text.split_once('\n').unwrap_or((text, ""));
         let body = head.strip_prefix(TOOL_PREFIX).unwrap_or(head).trim();
+        let (body, legacy_status) = match body.rsplit_once(" \u{2192} ") {
+            Some((call, status)) => (call.trim(), Some(status.trim())),
+            None => (body, None),
+        };
         let detail = detail.trim();
         let Some(open) = body.find('(') else {
             return Self {
                 name: body,
                 args: "",
-                status: "",
+                status: legacy_status.unwrap_or(""),
                 detail,
             };
         };
@@ -1104,7 +1108,7 @@ impl<'a> ToolLine<'a> {
         Self {
             name: body[..open].trim(),
             args,
-            status,
+            status: legacy_status.unwrap_or(status),
             detail,
         }
     }
@@ -1175,6 +1179,19 @@ mod tests {
             }
         );
         assert_eq!(ToolLine::parse("» bare").name, "bare");
+    }
+
+    #[test]
+    fn legacy_arrow_status_lines_parse() {
+        let line = format!("{TOOL_PREFIX}remote_channel_health ({{\"cs\": \"D:1\"}}) \u{2192} ok");
+        let t = ToolLine::parse(&line);
+        assert_eq!((t.name, t.args, t.status), ("remote_channel_health", "{\"cs\": \"D:1\"}", "ok"));
+        let cut = format!("{TOOL_PREFIX}ToolSearch ({{\"query\": \"select:a,cre\u{2026}) \u{2192} ok");
+        let t = ToolLine::parse(&cut);
+        assert_eq!((t.name, t.args, t.status), ("ToolSearch", "{\"query\": \"select:a,cre\u{2026}", "ok"));
+        let bare = format!("{TOOL_PREFIX}remote_egui_list_targets \u{2192} ok");
+        let t = ToolLine::parse(&bare);
+        assert_eq!((t.name, t.args, t.status), ("remote_egui_list_targets", "", "ok"));
     }
 
     #[test]
