@@ -271,7 +271,7 @@ fn media_of(blk: &BlockIO) -> Option<Media> {
 }
 
 /// Read `total` bytes from LBA 0 into an `io_align`-honouring bounce buffer.
-fn bounce_read(blk: &BlockIO, m: &Media, out: &mut [u8; SECTOR]) -> Result<(), String> {
+fn bounce_read(blk: &mut BlockIO, m: &Media, out: &mut [u8; SECTOR]) -> Result<(), String> {
     let bs = m.block_size as usize;
     if m.block_size == 0 || m.block_size > MAX_BLOCK_SIZE {
         return Err(format!("block size {}", m.block_size));
@@ -318,7 +318,7 @@ fn read_first_sector(h: Handle) -> (Option<[u8; SECTOR]>, ReadPath) {
         agent: boot::image_handle(),
         controller: None,
     };
-    let blk = match unsafe {
+    let mut blk = match unsafe {
         boot::open_protocol::<BlockIO>(params(), OpenProtocolAttributes::GetProtocol)
     } {
         Ok(b) => b,
@@ -340,7 +340,7 @@ fn read_first_sector(h: Handle) -> (Option<[u8; SECTOR]>, ReadPath) {
             Err(_) => buf = [0u8; SECTOR],
         }
     }
-    match bounce_read(&blk, &media, &mut buf) {
+    match bounce_read(&mut blk, &media, &mut buf) {
         Ok(()) => (Some(buf), ReadPath::BlockIo),
         Err(why) => (None, ReadPath::Failed(why)),
     }

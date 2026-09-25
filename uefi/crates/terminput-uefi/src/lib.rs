@@ -21,8 +21,8 @@ impl UefiInputReader {
         // WaitForKey event; in that case skip the wait and poll read_key
         // directly rather than panicking on a missing event.
         if let Ok(key_event) = self.input.wait_for_key_event() {
-            let mut events = [key_event];
-            boot::wait_for_event(&mut events).discard_errdata()?;
+            let events = [key_event];
+            boot::wait_for_event(&events).discard_errdata()?;
         }
         self.poll_event()
     }

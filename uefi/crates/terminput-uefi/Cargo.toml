@@ -1,10 +1,10 @@
 [package]
 name = "terminput-uefi"
 version = "0.1.0"
-description = "terminput implementation for UEFI (vendored fork bumped to terminput 0.5 / uefi 0.37)."
+description = "terminput implementation for UEFI (vendored fork bumped to terminput 0.5 / uefi 0.41)."
 edition = "2024"
 publish = false
 
 [dependencies]
 terminput = { version = "0.5.15", default-features = false }
-uefi = { version = "0.39.0", features = ["alloc"] }
+uefi = { version = "0.41.0", features = ["alloc"] }

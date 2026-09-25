@@ -121,7 +121,7 @@ fn open_snp() -> Result<Held<SimpleNetwork>, String> {
         .next()
         .ok_or_else(|| "no SNP handle".to_string())?;
     // Held: rebinding the NIC drivers drops this open record under us.
-    let snp = protoguard::get::<SimpleNetwork>(handle)
+    let mut snp = protoguard::get::<SimpleNetwork>(handle)
         .map_err(|e| format!("open SNP: {e:?}"))?;
     if snp.mode().state == NetworkState::STOPPED {
         let _ = snp.start();
@@ -191,9 +191,11 @@ impl Link {
     pub fn transmit(&self, frame: &[u8]) -> Result<(), String> {
         match self {
             Link::Mnp(n) => n.transmit(frame),
-            Link::Snp(s) => s
-                .transmit(0, frame, None, None, None)
-                .map_err(|e| format!("SNP tx: {e:?}")),
+            Link::Snp(s) => {
+                let mut buf = frame.to_vec();
+                s.transmit(0, &mut buf, None, None, None)
+                    .map_err(|e| format!("SNP tx: {e:?}"))
+            }
         }
     }
 
