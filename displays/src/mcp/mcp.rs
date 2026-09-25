@@ -1,6 +1,6 @@
 use rmcp::{
     handler::server::{wrapper::Parameters, tool::ToolRouter, ServerHandler},
-    model::{CallToolResult, ContentBlock, ErrorCode, ErrorData, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo},
+    model::{CallToolResult, ContentBlock, ErrorCode, ErrorData, Implementation, ProtocolVersion, ServerCapabilities, ServerConfig},
     schemars, tool, tool_handler, tool_router,
 };
 use schemars::JsonSchema;
@@ -353,8 +353,8 @@ Avoid destructive actions without explicit approval.";
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for DiagnosticToolProvider {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().enable_experimental().build())
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().enable_experimental().build())
         .with_instructions(INSTRUCTIONS.to_string())
         .with_server_info(Implementation::from_build_env())
         .with_protocol_version(ProtocolVersion::LATEST)

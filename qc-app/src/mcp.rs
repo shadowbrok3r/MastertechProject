@@ -9,7 +9,7 @@ use rmcp::{
     handler::server::{wrapper::Parameters, tool::ToolRouter, ServerHandler},
     model::{
         CallToolResult, ContentBlock, ErrorData, Implementation, ProtocolVersion,
-        ServerCapabilities, ServerInfo,
+        ServerCapabilities, ServerConfig,
     },
     schemars, tool, tool_handler, tool_router,
 };
@@ -2417,8 +2417,8 @@ impl QcToolProvider {
 
 #[tool_handler]
 impl ServerHandler for QcToolProvider {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(
             ServerCapabilities::builder().enable_tools().build(),
         )
         .with_instructions(

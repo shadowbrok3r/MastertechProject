@@ -9,7 +9,7 @@ use std::time::Duration;
 use base64::Engine;
 use database::schema::NEVER_REMEMBER_TOOLS;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, ClientInfo, ContentBlock, Implementation, ResourceContents, Tool,
+    CallToolRequestParams, CallToolResult, ClientConfig, ContentBlock, Implementation, ResourceContents, Tool,
 };
 use rmcp::service::RunningService;
 use rmcp::{RoleClient, ServiceExt};
@@ -168,7 +168,7 @@ impl ToolPolicy {
 
 /// An in-process MCP client bound to its own `PluginToolProvider`.
 pub struct ToolHost {
-    client: RunningService<RoleClient, ClientInfo>,
+    client: RunningService<RoleClient, ClientConfig>,
     catalog: Vec<Tool>,
     pub policy: ToolPolicy,
     output_chars: usize,
@@ -194,7 +194,7 @@ impl ToolHost {
                 Err(e) => log::warn!("codex: in-process tool server failed to start: {e}"),
             }
         });
-        let mut info = ClientInfo::default();
+        let mut info = ClientConfig::default();
         // The provenance code maps a client name containing `codex` to the codex harness.
         info.client_info = Implementation::new("codex-broker", env!("CARGO_PKG_VERSION"));
         let client = info
