@@ -34,12 +34,12 @@ impl MasterTechApp {
                     tree.remove_tab(index);
                 }
             }
-            for (surface, node, tab) in std::mem::take(&mut self.context.pending_tab_adds) {
+            for (path, tab) in std::mem::take(&mut self.context.pending_tab_adds) {
                 if !mode.allows(tab) {
                     refuse(&mut self.context, mode, tab);
                     continue;
                 }
-                tree.set_focused_node_and_surface((surface, node));
+                tree.set_focused_node_and_surface(path);
                 tree.push_to_focused_leaf(tab);
             }
         }
@@ -61,8 +61,8 @@ impl MasterTechApp {
         }
 
         if let Some(tab) = self.context.pending_activate_tab.take() {
-            if let Some((surface_index, node_index, tab_index)) = tree.find_tab(&tab) {
-                tree.set_active_tab((surface_index, node_index, tab_index));
+            if let Some(path) = tree.find_tab(&tab) {
+                let _ = tree.set_active_tab(path);
             }
         }
 

@@ -2,7 +2,7 @@ use database::{schema::{prestashop_schema::PrestashopPayload, CarboniteResponse,
 use crate::{tabs::{file_browser::{FileBrowser, FilesPanelMode}, github::self_updater::GithubRelease, scripts::EguiScriptsTab, tur_sheet::{get_ticket::SendRequest,scaffold::{self, HardwareTest}}}};
 use displays::{app_state::{default_tree, SharedContext}, channel_manager::ChannelManager, modals::{DuplicateMergeModal, task_modal::SpecialPartOrder}, plugins::{DefaultEventDispatcher, PluginClientCommand, PluginManager}, tabs::{DockSession, WorkMode}, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
 use std::{path::PathBuf,sync::{atomic::AtomicBool, Arc, Mutex, RwLock}};
-use egui_dock::{NodeIndex, SurfaceIndex};
+use egui_dock::NodePath;
 use crossbeam::channel::{Receiver, Sender};
 
 /// One order pull, success or failure. The error is a `String` because it
@@ -127,8 +127,8 @@ pub struct MastertechContext {
     pub github_issue_descript: String,
     pub github_issue_user: String,
 
-    pub added_nodes: Vec<(SurfaceIndex, NodeIndex)>,
-    pub pending_tab_adds: Vec<(SurfaceIndex, NodeIndex, displays::tabs::TabId)>,
+    pub added_nodes: Vec<NodePath>,
+    pub pending_tab_adds: Vec<(NodePath, displays::tabs::TabId)>,
     pub pending_tab_removes: Vec<displays::tabs::TabId>,
     pub pending_activate_tab: Option<displays::tabs::TabId>,
     pub pending_tab_opens: Vec<displays::tabs::TabId>,

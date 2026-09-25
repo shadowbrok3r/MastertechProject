@@ -363,7 +363,7 @@ impl MasterTechApp {
                                 let reset_mem = Button::new(RichText::new(" Reset Memory ").monospace()).ui(ui);
                                 let default_dock = default_tree();
                                 if reset_ui.clicked() {
-                                    let default_layout = serde_json::to_value(&default_dock.tree).unwrap();
+                                    let default_layout = default_dock.layout_value();
                                     usr.set_ui_layout_mastertech(default_layout.clone());
 
                                     self.dock = default_dock;
@@ -376,7 +376,7 @@ impl MasterTechApp {
                                     });
                                 }
                                 if submit.clicked() {
-                                    let val = serde_json::to_value(self.dock.tree.clone()).unwrap_or_default();
+                                    let val = self.dock.layout_value();
                                     usr.set_ui_layout_mastertech(val.clone());
 
                                     let mut user = usr.clone();

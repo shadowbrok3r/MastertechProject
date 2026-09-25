@@ -354,7 +354,7 @@ impl SharedContext {
                                 };
 
                                 if reset_ui.clicked() {
-                                    let default_layout = serde_json::to_value(&new_tree.tree).unwrap();
+                                    let default_layout = new_tree.layout_value();
                                     self.user_settings.set_ui_layout_mtechserver(default_layout.clone());
                                     user.set_ui_layout_mtechserver(default_layout.clone());
                                     #[cfg(target_arch = "wasm32")]
@@ -396,7 +396,7 @@ impl SharedContext {
                                 }
                                 
                                 if submit.clicked() {
-                                    let val = serde_json::to_value(self.dock.tree.clone()).unwrap_or_default();
+                                    let val = self.dock.layout_value();
                                     self.user_settings.set_ui_layout_mtechserver(val.clone());
                                     user.set_ui_layout_mtechserver(val.clone());
                                     log::debug!("user_settings: {:#?}", user.get_user_settings());

@@ -758,6 +758,10 @@ impl eframe::App for QcApp {
 impl egui_dock::TabViewer for QcApp {
     type Tab = QcTab;
 
+    fn id(&mut self, tab: &mut Self::Tab) -> egui::Id {
+        egui::Id::new(*tab)
+    }
+
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
         tab.title().into()
     }

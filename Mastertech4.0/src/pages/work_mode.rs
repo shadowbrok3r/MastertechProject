@@ -53,7 +53,7 @@ impl MasterTechApp {
         };
         let layout = user.get_user_settings().get_ui_layout_mastertech();
         if let Ok(tree) = serde_json::from_value::<egui_dock::DockState<TabId>>(layout.clone()) {
-            return DockSession { tree };
+            return DockSession::from_tree(tree);
         }
         match serde_json::from_value::<egui_dock::DockState<String>>(layout) {
             Ok(legacy) => DockSession::from_legacy_tree(legacy),

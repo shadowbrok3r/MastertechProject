@@ -49,8 +49,8 @@ impl crate::app_state::SharedContext {
                     tree.remove_tab(index);
                 }
             }
-            for (surface, node, tab) in self.pending_tab_adds.drain(..) {
-                tree.set_focused_node_and_surface((surface, node));
+            for (path, tab) in self.pending_tab_adds.drain(..) {
+                tree.set_focused_node_and_surface(path);
                 tree.push_to_focused_leaf(tab);
             }
         }
@@ -69,8 +69,8 @@ impl crate::app_state::SharedContext {
         }
 
         if let Some(tab) = self.pending_activate_tab.take() {
-            if let Some((surface_index, node_index, tab_index)) = tree.find_tab(&tab) {
-                tree.set_active_tab((surface_index, node_index, tab_index));
+            if let Some(path) = tree.find_tab(&tab) {
+                let _ = tree.set_active_tab(path);
             }
         }
 

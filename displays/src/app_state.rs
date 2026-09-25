@@ -4,7 +4,6 @@ use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Styl
 use std::{collections::{BTreeMap, HashMap, HashSet}, sync::Arc};
 use crossbeam::channel::{self, Receiver, Sender};
 use database::{live_data::Action, schema::RecordId};
-use egui_dock::NodeIndex;
 use serde::{Deserialize, Serialize};
 use anyhow::Error;
 // `Spawner` (the trait carrying `spawn`) is already pulled in via the
@@ -443,10 +442,10 @@ pub struct SharedContext {
     pub update_settings: bool,
     pub get_settings: bool,
     #[serde(skip)]
-    pub added_nodes: Vec<(egui_dock::SurfaceIndex, NodeIndex)>,
+    pub added_nodes: Vec<egui_dock::NodePath>,
     /// Tabs requested to be added from TabViewer::add_popup; applied after DockArea::show
     #[serde(skip)]
-    pub pending_tab_adds: Vec<(egui_dock::SurfaceIndex, NodeIndex, TabId)>,
+    pub pending_tab_adds: Vec<(egui_dock::NodePath, TabId)>,
     /// Tabs requested to be removed from TabViewer::add_popup; applied after DockArea::show
     #[serde(skip)]
     pub pending_tab_removes: Vec<TabId>,
