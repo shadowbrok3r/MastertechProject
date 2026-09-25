@@ -11,7 +11,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
 use crate::app_state::MasterTechApp;
-use crate::tabs::minidump::MinidumpArgs;
+use crate::tabs::minidump_args::MinidumpArgs;
 
 // Idle redraw floor; input redraws immediately and egui animations drive faster.
 const TICK: Duration = Duration::from_millis(100);

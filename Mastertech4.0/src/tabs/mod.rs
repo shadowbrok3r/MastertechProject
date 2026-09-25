@@ -14,6 +14,7 @@ pub mod file_browser;
 pub mod github;
 #[cfg(target_os = "windows")]
 pub mod minidump;
+pub mod minidump_args;
 pub mod part_order;
 pub mod puffin_profiler;
 pub mod resource_mon;
