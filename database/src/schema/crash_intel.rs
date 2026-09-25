@@ -217,6 +217,12 @@ pub struct ReconcileReport {
     pub snapshots_task_linked: usize,
     /// `stress_test_run` rows that gained the session's `task_ref`.
     pub stress_runs_task_linked: usize,
+    /// Unlinked `stress_test_run` rows on the session's computer claimed for it.
+    #[serde(default)]
+    pub stress_runs_claimed: usize,
+    /// `stress_test_run` rows that gained the session's `service_order`.
+    #[serde(default)]
+    pub stress_runs_order_linked: usize,
 }
 
 impl ReconcileReport {
@@ -227,20 +233,42 @@ impl ReconcileReport {
             + self.sightings_enriched
             + self.snapshots_task_linked
             + self.stress_runs_task_linked
+            + self.stress_runs_claimed
+            + self.stress_runs_order_linked
     }
 
     /// One-line account of what the sweep changed, covering every counter so
     /// an enrichment-only sweep isn't reported as "0 sightings, 0 snapshots".
     pub fn summary(&self) -> String {
         format!(
-            "{} sighting(s) claimed, {} task link(s) propagated, {} snapshot(s) claimed, {} sibling field(s) enriched",
+            "{} sighting(s) claimed, {} snapshot(s) claimed, {} stress run(s) claimed, {} task link(s) propagated, {} service-order link(s) propagated, {} sibling field(s) enriched",
             self.sightings_claimed,
-            self.sightings_task_linked,
             self.snapshots_claimed,
+            self.stress_runs_claimed,
+            self.sightings_task_linked + self.snapshots_task_linked + self.stress_runs_task_linked,
+            self.stress_runs_order_linked,
             self.sightings_enriched
         )
     }
 }
+
+/// Claims the session computer's unlinked stress runs started inside the engagement span, unless linked to another order or task.
+pub const CLAIM_STRESS_RUNS_SQL: &str = "UPDATE stress_test_run SET \
+     session_ref = $sid, \
+     task_ref = task_ref ?? $task, \
+     service_order = service_order ?? $so \
+     WHERE session_ref == NONE AND computer == $comp \
+     AND started_at >= ($started - 15m) \
+     AND started_at <= ($ended ?? time::now()) \
+     AND (service_order == NONE OR $so == NONE OR service_order == $so) \
+     AND (task_ref == NONE OR $task == NONE OR task_ref == $task) \
+     RETURN VALUE id";
+
+/// Gives the session's stress runs its service order where they have none and no other task.
+pub const LINK_STRESS_RUN_ORDERS_SQL: &str = "UPDATE stress_test_run SET service_order = $so \
+     WHERE session_ref == $sid AND service_order == NONE \
+     AND (task_ref == NONE OR task_ref == $task) \
+     RETURN VALUE id";
 
 /// `crash_signature:<0xNNN_module>` so repeat crashes upsert in place.
 pub fn crash_signature_record_id(bugcheck_code: &str, module: &str) -> RecordId {
@@ -1116,8 +1144,8 @@ impl CrashVerdict {
     }
 }
 
-/// Claim orphan crash sightings and driver snapshots for a session and
-/// propagate a late-arriving task link. Coalesce-only: existing links are
+/// Claim orphan crash sightings, driver snapshots and stress runs for a session
+/// and propagate a late-arriving task link. Coalesce-only: existing links are
 /// never overwritten. Orphan claims are bounded to the engagement span —
 /// no earlier than 15 minutes before the session started and no later than
 /// its end (now, while it is open) — so unlinked rows from other
@@ -1211,9 +1239,44 @@ pub async fn reconcile_session_links(
         report.stress_runs_task_linked = runs_linked.len();
     }
 
+    if let Some(computer) = &session.computer_id {
+        let res = db()
+            .query(CLAIM_STRESS_RUNS_SQL)
+            .bind(("sid", session.id.clone()))
+            .bind(("task", session.task_ref.clone()))
+            .bind(("so", session.service_order.clone()))
+            .bind(("comp", computer.clone()))
+            .bind(("started", session.started_at))
+            .bind(("ended", session.ended_at))
+            .await
+            .and_then(|mut r| r.take::<Vec<RecordId>>(0));
+        report.stress_runs_claimed = written(res, "stress run claim", &session.id);
+    }
+    if let Some(service_order) = &session.service_order {
+        let res = db()
+            .query(LINK_STRESS_RUN_ORDERS_SQL)
+            .bind(("sid", session.id.clone()))
+            .bind(("so", service_order.clone()))
+            .bind(("task", session.task_ref.clone()))
+            .await
+            .and_then(|mut r| r.take::<Vec<RecordId>>(0));
+        report.stress_runs_order_linked = written(res, "stress run order link", &session.id);
+    }
+
     report.sightings_enriched = enrich_session_dump_siblings(&session.id).await.unwrap_or(0);
 
     Ok(report)
+}
+
+/// Rows an `UPDATE ... RETURN VALUE id` wrote; a failed statement is logged and counts as none.
+fn written(res: Result<Vec<RecordId>, surrealdb::Error>, what: &str, session: &RecordId) -> usize {
+    match res {
+        Ok(ids) => ids.len(),
+        Err(e) => {
+            log::warn!("reconcile: {what} failed for {session:?}: {e}");
+            0
+        }
+    }
 }
 
 /// Fill gaps between sightings of the SAME dump on one session. The fast
@@ -1371,6 +1434,22 @@ pub async fn sightings_for_session(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_reconcile_report_counts_stress_run_claims_and_order_links() {
+        let report = ReconcileReport {
+            stress_runs_claimed: 2,
+            stress_runs_order_linked: 1,
+            stress_runs_task_linked: 3,
+            sightings_task_linked: 1,
+            ..Default::default()
+        };
+        assert_eq!(report.total(), 7);
+        let summary = report.summary();
+        assert!(summary.contains("2 stress run(s) claimed"), "{summary}");
+        assert!(summary.contains("4 task link(s) propagated"), "{summary}");
+        assert!(summary.contains("1 service-order link(s) propagated"), "{summary}");
+    }
 
     const ANALYZE_TEXT: &str = "\
 Microsoft (R) Windows Debugger Version 10.0\n\
