@@ -530,19 +530,25 @@ pub fn markdown(ui: &mut Ui, style: &ChatStyle, text: &str, ink: Color32, id: Id
 /// A tool payload: JSON as a tree, a sentence ending in JSON as both, anything else monospace.
 pub fn payload(ui: &mut Ui, style: &ChatStyle, text: &str, ink: Color32, id: Id) {
     if let Some(values) = markdown::cached_json(ui.ctx(), text) {
-        for (n, v) in values.iter().enumerate() {
-            json_tree::show(ui, id.with(n), v, style);
-        }
+        json_values(ui, style, &values, text, id);
         return;
     }
     if let Some((head, values)) = markdown::split_json(text) {
         mono_text(ui, style, head, ink);
-        for (n, v) in values.iter().enumerate() {
-            json_tree::show(ui, id.with(n), v, style);
-        }
+        json_values(ui, style, &values, text, id);
         return;
     }
     mono_text(ui, style, text, ink);
+}
+
+/// JSON values as trees, with a note when `text` was cut short.
+fn json_values(ui: &mut Ui, style: &ChatStyle, values: &[Value], text: &str, id: Id) {
+    for (n, v) in values.iter().enumerate() {
+        json_tree::show(ui, id.with(n), v, style);
+    }
+    if markdown::ends_cut(text) {
+        caption(ui, style, "Cut short when it was recorded.");
+    }
 }
 
 /// A JSON value as a collapsible tree keyed under `id`.
