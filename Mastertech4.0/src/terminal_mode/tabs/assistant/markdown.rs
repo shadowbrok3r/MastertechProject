@@ -53,7 +53,7 @@ fn block_lines(block: Block<'_>, width: usize, ink: Color) -> Vec<Line<'static>>
             wrap::words(&inline(text, style), width, &[], &[])
         }
         Block::Line { depth, text } => {
-            let pad = [wrap::pad(depth * INDENT)];
+            let pad = [wrap::pad((depth * INDENT).min(width / 2))];
             wrap::words(&inline(text, base), width, &pad, &pad)
         }
         Block::Item {
@@ -65,7 +65,7 @@ fn block_lines(block: Block<'_>, width: usize, ink: Color) -> Vec<Line<'static>>
                 Marker::Bullet => glyphs::BULLET,
                 Marker::Number(n) => n,
             };
-            let lead = depth * INDENT;
+            let lead = (depth * INDENT).min(width / 2);
             let first = [
                 wrap::pad(lead),
                 Span::styled(format!("{mark} "), Style::default().fg(THEME.tertiary)),
@@ -83,7 +83,7 @@ fn block_lines(block: Block<'_>, width: usize, ink: Color) -> Vec<Line<'static>>
                 .add_modifier(Modifier::ITALIC);
             wrap::words(&inline(text, style), width, &rule, &rule)
         }
-        Block::Shell(line) => shell_line(line, width),
+        Block::Shell(line) => command(line.strip_prefix("$ ").unwrap_or(line), width),
         Block::Code { lang, code } => code_block(lang, code, width),
         Block::Rule => vec![Line::from(Span::styled(
             glyphs::RULE.repeat(width),
@@ -122,15 +122,18 @@ fn inline(text: &str, base: Style) -> Vec<(Style, Cow<'_, str>)> {
     out
 }
 
-/// A `$ command` line coloured as PowerShell or shell.
-pub fn shell_line(line: &str, width: usize) -> Vec<Line<'static>> {
-    let cmd = line.strip_prefix("$ ").unwrap_or(line);
-    let runs: Vec<(Style, &str)> = syntax::tokens(Lang::guess_shell(cmd), cmd)
+/// A command with `$ ` before its first line, coloured as PowerShell or shell.
+pub fn command(cmd: &str, width: usize) -> Vec<Line<'static>> {
+    let prompt = [Span::styled("$ ", Style::default().fg(THEME.text_muted))];
+    let pad = [wrap::pad(2)];
+    syntax::styled_lines(Some(Lang::guess_shell(cmd)), cmd)
         .into_iter()
-        .map(|(tok, s)| (tok.style(), s))
-        .collect();
-    let first = [Span::styled("$ ", Style::default().fg(THEME.text_muted))];
-    wrap::mono(&runs, width, &first, &[wrap::pad(2)])
+        .enumerate()
+        .flat_map(|(i, runs)| {
+            let first: &[Span<'static>] = if i == 0 { &prompt } else { &pad };
+            wrap::mono(&runs, width, first, &pad)
+        })
+        .collect()
 }
 
 /// A fenced block: its language, a left rule and a subtle background behind coloured code.

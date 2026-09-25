@@ -2,7 +2,7 @@
 //! admin-agent talks to codex; this page reads `agent_event`, queues
 //! `agent_turn` rows and decides `agent_approval` rows, like the desktop tab.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
@@ -12,8 +12,8 @@ use database::schema::{
 };
 use displays::{PlatformSpawner, Spawner};
 use ratatui::{
-    crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind},
-    layout::{Alignment, Constraint, Layout, Rect},
+    crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
+    layout::{Alignment, Constraint, Layout, Position, Rect},
     prelude::Backend,
     style::{Modifier, Style},
     text::{Line, Span},
@@ -52,6 +52,21 @@ enum Msg {
     Decided(RecordId, Result<AgentDecideOutcome, String>),
 }
 
+/// A folding row header on screen: its view row, event key and open state.
+struct Hit {
+    y: u16,
+    key: String,
+    open: bool,
+}
+
+/// Line `line` of the row keyed `key`, held on view row `at`.
+#[derive(Clone)]
+struct Anchor {
+    key: String,
+    line: usize,
+    at: usize,
+}
+
 pub struct AssistantTab<'a> {
     input: InputField<'a>,
     connection_string: String,
@@ -63,6 +78,20 @@ pub struct AssistantTab<'a> {
     snoozed: HashMap<RecordId, Instant>,
     in_flight: HashSet<RecordId>,
     show_reasoning: bool,
+    /// Unfolds every tool, shell, file-change and approval row.
+    expand: bool,
+    transcript: transcript::Transcript,
+    /// Open state of rows toggled by a click, by event key.
+    toggled: RefCell<HashMap<String, bool>>,
+    hits: RefCell<Vec<Hit>>,
+    /// The first row line on screen.
+    top: RefCell<Option<Anchor>>,
+    /// The line to hold in place on the next redraw.
+    anchor: RefCell<Option<Anchor>>,
+    /// `scroll_back` as the last redraw left it.
+    last_back: Cell<usize>,
+    view: Cell<Rect>,
+    page: Cell<usize>,
     note: String,
     requested_at: Option<Instant>,
     scroll_back: Cell<usize>,
@@ -95,6 +124,15 @@ impl<'a> AssistantTab<'a> {
             snoozed: HashMap::new(),
             in_flight: HashSet::new(),
             show_reasoning: false,
+            expand: false,
+            transcript: transcript::Transcript::default(),
+            toggled: RefCell::new(HashMap::new()),
+            hits: RefCell::new(Vec::new()),
+            top: RefCell::new(None),
+            anchor: RefCell::new(None),
+            last_back: Cell::new(0),
+            view: Cell::new(Rect::default()),
+            page: Cell::new(5),
             note: String::new(),
             requested_at: None,
             scroll_back: Cell::new(0),
@@ -181,6 +219,8 @@ impl<'a> AssistantTab<'a> {
                     if changed {
                         self.events.clear();
                         self.approvals.clear();
+                        self.transcript.clear();
+                        self.toggled.borrow_mut().clear();
                         self.last_seq = 0;
                         self.last_event_poll = None;
                         self.last_approval_poll = None;
@@ -203,7 +243,11 @@ impl<'a> AssistantTab<'a> {
                     for row in rows {
                         self.last_seq = self.last_seq.max(row.seq);
                         match self.events.iter_mut().find(|e| e.id == row.id) {
-                            Some(existing) => *existing = row,
+                            Some(existing) if *existing != row => {
+                                self.transcript.forget(&row.id);
+                                *existing = row;
+                            }
+                            Some(_) => {}
                             None => self.events.push(row),
                         }
                     }
@@ -381,47 +425,55 @@ impl<'a> AssistantTab<'a> {
         }
     }
 
-    fn approval_lines(req: &AgentApproval, width: usize, busy: bool) -> Vec<Line<'static>> {
+    /// The decision panel's lines within `budget` rows, cutting the arguments before the keys.
+    fn approval_lines(req: &AgentApproval, width: usize, busy: bool, budget: usize) -> Vec<Line<'static>> {
         let warn = Style::default().fg(THEME.warning);
         let muted = Style::default().fg(THEME.text_muted);
         let strong = Style::default().fg(THEME.text).add_modifier(Modifier::BOLD);
-        let mut lines = Vec::new();
         let secs = req.secs_remaining();
         let expires = format!("expires in {}m {:02}s", secs / 60, secs % 60);
+        let mut lines = wrap::words(&[(strong, req.summary.as_str())], width, &[], &[]);
+        let mut body = Vec::new();
+        let mut keys = Vec::new();
         if req.kind == "question" {
-            for w in transcript::wrap(&req.summary, width) {
-                lines.push(Line::from(Span::styled(w, strong)));
-            }
             let questions = req.questions.as_ref().and_then(Value::as_array).cloned().unwrap_or_default();
             if let Some(q) = questions.first() {
                 for (i, opt) in q.get("options").and_then(Value::as_array).into_iter().flatten().enumerate().take(9) {
                     let label = opt.get("label").and_then(Value::as_str).unwrap_or("");
                     let desc = opt.get("description").and_then(Value::as_str).unwrap_or("");
                     let text = if desc.is_empty() { format!("{}) {label}", i + 1) } else { format!("{}) {label} \u{2014} {desc}", i + 1) };
-                    lines.push(Line::from(Span::styled(transcript::clip(&text, width), Style::default().fg(THEME.text))));
+                    body.push(Line::from(Span::styled(wrap::clip(&text, width), Style::default().fg(THEME.text))));
                 }
             }
-            lines.push(Line::from(Span::styled(
-                transcript::clip(&format!("digit picks an option \u{00b7} or type an answer and press Enter \u{00b7} Esc later \u{00b7} {expires}"), width),
+            keys.push(Line::from(Span::styled(
+                wrap::clip(&format!("digit picks an option \u{00b7} or type an answer and press Enter \u{00b7} Esc later \u{00b7} {expires}"), width),
                 muted,
             )));
         } else {
-            for w in transcript::wrap(&req.summary, width) {
-                lines.push(Line::from(Span::styled(w, strong)));
-            }
             if let Some(args) = req.arguments.as_ref().filter(|a| !a.is_null()) {
-                lines.push(Line::from(Span::styled(transcript::clip(&args.to_string(), width), muted)));
+                body = json::lines(args, width);
             }
             let session = if req.may_approve_for_session() { "  [s] approve for session" } else { "" };
-            lines.push(Line::from(Span::styled(
-                transcript::clip(&format!("[y] approve{session}  [n] decline  [Ctrl+N] decline with the typed note  [x] stop agent  [Esc] later"), width),
+            keys.push(Line::from(Span::styled(
+                wrap::clip(&format!("[y] approve{session}  [n] decline  [Ctrl+N] decline with the typed note  [x] stop agent  [Esc] later"), width),
                 warn,
             )));
-            lines.push(Line::from(Span::styled(expires, muted)));
+            keys.push(Line::from(Span::styled(expires, muted)));
         }
         if busy {
-            lines.push(Line::from(Span::styled("sending\u{2026}", muted)));
+            keys.push(Line::from(Span::styled("sending\u{2026}", muted)));
         }
+        let room = budget.saturating_sub(lines.len() + keys.len());
+        if body.len() > room {
+            let keep = room.saturating_sub(1);
+            let hidden = body.len() - keep;
+            body.truncate(keep);
+            if room > 0 {
+                body.push(Line::from(Span::styled(format!("{} {hidden} more lines", glyphs::ELLIPSIS), muted)));
+            }
+        }
+        lines.extend(body);
+        lines.extend(keys);
         lines
     }
 
@@ -455,6 +507,27 @@ impl<'a> AssistantTab<'a> {
         }
         lines
     }
+
+    /// Drops click toggles after a fold mode changes, keeping the top row in place when scrolled back.
+    fn refold(&self) {
+        self.toggled.borrow_mut().clear();
+        if self.scroll_back.get() > 0 {
+            *self.anchor.borrow_mut() = self.top.borrow().clone();
+        }
+    }
+
+    /// Folds or unfolds the row whose header is at `(x, y)`; false when no header is there.
+    fn toggle_at(&self, x: u16, y: u16) -> bool {
+        let view = self.view.get();
+        if !view.contains(Position::new(x, y)) {
+            return false;
+        }
+        let hits = self.hits.borrow();
+        let Some(hit) = hits.iter().find(|h| h.y == y) else { return false };
+        self.toggled.borrow_mut().insert(hit.key.clone(), !hit.open);
+        *self.anchor.borrow_mut() = Some(Anchor { key: hit.key.clone(), line: 0, at: usize::from(y - view.y) });
+        true
+    }
 }
 
 impl<'a> HandleWidget<'a> for AssistantTab<'a> {
@@ -466,7 +539,9 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
         let approval = self.active_approval();
         let busy = approval.as_ref().is_some_and(|r| self.in_flight.contains(&r.id));
         let inner_w = area.width.saturating_sub(2) as usize;
-        let approval_lines = approval.as_ref().map(|r| Self::approval_lines(r, inner_w.max(8), busy));
+        let approval_budget = (area.height / 2).saturating_sub(2) as usize;
+        let approval_lines =
+            approval.as_ref().map(|r| Self::approval_lines(r, inner_w.max(8), busy, approval_budget));
         let approval_h = approval_lines
             .as_ref()
             .map(|l| (l.len() as u16 + 2).min(area.height / 2))
@@ -499,19 +574,59 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
             .title_style(THEME.title())
             .title(title);
 
-        let inner_h = rows[0].height.saturating_sub(2) as usize;
-        let lines = if self.events.is_empty() {
-            self.empty_lines()
-        } else {
-            transcript::render(&self.events, inner_w, self.show_reasoning, spinner)
+        let inner = block.inner(rows[0]);
+        let inner_h = inner.height as usize;
+        let opts = transcript::Options {
+            width: inner_w,
+            show_reasoning: self.show_reasoning,
+            expand: self.expand,
+            spinner,
         };
-        let total = lines.len();
-        let max_back = total.saturating_sub(inner_h);
-        let back = self.scroll_back.get().min(max_back);
+        let (body, tail) = if self.events.is_empty() {
+            (Vec::new(), self.empty_lines())
+        } else {
+            (self.transcript.rows(&self.events, &opts, &self.toggled.borrow()), Vec::new())
+        };
+        let blank = Line::default();
+        let slots = transcript::flatten(&body, &tail, &blank);
+        let total = slots.len();
+        let asked = self.scroll_back.get();
+        let mut back = asked.min(total.saturating_sub(inner_h));
+        let held = if asked > 0 && asked == self.last_back.get() { self.top.borrow().clone() } else { None };
+        let anchor = self.anchor.borrow_mut().take().or(held);
+        if let Some(a) = anchor
+            && let Some(i) = slots
+                .iter()
+                .position(|s| s.is(&a.key, a.line))
+                .or_else(|| slots.iter().position(|s| s.is(&a.key, 0)))
+        {
+            back = anchored_back(total, inner_h, i, a.at);
+        }
         self.scroll_back.set(back);
-        let end = total.saturating_sub(back);
+        self.last_back.set(back);
+        let end = total - back;
         let start = end.saturating_sub(inner_h);
-        let view: Vec<Line> = lines[start..end].to_vec();
+        let mut hits = Vec::new();
+        let mut top = None;
+        for (i, slot) in slots[start..end].iter().enumerate() {
+            let Some(row) = slot.row else { continue };
+            if top.is_none() {
+                top = Some(Anchor { key: row.key.clone(), line: slot.index, at: i });
+            }
+            if let Some(open) = row.fold.filter(|_| slot.is_head()) {
+                hits.push(Hit { y: inner.y + i as u16, key: row.key.clone(), open });
+            }
+        }
+        *self.hits.borrow_mut() = hits;
+        *self.top.borrow_mut() = top;
+        self.view.set(inner);
+        self.page.set(inner_h.saturating_sub(2).max(1));
+        let view: Vec<Line> = slots[start..end].iter().map(|s| s.line.clone()).collect();
+        let block = if back > 0 {
+            block.title_bottom(Line::from(format!(" {} {back} more below \u{00b7} PgDn ", glyphs::SCROLL_DOWN)).right_aligned())
+        } else {
+            block
+        };
         f.render_widget(Paragraph::new(view).block(block).style(Style::default().bg(THEME.bg)), rows[0]);
 
         if let (Some(req), Some(lines)) = (approval.as_ref(), approval_lines) {
@@ -527,8 +642,9 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
 
         f.render_widget(&self.input, rows[2]);
 
-        let mut footer = String::from(
-            "Enter send  \u{00b7}  Alt+Enter newline  \u{00b7}  PgUp/PgDn scroll  \u{00b7}  Ctrl+T thinking  \u{00b7}  Ctrl+X close session",
+        let expand = if self.expand { "Ctrl+O collapse tools" } else { "Ctrl+O expand tools" };
+        let mut footer = format!(
+            "Enter send  \u{00b7}  Alt+Enter newline  \u{00b7}  {expand}  \u{00b7}  Ctrl+T thinking  \u{00b7}  PgUp/PgDn scroll  \u{00b7}  Ctrl+X close session",
         );
         if running {
             footer.push_str("  \u{00b7}  Esc stop");
@@ -543,7 +659,7 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
         let context = self.thread.as_ref().and_then(AgentThread::context_usage);
         let context_w = context.as_ref().map_or(0, |c| c.chars().count() as u16 + 1);
         let [hints, usage] = Layout::horizontal([Constraint::Fill(1), Constraint::Length(context_w)]).areas(rows[3]);
-        f.render_widget(Paragraph::new(transcript::clip(&footer, hints.width as usize)).style(muted), hints);
+        f.render_widget(Paragraph::new(wrap::clip(&footer, hints.width as usize)).style(muted), hints);
         if let Some(context) = context {
             f.render_widget(Paragraph::new(context).alignment(Alignment::Right).style(muted), usage);
         }
@@ -580,15 +696,21 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
                 true
             }
             KeyCode::PageUp => {
-                self.scroll_back.set(self.scroll_back.get().saturating_add(5));
+                self.scroll_back.set(self.scroll_back.get().saturating_add(self.page.get()));
                 true
             }
             KeyCode::PageDown => {
-                self.scroll_back.set(self.scroll_back.get().saturating_sub(5));
+                self.scroll_back.set(self.scroll_back.get().saturating_sub(self.page.get()));
+                true
+            }
+            KeyCode::Char('o') if ctrl => {
+                self.expand = !self.expand;
+                self.refold();
                 true
             }
             KeyCode::Char('t') if ctrl => {
                 self.show_reasoning = !self.show_reasoning;
+                self.refold();
                 true
             }
             KeyCode::Char('x') if ctrl => {
@@ -605,9 +727,15 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
         match mouse_event.kind {
             MouseEventKind::ScrollUp => self.scroll_back.set(self.scroll_back.get().saturating_add(3)),
             MouseEventKind::ScrollDown => self.scroll_back.set(self.scroll_back.get().saturating_sub(3)),
+            MouseEventKind::Down(MouseButton::Left) if self.toggle_at(mouse_event.column, mouse_event.row) => {}
             _ => ButtonType::handle_mouse_event(&self.input, mouse_event),
         }
     }
+}
+
+/// Lines scrolled back from the end that put line `index` on view row `at` of a `height`-row view over `total` lines.
+fn anchored_back(total: usize, height: usize, index: usize, at: usize) -> usize {
+    total.saturating_sub(index.saturating_sub(at) + height)
 }
 
 fn status_word(status: &str) -> &'static str {
@@ -625,4 +753,17 @@ fn status_word(status: &str) -> &'static str {
 
 fn short_key(id: &RecordId) -> String {
     id.key_string().chars().take(8).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_anchored_line_stays_on_its_view_row() {
+        assert_eq!(anchored_back(100, 10, 50, 3), 43);
+        assert_eq!(anchored_back(100, 10, 95, 0), 0);
+        assert_eq!(anchored_back(8, 10, 2, 5), 0);
+        assert_eq!(anchored_back(100, 10, 2, 5), 90);
+    }
 }
