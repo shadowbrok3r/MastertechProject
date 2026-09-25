@@ -110,14 +110,16 @@ impl SharedContext {
                             "Create Task",
                             crate::get_database_users(),
                             self.tur_channel.0.clone(),
-                        );
+                        )
+                        .with_ui_actions(self.ui_actions_tx.clone());
                         create_modal.update_tur_info(task_data);
                     } else {
                         let create_modal = CreateTaskModal::new(
                             "Create Task",
                             crate::get_database_users(),
                             self.tur_channel.0.clone(),
-                        );
+                        )
+                        .with_ui_actions(self.ui_actions_tx.clone());
 
                         if self.opened_modals.get(&create_modal.title).is_some() {
                             self.opened_modals.remove_entry(&create_modal.title);
@@ -134,7 +136,8 @@ impl SharedContext {
                         "Create Task",
                         crate::get_database_users(),
                         self.tur_channel.0.clone(),
-                    );
+                    )
+                    .with_ui_actions(self.ui_actions_tx.clone());
                     
                     // Get service details for device info
                     let service = presta_payload.order.associations.order_service.get(0);
@@ -180,7 +183,8 @@ impl SharedContext {
                         "Create Task",
                         crate::get_database_users(),
                         self.tur_channel.0.clone(),
-                    );
+                    )
+                    .with_ui_actions(self.ui_actions_tx.clone());
                     
                     // Create a Tur struct from the SystemInStoreData
                     // The computer_data is already populated in SystemInStoreData
