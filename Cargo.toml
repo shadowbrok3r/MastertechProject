@@ -183,6 +183,12 @@ strip = false          # keep symbols for legible stack traces during testing
 debug = false          # no debug info (keeps binary small)
 incremental = true     # cache unchanged crates between rebuilds
 
+# Profile the release workflow ships native binaries with: release, but thin LTO over 16 codegen units.
+[profile.dist]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+
 # [profile.wasm-release] # trunk build --release --profile wasm-release
 # inherits = "release"
 # strip = false  # Disable strip just for this profile

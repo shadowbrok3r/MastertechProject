@@ -123,15 +123,17 @@ jobs:
 
       # Cache must come BEFORE the build step that consumes it, otherwise it
       # never speeds anything up.
+      # Restores the cache warm-native-cache.yml saves on main; saves only on main.
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-mastertech"
-          shared-key: "native-${{ matrix.target }}"
+          shared-key: "native-${{ matrix.target }}${{ matrix.features && format('-{0}', matrix.features) || '' }}"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build
         shell: bash
         run: >-
-          cargo build --release --bin "${{ matrix.bin }}" --target "${{ matrix.target }}"
+          cargo build --profile dist --bin "${{ matrix.bin }}" --target "${{ matrix.target }}"
           ${{ matrix.features && format('--features {0}', matrix.features) || '' }}
 
       # The self-updater wants a `.exe` asset whose name starts with the package
@@ -141,7 +143,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          src="target/${{ matrix.target }}/release/${{ matrix.bin }}"
+          src="target/${{ matrix.target }}/dist/${{ matrix.bin }}"
           if [[ "${{ matrix.target }}" == *windows* ]]; then src="${src}.exe"; fi
           cp "${src}" "${{ matrix.artifact }}"
           gh release upload "${GITHUB_REF_NAME}" "${{ matrix.artifact }}" --clobber
