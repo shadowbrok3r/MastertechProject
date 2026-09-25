@@ -610,6 +610,7 @@ impl MtechServer {
                 Window::new(&client.connection_string)
                     .open(&mut is_open)
                     .frame(column_frame)
+                    .title_frame(eframe::egui::Frame::window(&ctx.global_style()))
                     .min_size(Vec2::new(700., 400.))
                     .max_size(Vec2::new(1500., 900.))
                     .default_size(Vec2::new(1000., 900.))

@@ -135,6 +135,7 @@ impl DuplicateMergeModal {
             .color(style.warn_fg_color);
 
         Window::new(title_text)
+            .title_frame(Frame::window(&ctx.global_style()))
             .frame(
                 Frame::default()
                     .inner_margin(Margin::symmetric(16, 16))

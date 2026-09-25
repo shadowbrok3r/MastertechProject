@@ -79,6 +79,7 @@ impl ModalWindow for ModalType {
         let max_height = (ctx.content_rect().height() - 80.0).clamp(400.0, 900.0);
 
         Window::new(title_color)
+            .title_frame(Frame::window(&ctx.global_style()))
             .frame(
                 Frame::default()
                 .inner_margin(Margin::symmetric(4, 4))

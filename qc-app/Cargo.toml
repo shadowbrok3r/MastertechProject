@@ -16,7 +16,7 @@ skia-render = ["dep:egui_skia", "dep:skia-safe", "dep:softbuffer", "dep:winit", 
 [dependencies]
 eframe = { version = "0.36", features = ["persistence", "serde", "default_fonts", "glow", "links"], default-features = false }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
-egui-phosphor = { version = "0.12.0", default-features = false, features = ["regular"] }
+egui-phosphor.workspace = true
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "rustls", "stream"] }
 egui_skia = { git = "https://github.com/shadowbrok3r/egui_skia", features = ["winit", "cpu_fix"], optional = true }
 sysinfo = { version = "0.39", features = ["serde", "multithread"] }

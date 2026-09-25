@@ -29,9 +29,6 @@ members = [
     "backdrop-blur/crates/backdrop-blur-egui",
     "backdrop-blur/crates/backdrop-blur-wgpu",
     "backdrop-blur/examples/eframe-glow-panel",
-    # Vendored https://github.com/zakarumych/egui-snarl + egui-scale, ported to egui 0.36.
-    "vendor/egui-snarl",
-    "vendor/egui-scale",
     # Vendored zc-codex bridge core (Codex app-server JSON-RPC client) for the admin-agent broker.
     "vendor/zc-codex-client",
 ]
@@ -63,8 +60,6 @@ default-members = [
     "backdrop-blur/crates/backdrop-blur-core",
     "backdrop-blur/crates/backdrop-blur-glow",
     "backdrop-blur/crates/backdrop-blur-egui",
-    "vendor/egui-snarl",
-    "vendor/egui-scale",
     "vendor/zc-codex-client",
 ]
 # Standalone crates with their own toolchain/target; never part of this resolve.
@@ -84,9 +79,7 @@ exclude = [
 version = "4.8.3"
 
 [workspace.dependencies]
-# Tracks eframe's egui so vendored snarl shares one egui type with displays.
-egui = { version = "0.36", default-features = false }
-egui-snarl = { path = "vendor/egui-snarl", features = ["serde"] }
+egui-snarl = { version = "0.12", features = ["serde"] }
 backdrop-blur-core = { path = "backdrop-blur/crates/backdrop-blur-core" }
 backdrop-blur-glow = { path = "backdrop-blur/crates/backdrop-blur-glow" }
 backdrop-blur-egui = { path = "backdrop-blur/crates/backdrop-blur-egui", default-features = false, features = ["grab-pass"] }
@@ -105,8 +98,8 @@ surrealdb = { version = "3.3.0", default-features = false, features = ["protocol
 surrealdb-types = { version = "3.3.0" }
 egui_extras = { version = "0.36", features = ["datepicker", "syntect", "serde", "image", "all_loaders" ]}
 egui-data-table = { git = "https://github.com/shadowbrok3r/egui-data-table", features = ["persistency"]}
-# Fork: crates.io 0.16.0 is the newest release and it only compiles against egui 0.35.
-egui_json_tree = { git = "https://github.com/shadowbrok3r/egui_json_tree", features = ["serde_json"] }
+egui-phosphor = { version = "0.14", default-features = false, features = ["regular"] }
+egui_json_tree = { version = "0.17", features = ["serde_json"] }
 egui_dock = { git = "https://github.com/shadowbrok3r/egui_dock",  features = [ "serde" ] }
 rmcp = { version = "3.4.1", features = ["server", "client", "transport-async-rw", "transport-streamable-http-server"] }
 axum = { version = "0.8", default-features = true, features = ["tokio"] }
@@ -193,6 +186,3 @@ codegen-units = 16
 # [profile.wasm-release] # trunk build --release --profile wasm-release
 # inherits = "release"
 # strip = false  # Disable strip just for this profile
-
-[patch.crates-io]
-egui-phosphor = { git = "https://github.com/shadowbrok3r/egui-phosphor", branch = "egui-036" }

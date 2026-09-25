@@ -670,7 +670,7 @@ impl RemoteExplorer {
     /// dropped from [`Self::thumb_cache`].
     pub fn forget_pending_images(&mut self, ctx: &eframe::egui::Context) {
         for path in self.pending_forget.drain(..) {
-            ctx.forget_image(&format!("bytes://rexpl/{path}"));
+            ctx.forget_image(&format!("bytes://rexpl/{path}.png"));
         }
     }
 
@@ -2262,7 +2262,7 @@ fn icon_placeholder(ui: &mut Ui, name: &str, is_dir: bool, avail: Vec2) {
 /// egui's loader caches one texture per file.
 fn thumb_image(path: &str, bytes: Arc<[u8]>) -> Image<'static> {
     Image::new(ImageSource::Bytes {
-        uri: Cow::Owned(format!("bytes://rexpl/{path}")),
+        uri: Cow::Owned(format!("bytes://rexpl/{path}.png")),
         bytes: Bytes::Shared(bytes),
     })
     .texture_options(TextureOptions::LINEAR)

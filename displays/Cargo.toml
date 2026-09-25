@@ -64,7 +64,6 @@ bytes.workspace = true
 regex.workspace = true
 async-openai = { workspace = true }
 log.workspace = true
-egui-phosphor = { version = "0.12.0", default-features = false, features = ["regular"] }
 image.workspace = true
 
 # The grab-pass reads object-valued GL bindings, which glow's WebGL backend panics on, so wasm
