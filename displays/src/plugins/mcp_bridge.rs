@@ -337,6 +337,66 @@ fn mark_recorded(result: &mut serde_json::Value, recorded: &std::collections::Ha
     fresh
 }
 
+/// One dump of a remote `minidump_analyze` call, reduced to its signature.
+#[derive(Debug, Serialize)]
+struct DumpSummary {
+    dump_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    already_recorded: Option<bool>,
+    bugcheck_code: Option<String>,
+    bugcheck_name: Option<String>,
+    module: Option<String>,
+    dump_time: Option<String>,
+    has_fleet_verdict: bool,
+    path: Option<String>,
+}
+
+/// Remote `minidump_analyze` output, serialized with its summary ahead of the full triage.
+#[derive(Serialize)]
+struct RemoteDumpReport<'a> {
+    mode: &'static str,
+    connection_string: &'a str,
+    success: bool,
+    new_dumps: Option<usize>,
+    new_dump_names: Option<Vec<String>>,
+    dumps: Vec<DumpSummary>,
+    session_ref: Option<String>,
+    ingested: &'static str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    warnings: Vec<super::tool_warnings::ToolWarning>,
+    fleet: serde_json::Value,
+    result: serde_json::Value,
+}
+
+/// One summary per dump in `result`, unrecorded first; `verdict_sigs` holds the `<code>_<module>` keys with a fleet verdict.
+fn dump_summaries(
+    result: &mut serde_json::Value,
+    crashes: &[database::schema::crash_intel::ParsedCrash],
+    verdict_sigs: &std::collections::HashSet<String>,
+) -> Vec<DumpSummary> {
+    let mut dumps: Vec<DumpSummary> = remote_dump_entries(result)
+        .into_iter()
+        .map(|dump| {
+            let text = |key: &str| dump.get(key).and_then(serde_json::Value::as_str).map(str::to_string);
+            let dump_name = text("dump_name");
+            let crash = crashes.iter().find(|c| c.dump_name == dump_name);
+            DumpSummary {
+                already_recorded: dump.get("already_recorded").and_then(serde_json::Value::as_bool),
+                bugcheck_code: crash.map(|c| c.bugcheck_code.clone()),
+                bugcheck_name: crash.map(|c| c.bugcheck_name.clone()),
+                module: crash.map(|c| c.module.clone()),
+                dump_time: crash.and_then(|c| c.dump_time.clone()),
+                has_fleet_verdict: crash
+                    .is_some_and(|c| verdict_sigs.contains(&format!("{}_{}", c.bugcheck_code, c.module))),
+                path: text("path"),
+                dump_name,
+            }
+        })
+        .collect();
+    dumps.sort_by_key(|d| d.already_recorded == Some(true));
+    dumps
+}
+
 /// Which of `names` this client had sighted before `before`, in one read.
 async fn dumps_recorded_before(
     connection_string: &str,
@@ -7554,7 +7614,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "minidump_analyze",
-        description = "Analyze Windows kernel crash dumps (BSOD) — no cdb/WinDbg needed. Open a diagnostic_session for the client FIRST so the recorded sightings link to it; running this before a session exists records them unlinked (a later create_diagnostic_session / intel_links_reap can claim them). LOCAL (path, no connection_string): parse a .dmp on this admin machine — pass link_connection_string so sightings link and dedup stays on. REMOTE (connection_string): run the CLIENT's built-in parser over ALL its dumps (MEMORY.DMP + Minidump + LiveKernelReports), or a single `path` on the client — no plugin deploy required. Handles triage minidumps plus full/BMP/kernel/live dumps: bugcheck code/name, decoded parameters, crash-time RIP, driver-list blame, and fleet matches (prior verdicts, known-bad drivers). Results ALWAYS auto-log to fleet crash intel (crash_signature/crash_sighting). REMOTE results mark every dump `already_recorded` (true when an earlier call already recorded that dump for this client) and give `new_dumps` / `new_dump_names` for the rest: a repeat or scheduled pass should log, verdict or open tasks only for dumps with already_recorded: false. This is the primary BSOD triage tool; use com.mastertech.dump-decode only for a deep cdb `!analyze` pass or Microsoft FAILURE_BUCKET_ID."
+        description = "Analyze Windows kernel crash dumps (BSOD) — no cdb/WinDbg needed. Open a diagnostic_session for the client FIRST so the recorded sightings link to it; running this before a session exists records them unlinked (a later create_diagnostic_session / intel_links_reap can claim them). LOCAL (path, no connection_string): parse a .dmp on this admin machine — pass link_connection_string so sightings link and dedup stays on. REMOTE (connection_string): run the CLIENT's built-in parser over ALL its dumps (MEMORY.DMP + Minidump + LiveKernelReports), or a single `path` on the client — no plugin deploy required. Handles triage minidumps plus full/BMP/kernel/live dumps: bugcheck code/name, decoded parameters, crash-time RIP, driver-list blame, and fleet matches (prior verdicts, known-bad drivers). Results ALWAYS auto-log to fleet crash intel (crash_signature/crash_sighting). REMOTE results open with `new_dumps` / `new_dump_names` and `dumps`, one entry per dump (already_recorded, bugcheck, module, has_fleet_verdict, path; unrecorded first), followed by warnings, fleet matches and the full per-dump triage in `result`. already_recorded is true when an earlier call already recorded that dump for this client: a repeat or scheduled pass should log, verdict or open tasks only for dumps with already_recorded: false. This is the primary BSOD triage tool; use com.mastertech.dump-decode only for a deep cdb `!analyze` pass or Microsoft FAILURE_BUCKET_ID."
     )]
     async fn minidump_analyze(
         &self,
@@ -7600,7 +7660,7 @@ impl PluginToolProvider {
                 serde_json::from_str(&result_json).unwrap_or(serde_json::json!(result_json));
 
             // Fleet enrichment + completeness warnings (parity with LOCAL mode).
-            use super::tool_warnings::{attach_warnings, ToolWarning};
+            use super::tool_warnings::ToolWarning;
             let mut warnings: Vec<ToolWarning> = Vec::new();
 
             let names = remote_dump_names(&mut result);
@@ -7637,13 +7697,14 @@ impl PluginToolProvider {
                 .unwrap_or_default();
             let mut fleet: Vec<serde_json::Value> = Vec::new();
             let mut seen_sigs: Vec<String> = Vec::new();
+            let mut verdict_sigs = std::collections::HashSet::new();
             let mut prior_verdicts = 0usize;
             let mut known_bad_hits: Vec<serde_json::Value> = Vec::new();
             let mut seen_modules: Vec<String> = Vec::new();
             for c in &crashes {
                 let sig_key = format!("{}_{}", c.bugcheck_code, c.module);
                 if !seen_sigs.contains(&sig_key) {
-                    seen_sigs.push(sig_key);
+                    seen_sigs.push(sig_key.clone());
                     let signature =
                         database::schema::CrashSignature::find(&c.bugcheck_code, &c.module)
                             .await
@@ -7656,6 +7717,7 @@ impl PluginToolProvider {
                     };
                     prior_verdicts += verdicts.len();
                     if let Some(v) = verdicts.first() {
+                        verdict_sigs.insert(sig_key);
                         warnings.push(ToolWarning::warn(
                             "prior_verdict",
                             format!(
@@ -7691,24 +7753,24 @@ impl PluginToolProvider {
                 ));
             }
 
-            return Ok(CallToolResult::success(vec![ContentBlock::json(attach_warnings(
-                serde_json::json!({
-                    "mode": "remote",
-                    "connection_string": cs,
-                    "success": success,
-                    "ingested": "auto → crash_signature/crash_sighting",
-                    "new_dumps": new_dumps.as_ref().map(Vec::len),
-                    "new_dump_names": new_dumps,
-                    "session_ref": open_session.as_ref().map(|s| s.id.key_string()),
-                    "fleet": {
-                        "signatures": fleet,
-                        "known_bad_hits": known_bad_hits,
-                        "prior_verdicts": prior_verdicts,
-                    },
-                    "result": result,
-                }),
+            let dumps = dump_summaries(&mut result, &crashes, &verdict_sigs);
+            return Ok(CallToolResult::success(vec![ContentBlock::json(RemoteDumpReport {
+                mode: "remote",
+                connection_string: cs,
+                success,
+                new_dumps: new_dumps.as_ref().map(Vec::len),
+                new_dump_names: new_dumps,
+                dumps,
+                session_ref: open_session.as_ref().map(|s| s.id.key_string()),
+                ingested: "auto → crash_signature/crash_sighting",
                 warnings,
-            ))
+                fleet: serde_json::json!({
+                    "signatures": fleet,
+                    "known_bad_hits": known_bad_hits,
+                    "prior_verdicts": prior_verdicts,
+                }),
+                result,
+            })
             .map_err(to_internal)?]));
         }
 
@@ -12560,6 +12622,47 @@ mod broker_tool_tests {
         assert_eq!(result["already_recorded"], true);
         let mut empty = serde_json::json!({ "status": "done", "data": { "message": "no dumps" } });
         assert!(mark_recorded(&mut empty, &recorded).is_empty());
+    }
+
+    #[test]
+    fn a_remote_report_leads_with_its_dump_summary() {
+        let mut result = serde_json::json!({ "status": "done", "data": { "dumps": [
+            { "dump_name": "old.dmp", "path": "C:\\Windows\\Minidump\\old.dmp", "already_recorded": true, "triage": {} },
+            { "dump_name": "new.dmp", "already_recorded": false, "triage": { "drivers": "x".repeat(20_000) } },
+        ]}});
+        let crashes = vec![database::schema::crash_intel::ParsedCrash {
+            bugcheck_code: "0x133".into(),
+            bugcheck_name: "DPC_WATCHDOG_VIOLATION".into(),
+            module: "nvlddmkm.sys".into(),
+            dump_name: Some("new.dmp".into()),
+            ..Default::default()
+        }];
+        let verdict_sigs = ["0x133_nvlddmkm.sys".to_string()].into_iter().collect();
+        let dumps = dump_summaries(&mut result, &crashes, &verdict_sigs);
+        assert_eq!(dumps[0].dump_name.as_deref(), Some("new.dmp"));
+        assert_eq!(dumps[0].module.as_deref(), Some("nvlddmkm.sys"));
+        assert!(dumps[0].has_fleet_verdict);
+        assert_eq!(dumps[1].already_recorded, Some(true));
+        assert!(dumps[1].bugcheck_code.is_none() && !dumps[1].has_fleet_verdict);
+
+        let text = serde_json::to_string(&RemoteDumpReport {
+            mode: "remote",
+            connection_string: "DESKTOP-1:abc",
+            success: true,
+            new_dumps: Some(1),
+            new_dump_names: Some(vec!["new.dmp".into()]),
+            dumps,
+            session_ref: None,
+            ingested: "auto",
+            warnings: Vec::new(),
+            fleet: serde_json::json!({ "signatures": ["y".repeat(20_000)] }),
+            result,
+        })
+        .expect("serializes");
+        let at = |key: &str| text.find(&format!("\"{key}\"")).unwrap_or_else(|| panic!("{key} missing"));
+        assert!(at("dumps") < 1_000, "summary starts at {}", at("dumps"));
+        assert!(at("new_dumps") < at("fleet") && at("fleet") < at("result"));
+        assert!(!text.contains("\"warnings\""));
     }
 
     #[test]
