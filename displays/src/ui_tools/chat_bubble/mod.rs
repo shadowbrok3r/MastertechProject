@@ -1,7 +1,7 @@
 //! Chat transcript rows: author-tinted bubbles, a header strip, collapsible machinery rows and a dark text plate.
 
 mod json_tree;
-pub(crate) mod markdown;
+pub mod markdown;
 mod shell;
 
 use std::borrow::Cow;
@@ -17,6 +17,7 @@ use serde_json::Value;
 
 use super::mtech_glass::{edge, lift, pane};
 use super::{icons, theme};
+pub use shell::is_command_key;
 use shell::ShellColors;
 
 /// Width reserved for a header's copy button.

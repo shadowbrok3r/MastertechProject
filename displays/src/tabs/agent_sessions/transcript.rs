@@ -225,7 +225,7 @@ fn file_change_row(
 
 /// A tool call from its stored `dynamicToolCall`, `mcpToolCall` or `functionCallOutput` item, or its row text.
 #[derive(Debug, PartialEq)]
-pub(crate) struct ToolCall<'a> {
+pub struct ToolCall<'a> {
     pub name: &'a str,
     pub arguments: Option<&'a Value>,
     /// Arguments recovered from the row text when no item is stored yet.
@@ -237,11 +237,11 @@ pub(crate) struct ToolCall<'a> {
 }
 
 impl<'a> ToolCall<'a> {
-    pub(crate) fn from_event(ev: &'a AgentEvent) -> Self {
+    pub fn from_event(ev: &'a AgentEvent) -> Self {
         Self::parse(ev.item.as_ref(), &ev.text, ev.done)
     }
 
-    pub(crate) fn parse(item: Option<&'a Value>, text: &'a str, done: bool) -> Self {
+    pub fn parse(item: Option<&'a Value>, text: &'a str, done: bool) -> Self {
         let (text_name, text_args) = split_call(text);
         let field = |k: &str| item.and_then(|i| i.get(k));
         let name = field("tool")
@@ -261,12 +261,12 @@ impl<'a> ToolCall<'a> {
     }
 
     /// What the call returned, joined across its content items.
-    pub(crate) fn output(&self) -> Option<Cow<'a, str>> {
+    pub fn output(&self) -> Option<Cow<'a, str>> {
         output_text(self.item?)
     }
 
     /// Why the call failed: the MCP `error`, else the output of a call answered with `success: false`.
-    pub(crate) fn error(&self) -> Option<Cow<'a, str>> {
+    pub fn error(&self) -> Option<Cow<'a, str>> {
         if !self.failed {
             return None;
         }
