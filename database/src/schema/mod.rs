@@ -300,7 +300,19 @@ impl CarboniteResponse {
             .send()
             .await?;
 
-        let response_json: Vec<Self> = response.json().await?;
+        let status = response.status();
+        let body = response.text().await?;
+        // A search with no matches returns a blank body.
+        if body.trim().is_empty() {
+            anyhow::bail!("No SEB account found in scaffold for {customer_email}");
+        }
+        let response_json: Vec<Self> = serde_json::from_str(&body).map_err(|_| {
+            let detail = serde_json::from_str::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|v| v.get("error")?.as_str().map(str::to_owned))
+                .unwrap_or_else(|| body.trim().chars().take(160).collect());
+            anyhow::anyhow!("Scaffold SEB search failed (HTTP {status}): {detail}")
+        })?;
         log::debug!("response_json: {:?}", response_json);
         Ok(response_json)
     }

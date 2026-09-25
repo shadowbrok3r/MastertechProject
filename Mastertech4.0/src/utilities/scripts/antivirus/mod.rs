@@ -893,9 +893,11 @@ pub async fn install_supereasybackup(
     }
 
     let response_json: Vec<CarboniteResponse> = CarboniteResponse::default()
-        .from_customer_email(customer_email, client.clone()).await?;
+        .from_customer_email(customer_email.clone(), client.clone()).await?;
 
-    if response_json.is_empty() { return Err(anyhow::anyhow!("Response is empty")); }
+    if response_json.is_empty() {
+        return Err(anyhow::anyhow!("No SEB account found in scaffold for {customer_email}"));
+    }
 
     if let Some(carbonite_entry) = find_latest_carbonite_entry(&response_json) {
         let activation_code = &carbonite_entry.activation_code;
