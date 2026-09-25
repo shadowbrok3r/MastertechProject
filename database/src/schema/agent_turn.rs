@@ -33,7 +33,12 @@ pub struct TurnImage {
 impl TurnImage {
     /// The copy the broker keeps once the picture is staged at `path`.
     pub fn staged(&self, path: String) -> Self {
-        Self { name: self.name.clone(), mime: self.mime.clone(), data: None, path: Some(path) }
+        Self {
+            name: self.name.clone(),
+            mime: self.mime.clone(),
+            data: None,
+            path: Some(path),
+        }
     }
 }
 
@@ -113,7 +118,12 @@ impl AgentTurn {
     }
 
     /// Queues an instruction carrying pictures.
-    pub async fn ask_with(thread: &RecordId, kind: &str, text: &str, images: &[TurnImage]) -> anyhow::Result<RecordId> {
+    pub async fn ask_with(
+        thread: &RecordId,
+        kind: &str,
+        text: &str,
+        images: &[TurnImage],
+    ) -> anyhow::Result<RecordId> {
         if let Some(why) = refusal(kind, text, images) {
             anyhow::bail!(why);
         }
@@ -267,17 +277,27 @@ impl AgentTurn {
 
 /// FNV-1a over `bytes`.
 fn fnv1a(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, b| (h ^ u64::from(*b)).wrapping_mul(0x1000_0000_01b3))
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, b| {
+        (h ^ u64::from(*b)).wrapping_mul(0x1000_0000_01b3)
+    })
 }
 
 /// A staged picture's file name: its own made path-safe, plus a hash of its bytes.
 pub fn upload_name(name: &str, bytes: &[u8]) -> String {
     let safe: String = name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let (stem, ext) = match safe.rsplit_once('.') {
-        Some((stem, ext)) if !stem.is_empty() && !ext.is_empty() => (stem, format!(".{}", ext.to_ascii_lowercase())),
+        Some((stem, ext)) if !stem.is_empty() && !ext.is_empty() => {
+            (stem, format!(".{}", ext.to_ascii_lowercase()))
+        }
         _ => (safe.as_str(), String::new()),
     };
     format!("{stem}-{:08x}{ext}", fnv1a(bytes) as u32)
@@ -297,7 +317,12 @@ mod tests {
             tech: Some("tech@example.com".into()),
             status: "queued".into(),
             error: None,
-            images: vec![TurnImage { name: "shot.png".into(), mime: "image/png".into(), data: Some("AAAA".into()), path: None }],
+            images: vec![TurnImage {
+                name: "shot.png".into(),
+                mime: "image/png".into(),
+                data: Some("AAAA".into()),
+                path: None,
+            }],
             created_at: None,
             sent_at: None,
         }
@@ -350,9 +375,17 @@ mod tests {
         let image = [TurnImage::default()];
         assert_eq!(refusal("start", "  ", &[]), Some("empty message"));
         assert_eq!(refusal("steer", "", &[]), Some("empty message"));
-        assert_eq!(refusal("start", "", &image), None, "a picture alone is a message");
+        assert_eq!(
+            refusal("start", "", &image),
+            None,
+            "a picture alone is a message"
+        );
         assert_eq!(refusal("rename", " ", &[]), Some("empty title"));
-        assert_eq!(refusal("queue", "", &[]), None, "an empty queue turn resumes the queue");
+        assert_eq!(
+            refusal("queue", "", &[]),
+            None,
+            "an empty queue turn resumes the queue"
+        );
         assert_eq!(refusal("interrupt", "", &[]), None);
     }
 
@@ -362,7 +395,10 @@ mod tests {
         assert!(a.starts_with("my_shot__1_-") && a.ends_with(".png"), "{a}");
         assert_eq!(a.len(), "my_shot__1_-".len() + 8 + ".png".len());
         assert_ne!(a, upload_name("my shot (1).PNG", b"abd"));
-        assert_eq!(upload_name("noext", b"x"), format!("noext-{:08x}", fnv1a(b"x") as u32));
+        assert_eq!(
+            upload_name("noext", b"x"),
+            format!("noext-{:08x}", fnv1a(b"x") as u32)
+        );
         assert_eq!(upload_name("../../etc/passwd", b"x").find('/'), None);
     }
 }

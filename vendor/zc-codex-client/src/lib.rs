@@ -234,8 +234,12 @@ impl Client {
                 ) {
                     let mut active = turns.lock().await;
                     match v["method"].as_str() {
-                        Some("turn/started") => { active.insert(thread.to_string(), turn.to_string()); }
-                        Some("turn/completed") if active.get(thread).map(String::as_str) == Some(turn) => {
+                        Some("turn/started") => {
+                            active.insert(thread.to_string(), turn.to_string());
+                        }
+                        Some("turn/completed")
+                            if active.get(thread).map(String::as_str) == Some(turn) =>
+                        {
                             active.remove(thread);
                         }
                         _ => {}
@@ -376,17 +380,33 @@ impl Client {
             Some(id) => id,
             None => {
                 // Reads the thread's in-progress turn when turn/started was missed.
-                let snapshot = self.request("thread/read", json!({
-                    "threadId": thread_id, "includeTurns": true,
-                })).await?;
-                snapshot.pointer("/thread/turns").and_then(Value::as_array)
-                    .and_then(|turns| turns.iter().rev().find(|turn| turn["status"] == "inProgress"))
+                let snapshot = self
+                    .request(
+                        "thread/read",
+                        json!({
+                            "threadId": thread_id, "includeTurns": true,
+                        }),
+                    )
+                    .await?;
+                snapshot
+                    .pointer("/thread/turns")
+                    .and_then(Value::as_array)
+                    .and_then(|turns| {
+                        turns
+                            .iter()
+                            .rev()
+                            .find(|turn| turn["status"] == "inProgress")
+                    })
                     .and_then(|turn| turn["id"].as_str())
                     .ok_or_else(|| anyhow!("No active turn to stop. Refresh the session."))?
                     .to_string()
             }
         };
-        self.request("turn/interrupt", json!({ "threadId": thread_id, "turnId": turn_id })).await
+        self.request(
+            "turn/interrupt",
+            json!({ "threadId": thread_id, "turnId": turn_id }),
+        )
+        .await
     }
 
     pub async fn compact(&self, thread_id: &str) -> Result<Value> {

@@ -70,11 +70,17 @@ pub(super) async fn rename(cfg: &Config, turn: &AgentTurn) {
         Ok(Some(t)) => t.codex_thread_id,
         _ => None,
     };
-    let Some(codex_thread) = codex_thread else { return };
+    let Some(codex_thread) = codex_thread else {
+        return;
+    };
     let token = (!cfg.token.is_empty()).then_some(cfg.token.as_str());
     let named = match Client::connect_with_token(&cfg.url, "mastertech-broker", token).await {
         Ok((client, _events)) => client
-            .request_with_timeout("thread/name/set", json!({ "threadId": codex_thread, "name": title }), RENAME_TIMEOUT)
+            .request_with_timeout(
+                "thread/name/set",
+                json!({ "threadId": codex_thread, "name": title }),
+                RENAME_TIMEOUT,
+            )
             .await
             .map(|_| ()),
         Err(e) => Err(e),
