@@ -66,6 +66,7 @@ regex.workspace = true
 async-openai = { workspace = true }
 log.workspace = true
 egui-phosphor = { version = "0.12.0", default-features = false, features = ["regular"] }
+image.workspace = true
 
 # The grab-pass reads object-valued GL bindings, which glow's WebGL backend panics on, so wasm
 # gets the no-op glass backend and does not compile the dependency. See ui_tools::glass_backdrop.
@@ -81,9 +82,6 @@ database = { workspace = true, features = ["desktop"] }
 [target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
 eframe = { version = "0.36", features = ["serde", "default_fonts"], default-features = false }
 database = { workspace = true }
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies.image]
-workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Adds the relay-tunnel transport on native (unioned with the base
@@ -120,6 +118,7 @@ if-addrs = "0.15.0"
 dump-triage = { path = "../dump-triage", default-features = false }
 ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tls", "rustls_ring"]}
 wasm-bindgen-futures = { workspace=true, optional = true }
+wasm-bindgen = { workspace = true }
 web-time = { workspace=true, optional = true }
 wasm-cookies = { workspace = true}
 web-sys = { version = "0.3", features = [
@@ -131,6 +130,13 @@ web-sys = { version = "0.3", features = [
 	"CacheStorage",
 	"Navigator",
 	"ServiceWorkerContainer",
-	"ServiceWorkerRegistration"
+	"ServiceWorkerRegistration",
+	"Blob",
+	"ClipboardEvent",
+	"DataTransfer",
+	"Event",
+	"EventTarget",
+	"File",
+	"FileList"
 ] }
 js-sys = "0.3"

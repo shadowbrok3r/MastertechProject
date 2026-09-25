@@ -53,6 +53,26 @@ enum BridgeMsg {
     Apply { text: String, from: u64 },
     /// A session turned mirroring on; re-seed from the current contents.
     Reseed,
+    /// Reads the picture on the clipboard, if there is one.
+    ReadImage(Sender<Option<ClipboardImage>>),
+}
+
+/// An RGBA picture read from this machine's clipboard.
+#[derive(Debug, Clone)]
+pub struct ClipboardImage {
+    pub width: usize,
+    pub height: usize,
+    pub rgba: Vec<u8>,
+}
+
+/// The picture on this machine's clipboard, read on the bridge's own thread; `None` without one or a poller.
+pub fn read_image(timeout: std::time::Duration) -> Option<ClipboardImage> {
+    if !HAS_POLLER {
+        return None;
+    }
+    let (reply, answer) = crossbeam::channel::bounded(1);
+    hub().to_thread.send(BridgeMsg::ReadImage(reply)).ok()?;
+    answer.recv_timeout(timeout).ok().flatten()
 }
 
 /// Clipboard poller threads spawned in this process. One, once any session opens.
@@ -305,6 +325,14 @@ fn clipboard_loop(rx: Receiver<BridgeMsg>, hub: Arc<Hub>) {
                 }
             }
             Some(BridgeMsg::Reseed) => last = clipboard.get_text().unwrap_or_default(),
+            Some(BridgeMsg::ReadImage(reply)) => {
+                let image = clipboard.get_image().ok().map(|img| ClipboardImage {
+                    width: img.width,
+                    height: img.height,
+                    rgba: img.bytes.into_owned(),
+                });
+                let _ = reply.send(image);
+            }
             None => {}
         }
 
