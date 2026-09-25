@@ -12,30 +12,40 @@ use std::time::Duration;
 
 use crossbeam::channel::{Receiver, Sender};
 use database::live_data::{listen_data_filtered, Action};
-use database::schema::{AgentEvent, AgentThread, AgentTurn, RecordId, RecordIdExt};
-use eframe::egui::{self, Align, Layout, RichText, ScrollArea, TextEdit, Ui, vec2};
+use database::schema::{AgentEvent, AgentThread, AgentTurn, QueuedTurn, RecordId, RecordIdExt, TurnImage};
+use eframe::egui::{self, Align, Id, Layout, RichText, ScrollArea, TextEdit, Ui, vec2};
 use futures::future::AbortHandle;
 use web_time::Instant;
 
+use crate::ui_tools::agent_chat::{self, Composer, ComposerAction, QueueAction, Rename, RenameOutcome};
+use crate::ui_tools::framed_controls::selectable_card;
 use crate::ui_tools::{icons, theme};
 use crate::{PlatformSpawner, Spawner};
 
+pub use crate::ui_tools::agent_chat::status_chip;
 pub(crate) use transcript::chat_line;
 pub use transcript::{ToolCall, transcript_ui};
 
 /// Snapshot polls behind the live streams.
 const THREADS_POLL: Duration = Duration::from_secs(30);
 const EVENTS_POLL: Duration = Duration::from_secs(10);
+/// Queue reads while a turn runs or messages wait, and otherwise.
+const QUEUE_POLL_BUSY: Duration = Duration::from_secs(3);
+const QUEUE_POLL_IDLE: Duration = Duration::from_secs(15);
 /// Pause before a dropped stream is reopened.
 const STREAM_RETRY: Duration = Duration::from_secs(3);
 /// Repaint cadence that drains pushed rows while streams are open.
 const TICK: Duration = Duration::from_millis(400);
 const EVENT_PAGE: usize = 400;
+/// Tallest the message box grows before it scrolls.
+const COMPOSER_TEXT_MAX: f32 = 140.0;
 
 enum Msg {
     Threads(Result<Vec<AgentThread>, String>),
     Events(RecordId, Result<Vec<AgentEvent>, String>),
+    Waiting(RecordId, Result<Vec<QueuedTurn>, String>),
     Turn(Result<(), String>),
+    TakenBack(Result<Option<AgentTurn>, String>),
     ThreadStreamEnded(u64, Option<String>),
     EventStreamEnded(u64, Option<String>),
 }
@@ -80,11 +90,17 @@ pub struct AgentSessions {
     show_reasoning: bool,
     filter: String,
     composer: String,
+    attachments: Composer,
+    /// The selected thread's queue turns that have not gone out.
+    waiting: Vec<QueuedTurn>,
+    renaming: Option<Rename>,
     status: String,
     loading_threads: bool,
     loading_events: bool,
+    loading_waiting: bool,
     last_threads_poll: Option<Instant>,
     last_events_poll: Option<Instant>,
+    last_waiting_poll: Option<Instant>,
     thread_stream: LiveStream,
     event_stream: LiveStream,
     tx: Sender<Msg>,
@@ -109,11 +125,16 @@ impl Default for AgentSessions {
             show_reasoning: false,
             filter: String::new(),
             composer: String::new(),
+            attachments: Composer::default(),
+            waiting: Vec::new(),
+            renaming: None,
             status: String::new(),
             loading_threads: false,
             loading_events: false,
+            loading_waiting: false,
             last_threads_poll: None,
             last_events_poll: None,
+            last_waiting_poll: None,
             thread_stream: LiveStream::default(),
             event_stream: LiveStream::default(),
             tx,
@@ -132,8 +153,10 @@ impl AgentSessions {
         if self.selected.as_ref() != Some(&thread) {
             self.selected = Some(thread);
             self.events.clear();
+            self.waiting.clear();
             self.last_seq = 0;
             self.last_events_poll = None;
+            self.last_waiting_poll = None;
             self.event_stream.stop();
         }
     }
@@ -222,6 +245,26 @@ impl AgentSessions {
         });
     }
 
+    fn poll_waiting(&mut self) {
+        let Some(thread) = self.selected.clone() else { return };
+        if self.loading_waiting {
+            return;
+        }
+        self.loading_waiting = true;
+        self.last_waiting_poll = Some(Instant::now());
+        let tx = self.tx.clone();
+        PlatformSpawner::spawn(async move {
+            let r = AgentTurn::waiting(&thread).await.map_err(|e| e.to_string());
+            let _ = tx.send(Msg::Waiting(thread, r));
+        });
+    }
+
+    fn waiting_poll_due(&self) -> bool {
+        let busy = self.selected_thread().is_some_and(AgentThread::is_busy) || !self.waiting.is_empty();
+        let every = if busy { QUEUE_POLL_BUSY } else { QUEUE_POLL_IDLE };
+        self.last_waiting_poll.is_none_or(|t| t.elapsed() >= every)
+    }
+
     fn merge_event(&mut self, row: AgentEvent) {
         self.last_seq = self.last_seq.max(row.seq);
         match self.events.iter_mut().find(|e| e.id == row.id) {
@@ -243,7 +286,7 @@ impl AgentSessions {
         }
     }
 
-    fn drain(&mut self) {
+    fn drain(&mut self, ctx: &egui::Context) {
         while let Ok((action, row)) = self.thread_live_rx.try_recv() {
             match action {
                 Action::Delete => self.threads.retain(|t| t.id != row.id),
@@ -289,8 +332,28 @@ impl AgentSessions {
                     self.loading_events = false;
                     self.status = e;
                 }
-                Msg::Turn(Ok(())) => self.status = "sent".into(),
+                Msg::Waiting(thread, result) => {
+                    self.loading_waiting = false;
+                    match result {
+                        Ok(rows) if self.selected.as_ref() == Some(&thread) => self.waiting = rows,
+                        Ok(_) => {}
+                        Err(e) => log::debug!("agent queue poll failed: {e}"),
+                    }
+                }
+                Msg::Turn(Ok(())) => {
+                    self.status = "sent".into();
+                    self.last_waiting_poll = None;
+                }
                 Msg::Turn(Err(e)) => self.status = format!("send failed: {e}"),
+                Msg::TakenBack(Ok(Some(turn))) => {
+                    self.attachments.restore(ctx, &mut self.composer, turn);
+                    self.last_waiting_poll = None;
+                }
+                Msg::TakenBack(Ok(None)) => {
+                    self.status = "that message already went out".into();
+                    self.last_waiting_poll = None;
+                }
+                Msg::TakenBack(Err(e)) => self.status = format!("could not take the message back: {e}"),
                 Msg::ThreadStreamEnded(generation, error) => {
                     if self.thread_stream.ended(generation) {
                         self.last_threads_poll = None;
@@ -311,21 +374,40 @@ impl AgentSessions {
         }
     }
 
-    fn send_turn(&mut self, kind: &str) {
-        let Some(thread) = self.selected.clone() else { return };
-        let text = self.composer.trim().to_string();
-        if matches!(kind, "start" | "steer") && text.is_empty() {
-            return;
-        }
-        if matches!(kind, "start" | "steer") {
-            self.composer.clear();
-        }
+    /// Writes one turn row for `thread`.
+    fn ask(&mut self, thread: RecordId, kind: &'static str, text: String, images: Vec<TurnImage>) {
         let tx = self.tx.clone();
-        let kind = kind.to_string();
         PlatformSpawner::spawn(async move {
-            let r = AgentTurn::ask(&thread, &kind, &text).await.map(|_| ()).map_err(|e| e.to_string());
+            let r = AgentTurn::ask_with(&thread, kind, &text, &images).await.map(|_| ()).map_err(|e| e.to_string());
             let _ = tx.send(Msg::Turn(r));
         });
+    }
+
+    fn send_turn(&mut self, kind: &'static str) {
+        let Some(thread) = self.selected.clone() else { return };
+        self.ask(thread, kind, String::new(), Vec::new());
+    }
+
+    fn apply_queue_action(&mut self, action: QueueAction) {
+        let Some(thread) = self.selected.clone() else { return };
+        let tx = self.tx.clone();
+        match action {
+            QueueAction::Resume => self.ask(thread, "queue", String::new(), Vec::new()),
+            QueueAction::Remove(id) => {
+                self.waiting.retain(|w| w.id != id);
+                PlatformSpawner::spawn(async move {
+                    let r = AgentTurn::cancel(&id).await.map(|_| ()).map_err(|e| e.to_string());
+                    let _ = tx.send(Msg::Turn(r));
+                });
+            }
+            QueueAction::Edit(id) => {
+                self.waiting.retain(|w| w.id != id);
+                PlatformSpawner::spawn(async move {
+                    let r = AgentTurn::take_back(&id).await.map_err(|e| e.to_string());
+                    let _ = tx.send(Msg::TakenBack(r));
+                });
+            }
+        }
     }
 
     fn selected_thread(&self) -> Option<&AgentThread> {
@@ -334,7 +416,7 @@ impl AgentSessions {
     }
 
     pub fn ui(&mut self, ui: &mut Ui) {
-        self.drain();
+        self.drain(ui.ctx());
         if self.thread_stream.due() {
             self.start_thread_stream();
         }
@@ -347,12 +429,16 @@ impl AgentSessions {
         if self.selected.is_some() && self.last_events_poll.is_none_or(|t| t.elapsed() >= EVENTS_POLL) {
             self.poll_events();
         }
+        if self.selected.is_some() && self.waiting_poll_due() {
+            self.poll_waiting();
+        }
         ui.ctx().request_repaint_after(TICK);
 
         ui.horizontal(|ui| {
             if ui.button(format!("{} Refresh", icons::REFRESH)).clicked() {
                 self.last_threads_poll = None;
                 self.last_events_poll = None;
+                self.last_waiting_poll = None;
             }
             if ui.checkbox(&mut self.include_closed, "Show closed").changed() {
                 self.last_threads_poll = None;
@@ -383,7 +469,7 @@ impl AgentSessions {
 
     fn list_ui(&mut self, ui: &mut Ui) {
         let needle = self.filter.trim().to_lowercase();
-        let rows: Vec<(RecordId, String, String, String, egui::Color32)> = self
+        let rows: Vec<AgentThread> = self
             .threads
             .iter()
             .filter(|t| {
@@ -393,26 +479,66 @@ impl AgentSessions {
                     || t.requested_by.as_deref().unwrap_or("").to_lowercase().contains(&needle)
                     || t.status.contains(&needle)
             })
-            .map(|t| {
-                let (icon, color, word) = status_chip(ui, &t.status);
-                let who = t.requested_by.clone().unwrap_or_default();
-                (t.id.clone(), t.label(), format!("{icon} {word}"), who, color)
-            })
+            .cloned()
             .collect();
         if rows.is_empty() {
             ui.label(RichText::new("No agent sessions yet.").weak());
             return;
         }
+        let mut picked = None;
+        let mut rename_to = None;
         ScrollArea::vertical().id_salt("agent_thread_list").show(ui, |ui| {
-            for (id, label, chip, who, color) in rows {
-                let selected = self.selected.as_ref() == Some(&id);
-                let text = format!("{label}\n{chip}  {who}");
-                let resp = ui.selectable_label(selected, RichText::new(text).color(color));
-                if resp.clicked() {
-                    self.select(id.clone());
+            for t in &rows {
+                let key = t.id.key_string();
+                if let Some(edit) = self.renaming.as_mut().filter(|r| r.key == key) {
+                    match edit.show(ui, ui.available_width()) {
+                        RenameOutcome::Editing => {}
+                        RenameOutcome::Save(_, title) => rename_to = Some((t.id.clone(), title)),
+                        RenameOutcome::Cancel => self.renaming = None,
+                    }
+                    continue;
                 }
+                let selected = self.selected.as_ref() == Some(&t.id);
+                let card = selectable_card(ui, &key, selected, |ui| {
+                    ui.horizontal(|ui| {
+                        if agent_chat::is_active(t) {
+                            ui.add(egui::Spinner::new().size(12.0));
+                        }
+                        ui.add(egui::Label::new(RichText::new(t.label()).strong()).truncate());
+                    });
+                    ui.horizontal(|ui| {
+                        agent_chat::status_badge(ui, t);
+                        if let Some(who) = &t.requested_by {
+                            ui.add(egui::Label::new(RichText::new(who).small().weak()).truncate());
+                        }
+                    });
+                });
+                if card.response.clicked() {
+                    picked = Some(t.id.clone());
+                }
+                card.response.context_menu(|ui| {
+                    if ui.button(format!("{} Rename", icons::EDIT)).clicked() {
+                        self.renaming = Some(Rename::new(key.clone(), &t.label()));
+                        ui.close();
+                    }
+                });
             }
         });
+        if let Some(id) = picked {
+            self.select(id);
+        }
+        if let Some((id, title)) = rename_to {
+            self.renaming = None;
+            self.rename(id, title);
+        }
+    }
+
+    /// Asks the broker to store `title`; the list shows it at once.
+    fn rename(&mut self, thread: RecordId, title: String) {
+        if let Some(t) = self.threads.iter_mut().find(|t| t.id == thread) {
+            t.title = Some(title.clone());
+        }
+        self.ask(thread, "rename", title, Vec::new());
     }
 
     fn thread_ui(&mut self, ui: &mut Ui) {
@@ -421,27 +547,36 @@ impl AgentSessions {
             return;
         };
         crate::ui_data::agent_session_notify::mark_in_view(&thread.id);
-        let (icon, color, word) = status_chip(ui, &thread.status);
+        let pane = ui.available_rect_before_wrap();
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new(format!("{icon} {word}")).color(color).strong());
-            ui.label(RichText::new(format!("· {}", thread.label())).strong());
-            ui.label(RichText::new(format!("· {}", thread.connection_string)).weak());
-            if let Some(m) = &thread.model {
-                ui.label(RichText::new(format!("· {m}")).weak());
+            agent_chat::status_badge(ui, &thread);
+            ui.label(RichText::new(format!("\u{00b7} {}", thread.label())).strong());
+            if ui
+                .small_button(icons::EDIT)
+                .on_hover_text("Rename this session")
+                .clicked()
+            {
+                self.renaming = Some(Rename::new(thread.id.key_string(), &thread.label()));
             }
-            if let Some(context) = thread.context_usage() {
-                ui.label(RichText::new(format!("· {context}")).weak());
+            ui.label(RichText::new(format!("\u{00b7} {}", thread.connection_string)).weak());
+            if let Some(m) = &thread.model {
+                ui.label(RichText::new(format!("\u{00b7} {m}")).weak());
             }
             if let Some(by) = &thread.requested_by {
-                ui.label(RichText::new(format!("· asked by {by}")).weak());
+                ui.label(RichText::new(format!("\u{00b7} asked by {by}")).weak());
             }
         });
+        if agent_chat::context_bar(ui, &thread) {
+            self.send_turn("compact");
+        }
         if let Some(err) = thread.error.as_deref().filter(|e| !e.is_empty()) {
             ui.label(RichText::new(format!("{} {err}", icons::STATUS_ERR)).color(theme::error(ui)).small());
         }
         ui.separator();
 
-        let composer_h = 96.0;
+        let queue_h = if self.waiting.is_empty() { 0.0 } else { 26.0 + 22.0 * self.waiting.len().min(4) as f32 };
+        let attach_h = if self.attachments.attachments.is_empty() { 0.0 } else { 70.0 };
+        let composer_h = 110.0 + queue_h + attach_h;
         let body_h = (ui.available_height() - composer_h).max(120.0);
         let show_reasoning = self.show_reasoning;
         let salt = thread.id.key_string();
@@ -457,59 +592,29 @@ impl AgentSessions {
             });
 
         ui.separator();
+        if let Some(action) = agent_chat::queue_strip(ui, &self.waiting) {
+            self.apply_queue_action(action);
+        }
         let open = thread.is_open();
-        let running = matches!(thread.status.as_str(), "running" | "waiting_approval");
+        let composer_id = Id::new(("agent_sessions_composer", &salt));
+        let action = self.attachments.show(ui, composer_id, &mut self.composer, thread.is_busy(), open, COMPOSER_TEXT_MAX);
+        match action {
+            Some(ComposerAction::Send { kind, text, images, .. }) => self.ask(thread.id.clone(), kind, text, images),
+            Some(ComposerAction::Stop) => self.send_turn("interrupt"),
+            None => {}
+        }
         ui.add_enabled_ui(open, |ui| {
-            let resp = ui.add(
-                TextEdit::multiline(&mut self.composer)
-                    .desired_rows(2)
-                    .desired_width(f32::INFINITY)
-                    .hint_text(if running {
-                        "Tell the agent something while it works (Nudge), or queue a message for its next turn (Send)"
-                    } else {
-                        "Message the agent…"
-                    }),
-            );
-            let enter = resp.has_focus()
-                && ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.command);
-            ui.horizontal(|ui| {
-                if ui.button(format!("{} Send", icons::CHAT)).clicked() || enter {
-                    self.send_turn("start");
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui
+                    .small_button(RichText::new(format!("{} Close session", icons::CLOSE)).color(theme::error(ui)))
+                    .clicked()
+                {
+                    self.send_turn("close");
                 }
-                ui.add_enabled_ui(running, |ui| {
-                    if ui.button(format!("{} Nudge", icons::ARROW_RIGHT)).clicked() {
-                        self.send_turn("steer");
-                    }
-                    if ui
-                        .button(RichText::new(format!("{} Stop", icons::STOP)).color(theme::warn(ui)))
-                        .clicked()
-                    {
-                        self.send_turn("interrupt");
-                    }
-                });
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui
-                        .button(RichText::new(format!("{} Close session", icons::CLOSE)).color(theme::error(ui)))
-                        .clicked()
-                    {
-                        self.send_turn("close");
-                    }
-                });
             });
         });
-    }
-}
-
-/// Icon, colour and word for a thread status.
-pub fn status_chip(ui: &Ui, status: &str) -> (&'static str, egui::Color32, &'static str) {
-    match status {
-        "queued" => (icons::STATUS_QUEUED, theme::weak_text(ui), "Queued"),
-        "starting" => (icons::STATUS_WAIT, theme::info(ui), "Starting"),
-        "idle" => (icons::STATUS_READY, theme::success(ui), "Idle"),
-        "running" => (icons::STATUS_ON, theme::info(ui), "Working"),
-        "waiting_approval" => (icons::LOCK, theme::warn(ui), "Needs approval"),
-        "closed" => (icons::STATUS_OFF, theme::weak_text(ui), "Closed"),
-        "failed" => (icons::STATUS_ERR, theme::error(ui), "Failed"),
-        _ => (icons::STATUS_DOT, theme::weak_text(ui), "Unknown"),
+        if open {
+            self.attachments.drop_zone(ui, composer_id, pane);
+        }
     }
 }

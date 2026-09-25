@@ -7,6 +7,7 @@ use database::schema::{AgentEvent, RecordIdExt};
 use eframe::egui::{Id, Ui};
 use serde_json::Value;
 
+use crate::ui_tools::agent_chat;
 use crate::ui_tools::chat_bubble::{self, ChatKind, ChatRow, ChatStyle};
 
 /// Longest header summary in characters; the header also truncates to its width.
@@ -50,13 +51,12 @@ fn event_row(
             ui.add_space(2.0);
         }
         "user" => {
+            let images = agent_chat::attach::image_names(ev.item.as_ref());
             ChatRow::new(ChatKind::User, &key, "Technician")
                 .time(time)
                 .copy(text)
-                .has_body(has_text)
-                .show(ui, style, scope, |ui, id| {
-                    chat_bubble::markdown(ui, style, text, style.text, id)
-                });
+                .has_body(has_text || !images.is_empty())
+                .show(ui, style, scope, |ui, id| agent_chat::user_body(ui, style, text, &images, id));
         }
         "agent" => {
             ChatRow::new(ChatKind::Agent, &key, "Agent")
@@ -498,6 +498,16 @@ mod tests {
         let events = vec![
             keyed_event("a", "turn_started", "", true, None),
             keyed_event("b", "user", "Check **disk** health on `PC-1`.", true, None),
+            keyed_event(
+                "b2",
+                "user",
+                &format!("And this log:\n\n**setup.log**\n```log\n{long}\n```"),
+                true,
+                Some(json!({"type": "userMessage", "content": [
+                    {"type": "localImage", "path": "/tmp/zc-codexd-uploads/shot-0a1b2c3d.png"},
+                    {"type": "text", "text": "And this log"}
+                ]})),
+            ),
             keyed_event("c", "reasoning", "## Plan\n- read SMART", false, None),
             keyed_event(
                 "d",
