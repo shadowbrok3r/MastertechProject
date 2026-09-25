@@ -145,6 +145,7 @@ pub struct Client {
     out: mpsc::Sender<String>,
     pending: Pending,
     next_id: Arc<AtomicI64>,
+    active_turns: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl Client {
@@ -187,6 +188,7 @@ impl Client {
         let (out_tx, mut out_rx) = mpsc::channel::<String>(256);
         let (ev_tx, ev_rx) = mpsc::channel::<Event>(1024);
         let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
+        let active_turns = Arc::new(Mutex::new(HashMap::new()));
 
         tokio::spawn(async move {
             // Pinged on a timer as well as written to, so an idle session survives the phone being
@@ -211,6 +213,7 @@ impl Client {
 
         let pend = pending.clone();
         let evt = ev_tx.clone();
+        let turns = active_turns.clone();
         tokio::spawn(async move {
             let mut coalesce_text = Coalescer::new(Duration::from_millis(900));
             let mut coalesce_cmd = Coalescer::new(Duration::from_millis(900));
@@ -224,6 +227,21 @@ impl Client {
                 let Ok(v) = serde_json::from_str::<Value>(&txt) else {
                     continue;
                 };
+                // Record the ID before exposing TurnStarted to presenters: Stop can be tapped
+                // as soon as that event is drawn. A late completion cannot clear a newer turn.
+                if let (Some(thread), Some(turn)) = (
+                    v.pointer("/params/threadId").and_then(Value::as_str),
+                    v.pointer("/params/turn/id").and_then(Value::as_str),
+                ) {
+                    let mut active = turns.lock().await;
+                    match v["method"].as_str() {
+                        Some("turn/started") => { active.insert(thread.to_string(), turn.to_string()); }
+                        Some("turn/completed") if active.get(thread).map(String::as_str) == Some(turn) => {
+                            active.remove(thread);
+                        }
+                        _ => {}
+                    }
+                }
                 dispatch(v, &pend, &evt, &mut coalesce_text, &mut coalesce_cmd, &mut coalesce_reason).await;
             }
             let _ = evt
@@ -238,6 +256,7 @@ impl Client {
             out: out_tx,
             pending,
             next_id: Arc::new(AtomicI64::new(1)),
+            active_turns,
         };
 
         client
@@ -353,7 +372,23 @@ impl Client {
     }
 
     pub async fn turn_interrupt(&self, thread_id: &str) -> Result<Value> {
-        self.request("turn/interrupt", json!({ "threadId": thread_id })).await
+        let known_turn = self.active_turns.lock().await.get(thread_id).cloned();
+        let turn_id = match known_turn {
+            Some(id) => id,
+            None => {
+                // A resumed connection may have missed turn/started. Read the live turn rather
+                // than omitting the required ID or sending an untargeted startup interrupt.
+                let snapshot = self.request("thread/read", json!({
+                    "threadId": thread_id, "includeTurns": true,
+                })).await?;
+                snapshot.pointer("/thread/turns").and_then(Value::as_array)
+                    .and_then(|turns| turns.iter().rev().find(|turn| turn["status"] == "inProgress"))
+                    .and_then(|turn| turn["id"].as_str())
+                    .ok_or_else(|| anyhow!("No active turn to stop. Refresh the session."))?
+                    .to_string()
+            }
+        };
+        self.request("turn/interrupt", json!({ "threadId": thread_id, "turnId": turn_id })).await
     }
 
     pub async fn compact(&self, thread_id: &str) -> Result<Value> {
