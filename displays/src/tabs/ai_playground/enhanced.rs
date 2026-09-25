@@ -16,7 +16,7 @@ use database::schema::{AgentThread, AgentTurn, QueuedTurn, RecordId, RecordIdExt
 use serde::Serialize;
 
 /// Smallest outer height of the prompt box.
-const INPUT_MIN_HEIGHT: f32 = 92.0;
+const INPUT_MIN_HEIGHT: f32 = 52.0;
 const INPUT_PANEL_MARGIN: i8 = 6;
 /// Longest header summary in characters; the header also truncates to its width.
 const SUMMARY_CHARS: usize = 160;

@@ -32,6 +32,8 @@ const ACTIVE_KEY: &str = "agent_chat_active_composer";
 const TEXT_PASTE_GRACE: f64 = 1.0;
 /// Side of a composer thumbnail.
 const THUMB: f32 = 56.0;
+/// Width of each button column beside the text box.
+const SIDE_BUTTON_W: f32 = 30.0;
 
 /// Attachments waiting to go out with the next message, and the reads still under way.
 pub struct Composer {
@@ -92,7 +94,7 @@ impl Composer {
         }
     }
 
-    /// Draws the attachments, the text box and the controls; while `busy` it offers Queue, Send now and Stop.
+    /// Draws the attachments, then the text box with its button columns; while `busy` it offers Queue, Send now and Stop.
     pub fn show(
         &mut self,
         ui: &mut Ui,
@@ -117,26 +119,53 @@ impl Composer {
             } else {
                 "Message the agent (Shift+Enter for a new line; paste or drop pictures and files)"
             };
-            let response = ScrollArea::vertical()
-                .id_salt(id.with("scroll"))
-                .max_height(max_text_height)
-                .stick_to_bottom(true)
-                .show(ui, |ui| {
-                    TextEdit::multiline(text)
-                        .id(text_id)
-                        .hint_text(hint)
-                        .return_key(Some(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter)))
-                        .desired_rows(2)
-                        .desired_width(f32::INFINITY)
-                        .show(ui)
-                        .response
-                })
-                .inner;
-            if response.has_focus() {
-                mark_active(ui, id);
-            }
-            self.watch_paste(ui, response.has_focus());
-            ui.horizontal(|ui| action = self.controls(ui, text, busy));
+            let button_h = (ui.text_style_height(&egui::TextStyle::Button)
+                + 2.0 * ui.spacing().button_padding.y)
+                .max(ui.spacing().interact_size.y);
+            let column_h = 2.0 * button_h + ui.spacing().item_spacing.y;
+            let max_text_height = max_text_height.max(column_h);
+            // Vertical text padding that makes two rows as tall as two stacked buttons.
+            let font = egui::FontSelection::default().resolve(ui.style());
+            let line_h =
+                ui.fonts_mut(|f| f.row_height(&font)) + ui.spacing().extra_text_line_spacing;
+            let pad_y = ((column_h - 2.0 * line_h) / 2.0).ceil().clamp(2.0, 40.0) as i8;
+            ui.horizontal_top(|ui| {
+                let gap = ui.spacing().item_spacing.x;
+                let columns = if busy { 2.0 } else { 1.0 };
+                let text_w =
+                    (ui.available_width() - columns * (SIDE_BUTTON_W + gap)).max(SIDE_BUTTON_W);
+                let edit = ui.allocate_ui_with_layout(
+                    vec2(text_w, max_text_height),
+                    Layout::top_down_justified(Align::Min),
+                    |ui| {
+                        ScrollArea::vertical()
+                            .id_salt(id.with("scroll"))
+                            .max_height(max_text_height)
+                            .stick_to_bottom(true)
+                            .show(ui, |ui| {
+                                TextEdit::multiline(text)
+                                    .id(text_id)
+                                    .hint_text(hint)
+                                    .return_key(Some(KeyboardShortcut::new(
+                                        Modifiers::SHIFT,
+                                        Key::Enter,
+                                    )))
+                                    .desired_rows(2)
+                                    .desired_width(f32::INFINITY)
+                                    .margin(egui::Margin::symmetric(4, pad_y))
+                                    .show(ui)
+                                    .response
+                            })
+                            .inner
+                    },
+                );
+                let response = edit.inner;
+                if response.has_focus() {
+                    mark_active(ui, id);
+                }
+                self.watch_paste(ui, response.has_focus());
+                action = self.controls(ui, text, busy, edit.response.rect.height());
+            });
         });
         if enter {
             action = self
@@ -219,42 +248,32 @@ impl Composer {
         }
     }
 
-    fn controls(&mut self, ui: &mut Ui, text: &mut String, busy: bool) -> Option<ComposerAction> {
+    /// Icon buttons in columns `height` tall: Send now over Stop while `busy`, then attach over Send or Queue.
+    fn controls(
+        &mut self,
+        ui: &mut Ui,
+        text: &mut String,
+        busy: bool,
+        height: f32,
+    ) -> Option<ComposerAction> {
         let mut action = None;
-        #[cfg(not(any(target_os = "ios", target_os = "android")))]
-        if ui
-            .button(icons::PAPERCLIP)
-            .on_hover_text(
-                "Attach pictures or text files; you can also paste a screenshot or drop files here",
-            )
-            .clicked()
-        {
-            attach::pick_files(ui.ctx(), &self.tx);
-        }
-        if self.reading > 0 {
-            ui.add(Spinner::new().size(12.0));
-            ui.label(RichText::new("Reading\u{2026}").small().weak());
-        }
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let ready =
-                self.reading == 0 && !(text.trim().is_empty() && self.attachments.is_empty());
-            if busy {
+        let ready = self.reading == 0 && !(text.trim().is_empty() && self.attachments.is_empty());
+        let gap = ui.spacing().item_spacing.y;
+        let half = vec2(SIDE_BUTTON_W, ((height - gap) / 2.0).max(0.0));
+        if busy {
+            ui.vertical(|ui| {
                 if ui
-                    .add_enabled(ready, Button::new(format!("{} Queue", icons::QUEUE)))
-                    .on_hover_text("Send when the agent finishes this turn (Enter)")
-                    .clicked()
-                {
-                    action = self.submit(text, "queue");
-                }
-                if ui
-                    .add_enabled(ready, Button::new(format!("{} Send now", icons::SEND_NOW)))
-                    .on_hover_text("Tell the agent now, while it works")
+                    .add_enabled(ready, Button::new(icons::SEND_NOW).min_size(half))
+                    .on_hover_text("Send now: tell the agent while it works")
                     .clicked()
                 {
                     action = self.submit(text, "steer");
                 }
                 if ui
-                    .button(RichText::new(format!("{} Stop", icons::STOP)).color(theme::warn(ui)))
+                    .add(
+                        Button::new(RichText::new(icons::STOP).color(theme::warn(ui)))
+                            .min_size(half),
+                    )
                     .on_hover_text(
                         "Stop the running turn; queued messages wait until you resume them",
                     )
@@ -262,12 +281,39 @@ impl Composer {
                 {
                     action = Some(ComposerAction::Stop);
                 }
-            } else if ui
-                .add_enabled(ready, Button::new(format!("{} Send", icons::SEND)))
-                .on_hover_text("Send (Enter)")
+            });
+        }
+        ui.vertical(|ui| {
+            #[cfg(not(any(target_os = "ios", target_os = "android")))]
+            let send_size = {
+                if ui
+                    .add(Button::new(icons::PAPERCLIP).min_size(half))
+                    .on_hover_text(
+                        "Attach pictures or text files; you can also paste a screenshot or drop files here",
+                    )
+                    .clicked()
+                {
+                    attach::pick_files(ui.ctx(), &self.tx);
+                }
+                half
+            };
+            #[cfg(any(target_os = "ios", target_os = "android"))]
+            let send_size = vec2(SIDE_BUTTON_W, height);
+            let (icon, hover, kind) = if busy {
+                (
+                    icons::QUEUE,
+                    "Queue: send when the agent finishes this turn (Enter)",
+                    "queue",
+                )
+            } else {
+                (icons::SEND, "Send (Enter)", "start")
+            };
+            if ui
+                .add_enabled(ready, Button::new(icon).min_size(send_size))
+                .on_hover_text(hover)
                 .clicked()
             {
-                action = self.submit(text, "start");
+                action = self.submit(text, kind);
             }
         });
         action
@@ -294,7 +340,7 @@ impl Composer {
     }
 
     fn attachment_strip(&mut self, ui: &mut Ui) {
-        if self.attachments.is_empty() {
+        if self.attachments.is_empty() && self.reading == 0 {
             return;
         }
         let mut remove = None;
@@ -305,6 +351,10 @@ impl Composer {
                         remove = Some(i);
                     }
                 });
+            }
+            if self.reading > 0 {
+                ui.add(Spinner::new().size(12.0));
+                ui.label(RichText::new("Reading\u{2026}").small().weak());
             }
         });
         if let Some(i) = remove {
@@ -385,7 +435,7 @@ fn attachment_chip(ui: &mut Ui, a: &Attachment) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eframe::egui::{Context, Event, RawInput, pos2};
+    use eframe::egui::{Context, Event, PointerButton, Pos2, RawInput, pos2};
 
     /// One frame of a focused composer in a 420 px viewport, fed `events`.
     fn frame(
@@ -510,6 +560,110 @@ mod tests {
         }
         assert!(composer.attachments.is_empty() && text.is_empty());
         assert_eq!(composer.submit(&mut text, "start"), None);
+    }
+
+    /// Presses and releases the primary button at `pos` over two frames.
+    fn click(
+        ctx: &Context,
+        composer: &mut Composer,
+        text: &mut String,
+        busy: bool,
+        pos: Pos2,
+    ) -> Option<ComposerAction> {
+        let button = |pressed| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        let pressed = frame(
+            ctx,
+            composer,
+            text,
+            busy,
+            vec![Event::PointerMoved(pos), button(true)],
+        );
+        let released = frame(ctx, composer, text, busy, vec![button(false)]);
+        pressed.or(released)
+    }
+
+    /// The text box after one frame, and the x centre of each button column beside it.
+    fn columns(
+        ctx: &Context,
+        composer: &mut Composer,
+        text: &mut String,
+        busy: bool,
+    ) -> (Rect, [f32; 2]) {
+        frame(ctx, composer, text, busy, Vec::new());
+        let rect = ctx
+            .read_response(Id::new("composer_test").with("text"))
+            .expect("the text box was drawn")
+            .rect;
+        let gap = ctx.global_style().spacing.item_spacing.x;
+        let first = rect.right() + gap + SIDE_BUTTON_W / 2.0;
+        (rect, [first, first + gap + SIDE_BUTTON_W])
+    }
+
+    #[test]
+    fn send_sits_beside_the_text_box_at_its_bottom() {
+        let ctx = Context::default();
+        let mut composer = Composer::default();
+        let mut text = "check the disks".to_string();
+        let (rect, [column, _]) = columns(&ctx, &mut composer, &mut text, false);
+        assert!(
+            column + SIDE_BUTTON_W / 2.0 <= 420.5,
+            "the column fits the viewport: {rect:?}"
+        );
+        let sent = click(
+            &ctx,
+            &mut composer,
+            &mut text,
+            false,
+            pos2(column, rect.bottom() - 3.0),
+        );
+        assert!(
+            matches!(sent, Some(ComposerAction::Send { kind: "start", .. })),
+            "{sent:?}"
+        );
+    }
+
+    #[test]
+    fn while_busy_the_columns_hold_send_now_over_stop_and_queue_at_the_bottom() {
+        let ctx = Context::default();
+        let mut composer = Composer::default();
+        let mut text = "and the event log".to_string();
+        let (rect, [left, right]) = columns(&ctx, &mut composer, &mut text, true);
+        let steer = click(
+            &ctx,
+            &mut composer,
+            &mut text,
+            true,
+            pos2(left, rect.top() + 3.0),
+        );
+        assert!(
+            matches!(steer, Some(ComposerAction::Send { kind: "steer", .. })),
+            "{steer:?}"
+        );
+        text = "then this".to_string();
+        let queued = click(
+            &ctx,
+            &mut composer,
+            &mut text,
+            true,
+            pos2(right, rect.bottom() - 3.0),
+        );
+        assert!(
+            matches!(queued, Some(ComposerAction::Send { kind: "queue", .. })),
+            "{queued:?}"
+        );
+        let stop = click(
+            &ctx,
+            &mut composer,
+            &mut text,
+            true,
+            pos2(left, rect.bottom() - 3.0),
+        );
+        assert_eq!(stop, Some(ComposerAction::Stop));
     }
 
     #[test]
