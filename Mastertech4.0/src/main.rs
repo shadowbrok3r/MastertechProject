@@ -3,7 +3,7 @@
 
 use displays::app_state::{AppState, MainPages};
 use log::{error, info};
-use tabs::minidump::MinidumpArgs;
+use tabs::minidump_args::MinidumpArgs;
 
 #[cfg(target_os = "windows")]
 extern crate winapi;
