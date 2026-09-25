@@ -225,12 +225,16 @@ impl ThreadRow {
 
     /// The write that is due: a failed status, token counts after their interval, or an activity after the gap.
     pub fn due(&mut self, now: Instant) -> Option<AgentThreadState> {
-        let gap = self.wrote_at.is_none_or(|t| now.duration_since(t) >= ACTIVITY_GAP);
+        let gap = self
+            .wrote_at
+            .is_none_or(|t| now.duration_since(t) >= ACTIVITY_GAP);
         if gap && let Some((status, error)) = self.retry.take() {
             return self.status(&status, error.as_deref(), now);
         }
         let tokens = self.tokens != self.written_tokens
-            && self.tokens_at.is_none_or(|t| now.duration_since(t) >= self.interval);
+            && self
+                .tokens_at
+                .is_none_or(|t| now.duration_since(t) >= self.interval);
         let activity = gap && self.activity != self.written_activity;
         (tokens || activity).then(|| {
             self.wrote_at = Some(now);
@@ -405,10 +409,20 @@ mod tests {
         let mut writes = 0;
         for i in 0..80u64 {
             let now = t0 + Duration::from_millis(250 * i);
-            row.set_activity(if i % 2 == 0 { "thinking" } else { "tool:scripts_list" }.to_string());
+            row.set_activity(
+                if i % 2 == 0 {
+                    "thinking"
+                } else {
+                    "tool:scripts_list"
+                }
+                .to_string(),
+            );
             writes += usize::from(row.due(now).is_some());
         }
-        assert!((5..=11).contains(&writes), "{writes} activity writes in 20 s of flips every 250 ms");
+        assert!(
+            (5..=11).contains(&writes),
+            "{writes} activity writes in 20 s of flips every 250 ms"
+        );
     }
 
     #[test]
@@ -429,8 +443,16 @@ mod tests {
         let state = row.status("running", None, t0).expect("a change");
         assert_eq!(state.activity.as_deref(), Some("starting"));
         row.set_activity("thinking".into());
-        assert!(row.due(t0 + Duration::from_millis(500)).is_none(), "written inside the gap");
-        assert_eq!(row.due(t0 + ACTIVITY_GAP).and_then(|s| s.activity).as_deref(), Some("thinking"));
+        assert!(
+            row.due(t0 + Duration::from_millis(500)).is_none(),
+            "written inside the gap"
+        );
+        assert_eq!(
+            row.due(t0 + ACTIVITY_GAP)
+                .and_then(|s| s.activity)
+                .as_deref(),
+            Some("thinking")
+        );
     }
 
     #[test]
@@ -439,14 +461,28 @@ mod tests {
         let mut row = ThreadRow::new(0, (None, None), THREAD_FLUSH);
         let state = row.status("idle", Some("boom"), t0).expect("a change");
         row.failed(&state);
-        assert!(row.due(t0 + Duration::from_millis(100)).is_none(), "retried inside the gap");
+        assert!(
+            row.due(t0 + Duration::from_millis(100)).is_none(),
+            "retried inside the gap"
+        );
         let again = row.due(t0 + ACTIVITY_GAP).expect("a retry");
-        assert_eq!((again.status.as_deref(), again.error.as_deref()), (Some("idle"), Some("boom")));
+        assert_eq!(
+            (again.status.as_deref(), again.error.as_deref()),
+            (Some("idle"), Some("boom"))
+        );
 
-        let state = row.status("running", None, t0 + Duration::from_secs(3)).expect("a change");
+        let state = row
+            .status("running", None, t0 + Duration::from_secs(3))
+            .expect("a change");
         row.failed(&state);
-        assert!(row.status("idle", None, t0 + Duration::from_secs(4)).is_some());
-        assert!(row.due(t0 + Duration::from_secs(10)).is_none(), "a stale running was written over idle");
+        assert!(
+            row.status("idle", None, t0 + Duration::from_secs(4))
+                .is_some()
+        );
+        assert!(
+            row.due(t0 + Duration::from_secs(10)).is_none(),
+            "a stale running was written over idle"
+        );
     }
 
     #[test]
@@ -456,7 +492,10 @@ mod tests {
         row.set_tokens(Some(5), None);
         let state = row.due(t0).expect("new counts");
         row.failed(&state);
-        assert_eq!(row.due(t0 + THREAD_FLUSH).and_then(|s| s.tokens_used), Some(5));
+        assert_eq!(
+            row.due(t0 + THREAD_FLUSH).and_then(|s| s.tokens_used),
+            Some(5)
+        );
     }
 
     /// One response at the session's medians: 10 s reasoning, a 4 s reply, a quick tool call, one token update.

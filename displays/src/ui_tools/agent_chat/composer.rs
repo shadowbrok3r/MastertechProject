@@ -3,17 +3,25 @@
 use base64::Engine;
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::{AgentTurn, TurnImage};
-use eframe::egui::{self, vec2, Align, Button, Id, Key, KeyboardShortcut, Layout, Modifiers, Rect, RichText, ScrollArea, Spinner, TextEdit, Ui};
+use eframe::egui::{
+    self, Align, Button, Id, Key, KeyboardShortcut, Layout, Modifiers, Rect, RichText, ScrollArea,
+    Spinner, TextEdit, Ui, vec2,
+};
 
 use super::attach::{self, AttachEvent, Attachment, Body};
-use crate::ui_tools::{icons, theme};
 use crate::ToastMessage;
+use crate::ui_tools::{icons, theme};
 
 /// What the composer asked for this frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ComposerAction {
     /// A message, its pictures and their staged file names, as a `start`, `queue` or `steer` turn.
-    Send { kind: &'static str, text: String, images: Vec<TurnImage>, staged: Vec<String> },
+    Send {
+        kind: &'static str,
+        text: String,
+        images: Vec<TurnImage>,
+        staged: Vec<String>,
+    },
     Stop,
 }
 
@@ -37,7 +45,13 @@ pub struct Composer {
 impl Default for Composer {
     fn default() -> Self {
         let (tx, rx) = crossbeam::channel::unbounded();
-        Self { attachments: Vec::new(), tx, rx, reading: 0, text_pasted_at: None }
+        Self {
+            attachments: Vec::new(),
+            tx,
+            rx,
+            reading: 0,
+            text_pasted_at: None,
+        }
     }
 }
 
@@ -52,9 +66,18 @@ impl Composer {
                 AttachEvent::Started => self.reading += 1,
                 AttachEvent::Ready(prepared) => {
                     self.reading = self.reading.saturating_sub(1);
-                    let pictures = self.attachments.iter().filter(|a| matches!(a.body, Body::Image { .. })).count();
-                    if matches!(prepared.body, Body::Image { .. }) && pictures >= attach::MAX_IMAGES {
-                        toast(format!("A message carries at most {} pictures; {} was left out.", attach::MAX_IMAGES, prepared.name));
+                    let pictures = self
+                        .attachments
+                        .iter()
+                        .filter(|a| matches!(a.body, Body::Image { .. }))
+                        .count();
+                    if matches!(prepared.body, Body::Image { .. }) && pictures >= attach::MAX_IMAGES
+                    {
+                        toast(format!(
+                            "A message carries at most {} pictures; {} was left out.",
+                            attach::MAX_IMAGES,
+                            prepared.name
+                        ));
                         continue;
                     }
                     self.attachments.push(prepared.into_attachment(ctx));
@@ -70,7 +93,15 @@ impl Composer {
     }
 
     /// Draws the attachments, the text box and the controls; while `busy` it offers Queue, Send now and Stop.
-    pub fn show(&mut self, ui: &mut Ui, id: Id, text: &mut String, busy: bool, enabled: bool, max_text_height: f32) -> Option<ComposerAction> {
+    pub fn show(
+        &mut self,
+        ui: &mut Ui,
+        id: Id,
+        text: &mut String,
+        busy: bool,
+        enabled: bool,
+        max_text_height: f32,
+    ) -> Option<ComposerAction> {
         let ctx = ui.ctx().clone();
         self.receive(&ctx);
         #[cfg(target_arch = "wasm32")]
@@ -108,7 +139,9 @@ impl Composer {
             ui.horizontal(|ui| action = self.controls(ui, text, busy));
         });
         if enter {
-            action = self.submit(text, if busy { "queue" } else { "start" }).or(action);
+            action = self
+                .submit(text, if busy { "queue" } else { "start" })
+                .or(action);
             ui.memory_mut(|m| m.request_focus(text_id));
         }
         action
@@ -139,7 +172,11 @@ impl Composer {
             text.push_str(typed.trim());
         }
         for file in files {
-            self.attachments.push(Attachment { name: file.name.to_string(), body: Body::Text(file.body.to_string()), thumb: None });
+            self.attachments.push(Attachment {
+                name: file.name.to_string(),
+                body: Body::Text(file.body.to_string()),
+                thumb: None,
+            });
         }
         for image in turn.images {
             let Some(data) = image.data else { continue };
@@ -166,7 +203,11 @@ impl Composer {
             self.text_pasted_at = Some(now);
         }
         #[cfg(not(target_arch = "wasm32"))]
-        if released_v && self.text_pasted_at.is_none_or(|t| now - t > TEXT_PASTE_GRACE) {
+        if released_v
+            && self
+                .text_pasted_at
+                .is_none_or(|t| now - t > TEXT_PASTE_GRACE)
+        {
             attach::paste_image(ui.ctx(), &self.tx);
         }
         #[cfg(target_arch = "wasm32")]
@@ -183,7 +224,9 @@ impl Composer {
         #[cfg(not(any(target_os = "ios", target_os = "android")))]
         if ui
             .button(icons::PAPERCLIP)
-            .on_hover_text("Attach pictures or text files; you can also paste a screenshot or drop files here")
+            .on_hover_text(
+                "Attach pictures or text files; you can also paste a screenshot or drop files here",
+            )
             .clicked()
         {
             attach::pick_files(ui.ctx(), &self.tx);
@@ -193,7 +236,8 @@ impl Composer {
             ui.label(RichText::new("Reading\u{2026}").small().weak());
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let ready = self.reading == 0 && !(text.trim().is_empty() && self.attachments.is_empty());
+            let ready =
+                self.reading == 0 && !(text.trim().is_empty() && self.attachments.is_empty());
             if busy {
                 if ui
                     .add_enabled(ready, Button::new(format!("{} Queue", icons::QUEUE)))
@@ -211,7 +255,9 @@ impl Composer {
                 }
                 if ui
                     .button(RichText::new(format!("{} Stop", icons::STOP)).color(theme::warn(ui)))
-                    .on_hover_text("Stop the running turn; queued messages wait until you resume them")
+                    .on_hover_text(
+                        "Stop the running turn; queued messages wait until you resume them",
+                    )
                     .clicked()
                 {
                     action = Some(ComposerAction::Stop);
@@ -239,7 +285,12 @@ impl Composer {
         let staged = attach::remember_sent(&self.attachments);
         text.clear();
         self.attachments.clear();
-        Some(ComposerAction::Send { kind, text: message, images, staged })
+        Some(ComposerAction::Send {
+            kind,
+            text: message,
+            images,
+            staged,
+        })
     }
 
     fn attachment_strip(&mut self, ui: &mut Ui) {
@@ -278,36 +329,72 @@ fn mark_active(ui: &Ui, id: Id) {
 /// One attachment as a thumbnail or a file chip with a remove button; true when removed.
 fn attachment_chip(ui: &mut Ui, a: &Attachment) -> bool {
     let mut removed = false;
-    egui::Frame::group(ui.style()).inner_margin(2.0).show(ui, |ui| {
-        ui.horizontal(|ui| {
-            match (&a.body, &a.thumb) {
-                (Body::Image { width, height, bytes, .. }, Some(tex)) => {
-                    let details = format!("{} \u{00b7} {width}\u{00d7}{height} \u{00b7} {} KB", a.name, bytes.len().div_ceil(1024));
-                    ui.add(egui::Image::from_texture(tex).max_size(vec2(THUMB, THUMB)).corner_radius(4.0)).on_hover_ui(|ui| {
-                        ui.add(egui::Image::from_texture(tex).max_width(320.0));
-                        ui.label(RichText::new(details).small().weak());
-                    });
+    egui::Frame::group(ui.style())
+        .inner_margin(2.0)
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                match (&a.body, &a.thumb) {
+                    (
+                        Body::Image {
+                            width,
+                            height,
+                            bytes,
+                            ..
+                        },
+                        Some(tex),
+                    ) => {
+                        let details = format!(
+                            "{} \u{00b7} {width}\u{00d7}{height} \u{00b7} {} KB",
+                            a.name,
+                            bytes.len().div_ceil(1024)
+                        );
+                        ui.add(
+                            egui::Image::from_texture(tex)
+                                .max_size(vec2(THUMB, THUMB))
+                                .corner_radius(4.0),
+                        )
+                        .on_hover_ui(|ui| {
+                            ui.add(egui::Image::from_texture(tex).max_width(320.0));
+                            ui.label(RichText::new(details).small().weak());
+                        });
+                    }
+                    (Body::Image { .. }, None) => {
+                        ui.label(RichText::new(format!("{} {}", icons::IMAGE, a.name)).small());
+                    }
+                    (Body::Text(content), _) => {
+                        ui.label(
+                            RichText::new(format!(
+                                "{} {} \u{00b7} {} KB",
+                                icons::FILE_TEXT,
+                                a.name,
+                                content.len().div_ceil(1024)
+                            ))
+                            .small(),
+                        );
+                    }
                 }
-                (Body::Image { .. }, None) => {
-                    ui.label(RichText::new(format!("{} {}", icons::IMAGE, a.name)).small());
-                }
-                (Body::Text(content), _) => {
-                    ui.label(RichText::new(format!("{} {} \u{00b7} {} KB", icons::FILE_TEXT, a.name, content.len().div_ceil(1024))).small());
-                }
-            }
-            removed = ui.small_button(icons::CLOSE).on_hover_text("Remove").clicked();
+                removed = ui
+                    .small_button(icons::CLOSE)
+                    .on_hover_text("Remove")
+                    .clicked();
+            });
         });
-    });
     removed
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eframe::egui::{pos2, Context, Event, RawInput};
+    use eframe::egui::{Context, Event, RawInput, pos2};
 
     /// One frame of a focused composer in a 420 px viewport, fed `events`.
-    fn frame(ctx: &Context, composer: &mut Composer, text: &mut String, busy: bool, events: Vec<Event>) -> Option<ComposerAction> {
+    fn frame(
+        ctx: &Context,
+        composer: &mut Composer,
+        text: &mut String,
+        busy: bool,
+        events: Vec<Event>,
+    ) -> Option<ComposerAction> {
         let id = Id::new("composer_test");
         let input = RawInput {
             events,
@@ -324,7 +411,13 @@ mod tests {
     }
 
     fn enter(modifiers: Modifiers) -> Event {
-        Event::Key { key: Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers }
+        Event::Key {
+            key: Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
     }
 
     #[test]
@@ -332,14 +425,35 @@ mod tests {
         let ctx = Context::default();
         let mut composer = Composer::default();
         let mut text = "check the disks".to_string();
-        assert_eq!(frame(&ctx, &mut composer, &mut text, false, Vec::new()), None);
-        let sent = frame(&ctx, &mut composer, &mut text, false, vec![enter(Modifiers::NONE)]);
-        assert!(matches!(&sent, Some(ComposerAction::Send { kind: "start", text, .. }) if text == "check the disks"), "{sent:?}");
+        assert_eq!(
+            frame(&ctx, &mut composer, &mut text, false, Vec::new()),
+            None
+        );
+        let sent = frame(
+            &ctx,
+            &mut composer,
+            &mut text,
+            false,
+            vec![enter(Modifiers::NONE)],
+        );
+        assert!(
+            matches!(&sent, Some(ComposerAction::Send { kind: "start", text, .. }) if text == "check the disks"),
+            "{sent:?}"
+        );
         assert!(text.is_empty(), "the box is cleared once sent");
 
         text = "then the event log".to_string();
-        let queued = frame(&ctx, &mut composer, &mut text, true, vec![enter(Modifiers::NONE)]);
-        assert!(matches!(queued, Some(ComposerAction::Send { kind: "queue", .. })), "{queued:?}");
+        let queued = frame(
+            &ctx,
+            &mut composer,
+            &mut text,
+            true,
+            vec![enter(Modifiers::NONE)],
+        );
+        assert!(
+            matches!(queued, Some(ComposerAction::Send { kind: "queue", .. })),
+            "{queued:?}"
+        );
     }
 
     #[test]
@@ -348,19 +462,46 @@ mod tests {
         let mut composer = Composer::default();
         let mut text = "line one".to_string();
         frame(&ctx, &mut composer, &mut text, false, Vec::new());
-        assert_eq!(frame(&ctx, &mut composer, &mut text, false, vec![enter(Modifiers::SHIFT)]), None);
+        assert_eq!(
+            frame(
+                &ctx,
+                &mut composer,
+                &mut text,
+                false,
+                vec![enter(Modifiers::SHIFT)]
+            ),
+            None
+        );
         let mut empty = String::new();
-        assert_eq!(frame(&ctx, &mut composer, &mut empty, false, vec![enter(Modifiers::NONE)]), None);
+        assert_eq!(
+            frame(
+                &ctx,
+                &mut composer,
+                &mut empty,
+                false,
+                vec![enter(Modifiers::NONE)]
+            ),
+            None
+        );
     }
 
     #[test]
     fn a_send_carries_inlined_files_and_leaves_no_attachment_behind() {
         let mut composer = Composer::default();
-        composer.attachments.push(Attachment { name: "notes.txt".into(), body: Body::Text("alpha".into()), thumb: None });
+        composer.attachments.push(Attachment {
+            name: "notes.txt".into(),
+            body: Body::Text("alpha".into()),
+            thumb: None,
+        });
         let mut text = "see attached".to_string();
         let sent = composer.submit(&mut text, "steer");
         match sent {
-            Some(ComposerAction::Send { kind, text: message, images, staged }) => {
+            Some(ComposerAction::Send {
+                kind,
+                text: message,
+                images,
+                staged,
+            }) => {
                 assert_eq!(kind, "steer");
                 assert_eq!(message, "see attached\n\n**notes.txt**\n```txt\nalpha\n```");
                 assert!(images.is_empty() && staged.is_empty());
@@ -373,8 +514,10 @@ mod tests {
 
     #[test]
     fn a_send_waits_for_attachments_still_being_read() {
-        let mut composer = Composer::default();
-        composer.reading = 1;
+        let mut composer = Composer {
+            reading: 1,
+            ..Composer::default()
+        };
         let mut text = "hi".to_string();
         assert_eq!(composer.submit(&mut text, "start"), None);
         assert_eq!(text, "hi", "the message stays in the box");

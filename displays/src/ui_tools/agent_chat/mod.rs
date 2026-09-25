@@ -8,7 +8,9 @@ pub use composer::{Composer, ComposerAction};
 
 use database::schema::agent_thread::compact_tokens;
 use database::schema::{AgentActivity, AgentThread, QueuedTurn, RecordId, RecordIdExt};
-use eframe::egui::{self, vec2, Align, Color32, Id, Key, Layout, ProgressBar, Rect, RichText, Spinner, TextEdit, Ui};
+use eframe::egui::{
+    self, Align, Color32, Id, Key, Layout, ProgressBar, Rect, RichText, Spinner, TextEdit, Ui, vec2,
+};
 
 use crate::ui_tools::chat_bubble::{self, ChatKind, ChatRow, ChatStyle};
 use crate::ui_tools::{icons, theme};
@@ -88,7 +90,12 @@ pub fn context_color(ui: &Ui, fraction: f32) -> Color32 {
 fn lerp(a: Color32, b: Color32, t: f32) -> Color32 {
     let t = t.clamp(0.0, 1.0);
     let mix = |x: u8, y: u8| (f32::from(x) + (f32::from(y) - f32::from(x)) * t).round() as u8;
-    Color32::from_rgba_unmultiplied(mix(a.r(), b.r()), mix(a.g(), b.g()), mix(a.b(), b.b()), mix(a.a(), b.a()))
+    Color32::from_rgba_unmultiplied(
+        mix(a.r(), b.r()),
+        mix(a.g(), b.g()),
+        mix(a.b(), b.b()),
+        mix(a.a(), b.a()),
+    )
 }
 
 /// Context use as a bar with its percent and token counts, and a Compact button; true when Compact was pressed.
@@ -99,12 +106,22 @@ pub fn context_bar(ui: &mut Ui, thread: &AgentThread) -> bool {
         let fraction = thread.context_fraction();
         if let (Some(f), Some((used, window))) = (fraction, thread.context_tokens()) {
             let color = context_color(ui, f);
-            ui.add(ProgressBar::new(f.clamp(0.0, 1.0)).desired_width(96.0).desired_height(8.0).fill(color))
-                .on_hover_text(format!("{used} of {window} tokens in the context window"));
+            ui.add(
+                ProgressBar::new(f.clamp(0.0, 1.0))
+                    .desired_width(96.0)
+                    .desired_height(8.0)
+                    .fill(color),
+            )
+            .on_hover_text(format!("{used} of {window} tokens in the context window"));
             ui.label(
-                RichText::new(format!("{:.0}% \u{00b7} {}/{}", f * 100.0, compact_tokens(used), compact_tokens(window)))
-                    .small()
-                    .color(color),
+                RichText::new(format!(
+                    "{:.0}% \u{00b7} {}/{}",
+                    f * 100.0,
+                    compact_tokens(used),
+                    compact_tokens(window)
+                ))
+                .small()
+                .color(color),
             );
         } else {
             ui.label(RichText::new("context \u{2014}").small().weak());
@@ -117,7 +134,13 @@ pub fn context_bar(ui: &mut Ui, thread: &AgentThread) -> bool {
         let emphasised = fraction.is_some_and(|f| f >= COMPACT_EMPHASIS);
         let label = format!("{} Compact", icons::COMPACT);
         let button = if emphasised {
-            egui::Button::new(RichText::new(label).small().strong().color(theme::strong_text(ui))).fill(context_color(ui, fraction.unwrap_or(1.0)).gamma_multiply(0.45))
+            egui::Button::new(
+                RichText::new(label)
+                    .small()
+                    .strong()
+                    .color(theme::strong_text(ui)),
+            )
+            .fill(context_color(ui, fraction.unwrap_or(1.0)).gamma_multiply(0.45))
         } else {
             egui::Button::new(RichText::new(label).small())
         };
@@ -126,7 +149,10 @@ pub fn context_bar(ui: &mut Ui, thread: &AgentThread) -> bool {
         } else {
             "Summarise the conversation to free context"
         };
-        compact = ui.add_enabled(thread.is_open(), button).on_hover_text(tip).clicked();
+        compact = ui
+            .add_enabled(thread.is_open(), button)
+            .on_hover_text(tip)
+            .clicked();
     });
     compact
 }
@@ -148,31 +174,68 @@ pub fn queue_strip(ui: &mut Ui, waiting: &[QueuedTurn]) -> Option<QueueAction> {
     let held = waiting.iter().any(QueuedTurn::is_held);
     ui.horizontal_wrapped(|ui| {
         if held {
-            ui.label(RichText::new(format!("{} Queue held after a stop or a failed turn", icons::PAUSE)).small().color(theme::warn(ui)));
-            if ui.small_button(format!("{} Resume", icons::PLAY)).on_hover_text("Send the queued messages, one per turn").clicked() {
+            ui.label(
+                RichText::new(format!(
+                    "{} Queue held after a stop or a failed turn",
+                    icons::PAUSE
+                ))
+                .small()
+                .color(theme::warn(ui)),
+            );
+            if ui
+                .small_button(format!("{} Resume", icons::PLAY))
+                .on_hover_text("Send the queued messages, one per turn")
+                .clicked()
+            {
                 action = Some(QueueAction::Resume);
             }
         } else {
-            ui.label(RichText::new(format!("{} {} queued \u{00b7} sent when the turn ends", icons::QUEUE, waiting.len())).small().color(theme::info(ui)));
+            ui.label(
+                RichText::new(format!(
+                    "{} {} queued \u{00b7} sent when the turn ends",
+                    icons::QUEUE,
+                    waiting.len()
+                ))
+                .small()
+                .color(theme::info(ui)),
+            );
         }
     });
     for turn in waiting {
         ui.push_id(turn.id.key_string(), |ui| {
             ui.horizontal(|ui| {
                 let buttons = 2.0 * (24.0 + ui.spacing().item_spacing.x);
-                let first = turn.text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or_default();
+                let first = turn
+                    .text
+                    .lines()
+                    .map(str::trim)
+                    .find(|l| !l.is_empty())
+                    .unwrap_or_default();
                 let mut shown = chat_bubble::clip(first, QUEUED_PREVIEW_CHARS).into_owned();
                 if !turn.image_names.is_empty() {
                     shown = format!("{} {} {shown}", icons::IMAGE, turn.image_names.len());
                 }
-                ui.allocate_ui_with_layout(vec2((ui.available_width() - buttons).max(40.0), 20.0), Layout::left_to_right(Align::Center), |ui| {
-                    ui.add(egui::Label::new(RichText::new(shown).small()).truncate()).on_hover_text(&turn.text);
-                });
+                ui.allocate_ui_with_layout(
+                    vec2((ui.available_width() - buttons).max(40.0), 20.0),
+                    Layout::left_to_right(Align::Center),
+                    |ui| {
+                        ui.add(egui::Label::new(RichText::new(shown).small()).truncate())
+                            .on_hover_text(&turn.text);
+                    },
+                );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.small_button(icons::CLOSE).on_hover_text("Remove from the queue").clicked() {
+                    if ui
+                        .small_button(icons::CLOSE)
+                        .on_hover_text("Remove from the queue")
+                        .clicked()
+                    {
                         action = Some(QueueAction::Remove(turn.id.clone()));
                     }
-                    if ui.small_button(icons::UNDO).on_hover_text("Back to the composer").clicked() {
+                    if ui
+                        .small_button(icons::UNDO)
+                        .on_hover_text("Back to the composer")
+                        .clicked()
+                    {
                         action = Some(QueueAction::Edit(turn.id.clone()));
                     }
                 });
@@ -200,13 +263,22 @@ pub enum RenameOutcome {
 
 impl Rename {
     pub fn new(key: impl Into<String>, current: &str) -> Self {
-        Self { key: key.into(), text: current.to_string(), focused: false }
+        Self {
+            key: key.into(),
+            text: current.to_string(),
+            focused: false,
+        }
     }
 
     /// Draws the field; Enter saves, Escape or clicking away cancels.
     pub fn show(&mut self, ui: &mut Ui, width: f32) -> RenameOutcome {
         let id = Id::new(("agent_chat_rename", &self.key));
-        let response = ui.add(TextEdit::singleline(&mut self.text).id(id).desired_width(width).hint_text("New title"));
+        let response = ui.add(
+            TextEdit::singleline(&mut self.text)
+                .id(id)
+                .desired_width(width)
+                .hint_text("New title"),
+        );
         if !self.focused {
             response.request_focus();
             self.focused = true;
@@ -217,7 +289,9 @@ impl Rename {
         }
         if response.lost_focus() {
             return match database::schema::clean_title(&self.text) {
-                Some(title) if ui.input(|i| i.key_pressed(Key::Enter)) => RenameOutcome::Save(self.key.clone(), title),
+                Some(title) if ui.input(|i| i.key_pressed(Key::Enter)) => {
+                    RenameOutcome::Save(self.key.clone(), title)
+                }
                 _ => RenameOutcome::Cancel,
             };
         }
@@ -238,7 +312,9 @@ pub fn user_body(ui: &mut Ui, style: &ChatStyle, text: &str, images: &[String], 
             .nested(true)
             .badge(size, style.weak)
             .copy(file.body)
-            .show(ui, style, id, |ui, sub| chat_bubble::code(ui, style, file.lang, file.body, sub.with("code")));
+            .show(ui, style, id, |ui, sub| {
+                chat_bubble::code(ui, style, file.lang, file.body, sub.with("code"))
+            });
     }
     if !images.is_empty() {
         sent_images(ui, images);
@@ -251,14 +327,20 @@ pub fn sent_images(ui: &mut Ui, names: &[String]) {
         for name in names {
             match attach::sent_thumb(name) {
                 Some(tex) => {
-                    let image = egui::Image::from_texture(&tex).max_size(vec2(SENT_THUMB, SENT_THUMB)).corner_radius(4.0);
+                    let image = egui::Image::from_texture(&tex)
+                        .max_size(vec2(SENT_THUMB, SENT_THUMB))
+                        .corner_radius(4.0);
                     ui.add(image).on_hover_ui(|ui| {
                         ui.add(egui::Image::from_texture(&tex).max_width(PREVIEW_WIDTH));
                         ui.label(RichText::new(name).small().weak());
                     });
                 }
                 None => {
-                    ui.label(RichText::new(format!("{} {name}", icons::IMAGE)).small().weak());
+                    ui.label(
+                        RichText::new(format!("{} {name}", icons::IMAGE))
+                            .small()
+                            .weak(),
+                    );
                 }
             }
         }
@@ -270,7 +352,10 @@ pub fn drop_hint(ui: &Ui, rect: Rect) {
     if ui.ctx().input(|i| i.raw.hovered_files.is_empty()) {
         return;
     }
-    let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, Id::new(("agent_chat_drop", rect.min.x as i32, rect.min.y as i32))));
+    let painter = ui.ctx().layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        Id::new(("agent_chat_drop", rect.min.x as i32, rect.min.y as i32)),
+    ));
     painter.rect_filled(rect, 6.0, Color32::from_black_alpha(150));
     painter.text(
         rect.center(),
@@ -283,7 +368,9 @@ pub fn drop_hint(ui: &Ui, rect: Rect) {
 
 /// True when the pointer was last seen over `rect`.
 pub fn hovered(ui: &Ui, rect: Rect) -> bool {
-    ui.ctx().input(|i| i.pointer.latest_pos()).is_some_and(|p| rect.contains(p))
+    ui.ctx()
+        .input(|i| i.pointer.latest_pos())
+        .is_some_and(|p| rect.contains(p))
 }
 
 #[cfg(test)]
@@ -296,7 +383,10 @@ mod tests {
         let ctx = Context::default();
         let mut seen = Vec::new();
         let mut out = ctx.run_ui(RawInput::default(), |ui| {
-            seen = [0.1, 0.49, 0.6, 0.7, 0.8, 0.95].iter().map(|f| context_color(ui, *f)).collect();
+            seen = [0.1, 0.49, 0.6, 0.7, 0.8, 0.95]
+                .iter()
+                .map(|f| context_color(ui, *f))
+                .collect();
             assert_eq!(seen[0], theme::success(ui));
             assert_eq!(seen[3], theme::warn(ui));
             assert_eq!(seen[5], theme::error(ui));

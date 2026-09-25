@@ -56,7 +56,9 @@ fn event_row(
                 .time(time)
                 .copy(text)
                 .has_body(has_text || !images.is_empty())
-                .show(ui, style, scope, |ui, id| agent_chat::user_body(ui, style, text, &images, id));
+                .show(ui, style, scope, |ui, id| {
+                    agent_chat::user_body(ui, style, text, &images, id)
+                });
         }
         "agent" => {
             ChatRow::new(ChatKind::Agent, &key, "Agent")

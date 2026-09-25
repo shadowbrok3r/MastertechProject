@@ -289,20 +289,26 @@ impl AgentThread {
 
     /// Share of the context window in use, from 0 up; above 1 when the count overran the window.
     pub fn context_fraction(&self) -> Option<f32> {
-        self.context_tokens().map(|(used, window)| used as f32 / window as f32)
+        self.context_tokens()
+            .map(|(used, window)| used as f32 / window as f32)
     }
 
     /// True while a turn runs, waits on a decision, or the session is starting its first one.
     pub fn is_busy(&self) -> bool {
-        matches!(self.status.as_str(), "starting" | "running" | "waiting_approval")
+        matches!(
+            self.status.as_str(),
+            "starting" | "running" | "waiting_approval"
+        )
     }
 
     /// The recorded activity; idle while no turn runs.
     pub fn activity(&self) -> AgentActivity {
         match self.status.as_str() {
-            "running" | "waiting_approval" => {
-                self.activity.as_deref().map(AgentActivity::parse).unwrap_or(AgentActivity::Thinking)
-            }
+            "running" | "waiting_approval" => self
+                .activity
+                .as_deref()
+                .map(AgentActivity::parse)
+                .unwrap_or(AgentActivity::Thinking),
             "starting" => AgentActivity::Starting,
             _ => AgentActivity::Idle,
         }
@@ -546,7 +552,11 @@ mod tests {
         }
         let back = AgentThread::from_value(v).expect("a row without activity must deserialize");
         assert_eq!(back.activity, None);
-        assert_eq!(back.activity(), AgentActivity::Idle, "an idle row reads idle");
+        assert_eq!(
+            back.activity(),
+            AgentActivity::Idle,
+            "an idle row reads idle"
+        );
     }
 
     #[test]
@@ -593,7 +603,10 @@ mod tests {
     fn titles_are_one_trimmed_line_of_bounded_length() {
         assert_eq!(clean_title("  Disk\n check  "), Some("Disk check".into()));
         assert_eq!(clean_title(" \n "), None);
-        assert_eq!(clean_title(&"x".repeat(200)).map(|t| t.chars().count()), Some(TITLE_MAX_CHARS));
+        assert_eq!(
+            clean_title(&"x".repeat(200)).map(|t| t.chars().count()),
+            Some(TITLE_MAX_CHARS)
+        );
     }
 
     #[test]

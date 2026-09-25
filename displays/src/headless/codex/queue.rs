@@ -107,7 +107,10 @@ mod tests {
     #[test]
     fn the_same_turn_is_queued_once() {
         let mut q = queue(&["one"]);
-        assert!(!q.push(turn("one")), "a turn delivered twice was queued twice");
+        assert!(
+            !q.push(turn("one")),
+            "a turn delivered twice was queued twice"
+        );
         assert_eq!(q.len(), 1);
     }
 
@@ -144,7 +147,11 @@ mod tests {
         assert!(!empty.hold(STOPPED));
         assert!(!empty.hold(FAILED));
         empty.push(turn("later"));
-        assert_eq!(text(empty.next()).as_deref(), Some("later"), "a stop with nothing queued held a later message");
+        assert_eq!(
+            text(empty.next()).as_deref(),
+            Some("later"),
+            "a stop with nothing queued held a later message"
+        );
     }
 
     #[test]

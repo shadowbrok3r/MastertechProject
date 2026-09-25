@@ -246,7 +246,9 @@ impl AgentSessions {
     }
 
     fn poll_waiting(&mut self) {
-        let Some(thread) = self.selected.clone() else { return };
+        let Some(thread) = self.selected.clone() else {
+            return;
+        };
         if self.loading_waiting {
             return;
         }
@@ -260,8 +262,13 @@ impl AgentSessions {
     }
 
     fn waiting_poll_due(&self) -> bool {
-        let busy = self.selected_thread().is_some_and(AgentThread::is_busy) || !self.waiting.is_empty();
-        let every = if busy { QUEUE_POLL_BUSY } else { QUEUE_POLL_IDLE };
+        let busy =
+            self.selected_thread().is_some_and(AgentThread::is_busy) || !self.waiting.is_empty();
+        let every = if busy {
+            QUEUE_POLL_BUSY
+        } else {
+            QUEUE_POLL_IDLE
+        };
         self.last_waiting_poll.is_none_or(|t| t.elapsed() >= every)
     }
 
@@ -353,7 +360,9 @@ impl AgentSessions {
                     self.status = "that message already went out".into();
                     self.last_waiting_poll = None;
                 }
-                Msg::TakenBack(Err(e)) => self.status = format!("could not take the message back: {e}"),
+                Msg::TakenBack(Err(e)) => {
+                    self.status = format!("could not take the message back: {e}")
+                }
                 Msg::ThreadStreamEnded(generation, error) => {
                     if self.thread_stream.ended(generation) {
                         self.last_threads_poll = None;
@@ -378,25 +387,35 @@ impl AgentSessions {
     fn ask(&mut self, thread: RecordId, kind: &'static str, text: String, images: Vec<TurnImage>) {
         let tx = self.tx.clone();
         PlatformSpawner::spawn(async move {
-            let r = AgentTurn::ask_with(&thread, kind, &text, &images).await.map(|_| ()).map_err(|e| e.to_string());
+            let r = AgentTurn::ask_with(&thread, kind, &text, &images)
+                .await
+                .map(|_| ())
+                .map_err(|e| e.to_string());
             let _ = tx.send(Msg::Turn(r));
         });
     }
 
     fn send_turn(&mut self, kind: &'static str) {
-        let Some(thread) = self.selected.clone() else { return };
+        let Some(thread) = self.selected.clone() else {
+            return;
+        };
         self.ask(thread, kind, String::new(), Vec::new());
     }
 
     fn apply_queue_action(&mut self, action: QueueAction) {
-        let Some(thread) = self.selected.clone() else { return };
+        let Some(thread) = self.selected.clone() else {
+            return;
+        };
         let tx = self.tx.clone();
         match action {
             QueueAction::Resume => self.ask(thread, "queue", String::new(), Vec::new()),
             QueueAction::Remove(id) => {
                 self.waiting.retain(|w| w.id != id);
                 PlatformSpawner::spawn(async move {
-                    let r = AgentTurn::cancel(&id).await.map(|_| ()).map_err(|e| e.to_string());
+                    let r = AgentTurn::cancel(&id)
+                        .await
+                        .map(|_| ())
+                        .map_err(|e| e.to_string());
                     let _ = tx.send(Msg::Turn(r));
                 });
             }
@@ -487,43 +506,49 @@ impl AgentSessions {
         }
         let mut picked = None;
         let mut rename_to = None;
-        ScrollArea::vertical().id_salt("agent_thread_list").show(ui, |ui| {
-            for t in &rows {
-                let key = t.id.key_string();
-                if let Some(edit) = self.renaming.as_mut().filter(|r| r.key == key) {
-                    match edit.show(ui, ui.available_width()) {
-                        RenameOutcome::Editing => {}
-                        RenameOutcome::Save(_, title) => rename_to = Some((t.id.clone(), title)),
-                        RenameOutcome::Cancel => self.renaming = None,
-                    }
-                    continue;
-                }
-                let selected = self.selected.as_ref() == Some(&t.id);
-                let card = selectable_card(ui, &key, selected, |ui| {
-                    ui.horizontal(|ui| {
-                        if agent_chat::is_active(t) {
-                            ui.add(egui::Spinner::new().size(12.0));
+        ScrollArea::vertical()
+            .id_salt("agent_thread_list")
+            .show(ui, |ui| {
+                for t in &rows {
+                    let key = t.id.key_string();
+                    if let Some(edit) = self.renaming.as_mut().filter(|r| r.key == key) {
+                        match edit.show(ui, ui.available_width()) {
+                            RenameOutcome::Editing => {}
+                            RenameOutcome::Save(_, title) => {
+                                rename_to = Some((t.id.clone(), title))
+                            }
+                            RenameOutcome::Cancel => self.renaming = None,
                         }
-                        ui.add(egui::Label::new(RichText::new(t.label()).strong()).truncate());
+                        continue;
+                    }
+                    let selected = self.selected.as_ref() == Some(&t.id);
+                    let card = selectable_card(ui, &key, selected, |ui| {
+                        ui.horizontal(|ui| {
+                            if agent_chat::is_active(t) {
+                                ui.add(egui::Spinner::new().size(12.0));
+                            }
+                            ui.add(egui::Label::new(RichText::new(t.label()).strong()).truncate());
+                        });
+                        ui.horizontal(|ui| {
+                            agent_chat::status_badge(ui, t);
+                            if let Some(who) = &t.requested_by {
+                                ui.add(
+                                    egui::Label::new(RichText::new(who).small().weak()).truncate(),
+                                );
+                            }
+                        });
                     });
-                    ui.horizontal(|ui| {
-                        agent_chat::status_badge(ui, t);
-                        if let Some(who) = &t.requested_by {
-                            ui.add(egui::Label::new(RichText::new(who).small().weak()).truncate());
+                    if card.response.clicked() {
+                        picked = Some(t.id.clone());
+                    }
+                    card.response.context_menu(|ui| {
+                        if ui.button(format!("{} Rename", icons::EDIT)).clicked() {
+                            self.renaming = Some(Rename::new(key.clone(), &t.label()));
+                            ui.close();
                         }
                     });
-                });
-                if card.response.clicked() {
-                    picked = Some(t.id.clone());
                 }
-                card.response.context_menu(|ui| {
-                    if ui.button(format!("{} Rename", icons::EDIT)).clicked() {
-                        self.renaming = Some(Rename::new(key.clone(), &t.label()));
-                        ui.close();
-                    }
-                });
-            }
-        });
+            });
         if let Some(id) = picked {
             self.select(id);
         }
@@ -574,8 +599,16 @@ impl AgentSessions {
         }
         ui.separator();
 
-        let queue_h = if self.waiting.is_empty() { 0.0 } else { 26.0 + 22.0 * self.waiting.len().min(4) as f32 };
-        let attach_h = if self.attachments.attachments.is_empty() { 0.0 } else { 70.0 };
+        let queue_h = if self.waiting.is_empty() {
+            0.0
+        } else {
+            26.0 + 22.0 * self.waiting.len().min(4) as f32
+        };
+        let attach_h = if self.attachments.attachments.is_empty() {
+            0.0
+        } else {
+            70.0
+        };
         let composer_h = 110.0 + queue_h + attach_h;
         let body_h = (ui.available_height() - composer_h).max(120.0);
         let show_reasoning = self.show_reasoning;
@@ -597,16 +630,28 @@ impl AgentSessions {
         }
         let open = thread.is_open();
         let composer_id = Id::new(("agent_sessions_composer", &salt));
-        let action = self.attachments.show(ui, composer_id, &mut self.composer, thread.is_busy(), open, COMPOSER_TEXT_MAX);
+        let action = self.attachments.show(
+            ui,
+            composer_id,
+            &mut self.composer,
+            thread.is_busy(),
+            open,
+            COMPOSER_TEXT_MAX,
+        );
         match action {
-            Some(ComposerAction::Send { kind, text, images, .. }) => self.ask(thread.id.clone(), kind, text, images),
+            Some(ComposerAction::Send {
+                kind, text, images, ..
+            }) => self.ask(thread.id.clone(), kind, text, images),
             Some(ComposerAction::Stop) => self.send_turn("interrupt"),
             None => {}
         }
         ui.add_enabled_ui(open, |ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if ui
-                    .small_button(RichText::new(format!("{} Close session", icons::CLOSE)).color(theme::error(ui)))
+                    .small_button(
+                        RichText::new(format!("{} Close session", icons::CLOSE))
+                            .color(theme::error(ui)),
+                    )
                     .clicked()
                 {
                     self.send_turn("close");
