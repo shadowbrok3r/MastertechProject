@@ -280,6 +280,12 @@ impl Default for DiagnosticEntry {
 /// flagged in the diagnostics page.
 pub const STALE_SESSION_DAYS: i64 = 30;
 
+/// Sets `$sid`'s customer when it has none, then its task and service order where unset.
+pub const ADOPT_SESSION_LINKS_SQL: &str = "UPDATE $sid SET customer_id = $cust, \
+     customer_name = customer_name ?? $cust_name WHERE customer_id = NONE AND $cust != NONE; \
+     UPDATE $sid SET task_ref = task_ref ?? $task, service_order = service_order ?? $svc, \
+     last_activity_at = time::now()";
+
 /// Open-session projection holding no record-id links, so a row with a
 /// malformed FK still lists. `age_secs` is the age at query time.
 #[derive(Serialize, Deserialize, Debug, Clone, SurrealValue)]
@@ -634,6 +640,28 @@ impl DiagnosticSession {
             if let Err(e) = Self::stamp_task_origin_ai(t).await {
                 log::warn!("link_to_task: origin stamp failed: {e}");
             }
+        }
+        Ok(())
+    }
+
+    /// Fills the session's missing task, service order and customer links; set links are kept.
+    pub async fn adopt_service_links(
+        session_id: &RecordId,
+        task_ref: &RecordId,
+        service_order: &RecordId,
+        customer: Option<&RecordId>,
+        customer_name: Option<&str>,
+    ) -> anyhow::Result<()> {
+        db().query(ADOPT_SESSION_LINKS_SQL)
+        .bind(("sid", session_id.clone()))
+        .bind(("cust", customer.cloned()))
+        .bind(("cust_name", customer_name.map(str::to_string)))
+        .bind(("task", task_ref.clone()))
+        .bind(("svc", service_order.clone()))
+        .await?
+        .check()?;
+        if let Err(e) = Self::stamp_task_origin_ai(task_ref).await {
+            log::warn!("adopt_service_links: origin stamp failed: {e}");
         }
         Ok(())
     }

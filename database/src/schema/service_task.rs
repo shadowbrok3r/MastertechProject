@@ -2,7 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{Datetime, Priority, RecordId, Status, SurrealValue, TASK_TABLE};
+use super::{
+    AgentThread, AssistRequest, Datetime, Priority, RecordId, Status, SurrealValue, TASK_TABLE,
+};
 use crate::db;
 
 /// `task.origin` of a task the diagnostic agent created.
@@ -19,7 +21,9 @@ pub fn normalize_service_number(raw: &str) -> Option<String> {
     let sn = raw.trim().trim_start_matches('#').trim();
     let valid = !sn.is_empty()
         && sn.len() <= 32
-        && sn.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        && sn
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
     valid.then(|| sn.to_string())
 }
 
@@ -27,7 +31,10 @@ pub fn normalize_service_number(raw: &str) -> Option<String> {
 pub fn first_service_number<'a>(
     candidates: impl IntoIterator<Item = Option<&'a str>>,
 ) -> Option<String> {
-    candidates.into_iter().flatten().find_map(normalize_service_number)
+    candidates
+        .into_iter()
+        .flatten()
+        .find_map(normalize_service_number)
 }
 
 /// `<customer> - <service number>`, the shop's task name.
@@ -134,14 +141,20 @@ pub struct Requester {
 impl Requester {
     /// Display name, else the email's local part.
     pub fn label(&self) -> String {
-        let name = self.name.as_deref().map(str::trim).filter(|n| !n.is_empty());
+        let name = self
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|n| !n.is_empty());
         let local = self
             .email
             .as_deref()
             .and_then(|e| e.split('@').next())
             .map(str::trim)
             .filter(|l| !l.is_empty());
-        name.or(local).unwrap_or("the requesting technician").to_string()
+        name.or(local)
+            .unwrap_or("the requesting technician")
+            .to_string()
     }
 }
 
@@ -242,13 +255,85 @@ pub enum ServiceTaskError {
     Db(#[from] anyhow::Error),
 }
 
+/// Service number and requester a machine's live agent thread or latest assist request carry.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct EngagementHints {
+    pub thread: Option<RecordId>,
+    pub service_number: Option<String>,
+    pub requested_by: Option<String>,
+}
+
+/// The first candidate with text after trimming.
+fn first_text<'a>(candidates: impl IntoIterator<Item = Option<&'a str>>) -> Option<String> {
+    candidates
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+impl EngagementHints {
+    /// Thread fields first, then the request's.
+    pub fn from_rows(thread: Option<&AgentThread>, request: Option<&AssistRequest>) -> Self {
+        Self {
+            thread: thread.map(|t| t.id.clone()),
+            service_number: first_service_number([
+                thread.and_then(|t| t.service_number.as_deref()),
+                request.and_then(|r| r.service_number.as_deref()),
+            ]),
+            requested_by: first_text([
+                thread.and_then(|t| t.requested_by.as_deref()),
+                request.and_then(|r| r.requested_by.as_deref()),
+            ]),
+        }
+    }
+}
+
+/// Engagement hints for a machine; lookup failures leave the hint empty.
+pub async fn engagement_hints(connection_string: &str) -> EngagementHints {
+    let thread = AgentThread::active_for_connection(connection_string)
+        .await
+        .unwrap_or_else(|e| {
+            log::warn!("service_task: agent thread lookup failed for {connection_string}: {e}");
+            None
+        });
+    let request =
+        AssistRequest::latest_for_engagement(connection_string, thread.as_ref().map(|t| &t.id))
+            .await
+            .unwrap_or_else(|e| {
+                log::warn!(
+                    "service_task: assist request lookup failed for {connection_string}: {e}"
+                );
+                None
+            });
+    EngagementHints::from_rows(thread.as_ref(), request.as_ref())
+}
+
+/// The service_order row for `$sn`, with its customer's name.
+pub const SERVICE_ORDER_BY_NUMBER_SQL: &str = "SELECT id, service_number, customer, \
+     customer.name AS customer_name, computer, checkin_notes FROM service_order \
+     WHERE service_number == $sn LIMIT 1";
+
+/// Tasks filed under `$sn` or pointing at `$so`.
+pub const TASKS_FOR_SERVICE_SQL: &str = "SELECT id, task_name, completed, created_at FROM task \
+     WHERE service_number == $sn OR ($so != NONE AND service_ticket == $so)";
+
+/// The active user whose lowercased email is in `$emails` or whose lowercased name is `$name`.
+pub const REQUESTER_SQL: &str = "SELECT id, name, email, store FROM user \
+     WHERE (string::lowercase(email ?? '') IN $emails OR string::lowercase(name ?? '') == $name) \
+     AND active != false LIMIT 1";
+
+/// Sets `$so`'s computer and customer where they are unset.
+pub const FILL_ORDER_LINKS_SQL: &str =
+    "UPDATE $so SET computer = computer ?? $computer, customer = customer ?? $customer";
+
 /// The service_order for a service number, with its customer's name.
-pub async fn service_order_by_number(service_number: &str) -> anyhow::Result<Option<ServiceOrderRow>> {
+pub async fn service_order_by_number(
+    service_number: &str,
+) -> anyhow::Result<Option<ServiceOrderRow>> {
     let rows: Vec<ServiceOrderRow> = db()
-        .query(
-            "SELECT id, service_number, customer, customer.name AS customer_name, computer, \
-             checkin_notes FROM service_order WHERE service_number == $sn LIMIT 1",
-        )
+        .query(SERVICE_ORDER_BY_NUMBER_SQL)
         .bind(("sn", service_number.to_string()))
         .await?
         .take(0)?;
@@ -274,10 +359,7 @@ pub async fn tasks_for_service(
     service_order: Option<&RecordId>,
 ) -> anyhow::Result<Vec<TaskCandidate>> {
     let rows: Vec<TaskCandidate> = db()
-        .query(
-            "SELECT id, task_name, completed, created_at FROM task \
-             WHERE service_number == $sn OR ($so != NONE AND service_ticket == $so)",
-        )
+        .query(TASKS_FOR_SERVICE_SQL)
         .bind(("sn", service_number.to_string()))
         .bind(("so", service_order.cloned()))
         .await?
@@ -287,7 +369,9 @@ pub async fn tasks_for_service(
 
 /// The task an existing service number already has, open before completed.
 pub async fn find_service_task(service_number: &str) -> anyhow::Result<Option<TaskCandidate>> {
-    let Some(sn) = normalize_service_number(service_number) else { return Ok(None) };
+    let Some(sn) = normalize_service_number(service_number) else {
+        return Ok(None);
+    };
     let order = service_order_by_number(&sn).await?;
     let candidates = tasks_for_service(&sn, order.as_ref().map(|o| &o.id)).await?;
     Ok(pick_existing_task(&candidates).cloned())
@@ -300,12 +384,7 @@ pub async fn resolve_requester(ident: &str) -> anyhow::Result<Option<Requester>>
         return Ok(None);
     }
     let rows: Vec<Requester> = db()
-        .query(
-            "SELECT id, name, email, store FROM user \
-             WHERE (string::lowercase(email ?? '') IN $emails \
-                OR string::lowercase(name ?? '') == $name) \
-               AND active != false LIMIT 1",
-        )
+        .query(REQUESTER_SQL)
         .bind(("emails", emails))
         .bind(("name", ident.trim().to_lowercase()))
         .await?
@@ -318,8 +397,14 @@ async fn fill_order_links(
     order: &ServiceOrderRow,
     request: &ServiceTaskRequest,
 ) -> (Vec<&'static str>, Option<String>) {
-    let computer = request.computer.clone().filter(|_| order.computer.is_none());
-    let customer = request.customer.clone().filter(|_| order.customer.is_none());
+    let computer = request
+        .computer
+        .clone()
+        .filter(|_| order.computer.is_none());
+    let customer = request
+        .customer
+        .clone()
+        .filter(|_| order.customer.is_none());
     let mut filled = Vec::new();
     if computer.is_some() {
         filled.push("computer");
@@ -331,7 +416,7 @@ async fn fill_order_links(
         return (filled, None);
     }
     let res = db()
-        .query("UPDATE $so SET computer = computer ?? $computer, customer = customer ?? $customer")
+        .query(FILL_ORDER_LINKS_SQL)
         .bind(("so", order.id.clone()))
         .bind(("computer", computer))
         .bind(("customer", customer))
@@ -363,7 +448,10 @@ pub async fn ensure_service_task(
     let candidates = tasks_for_service(&service_number, Some(&order.id)).await?;
     let (task, task_name, created, assignee) = match plan_service_task(&candidates) {
         TaskPlan::Reuse(id) => {
-            let name = candidates.iter().find(|c| c.id == id).and_then(|c| c.task_name.clone());
+            let name = candidates
+                .iter()
+                .find(|c| c.id == id)
+                .and_then(|c| c.task_name.clone());
             (id, name, false, None)
         }
         TaskPlan::Create => {
@@ -443,10 +531,26 @@ mod tests {
 
     #[test]
     fn service_numbers_normalize_or_are_refused() {
-        assert_eq!(normalize_service_number(" 2155467 ").as_deref(), Some("2155467"));
-        assert_eq!(normalize_service_number("#2155467").as_deref(), Some("2155467"));
-        assert_eq!(normalize_service_number("SO-12345").as_deref(), Some("SO-12345"));
-        for bad in ["", "   ", "#", "2155 467", "2155467;DELETE task", "21554`67"] {
+        assert_eq!(
+            normalize_service_number(" 2155467 ").as_deref(),
+            Some("2155467")
+        );
+        assert_eq!(
+            normalize_service_number("#2155467").as_deref(),
+            Some("2155467")
+        );
+        assert_eq!(
+            normalize_service_number("SO-12345").as_deref(),
+            Some("SO-12345")
+        );
+        for bad in [
+            "",
+            "   ",
+            "#",
+            "2155 467",
+            "2155467;DELETE task",
+            "21554`67",
+        ] {
             assert_eq!(normalize_service_number(bad), None, "{bad:?}");
         }
     }
@@ -462,10 +566,22 @@ mod tests {
 
     #[test]
     fn task_names_follow_the_customer_dash_number_form() {
-        assert_eq!(service_task_name(Some("Barbara Baker"), "2155467"), "Barbara Baker - 2155467");
-        assert_eq!(service_task_name(Some("  brayden humphreys "), "2155359"), "brayden humphreys - 2155359");
-        assert_eq!(service_task_name(Some(""), "2155467"), "Unknown customer - 2155467");
-        assert_eq!(service_task_name(None, "2155467"), "Unknown customer - 2155467");
+        assert_eq!(
+            service_task_name(Some("Barbara Baker"), "2155467"),
+            "Barbara Baker - 2155467"
+        );
+        assert_eq!(
+            service_task_name(Some("  brayden humphreys "), "2155359"),
+            "brayden humphreys - 2155359"
+        );
+        assert_eq!(
+            service_task_name(Some(""), "2155467"),
+            "Unknown customer - 2155467"
+        );
+        assert_eq!(
+            service_task_name(None, "2155467"),
+            "Unknown customer - 2155467"
+        );
     }
 
     #[test]
@@ -474,13 +590,19 @@ mod tests {
             candidate("done-new", Some(true), at(3_000)),
             candidate("open-old", Some(false), at(1_000)),
         ];
-        assert_eq!(plan_service_task(&tasks), TaskPlan::Reuse(RecordId::new(TASK_TABLE, "open-old")));
+        assert_eq!(
+            plan_service_task(&tasks),
+            TaskPlan::Reuse(RecordId::new(TASK_TABLE, "open-old"))
+        );
     }
 
     #[test]
     fn a_completed_task_is_still_reused_rather_than_duplicated() {
         let tasks = [candidate("done", Some(true), at(1_000))];
-        assert_eq!(plan_service_task(&tasks), TaskPlan::Reuse(RecordId::new(TASK_TABLE, "done")));
+        assert_eq!(
+            plan_service_task(&tasks),
+            TaskPlan::Reuse(RecordId::new(TASK_TABLE, "done"))
+        );
     }
 
     #[test]
@@ -490,7 +612,10 @@ mod tests {
             candidate("undated", None, None),
             candidate("newer", Some(false), at(2_000)),
         ];
-        assert_eq!(plan_service_task(&tasks), TaskPlan::Reuse(RecordId::new(TASK_TABLE, "newer")));
+        assert_eq!(
+            plan_service_task(&tasks),
+            TaskPlan::Reuse(RecordId::new(TASK_TABLE, "newer"))
+        );
     }
 
     #[test]
@@ -528,7 +653,10 @@ mod tests {
         };
         let agent = NewServiceTask::for_order(&order(), "2155467", None, &derek(), now);
         let modal = crate::schema::LiveTaskPayload::default();
-        assert_eq!(fields(agent.clone().into_value()), fields(modal.into_value()));
+        assert_eq!(
+            fields(agent.clone().into_value()),
+            fields(modal.into_value())
+        );
         match agent.into_value() {
             Value::Object(obj) => assert_eq!(obj.get("origin"), Some(&Value::String("ai".into()))),
             other => panic!("task should store as an object, got {other:?}"),
@@ -538,10 +666,16 @@ mod tests {
     #[test]
     fn the_order_customer_name_beats_the_session_one() {
         let now = at(0).expect("epoch");
-        let task = NewServiceTask::for_order(&order(), "2155467", Some("Session Name"), &derek(), now);
+        let task =
+            NewServiceTask::for_order(&order(), "2155467", Some("Session Name"), &derek(), now);
         assert_eq!(task.task_name, "Barbara Baker - 2155467");
-        let nameless = ServiceOrderRow { customer_name: None, checkin_notes: None, ..order() };
-        let task = NewServiceTask::for_order(&nameless, "2155467", Some("Session Name"), &derek(), now);
+        let nameless = ServiceOrderRow {
+            customer_name: None,
+            checkin_notes: None,
+            ..order()
+        };
+        let task =
+            NewServiceTask::for_order(&nameless, "2155467", Some("Session Name"), &derek(), now);
         assert_eq!(task.task_name, "Session Name - 2155467");
         assert!(!task.task_description.contains("Check-in notes"));
     }
@@ -549,9 +683,16 @@ mod tests {
     #[test]
     fn a_requester_reads_as_a_name_then_a_username() {
         assert_eq!(derek().label(), "Derek Anderson");
-        let unnamed = Requester { name: Some(" ".into()), ..derek() };
+        let unnamed = Requester {
+            name: Some(" ".into()),
+            ..derek()
+        };
         assert_eq!(unnamed.label(), "derek.anderson");
-        let bare = Requester { name: None, email: None, ..derek() };
+        let bare = Requester {
+            name: None,
+            email: None,
+            ..derek()
+        };
         assert_eq!(bare.label(), "the requesting technician");
     }
 
@@ -559,9 +700,15 @@ mod tests {
     fn a_username_also_matches_its_pclaptops_email() {
         assert_eq!(
             requester_emails(" Derek.Anderson "),
-            vec!["derek.anderson".to_string(), "derek.anderson@pclaptops.com".to_string()]
+            vec![
+                "derek.anderson".to_string(),
+                "derek.anderson@pclaptops.com".to_string()
+            ]
         );
-        assert_eq!(requester_emails("derek.anderson@pclaptops.com"), vec!["derek.anderson@pclaptops.com".to_string()]);
+        assert_eq!(
+            requester_emails("derek.anderson@pclaptops.com"),
+            vec!["derek.anderson@pclaptops.com".to_string()]
+        );
         assert!(requester_emails("  ").is_empty());
     }
 }
