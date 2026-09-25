@@ -20,8 +20,7 @@ facet = { workspace = true, optional = true }
 [target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "uefi")))'.dependencies]
 tokio = { workspace = true }
 socket2 = "0.6"
-# 0.26 matches the ewebsock fork's tokio-tungstenite so both resolve to one build.
-tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"], optional = true }
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"], optional = true }
 futures = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
 

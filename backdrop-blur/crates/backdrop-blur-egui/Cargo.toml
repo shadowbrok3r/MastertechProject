@@ -33,7 +33,7 @@ glow = { version = "0.17", optional = true }
 log = { workspace = true, optional = true }
 
 [dev-dependencies]
-pollster = "0.4"
+pollster = "1.0.1"
 
 [features]
 # Fork default: grab-pass, the path MasterTech's eframe-on-glow apps use. Upstream defaults to

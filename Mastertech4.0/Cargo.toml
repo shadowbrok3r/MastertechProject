@@ -36,23 +36,23 @@ reqwest = { version = "0.13.2", default-features = false, features = ["json", "s
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", features = ["tokio", "tls", "rustls_ring"]}
 sysinfo = {version = "0.39.1", features = ["serde", "multithread"]}
-quick-xml = { version="0.41.0", features = ["serialize"] }
+quick-xml = { version = "0.42", features = ["serialize"] }
 tracing = { version = "0.1", features = ["log"] }
 clap = { version = "4.5", features = ["derive"] }
-sha2 = { version = "0.10", features = ["std"] }
-nvml-wrapper = { version = "0.12.1", features = ["serde"] }
+sha2 = "0.10"
+nvml-wrapper = { version = "0.13", features = ["serde"] }
 strum = { version = "0.28.0", features = ["strum_macros", "derive"] }
 enigo = { version = "0.6.1", features = ["serde"] }
 indexmap = { version = "2.13.0", features = ["serde"] }
 tachyonfx = { version = "0.25.0"}
-tui-logger = { git = "https://github.com/shadowbrok3r/tui-logger" }
+tui-logger = "0.18.3"
 rayon = "1"
 textwrap = "0.16"
 futures-util = "0.3"
 walkdir = "2.5"
-zip = "8.6.0"
+zip = { version = "8.6.0", default-features = false, features = ["deflate", "time"] }
 pollster = "1.0.1"
-image = "0.25"
+image.workspace = true
 num-format = "0.4"
 fs_extra = "1.3"
 num-traits = "0.2"
@@ -69,19 +69,19 @@ unicode-width = "0.2.0"
 arboard = "3"
 tempfile = "3.19"
 xcap = "0.9.0"
-zstd = "0.13.3"
+zstd.workspace = true
 humansize = "2"
 multi_log = "0.1"
 env_logger = "*"
 dunce = "1.0.5"
 directories = "6.0.0"
 image-meta = "0.1.4"
-rusqlite = { version = "0.39.0", features = ["bundled"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 
 egui_skia = { git = "https://github.com/shadowbrok3r/egui_skia", features = ["winit", "cpu_fix"], optional = true }
 skia-safe = { version = "0.99", optional = true }
 softbuffer = { version = "0.4", optional = true }
-winit = { version = "0.30", features = ["rwh_06"], optional = true }
+winit = { version = "0.30", default-features = false, features = ["rwh_06"], optional = true }
 raw-window-handle = { version = "0.6", optional = true }
 
 # nvme = "0.2.2"
@@ -170,11 +170,9 @@ minidump-unwind = "0.27"
 windows-registry = "0.6"
 # `#[implement(...)]` expands to `::windows_core::...`; needs this crate even when using `windows::core` in source.
 windows-core = "0.62"
-wmi = "=0.18.3"
-evtx = "0.11"
+wmi = "=0.18.4"
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
-dotenvy = { workspace = true }
 static_vcruntime = "3"
 embed-resource = "3"
 winres = "0.1"

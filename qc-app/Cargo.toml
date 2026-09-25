@@ -22,16 +22,14 @@ egui_skia = { git = "https://github.com/shadowbrok3r/egui_skia", features = ["wi
 sysinfo = { version = "0.39", features = ["serde", "multithread"] }
 stress-kit = { workspace = true, features = ["hw-sensors", "schemars"] }
 crossterm = { version = "0.29", features = ["event-stream"] }
-rusqlite = { version = "0.39.0", features = ["bundled"] }
-winit = { version = "0.30", features = ["rwh_06"], optional = true }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+winit = { version = "0.30", default-features = false, features = ["rwh_06"], optional = true }
 raw-window-handle = { version = "0.6", optional = true }
 directories = "6.0.0"
 softbuffer = { version = "0.4", optional = true }
 skia-safe = { version = "0.99", optional = true }
 toml = "1"
-image = "0.25"
-sha2 = "0.10"
-hex = "0.4"
+image.workspace = true
 egui_plot.workspace = true
 web-time.workspace = true
 stress-runner.workspace = true
@@ -39,7 +37,6 @@ mtech-ui = { workspace = true, features = ["stress-ui"] }
 mtech-tui.workspace = true
 ratatui.workspace = true
 database.workspace = true
-egui-data-table.workspace = true
 egui_extras.workspace = true
 egui_dock.workspace = true
 log.workspace = true
@@ -67,7 +64,7 @@ windows = { version = "0.62", features = [
     "Win32_Devices_DeviceAndDriverInstallation",
     "Win32_Devices_Properties",
 ]}
-wmi = "=0.18.3"
+wmi = "=0.18.4"
 
 [dependencies.egui]
 version = "0.36"
@@ -75,7 +72,6 @@ default-features = false
 features = ["rayon", "bytemuck"]
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
-dotenvy = { workspace = true }
 static_vcruntime = "3"
 embed-resource = "3"
 winres = "0.1"

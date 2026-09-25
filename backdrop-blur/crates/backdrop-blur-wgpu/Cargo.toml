@@ -26,7 +26,7 @@ wasm-bindgen-futures = "0.4"
 
 [dev-dependencies]
 # Block on wgpu's async adapter/device futures in the gated GPU tests.
-pollster = "0.4"
+pollster = "1.0.1"
 
 [features]
 # Gates the GPU tier: tests that build a `wgpu::Device` run only with this feature, on a

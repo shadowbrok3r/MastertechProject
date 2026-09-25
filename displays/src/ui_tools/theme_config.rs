@@ -2,7 +2,6 @@ use eframe::egui::{scroll_area::ScrollBarVisibility, style::{HandleShape, Numeri
 use crate::{ui_tools::{encode_theme, glass_backdrop::{self, GlassParams}, rerun_mtech::{RerunMtech, RerunMtechOled}, theme_chrome::{default_egui_chrome, legacy_classic_chrome, mtech_noir_chrome, mtech_noir_glass_chrome, mtech_noir_glass_params, shipped_chrome}, tokyo_dark::{TokyoNight, TokyoNightStorm}, SavedTheme}, PlatformSpawner, Spawner};
 use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;
-use derivative::Derivative;
 use database::schema::User;
 use std::sync::Arc;
 
@@ -115,8 +114,7 @@ fn is_blank_default_style(style: &Style) -> bool {
     styles_visually_equal(style, &dark_default)
 }
 
-#[derive(Serialize, Clone, Deserialize, Debug, Derivative)]
-#[derivative(PartialEq)]
+#[derive(Serialize, Clone, Deserialize, Debug, PartialEq)]
 pub struct ThemeConfig {
     /// Editor background
     pub background_color: Color32,
