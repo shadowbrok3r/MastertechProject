@@ -21,8 +21,11 @@
 
 use crate::db;
 use super::stress_test_sql;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::time::Duration;
+use surrealdb::{Connection, Surreal};
 
 use super::{
     random_record_id, Datetime, RecordId, SurrealValue,
@@ -732,8 +735,7 @@ pub enum FinishReason {
     /// `StressConfig.timeout`).
     #[surreal(value = "timeout")]
     Timeout,
-    /// Run crashed before reaching a normal finish (e.g. supervisor
-    /// thread panicked).
+    /// Run never reached a normal finish: its worker panicked, or its client died and the orphan reaper closed it.
     #[surreal(value = "crashed")]
     Crashed,
     /// Run stopped materially short of `duration_planned_secs` without an
@@ -1311,6 +1313,224 @@ impl StressTestRun {
             .take(0)?;
         Ok(runs)
     }
+
+    /// Closes orphaned `in_progress` runs as aborted/crashed; returns each closed run and why.
+    pub async fn reap_orphaned(
+        scope: ReapScope<'_>,
+        grace: Duration,
+    ) -> anyhow::Result<Vec<(RecordId, OrphanReason)>> {
+        reap_orphaned_on(db().as_ref(), scope, grace, Utc::now()).await
+    }
+
+    /// Newest metric or event timestamp of a run.
+    pub async fn last_seen(run: &RecordId) -> anyhow::Result<Option<DateTime<Utc>>> {
+        last_seen_on(db().as_ref(), run).await
+    }
+}
+
+// ============================================================
+// Orphaned-run reaper
+// ============================================================
+
+/// Silence past a run's planned end, and past its last heartbeat, before it counts as orphaned.
+pub const ORPHAN_GRACE: Duration = Duration::from_secs(2 * 3600);
+
+/// Which `in_progress` rows a reap pass may close.
+#[derive(Debug, Clone, Copy)]
+pub enum ReapScope<'a> {
+    /// Every machine, on the planned-window rule only.
+    Fleet,
+    /// One computer; also closes runs silent since before `booted_at`.
+    Machine {
+        computer: &'a RecordId,
+        booted_at: Option<DateTime<Utc>>,
+    },
+}
+
+/// Why a reap pass closed a run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrphanReason {
+    /// Past its planned window plus grace, and silent for the grace.
+    Overdue,
+    /// Silent since before the machine's current boot.
+    Rebooted,
+}
+
+impl OrphanReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Overdue => "overdue",
+            Self::Rebooted => "rebooted",
+        }
+    }
+
+    /// Text appended to the closed run's `notes`.
+    pub fn note(self, grace: Duration) -> String {
+        match self {
+            Self::Overdue => format!(
+                "[orphaned: no finalize within planned window + {}; ended_at is the last metric/event]",
+                grace_label(grace)
+            ),
+            Self::Rebooted => {
+                "[orphaned: machine rebooted mid-run; ended_at is the last metric/event]"
+                    .to_string()
+            }
+        }
+    }
+}
+
+/// `2h` / `90m` / `45s` form of a grace period.
+fn grace_label(grace: Duration) -> String {
+    let secs = grace.as_secs();
+    if secs.is_multiple_of(3600) {
+        format!("{}h", secs / 3600)
+    } else if secs.is_multiple_of(60) {
+        format!("{}m", secs / 60)
+    } else {
+        format!("{secs}s")
+    }
+}
+
+/// Liveness evidence for one `in_progress` run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RunLiveness {
+    pub started_at: DateTime<Utc>,
+    pub planned_secs: Option<u64>,
+    /// Newest metric or event timestamp.
+    pub last_seen: Option<DateTime<Utc>>,
+}
+
+impl RunLiveness {
+    /// End of the planned window plus `grace`; a missing plan counts as zero.
+    pub fn deadline(&self, grace: Duration) -> DateTime<Utc> {
+        let window = Duration::from_secs(self.planned_secs.unwrap_or(0)).saturating_add(grace);
+        add_saturating(self.started_at, window)
+    }
+
+    /// Newest moment the run is proven alive, never before its start.
+    pub fn last_alive(&self) -> DateTime<Utc> {
+        self.last_seen
+            .map_or(self.started_at, |seen| seen.max(self.started_at))
+    }
+
+    /// Why the run counts as orphaned at `now`, or `None` while it may still be live.
+    pub fn orphaned(
+        &self,
+        grace: Duration,
+        now: DateTime<Utc>,
+        booted_at: Option<DateTime<Utc>>,
+    ) -> Option<OrphanReason> {
+        if booted_at.is_some_and(|boot| self.last_alive() < boot) {
+            Some(OrphanReason::Rebooted)
+        } else if now > self.deadline(grace) && now > add_saturating(self.last_alive(), grace) {
+            Some(OrphanReason::Overdue)
+        } else {
+            None
+        }
+    }
+}
+
+/// `at + by`, clamped to the latest representable time.
+fn add_saturating(at: DateTime<Utc>, by: Duration) -> DateTime<Utc> {
+    chrono::Duration::from_std(by)
+        .ok()
+        .and_then(|by| at.checked_add_signed(by))
+        .unwrap_or(DateTime::<Utc>::MAX_UTC)
+}
+
+#[derive(Debug, SurrealValue)]
+struct OrphanCandidate {
+    id: RecordId,
+    started_at: Datetime,
+    duration_planned_secs: Option<i64>,
+}
+
+/// [`StressTestRun::reap_orphaned`] against an explicit connection and clock.
+pub async fn reap_orphaned_on<C: Connection>(
+    db: &Surreal<C>,
+    scope: ReapScope<'_>,
+    grace: Duration,
+    now: DateTime<Utc>,
+) -> anyhow::Result<Vec<(RecordId, OrphanReason)>> {
+    let (mut response, booted_at) = match scope {
+        ReapScope::Fleet => {
+            let floor: Datetime = (now - chrono::Duration::from_std(grace)?).into();
+            let response = db
+                .query(stress_test_sql::ORPHAN_CANDIDATES_FLEET)
+                .bind(("floor", floor))
+                .await?;
+            (response, None)
+        }
+        ReapScope::Machine {
+            computer,
+            booted_at,
+        } => {
+            let response = db
+                .query(stress_test_sql::ORPHAN_CANDIDATES_MACHINE)
+                .bind(("computer", computer.clone()))
+                .await?;
+            (response, booted_at)
+        }
+    };
+    let candidates: Vec<OrphanCandidate> = response.take(0)?;
+
+    let mut closed = Vec::new();
+    for candidate in candidates {
+        let mut liveness = RunLiveness {
+            started_at: candidate.started_at.into(),
+            planned_secs: candidate
+                .duration_planned_secs
+                .and_then(|s| u64::try_from(s).ok()),
+            last_seen: None,
+        };
+        // Skips the heartbeat lookup for runs still inside their window when no boot time is known.
+        if booted_at.is_none() && now <= liveness.deadline(grace) {
+            continue;
+        }
+        liveness.last_seen = match last_seen_on(db, &candidate.id).await {
+            Ok(seen) => seen,
+            Err(e) => {
+                log::warn!(
+                    "orphan reap: heartbeat lookup for {:?} failed: {e}",
+                    candidate.id
+                );
+                continue;
+            }
+        };
+        let Some(reason) = liveness.orphaned(grace, now, booted_at) else {
+            continue;
+        };
+        let closing = db
+            .query(stress_test_sql::ORPHAN_CLOSE)
+            .bind(("id", candidate.id.clone()))
+            .bind(("ended_at", Datetime::from(liveness.last_alive())))
+            .bind(("note", reason.note(grace)))
+            .await
+            .and_then(|mut r| r.take::<Vec<RecordId>>(0));
+        match closing {
+            Ok(ids) if !ids.is_empty() => closed.push((candidate.id, reason)),
+            Ok(_) => {}
+            Err(e) => log::warn!("orphan reap: closing {:?} failed: {e}", candidate.id),
+        }
+    }
+    Ok(closed)
+}
+
+async fn last_seen_on<C: Connection>(
+    db: &Surreal<C>,
+    run: &RecordId,
+) -> anyhow::Result<Option<DateTime<Utc>>> {
+    let mut response = db
+        .query(stress_test_sql::RUN_LAST_SEEN)
+        .bind(("id", run.clone()))
+        .await?;
+    let metric: Vec<Datetime> = response.take(0)?;
+    let event: Vec<Datetime> = response.take(1)?;
+    Ok(metric
+        .into_iter()
+        .chain(event)
+        .map(DateTime::<Utc>::from)
+        .max())
 }
 
 // ============================================================
@@ -1820,5 +2040,196 @@ mod tests {
             panic!("expected Unknown");
         };
         assert_eq!(reason, "socket wedged");
+    }
+
+    fn at(rfc3339: &str) -> DateTime<Utc> {
+        rfc3339.parse().expect("valid RFC 3339 timestamp")
+    }
+
+    fn secs(n: u64) -> Duration {
+        Duration::from_secs(n)
+    }
+
+    /// DESKTOP-JFAT75B's silver cert `b40d4ead`, orphaned by a reboot on 2026-09-24.
+    fn jfat_silver() -> RunLiveness {
+        RunLiveness {
+            started_at: at("2026-09-24T23:16:54Z"),
+            planned_secs: Some(12_600),
+            last_seen: Some(at("2026-09-24T23:35:29Z")),
+        }
+    }
+
+    #[test]
+    fn deadline_is_start_plus_plan_plus_grace() {
+        assert_eq!(
+            jfat_silver().deadline(ORPHAN_GRACE),
+            at("2026-09-25T04:46:54Z")
+        );
+    }
+
+    #[test]
+    fn a_run_inside_its_window_is_not_orphaned() {
+        let run = jfat_silver();
+        assert_eq!(
+            run.orphaned(ORPHAN_GRACE, at("2026-09-25T00:27:37Z"), None),
+            None
+        );
+        assert_eq!(
+            run.orphaned(ORPHAN_GRACE, at("2026-09-25T04:46:54Z"), None),
+            None
+        );
+    }
+
+    #[test]
+    fn a_silent_run_is_overdue_once_the_deadline_passes() {
+        let run = jfat_silver();
+        assert_eq!(
+            run.orphaned(ORPHAN_GRACE, at("2026-09-25T04:46:55Z"), None),
+            Some(OrphanReason::Overdue)
+        );
+    }
+
+    #[test]
+    fn a_run_still_heartbeating_past_its_deadline_is_not_orphaned() {
+        let run = RunLiveness {
+            last_seen: Some(at("2026-09-25T04:00:00Z")),
+            ..jfat_silver()
+        };
+        assert_eq!(
+            run.orphaned(ORPHAN_GRACE, at("2026-09-25T05:00:00Z"), None),
+            None
+        );
+        assert_eq!(
+            run.orphaned(ORPHAN_GRACE, at("2026-09-25T06:00:01Z"), None),
+            Some(OrphanReason::Overdue)
+        );
+    }
+
+    #[test]
+    fn a_missing_plan_counts_as_zero_but_a_live_heartbeat_still_protects_it() {
+        let open_ended = RunLiveness {
+            started_at: at("2026-09-02T00:52:13Z"),
+            planned_secs: None,
+            last_seen: None,
+        };
+        assert_eq!(
+            open_ended.deadline(ORPHAN_GRACE),
+            at("2026-09-02T02:52:13Z")
+        );
+        assert_eq!(
+            open_ended.orphaned(ORPHAN_GRACE, at("2026-09-02T02:52:14Z"), None),
+            Some(OrphanReason::Overdue)
+        );
+
+        let still_running = RunLiveness {
+            last_seen: Some(at("2026-09-02T05:00:00Z")),
+            ..open_ended
+        };
+        assert_eq!(
+            still_running.orphaned(ORPHAN_GRACE, at("2026-09-02T06:00:00Z"), None),
+            None
+        );
+    }
+
+    #[test]
+    fn a_run_with_no_heartbeat_is_judged_from_its_start() {
+        let run = RunLiveness {
+            last_seen: None,
+            ..jfat_silver()
+        };
+        assert_eq!(run.last_alive(), run.started_at);
+        assert_eq!(
+            run.orphaned(ORPHAN_GRACE, at("2026-09-25T04:46:55Z"), None),
+            Some(OrphanReason::Overdue)
+        );
+    }
+
+    #[test]
+    fn last_alive_never_precedes_the_start() {
+        let run = RunLiveness {
+            last_seen: Some(at("2026-09-24T23:00:00Z")),
+            ..jfat_silver()
+        };
+        assert_eq!(run.last_alive(), at("2026-09-24T23:16:54Z"));
+    }
+
+    #[test]
+    fn a_run_silent_since_before_the_boot_is_rebooted_even_inside_its_window() {
+        let run = jfat_silver();
+        let boot = Some(at("2026-09-24T23:40:00Z"));
+        assert_eq!(
+            run.orphaned(ORPHAN_GRACE, at("2026-09-24T23:42:49Z"), boot),
+            Some(OrphanReason::Rebooted)
+        );
+    }
+
+    #[test]
+    fn a_run_heartbeating_after_the_boot_is_not_rebooted() {
+        // Bronze `934d128a` started on DESKTOP-JFAT75B after the reboot.
+        let live = RunLiveness {
+            started_at: at("2026-09-24T23:42:49Z"),
+            planned_secs: Some(5_400),
+            last_seen: Some(at("2026-09-25T00:27:27Z")),
+        };
+        let boot = Some(at("2026-09-24T23:40:00Z"));
+        assert_eq!(
+            live.orphaned(ORPHAN_GRACE, at("2026-09-25T00:27:37Z"), boot),
+            None
+        );
+
+        let fresh = RunLiveness {
+            last_seen: None,
+            ..live
+        };
+        assert_eq!(
+            fresh.orphaned(ORPHAN_GRACE, at("2026-09-24T23:42:50Z"), boot),
+            None
+        );
+    }
+
+    #[test]
+    fn a_boot_time_takes_precedence_over_the_window() {
+        let run = jfat_silver();
+        let boot = Some(at("2026-09-24T23:40:00Z"));
+        assert_eq!(
+            run.orphaned(ORPHAN_GRACE, at("2026-09-25T09:00:00Z"), boot),
+            Some(OrphanReason::Rebooted)
+        );
+    }
+
+    #[test]
+    fn an_absurd_plan_saturates_instead_of_overflowing() {
+        let run = RunLiveness {
+            planned_secs: Some(u64::MAX),
+            ..jfat_silver()
+        };
+        assert_eq!(run.deadline(ORPHAN_GRACE), DateTime::<Utc>::MAX_UTC);
+        assert_eq!(
+            run.orphaned(ORPHAN_GRACE, at("2100-01-01T00:00:00Z"), None),
+            None
+        );
+    }
+
+    #[test]
+    fn a_shorter_grace_moves_the_deadline() {
+        assert_eq!(
+            jfat_silver().deadline(secs(600)),
+            at("2026-09-25T02:56:54Z")
+        );
+    }
+
+    #[test]
+    fn notes_name_the_rule_and_the_grace() {
+        assert_eq!(
+            OrphanReason::Overdue.note(ORPHAN_GRACE),
+            "[orphaned: no finalize within planned window + 2h; ended_at is the last metric/event]"
+        );
+        assert!(OrphanReason::Overdue.note(secs(5_400)).contains("+ 90m;"));
+        assert!(OrphanReason::Overdue.note(secs(45)).contains("+ 45s;"));
+        assert!(
+            OrphanReason::Rebooted
+                .note(ORPHAN_GRACE)
+                .contains("rebooted")
+        );
     }
 }

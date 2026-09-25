@@ -19,10 +19,12 @@ mod assist;
 pub mod codex;
 mod notify;
 mod offer;
+mod stress_reap;
 
 pub use assist::spawn_assist_dispatcher;
 pub use codex::spawn_codex_broker;
 pub use notify::spawn_shelf_notifier;
+pub use stress_reap::spawn_stress_reaper;
 
 /// Poll interval for the session pump.
 const PUMP_MS: u64 = 100;
@@ -277,6 +279,7 @@ pub async fn run(mcp_http: bool) -> anyhow::Result<()> {
     spawn_codex_broker(manager.clone());
     spawn_assist_dispatcher();
     spawn_shelf_notifier();
+    spawn_stress_reaper();
 
     if mcp_http {
         crate::plugins::run_plugin_mcp_server_http(manager).await

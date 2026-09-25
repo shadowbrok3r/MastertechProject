@@ -19,9 +19,9 @@ use crossbeam::channel::{bounded, Receiver, Sender, TrySendError};
 
 use database::schema::{
     random_record_id, BiosSettings, DriverVersions, FailureMode,
-    FinishReason as DbFinishReason, RecordId, RunResult, RunSummary, ScenarioStageSummary,
-    StressTestEvent as DbStressTestEvent, StressTestMetric, StressTestRun, TargetKind, TestTool,
-    EventKind as DbEventKind, STRESS_TEST_EVENT_TABLE,
+    FinishReason as DbFinishReason, ReapScope, RecordId, RecordIdExt, RunResult, RunSummary,
+    ScenarioStageSummary, StressTestEvent as DbStressTestEvent, StressTestMetric, StressTestRun,
+    TargetKind, TestTool, EventKind as DbEventKind, ORPHAN_GRACE, STRESS_TEST_EVENT_TABLE,
 };
 use stress_kit::{
     scenario::{
@@ -488,6 +488,8 @@ fn worker(
         spec.touched_components.len()
     );
 
+    close_orphaned_runs(&spec.computer, &update_tx);
+
     // ---- 1. Build + persist the StressTestRun row ----
     // `StressTestRun::create` already does a read-back via `Self::exists`,
     // so an Ok here proves the row landed in SurrealDB.
@@ -735,6 +737,42 @@ fn build_run(spec: &RunSpec) -> StressTestRun {
 
     run.duration_planned_secs = spec.plan.expected_duration_secs();
     run
+}
+
+/// Closes this computer's `in_progress` runs that went silent before this boot or outlived their window.
+fn close_orphaned_runs(computer: &RecordId, update_tx: &Sender<RunUpdate>) {
+    let booted_at = i64::try_from(sysinfo::System::boot_time())
+        .ok()
+        .filter(|secs| *secs > 0)
+        .and_then(|secs| chrono::DateTime::from_timestamp(secs, 0));
+    let computer = computer.clone();
+    let reaped = runtime::block_on(async move {
+        let scope = ReapScope::Machine {
+            computer: &computer,
+            booted_at,
+        };
+        StressTestRun::reap_orphaned(scope, ORPHAN_GRACE).await
+    });
+    match reaped {
+        Ok(closed) if closed.is_empty() => {}
+        Ok(closed) => {
+            let runs: Vec<String> = closed
+                .iter()
+                .map(|(id, reason)| format!("{} ({})", id.key_string(), reason.as_str()))
+                .collect();
+            send(
+                update_tx,
+                RunUpdate::Warning {
+                    message: format!(
+                        "closed {} orphaned stress run(s) on this machine as aborted: {}",
+                        closed.len(),
+                        runs.join(", ")
+                    ),
+                },
+            );
+        }
+        Err(e) => log::warn!("[stress-runner/worker] orphaned-run reap failed: {e}"),
+    }
 }
 
 /// Text used when a fatal sample carries no `last_error`.
