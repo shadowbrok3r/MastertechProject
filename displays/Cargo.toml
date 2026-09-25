@@ -26,7 +26,6 @@ reqwest = { version = "0.13", default-features = false, features = ["stream", "j
 compact_str = { version = "0.9.0", features = ["serde"] }
 toml = "1.1.2"
 uuid = { version = "1.0", features = ["v4"] }
-rpc-router = "0.2.0"
 schemars = "1"
 zstd.workspace = true
 tap = "1"
@@ -62,7 +61,6 @@ chrono.workspace = true
 serde.workspace = true
 bytes.workspace = true
 regex.workspace = true
-async-openai = { workspace = true }
 log.workspace = true
 image.workspace = true
 
