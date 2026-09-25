@@ -15,6 +15,7 @@ use serde_json::Value;
 
 #[cfg(target_os = "windows")]
 use crate::tabs::minidump::MiniDumpApp;
+use crate::tabs::minidump::MinidumpArgs;
 
 pub struct MasterTechApp {
     pub context: MastertechContext,
@@ -219,11 +220,11 @@ pub struct PendingTurData {
 impl MasterTechApp {
     /// Construct against a bare egui context for the egui_skia software renderer,
     /// which has no eframe backend or storage.
-    pub fn new_software(ctx: &eframe::egui::Context) -> Self {
-        Self::new(&eframe::CreationContext::_new_kittest(ctx.clone()))
+    pub fn new_software(ctx: &eframe::egui::Context, minidump: MinidumpArgs) -> Self {
+        Self::new(&eframe::CreationContext::_new_kittest(ctx.clone()), minidump)
     }
 
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, minidump: MinidumpArgs) -> Self {
         displays::ui_tools::theme_config::bootstrap_startup_theme(&cc.egui_ctx);
 
         // Background thread requests a repaint every 250ms to keep the event loop ticking.
@@ -283,6 +284,8 @@ impl MasterTechApp {
             mgr.set_dispatcher(plugin_dispatcher);
             Arc::new(RwLock::new(mgr))
         };
+        #[cfg(not(target_os = "windows"))]
+        let _ = minidump;
 
         let mastertech_context = MastertechContext {
             pending_assist: None,
@@ -342,7 +345,7 @@ impl MasterTechApp {
             hdd_test_cbox: scaffold::HardwareTest::HddNotTested,
             ssd_test_cbox: scaffold::HardwareTest::SsdNotTested,
             #[cfg(target_os = "windows")]
-            minidump_app: MiniDumpApp::default(),
+            minidump_app: MiniDumpApp::new(minidump),
 
             client_uuid,
             rx,

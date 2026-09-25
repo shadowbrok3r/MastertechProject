@@ -3,6 +3,7 @@
 
 use displays::app_state::{AppState, MainPages};
 use log::{error, info};
+use tabs::minidump::MinidumpArgs;
 
 #[cfg(target_os = "windows")]
 extern crate winapi;
@@ -389,8 +390,8 @@ fn init_terminal_mode_logging(opts: LaunchOptions) {
 }
 
 #[cfg(feature = "skia-render")]
-fn try_software_gui() -> bool {
-    match software_gui::run() {
+fn try_software_gui(minidump: MinidumpArgs) -> bool {
+    match software_gui::run(minidump) {
         Ok(()) => true,
         Err(e) => {
             error!("software renderer failed: {e:?}");
@@ -400,12 +401,12 @@ fn try_software_gui() -> bool {
 }
 
 #[cfg(not(feature = "skia-render"))]
-fn try_software_gui() -> bool {
+fn try_software_gui(_minidump: MinidumpArgs) -> bool {
     error!("no software renderer in this build: the `skia-render` feature is off, so the GPU -> software -> terminal ladder has no middle rung (see Mastertech4.0/BUILD.md)");
     false
 }
 
-async fn run_gui(opts: LaunchOptions) -> eframe::Result<()> {
+async fn run_gui(opts: LaunchOptions, minidump: MinidumpArgs) -> eframe::Result<()> {
     let mut egui_builder = displays::ui_tools::egui_logger::builder();
     for target in logging::MUTED_TARGETS {
         egui_builder = egui_builder.add_blacklist(target);
@@ -426,8 +427,9 @@ async fn run_gui(opts: LaunchOptions) -> eframe::Result<()> {
         } else {
             error!("--cpu/--software requested, but this build ships no software renderer");
         }
-        try_software_gui()
+        try_software_gui(minidump)
     } else {
+        let glow_minidump = minidump.clone();
         let eframe_app = eframe::run_native(
             format!("Mastertech-{}", database::version_with_build!()).as_str(),
             eframe::NativeOptions {
@@ -437,16 +439,16 @@ async fn run_gui(opts: LaunchOptions) -> eframe::Result<()> {
                     .with_icon(load_icon()),
                 ..Default::default()
             },
-            Box::new(|cc| {
+            Box::new(move |cc| {
                 egui_extras::install_image_loaders(&cc.egui_ctx);
-                Ok(Box::new(app_state::MasterTechApp::new(cc)))
+                Ok(Box::new(app_state::MasterTechApp::new(cc, glow_minidump)))
             }),
         );
         match eframe_app {
             Ok(()) => true,
             Err(e) => {
                 error!("eframe glow init failed: {e:?}; trying egui_skia software renderer");
-                try_software_gui()
+                try_software_gui(minidump)
             }
         }
     };
@@ -475,43 +477,9 @@ async fn run_gui(opts: LaunchOptions) -> eframe::Result<()> {
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> eframe::Result<()> {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-
-    // Adopt the launching terminal's console, if there is one. Never allocates, so a double-click
-    // opens no stray window; terminal mode allocates later when this found nothing.
-    let console_attached = console::attach_parent();
-
-    // Correct a stale clock (Windows PE boots ~years in the past) before any TLS
-    // handshake, or rustls rejects valid certs as "not valid yet".
-    if let Err(e) = database::clock_sync::ensure_system_clock_sane() {
-        log::warn!("clock sync failed ({e:?}); TLS may fail if the system clock is wrong");
-    }
-
-    // Run stress-runner's DB writes on this runtime (which owns the SurrealDB
-    // connection) instead of its private fallback runtime.
-    stress_runner::set_runtime_handle(tokio::runtime::Handle::current());
-
-    // Lets a script executor start async work from the thread it runs on.
-    scripts_exec::env::set_runtime_handle(tokio::runtime::Handle::current());
-
-    #[cfg(target_os = "windows")]
-    {
-        use windows::Win32::System::Threading::GetCurrentProcess;
-        use windows::Win32::System::Threading::SetPriorityClass;
-        use windows::Win32::System::Threading::ABOVE_NORMAL_PRIORITY_CLASS;
-        unsafe {
-            let _ = SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);
-        }
-        // Delete the one-shot logon relaunch task so it does not fire on every logon.
-        utilities::windows::reboot::clear_relaunch_task();
-        utilities::windows::power::ensure_awake("startup");
-        // Without a WER LocalDumps key an AppCrash keeps metadata only and no .mdmp.
-        tokio::spawn(utilities::windows::crash_dumps::apply_policy_when_ready());
-    }
-
-    let matches = clap::Command::new("Mastertech")
+/// The top-level command line, including the Minidump tab's inputs.
+fn cli() -> clap::Command {
+    clap::Command::new("Mastertech")
         .version(env!("CARGO_PKG_VERSION"))
         .author("Shadowbroker")
         .arg(
@@ -554,7 +522,47 @@ async fn main() -> eframe::Result<()> {
                 .help("Disable the glass backdrop-blur pass (same as setting MTECH_NO_FROST=1)")
                 .action(clap::ArgAction::SetTrue),
         )
-        .get_matches();
+        .args(MinidumpArgs::clap_args())
+}
+
+#[tokio::main]
+async fn main() -> eframe::Result<()> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    // Adopt the launching terminal's console, if there is one. Never allocates, so a double-click
+    // opens no stray window; terminal mode allocates later when this found nothing.
+    let console_attached = console::attach_parent();
+
+    // Correct a stale clock (Windows PE boots ~years in the past) before any TLS
+    // handshake, or rustls rejects valid certs as "not valid yet".
+    if let Err(e) = database::clock_sync::ensure_system_clock_sane() {
+        log::warn!("clock sync failed ({e:?}); TLS may fail if the system clock is wrong");
+    }
+
+    // Run stress-runner's DB writes on this runtime (which owns the SurrealDB
+    // connection) instead of its private fallback runtime.
+    stress_runner::set_runtime_handle(tokio::runtime::Handle::current());
+
+    // Lets a script executor start async work from the thread it runs on.
+    scripts_exec::env::set_runtime_handle(tokio::runtime::Handle::current());
+
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::System::Threading::GetCurrentProcess;
+        use windows::Win32::System::Threading::SetPriorityClass;
+        use windows::Win32::System::Threading::ABOVE_NORMAL_PRIORITY_CLASS;
+        unsafe {
+            let _ = SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);
+        }
+        // Delete the one-shot logon relaunch task so it does not fire on every logon.
+        utilities::windows::reboot::clear_relaunch_task();
+        utilities::windows::power::ensure_awake("startup");
+        // Without a WER LocalDumps key an AppCrash keeps metadata only and no .mdmp.
+        tokio::spawn(utilities::windows::crash_dumps::apply_policy_when_ready());
+    }
+
+    let matches = cli().get_matches();
+    let minidump = MinidumpArgs::from_matches(&matches);
 
     let opts = LaunchOptions {
         mirror_to_console: console_attached,
@@ -614,7 +622,7 @@ async fn main() -> eframe::Result<()> {
         let res = terminal_mode::run_terminal_mode().await;
         log::info!("TERM MODE: {res:?}");
     } else {
-        run_gui(opts).await?;
+        run_gui(opts, minidump).await?;
     }
     
     Ok(())
