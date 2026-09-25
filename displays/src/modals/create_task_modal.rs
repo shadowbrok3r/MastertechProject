@@ -1,4 +1,4 @@
-use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TaskCreationResult, TicketData, User, assignable_users, prestashop::OrderType, entity_link::computer_has_minimal_hardware},db};
+use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TaskCreationResult, TicketData, User, assignee_names, prestashop::OrderType, entity_link::computer_has_minimal_hardware},db};
 use crate::{get_current_user_from_auth, get_toast_sender, ui_tools::autocomplete::AutoCompleteTextEdit, ui_tools::icons, DisplayModal, PlatformSpawner, Spawner, ToastMessage};
 use eframe::egui::{Align, Button, Color32, ComboBox, Frame, RichText, Spinner, Stroke, TextEdit, Ui, Vec2, Widget, vec2};
 use database::schema::utilities::create_full_task_payload;
@@ -12,7 +12,6 @@ use database::schema::Datetime;
 use chrono::Utc;
 use egui_extras::DatePickerButton;
 use crossbeam::channel::{Sender, Receiver};
-use std::collections::BTreeSet;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 
@@ -309,18 +308,15 @@ impl CreateTaskModal {
                 .ui(ui);
 
             ui.add_space(15.0);
-            let mut inputs = BTreeSet::new();
-
-            for user in assignable_users(&self.store_users, self.user.get_store()) {
-                inputs.insert(user.get_username().to_string());
-            }
+            let (inputs, local) = assignee_names(&self.store_users, self.user.get_store());
 
             let r = AutoCompleteTextEdit::new(
-                &mut self.assignee, 
-                inputs.clone()
+                &mut self.assignee,
+                inputs
             )
             .highlight_matches(true)
             .max_suggestions(3)
+            .group_by(move |name| usize::from(!local.contains(name)))
             .set_text_edit_properties(|text_edit| {
                 text_edit
                     .hint_text("Assignee")

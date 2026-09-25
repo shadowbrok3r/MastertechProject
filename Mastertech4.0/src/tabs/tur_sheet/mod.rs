@@ -1,10 +1,10 @@
 use crate::{app_state::MastertechContext, tabs::tur_sheet::scaffold::HardwareTest::{HddFail, HddNotTested, HddPass, RamFail, RamNotTested, RamPass, SsdFail, SsdNotTested, SsdPass}};
 use eframe::egui::{vec2, Align, Button, Color32, ComboBox, FontId, Grid, Id, Key, KeyboardShortcut, Margin, Modifiers, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget };
-use database::schema::{assignable_users, CarboniteResponse, CustomerData, LiveTaskPayload, TicketData};
+use database::schema::{assignee_names, CarboniteResponse, CustomerData, LiveTaskPayload, TicketData};
 use displays::plugins::push_widget_anchor;
 use displays::ui_tools::{autocomplete::AutoCompleteTextEdit, toasts::{Toast, ToastKind, ToastOptions}};
 use egui::Frame;
-use std::{collections::BTreeSet, f32};
+use std::f32;
 use get_ticket::SendRequest;
 use std::path::PathBuf;
 use log::{debug, info};
@@ -260,8 +260,6 @@ impl MastertechContext {
 
             ui.label("");
 
-            let mut inputs = BTreeSet::new();
-
             let roster = displays::get_database_users();
             let my_store = self
                 .shared_ctx
@@ -269,13 +267,13 @@ impl MastertechContext {
                 .as_ref()
                 .map(|u| u.get_store())
                 .unwrap_or_default();
-            for user in assignable_users(&roster, my_store) {
-                inputs.insert(user.get_username().to_string());
-            }
+            let (inputs, local) = assignee_names(&roster, my_store);
+            let local_tech = local.clone();
             
             let tur_salesman = AutoCompleteTextEdit::new(&mut self.ticket_data.salesman, inputs.clone())
                 .highlight_matches(true)
                 .max_suggestions(3)
+                .group_by(move |name| usize::from(!local.contains(name)))
                 .set_text_edit_properties(move |text_edit| 
             {
                 text_edit
@@ -290,9 +288,10 @@ impl MastertechContext {
             .ui(ui);
             push_widget_anchor("tur.salesman", tur_salesman.rect);
 
-            let tur_tech = AutoCompleteTextEdit::new(&mut self.ticket_data.tech, inputs.clone())
+            let tur_tech = AutoCompleteTextEdit::new(&mut self.ticket_data.tech, inputs)
                 .highlight_matches(true)
                 .max_suggestions(3)
+                .group_by(move |name| usize::from(!local_tech.contains(name)))
                 .set_text_edit_properties(move |text_edit| 
             {
                 text_edit

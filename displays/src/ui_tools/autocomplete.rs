@@ -41,6 +41,8 @@ pub struct AutoCompleteTextEdit<'a, T> {
     /// Used to set properties on the internal TextEdit
     set_properties: Option<Box<SetTextEditProperties>>,
     filter: Option<Box<dyn Fn(&str) -> bool>>,
+    /// Rank group of an entry; lower groups list first, then match score
+    group: Option<Box<dyn Fn(&str) -> usize>>,
     layouter: Option<&'a mut dyn FnMut(&Ui, &dyn eframe::egui::TextBuffer, f32) -> Arc<eframe::egui::Galley>>,
 }
 
@@ -61,6 +63,7 @@ where
             highlight: false,
             set_properties: None,
             filter: None,
+            group: None,
             layouter: None,
         }
     }
@@ -113,6 +116,15 @@ where
         self
     }
 
+    /// Lists matches by `group` (lowest first), then by match score.
+    pub fn group_by<F>(mut self, group: F) -> Self
+    where
+        F: Fn(&str) -> usize + 'static,
+    {
+        self.group = Some(Box::new(group));
+        self
+    }
+
     /// Sets the layouter function for custom text layout.
     pub fn layouter(
         mut self,
@@ -137,8 +149,10 @@ where
             highlight,
             set_properties,
             filter,
+            group,
             layouter,
         } = self;
+        let rank = |s: &S, score: i64| (group.as_ref().map_or(0, |g| g(s.as_ref())), Reverse(score));
 
         let id = ui.next_auto_id();
         ui.skip_ahead_auto_ids(1);
@@ -203,7 +217,7 @@ where
                         })
                         .collect::<Vec<_>>();
 
-                    match_results.sort_by_key(|k| Reverse(k.1));
+                    match_results.sort_by_key(|k| rank(&k.0, k.1));
                 }
             } else {
                 if !text_field.is_empty() {
@@ -214,7 +228,7 @@ where
                             score.map(|(score, indices)| (s, score, indices))
                         })
                         .collect::<Vec<_>>();
-                    match_results.sort_by_key(|k| Reverse(k.1)); 
+                    match_results.sort_by_key(|k| rank(&k.0, k.1));
                 }
             }
         }
@@ -233,29 +247,20 @@ where
             max_suggestions,
         );
 
-        let accepted_by_keyboard = ui.input_mut(|input| input.key_pressed(Key::Enter))
-            || ui.input_mut(|input| input.key_pressed(Key::Tab));
-
-        // if let (Some(index), true) = (
-        //     state.selected_index,
-        //     // If accepted by keyboard, close the popup. If the popup is closed with a selected index, take that text
-        //     accepted_by_keyboard || !ui.memory(|mem| mem.is_popup_open(id)),
-        // ) {
-        //     text_field.replace_with(match_results[index].0.as_ref());
-        //     state.selected_index = None;
-        // }
-
-        // if accepted_by_keyboard {
-        //     text_response.request_focus()
-        // }
+        let accepted_by_keyboard = (text_response.has_focus() || text_response.lost_focus())
+            && ui.input(|input| input.key_pressed(Key::Enter) || input.key_pressed(Key::Tab));
+        // A click while the pointer was over an entry last frame accepts that entry.
+        let clicked_index = state
+            .hovered_index
+            .filter(|_| ui.input(|input| input.pointer.any_click()));
+        let accepted_index = clicked_index
+            .or(state.selected_index.filter(|_| accepted_by_keyboard))
+            .filter(|&index| index < match_results.len());
 
         let ctx = ui.ctx();
 
         let open = &mut false;
-        if let (Some(index), true) = (
-            state.selected_index,
-            accepted_by_keyboard || !Popup::is_id_open(&ctx, id),
-        ) {
+        if let Some(index) = accepted_index {
             if let Some(at_char_index) = trigger_char_position {
                 let selected_text = match_results[index].0.as_ref();
                 text_response.request_focus();
@@ -292,6 +297,7 @@ where
                 }
             }
             state.selected_index = None;
+            state.hovered_index = None;
         }
 
         if !match_results.is_empty() && text_response.has_focus() {
@@ -311,9 +317,10 @@ where
             }
         }
 
+        state.hovered_index = None;
         Popup::new(
-            id, 
-            ctx.clone(), 
+            id,
+            ctx.clone(),
             PopupAnchor::from(&text_response.response), 
             LayerId::new(Order::Foreground, id)
         )
@@ -342,14 +349,11 @@ where
                     job.append(output.as_ref(), 0.0, TextFormat::default());
                     job
                 };
-                //  Update selected index based on hover
+                // Hover highlights the entry; it is only accepted by a click, Enter or Tab.
                 if ui.toggle_value(&mut selected, text).hovered() {
                     state.selected_index = Some(i);
-                    // text_field.replace_with(match_results[index].0.as_ref());
+                    state.hovered_index = Some(i);
                 }
-                // if ui.toggle_value(&mut selected, text).clicked() {
-                //     text_field.replace_with(output.as_ref());
-                // }
             }
         });
 
@@ -392,11 +396,15 @@ pub fn highlight_matches(text: &str, match_indices: &[usize], color: Color32) ->
 
 /// Stores the currently selected index in egui state
 #[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 struct AutoCompleteTextEditState {
     /// Currently selected index, is `None` if nothing is selected
     selected_index: Option<usize>,
     /// Whether or not the text edit was focused last frame
     focused: bool,
+    /// Entry under the pointer when the popup was last drawn
+    #[serde(skip)]
+    hovered_index: Option<usize>,
 }
 
 impl AutoCompleteTextEditState {
