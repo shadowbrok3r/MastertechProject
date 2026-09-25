@@ -2,20 +2,23 @@
 //! agent_event rows, answers the requests codex addresses to its client (tool
 //! calls, technician questions, approvals) and applies technician turns.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use base64::Engine;
 use database::schema::agent_thread::AgentThreadState;
 use database::schema::{
-    AgentApproval, AgentEvent, AgentThread, AgentTurn, AssistRequest, NewAgentApproval, RecordId,
-    RecordIdExt,
+    upload_name, AgentActivity, AgentApproval, AgentEvent, AgentThread, AgentTurn, AssistRequest,
+    NewAgentApproval, RecordId, RecordIdExt, TurnImage, DEFAULT_UPLOAD_DIR,
 };
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot};
 use zc_codex_client::{decision, elicitation, Client, Event};
 
+use super::busy::{self, Busy, Signal};
 use super::coalesce::{self, Partial, ThreadRow, TranscriptBuffer};
+use super::queue::{self, TurnQueue};
 use super::tools::{scope_violation, ToolHost, ToolOutcome, ToolPolicy};
 use super::wait;
 use super::zeroclaw::{self, ZeroclawMemory};
@@ -25,6 +28,8 @@ use super::{manager, prompt, register_runner, runner_for, unregister_runner, Con
 #[derive(Debug, Clone)]
 pub enum RunnerCmd {
     Turn(AgentTurn),
+    /// A stop request, sent from its own task, got its answer.
+    Stopped { turn: Option<RecordId>, result: Result<(), String> },
 }
 
 /// Reconnect attempts before a thread is marked failed.
@@ -42,6 +47,15 @@ const FLUSH_TICK: Duration = Duration::from_millis(250);
 const DATA_URL_KEEP: usize = 256;
 /// Idle time after which a runner frees its pool slot; the thread's next turn brings one up again.
 const IDLE_RELEASE: Duration = Duration::from_secs(10 * 60);
+/// Longest decoded picture the broker stages.
+const IMAGE_MAX_BYTES: usize = 8 * 1024 * 1024;
+/// How long a stop request may take before it is reported as failed.
+const STOP_TIMEOUT: Duration = Duration::from_secs(30);
+/// Ceiling on the small reads (`thread/read`, `daemon/hello`) the runner makes between turns.
+const READ_TIMEOUT: Duration = Duration::from_secs(20);
+/// Transcript text of a context compaction while it runs and once it is done.
+const COMPACTING: &str = "Compacting the conversation to free context\u{2026}";
+const COMPACTED: &str = "Conversation compacted to free context.";
 
 /// Starts the thread's runner task and registers its command channel; a thread
 /// that already has a runner gets that runner's channel back instead.
@@ -83,6 +97,8 @@ struct Runner {
     thread: AgentThread,
     tools: Arc<ToolHost>,
     client: Client,
+    /// The runner's own command channel, for tasks that report back.
+    own: mpsc::Sender<RunnerCmd>,
     codex_thread_id: Option<String>,
     next_seq: i64,
     seqs: HashMap<String, i64>,
@@ -98,6 +114,20 @@ struct Runner {
     memory: Option<Arc<ZeroclawMemory>>,
     /// When the thread last went idle; `None` while a turn is in progress.
     idle_since: Option<Instant>,
+    busy: Busy,
+    queue: TurnQueue,
+    /// Compaction asked for while a turn ran, sent once it ends.
+    pending_compact: Option<AgentTurn>,
+    /// Commands that arrived while a tool call or an approval held the loop.
+    deferred: VecDeque<RunnerCmd>,
+    /// The daemon's staging directory, read from its hello on first use per connection.
+    upload_dir: Option<String>,
+    /// A non-retry error ended the current turn.
+    turn_failed: bool,
+    /// A stop request for the current turn is out.
+    stopping: bool,
+    /// A compaction was sent and no turn has started for it yet.
+    compact_unstarted: bool,
 }
 
 impl Runner {
@@ -145,6 +175,7 @@ impl Runner {
             thread,
             tools,
             client,
+            own,
             seqs: HashMap::new(),
             completed: HashSet::new(),
             transcript: TranscriptBuffer::new(coalesce::ITEM_FLUSH),
@@ -154,42 +185,58 @@ impl Runner {
             remembered: HashSet::new(),
             attached: false,
             idle_since: None,
+            busy: Busy::default(),
+            queue: TurnQueue::default(),
+            pending_compact: None,
+            deferred: VecDeque::new(),
+            upload_dir: None,
+            turn_failed: false,
+            stopping: false,
+            compact_unstarted: false,
         };
         if let Err(e) = me.attach().await {
             me.write_status("failed", Some(&format!("thread start: {e}"))).await?;
             return Err(e);
         }
+        me.load_queue().await;
         if let Some(text) = opening {
             let text = me.with_memory_brief(text).await;
-            me.send_turn("start", &text).await?;
+            me.send_text("start", &text).await?;
         }
+        me.pump().await;
 
         let mut tick = tokio::time::interval(FLUSH_TICK);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
-            let flow = tokio::select! {
-                ev = events.recv() => match ev {
-                    Some(ev) => me.on_event(ev).await,
-                    None => Flow::Reconnect,
+            let flow = match me.deferred.pop_front() {
+                Some(cmd) => me.on_cmd(cmd).await,
+                None => tokio::select! {
+                    ev = events.recv() => match ev {
+                        Some(ev) => me.on_event(ev, &mut rx).await,
+                        None => Flow::Reconnect,
+                    },
+                    cmd = rx.recv() => match cmd {
+                        Some(cmd) => me.on_cmd(cmd).await,
+                        None => Flow::Closed,
+                    },
+                    _ = tick.tick() => {
+                        me.flush_due().await;
+                        if me.idle_expired() { Flow::Release } else { Flow::Continue }
+                    }
                 },
-                cmd = rx.recv() => match cmd {
-                    Some(RunnerCmd::Turn(turn)) => me.on_turn(turn).await,
-                    None => Flow::Closed,
-                },
-                _ = tick.tick() => {
-                    me.flush_due().await;
-                    if me.idle_expired() { Flow::Release } else { Flow::Continue }
-                }
             };
             match flow {
                 Flow::Continue => {}
                 Flow::Closed => break,
                 Flow::Release => {
-                    me.release(rx, &own).await;
+                    me.release(rx).await;
                     return Ok(());
                 }
                 Flow::Reconnect => match me.reconnect().await {
-                    Ok(new_events) => events = new_events,
+                    Ok(new_events) => {
+                        events = new_events;
+                        me.pump().await;
+                    }
                     Err(e) => {
                         me.write_status("failed", Some(&e.to_string())).await?;
                         return Err(e);
@@ -252,9 +299,10 @@ impl Runner {
         })
     }
 
-    /// Resumes the recorded codex thread, or starts a new one.
+    /// Resumes the recorded codex thread, or starts a new one, and records whether a turn still runs.
     async fn attach(&mut self) -> anyhow::Result<()> {
         let first = !self.attached;
+        self.upload_dir = None;
         if let Some(existing) = self.codex_thread_id.clone() {
             let mut params = self.thread_params();
             params["threadId"] = json!(existing);
@@ -262,11 +310,17 @@ impl Runner {
                 Ok(_) => {
                     log::info!("codex: resumed codex thread {existing} for {}", self.thread.connection_string);
                     self.backfill(&existing).await;
+                    let in_progress = self.turn_in_progress().await.unwrap_or(false);
                     if first && matches!(self.thread.status.as_str(), "running" | "waiting_approval") {
-                        self.reconcile_interrupted().await;
+                        self.reconcile_interrupted(in_progress).await;
                     }
                     self.attached = true;
-                    self.write_status("idle", None).await?;
+                    if !in_progress {
+                        self.stopping = false;
+                    }
+                    self.busy = self.busy.after(&Signal::Attached { in_progress });
+                    self.row.set_activity(self.busy.activity.to_db());
+                    self.write_status(self.busy.phase.status(), None).await?;
                     return Ok(());
                 }
                 Err(e) => {
@@ -277,11 +331,54 @@ impl Runner {
         }
         let id = self.client.thread_start(self.thread_params()).await?;
         AgentThread::set_codex_thread(&self.thread.id, &id).await?;
+        self.busy = Busy::default();
+        self.stopping = false;
+        self.row.set_activity(self.busy.activity.to_db());
         self.write_status("idle", None).await?;
         log::info!("codex: thread {} -> codex {id}", self.thread.id.key_string());
         self.codex_thread_id = Some(id);
         self.attached = true;
         Ok(())
+    }
+
+    /// Whether the app-server still runs a turn on this thread; `None` when it could not be read.
+    async fn turn_in_progress(&self) -> Option<bool> {
+        let id = self.codex_thread_id.as_deref()?;
+        let params = json!({ "threadId": id, "includeTurns": true });
+        let snapshot = match self.client.request_with_timeout("thread/read", params, READ_TIMEOUT).await {
+            Ok(s) => s,
+            Err(e) => {
+                log::debug!("codex: thread/read failed: {e}");
+                return None;
+            }
+        };
+        let turns = snapshot.pointer("/thread/turns")?.as_array()?;
+        Some(turns.iter().any(|t| t["status"] == "inProgress"))
+    }
+
+    /// Queue turns claimed before this runner started, in the order they were sent.
+    async fn load_queue(&mut self) {
+        let rows = match AgentTurn::queue_of(&self.thread.id).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                log::warn!("codex: could not read the queue of {}: {e}", self.thread.id.key_string());
+                return;
+            }
+        };
+        let mut held = false;
+        for turn in rows {
+            if turn.text.trim().is_empty() && turn.images.is_empty() {
+                let _ = AgentTurn::take_queued(&turn.id).await;
+                continue;
+            }
+            held |= turn.status == "held";
+            self.queue.push(turn);
+        }
+        if held && self.queue.hold(queue::STOPPED) {
+            if let Err(e) = AgentTurn::hold_queue(&self.thread.id).await {
+                log::warn!("codex: could not hold the queue of {}: {e}", self.thread.id.key_string());
+            }
+        }
     }
 
     /// Records the items codex produced while no broker was attached.
@@ -340,7 +437,7 @@ impl Runner {
     }
 
     /// The previous broker died mid-turn: the decisions it was relaying cannot be answered any more.
-    async fn reconcile_interrupted(&mut self) {
+    async fn reconcile_interrupted(&mut self, in_progress: bool) {
         match AgentApproval::fail_pending_for_thread(
             &self.thread.id,
             "The broker restarted before this decision could be relayed; the agent can ask again.",
@@ -351,7 +448,12 @@ impl Runner {
             Ok(n) => self.marker("approval", &format!("{n} pending approval(s) were cancelled by a broker restart."), None).await,
             Err(e) => log::warn!("codex: could not reconcile pending approvals: {e}"),
         }
-        self.marker("other", "Broker restarted while the agent was working; send a message if it went quiet.", None).await;
+        let note = if in_progress {
+            "Broker restarted mid-turn and reattached to the running turn."
+        } else {
+            "Broker restarted while the agent was working; send a message if it went quiet."
+        };
+        self.marker("other", note, None).await;
     }
 
     async fn reconnect(&mut self) -> anyhow::Result<mpsc::Receiver<Event>> {
@@ -416,9 +518,10 @@ impl Runner {
         }
     }
 
-    async fn save_row(&self, state: AgentThreadState) {
+    async fn save_row(&mut self, state: AgentThreadState) {
         if let Err(e) = AgentThread::save_state(&self.thread.id, &state).await {
             log::warn!("codex: thread write failed: {e}");
+            self.row.failed(&state);
         }
     }
 
@@ -458,7 +561,7 @@ impl Runner {
         let Some(state) = self.row.status(status, error, Instant::now()) else { return Ok(()) };
         let written = AgentThread::save_state(&self.thread.id, &state).await;
         if written.is_err() {
-            self.row.forget_status();
+            self.row.failed(&state);
         }
         written
     }
@@ -469,16 +572,41 @@ impl Runner {
         }
     }
 
+    /// Moves the phase and activity on `signal`; a phase change is written at once, an activity later.
+    async fn signal(&mut self, signal: Signal) {
+        let next = self.busy.after(&signal);
+        if next == self.busy {
+            return;
+        }
+        let moved = next.phase != self.busy.phase;
+        self.busy = next;
+        self.row.set_activity(self.busy.activity.to_db());
+        if moved {
+            self.set_status(self.busy.phase.status()).await;
+        }
+    }
+
     fn idle_expired(&self) -> bool {
-        self.waits.is_empty() && self.idle_since.is_some_and(|t| t.elapsed() >= IDLE_RELEASE)
+        self.waits.is_empty()
+            && self.busy.is_idle()
+            && !self.stopping
+            && self.pending_compact.is_none()
+            && self.idle_since.is_some_and(|t| t.elapsed() >= IDLE_RELEASE)
     }
 
     /// Frees the pool slot; a turn that reached this runner first goes to a fresh runner.
-    async fn release(mut self, mut rx: mpsc::Receiver<RunnerCmd>, own: &mpsc::Sender<RunnerCmd>) {
+    async fn release(mut self, mut rx: mpsc::Receiver<RunnerCmd>) {
         let key = self.thread.id.key_string();
-        unregister_runner(&key, own);
+        unregister_runner(&key, &self.own);
         rx.close();
-        let raced: Vec<RunnerCmd> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        let raced: Vec<AgentTurn> = std::mem::take(&mut self.deferred)
+            .into_iter()
+            .chain(std::iter::from_fn(|| rx.try_recv().ok()))
+            .filter_map(|cmd| match cmd {
+                RunnerCmd::Turn(turn) => Some(turn),
+                RunnerCmd::Stopped { .. } => None,
+            })
+            .collect();
         self.flush_all().await;
         log::info!("codex: released idle runner for thread {key}");
         if raced.is_empty() {
@@ -489,9 +617,10 @@ impl Runner {
             _ => self.thread.clone(),
         };
         let tx = spawn(self.cfg.clone(), thread, None);
-        for cmd in raced {
-            if let Err(mpsc::error::SendError(RunnerCmd::Turn(turn))) = tx.send(cmd).await {
-                let _ = AgentTurn::mark_failed(&turn.id, "runner did not accept the turn").await;
+        for turn in raced {
+            let id = turn.id.clone();
+            if tx.send(RunnerCmd::Turn(turn)).await.is_err() {
+                let _ = AgentTurn::mark_failed(&id, "runner did not accept the turn").await;
             }
         }
     }
@@ -513,36 +642,55 @@ impl Runner {
         }
     }
 
-    async fn on_event(&mut self, ev: Event) -> Flow {
+    async fn on_cmd(&mut self, cmd: RunnerCmd) -> Flow {
+        match cmd {
+            RunnerCmd::Turn(turn) => self.on_turn(turn).await,
+            RunnerCmd::Stopped { turn, result } => {
+                self.stop_answered(turn.as_ref(), result).await;
+                Flow::Continue
+            }
+        }
+    }
+
+    async fn on_event(&mut self, ev: Event, rx: &mut mpsc::Receiver<RunnerCmd>) -> Flow {
         match ev {
             Event::Text { item_id, text, final_chunk, .. } => {
+                if !final_chunk {
+                    self.signal(Signal::Streaming(AgentActivity::Writing)).await;
+                }
                 self.stream_text(&item_id, "agent", &text, final_chunk).await
             }
             Event::Reasoning { item_id, text, final_chunk, .. } => {
+                if !final_chunk {
+                    self.signal(Signal::Streaming(AgentActivity::Thinking)).await;
+                }
                 self.stream_text(&item_id, "reasoning", &text, final_chunk).await
             }
             Event::CommandOutput { item_id, text, final_chunk, .. } => {
+                if !final_chunk {
+                    self.signal(Signal::Streaming(AgentActivity::Command)).await;
+                }
                 self.stream_text(&item_id, "command", &text, final_chunk).await
             }
-            Event::Item { item_type, completed, item, .. } => self.on_item(&item_type, completed, item).await,
+            Event::Item { item_type, completed, item, .. } => {
+                if let Some(signal) = busy::item_signal(&item_type, completed, &item) {
+                    self.signal(signal).await;
+                }
+                self.on_item(&item_type, completed, item).await
+            }
             Event::Ask { request_id, method, params, .. } => {
-                self.on_ask(request_id, &method, params).await;
+                self.on_ask(request_id, &method, params, rx).await;
             }
             Event::AskResolved { request_id } => {
                 self.stop_wait(&request_id, "the request was settled elsewhere");
             }
             Event::TurnStarted { .. } => {
                 self.turn_no += 1;
+                self.compact_unstarted = false;
                 self.marker("turn_started", "", None).await;
-                self.set_status("running").await;
+                self.signal(Signal::TurnStarted).await;
             }
-            Event::TurnCompleted { .. } => {
-                self.stop_waits("the turn ended");
-                self.flush_transcript().await;
-                self.transcript.clear();
-                self.marker("turn_completed", "", None).await;
-                self.set_status("idle").await;
-            }
+            Event::TurnCompleted { .. } => self.turn_completed().await,
             Event::Error { message, will_retry, .. } => {
                 let text = if will_retry {
                     format!("Agent hit a transient error and is retrying: {message}")
@@ -550,8 +698,13 @@ impl Runner {
                     format!("Agent error: {message}")
                 };
                 self.marker("error", &text, None).await;
-                if !will_retry {
-                    if let Err(e) = self.write_status("idle", Some(&message)).await {
+                if will_retry {
+                    self.signal(Signal::Error { will_retry }).await;
+                } else {
+                    self.turn_failed = true;
+                    self.busy = self.busy.after(&Signal::Error { will_retry });
+                    self.row.set_activity(self.busy.activity.to_db());
+                    if let Err(e) = self.write_status(self.busy.phase.status(), Some(&message)).await {
                         log::warn!("codex: status write failed: {e}");
                     }
                 }
@@ -562,14 +715,39 @@ impl Runner {
                     window.and_then(|w| i64::try_from(w).ok()),
                 );
             }
-            Event::Other { method, .. } => {
-                if method == "connection/closed" {
-                    return Flow::Reconnect;
+            Event::Other { method, params } => match method.as_str() {
+                "connection/closed" => return Flow::Reconnect,
+                "thread/status/changed" => {
+                    if let Some(status) = busy::server_status(&params) {
+                        self.signal(Signal::Server(status)).await;
+                    }
                 }
-                log::debug!("codex: {method} ignored");
-            }
+                "thread/compacted" if self.compact_unstarted => {
+                    self.compact_unstarted = false;
+                    if !self.busy.is_idle() {
+                        self.signal(Signal::TurnEnded).await;
+                        self.pump().await;
+                    }
+                }
+                _ => log::debug!("codex: {method} ignored"),
+            },
         }
         Flow::Continue
+    }
+
+    /// A turn ended: a failed one holds the queue, then the next queued message goes out.
+    async fn turn_completed(&mut self) {
+        self.stop_waits("the turn ended");
+        self.flush_transcript().await;
+        self.transcript.clear();
+        self.marker("turn_completed", "", None).await;
+        self.signal(Signal::TurnEnded).await;
+        let failed = std::mem::take(&mut self.turn_failed);
+        let stopped = std::mem::take(&mut self.stopping);
+        if failed && !stopped {
+            self.hold_queue(queue::FAILED).await;
+        }
+        self.pump().await;
     }
 
     async fn on_item(&mut self, item_type: &str, completed: bool, mut item: Value) {
@@ -580,7 +758,8 @@ impl Runner {
             if !self.transcript.contains(&item_id) && !self.completed.contains(&item_id) {
                 let seq = self.seq_for(&item_id);
                 let turn = self.turn_label();
-                self.transcript.open(&item_id, seq, kind, turn, item_text(kind, &item), now);
+                let text = if item_type == "contextCompaction" { COMPACTING.to_string() } else { item_text(kind, &item) };
+                self.transcript.open(&item_id, seq, kind, turn, text, now);
             }
             return;
         }
@@ -604,10 +783,10 @@ impl Runner {
         }
     }
 
-    async fn on_ask(&mut self, request_id: Value, method: &str, params: Value) {
+    async fn on_ask(&mut self, request_id: Value, method: &str, params: Value, rx: &mut mpsc::Receiver<RunnerCmd>) {
         match method {
-            "item/tool/call" => self.on_tool_call(request_id, params).await,
-            "item/tool/requestUserInput" => self.on_question(request_id, params).await,
+            "item/tool/call" => self.on_tool_call(request_id, params, rx).await,
+            "item/tool/requestUserInput" => self.on_question(request_id, params, rx).await,
             "item/commandExecution/requestApproval" => {
                 let cmd = params.get("command").map(|c| c.to_string()).unwrap_or_default();
                 self.marker("approval", &format!("Shell command refused by policy: {cmd}"), Some(params)).await;
@@ -675,20 +854,45 @@ impl Runner {
         }
     }
 
-    /// Runs a tool, writing buffered transcript text once it has run for one flush interval.
-    async fn call_tool(&mut self, tool: &str, arguments: Value, general: bool) -> ToolOutcome {
+    /// A command that arrived while a tool call or an approval held the loop: a stop acts now, the rest wait.
+    async fn side_cmd(&mut self, cmd: Option<RunnerCmd>) {
+        match cmd {
+            Some(RunnerCmd::Turn(turn)) if turn.kind == "interrupt" => self.interrupt(&turn).await,
+            Some(RunnerCmd::Turn(turn)) if turn.kind == "close" => {
+                if !self.stopping {
+                    self.begin_stop(None);
+                }
+                self.deferred.push_back(RunnerCmd::Turn(turn));
+            }
+            Some(cmd) => self.deferred.push_back(cmd),
+            None => {}
+        }
+    }
+
+    /// Runs a tool while answering stop requests and writing buffered rows.
+    async fn call_tool(
+        &mut self,
+        tool: &str,
+        arguments: Value,
+        general: bool,
+        rx: &mut mpsc::Receiver<RunnerCmd>,
+    ) -> ToolOutcome {
+        self.signal(Signal::Working(AgentActivity::Tool(tool.to_string()))).await;
         let tools = self.tools.clone();
         let call = tools.call(tool, arguments, general);
         tokio::pin!(call);
-        tokio::select! {
-            outcome = &mut call => return outcome,
-            _ = tokio::time::sleep(coalesce::ITEM_FLUSH) => {}
+        let mut tick = tokio::time::interval(FLUSH_TICK);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                outcome = &mut call => return outcome,
+                cmd = rx.recv() => self.side_cmd(cmd).await,
+                _ = tick.tick() => self.flush_due().await,
+            }
         }
-        self.flush_transcript().await;
-        call.await
     }
 
-    async fn on_tool_call(&mut self, request_id: Value, params: Value) {
+    async fn on_tool_call(&mut self, request_id: Value, params: Value, rx: &mut mpsc::Receiver<RunnerCmd>) {
         let tool = params.get("tool").and_then(Value::as_str).unwrap_or("").to_string();
         let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
         if tool == wait::TOOL_NAME {
@@ -708,7 +912,7 @@ impl Runner {
         }
         let needs_human = self.tools.policy.needs_approval(&tool) && !self.remembered.contains(&tool);
         if !needs_human {
-            let outcome = self.call_tool(&tool, arguments, general).await;
+            let outcome = self.call_tool(&tool, arguments, general, rx).await;
             self.after_tool(&tool, &outcome).await;
             self.respond(&request_id, outcome.response()).await;
             return;
@@ -743,7 +947,7 @@ impl Runner {
                 return;
             }
         };
-        self.set_status("waiting_approval").await;
+        self.signal(Signal::Approval(tool.clone())).await;
         self.marker(
             "approval",
             &format!("Waiting for a technician to approve: {summary}"),
@@ -751,9 +955,13 @@ impl Runner {
         )
         .await;
 
-        let row = self.wait_for_decision(&approval_id).await;
-        self.set_status("running").await;
-        let status = row.as_ref().map(|r| r.status.clone()).unwrap_or_else(|| "expired".into());
+        let row = self.wait_for_decision(&approval_id, rx).await;
+        self.signal(Signal::Decided).await;
+        let status = match &row {
+            _ if self.stopping => "cancelled".to_string(),
+            Some(r) => r.status.clone(),
+            None => "expired".to_string(),
+        };
         let note = row.as_ref().and_then(|r| r.deny_note.clone()).unwrap_or_default();
         match status.as_str() {
             "accepted" | "accepted_for_session" => {
@@ -761,7 +969,7 @@ impl Runner {
                     self.remembered.insert(tool.clone());
                 }
                 self.marker("approval", &format!("Approved: {summary}"), None).await;
-                let outcome = self.call_tool(&tool, arguments, general).await;
+                let outcome = self.call_tool(&tool, arguments, general, rx).await;
                 self.after_tool(&tool, &outcome).await;
                 let _ = AgentApproval::resolve_by_broker(&approval_id, &status, Some(outcome.record())).await;
                 self.respond(&request_id, outcome.response()).await;
@@ -771,8 +979,9 @@ impl Runner {
                 let outcome = ToolOutcome::failure("The technician stopped the agent; the call was not run.".into());
                 let _ = AgentApproval::resolve_by_broker(&approval_id, "cancelled", Some(outcome.record())).await;
                 self.respond(&request_id, outcome.response()).await;
-                if let Some(t) = self.codex_thread_id.clone() {
-                    let _ = self.client.turn_interrupt(&t).await;
+                if !self.stopping {
+                    self.hold_queue(queue::STOPPED).await;
+                    self.begin_stop(None);
                 }
             }
             "declined" => {
@@ -897,7 +1106,7 @@ impl Runner {
         }
     }
 
-    async fn on_question(&mut self, request_id: Value, params: Value) {
+    async fn on_question(&mut self, request_id: Value, params: Value, rx: &mut mpsc::Receiver<RunnerCmd>) {
         let questions = params.get("questions").cloned().unwrap_or_else(|| json!([]));
         let first = questions
             .as_array()
@@ -930,38 +1139,55 @@ impl Runner {
                 return;
             }
         };
-        self.set_status("waiting_approval").await;
+        self.signal(Signal::Approval("question".into())).await;
         self.marker(
             "approval",
             &format!("Agent asks the technician: {first}"),
             Some(json!({ "approval": approval_id.key_string(), "questions": questions })),
         )
         .await;
-        let row = self.wait_for_decision(&approval_id).await;
-        self.set_status("running").await;
+        let row = self.wait_for_decision(&approval_id, rx).await;
+        self.signal(Signal::Decided).await;
+        let answered = !self.stopping && row.as_ref().is_some_and(|r| r.status == "answered");
         let answers = row
             .as_ref()
-            .filter(|r| r.status == "answered")
+            .filter(|_| answered)
             .and_then(|r| r.answers.clone())
             .map(normalize_answers)
             .unwrap_or_else(|| json!({}));
         let body = json!({ "answers": answers });
-        let final_status = if row.as_ref().is_some_and(|r| r.status == "answered") { "answered" } else { "expired" };
+        let final_status = if answered {
+            "answered"
+        } else if self.stopping {
+            "cancelled"
+        } else {
+            "expired"
+        };
         let _ = AgentApproval::resolve_by_broker(&approval_id, final_status, Some(body.clone())).await;
-        self.marker(
-            "approval",
-            if final_status == "answered" { "Technician answered." } else { "No answer from a technician." },
-            None,
-        )
-        .await;
+        let note = match final_status {
+            "answered" => "Technician answered.",
+            "cancelled" => "The technician stopped the agent before answering.",
+            _ => "No answer from a technician.",
+        };
+        self.marker("approval", note, None).await;
         self.respond(&request_id, body).await;
     }
 
-    /// Polls the approval row until a technician decides or the deadline passes.
-    async fn wait_for_decision(&self, approval_id: &RecordId) -> Option<AgentApproval> {
+    /// Polls the approval row until a technician decides, the deadline passes, or a stop arrives.
+    async fn wait_for_decision(&mut self, approval_id: &RecordId, rx: &mut mpsc::Receiver<RunnerCmd>) -> Option<AgentApproval> {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(self.cfg.approval_ttl_secs + 15);
+        let mut poll = tokio::time::interval(APPROVAL_POLL);
+        poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        poll.tick().await;
         loop {
-            tokio::time::sleep(APPROVAL_POLL).await;
+            tokio::select! {
+                _ = poll.tick() => {}
+                cmd = rx.recv() => self.side_cmd(cmd).await,
+            }
+            if self.stopping {
+                return None;
+            }
+            self.flush_due().await;
             match AgentApproval::fetch(approval_id).await {
                 Ok(Some(row)) if !row.is_pending() => return Some(row),
                 Ok(Some(_)) => {}
@@ -976,45 +1202,292 @@ impl Runner {
         }
     }
 
-    async fn send_turn(&mut self, kind: &str, text: &str) -> anyhow::Result<()> {
+    /// Sends one text input as a new turn, or into the running one for `steer`.
+    async fn send_text(&mut self, kind: &str, text: &str) -> anyhow::Result<()> {
         let Some(thread_id) = self.codex_thread_id.clone() else {
             anyhow::bail!("no codex thread yet");
         };
-        match kind {
-            "steer" => self.client.turn_steer(&thread_id, text).await?,
-            _ => self.client.turn_start(&thread_id, text).await?,
+        let input = vec![json!({ "type": "text", "text": text })];
+        self.send_inputs(&thread_id, kind, input).await.map_err(anyhow::Error::msg)
+    }
+
+    /// `turn/steer` into a running turn, else `turn/start`, which marks the thread running.
+    async fn send_inputs(&mut self, thread_id: &str, kind: &str, input: Vec<Value>) -> Result<(), String> {
+        let steer = kind == "steer" && !self.busy.is_idle();
+        let sent = if steer {
+            self.client.turn_steer_with_inputs(thread_id, input).await
+        } else {
+            self.client.turn_start_with_inputs(thread_id, input).await
         };
+        sent.map_err(|e| e.to_string())?;
+        if self.busy.is_idle() {
+            self.signal(Signal::TurnStarted).await;
+        }
         Ok(())
+    }
+
+    /// Stages the turn's pictures and sends it with its text.
+    async fn deliver(&mut self, turn: &AgentTurn, kind: &str) -> Result<(), String> {
+        let thread_id = self.codex_thread_id.clone().ok_or_else(|| "no codex thread yet".to_string())?;
+        let mut input = Vec::new();
+        if !turn.images.is_empty() {
+            let (items, staged) = self.stage_images(&turn.images).await?;
+            input = items;
+            if let Err(e) = AgentTurn::record_staged(&turn.id, &staged).await {
+                log::warn!("codex: could not trim the staged pictures of {}: {e}", turn.id.key_string());
+            }
+        }
+        if !turn.text.trim().is_empty() || input.is_empty() {
+            input.push(json!({ "type": "text", "text": turn.text }));
+        }
+        self.send_inputs(&thread_id, kind, input).await
+    }
+
+    /// The daemon's staging directory from its hello, else the default.
+    async fn upload_dir(&mut self) -> String {
+        if let Some(dir) = &self.upload_dir {
+            return dir.clone();
+        }
+        let reported = match self.client.request_with_timeout("daemon/hello", json!({}), READ_TIMEOUT).await {
+            Ok(hello) => hello.get("uploadDir").and_then(Value::as_str).map(str::trim).filter(|d| !d.is_empty()).map(str::to_string),
+            Err(e) => {
+                log::debug!("codex: daemon/hello failed: {e}");
+                None
+            }
+        };
+        let dir = reported.unwrap_or_else(|| DEFAULT_UPLOAD_DIR.to_string());
+        self.upload_dir = Some(dir.clone());
+        dir
+    }
+
+    /// Writes each picture into the upload directory; returns the turn's image inputs and the trimmed rows.
+    async fn stage_images(&mut self, images: &[TurnImage]) -> Result<(Vec<Value>, Vec<TurnImage>), String> {
+        let dir = self.upload_dir().await;
+        let mut inputs = Vec::with_capacity(images.len());
+        let mut staged = Vec::with_capacity(images.len());
+        for image in images {
+            let path = match (&image.data, &image.path) {
+                (Some(data), _) => self.stage_one(&dir, image, data).await?,
+                (None, Some(path)) => path.clone(),
+                (None, None) => return Err(format!("{} carries no picture data", image.name)),
+            };
+            inputs.push(json!({ "type": "localImage", "path": path }));
+            staged.push(image.staged(path));
+        }
+        Ok((inputs, staged))
+    }
+
+    async fn stage_one(&self, dir: &str, image: &TurnImage, data: &str) -> Result<String, String> {
+        let data = data.trim();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .map_err(|e| format!("{} is not valid base64: {e}", image.name))?;
+        if bytes.is_empty() {
+            return Err(format!("{} is empty", image.name));
+        }
+        if bytes.len() > IMAGE_MAX_BYTES {
+            return Err(format!("{} is {} KB; the limit is {} KB", image.name, bytes.len() / 1024, IMAGE_MAX_BYTES / 1024));
+        }
+        let path = format!("{}/{}", dir.trim_end_matches('/'), upload_name(&image.name, &bytes));
+        self.client
+            .request("fs/writeFile", json!({ "path": path, "dataBase64": data }))
+            .await
+            .map_err(|e| format!("could not stage {}: {e}", image.name))?;
+        Ok(path)
+    }
+
+    /// Holds the queue while it has anything in it, and records the hold on its rows.
+    async fn hold_queue(&mut self, why: &str) {
+        if self.queue.hold(why) {
+            self.write_hold().await;
+        }
+    }
+
+    async fn write_hold(&mut self) {
+        if let Err(e) = AgentTurn::hold_queue(&self.thread.id).await {
+            log::warn!("codex: could not hold the queue of {}: {e}", self.thread.id.key_string());
+        }
+        let why = self.queue.held().unwrap_or_default().to_string();
+        let waiting = self.queue.len();
+        self.marker("other", &format!("Queue held with {waiting} waiting: {why}"), None).await;
+    }
+
+    /// Queues a message behind the running turn; one with no text or pictures resumes a held queue.
+    async fn enqueue(&mut self, turn: AgentTurn) {
+        if turn.text.trim().is_empty() && turn.images.is_empty() {
+            let _ = AgentTurn::take_queued(&turn.id).await;
+            if self.queue.resume() {
+                if let Err(e) = AgentTurn::release_queue(&self.thread.id).await {
+                    log::warn!("codex: could not release the queue of {}: {e}", self.thread.id.key_string());
+                }
+                self.marker("other", "Queue resumed.", None).await;
+            }
+        } else if self.queue.push(turn) && self.queue.held().is_some() {
+            if let Err(e) = AgentTurn::hold_queue(&self.thread.id).await {
+                log::warn!("codex: could not hold the queue of {}: {e}", self.thread.id.key_string());
+            }
+        }
+        self.pump().await;
+    }
+
+    /// While the thread is idle, sends a deferred compaction or the oldest queued message.
+    async fn pump(&mut self) {
+        if !self.busy.is_idle() {
+            return;
+        }
+        if let Some(turn) = self.pending_compact.take() {
+            self.compact(&turn).await;
+            return;
+        }
+        while self.busy.is_idle() {
+            let Some(turn) = self.queue.next() else { return };
+            match AgentTurn::take_queued(&turn.id).await {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(e) => {
+                    log::warn!("codex: could not take queued turn {}: {e}", turn.id.key_string());
+                    self.queue.undelivered(turn, "the database did not answer");
+                    self.write_hold().await;
+                    return;
+                }
+            }
+            if let Err(e) = self.deliver(&turn, "start").await {
+                let _ = AgentTurn::mark_failed(&turn.id, &e).await;
+                self.marker("error", &format!("Could not send a queued message: {e}"), None).await;
+                self.hold_queue("A queued message could not be sent.").await;
+                return;
+            }
+        }
+    }
+
+    async fn request_compact(&mut self, turn: AgentTurn) {
+        if self.busy.is_idle() {
+            self.compact(&turn).await;
+            return;
+        }
+        if let Some(earlier) = self.pending_compact.replace(turn) {
+            let _ = AgentTurn::mark_failed(&earlier.id, "a later compaction request replaced it").await;
+        }
+        self.marker("other", "Compaction requested; it starts when this turn ends.", None).await;
+    }
+
+    async fn compact(&mut self, turn: &AgentTurn) {
+        let Some(thread_id) = self.codex_thread_id.clone() else {
+            let _ = AgentTurn::mark_failed(&turn.id, "no codex thread yet").await;
+            return;
+        };
+        match self.client.compact(&thread_id).await {
+            Ok(_) => {
+                self.compact_unstarted = true;
+                self.signal(Signal::Working(AgentActivity::Compacting)).await;
+                self.marker("other", "Compaction requested by the technician.", None).await;
+            }
+            Err(e) => {
+                let _ = AgentTurn::mark_failed(&turn.id, &e.to_string()).await;
+                self.marker("error", &format!("Could not start compaction: {e}"), None).await;
+            }
+        }
+    }
+
+    /// Stops the running turn, holds the queue and drops a deferred compaction.
+    async fn interrupt(&mut self, turn: &AgentTurn) {
+        self.stop_waits("the technician stopped the agent");
+        self.hold_queue(queue::STOPPED).await;
+        if let Some(compact) = self.pending_compact.take() {
+            let _ = AgentTurn::mark_failed(&compact.id, "stopped before the compaction started").await;
+        }
+        if self.codex_thread_id.is_none() {
+            let _ = AgentTurn::mark_failed(&turn.id, "no codex thread yet").await;
+            return;
+        }
+        if self.busy.is_idle() {
+            if self.turn_in_progress().await != Some(true) {
+                self.row.forget_status();
+                self.set_status("idle").await;
+                self.marker("other", "Nothing was running; the session is idle.", None).await;
+                return;
+            }
+            self.signal(Signal::Attached { in_progress: true }).await;
+        }
+        if self.stopping {
+            return;
+        }
+        self.begin_stop(Some(turn.id.clone()));
+        self.marker("other", "Technician stopped the agent.", None).await;
+    }
+
+    /// Sends `turn/interrupt` from its own task, which reports back as [`RunnerCmd::Stopped`].
+    fn begin_stop(&mut self, turn: Option<RecordId>) {
+        let Some(thread_id) = self.codex_thread_id.clone() else { return };
+        self.stopping = true;
+        let (client, own) = (self.client.clone(), self.own.clone());
+        tokio::spawn(async move {
+            let result = match tokio::time::timeout(STOP_TIMEOUT, client.turn_interrupt(&thread_id)).await {
+                Ok(Ok(_)) => Ok(()),
+                Ok(Err(e)) => Err(e.to_string()),
+                Err(_) => Err(format!("no answer within {} s", STOP_TIMEOUT.as_secs())),
+            };
+            let _ = own.send(RunnerCmd::Stopped { turn, result }).await;
+        });
+    }
+
+    /// A refused stop: an idle server means nothing ran, otherwise the agent keeps going.
+    async fn stop_answered(&mut self, turn: Option<&RecordId>, result: Result<(), String>) {
+        let Err(e) = result else { return };
+        if let Some(id) = turn {
+            let _ = AgentTurn::mark_failed(id, &e).await;
+        }
+        self.stopping = false;
+        if self.turn_in_progress().await == Some(false) {
+            self.signal(Signal::TurnEnded).await;
+            self.marker("other", "Nothing was running; the session is idle.", None).await;
+            self.pump().await;
+        } else {
+            self.marker("error", &format!("Stop did not reach the agent: {e}"), None).await;
+        }
     }
 
     async fn on_turn(&mut self, turn: AgentTurn) -> Flow {
         match turn.kind.as_str() {
             "start" | "steer" => {
                 self.stop_waits("the technician sent a message");
-                if let Err(e) = self.send_turn(&turn.kind, &turn.text).await {
+                if let Err(e) = self.deliver(&turn, &turn.kind).await {
                     log::warn!("codex: turn {} failed: {e}", turn.id.key_string());
-                    let _ = AgentTurn::mark_failed(&turn.id, &e.to_string()).await;
+                    let _ = AgentTurn::mark_failed(&turn.id, &e).await;
                     self.marker("error", &format!("Could not deliver the technician's message: {e}"), None).await;
                 }
                 Flow::Continue
             }
+            "queue" => {
+                self.enqueue(turn).await;
+                Flow::Continue
+            }
+            "compact" => {
+                self.request_compact(turn).await;
+                Flow::Continue
+            }
             "interrupt" => {
-                self.stop_waits("the technician stopped the agent");
-                if let Some(t) = self.codex_thread_id.clone() {
-                    if let Err(e) = self.client.turn_interrupt(&t).await {
-                        let _ = AgentTurn::mark_failed(&turn.id, &e.to_string()).await;
-                    }
-                }
-                self.marker("other", "Technician interrupted the agent.", None).await;
+                self.interrupt(&turn).await;
+                Flow::Continue
+            }
+            "rename" => {
+                super::turns::rename(&self.cfg, &turn).await;
                 Flow::Continue
             }
             "close" => {
                 self.stop_waits("the session was closed");
+                if !self.busy.is_idle() && !self.stopping {
+                    self.begin_stop(None);
+                }
                 self.remember_session().await;
+                if let Err(e) = AgentTurn::cancel_waiting(&self.thread.id, "the session closed").await {
+                    log::warn!("codex: could not cancel the queue of {}: {e}", self.thread.id.key_string());
+                }
                 if let Some(t) = self.codex_thread_id.clone() {
                     let _ = self.client.request("thread/unsubscribe", json!({ "threadId": t })).await;
                 }
                 self.marker("other", "Session closed by the technician.", None).await;
+                self.row.set_activity(AgentActivity::Idle.to_db());
                 self.set_status("closed").await;
                 if let Some(req) = &self.thread.assist_request {
                     let _ = AssistRequest::finish(req, "completed", None).await;
@@ -1113,7 +1586,10 @@ fn item_text(kind: &str, item: &Value) -> String {
             text
         }
         "file_change" => "file changes".to_string(),
-        _ => item.get("type").and_then(Value::as_str).unwrap_or("").to_string(),
+        _ => match item.get("type").and_then(Value::as_str) {
+            Some("contextCompaction") => COMPACTED.to_string(),
+            other => other.unwrap_or("").to_string(),
+        },
     }
 }
 
@@ -1196,6 +1672,12 @@ mod tests {
         let text = item_text("tool_call", &item);
         assert!(text.starts_with("query_surrealdb("));
         assert!(text.ends_with("error: boom"));
+    }
+
+    #[test]
+    fn a_compaction_reads_as_a_sentence() {
+        assert_eq!(item_text(kind_for("contextCompaction"), &json!({ "type": "contextCompaction", "id": "c" })), COMPACTED);
+        assert_eq!(item_text("other", &json!({ "type": "plan" })), "plan");
     }
 
     #[test]

@@ -197,6 +197,20 @@ impl AgentTurn {
         Ok(rows.into_iter().next())
     }
 
+    /// Cancels every queue turn of a thread that has not been sent.
+    pub async fn cancel_waiting(thread: &RecordId, why: &str) -> anyhow::Result<()> {
+        db().query(
+            "UPDATE agent_turn SET status = 'cancelled', error = $why, \
+             images = IF images != NONE THEN images.map(|$i| { name: $i.name, mime: $i.mime, path: $i.path }) END \
+             WHERE thread = $thread AND kind = 'queue' AND status IN ['pending', 'queued', 'held']",
+        )
+        .bind(("thread", thread.clone()))
+        .bind(("why", why.to_string()))
+        .await?
+        .check()?;
+        Ok(())
+    }
+
     /// Holds a thread's waiting queue turns until a resume releases them.
     pub async fn hold_queue(thread: &RecordId) -> anyhow::Result<()> {
         db().query("UPDATE agent_turn SET status = 'held' WHERE thread = $thread AND kind = 'queue' AND status = 'queued'")

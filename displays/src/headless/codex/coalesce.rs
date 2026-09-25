@@ -9,6 +9,8 @@ use database::schema::agent_thread::AgentThreadState;
 pub const ITEM_FLUSH: Duration = Duration::from_secs(1);
 /// Shortest gap between two token-count writes of the thread row.
 pub const THREAD_FLUSH: Duration = Duration::from_secs(5);
+/// Shortest gap between a thread-row write and one that only carries a new activity or a retry.
+pub const ACTIVITY_GAP: Duration = Duration::from_secs(2);
 
 /// The current text of an item still in progress.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,11 +141,17 @@ fn take(item_id: &str, pending: &mut Pending, now: Instant) -> Partial {
 #[derive(Debug)]
 pub struct ThreadRow {
     status: Option<String>,
+    /// A status write that failed, with its error, sent again once the gap has passed.
+    retry: Option<(String, Option<String>)>,
     seq: i64,
     written_seq: i64,
     tokens: (Option<i64>, Option<i64>),
     written_tokens: (Option<i64>, Option<i64>),
     tokens_at: Option<Instant>,
+    activity: Option<String>,
+    written_activity: Option<String>,
+    /// Time of the last write of any field.
+    wrote_at: Option<Instant>,
     interval: Duration,
 }
 
@@ -152,11 +160,15 @@ impl ThreadRow {
     pub fn new(seq: i64, tokens: (Option<i64>, Option<i64>), interval: Duration) -> Self {
         Self {
             status: None,
+            retry: None,
             seq,
             written_seq: seq,
             tokens,
             written_tokens: tokens,
             tokens_at: None,
+            activity: None,
+            written_activity: None,
+            wrote_at: None,
             interval,
         }
     }
@@ -175,32 +187,71 @@ impl ThreadRow {
         self.tokens = (used.or(self.tokens.0), window.or(self.tokens.1));
     }
 
+    /// Keeps the latest activity; it is written with the next write, or alone after [`ACTIVITY_GAP`].
+    pub fn set_activity(&mut self, activity: String) {
+        self.activity = Some(activity);
+    }
+
     /// The write a status change needs; `None` when the status is unchanged and carries no error.
     pub fn status(&mut self, status: &str, error: Option<&str>, now: Instant) -> Option<AgentThreadState> {
         if error.is_none() && self.status.as_deref() == Some(status) {
             return None;
         }
+        self.retry = None;
         self.status = Some(status.to_string());
+        self.wrote_at = Some(now);
         let mut state = self.pending(now);
         state.status = Some(status.to_string());
         state.error = error.map(str::to_string);
         Some(state)
     }
 
-    /// The write changed token counts need once the interval has passed.
+    /// Marks the fields of a write that failed as unwritten, so a later write sends them again.
+    pub fn failed(&mut self, state: &AgentThreadState) {
+        if let Some(status) = &state.status {
+            self.status = None;
+            self.retry = Some((status.clone(), state.error.clone()));
+        }
+        if state.activity.is_some() {
+            self.written_activity = None;
+        }
+        if state.tokens_used.is_some() || state.tokens_window.is_some() {
+            self.written_tokens = (None, None);
+        }
+        if let Some(seq) = state.last_seq {
+            self.written_seq = self.written_seq.min(seq - 1);
+        }
+    }
+
+    /// The write that is due: a failed status, token counts after their interval, or an activity after the gap.
     pub fn due(&mut self, now: Instant) -> Option<AgentThreadState> {
-        let changed = self.tokens != self.written_tokens;
-        let waited = self.tokens_at.is_none_or(|t| now.duration_since(t) >= self.interval);
-        (changed && waited).then(|| self.pending(now))
+        let gap = self.wrote_at.is_none_or(|t| now.duration_since(t) >= ACTIVITY_GAP);
+        if gap && let Some((status, error)) = self.retry.take() {
+            return self.status(&status, error.as_deref(), now);
+        }
+        let tokens = self.tokens != self.written_tokens
+            && self.tokens_at.is_none_or(|t| now.duration_since(t) >= self.interval);
+        let activity = gap && self.activity != self.written_activity;
+        (tokens || activity).then(|| {
+            self.wrote_at = Some(now);
+            self.pending(now)
+        })
     }
 
     /// The write every pending change needs, due or not.
     pub fn drain(&mut self, now: Instant) -> Option<AgentThreadState> {
+        if let Some((status, error)) = self.retry.take() {
+            return self.status(&status, error.as_deref(), now);
+        }
         let state = self.pending(now);
-        (!state.is_empty()).then_some(state)
+        if state.is_empty() {
+            return None;
+        }
+        self.wrote_at = Some(now);
+        Some(state)
     }
 
-    /// Pending cursor and token changes, marked written.
+    /// Pending cursor, token and activity changes, marked written.
     fn pending(&mut self, now: Instant) -> AgentThreadState {
         let mut state = AgentThreadState::default();
         if self.seq > self.written_seq {
@@ -211,6 +262,10 @@ impl ThreadRow {
             (state.tokens_used, state.tokens_window) = self.tokens;
             self.written_tokens = self.tokens;
             self.tokens_at = Some(now);
+        }
+        if self.activity != self.written_activity {
+            state.activity = self.activity.clone();
+            self.written_activity = self.activity.clone();
         }
         state
     }
@@ -341,6 +396,67 @@ mod tests {
         }
         assert!((12..=13).contains(&writes), "{writes} token writes in 60 s of per-second updates");
         assert_eq!(row.drain(t0 + Duration::from_secs(61)).and_then(|s| s.tokens_used), Some(159));
+    }
+
+    #[test]
+    fn activity_flips_are_written_at_most_once_per_gap() {
+        let t0 = Instant::now();
+        let mut row = ThreadRow::new(0, (None, None), THREAD_FLUSH);
+        let mut writes = 0;
+        for i in 0..80u64 {
+            let now = t0 + Duration::from_millis(250 * i);
+            row.set_activity(if i % 2 == 0 { "thinking" } else { "tool:scripts_list" }.to_string());
+            writes += usize::from(row.due(now).is_some());
+        }
+        assert!((5..=11).contains(&writes), "{writes} activity writes in 20 s of flips every 250 ms");
+    }
+
+    #[test]
+    fn an_unchanged_activity_is_not_written_again() {
+        let t0 = Instant::now();
+        let mut row = ThreadRow::new(0, (None, None), THREAD_FLUSH);
+        row.set_activity("thinking".into());
+        assert!(row.due(t0).is_some());
+        row.set_activity("thinking".into());
+        assert!(row.due(t0 + Duration::from_secs(10)).is_none());
+    }
+
+    #[test]
+    fn a_status_write_carries_the_activity_and_resets_the_gap() {
+        let t0 = Instant::now();
+        let mut row = ThreadRow::new(0, (None, None), THREAD_FLUSH);
+        row.set_activity("starting".into());
+        let state = row.status("running", None, t0).expect("a change");
+        assert_eq!(state.activity.as_deref(), Some("starting"));
+        row.set_activity("thinking".into());
+        assert!(row.due(t0 + Duration::from_millis(500)).is_none(), "written inside the gap");
+        assert_eq!(row.due(t0 + ACTIVITY_GAP).and_then(|s| s.activity).as_deref(), Some("thinking"));
+    }
+
+    #[test]
+    fn a_failed_status_write_is_sent_again_unless_a_newer_status_replaced_it() {
+        let t0 = Instant::now();
+        let mut row = ThreadRow::new(0, (None, None), THREAD_FLUSH);
+        let state = row.status("idle", Some("boom"), t0).expect("a change");
+        row.failed(&state);
+        assert!(row.due(t0 + Duration::from_millis(100)).is_none(), "retried inside the gap");
+        let again = row.due(t0 + ACTIVITY_GAP).expect("a retry");
+        assert_eq!((again.status.as_deref(), again.error.as_deref()), (Some("idle"), Some("boom")));
+
+        let state = row.status("running", None, t0 + Duration::from_secs(3)).expect("a change");
+        row.failed(&state);
+        assert!(row.status("idle", None, t0 + Duration::from_secs(4)).is_some());
+        assert!(row.due(t0 + Duration::from_secs(10)).is_none(), "a stale running was written over idle");
+    }
+
+    #[test]
+    fn a_failed_token_write_is_sent_again() {
+        let t0 = Instant::now();
+        let mut row = ThreadRow::new(0, (Some(1), Some(10)), THREAD_FLUSH);
+        row.set_tokens(Some(5), None);
+        let state = row.due(t0).expect("new counts");
+        row.failed(&state);
+        assert_eq!(row.due(t0 + THREAD_FLUSH).and_then(|s| s.tokens_used), Some(5));
     }
 
     /// One response at the session's medians: 10 s reasoning, a 4 s reply, a quick tool call, one token update.
