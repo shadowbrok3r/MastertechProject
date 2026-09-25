@@ -28,7 +28,11 @@ use crate::terminal_mode::{
     widgets::{button::ButtonState, input_field::InputField, ButtonType, HandleWidget, SHORTCUT_SET},
 };
 
+mod json;
+mod markdown;
+mod syntax;
 mod transcript;
+mod wrap;
 
 const THREAD_POLL: Duration = Duration::from_secs(4);
 const THREAD_POLL_WAITING: Duration = Duration::from_secs(2);
@@ -300,7 +304,7 @@ impl<'a> AssistantTab<'a> {
     }
 
     fn submit(&mut self) {
-        let text = self.input.get_raw_text().trim().to_string();
+        let text = self.input.get_text().join("\n").trim().to_string();
         // Typed text answers the agent's open question before it is a message.
         if let Some(req) = self.active_approval().filter(|r| r.kind == "question") {
             if text.is_empty() {
