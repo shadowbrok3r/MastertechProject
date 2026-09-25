@@ -19,6 +19,7 @@ pub mod galactic_glass;
 pub mod soft_glass;
 pub mod glass_backdrop;
 pub mod glass_card;
+pub mod agent_chat;
 pub mod chat_bubble;
 pub mod framed_controls;
 pub mod theme_chrome;
