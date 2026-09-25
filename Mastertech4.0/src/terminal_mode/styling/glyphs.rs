@@ -53,3 +53,9 @@ pub const BULLET: &str = "\u{25aa}"; // ▪
 pub const AGENT_RUNNING: &str = "\u{25cc}"; // ◌
 /// Quarter-circle spinner frames.
 pub const SPINNER: [&str; 4] = ["\u{25d0}", "\u{25d3}", "\u{25d1}", "\u{25d2}"]; // ◐ ◓ ◑ ◒
+/// Left rule of a code block or quote.
+pub const CODE_RULE: &str = "\u{258e}"; // ▎
+/// Horizontal rule and divider stroke.
+pub const RULE: &str = "\u{2500}"; // ─
+/// Marks text that was cut.
+pub const ELLIPSIS: &str = "\u{2026}"; // …
