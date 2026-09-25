@@ -1233,7 +1233,9 @@ pub struct StressSummariesBackfillParams {
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct StressRunsReapParams {
-    #[schemars(description = "Reap runs whose started_at is older than now minus this many seconds (default 3600, min 600).")]
+    #[schemars(
+        description = "Reap a run only once this many seconds have passed since both its planned end (started_at + duration_planned_secs) and its newest metric/event (default 3600, min 600)."
+    )]
     pub grace_secs: Option<u64>,
     #[schemars(description = "Only reap runs for this hostname.")]
     pub hostname: Option<String>,
@@ -9740,15 +9742,17 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
 
     #[tool(
         name = "stress_runs_reap",
-        description = "Finalize zombie stress_test_run rows stuck at result='in_progress' past their window (client hang/reboot prevented finalize). Each candidate is graded from its own stress_test_event rows: a run with failure-class events (bsod, unexpected_shutdown, whea_hit, tdr, memory_error, disk_io_error) is closed result='fail' with the matching failure_kind and its summary counters backfilled from those events; only a run with no such evidence is closed 'aborted'. ended_at is the last event timestamp — the last moment the run is PROVEN to have been alive, which is a LOWER BOUND on its real end, not the end itself; duration_actual_secs derived from it is a floor, never an exact runtime. Use dry_run:true to preview the grade. Returns the affected run ids with the evidence each was graded on."
+        description = "Finalize zombie stress_test_run rows stuck at result='in_progress' past their window (client hang/reboot prevented finalize): grace_secs must have passed since both the planned end and the newest metric/event. admin-agent already closes such rows every 15 min at a 2h grace as result='aborted', finish_reason='crashed'; stress_summaries_backfill regrade:true upgrades those with failure evidence. Each candidate is graded from its own stress_test_event rows: a run with failure-class events (bsod, unexpected_shutdown, whea_hit, tdr, memory_error, disk_io_error) is closed result='fail' with the matching failure_kind and its summary counters backfilled from those events; only a run with no such evidence is closed 'aborted'. ended_at is the last event timestamp — the last moment the run is PROVEN to have been alive, which is a LOWER BOUND on its real end, not the end itself; duration_actual_secs derived from it is a floor, never an exact runtime. Use dry_run:true to preview the grade. Returns the affected run ids with the evidence each was graded on."
     )]
     async fn stress_runs_reap(
         &self,
         Parameters(p): Parameters<StressRunsReapParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        use database::schema::{Datetime, FailureMode, RecordId, RecordIdExt};
+        use database::schema::{
+            Datetime, FailureMode, RecordId, RecordIdExt, RunLiveness, StressTestRun,
+        };
 
-        const REAP_SELECT: &str = "SELECT <string> id AS id, hostname, preset_label, started_at, summary FROM stress_test_run WHERE result = 'in_progress' AND started_at < <datetime>$cutoff AND ($hostname IS NONE OR hostname = $hostname);";
+        const REAP_SELECT: &str = "SELECT <string> id AS id, hostname, preset_label, <string> started_at AS started_at, duration_planned_secs, summary FROM stress_test_run WHERE result = 'in_progress' AND started_at < <datetime>$cutoff AND ($hostname IS NONE OR hostname = $hostname);";
         // `data.new_errors` batches every mismatch since the last tick into one
         // row, so the row count understates the mismatches; sum it instead.
         const EVIDENCE_SELECT: &str = "SELECT <string> run_ref AS run_ref, kind, count() AS rows, math::sum(data.new_errors ?? 1) AS units, <string> time::max(at) AS last_at FROM stress_test_event WHERE run_ref IN $ids GROUP BY run_ref, kind;";
@@ -9757,7 +9761,7 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
         let grace = p.grace_secs.unwrap_or(3600).max(600);
         let cutoff = (chrono::Utc::now() - chrono::Duration::seconds(grace as i64)).to_rfc3339();
 
-        let candidates: Vec<serde_json::Value> = database::db()
+        let rows: Vec<serde_json::Value> = database::db()
             .query(REAP_SELECT)
             .bind(("cutoff", cutoff))
             .bind(("hostname", p.hostname.clone()))
@@ -9765,6 +9769,33 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
             .map_err(to_internal)?
             .take(0)
             .map_err(to_internal)?;
+        // Drops rows the shared orphan rule still counts as possibly live.
+        let now = chrono::Utc::now();
+        let mut candidates = Vec::with_capacity(rows.len());
+        for row in rows {
+            let started_at = row
+                .get("started_at")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok());
+            let id = row
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(|s| parse_record_id(s, database::schema::STRESS_TEST_RUN_TABLE));
+            if let (Some(started_at), Some(id)) = (started_at, id) {
+                let liveness = RunLiveness {
+                    started_at,
+                    planned_secs: row.get("duration_planned_secs").and_then(|v| v.as_u64()),
+                    last_seen: StressTestRun::last_seen(&id).await.map_err(to_internal)?,
+                };
+                if liveness
+                    .orphaned(std::time::Duration::from_secs(grace), now, None)
+                    .is_none()
+                {
+                    continue;
+                }
+            }
+            candidates.push(row);
+        }
         if candidates.is_empty() {
             return Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
                 "dry_run": p.dry_run,

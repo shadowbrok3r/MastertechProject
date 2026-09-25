@@ -3,8 +3,10 @@
 //! deploying to a remote client.
 
 use database::schema::{
-    stress_test_sql, CoreSampleRow, HardwareComponent, HardwareKind, RecordId, StressTestMetric,
-    StressTestRun, TargetKind, TestTool, COMPUTER_TABLE,
+    COMPUTER_TABLE, CoreSampleRow, Datetime, EventKind, HardwareComponent, HardwareKind,
+    ORPHAN_GRACE, OrphanReason, ReapScope, RecordId, RecordIdExt, STRESS_TEST_RUN_TABLE,
+    StressTestEvent, StressTestMetric, StressTestRun, TargetKind, TestTool, reap_orphaned_on,
+    stress_test_sql,
 };
 use surrealdb::engine::local::{Db, Mem};
 use surrealdb::Surreal;
@@ -270,8 +272,12 @@ fn stress_query_fixtures_validate_with_surreal_cli() {
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/stress_queries.surql"
     );
+    let backfill = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/queries/stress_orphan_backfill.surql"
+    );
 
-    for path in [schema, queries] {
+    for path in [schema, queries, backfill] {
         let output = std::process::Command::new("surreal")
             .args(["validate", path])
             .output()
@@ -350,4 +356,346 @@ async fn benchmark_result_round_trips_through_surreal() {
     assert_eq!(got.peak, Some(4500.0));
     assert_eq!(got.threads, 16);
     assert!(got.detail.is_some());
+}
+
+const ORPHAN_BACKFILL: &str = include_str!("../queries/stress_orphan_backfill.surql");
+
+fn hours(n: i64) -> chrono::Duration {
+    chrono::Duration::hours(n)
+}
+
+fn minutes(n: i64) -> chrono::Duration {
+    chrono::Duration::minutes(n)
+}
+
+async fn seed_computer(db: &Surreal<Db>, key: &str) -> RecordId {
+    let computer = RecordId::new(COMPUTER_TABLE, key);
+    db.query("CREATE $id CONTENT { hostname: $host }")
+        .bind(("id", computer.clone()))
+        .bind(("host", key.split(':').next().unwrap_or(key).to_string()))
+        .await
+        .and_then(|r| r.check())
+        .expect("seed computer");
+    computer
+}
+
+/// CREATE an `in_progress` run with a fixed key, start and plan.
+async fn seed_timed_run(
+    db: &Surreal<Db>,
+    key: &str,
+    computer: &RecordId,
+    started_at: chrono::DateTime<chrono::Utc>,
+    planned_secs: Option<u64>,
+) -> RecordId {
+    let mut run = StressTestRun::new_for(
+        computer.clone(),
+        TestTool::StressKit {
+            stressor: "cpu".to_string(),
+        },
+        TargetKind::Cpu,
+    );
+    run.id = RecordId::new(STRESS_TEST_RUN_TABLE, key);
+    run.started_at = started_at.into();
+    run.duration_planned_secs = planned_secs;
+    let mut content = run.clone().into_value();
+    if let surrealdb::types::Value::Object(obj) = &mut content {
+        obj.remove("embedding");
+        obj.remove("id");
+        obj.insert(
+            "failure_mode".to_string(),
+            surrealdb::types::Value::Object(
+                [(
+                    "None".to_string(),
+                    surrealdb::types::Value::Object(Default::default()),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+        );
+    }
+    db.query(stress_test_sql::STRESS_RUN_CREATE)
+        .bind(("id", run.id.clone()))
+        .bind(("content", content))
+        .bind(("embedding", None::<Vec<f32>>))
+        .await
+        .and_then(|r| r.check())
+        .expect("create run");
+    run.id
+}
+
+async fn seed_metric_at(db: &Surreal<Db>, run: &RecordId, at: chrono::DateTime<chrono::Utc>) {
+    let metric = StressTestMetric::new(run.clone(), at.into());
+    let mut content = metric.clone().into_value();
+    if let surrealdb::types::Value::Object(obj) = &mut content {
+        obj.remove("id");
+    }
+    db.query("CREATE $id CONTENT $content")
+        .bind(("id", metric.id.clone()))
+        .bind(("content", content))
+        .await
+        .and_then(|r| r.check())
+        .expect("create metric");
+}
+
+async fn seed_event_at(db: &Surreal<Db>, run: &RecordId, at: chrono::DateTime<chrono::Utc>) {
+    let mut event = StressTestEvent::new(run.clone(), EventKind::StageStarted, "stress-kit");
+    event.at = at.into();
+    let mut content = event.clone().into_value();
+    if let surrealdb::types::Value::Object(obj) = &mut content {
+        obj.remove("id");
+    }
+    db.query("CREATE $id CONTENT $content")
+        .bind(("id", event.id.clone()))
+        .bind(("content", content))
+        .await
+        .and_then(|r| r.check())
+        .expect("create event");
+}
+
+async fn set_fields(db: &Surreal<Db>, run: &RecordId, set: &str) {
+    db.query(format!("UPDATE $id SET {set}"))
+        .bind(("id", run.clone()))
+        .await
+        .and_then(|r| r.check())
+        .expect("update run");
+}
+
+#[derive(Debug, PartialEq, SurrealValue)]
+struct RunState {
+    id: String,
+    result: String,
+    finish_reason: Option<String>,
+    ended_at: Option<Datetime>,
+    duration_actual_secs: Option<f64>,
+    notes: Option<String>,
+}
+
+const RUN_STATE_FIELDS: &str =
+    "<string> id AS id, result, finish_reason, ended_at, duration_actual_secs, notes";
+
+async fn run_state(db: &Surreal<Db>, run: &RecordId) -> RunState {
+    db.query(format!("SELECT {RUN_STATE_FIELDS} FROM ONLY $id"))
+        .bind(("id", run.clone()))
+        .await
+        .expect("select run")
+        .take::<Option<RunState>>(0)
+        .expect("decode run")
+        .expect("run present")
+}
+
+async fn all_run_states(db: &Surreal<Db>) -> Vec<RunState> {
+    db.query(format!(
+        "SELECT {RUN_STATE_FIELDS} FROM stress_test_run ORDER BY id"
+    ))
+    .await
+    .expect("select runs")
+    .take(0)
+    .expect("decode runs")
+}
+
+/// One run per window-rule case, all on one computer.
+struct FleetCases {
+    orphan: RecordId,
+    open_ended: RecordId,
+    long_live: RecordId,
+    overrun: RecordId,
+    within_grace: RecordId,
+    finished: RecordId,
+}
+
+async fn seed_fleet_cases(db: &Surreal<Db>, now: chrono::DateTime<chrono::Utc>) -> FleetCases {
+    let computer = seed_computer(db, "DESKTOP-REAP:0a1b2c3d4").await;
+
+    let orphan = seed_timed_run(db, "orphan", &computer, now - hours(10), Some(3600)).await;
+    seed_event_at(db, &orphan, now - hours(10) + minutes(1)).await;
+    seed_metric_at(db, &orphan, now - hours(9) - minutes(30)).await;
+    set_fields(db, &orphan, "notes = 'tech note'").await;
+
+    let open_ended = seed_timed_run(db, "open_ended", &computer, now - hours(5), None).await;
+    seed_metric_at(db, &open_ended, now - hours(4)).await;
+
+    let long_live =
+        seed_timed_run(db, "long_live", &computer, now - hours(3), Some(12 * 3600)).await;
+    seed_metric_at(db, &long_live, now - minutes(1)).await;
+
+    let overrun = seed_timed_run(db, "overrun", &computer, now - hours(5), Some(3600)).await;
+    seed_metric_at(db, &overrun, now - minutes(1)).await;
+
+    // Planned end 90 minutes ago: overdue at a 1h grace, not at 2h.
+    let within_grace = seed_timed_run(
+        db,
+        "within_grace",
+        &computer,
+        now - hours(3) - minutes(30),
+        Some(7200),
+    )
+    .await;
+
+    let finished = seed_timed_run(db, "finished", &computer, now - hours(10), Some(3600)).await;
+    set_fields(
+        db,
+        &finished,
+        "result = 'pass', finish_reason = 'completed'",
+    )
+    .await;
+
+    FleetCases {
+        orphan,
+        open_ended,
+        long_live,
+        overrun,
+        within_grace,
+        finished,
+    }
+}
+
+#[tokio::test]
+async fn fleet_reap_closes_silent_overdue_runs_and_spares_live_ones() {
+    let db = mem_db().await;
+    let now = chrono::Utc::now();
+    let cases = seed_fleet_cases(&db, now).await;
+
+    let closed = reap_orphaned_on(&db, ReapScope::Fleet, ORPHAN_GRACE, now)
+        .await
+        .expect("reap");
+    let mut keys: Vec<String> = closed.iter().map(|(id, _)| id.key_string()).collect();
+    keys.sort();
+    assert_eq!(keys, ["open_ended", "orphan"]);
+    assert!(
+        closed
+            .iter()
+            .all(|(_, reason)| *reason == OrphanReason::Overdue)
+    );
+
+    let note = OrphanReason::Overdue.note(ORPHAN_GRACE);
+    let orphan = run_state(&db, &cases.orphan).await;
+    assert_eq!(orphan.result, "aborted");
+    assert_eq!(orphan.finish_reason.as_deref(), Some("crashed"));
+    assert_eq!(orphan.ended_at, Some((now - hours(9) - minutes(30)).into()));
+    assert_eq!(orphan.duration_actual_secs, Some(1800.0));
+    assert_eq!(orphan.notes, Some(format!("tech note {note}")));
+
+    let open_ended = run_state(&db, &cases.open_ended).await;
+    assert_eq!(open_ended.result, "aborted");
+    assert_eq!(open_ended.ended_at, Some((now - hours(4)).into()));
+    assert_eq!(open_ended.duration_actual_secs, Some(3600.0));
+    assert_eq!(open_ended.notes, Some(note));
+
+    for live in [&cases.long_live, &cases.overrun, &cases.within_grace] {
+        let state = run_state(&db, live).await;
+        assert_eq!(state.result, "in_progress", "{} was closed", state.id);
+        assert_eq!(state.finish_reason, None);
+        assert_eq!(state.ended_at, None);
+    }
+    let finished = run_state(&db, &cases.finished).await;
+    assert_eq!(finished.result, "pass");
+    assert_eq!(finished.finish_reason.as_deref(), Some("completed"));
+}
+
+#[tokio::test]
+async fn machine_reap_closes_this_computers_runs_silent_since_before_boot() {
+    let db = mem_db().await;
+    let now = chrono::Utc::now();
+    let this = seed_computer(&db, "DESKTOP-JFAT75B:4198373a9").await;
+    let other = seed_computer(&db, "DESKTOP-EOA4FR0:3a1e473a3").await;
+
+    let before_boot =
+        seed_timed_run(&db, "before_boot", &this, now - minutes(30), Some(28_800)).await;
+    seed_metric_at(&db, &before_boot, now - minutes(20)).await;
+    let after_boot = seed_timed_run(&db, "after_boot", &this, now - minutes(5), Some(5_400)).await;
+    seed_metric_at(&db, &after_boot, now - minutes(1)).await;
+    let elsewhere = seed_timed_run(&db, "elsewhere", &other, now - minutes(30), Some(28_800)).await;
+    seed_metric_at(&db, &elsewhere, now - minutes(20)).await;
+
+    let scope = ReapScope::Machine {
+        computer: &this,
+        booted_at: Some(now - minutes(10)),
+    };
+    let closed = reap_orphaned_on(&db, scope, ORPHAN_GRACE, now)
+        .await
+        .expect("reap");
+    assert_eq!(closed, vec![(before_boot.clone(), OrphanReason::Rebooted)]);
+
+    let state = run_state(&db, &before_boot).await;
+    assert_eq!(state.result, "aborted");
+    assert_eq!(state.finish_reason.as_deref(), Some("crashed"));
+    assert_eq!(state.ended_at, Some((now - minutes(20)).into()));
+    assert_eq!(state.duration_actual_secs, Some(600.0));
+    assert_eq!(state.notes, Some(OrphanReason::Rebooted.note(ORPHAN_GRACE)));
+    assert_eq!(run_state(&db, &after_boot).await.result, "in_progress");
+    assert_eq!(run_state(&db, &elsewhere).await.result, "in_progress");
+
+    let fleet = reap_orphaned_on(&db, ReapScope::Fleet, ORPHAN_GRACE, now)
+        .await
+        .expect("fleet reap");
+    assert!(fleet.is_empty(), "window rule closed {fleet:?}");
+}
+
+#[tokio::test]
+async fn orphan_close_leaves_a_run_that_finished_meanwhile() {
+    let db = mem_db().await;
+    let now = chrono::Utc::now();
+    let computer = seed_computer(&db, "DESKTOP-REAP:5e6f7a8b9").await;
+    let run = seed_timed_run(&db, "raced", &computer, now - hours(10), Some(3600)).await;
+    set_fields(&db, &run, "result = 'pass', finish_reason = 'completed'").await;
+
+    let closed: Vec<RecordId> = db
+        .query(stress_test_sql::ORPHAN_CLOSE)
+        .bind(("id", run.clone()))
+        .bind(("ended_at", Datetime::from(now - hours(9))))
+        .bind(("note", OrphanReason::Overdue.note(ORPHAN_GRACE)))
+        .await
+        .expect("close query")
+        .take(0)
+        .expect("closed ids");
+    assert!(closed.is_empty());
+
+    let state = run_state(&db, &run).await;
+    assert_eq!(state.result, "pass");
+    assert_eq!(state.finish_reason.as_deref(), Some("completed"));
+    assert_eq!(state.ended_at, None);
+    assert_eq!(state.notes, None);
+}
+
+#[derive(Debug, SurrealValue)]
+struct BackfillPreviewRow {
+    id: RecordId,
+    last_seen: Datetime,
+}
+
+#[tokio::test]
+async fn orphan_backfill_script_matches_the_fleet_reaper() {
+    let now = chrono::Utc::now();
+    let scripted = mem_db().await;
+    let reaped = mem_db().await;
+    let cases = seed_fleet_cases(&scripted, now).await;
+    seed_fleet_cases(&reaped, now).await;
+
+    let mut response = scripted
+        .query(ORPHAN_BACKFILL)
+        .await
+        .and_then(|r| r.check())
+        .expect("backfill script");
+    let mut preview: Vec<BackfillPreviewRow> = response.take(2).expect("preview rows");
+    preview.sort_by_key(|row| row.id.key_string());
+    let preview_ids: Vec<&RecordId> = preview.iter().map(|row| &row.id).collect();
+    assert_eq!(preview_ids, [&cases.open_ended, &cases.orphan]);
+    assert_eq!(preview[1].last_seen, (now - hours(9) - minutes(30)).into());
+
+    reap_orphaned_on(&reaped, ReapScope::Fleet, ORPHAN_GRACE, now)
+        .await
+        .expect("reap");
+    assert_eq!(
+        all_run_states(&scripted).await,
+        all_run_states(&reaped).await
+    );
+
+    let rerun: Vec<BackfillPreviewRow> = scripted
+        .query(ORPHAN_BACKFILL)
+        .await
+        .and_then(|r| r.check())
+        .expect("second backfill run")
+        .take(2)
+        .expect("second preview");
+    assert!(rerun.is_empty(), "a second run found {rerun:?}");
 }
