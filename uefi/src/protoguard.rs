@@ -3,9 +3,9 @@
 //! Firmware removes an agent's GET_PROTOCOL open record when the interface is
 //! uninstalled or the controller is disconnected, and destroys service-binding
 //! children outright — both routine while the IPv4 stack reconfigures during
-//! DHCP/PXE. `uefi::boot::ScopedProtocol` asserts CloseProtocol returned
-//! SUCCESS, so its `Drop` panics once that has happened. [`Held`] issues the
-//! same close and discards the status.
+//! DHCP/PXE. `uefi::boot::ScopedProtocol` debug-asserts CloseProtocol returned
+//! SUCCESS, so its `Drop` panics in debug builds once that has happened.
+//! [`Held`] issues the same close and discards the status.
 
 use core::mem::ManuallyDrop;
 use core::ops::{Deref, DerefMut};
