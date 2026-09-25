@@ -156,6 +156,25 @@ impl AssistRequest {
         Ok(())
     }
 
+    /// Newest request for a machine that joined `thread`, or is pending or dispatched from the last day.
+    pub async fn latest_for_engagement(
+        connection_string: &str,
+        thread: Option<&RecordId>,
+    ) -> anyhow::Result<Option<Self>> {
+        let mut res = db()
+            .query(
+                "SELECT * FROM assist_request WHERE connection_string = $cs \
+                 AND (($thread != NONE AND agent_thread = $thread) \
+                   OR (status IN ['pending', 'dispatched'] AND created_at > time::now() - 1d)) \
+                 ORDER BY created_at DESC LIMIT 1",
+            )
+            .bind(("cs", connection_string.to_string()))
+            .bind(("thread", thread.cloned()))
+            .await?;
+        let rows: Vec<Self> = res.take(0)?;
+        Ok(rows.into_iter().next())
+    }
+
     /// Rows left pending while no dispatcher was listening.
     pub async fn pending() -> anyhow::Result<Vec<Self>> {
         let mut res = db()

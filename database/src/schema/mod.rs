@@ -82,9 +82,9 @@ pub use diagnostic::*;
 pub use service_metrics::ServiceMetrics;
 pub use order_intake::{ensure_order_records, materialize_order_read_only, IntakeOutcome};
 pub use service_task::{
-    ensure_service_task, find_service_task, first_service_number, normalize_service_number,
-    service_order_by_id, service_order_by_number, EnsuredServiceTask, ServiceOrderRow,
-    ServiceTaskError, ServiceTaskRequest, TaskCandidate,
+    engagement_hints, ensure_service_task, find_service_task, first_service_number,
+    normalize_service_number, service_order_by_id, service_order_by_number, EngagementHints,
+    EnsuredServiceTask, ServiceOrderRow, ServiceTaskError, ServiceTaskRequest, TaskCandidate,
 };
 pub use assist_message::{AssistContext, AssistMessage, AssistThread, ASSIST_MESSAGE_TABLE};
 pub use outcome::{

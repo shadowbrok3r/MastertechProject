@@ -23,6 +23,14 @@ const SIGNED_IN_TECH_THREADS: &str =
 /// Longest title a rename stores, in characters.
 const TITLE_MAX_CHARS: usize = 80;
 
+/// Fills the unset service order, customer and service number of `$cs`'s open threads on `$sn` or none.
+pub const ADOPT_THREAD_LINKS_SQL: &str = "UPDATE agent_thread SET service_order = service_order ?? $so, \
+     customer = customer ?? $cust, service_number = service_number ?? $sn, updated_at = time::now() \
+     WHERE connection_string = $cs AND status NOT IN ['closed', 'failed'] \
+     AND (service_number = NONE OR service_number = $sn) \
+     AND (service_order = NONE OR (customer = NONE AND $cust != NONE)) \
+     RETURN VALUE id";
+
 /// A token count in thousands, or millions past a million.
 pub fn compact_tokens(n: i64) -> String {
     match n {
@@ -412,6 +420,24 @@ impl AgentThread {
             .bind(("ds", session.clone()))
             .await?;
         Ok(())
+    }
+
+    /// Fills the service order, customer and service number a machine's open thread lacks; returns the threads written.
+    pub async fn adopt_service_links(
+        connection_string: &str,
+        service_number: &str,
+        service_order: &RecordId,
+        customer: Option<&RecordId>,
+    ) -> anyhow::Result<usize> {
+        let mut res = db()
+            .query(ADOPT_THREAD_LINKS_SQL)
+            .bind(("cs", connection_string.to_string()))
+            .bind(("sn", service_number.to_string()))
+            .bind(("so", service_order.clone()))
+            .bind(("cust", customer.cloned()))
+            .await?;
+        let ids: Vec<RecordId> = res.take(0)?;
+        Ok(ids.len())
     }
 
     /// Threads the broker should be attached to, oldest first.
