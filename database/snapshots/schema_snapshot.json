@@ -203,7 +203,7 @@
     },
     {
       "path": "database/schema/user.surql",
-      "hash": "32c9d147f0cfa81883ef7978ad08db563cfefcc3a9c0986486242e30d221d5dd"
+      "hash": "b0f02bd60b287534f151de419e4b71d0235e1900c74cab061308deec73e6580b"
     },
     {
       "path": "database/schema/user_message.surql",
