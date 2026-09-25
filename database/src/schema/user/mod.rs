@@ -853,3 +853,31 @@ mod user_settings_tests {
         assert_eq!(restored.get_default_work_mode().as_deref(), Some("diagnostic"));
     }
 }
+
+#[cfg(test)]
+mod row_visibility_tests {
+    use super::*;
+    use surrealdb::types::Value as SurrealDBValue;
+
+    /// Another user's row arrives without the owner-only fields, and the roster must still load.
+    #[test]
+    fn a_row_with_owner_only_fields_hidden_still_loads() {
+        let user = User {
+            minio_access_key: Some("ak".into()),
+            minio_secret_key: Some("sk".into()),
+            mcp_settings: Some(McpSettings { api_key: Some("key".into()), ..Default::default() }),
+            ..Default::default()
+        };
+        let mut value = user.into_value();
+        let SurrealDBValue::Object(ref mut row) = value else {
+            panic!("User did not encode as an object");
+        };
+        for field in ["minio_access_key", "minio_secret_key", "mcp_settings"] {
+            assert!(row.remove(field).is_some(), "{field} must be written, or this test proves nothing");
+        }
+
+        let restored = User::from_value(value).expect("a row with owner-only fields hidden must deserialize");
+        assert_eq!(restored.get_minio_secret_key(), None);
+        assert_eq!(restored.get_mcp_api_key(), None);
+    }
+}
