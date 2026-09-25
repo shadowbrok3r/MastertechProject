@@ -1,5 +1,5 @@
 use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TaskCreationResult, TicketData, User, assignee_names, prestashop::OrderType, entity_link::computer_has_minimal_hardware},db};
-use crate::{get_current_user_from_auth, get_toast_sender, ui_tools::autocomplete::AutoCompleteTextEdit, ui_tools::icons, DisplayModal, PlatformSpawner, Spawner, ToastMessage};
+use crate::{get_current_user_from_auth, get_toast_sender, ui_tools::autocomplete::AutoCompleteTextEdit, ui_tools::icons, DisplayModal, PlatformSpawner, Spawner, TaskUiActions, ToastMessage};
 use eframe::egui::{Align, Button, Color32, ComboBox, Frame, RichText, Spinner, Stroke, TextEdit, Ui, Vec2, Widget, vec2};
 use database::schema::utilities::create_full_task_payload;
 use database::schema::{fetch_prestashop_order, OrderLookup};
@@ -61,6 +61,9 @@ pub struct CreateTaskModal {
     pub assignee_verify_tx: Option<Sender<(String, bool)>>,
     #[serde(skip)]
     pub assignee_verify_rx: Option<Receiver<(String, bool)>>,
+    /// Opens the task a service number already has instead of creating another.
+    #[serde(skip)]
+    pub ui_actions_tx: Option<Sender<TaskUiActions>>,
 }
 
 // TODO This is an ugly implementation
@@ -108,6 +111,11 @@ impl CreateTaskModal {
             assignee_verify_rx: Some(assignee_verify_rx),
             ..Default::default()
         }
+    }
+
+    pub fn with_ui_actions(mut self, tx: Sender<TaskUiActions>) -> Self {
+        self.ui_actions_tx = Some(tx);
+        self
     }
 
     pub fn update_tur_info(&mut self, tur: Tur) {
@@ -470,6 +478,7 @@ impl CreateTaskModal {
 
                 let task = payload.task_data.clone();
                 let result_tx = self.creation_result_tx.clone();
+                let ui_tx = self.ui_actions_tx.clone();
                 let service_number = payload.ticket_data.service_number.clone();
                 
                 // Check if we have a service number but haven't pulled the order yet
@@ -478,7 +487,15 @@ impl CreateTaskModal {
                 
                 PlatformSpawner::spawn(async move {
                     let mut payload = payload;
-                    
+                    let task_id = task.id.clone();
+
+                    if open_existing_task(&service_number, &task_id, ui_tx.as_ref()).await {
+                        if let Some(tx) = result_tx {
+                            let _ = tx.try_send(TaskCreationResult::AlreadyExists { service_number });
+                        }
+                        return;
+                    }
+
                     // If service number is entered but data wasn't pulled, pull it now
                     if needs_pull {
                         info!("Service number entered but order not pulled, fetching now: {}", service_number);
@@ -560,6 +577,9 @@ impl CreateTaskModal {
                             assignee_override,
                         ).await;
                         info!("create_task_result: {create_task_result:?}");
+                        if let TaskCreationResult::AlreadyExists { service_number } = &create_task_result {
+                            open_existing_task(service_number, &task_id, ui_tx.as_ref()).await;
+                        }
 
                         // Send result through channel
                         if let Some(tx) = result_tx {
@@ -613,6 +633,27 @@ impl CreateTaskModal {
 
         self.current_page_state.clone()
     }
+}
+
+/// Opens the task `service_number` already has, other than `own`; true when one exists.
+async fn open_existing_task(
+    service_number: &str,
+    own: &database::schema::RecordId,
+    ui_tx: Option<&Sender<TaskUiActions>>,
+) -> bool {
+    let existing = match database::schema::find_service_task(service_number).await {
+        Ok(found) => found.map(|t| t.id).filter(|id| id != own),
+        Err(e) => {
+            log::warn!("Existing task lookup for #{service_number} failed: {e:?}");
+            None
+        }
+    };
+    let Some(id) = existing else { return false };
+    info!("Service #{service_number} already has task {id:?}; opening it");
+    if let Some(tx) = ui_tx {
+        let _ = tx.try_send(TaskUiActions::OpenTaskModalById(id));
+    }
+    true
 }
 
 impl Tur {
