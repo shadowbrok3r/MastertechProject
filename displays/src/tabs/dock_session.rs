@@ -218,7 +218,7 @@ mod dock_session_tests {
 
         assert_eq!(
             session.open_set(),
-            [TabId::TurSheet, TabId::Scripts].into_iter().collect(),
+            [TabId::TurSheet, TabId::Scripts].into_iter().collect::<HashSet<_>>(),
             "the migration fell back to defaults instead of recovering the layout"
         );
     }
