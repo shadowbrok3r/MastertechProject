@@ -1013,6 +1013,7 @@ mod tests {
             allow_box_shell: false,
             tokens_used: None,
             tokens_window: None,
+            activity: None,
             last_seq: None,
             created_at: None,
             updated_at: None,
