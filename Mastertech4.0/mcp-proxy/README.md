@@ -19,7 +19,7 @@ binary), so:
 
 ## Setup (once)
 
-Requires Node 18+.
+Requires Node 20+.
 
 ```sh
 cd Mastertech4.0/mcp-proxy
