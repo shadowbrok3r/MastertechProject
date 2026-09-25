@@ -657,7 +657,7 @@ impl MtechServer {
                 self.shared_ctx.get_settings = false;
                 let layout = user.get_user_settings().get_ui_layout_mtechserver();
                 if let Ok(tree) = serde_json::from_value::<egui_dock::DockState<displays::tabs::TabId>>(layout.clone()) {
-                    self.shared_ctx.dock.tree = tree;
+                    self.shared_ctx.dock = displays::tabs::DockSession::from_tree(tree);
                 } else {
                     match serde_json::from_value::<DockState<String>>(layout) {
                         Ok(legacy) => {

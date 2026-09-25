@@ -1,6 +1,6 @@
 use database::schema::{utilities::{get_completed_tasks_for_store, get_tasks_for_store}, FilterLiveTasks, Store};
 use displays::tabs::{TabContext, TabId};
-use egui_dock::{tab_viewer::OnCloseResponse, NodeIndex, SurfaceIndex, TabViewer};
+use egui_dock::{tab_viewer::OnCloseResponse, NodePath, TabViewer};
 use crate::app_state::MastertechContext;
 use eframe::egui::{Ui, WidgetText};
 use github::get_github_releases;
@@ -75,6 +75,10 @@ impl MastertechContext {
 
 impl TabViewer for MastertechContext {
     type Tab = TabId;
+
+    fn id(&mut self, tab: &mut Self::Tab) -> eframe::egui::Id {
+        eframe::egui::Id::new(*tab)
+    }
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
         match *tab {
@@ -168,8 +172,7 @@ impl TabViewer for MastertechContext {
         &mut self,
         ui: &mut Ui,
         tab: &mut Self::Tab,
-        _surface_index: SurfaceIndex,
-        _node_index: NodeIndex,
+        _path: NodePath,
     ) {
         match *tab {
             TabId::FileBrowser => self.file_browser_popup(ui),
@@ -189,8 +192,8 @@ impl TabViewer for MastertechContext {
         OnCloseResponse::Close
     }
 
-    fn on_add(&mut self, surface_index: SurfaceIndex, node_index: NodeIndex) {
-        self.added_nodes.push((surface_index, node_index));
+    fn on_add(&mut self, path: NodePath) {
+        self.added_nodes.push(path);
     }
 
     fn on_tab_button(&mut self, tab: &mut Self::Tab, response: &eframe::egui::Response) {

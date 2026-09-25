@@ -96,6 +96,10 @@ impl SharedContext {
 impl egui_dock::TabViewer for SharedContext {
     type Tab = TabId;
 
+    fn id(&mut self, tab: &mut Self::Tab) -> Id {
+        Id::new(*tab)
+    }
+
     fn ui(&mut self, ui: &mut egui_dock::egui::Ui, tab: &mut Self::Tab) {
         let is_admin = self
             .current_user
@@ -195,8 +199,7 @@ impl egui_dock::TabViewer for SharedContext {
         &mut self,
         ui: &mut Ui,
         tab: &mut Self::Tab,
-        _surface_index: egui_dock::SurfaceIndex,
-        _node_index: egui_dock::NodeIndex,
+        _path: egui_dock::NodePath,
     ) {
         let ctx = self.tab_context();
         match *tab {
@@ -215,16 +218,11 @@ impl egui_dock::TabViewer for SharedContext {
         egui_dock::tab_viewer::OnCloseResponse::Close
     }
 
-    fn on_add(&mut self, surface_index: egui_dock::SurfaceIndex, node_index: egui_dock::NodeIndex) {
-        self.added_nodes.push((surface_index, node_index));
+    fn on_add(&mut self, path: egui_dock::NodePath) {
+        self.added_nodes.push(path);
     }
 
-    fn add_popup(
-        &mut self,
-        ui: &mut Ui,
-        surface_index: egui_dock::SurfaceIndex,
-        node_index: egui_dock::NodeIndex,
-    ) {
+    fn add_popup(&mut self, ui: &mut Ui, path: egui_dock::NodePath) {
         ui.set_width(100.0);
         let tab_ctx = self.tab_context();
         let is_root = crate::tabs::admin_console::current_user_is_root();
@@ -233,9 +231,8 @@ impl egui_dock::TabViewer for SharedContext {
             let open = self.dock.is_open(tab);
             if ui.selectable_label(open, label).clicked() {
                 if !open {
-                    self.on_add(surface_index, node_index);
-                    self.pending_tab_adds
-                        .push((surface_index, node_index, tab));
+                    self.on_add(path);
+                    self.pending_tab_adds.push((path, tab));
                 } else {
                     self.pending_tab_removes.push(tab);
                 }

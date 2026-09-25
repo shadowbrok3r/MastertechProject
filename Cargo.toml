@@ -100,7 +100,7 @@ egui_extras = { version = "0.36", features = ["datepicker", "syntect", "serde", 
 egui-data-table = { git = "https://github.com/shadowbrok3r/egui-data-table", features = ["persistency"]}
 egui-phosphor = { version = "0.14", default-features = false, features = ["regular"] }
 egui_json_tree = { version = "0.17", features = ["serde_json"] }
-egui_dock = { git = "https://github.com/shadowbrok3r/egui_dock",  features = [ "serde" ] }
+egui_dock = { version = "0.21.1", features = ["serde"] }
 rmcp = { version = "3.4.1", features = ["server", "client", "transport-async-rw", "transport-streamable-http-server"] }
 axum = { version = "0.8", default-features = true, features = ["tokio"] }
 # `wasmbind` routes Utc/Local::now() through js_sys::Date on wasm32. Without it

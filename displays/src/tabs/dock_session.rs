@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use super::tab_id::TabId;
 
+pub const EJECT_LABEL: &str = "Undock";
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DockSession {
     pub tree: DockState<TabId>,
@@ -16,6 +18,24 @@ impl DockSession {
         Self {
             tree: DockState::new(initial),
         }
+    }
+
+    /// Wraps a deserialized tree and restores the tab menu's eject label.
+    pub fn from_tree(mut tree: DockState<TabId>) -> Self {
+        tree.translations.tab_context_menu.eject_button = EJECT_LABEL.to_owned();
+        Self { tree }
+    }
+
+    /// Serializes the tree with its translations included.
+    pub fn layout_value(&self) -> serde_json::Value {
+        let mut value = serde_json::to_value(&self.tree).unwrap_or_default();
+        if let (Some(obj), Ok(translations)) = (
+            value.as_object_mut(),
+            serde_json::to_value(&self.tree.translations),
+        ) {
+            obj.insert("translations".to_owned(), translations);
+        }
+        value
     }
 
     pub fn is_open(&self, tab: TabId) -> bool {
@@ -65,7 +85,7 @@ impl DockSession {
             Some(mut tree) => {
                 // Drops leaves the remap emptied of retired tabs.
                 tree.retain_tabs(|_| true);
-                Self { tree }
+                Self::from_tree(tree)
             }
             None => {
                 warn!("DockSession: legacy layout migration failed; using defaults");
@@ -144,7 +164,7 @@ pub fn default_dock_session_wasm() -> DockSession {
         vec![TabId::MyTasks, TabId::BugReport, TabId::TaskAudit],
     );
 
-    session.tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
+    session.tree.translations.tab_context_menu.eject_button = EJECT_LABEL.to_owned();
     session
 }
 
@@ -157,7 +177,7 @@ pub fn default_dock_session_native() -> DockSession {
         TabId::Downloads,
         TabId::Inventory,
     ]);
-    session.tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
+    session.tree.translations.tab_context_menu.eject_button = EJECT_LABEL.to_owned();
 
     let [_a, _b] = session.tree.main_surface_mut().split_left(
         NodeIndex::root(),
@@ -220,6 +240,43 @@ mod dock_session_tests {
             session.open_set(),
             [TabId::TurSheet, TabId::Scripts].into_iter().collect::<HashSet<_>>(),
             "the migration fell back to defaults instead of recovering the layout"
+        );
+    }
+
+    /// Removes every `tab_bar_hidden` key, which egui_dock 0.18 layouts lack.
+    fn strip_tab_bar_hidden(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(map) => {
+                map.remove("tab_bar_hidden");
+                map.values_mut().for_each(strip_tab_bar_hidden);
+            }
+            serde_json::Value::Array(items) => items.iter_mut().for_each(strip_tab_bar_hidden),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn a_saved_layout_carries_translations() {
+        let value = default_dock_session_native().layout_value();
+        assert_eq!(
+            value["translations"]["tab_context_menu"]["eject_button"],
+            EJECT_LABEL,
+            "a layout saved without translations fails to load on egui_dock 0.18 clients"
+        );
+    }
+
+    #[test]
+    fn a_layout_in_the_old_format_still_loads() {
+        let mut value = default_dock_session_native().layout_value();
+        strip_tab_bar_hidden(&mut value);
+        normalize_null_floats(&mut value);
+        let tree: DockState<TabId> =
+            serde_json::from_value(value).expect("an egui_dock 0.18 layout must deserialize");
+        let session = DockSession::from_tree(tree);
+        assert_eq!(session.open_set(), default_dock_session_native().open_set());
+        assert_eq!(
+            session.tree.translations.tab_context_menu.eject_button,
+            EJECT_LABEL
         );
     }
 }

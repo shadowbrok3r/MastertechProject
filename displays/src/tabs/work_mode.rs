@@ -1,11 +1,11 @@
 //! The job a technician picked at launch, and the curated tab set it opens.
 
-use egui_dock::{NodeIndex, SurfaceIndex};
+use egui_dock::{NodeIndex, NodePath, SurfaceIndex};
 use serde::{Deserialize, Serialize};
 
 use crate::ui_tools::icons::p;
 
-use super::dock_session::{DockSession, default_dock_session_native};
+use super::dock_session::{DockSession, EJECT_LABEL, default_dock_session_native};
 use super::tab_id::{TabContext, TabId};
 
 /// What the technician is doing. `Full` is the uncurated app.
@@ -181,10 +181,10 @@ impl WorkMode {
 
 /// Focuses the work leaf so a View-menu re-open lands there, not beside the chat.
 fn finish(mut session: DockSession, work: NodeIndex) -> DockSession {
-    session.tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
+    session.tree.translations.tab_context_menu.eject_button = EJECT_LABEL.to_owned();
     session
         .tree
-        .set_focused_node_and_surface((SurfaceIndex::main(), work));
+        .set_focused_node_and_surface(NodePath::new(SurfaceIndex::main(), work));
     session
 }
 
@@ -254,8 +254,8 @@ mod work_mode_tests {
                 .find_tab(&TabId::TurSheet)
                 .expect("work tab is open");
             assert_ne!(
-                chat.1,
-                work.1,
+                chat.node,
+                work.node,
                 "{} docked the chat into the work pane",
                 mode.title()
             );
