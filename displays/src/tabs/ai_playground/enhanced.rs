@@ -1,9 +1,9 @@
 use eframe::egui::{
-    vec2, Align, Button, CentralPanel, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers,
-    Popup, PopupCloseBehavior, RichText, ScrollArea, TextEdit, TextStyle, Ui,
+    Align, CentralPanel, Frame, Id, Layout, Margin, Popup, PopupCloseBehavior, RichText, ScrollArea, Ui,
 };
 use crate::{
     tabs::ai_playground::{ChatMessage, ChatMessageType, ChatThread, SentFrom, TOOL_PREFIX},
+    ui_tools::agent_chat::{self, Composer, ComposerAction, QueueAction, Rename, RenameOutcome},
     ui_tools::chat_bubble::{self, ChatKind, ChatRow, ChatStyle},
     ui_tools::icons,
     PlatformSpawner, Spawner,
@@ -12,15 +12,27 @@ use crate::{
 use std::collections::HashMap;
 use chrono::{DateTime, Local, Utc};
 use crossbeam::channel::{Receiver, Sender};
-use database::schema::RecordIdExt;
+use database::schema::{AgentThread, AgentTurn, QueuedTurn, RecordId, RecordIdExt, TurnImage};
 use serde::Serialize;
 
 /// Smallest outer height of the prompt box.
 const INPUT_MIN_HEIGHT: f32 = 92.0;
 const INPUT_PANEL_MARGIN: i8 = 6;
-const TEXT_EDIT_MARGIN: Margin = Margin::symmetric(4, 2);
 /// Longest header summary in characters; the header also truncates to its width.
 const SUMMARY_CHARS: usize = 160;
+/// Prefix on assistant lines that carry a broker notice rather than a reply.
+const NOTICE_PREFIX: &str = icons::INFO;
+/// Longest first message an `assist_request` carries whole.
+const REQUEST_NOTE_MAX: usize = 500;
+/// First message of a session whose real first message goes in as a queued turn.
+const OPENER: &str = "Open this session. My request follows as the next message.";
+
+/// The open agent chat's session row and queue, read together.
+struct AgentState {
+    thread: String,
+    row: Option<AgentThread>,
+    waiting: Vec<QueuedTurn>,
+}
 
 /// A chat thread loaded from the database, delivered to the UI thread.
 struct LoadedThread {
@@ -96,6 +108,29 @@ pub struct EnhancedAiPlayground {
     load_tx: Sender<Vec<LoadedThread>>,
     #[serde(skip)]
     load_rx: Receiver<Vec<LoadedThread>>,
+    /// Attachments waiting in each thread's composer.
+    #[serde(skip)]
+    composers: HashMap<String, Composer>,
+    /// The open agent chat's session row, re-read with its queue.
+    #[serde(skip)]
+    open_row: Option<AgentThread>,
+    /// The open agent chat's queue turns that have not gone out.
+    #[serde(skip)]
+    waiting: Vec<QueuedTurn>,
+    #[serde(skip)]
+    last_state_poll: Option<web_time::Instant>,
+    #[serde(skip)]
+    state_tx: Sender<AgentState>,
+    #[serde(skip)]
+    state_rx: Receiver<AgentState>,
+    /// Queue turns taken back for editing, by the thread they belong to.
+    #[serde(skip)]
+    taken_back_tx: Sender<(String, AgentTurn)>,
+    #[serde(skip)]
+    taken_back_rx: Receiver<(String, AgentTurn)>,
+    /// A chat title being edited in the top bar.
+    #[serde(skip)]
+    renaming: Option<Rename>,
 }
 
 impl Default for EnhancedAiPlayground {
@@ -106,6 +141,8 @@ impl Default for EnhancedAiPlayground {
         let (agent_index_tx, agent_index_rx) =
             crossbeam::channel::unbounded::<Vec<database::schema::AgentThread>>();
         let (agent_switch_tx, agent_switch_rx) = crossbeam::channel::unbounded::<(String, String)>();
+        let (state_tx, state_rx) = crossbeam::channel::unbounded::<AgentState>();
+        let (taken_back_tx, taken_back_rx) = crossbeam::channel::unbounded::<(String, AgentTurn)>();
         Self {
             selected_thread: String::new(),
             chat_title: HashMap::new(),
@@ -135,6 +172,15 @@ impl Default for EnhancedAiPlayground {
             loaded: false,
             load_tx,
             load_rx,
+            composers: HashMap::new(),
+            open_row: None,
+            waiting: Vec::new(),
+            last_state_poll: None,
+            state_tx,
+            state_rx,
+            taken_back_tx,
+            taken_back_rx,
+            renaming: None,
         }
     }
 }
@@ -148,7 +194,7 @@ impl EnhancedAiPlayground {
     /// Opens a fresh thread that asks the agent for a first look at the focused machine.
     pub fn start_agent_diagnosis(&mut self, connection_string: Option<String>) {
         let thread_id = uuid::Uuid::new_v4().to_string();
-        self.selected_thread = thread_id.clone();
+        self.select_thread(thread_id.clone());
         self.threads.insert(
             thread_id.clone(),
             ChatThread { id: thread_id.clone(), messages: Vec::new(), images: Vec::new(), input: String::new() },
@@ -173,7 +219,7 @@ impl EnhancedAiPlayground {
                 None => "In two lines, say what you can look up and do from here.".to_string(),
             };
             self.thread_engine.insert(thread_id.clone(), "Codex agent".to_string());
-            self.send_to_agent(thread_id, prompt, connection_string);
+            self.send_to_agent(thread_id, prompt, Vec::new(), "start", connection_string);
         }
         #[cfg(not(any(target_arch = "wasm32", feature = "tokio")))]
         {
@@ -183,6 +229,7 @@ impl EnhancedAiPlayground {
 
     pub fn enhanced_ai_playground(&mut self, ui: &mut Ui) {
         self.ensure_loaded();
+        let rail = ui.max_rect();
 
         eframe::egui::Panel::top("enhanced_ai_topbar")
             .frame(Frame::default().inner_margin(Margin::symmetric(6, 2)))
@@ -190,7 +237,18 @@ impl EnhancedAiPlayground {
             .show_separator_line(false)
             .show(ui, |ui| self.show_chat_topbar(ui));
 
-        // Sized from last frame's prompt, from the minimum up to half the chat.
+        if let Some(row) = self.open_row.clone().filter(|r| r.id.key_string() == self.selected_thread) {
+            eframe::egui::Panel::top("enhanced_ai_context")
+                .frame(Frame::default().inner_margin(Margin::symmetric(8, 1)))
+                .show_separator_line(false)
+                .show(ui, |ui| {
+                    if agent_chat::context_bar(ui, &row) {
+                        self.ask_agent(&row.id, "compact", String::new(), Vec::new());
+                    }
+                });
+        }
+
+        // Sized from last frame's composer, from the minimum up to half the chat.
         let height_id = ui.id().with("enhanced_ai_input_height");
         let max_height = (ui.available_height() * 0.5).max(INPUT_MIN_HEIGHT);
         let height = ui
@@ -201,9 +259,8 @@ impl EnhancedAiPlayground {
             .frame(Frame::default().inner_margin(Margin::same(INPUT_PANEL_MARGIN)))
             .exact_size(height)
             .show(ui, |ui| {
-                let text_height = self.show_chat_input(ui).unwrap_or(0.0);
-                let wanted = (text_height + 2.0 * f32::from(INPUT_PANEL_MARGIN))
-                    .clamp(INPUT_MIN_HEIGHT, max_height);
+                let used = self.show_chat_input(ui, max_height);
+                let wanted = (used + 2.0 * f32::from(INPUT_PANEL_MARGIN)).clamp(INPUT_MIN_HEIGHT, max_height);
                 if (wanted - height).abs() > 0.5 {
                     ui.memory_mut(|m| m.data.insert_temp(height_id, wanted));
                     ui.ctx().request_repaint();
@@ -214,11 +271,21 @@ impl EnhancedAiPlayground {
             .frame(Frame::central_panel(ui.style()).inner_margin(Margin::same(10)))
             .show(ui, |ui| self.show_chat_content(ui));
 
+        if self.threads.contains_key(&self.selected_thread) {
+            let id = composer_id(&self.selected_thread);
+            self.composers.entry(self.selected_thread.clone()).or_default().drop_zone(ui, id, rail);
+        }
         self.handle_enhanced_ai_events(ui);
     }
 
     fn thread_title(&self, id: &str) -> String {
-        self.chat_title.get(id).cloned().unwrap_or_else(|| {
+        let session = self
+            .open_row
+            .iter()
+            .chain(&self.agent_index)
+            .find(|t| t.id.key_string() == id && t.title.as_deref().is_some_and(|t| !t.trim().is_empty()))
+            .map(AgentThread::label);
+        session.or_else(|| self.chat_title.get(id).cloned()).unwrap_or_else(|| {
             self.threads
                 .get(id)
                 .and_then(|t| t.messages.iter().find_map(|m| match &m.content {
@@ -237,13 +304,24 @@ impl EnhancedAiPlayground {
         }
     }
 
-    /// Compact top bar: hover-open threads dropdown + New chat on the left;
-    /// model, tools toggle and close on the right.
+    /// Top bar: the threads dropdown and New chat on the left; the session's status and close on the right.
     fn show_chat_topbar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
+            if self.renaming.as_ref().is_some_and(|r| r.key == self.selected_thread) {
+                self.rename_field(ui);
+                return;
+            }
             // ── Threads dropdown (opens on hover, stays open over the popup) ──
             let label = format!("{}  {}  {}", icons::CHAT, self.current_thread_title(), icons::CHEV_OPEN);
             let resp = ui.button(RichText::new(label));
+            if self.threads.contains_key(&self.selected_thread) {
+                resp.context_menu(|ui| {
+                    if ui.button(format!("{} Rename", icons::EDIT)).clicked() {
+                        self.start_rename(self.selected_thread.clone());
+                        ui.close();
+                    }
+                });
+            }
             // Stay open while the pointer is over the button OR the popup
             // (compared against last frame's popup rect, so crossing the gap
             // between them doesn't snap it shut).
@@ -257,6 +335,7 @@ impl EnhancedAiPlayground {
             let open = resp.hovered() || over_popup;
 
             let mut picked: Option<String> = None;
+            let mut rename: Option<String> = None;
             let popup = Popup::from_response(&resp)
                 .open(open)
                 .gap(2.0)
@@ -264,9 +343,9 @@ impl EnhancedAiPlayground {
                 .show(|ui| {
                     ui.set_min_width(220.);
                     #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
-                    let agent_index = self.agent_index.clone();
+                    let agent_index = self.index_with_open_row();
                     #[cfg(not(any(target_arch = "wasm32", feature = "tokio")))]
-                    let agent_index: Vec<database::schema::AgentThread> = Vec::new();
+                    let agent_index: Vec<AgentThread> = Vec::new();
                     if self.threads.is_empty() && agent_index.is_empty() {
                         ui.label(RichText::new("No chats yet").weak());
                         return;
@@ -277,12 +356,16 @@ impl EnhancedAiPlayground {
                     ScrollArea::vertical().max_height(320.).show(ui, |ui| {
                         for id in ids {
                             let title = self.thread_title(&id);
-                            if ui
-                                .selectable_label(selected == id, RichText::new(format!("{}  {title}", icons::CHAT)))
-                                .clicked()
-                            {
-                                picked = Some(id);
+                            let row = ui.selectable_label(selected == id, RichText::new(format!("{}  {title}", icons::CHAT)));
+                            if row.clicked() {
+                                picked = Some(id.clone());
                             }
+                            row.context_menu(|ui| {
+                                if ui.button(format!("{} Rename", icons::EDIT)).clicked() {
+                                    rename = Some(id.clone());
+                                    ui.close();
+                                }
+                            });
                         }
                         if agent_index.is_empty() {
                             return;
@@ -290,27 +373,39 @@ impl EnhancedAiPlayground {
                         ui.separator();
                         ui.label(RichText::new("Agent sessions").weak().small());
                         for t in &agent_index {
-                            // A session mid-turn or waiting on a decision is the one a tech is watching.
-                            let mark = match t.status.as_str() {
-                                "running" => icons::STATUS_ON,
-                                "waiting_approval" => icons::LOCK,
-                                _ => icons::ROBOT,
-                            };
                             let who = t.requested_by.as_deref().unwrap_or("unattributed");
                             let key = t.id.key_string();
-                            let line = format!("{mark}  {}  ({})", t.label(), t.status);
-                            if ui
-                                .selectable_label(selected == key, RichText::new(line))
-                                .on_hover_text(format!("{who}\n{}", t.connection_string))
-                                .clicked()
-                            {
-                                picked = Some(key);
+                            let (icon, color, _) = agent_chat::status_chip(ui, &t.status);
+                            let row = ui
+                                .horizontal(|ui| {
+                                    if agent_chat::is_active(t) {
+                                        ui.add(eframe::egui::Spinner::new().size(12.0).color(color));
+                                    } else {
+                                        ui.label(RichText::new(icon).color(color));
+                                    }
+                                    let line = format!("{}  ({})", t.label(), agent_chat::status_words(t));
+                                    ui.selectable_label(selected == key, RichText::new(line))
+                                })
+                                .inner
+                                .on_hover_text(format!("{who}\n{}", t.connection_string));
+                            if row.clicked() {
+                                picked = Some(key.clone());
                             }
+                            row.context_menu(|ui| {
+                                if ui.button(format!("{} Rename", icons::EDIT)).clicked() {
+                                    rename = Some(key.clone());
+                                    ui.close();
+                                }
+                            });
                         }
                     });
                 });
             let stored = popup.map(|r| r.response.rect).unwrap_or(eframe::egui::Rect::NOTHING);
             ui.memory_mut(|m| m.data.insert_temp(rect_id, stored));
+            if let Some(id) = rename {
+                picked = Some(id.clone());
+                self.start_rename(id);
+            }
             if let Some(id) = picked {
                 #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
                 if !self.threads.contains_key(&id) {
@@ -318,14 +413,14 @@ impl EnhancedAiPlayground {
                     // state; opening it backfills the transcript.
                     self.open_agent_thread(id.clone());
                 }
-                self.selected_thread = id;
+                self.select_thread(id);
             }
 
             if ui.button(RichText::new(icons::PLUS)).on_hover_text("New chat").clicked() {
                 self.create_new_chat_thread();
             }
 
-            // ── Right side: close · tools · model ──
+            // ── Right side: close · diagnose · status or engine ──
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if !self.self_diagnosis
                     && ui.button(RichText::new(icons::CLOSE)).on_hover_text("Close chat").clicked()
@@ -342,6 +437,10 @@ impl EnhancedAiPlayground {
                     let cs = self.focused_client.clone();
                     self.start_agent_diagnosis(cs);
                 }
+                if let Some(row) = self.open_row.as_ref().filter(|r| r.id.key_string() == self.selected_thread) {
+                    agent_chat::status_badge(ui, row);
+                    return;
+                }
                 let engine = self
                     .thread_engine
                     .get(&self.selected_thread)
@@ -354,56 +453,87 @@ impl EnhancedAiPlayground {
         });
     }
 
-    /// Draws the prompt box and returns the height its text needs.
-    fn show_chat_input(&mut self, ui: &mut Ui) -> Option<f32> {
-        let mut send = false;
-        let mut text_height = None;
-        if let Some(thread) = self.threads.get_mut(&self.selected_thread) {
-            let row_h = ui.available_height();
-            let send_w = 38.0;
-            let send_h = INPUT_MIN_HEIGHT - 2.0 * f32::from(INPUT_PANEL_MARGIN);
-            let margin_y = TEXT_EDIT_MARGIN.sum().y;
-            let line_h = ui.text_style_height(&TextStyle::Body) + ui.spacing().extra_text_line_spacing;
-            let rows = ((row_h - margin_y) / line_h).floor().max(1.0) as usize;
-            ui.with_layout(Layout::left_to_right(Align::Max), |ui| {
-                let edit_size = vec2(ui.available_width() - send_w - 6.0, row_h);
-                let output = ui
-                    .allocate_ui(edit_size, |ui| {
-                        ScrollArea::vertical()
-                            .id_salt("enhanced_ai_input_scroll")
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                TextEdit::multiline(&mut thread.input)
-                                    .hint_text("Ask anything…  (Shift+Enter for newline)")
-                                    .return_key(Some(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter)))
-                                    .margin(TEXT_EDIT_MARGIN)
-                                    .desired_rows(rows)
-                                    .desired_width(f32::INFINITY)
-                                    .show(ui)
-                            })
-                            .inner
-                    })
-                    .inner;
-                text_height = Some(output.galley.rect.height() + margin_y);
-                let enter = output.response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-                let clicked = ui
-                    .add_sized([send_w, send_h], Button::new(RichText::new(icons::UP).strong()))
-                    .on_hover_text("Send")
-                    .clicked();
-                if (clicked || enter) && !thread.input.trim().is_empty() {
-                    send = true;
+    /// The agent index with the open session's fresher row in place of its listed one.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    fn index_with_open_row(&self) -> Vec<AgentThread> {
+        let mut index = self.agent_index.clone();
+        if let Some(row) = &self.open_row {
+            if let Some(listed) = index.iter_mut().find(|t| t.id == row.id) {
+                *listed = row.clone();
+            }
+        }
+        index
+    }
+
+    fn select_thread(&mut self, id: String) {
+        if self.selected_thread != id {
+            self.open_row = None;
+            self.waiting.clear();
+            self.last_state_poll = None;
+        }
+        self.selected_thread = id;
+    }
+
+    fn start_rename(&mut self, key: String) {
+        let current = self.thread_title(&key);
+        self.renaming = Some(Rename::new(key, &current));
+    }
+
+    /// The title field in the top bar; saving renames the session through the broker, or the local chat.
+    fn rename_field(&mut self, ui: &mut Ui) {
+        let width = (ui.available_width() - 40.0).clamp(80.0, 280.0);
+        let Some(edit) = self.renaming.as_mut() else { return };
+        match edit.show(ui, width) {
+            RenameOutcome::Editing => {}
+            RenameOutcome::Cancel => self.renaming = None,
+            RenameOutcome::Save(key, title) => {
+                self.renaming = None;
+                self.chat_title.insert(key.clone(), title.clone());
+                if let Some(t) = self.agent_index.iter_mut().find(|t| t.id.key_string() == key) {
+                    t.title = Some(title.clone());
                 }
-            });
-        } else {
+                if let Some(t) = self.open_row.as_mut().filter(|t| t.id.key_string() == key) {
+                    t.title = Some(title.clone());
+                }
+                if self.agent_threads.contains(&key) {
+                    self.ask_agent(&RecordId::new("agent_thread", key.as_str()), "rename", title, Vec::new());
+                } else {
+                    self.save_thread(&key);
+                }
+            }
+        }
+    }
+
+    /// Draws the queue strip and the composer; returns the height they took.
+    fn show_chat_input(&mut self, ui: &mut Ui, max_height: f32) -> f32 {
+        let tid = self.selected_thread.clone();
+        if !self.threads.contains_key(&tid) {
             ui.centered_and_justified(|ui| {
                 ui.label(RichText::new(format!("Start a new chat with  {}  above.", icons::PLUS)).weak());
             });
+            return INPUT_MIN_HEIGHT;
         }
-
-        if send {
-            self.send_chat_message();
+        let top = ui.cursor().top();
+        if let Some(action) = agent_chat::queue_strip(ui, &self.waiting) {
+            self.apply_queue_action(&tid, action);
         }
-        text_height
+        let row = self.open_row.as_ref().filter(|r| r.id.key_string() == tid);
+        let busy = row.is_some_and(AgentThread::is_busy);
+        let open = row.is_none_or(AgentThread::is_open);
+        let text_max = (max_height - 72.0).max(40.0);
+        let composer = self.composers.entry(tid.clone()).or_default();
+        let Some(thread) = self.threads.get_mut(&tid) else { return INPUT_MIN_HEIGHT };
+        let action = composer.show(ui, composer_id(&tid), &mut thread.input, busy, open, text_max);
+        match action {
+            Some(ComposerAction::Send { kind, text, images, staged }) => self.send_chat_message(kind, text, images, staged),
+            Some(ComposerAction::Stop) => {
+                if self.agent_threads.contains(&tid) {
+                    self.ask_agent(&RecordId::new("agent_thread", tid.as_str()), "interrupt", String::new(), Vec::new());
+                }
+            }
+            None => {}
+        }
+        ui.min_rect().bottom() - top
     }
 
     fn show_chat_content(&mut self, ui: &mut Ui) {
@@ -558,6 +688,20 @@ impl EnhancedAiPlayground {
         {
             self.poll_agent_index(ui);
             self.poll_agent_replies(ui);
+            self.poll_agent_state(ui);
+        }
+        while let Ok(state) = self.state_rx.try_recv() {
+            if state.thread == self.selected_thread {
+                self.open_row = state.row;
+                self.waiting = state.waiting;
+            }
+        }
+        while let Ok((thread, turn)) = self.taken_back_rx.try_recv() {
+            let ctx = ui.ctx().clone();
+            if let (Some(composer), Some(chat)) = (self.composers.get_mut(&thread), self.threads.get_mut(&thread)) {
+                composer.restore(&ctx, &mut chat.input, turn);
+            }
+            self.last_state_poll = None;
         }
 
         while let Ok(response) = self.response_rx.try_recv() {
@@ -599,28 +743,33 @@ impl EnhancedAiPlayground {
         if let Some(title) = self.chat_title.remove(local) {
             self.chat_title.insert(key.clone(), title);
         }
+        if let Some(composer) = self.composers.remove(local) {
+            self.composers.insert(key.clone(), composer);
+        }
         self.agent_threads.remove(local);
         self.agent_threads.insert(key.clone());
         self.hydrated.insert(key.clone());
         if self.selected_thread == local {
-            self.selected_thread = key;
+            self.select_thread(key);
         }
         self.last_agent_poll = None;
     }
 
-    /// Queues one technician message for the agent: a turn on an open session, or a
-    /// request that opens one for the target machine.
+    /// Sends one message as a `start`, `queue` or `steer` turn, or files the request that opens its session.
     #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
     fn send_to_agent(
         &mut self,
         thread_id: String,
         text: String,
+        images: Vec<TurnImage>,
+        kind: &'static str,
         connection_string: Option<String>,
     ) {
-        use database::schema::{AgentThread, AgentTurn, AssistRequest, RecordId};
+        use database::schema::AssistRequest;
 
         self.agent_threads.insert(thread_id.clone());
-        let session = self.agent_index.iter().any(|t| t.id.key_string() == thread_id);
+        self.last_state_poll = None;
+        let session = self.agent_index.iter().chain(&self.open_row).any(|t| t.id.key_string() == thread_id);
         let target = connection_string.or_else(|| self.focused_client.clone());
         let user = crate::get_current_user_from_auth();
         let tech = user.as_ref().map(|u| u.get_email().to_string());
@@ -641,7 +790,7 @@ impl EnhancedAiPlayground {
                 content,
             };
             if session {
-                if let Err(e) = AgentTurn::ask(&RecordId::new("agent_thread", tid.as_str()), "start", &text).await {
+                if let Err(e) = AgentTurn::ask_with(&RecordId::new("agent_thread", tid.as_str()), kind, &text, &images).await {
                     let _ = tx.try_send(say(ChatMessageType::Error(format!("could not queue the message: {e}"))));
                 }
                 return;
@@ -662,45 +811,130 @@ impl EnhancedAiPlayground {
             // A machine with a live session takes the message as a turn; otherwise a
             // request opens one. Either way this thread becomes that session.
             match AgentThread::active_for_connection(&cs).await {
-                Ok(Some(thread)) => match AgentTurn::ask(&thread.id, "start", &text).await {
-                    Ok(_) => {
-                        let _ = switch_tx.try_send((tid.clone(), thread.id.key_string()));
+                Ok(Some(thread)) => {
+                    let kind = if thread.is_busy() && kind == "start" { "queue" } else { kind };
+                    match AgentTurn::ask_with(&thread.id, kind, &text, &images).await {
+                        Ok(_) => {
+                            let _ = switch_tx.try_send((tid.clone(), thread.id.key_string()));
+                        }
+                        Err(e) => {
+                            let _ = tx.try_send(say(ChatMessageType::Error(format!("could not queue the message: {e}"))));
+                        }
                     }
-                    Err(e) => {
-                        let _ = tx.try_send(say(ChatMessageType::Error(format!("could not queue the message: {e}"))));
-                    }
-                },
-                _ => match AssistRequest::create_from_chat(&cs, tech.as_deref(), store.as_deref(), service_number.as_deref(), &text).await {
-                    Ok(request) => {
-                        let what = if general { "your records session".to_string() } else { format!("a session for {cs}") };
-                        let _ = tx.try_send(say(ChatMessageType::Text(format!(
-                            "Asked the agent host to open {what}\u{2026}"
-                        ))));
-                        for _ in 0..45 {
-                            database::sleep_compat(std::time::Duration::from_secs(2)).await;
-                            if let Ok(Some(req)) = AssistRequest::get(&request).await {
-                                if let Some(thread) = req.agent_thread {
-                                    let _ = switch_tx.try_send((tid.clone(), thread.key_string()));
-                                    return;
-                                }
-                                if req.status == "failed" {
-                                    let _ = tx.try_send(say(ChatMessageType::Error(format!(
-                                        "the agent host could not open a session: {}",
-                                        req.dispatch_error.unwrap_or_else(|| "unknown error".into())
-                                    ))));
-                                    return;
+                }
+                _ => {
+                    // A long message or pictures follow the opener as a queued turn.
+                    let whole = images.is_empty() && text.chars().count() <= REQUEST_NOTE_MAX;
+                    let note = if whole { text.as_str() } else { OPENER };
+                    match AssistRequest::create_from_chat(&cs, tech.as_deref(), store.as_deref(), service_number.as_deref(), note).await {
+                        Ok(request) => {
+                            let what = if general { "your records session".to_string() } else { format!("a session for {cs}") };
+                            let _ = tx.try_send(say(ChatMessageType::Text(format!(
+                                "Asked the agent host to open {what}\u{2026}"
+                            ))));
+                            for _ in 0..45 {
+                                database::sleep_compat(std::time::Duration::from_secs(2)).await;
+                                if let Ok(Some(req)) = AssistRequest::get(&request).await {
+                                    if let Some(thread) = req.agent_thread {
+                                        if !whole {
+                                            if let Err(e) = AgentTurn::ask_with(&thread, "queue", &text, &images).await {
+                                                let _ = tx.try_send(say(ChatMessageType::Error(format!("could not queue the message: {e}"))));
+                                            }
+                                        }
+                                        let _ = switch_tx.try_send((tid.clone(), thread.key_string()));
+                                        return;
+                                    }
+                                    if req.status == "failed" {
+                                        let _ = tx.try_send(say(ChatMessageType::Error(format!(
+                                            "the agent host could not open a session: {}",
+                                            req.dispatch_error.unwrap_or_else(|| "unknown error".into())
+                                        ))));
+                                        return;
+                                    }
                                 }
                             }
+                            let _ = tx.try_send(say(ChatMessageType::Error(
+                                "no agent session opened within 90 seconds; is admin-agent running?".into(),
+                            )));
                         }
-                        let _ = tx.try_send(say(ChatMessageType::Error(
-                            "no agent session opened within 90 seconds; is admin-agent running?".into(),
-                        )));
+                        Err(e) => {
+                            let _ = tx.try_send(say(ChatMessageType::Error(format!("could not request a diagnosis: {e}"))));
+                        }
                     }
-                    Err(e) => {
-                        let _ = tx.try_send(say(ChatMessageType::Error(format!("could not request a diagnosis: {e}"))));
-                    }
-                },
+                }
             }
+        });
+    }
+
+    /// Writes one turn row for a session, reporting a failure in its chat.
+    fn ask_agent(&mut self, thread: &RecordId, kind: &'static str, text: String, images: Vec<TurnImage>) {
+        self.last_state_poll = None;
+        let tx = self.response_tx.clone();
+        let (thread, tid) = (thread.clone(), thread.key_string());
+        PlatformSpawner::spawn(async move {
+            if let Err(e) = AgentTurn::ask_with(&thread, kind, &text, &images).await {
+                let _ = tx.try_send(ChatMessage {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    thread_id: tid,
+                    ts: crate::tabs::ai_playground::now_ts(),
+                    from: SentFrom::Assistant,
+                    content: ChatMessageType::Error(format!("could not send the {kind} request: {e}")),
+                });
+            }
+        });
+    }
+
+    /// Resumes the held queue, removes a queued message, or takes one back into the composer.
+    fn apply_queue_action(&mut self, tid: &str, action: QueueAction) {
+        let thread = RecordId::new("agent_thread", tid);
+        match action {
+            QueueAction::Resume => self.ask_agent(&thread, "queue", String::new(), Vec::new()),
+            QueueAction::Remove(id) => {
+                self.waiting.retain(|w| w.id != id);
+                PlatformSpawner::spawn(async move {
+                    if let Err(e) = AgentTurn::cancel(&id).await {
+                        log::warn!("could not remove a queued message: {e}");
+                    }
+                });
+            }
+            QueueAction::Edit(id) => {
+                self.waiting.retain(|w| w.id != id);
+                let tx = self.taken_back_tx.clone();
+                let tid = tid.to_string();
+                PlatformSpawner::spawn(async move {
+                    match AgentTurn::take_back(&id).await {
+                        Ok(Some(turn)) => {
+                            let _ = tx.send((tid, turn));
+                        }
+                        Ok(None) => {}
+                        Err(e) => log::warn!("could not take a queued message back: {e}"),
+                    }
+                });
+            }
+        }
+        self.last_state_poll = None;
+    }
+
+    /// Re-reads the open agent chat's session row and its queue.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    fn poll_agent_state(&mut self, ui: &Ui) {
+        use std::time::Duration;
+        const EVERY: Duration = Duration::from_secs(2);
+        if !self.agent_threads.contains(&self.selected_thread) {
+            return;
+        }
+        let now = web_time::Instant::now();
+        if self.last_state_poll.is_some_and(|t| now.duration_since(t) < EVERY) {
+            return;
+        }
+        self.last_state_poll = Some(now);
+        ui.ctx().request_repaint_after(EVERY);
+        let tx = self.state_tx.clone();
+        let thread = self.selected_thread.clone();
+        PlatformSpawner::spawn(async move {
+            let id = RecordId::new("agent_thread", thread.as_str());
+            let (Ok(row), Ok(waiting)) = (AgentThread::get(&id).await, AgentTurn::waiting(&id).await) else { return };
+            let _ = tx.send(AgentState { thread, row, waiting });
         });
     }
 
@@ -760,7 +994,7 @@ impl EnhancedAiPlayground {
             images: Vec::new(),
             input: String::new(),
         });
-        self.selected_thread = thread;
+        self.select_thread(thread);
         // Force the next reply poll rather than waiting out the interval.
         self.last_agent_poll = None;
     }
@@ -821,6 +1055,9 @@ impl EnhancedAiPlayground {
                         )),
                     ),
                     "approval" => (SentFrom::Assistant, ChatMessageType::Text(format!("{} {}", icons::LOCK, row.text))),
+                    "other" if !row.text.trim().is_empty() => {
+                        (SentFrom::Assistant, ChatMessageType::Text(format!("{NOTICE_PREFIX} {}", row.text)))
+                    }
                     "user" if hydrate => (SentFrom::Me, ChatMessageType::Text(row.text.clone())),
                     _ => continue,
                 };
@@ -828,14 +1065,19 @@ impl EnhancedAiPlayground {
                     .created_at
                     .map(|at| DateTime::<Utc>::from(at).timestamp())
                     .unwrap_or_else(crate::tabs::ai_playground::now_ts);
-                let _ = tx.try_send(ChatMessage { id, thread_id: thread.clone(), ts, from, content });
+                let pictures = if from == SentFrom::Me { agent_chat::attach::image_names(row.item.as_ref()) } else { Vec::new() };
+                let _ = tx.try_send(ChatMessage { id: id.clone(), thread_id: thread.clone(), ts, from, content });
+                for (n, name) in pictures.into_iter().enumerate() {
+                    let content = ChatMessageType::Image((name, bytes::Bytes::new()));
+                    let _ = tx.try_send(ChatMessage { id: format!("{id}:image{n}"), thread_id: thread.clone(), ts, from: SentFrom::Me, content });
+                }
             }
         });
     }
 
     fn create_new_chat_thread(&mut self) {
         let thread_id = uuid::Uuid::new_v4().to_string();
-        self.selected_thread = thread_id.clone();
+        self.select_thread(thread_id.clone());
         self.threads.insert(thread_id.clone(), ChatThread {
             id: thread_id,
             messages: Vec::new(),
@@ -844,31 +1086,24 @@ impl EnhancedAiPlayground {
         });
     }
 
-    fn send_chat_message(&mut self) {
+    /// Echoes a composed message and its pictures into the open thread and sends it to the agent.
+    fn send_chat_message(&mut self, kind: &'static str, text: String, images: Vec<TurnImage>, staged: Vec<String>) {
         if !self.threads.contains_key(&self.selected_thread) {
             self.create_new_chat_thread();
         }
-
-        let (input, thread_id) = match self.threads.get_mut(&self.selected_thread) {
-            Some(thread) => {
-                let input = thread.input.trim().to_string();
-                if input.is_empty() {
-                    return;
-                }
-                thread.input.clear();
-                (input, thread.id.clone())
-            }
-            None => return,
-        };
-
-        // Echo the user's message into the thread.
-        let _ = self.response_tx.try_send(ChatMessage {
+        let thread_id = self.selected_thread.clone();
+        let ts = crate::tabs::ai_playground::now_ts();
+        let echo = |content: ChatMessageType| ChatMessage {
             id: uuid::Uuid::new_v4().to_string(),
             thread_id: thread_id.clone(),
-            ts: crate::tabs::ai_playground::now_ts(),
+            ts,
             from: SentFrom::Me,
-            content: ChatMessageType::Text(input.clone()),
-        });
+            content,
+        };
+        let _ = self.response_tx.try_send(echo(ChatMessageType::Text(text.clone())));
+        for name in staged {
+            let _ = self.response_tx.try_send(echo(ChatMessageType::Image((name, bytes::Bytes::new()))));
+        }
 
         // Every message goes to the agent: a session thread continues, a focused
         // machine gets its session, anything else the technician's records session.
@@ -877,13 +1112,18 @@ impl EnhancedAiPlayground {
             if !self.agent_threads.contains(&thread_id) {
                 self.thread_engine.insert(thread_id.clone(), "Codex agent".to_string());
             }
-            self.send_to_agent(thread_id, input, None);
+            self.send_to_agent(thread_id, text, images, kind, None);
         }
         #[cfg(not(any(target_arch = "wasm32", feature = "tokio")))]
         {
-            let _ = (input, thread_id);
+            let _ = (text, images, kind, thread_id);
         }
     }
+}
+
+/// The composer id of a chat thread.
+fn composer_id(thread: &str) -> Id {
+    Id::new(("enhanced_ai_composer", thread))
 }
 
 fn short_title(s: &str) -> String {
@@ -903,7 +1143,15 @@ fn is_tool_line(message: &ChatMessage) -> bool {
     }
 }
 
-/// Draws a thread's messages, folding each run of consecutive tool lines into one row.
+/// The staged file name of a picture message.
+fn picture_name(message: &ChatMessage) -> Option<&str> {
+    match &message.content {
+        ChatMessageType::Image((name, _)) => Some(name.as_str()),
+        _ => None,
+    }
+}
+
+/// Draws a thread's messages, folding tool-line runs into one row and trailing pictures into their message.
 fn chat_rows(
     ui: &mut Ui,
     style: &ChatStyle,
@@ -920,8 +1168,13 @@ fn chat_rows(
             }
             tool_group(ui, style, scope, now, &messages[start..i]);
         } else {
-            chat_message(ui, style, scope, now, &messages[i]);
-            i += 1;
+            let mut end = i + 1;
+            while end < messages.len() && picture_name(&messages[end]).is_some() {
+                end += 1;
+            }
+            let pictures: Vec<String> = messages[i + 1..end].iter().filter_map(picture_name).map(str::to_string).collect();
+            chat_message(ui, style, scope, now, &messages[i], &pictures);
+            i = end;
         }
     }
 }
@@ -938,6 +1191,7 @@ fn chat_message(
     scope: Id,
     now: &DateTime<Local>,
     message: &ChatMessage,
+    pictures: &[String],
 ) {
     let time = message_time(message.ts, now);
     let key = message.id.as_str();
@@ -979,19 +1233,32 @@ fn chat_message(
                     });
                 return;
             }
-            let (kind, label) = match message.from {
-                SentFrom::Me => (ChatKind::User, "You"),
-                SentFrom::Assistant => (ChatKind::Agent, "Assistant"),
-            };
-            ChatRow::new(kind, key, label)
-                .time(time)
-                .copy(text)
-                .has_body(!text.trim().is_empty())
-                .show(ui, style, scope, |ui, id| {
-                    chat_bubble::markdown(ui, style, text, style.text, id)
-                });
+            if let Some(notice) = text.strip_prefix(NOTICE_PREFIX).filter(|_| message.from == SentFrom::Assistant) {
+                chat_bubble::notice(ui, style, notice, time.as_deref());
+                return;
+            }
+            match message.from {
+                SentFrom::Me => {
+                    ChatRow::new(ChatKind::User, key, "You")
+                        .time(time)
+                        .copy(text)
+                        .has_body(!text.trim().is_empty() || !pictures.is_empty())
+                        .show(ui, style, scope, |ui, id| agent_chat::user_body(ui, style, text, pictures, id));
+                }
+                SentFrom::Assistant => {
+                    ChatRow::new(ChatKind::Agent, key, "Assistant")
+                        .time(time)
+                        .copy(text)
+                        .has_body(!text.trim().is_empty())
+                        .show(ui, style, scope, |ui, id| chat_bubble::markdown(ui, style, text, style.text, id));
+                }
+            }
         }
-        ChatMessageType::Image(_) | ChatMessageType::Done => {}
+        ChatMessageType::Image((name, _)) => {
+            let names: Vec<String> = std::iter::once(name.clone()).chain(pictures.iter().cloned()).collect();
+            agent_chat::sent_images(ui, &names);
+        }
+        ChatMessageType::Done => {}
     }
 }
 
@@ -1219,7 +1486,7 @@ mod tests {
 
     #[test]
     fn every_message_kind_draws_open_and_closed_inside_the_viewport() {
-        use eframe::egui::{Context, RawInput, Rect, pos2};
+        use eframe::egui::{Context, RawInput, Rect, pos2, vec2};
         let long = "y".repeat(3_000);
         let message = |id: &str, from: SentFrom, content: ChatMessageType| ChatMessage {
             id: id.into(),
@@ -1269,6 +1536,21 @@ mod tests {
                 "h",
                 SentFrom::Assistant,
                 ChatMessageType::Error("could not queue the message".into()),
+            ),
+            message(
+                "i",
+                SentFrom::Me,
+                ChatMessageType::Text(format!("see the log\n\n**setup.log**\n```log\n{long}\n```")),
+            ),
+            message(
+                "j",
+                SentFrom::Me,
+                ChatMessageType::Image(("shot-0a1b2c3d.png".into(), bytes::Bytes::new())),
+            ),
+            message(
+                "k",
+                SentFrom::Assistant,
+                ChatMessageType::Text(format!("{NOTICE_PREFIX} Queue held with 1 waiting: {long}")),
             ),
         ];
         let ctx = Context::default();
