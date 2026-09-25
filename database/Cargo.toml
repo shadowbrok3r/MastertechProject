@@ -59,7 +59,7 @@ tcp_protocol = { path = "../tcp_protocol", features = ["fingerprint"] }
 # this target through surrealdb, which does not ask for `macros`.
 tokio = { version = "1", default-features = false, features = ["macros", "sync"] }
 wasm-bindgen-futures.workspace = true
-gloo-timers = { version = "0.3", features = ["futures"] }
+gloo-timers = { version = "0.4", features = ["futures"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_SystemInformation"] }

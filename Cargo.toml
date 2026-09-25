@@ -101,14 +101,14 @@ database = { path = "database" }
 tcp_protocol = { path = "tcp_protocol" }
 eframe = { version="0.36", features=["serde",  "default_fonts", "glow", "links"], default-features=false }
 ratatui = { version = "0.30", default-features = true, features = [ "crossterm", "unstable", "serde", "layout-cache" ]}
-surrealdb = { version = "3.3.0-beta.2", features = ["protocol-ws"] }
-surrealdb-types = { version = "3.3.0-beta.2" }
+surrealdb = { version = "3.3.0", default-features = false, features = ["protocol-ws", "rustls"] }
+surrealdb-types = { version = "3.3.0" }
 egui_extras = { version = "0.36", features = ["datepicker", "syntect", "serde", "image", "all_loaders" ]}
 egui-data-table = { git = "https://github.com/shadowbrok3r/egui-data-table", features = ["persistency"]}
 # Fork: crates.io 0.16.0 is the newest release and it only compiles against egui 0.35.
 egui_json_tree = { git = "https://github.com/shadowbrok3r/egui_json_tree", features = ["serde_json"] }
 egui_dock = { git = "https://github.com/shadowbrok3r/egui_dock",  features = [ "serde" ] }
-rmcp = { version = "3.4.0", features = ["server", "client", "transport-async-rw", "transport-streamable-http-server"] }
+rmcp = { version = "3.4.1", features = ["server", "client", "transport-async-rw", "transport-streamable-http-server"] }
 axum = { version = "0.8", default-features = true, features = ["tokio"] }
 # `wasmbind` routes Utc/Local::now() through js_sys::Date on wasm32. Without it
 # chrono falls back to SystemTime::now(), which panics with "time not
@@ -128,7 +128,7 @@ uuid = { version = "1", features = ["v4"] }
 wasm-bindgen-futures = "0.4.75"
 # Exact pin: trunk selects wasm-bindgen-cli from the locked version, so this must
 # name a version with a published CLI release artifact. eframe 0.36 requires >=0.2.126.
-wasm-bindgen = "=0.2.126"
+wasm-bindgen = "=0.2.128"
 # 0.4 requires js-sys ^0.3.91; surrealdb 3.1.0-beta.2 pins wasm-bindgen-futures 0.4.58 → js-sys 0.3.85.
 gloo-console = "0.3"
 wasm-cookies = "0.2"
@@ -143,8 +143,8 @@ mime_guess = "2"
 crossbeam = "0.8"
 futures = "0.3"
 fuzzy-matcher = "0.3"
-wasmtime = "47.0.2"
-wasmtime-wasi = "47.0.2"
+wasmtime = "48.0.3"
+wasmtime-wasi = { version = "48.0.3", default-features = false, features = ["p1"] }
 wat = "1"
 rfd = "0.17.2"
 regex = "1.13.0"
