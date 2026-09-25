@@ -5,3 +5,5 @@
 //! every call site imports from.
 
 pub use mtech_ui::icons::*;
+
+pub const USER: &str = p::USER;
