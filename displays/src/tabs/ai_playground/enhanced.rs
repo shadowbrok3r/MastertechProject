@@ -1,15 +1,16 @@
 use eframe::egui::{
-    text::LayoutJob, vec2, Align, Button, CentralPanel, CollapsingHeader, Color32, FontId, Frame,
-    Key, KeyboardShortcut, Layout, Margin, Modifiers, Popup, PopupCloseBehavior, RichText,
-    ScrollArea, TextEdit, TextFormat, TextStyle, Ui,
+    vec2, Align, Button, CentralPanel, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers,
+    Popup, PopupCloseBehavior, RichText, ScrollArea, TextEdit, TextStyle, Ui,
 };
 use crate::{
-    tabs::ai_playground::{ChatMessage, ChatMessageType, ChatThread, SentFrom},
+    tabs::ai_playground::{ChatMessage, ChatMessageType, ChatThread, SentFrom, TOOL_PREFIX},
+    ui_tools::chat_bubble::{self, ChatKind, ChatRow, ChatStyle},
     ui_tools::icons,
     PlatformSpawner, Spawner,
 };
 
 use std::collections::HashMap;
+use chrono::{DateTime, Local, Utc};
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::RecordIdExt;
 use serde::Serialize;
@@ -18,6 +19,8 @@ use serde::Serialize;
 const INPUT_MIN_HEIGHT: f32 = 92.0;
 const INPUT_PANEL_MARGIN: i8 = 6;
 const TEXT_EDIT_MARGIN: Margin = Margin::symmetric(4, 2);
+/// Longest header summary in characters; the header also truncates to its width.
+const SUMMARY_CHARS: usize = 160;
 
 /// A chat thread loaded from the database, delivered to the UI thread.
 struct LoadedThread {
@@ -432,175 +435,13 @@ impl EnhancedAiPlayground {
             return;
         }
 
+        let style = ChatStyle::from_ui(ui);
+        let scope = Id::new(("ai_chat_rows", self.selected_thread.as_str()));
+        let now = Local::now();
         ScrollArea::vertical()
             .auto_shrink([false, false])
             .stick_to_bottom(true)
-            .show(ui, |ui| {
-                // Consecutive tool lines collapse into one block instead of one card each.
-                let mut i = 0;
-                while i < messages.len() {
-                    if Self::is_tool_line(&messages[i]) {
-                        let start = i;
-                        while i < messages.len() && Self::is_tool_line(&messages[i]) {
-                            i += 1;
-                        }
-                        self.render_tool_group(ui, &messages[start..i]);
-                    } else {
-                        self.render_chat_message(ui, &messages[i]);
-                        i += 1;
-                    }
-                    ui.add_space(6.);
-                }
-            });
-    }
-
-    /// True for assistant tool-activity lines emitted with `TOOL_PREFIX`.
-    fn is_tool_line(message: &ChatMessage) -> bool {
-        match &message.content {
-            ChatMessageType::Text(t) => {
-                matches!(message.from, SentFrom::Assistant)
-                    && t.starts_with(crate::tabs::ai_playground::TOOL_PREFIX)
-            }
-            _ => false,
-        }
-    }
-
-    fn render_tool_group(&self, ui: &mut Ui, group: &[ChatMessage]) {
-        let salt = group.first().map(|m| m.id.as_str()).unwrap_or("tools");
-        let plural = if group.len() == 1 { "" } else { "s" };
-        let title = format!("{}  {} tool call{plural}", icons::WRENCH, group.len());
-        Frame::group(ui.style()).fill(ui.visuals().extreme_bg_color).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            CollapsingHeader::new(RichText::new(title).small().weak())
-                .id_salt(format!("tool-group-{salt}"))
-                .default_open(true)
-                .show(ui, |ui| {
-                    for m in group {
-                        if let ChatMessageType::Text(t) = &m.content {
-                            self.render_tool_line(ui, &m.id, t);
-                        }
-                    }
-                });
-        });
-    }
-
-    /// Splits `» name ({json}) status` plus an optional result after the first
-    /// newline, rendering both JSON payloads as collapsible trees.
-    fn render_tool_line(&self, ui: &mut Ui, id: &str, text: &str) {
-        let (text, result) = match text.split_once('\n') {
-            Some((head, tail)) => (head, tail.trim()),
-            None => (text, ""),
-        };
-        let body = text.trim_start_matches(crate::tabs::ai_playground::TOOL_PREFIX).trim_start();
-
-        let (name, rest) = match body.find(" (") {
-            Some(i) => (&body[..i], &body[i + 1..]),
-            None => (body, ""),
-        };
-        let (args, status) = match rest.rfind(')') {
-            Some(i) => (rest[1..i].trim(), rest[i + 1..].trim()),
-            None => ("", rest.trim()),
-        };
-
-        let mut header = LayoutJob::default();
-        header.append(
-            name,
-            0.0,
-            TextFormat {
-                font_id: FontId::monospace(11.0),
-                color: ui.visuals().strong_text_color(),
-                ..Default::default()
-            },
-        );
-        if !status.is_empty() {
-            header.append(
-                &format!("  {status}"),
-                0.0,
-                TextFormat {
-                    font_id: FontId::proportional(11.0),
-                    color: Color32::LIGHT_GREEN,
-                    ..Default::default()
-                },
-            );
-        }
-        // Nothing to reveal when the call carried neither payload.
-        if args.is_empty() && result.is_empty() {
-            ui.label(header);
-            return;
-        }
-        CollapsingHeader::new(header)
-            .id_salt(format!("tool-call-{id}"))
-            .default_open(false)
-            .show(ui, |ui| {
-                if !args.is_empty() {
-                    Self::render_payload(ui, &format!("tool-args-{id}"), "arguments", args);
-                }
-                if !result.is_empty() {
-                    Self::render_payload(ui, &format!("tool-res-{id}"), "result", result);
-                }
-            });
-    }
-
-    /// JSON payloads get a tree; anything else falls back to monospace text.
-    fn render_payload(ui: &mut Ui, salt: &str, label: &str, raw: &str) {
-        CollapsingHeader::new(RichText::new(label).small().weak())
-            .id_salt(salt)
-            .default_open(false)
-            .show(ui, |ui| match serde_json::from_str::<serde_json::Value>(raw) {
-                Ok(value) => crate::ui_tools::hex_json::json_tree(ui, salt, &value),
-                Err(_) => {
-                    ui.add(
-                        eframe::egui::Label::new(RichText::new(raw).monospace().small())
-                            .wrap_mode(eframe::egui::TextWrapMode::Extend),
-                    );
-                }
-            });
-    }
-
-    fn render_chat_message(&self, ui: &mut Ui, message: &ChatMessage) {
-        match &message.content {
-            ChatMessageType::Reasoning(reasoning) => {
-                if reasoning.trim().is_empty() {
-                    return;
-                }
-                CollapsingHeader::new(RichText::new(format!("{}  Thinking", icons::LIGHTBULB)).weak())
-                    .id_salt(format!("think-{}", message.id))
-                    .default_open(false)
-                    .show(ui, |ui| {
-                        ui.style_mut().visuals.override_text_color = Some(ui.visuals().weak_text_color());
-                        crate::markdown_editor::chat_markdown::render(ui, reasoning);
-                    });
-            }
-            ChatMessageType::Text(text)
-            | ChatMessageType::Code(text)
-            | ChatMessageType::Error(text)
-            | ChatMessageType::FileId(text) => {
-                let is_user = matches!(message.from, SentFrom::Me);
-                let (glyph, name) = if is_user {
-                    (icons::p::USER, "You")
-                } else {
-                    (icons::ROBOT, "Assistant")
-                };
-                let fill = if is_user {
-                    ui.visuals().widgets.active.weak_bg_fill
-                } else {
-                    ui.visuals().faint_bg_color
-                };
-                Frame::group(ui.style()).fill(fill).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.horizontal(|ui| {
-                        let color = if is_user { Color32::LIGHT_BLUE } else { Color32::LIGHT_GREEN };
-                        ui.label(RichText::new(format!("{glyph}  {name}")).strong().color(color).small());
-                    });
-                    if matches!(message.content, ChatMessageType::Error(_)) {
-                        ui.colored_label(ui.visuals().error_fg_color, text);
-                    } else {
-                        crate::markdown_editor::chat_markdown::render(ui, text);
-                    }
-                });
-            }
-            ChatMessageType::Image(_) | ChatMessageType::Done => {}
-        }
+            .show(ui, |ui| chat_rows(ui, &style, scope, &now, &messages));
     }
 
     /// Kicks off a one-time load of the user's persisted chat threads.
@@ -975,22 +816,19 @@ impl EnhancedAiPlayground {
                     "tool_call" | "command" => (
                         SentFrom::Assistant,
                         ChatMessageType::Text(format!(
-                            "{}{}",
-                            crate::tabs::ai_playground::TOOL_PREFIX,
-                            row.text.lines().next().unwrap_or_default()
+                            "{TOOL_PREFIX}{}",
+                            crate::tabs::agent_sessions::chat_line(&row).unwrap_or_default()
                         )),
                     ),
                     "approval" => (SentFrom::Assistant, ChatMessageType::Text(format!("{} {}", icons::LOCK, row.text))),
                     "user" if hydrate => (SentFrom::Me, ChatMessageType::Text(row.text.clone())),
                     _ => continue,
                 };
-                let _ = tx.try_send(ChatMessage {
-                    id,
-                    thread_id: thread.clone(),
-                    ts: crate::tabs::ai_playground::now_ts(),
-                    from,
-                    content,
-                });
+                let ts = row
+                    .created_at
+                    .map(|at| DateTime::<Utc>::from(at).timestamp())
+                    .unwrap_or_else(crate::tabs::ai_playground::now_ts);
+                let _ = tx.try_send(ChatMessage { id, thread_id: thread.clone(), ts, from, content });
             }
         });
     }
@@ -1054,5 +892,412 @@ fn short_title(s: &str) -> String {
         t
     } else {
         format!("{}…", t.chars().take(28).collect::<String>())
+    }
+}
+
+/// True for assistant tool-activity lines emitted with `TOOL_PREFIX`.
+fn is_tool_line(message: &ChatMessage) -> bool {
+    match (&message.from, &message.content) {
+        (SentFrom::Assistant, ChatMessageType::Text(t)) => t.starts_with(TOOL_PREFIX),
+        _ => false,
+    }
+}
+
+/// Draws a thread's messages, folding each run of consecutive tool lines into one row.
+fn chat_rows(
+    ui: &mut Ui,
+    style: &ChatStyle,
+    scope: Id,
+    now: &DateTime<Local>,
+    messages: &[ChatMessage],
+) {
+    let mut i = 0;
+    while i < messages.len() {
+        if is_tool_line(&messages[i]) {
+            let start = i;
+            while i < messages.len() && is_tool_line(&messages[i]) {
+                i += 1;
+            }
+            tool_group(ui, style, scope, now, &messages[start..i]);
+        } else {
+            chat_message(ui, style, scope, now, &messages[i]);
+            i += 1;
+        }
+    }
+}
+
+/// Local clock time of a message's unix-seconds stamp.
+fn message_time(ts: i64, now: &DateTime<Local>) -> Option<String> {
+    let at = DateTime::<Utc>::from_timestamp(ts, 0).filter(|_| ts > 0)?;
+    Some(chat_bubble::local_clock(at, now))
+}
+
+fn chat_message(
+    ui: &mut Ui,
+    style: &ChatStyle,
+    scope: Id,
+    now: &DateTime<Local>,
+    message: &ChatMessage,
+) {
+    let time = message_time(message.ts, now);
+    let key = message.id.as_str();
+    match &message.content {
+        ChatMessageType::Reasoning(text) => {
+            if text.trim().is_empty() {
+                return;
+            }
+            ChatRow::new(ChatKind::Reasoning, key, "Thinking")
+                .time(time)
+                .copy(text)
+                .summary(chat_bubble::summary_line(text, SUMMARY_CHARS))
+                .show(ui, style, scope, |ui, id| {
+                    chat_bubble::markdown(ui, style, text, style.text, id)
+                });
+        }
+        ChatMessageType::Error(text) => {
+            ChatRow::new(ChatKind::Error, key, "Error")
+                .time(time)
+                .copy(text)
+                .show(ui, style, scope, |ui, id| {
+                    chat_bubble::markdown(ui, style, text, style.error, id)
+                });
+        }
+        ChatMessageType::Text(text)
+        | ChatMessageType::Code(text)
+        | ChatMessageType::FileId(text) => {
+            let approval = match message.from {
+                SentFrom::Assistant => text.strip_prefix(icons::LOCK).map(str::trim_start),
+                SentFrom::Me => None,
+            };
+            if let Some(text) = approval {
+                ChatRow::new(ChatKind::Approval, key, "Approval")
+                    .time(time)
+                    .copy(text)
+                    .summary(chat_bubble::summary_line(text, SUMMARY_CHARS))
+                    .show(ui, style, scope, |ui, id| {
+                        chat_bubble::markdown(ui, style, text, style.text, id)
+                    });
+                return;
+            }
+            let (kind, label) = match message.from {
+                SentFrom::Me => (ChatKind::User, "You"),
+                SentFrom::Assistant => (ChatKind::Agent, "Assistant"),
+            };
+            ChatRow::new(kind, key, label)
+                .time(time)
+                .copy(text)
+                .has_body(!text.trim().is_empty())
+                .show(ui, style, scope, |ui, id| {
+                    chat_bubble::markdown(ui, style, text, style.text, id)
+                });
+        }
+        ChatMessageType::Image(_) | ChatMessageType::Done => {}
+    }
+}
+
+/// Consecutive tool lines as one collapsible row, with a nested row per call when there are several.
+fn tool_group(
+    ui: &mut Ui,
+    style: &ChatStyle,
+    scope: Id,
+    now: &DateTime<Local>,
+    group: &[ChatMessage],
+) {
+    let calls: Vec<(&ChatMessage, &str, ToolLine<'_>)> = group
+        .iter()
+        .filter_map(|m| match &m.content {
+            ChatMessageType::Text(t) => Some((m, t.as_str(), ToolLine::parse(t))),
+            _ => None,
+        })
+        .collect();
+    let Some((first, _, _)) = calls.first() else {
+        return;
+    };
+    let key = format!("tools:{}", first.id);
+    let failed = calls.iter().filter(|(_, _, c)| c.failed()).count();
+    let (label, summary) = match calls.as_slice() {
+        [(_, _, only)] => (
+            chat_bubble::tool_label(only.name).to_string(),
+            only.summary(ui),
+        ),
+        _ => {
+            let names: Vec<&str> = calls
+                .iter()
+                .map(|(_, _, c)| chat_bubble::tool_label(c.name))
+                .collect();
+            (
+                format!("Tools ({})", calls.len()),
+                chat_bubble::clip(&names.join(", "), SUMMARY_CHARS).into_owned(),
+            )
+        }
+    };
+    let mut row = ChatRow::new(ChatKind::Tool, &key, &label)
+        .time(message_time(first.ts, now))
+        .summary(summary)
+        .default_open(failed > 0);
+    if let [(_, _, only)] = calls.as_slice() {
+        if only.failed() {
+            row = row.badge("failed", style.error);
+        } else if !only.status.is_empty() {
+            row = row.badge(only.status, style.weak);
+        }
+    } else if failed > 0 {
+        row = row.badge(format!("{failed} failed"), style.error);
+    }
+    let copied = row.show(ui, style, scope, |ui, id| match calls.as_slice() {
+        [(_, _, only)] => only.body(ui, style, id),
+        _ => {
+            for (m, raw, call) in &calls {
+                let mut sub =
+                    ChatRow::new(ChatKind::Tool, &m.id, chat_bubble::tool_label(call.name))
+                        .nested(true)
+                        .copy(raw.trim_start_matches(TOOL_PREFIX))
+                        .summary(call.summary(ui))
+                        .default_open(call.failed())
+                        .has_body(call.has_payload());
+                if call.failed() {
+                    sub = sub.badge("failed", style.error);
+                } else if !call.status.is_empty() {
+                    sub = sub.badge(call.status, style.weak);
+                }
+                sub.show(ui, style, id, |ui, sub_id| call.body(ui, style, sub_id));
+            }
+        }
+    });
+    if copied {
+        let all: Vec<&str> = calls
+            .iter()
+            .map(|(_, raw, _)| raw.trim_start_matches(TOOL_PREFIX))
+            .collect();
+        ui.ctx().copy_text(all.join("\n\n"));
+    }
+}
+
+/// A `» name (arguments) status` tool line with its result or error after the first newline.
+#[derive(Debug, PartialEq, Eq)]
+struct ToolLine<'a> {
+    name: &'a str,
+    args: &'a str,
+    status: &'a str,
+    detail: &'a str,
+}
+
+impl<'a> ToolLine<'a> {
+    /// Reads both `name (args) status` and the older `name(args)` spelling.
+    fn parse(text: &'a str) -> Self {
+        let (head, detail) = text.split_once('\n').unwrap_or((text, ""));
+        let body = head.strip_prefix(TOOL_PREFIX).unwrap_or(head).trim();
+        let detail = detail.trim();
+        let Some(open) = body.find('(') else {
+            return Self {
+                name: body,
+                args: "",
+                status: "",
+                detail,
+            };
+        };
+        let rest = &body[open + 1..];
+        let (args, status) = match rest.rfind(')') {
+            Some(close) => (rest[..close].trim(), rest[close + 1..].trim()),
+            None => (rest.trim(), ""),
+        };
+        Self {
+            name: body[..open].trim(),
+            args,
+            status,
+            detail,
+        }
+    }
+
+    fn failed(&self) -> bool {
+        let status = self.status.to_ascii_lowercase();
+        ["fail", "error", "declin", "denied"]
+            .iter()
+            .any(|w| status.contains(w))
+            || status
+                .strip_prefix("exit ")
+                .is_some_and(|code| code.trim() != "0")
+    }
+
+    fn has_payload(&self) -> bool {
+        !self.args.is_empty() || !self.detail.is_empty()
+    }
+
+    fn summary(&self, ui: &Ui) -> String {
+        chat_bubble::payload_summary(ui.ctx(), self.args, SUMMARY_CHARS)
+    }
+
+    fn body(&self, ui: &mut Ui, style: &ChatStyle, id: Id) {
+        if !self.args.is_empty() {
+            chat_bubble::caption(ui, style, "Arguments");
+            chat_bubble::payload(ui, style, self.args, style.text, id.with("args"));
+        }
+        if !self.detail.is_empty() {
+            let (title, ink) = if self.failed() {
+                ("Error", style.error)
+            } else {
+                ("Result", style.text)
+            };
+            chat_bubble::caption(ui, style, title);
+            chat_bubble::payload(ui, style, self.detail, ink, id.with("detail"));
+        }
+        if !self.has_payload() {
+            chat_bubble::caption(ui, style, "No arguments or result were recorded.");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_lines_split_into_name_arguments_status_and_result() {
+        let line =
+            format!("{TOOL_PREFIX}get_client_info ({{\"a\":\"(x)\"}}) 1.2 s\n{{\"ok\":true}}\n");
+        assert_eq!(
+            ToolLine::parse(&line),
+            ToolLine {
+                name: "get_client_info",
+                args: "{\"a\":\"(x)\"}",
+                status: "1.2 s",
+                detail: "{\"ok\":true}"
+            }
+        );
+        let old = format!("{TOOL_PREFIX}query_surrealdb({{\"query\":\"SELECT 1\"}})");
+        assert_eq!(
+            ToolLine::parse(&old),
+            ToolLine {
+                name: "query_surrealdb",
+                args: "{\"query\":\"SELECT 1\"}",
+                status: "",
+                detail: ""
+            }
+        );
+        assert_eq!(ToolLine::parse("» bare").name, "bare");
+    }
+
+    #[test]
+    fn failures_are_read_from_the_status_word() {
+        let status = |s: &'static str| ToolLine {
+            name: "t",
+            args: "",
+            status: s,
+            detail: "",
+        };
+        for failed in ["failed", "error", "Declined", "exit 2"] {
+            assert!(status(failed).failed(), "{failed}");
+        }
+        for ok in ["", "1.2 s", "exit 0", "ok"] {
+            assert!(!status(ok).failed(), "{ok}");
+        }
+    }
+
+    #[test]
+    fn message_times_skip_a_missing_stamp() {
+        let now = Local::now();
+        assert_eq!(message_time(0, &now), None);
+        assert!(message_time(1_790_000_000, &now).is_some());
+    }
+
+    #[test]
+    fn every_message_kind_draws_open_and_closed_inside_the_viewport() {
+        use eframe::egui::{Context, RawInput, Rect, pos2};
+        let long = "y".repeat(3_000);
+        let message = |id: &str, from: SentFrom, content: ChatMessageType| ChatMessage {
+            id: id.into(),
+            thread_id: "t".into(),
+            ts: 1_790_000_000,
+            from,
+            content,
+        };
+        let tool = |id: &str, line: String| {
+            message(
+                id,
+                SentFrom::Assistant,
+                ChatMessageType::Text(format!("{TOOL_PREFIX}{line}")),
+            )
+        };
+        let messages = vec![
+            message(
+                "a",
+                SentFrom::Me,
+                ChatMessageType::Text("Why is **PC-1** slow?".into()),
+            ),
+            message(
+                "b",
+                SentFrom::Assistant,
+                ChatMessageType::Reasoning(format!("thinking {long}")),
+            ),
+            tool(
+                "c",
+                format!("get_client_info ({{\"k\":\"{long}\"}}) 1.2 s\n{{\"cpu\":\"{long}\"}}"),
+            ),
+            message(
+                "d",
+                SentFrom::Assistant,
+                ChatMessageType::Text(format!("## Found\n```\n{long}\n```\n{long}")),
+            ),
+            tool("e", "query_surrealdb({\"q\":\"SELECT 1\"})".into()),
+            tool("f", format!("run_script ({{}}) failed\nerror: {long}")),
+            message(
+                "g",
+                SentFrom::Assistant,
+                ChatMessageType::Text(format!(
+                    "{} Waiting for a technician to approve: run x",
+                    icons::LOCK
+                )),
+            ),
+            message(
+                "h",
+                SentFrom::Assistant,
+                ChatMessageType::Error("could not queue the message".into()),
+            ),
+        ];
+        let ctx = Context::default();
+        let scope = Id::new(("ai_chat_rows", "t"));
+        let now = Local::now();
+        let render = || {
+            let input = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(420.0, 900.0))),
+                ..Default::default()
+            };
+            let mut size = vec2(0.0, 0.0);
+            let mut out = ctx.run_ui(input, |ui| {
+                ScrollArea::vertical().show(ui, |ui| {
+                    chat_rows(ui, &ChatStyle::from_ui(ui), scope, &now, &messages);
+                    size = ui.min_rect().size();
+                });
+            });
+            out.textures_delta.clear();
+            size
+        };
+        let closed = render();
+        ctx.data_mut(|d| {
+            for m in &messages {
+                d.insert_temp(scope.with(m.id.as_str()).with("open"), true);
+            }
+            d.insert_temp(scope.with("tools:c").with("open"), true);
+            let group = scope.with("tools:e");
+            d.insert_temp(group.with("open"), true);
+            for id in ["e", "f"] {
+                d.insert_temp(group.with(id).with("open"), true);
+            }
+        });
+        let open = render();
+        let settled = render();
+        for size in [closed, open, settled] {
+            assert!(
+                (300.0..=421.0).contains(&size.x),
+                "content {} px wide in a 420 px viewport",
+                size.x
+            );
+        }
+        assert!(
+            open.y > closed.y + 400.0,
+            "opening every row grew the chat from {} to {} px",
+            closed.y,
+            open.y
+        );
     }
 }

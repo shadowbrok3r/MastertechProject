@@ -11,6 +11,9 @@ use crate::ui_tools::chat_bubble::{self, ChatKind, ChatRow, ChatStyle};
 
 /// Longest header summary in characters; the header also truncates to its width.
 const SUMMARY_CHARS: usize = 160;
+/// Characters of arguments and of result kept in a chat line.
+const LINE_ARGS_CHARS: usize = 2_000;
+const LINE_DETAIL_CHARS: usize = 4_000;
 
 /// Renders a transcript; shared with the bench-side progress window.
 pub fn transcript_ui(ui: &mut Ui, salt: &str, events: &[AgentEvent], show_reasoning: bool) {
@@ -391,6 +394,51 @@ fn split_call(text: &str) -> (&str, Option<&str>) {
     }
 }
 
+/// The AI chat's `name (arguments) status` line for a tool or shell row, then its result or error.
+pub(crate) fn chat_line(ev: &AgentEvent) -> Option<String> {
+    match ev.kind.as_str() {
+        "tool_call" => {
+            let call = ToolCall::from_event(ev);
+            let status = if call.failed {
+                "failed".to_string()
+            } else {
+                call.duration_ms
+                    .map(chat_bubble::duration_label)
+                    .unwrap_or_default()
+            };
+            let detail = call.error().or_else(|| call.output()).unwrap_or_default();
+            Some(line(call.name, &call.arguments_text(), &status, &detail))
+        }
+        "command" => {
+            let (head, rest) = ev.text.split_once('\n').unwrap_or((ev.text.as_str(), ""));
+            let field = |k: &str| ev.item.as_ref().and_then(|i| i.get(k));
+            let status = match field("exitCode").and_then(Value::as_i64) {
+                Some(code) if code != 0 => format!("exit {code}"),
+                _ => field("durationMs")
+                    .and_then(Value::as_u64)
+                    .map(chat_bubble::duration_label)
+                    .unwrap_or_default(),
+            };
+            Some(line("shell", head.trim(), &status, rest))
+        }
+        _ => None,
+    }
+}
+
+fn line(name: &str, args: &str, status: &str, detail: &str) -> String {
+    let mut out = format!("{name} ({})", chat_bubble::clip(args, LINE_ARGS_CHARS));
+    if !status.is_empty() {
+        out.push(' ');
+        out.push_str(status);
+    }
+    let detail = detail.trim();
+    if !detail.is_empty() {
+        out.push('\n');
+        out.push_str(&chat_bubble::clip(detail, LINE_DETAIL_CHARS));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -583,5 +631,26 @@ mod tests {
             ("tool", Some("{\"a\":\"cut…"))
         );
         assert_eq!(split_call("bare"), ("bare", None));
+    }
+
+    #[test]
+    fn chat_lines_carry_the_status_and_the_result() {
+        let item = json!({"tool": "t", "arguments": {"a": 1}, "success": false, "contentItems": [{"type": "inputText", "text": "nope"}]});
+        let ev = event("tool_call", "t({\"a\":1})", true, Some(item));
+        assert_eq!(
+            chat_line(&ev).as_deref(),
+            Some("t ({\"a\":1}) failed\nnope")
+        );
+        let cmd = event(
+            "command",
+            "$ ls\nfile.txt\n",
+            true,
+            Some(json!({"exitCode": 2})),
+        );
+        assert_eq!(
+            chat_line(&cmd).as_deref(),
+            Some("shell ($ ls) exit 2\nfile.txt")
+        );
+        assert_eq!(chat_line(&event("agent", "hi", true, None)), None);
     }
 }

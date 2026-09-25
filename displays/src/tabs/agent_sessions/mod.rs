@@ -20,6 +20,7 @@ use web_time::Instant;
 use crate::ui_tools::{icons, theme};
 use crate::{PlatformSpawner, Spawner};
 
+pub(crate) use transcript::chat_line;
 pub use transcript::transcript_ui;
 
 /// Snapshot polls behind the live streams.
