@@ -1,5 +1,4 @@
-//! Controls shared by the AI chat rail and the Agent Sessions tab: status badges, the context bar,
-//! the composer with its queue and attachments, renaming, and the pictures a message carried.
+//! Agent chat controls shared by the AI chat rail and the Agent Sessions tab.
 
 pub mod attach;
 mod composer;

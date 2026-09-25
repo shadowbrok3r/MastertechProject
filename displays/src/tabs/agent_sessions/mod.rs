@@ -29,8 +29,9 @@ pub use transcript::{ToolCall, transcript_ui};
 /// Snapshot polls behind the live streams.
 const THREADS_POLL: Duration = Duration::from_secs(30);
 const EVENTS_POLL: Duration = Duration::from_secs(10);
-/// Queue reads while a turn runs or messages wait, and otherwise.
+/// Queue poll interval while a turn runs or messages wait.
 const QUEUE_POLL_BUSY: Duration = Duration::from_secs(3);
+/// Queue poll interval otherwise.
 const QUEUE_POLL_IDLE: Duration = Duration::from_secs(15);
 /// Pause before a dropped stream is reopened.
 const STREAM_RETRY: Duration = Duration::from_secs(3);
