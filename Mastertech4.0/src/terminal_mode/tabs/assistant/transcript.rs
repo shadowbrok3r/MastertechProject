@@ -8,7 +8,7 @@ use std::rc::Rc;
 use chrono::{DateTime, Local, NaiveDate, Utc};
 use database::schema::{AgentEvent, RecordId, RecordIdExt};
 use displays::tabs::agent_sessions::ToolCall;
-use displays::ui_tools::chat_bubble::markdown::{as_json, split_json};
+use displays::ui_tools::chat_bubble::markdown::{as_json, ends_cut, split_json};
 use displays::ui_tools::chat_bubble::{self as chat, ChatKind};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -555,15 +555,23 @@ fn file_changes(ev: &AgentEvent) -> Vec<(&str, &str)> {
 
 /// A tool payload: JSON as JSON, a sentence ending in JSON as both, anything else as monospace text.
 fn payload(text: &str, width: usize, ink: Color) -> Vec<Line<'static>> {
-    if let Some(values) = as_json(text) {
-        return values.iter().flat_map(|v| json::lines(v, width)).collect();
+    let (head, values) = match as_json(text) {
+        Some(values) => ("", values),
+        None => match split_json(text) {
+            Some(split) => split,
+            None => return mono(text, width, ink),
+        },
+    };
+    let mut out = if head.is_empty() {
+        Vec::new()
+    } else {
+        mono(head, width, ink)
+    };
+    out.extend(values.iter().flat_map(|v| json::lines(v, width)));
+    if ends_cut(text) {
+        out.extend(note("Cut short when it was recorded.", width));
     }
-    if let Some((head, values)) = split_json(text) {
-        let mut out = mono(head, width, ink);
-        out.extend(values.iter().flat_map(|v| json::lines(v, width)));
-        return out;
-    }
-    mono(text, width, ink)
+    out
 }
 
 /// Monospace text in `ink`, cut at [`MONO_MAX_CHARS`] with a note of how much was left out.
@@ -913,6 +921,25 @@ mod tests {
             .find(|s| s.content == "\"PC-1\"")
             .expect("string span");
         assert_ne!(null.style, string.style);
+    }
+
+    #[test]
+    fn arguments_cut_short_in_the_row_text_still_read_as_json() {
+        let cut = "query_surrealdb({\"query\":\"SELECT * FROM x WHERE\u{2026})";
+        let events = [event("z", "tool_call", cut, false, None)];
+        let folded = rows(&events, &opts(80, false));
+        assert!(text(&folded[0].lines[0]).contains("query=SELECT * FROM x WHERE"));
+        let open = lines_of(&rows(&events, &opts(80, true))[0]);
+        assert!(
+            open.iter()
+                .any(|l| l.contains("\"query\": \"SELECT * FROM x WHERE\"")),
+            "{open:?}"
+        );
+        assert!(
+            open.iter()
+                .any(|l| l.contains("Cut short when it was recorded.")),
+            "{open:?}"
+        );
     }
 
     #[test]

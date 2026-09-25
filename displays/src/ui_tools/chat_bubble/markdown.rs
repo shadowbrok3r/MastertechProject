@@ -324,7 +324,7 @@ pub fn as_json(text: &str) -> Option<Vec<Value>> {
 }
 
 /// True when `text` ends in the `…` a recorder appends to text it cut short.
-pub(crate) fn ends_cut(text: &str) -> bool {
+pub fn ends_cut(text: &str) -> bool {
     text.trim_end().ends_with('\u{2026}')
 }
 
