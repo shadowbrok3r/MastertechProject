@@ -430,6 +430,12 @@ fn message(head: Head, text: &str, ink: Color, width: usize, key: String) -> Row
     }
 }
 
+/// A message the technician sent that no event shows yet, as a `You` row without a time.
+pub fn draft(text: &str, width: usize) -> Vec<Line<'static>> {
+    let head = Head::new(ChatKind::User, None);
+    message(head, text, THEME.text, width.max(MIN_WIDTH), String::new()).lines
+}
+
 /// A folding row: the header, then while open the body behind a left rule.
 fn folding(
     head: Head,
