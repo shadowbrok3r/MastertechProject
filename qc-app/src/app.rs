@@ -93,6 +93,22 @@ fn default_dock() -> DockState<QcTab> {
     DockState::new(QcTab::ALL.to_vec())
 }
 
+/// Storage key for the dock layout.
+const DOCK_KEY: &str = "qc_dock";
+
+/// Dock field of settings blobs written before `DOCK_KEY` existed.
+#[derive(serde::Deserialize)]
+struct LegacyDock {
+    #[serde(default = "default_dock")]
+    dock: DockState<QcTab>,
+}
+
+fn load_dock(storage: &dyn eframe::Storage) -> DockState<QcTab> {
+    eframe::get_value(storage, DOCK_KEY)
+        .or_else(|| eframe::get_value::<LegacyDock>(storage, eframe::APP_KEY).map(|l| l.dock))
+        .unwrap_or_else(default_dock)
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct QcApp {
     pub github_owner: String,
@@ -105,7 +121,7 @@ pub struct QcApp {
     /// `.bin` passed to H2OOAE `-W` in inject preview.
     pub oa3_bin_path: String,
     pub h2o_generation: H2oGeneration,
-    #[serde(default = "default_dock")]
+    #[serde(skip, default = "default_dock")]
     dock: DockState<QcTab>,
     /// Persisted stress panel config.
     pub stress_cfg: StressPanelConfig,
@@ -204,7 +220,8 @@ impl Default for QcApp {
 impl QcApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         if let Some(storage) = cc.storage {
-            if let Some(app) = eframe::get_value(storage, eframe::APP_KEY) {
+            if let Some(mut app) = eframe::get_value::<Self>(storage, eframe::APP_KEY) {
+                app.dock = load_dock(storage);
                 return app;
             }
         }
@@ -752,6 +769,7 @@ impl eframe::App for QcApp {
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
+        eframe::set_value(storage, DOCK_KEY, &self.dock);
     }
 }
 
@@ -821,5 +839,58 @@ impl egui_dock::TabViewer for QcApp {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod dock_storage_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[derive(Default)]
+    struct MemStorage(HashMap<String, String>);
+
+    impl eframe::Storage for MemStorage {
+        fn get_string(&self, key: &str) -> Option<String> {
+            self.0.get(key).cloned()
+        }
+        fn set_string(&mut self, key: &str, value: String) {
+            self.0.insert(key.to_owned(), value);
+        }
+        fn remove_string(&mut self, key: &str) {
+            self.0.remove(key);
+        }
+        fn flush(&mut self) {}
+    }
+
+    fn single_tab_dock() -> DockState<QcTab> {
+        DockState::new(vec![QcTab::Logs])
+    }
+
+    #[test]
+    fn the_dock_key_wins() {
+        let mut storage = MemStorage::default();
+        eframe::set_value(&mut storage, DOCK_KEY, &single_tab_dock());
+        assert_eq!(load_dock(&storage).iter_all_tabs().count(), 1);
+    }
+
+    #[test]
+    fn a_dock_in_an_old_settings_blob_is_migrated() {
+        #[derive(serde::Serialize)]
+        struct OldBlob {
+            dock: DockState<QcTab>,
+        }
+        let mut storage = MemStorage::default();
+        eframe::set_value(&mut storage, eframe::APP_KEY, &OldBlob { dock: single_tab_dock() });
+        assert_eq!(load_dock(&storage).iter_all_tabs().count(), 1);
+    }
+
+    #[test]
+    fn no_saved_dock_falls_back_to_the_default() {
+        let storage = MemStorage::default();
+        assert_eq!(
+            load_dock(&storage).iter_all_tabs().count(),
+            default_dock().iter_all_tabs().count()
+        );
     }
 }
