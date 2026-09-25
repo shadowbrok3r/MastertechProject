@@ -50,6 +50,7 @@ pub mod sql_approval;
 pub mod service_metrics;
 pub mod assist_message;
 pub mod order_intake;
+pub mod service_task;
 pub mod outcome;
 pub mod provenance;
 pub mod business_calendar;
@@ -80,6 +81,11 @@ pub use build_job::*;
 pub use diagnostic::*;
 pub use service_metrics::ServiceMetrics;
 pub use order_intake::{ensure_order_records, materialize_order_read_only, IntakeOutcome};
+pub use service_task::{
+    ensure_service_task, find_service_task, first_service_number, normalize_service_number,
+    service_order_by_id, service_order_by_number, EnsuredServiceTask, ServiceOrderRow,
+    ServiceTaskError, ServiceTaskRequest, TaskCandidate,
+};
 pub use assist_message::{AssistContext, AssistMessage, AssistThread, ASSIST_MESSAGE_TABLE};
 pub use outcome::{
     client_computer_ids, internal_computer_for_client, outcome_for_sessions, record_id_from_string,
