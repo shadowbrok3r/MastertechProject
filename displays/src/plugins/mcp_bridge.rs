@@ -1755,6 +1755,9 @@ pub struct CreateDiagnosticSessionParams {
     pub task_id: Option<String>,
     #[schemars(description = "Optional service order record id (`service_order:key` or SurrealQL quoted form).")]
     pub service_order_id: Option<String>,
+    #[schemars(description = "Service number the machine is in for, when you know it (e.g. '2155467'). Defaults to the one on this machine's agent thread or assist request. When no task exists for it, one is created and assigned to requested_by.")]
+    #[serde(default)]
+    pub service_number: Option<String>,
     #[schemars(description = "Omit: filled from the resolved customer.")]
     pub customer_name: Option<String>,
     #[schemars(description = "Technician doing hands-on work, when one is. Leave unset when an agent drives the session; driven_by records that.")]
@@ -6236,6 +6239,35 @@ impl PluginToolProvider {
             },
         };
 
+        // Service number: the explicit order's, the param, then the machine's agent thread or assist request.
+        let hints = match &task_ref {
+            Some(_) => Default::default(),
+            None => database::schema::engagement_hints(&p.connection_string).await,
+        };
+        let explicit_order = match &service_order {
+            Some(so) => database::schema::service_order_by_id(so).await.unwrap_or_else(|e| {
+                log::warn!("create_diagnostic_session: service order read failed: {e}");
+                None
+            }),
+            None => None,
+        };
+        let service_number = database::schema::first_service_number([
+            explicit_order.as_ref().and_then(|o| o.service_number.as_deref()),
+            p.service_number.as_deref(),
+            hints.service_number.as_deref(),
+        ]);
+        let order = match (explicit_order, &service_number, &task_ref) {
+            (Some(order), _, _) => Some(order),
+            (None, Some(sn), None) => database::schema::service_order_by_number(sn)
+                .await
+                .unwrap_or_else(|e| {
+                    log::warn!("create_diagnostic_session: service order lookup for #{sn} failed: {e}");
+                    None
+                }),
+            _ => None,
+        };
+        let requested_by = first_non_blank([p.requested_by.as_deref(), hints.requested_by.as_deref()]);
+
         let session = database::schema::DiagnosticSession {
             connection_string: p.connection_string,
             hostname,
@@ -6243,9 +6275,9 @@ impl PluginToolProvider {
             customer_id,
             computer_id: Some(computer_id),
             task_ref,
-            service_order,
+            service_order: service_order.or_else(|| order.as_ref().map(|o| o.id.clone())),
             tech: p.tech,
-            requested_by: p.requested_by,
+            requested_by: requested_by.clone(),
             store: p.store,
             // Coerced to <source>/<name>: agents pass a colon, which the field's
             // ASSERT rejects, and the rejection reached nobody who could act on it.
@@ -6308,39 +6340,79 @@ impl PluginToolProvider {
                 ),
             ));
         }
+        let cs = created.connection_string.clone();
+        let mut task_created = false;
+        let mut unlinked_reason: Option<String> = None;
         if created.task_ref.is_none() {
-            match created.resolve_open_service_task().await {
-                Ok(Some((task, so))) => {
-                    match database::schema::DiagnosticSession::link_to_task(
-                        &id,
-                        Some(&task),
-                        Some(&so),
-                    )
-                    .await
-                    {
-                        Ok(()) => {
-                            created.task_ref = Some(task);
-                            created.service_order = Some(so);
+            match (&order, &service_number) {
+                (Some(order), _) => {
+                    let machine = staff_computer.is_none();
+                    let request = database::schema::ServiceTaskRequest {
+                        requested_by: requested_by.clone(),
+                        computer: created.computer_id.clone().filter(|_| machine),
+                        customer: created.customer_id.clone().filter(|_| machine),
+                        customer_name: created.customer_name.clone().filter(|_| machine),
+                    };
+                    match database::schema::ensure_service_task(order, &request).await {
+                        Ok(ensured) => {
+                            let link = adopt_service_task(&mut created, &ensured, machine).await;
+                            task_created = ensured.created;
+                            warnings.extend(service_task_warnings(&ensured, Some(&created), Some(&link)));
                         }
                         Err(e) => {
-                            log::warn!("create_diagnostic_session: task auto-link failed: {e}")
+                            log::warn!("create_diagnostic_session: service task not ensured: {e}");
+                            unlinked_reason = Some(e.to_string());
                         }
                     }
+                    if let Some(sn) = order.service_number.as_deref() {
+                        adopt_thread_order(&cs, sn, order).await;
+                    }
                 }
-                Ok(None) => {}
-                Err(e) => log::warn!("create_diagnostic_session: task resolution failed: {e}"),
+                (None, Some(sn)) => {
+                    unlinked_reason = Some(format!("Mastertech has no service_order row for #{sn} yet"));
+                }
+                (None, None) => match created.resolve_open_service_task().await {
+                    Ok(Some((task, so))) => {
+                        match database::schema::DiagnosticSession::link_to_task(
+                            &id,
+                            Some(&task),
+                            Some(&so),
+                        )
+                        .await
+                        {
+                            Ok(()) => {
+                                created.task_ref = Some(task);
+                                created.service_order = Some(so);
+                            }
+                            Err(e) => {
+                                log::warn!("create_diagnostic_session: task auto-link failed: {e}")
+                            }
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => log::warn!("create_diagnostic_session: task resolution failed: {e}"),
+                },
             }
         }
         if created.task_ref.is_none() {
+            let fix = match &service_number {
+                Some(sn) => format!(
+                    "ensure_service_task {{ service_number: \"{sn}\", connection_string: \"{cs}\", requested_by: \"<technician email>\" }} before producing records"
+                ),
+                None => format!(
+                    "ensure_service_task {{ service_number: \"<number>\", connection_string: \"{cs}\", requested_by: \"<technician email>\" }} as soon as the service number is known, before producing records; link_diagnostic_to_task {{ session_id: \"{id_str}\", task_id: \"task:<key>\" }} for a task you already know"
+                ),
+            };
             warnings.push(
                 ToolWarning::warn(
                     "session_unlinked",
-                    "No service task could be resolved for this session; records created \
-                     against it will carry no task_ref until it is linked.",
+                    format!(
+                        "No service task could be resolved for this session{}; records created \
+                         against it will carry no task_ref until it is linked.",
+                        unlinked_reason.map(|r| format!(" ({r})")).unwrap_or_default()
+                    ),
                 )
-                .with_fix(format!(
-                    "link_diagnostic_to_task {{ session_id: \"{id_str}\", task_id: \"task:<key>\" }} once the service task is known"
-                )),
+                .with_fix(fix),
             );
         }
 
@@ -6362,6 +6434,8 @@ impl PluginToolProvider {
                 "session_id": id_str,
                 "task_ref": created.task_ref.as_ref().map(RecordIdExt::key_string),
                 "service_order": created.service_order.as_ref().map(RecordIdExt::key_string),
+                "service_number": service_number,
+                "task_created": task_created,
                 "reconciled": reconciled,
             }),
             warnings,
@@ -13121,6 +13195,15 @@ mod broker_tool_tests {
         assert_eq!(codes(&kept), vec!["session_linked_elsewhere", "order_customer_mismatch"]);
         assert!(kept[0].message.contains("task:t0"), "{}", kept[0].message);
         assert!(kept[0].fix.as_deref().is_some_and(|f| f.contains("task:t1")));
+    }
+
+    #[test]
+    fn a_session_can_be_opened_for_a_service_number() {
+        let p: CreateDiagnosticSessionParams = serde_json::from_value(
+            serde_json::json!({ "connection_string": "DESKTOP-1:abc", "service_number": "2155467" }),
+        )
+        .expect("parses");
+        assert_eq!(p.service_number.as_deref(), Some("2155467"));
     }
 }
 
