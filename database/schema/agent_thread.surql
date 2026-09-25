@@ -10,6 +10,8 @@
 DEFINE TABLE agent_thread TYPE ANY SCHEMALESS PERMISSIONS FULL;
 
 DEFINE FIELD assist_request     ON agent_thread TYPE none | record<assist_request>     PERMISSIONS FULL;
+-- The agent's current step (idle, thinking, writing, tool:<name>, compacting...), written at most every 2 s.
+DEFINE FIELD activity           ON agent_thread TYPE none | string                     PERMISSIONS FULL;
 DEFINE FIELD assignee           ON agent_thread TYPE none | record<user>               PERMISSIONS FULL;
 -- Root toggle that lets the agent run shell on the broker host; off by default.
 DEFINE FIELD allow_box_shell    ON agent_thread TYPE bool DEFAULT false                PERMISSIONS FULL;
