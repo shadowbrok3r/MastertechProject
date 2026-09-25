@@ -56,7 +56,7 @@ use rmcp::{
     handler::server::{wrapper::Parameters, tool::ToolRouter, ServerHandler},
     model::{
         CallToolResult, ContentBlock, ErrorCode, ErrorData, Implementation, ProtocolVersion,
-        ServerCapabilities, ServerInfo,
+        ServerCapabilities, ServerConfig,
     },
     schemars, tool, tool_handler, tool_router,
 };
@@ -11352,7 +11352,7 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
 
 // ─── Server handler ────────────────────────────────────────────────────────────
 
-/// Shown to MCP clients in `initialize` (`ServerInfo.instructions`). Keep in sync with View menu + `nav_tab_anchor_key` in Mastertech `menu_bar.rs`.
+/// Shown to MCP clients in `initialize` (`ServerConfig.instructions`). Keep in sync with View menu + `nav_tab_anchor_key` in Mastertech `menu_bar.rs`.
 pub const INSTRUCTIONS: &str = r#"Mastertech Plugin System MCP (MasterTech desktop + admin Web Console).
 
 === Diagnostic Flow (crash/hardware engagements — follow this ORDER) ===
@@ -12032,8 +12032,8 @@ Do not skip notifications/initialized. Prefer perform_steps with sleep_ms betwee
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for PluginToolProvider {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(
             ServerCapabilities::builder()
                 .enable_tools()
                 .enable_experimental()
