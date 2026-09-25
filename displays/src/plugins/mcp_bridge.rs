@@ -8373,7 +8373,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "intel_links_reap",
-        description = "Sweep every open diagnostic session through the link reconciler: claim orphan crash sightings and driver snapshots into their session, propagate task links, and enrich same-dump sighting siblings. Reports per-session claims, sessions skipped (unreadable row / reconcile error), sessions open past the stale threshold, and fleet-wide remaining-orphan counts. One bad session never aborts the sweep. Safe to run anytime (idempotent, coalesce-only); use it to backfill links after out-of-order ingest."
+        description = "Sweep every open diagnostic session through the link reconciler: claim orphan crash sightings, driver snapshots and stress runs into their session, propagate task and service-order links, and enrich same-dump sighting siblings. Reports per-session claims, sessions skipped (unreadable row / reconcile error), sessions open past the stale threshold, and fleet-wide remaining-orphan counts. One bad session never aborts the sweep. Safe to run anytime (idempotent, coalesce-only); use it to backfill links after out-of-order ingest."
     )]
     async fn intel_links_reap(&self) -> Result<CallToolResult, ErrorData> {
         use super::tool_warnings::{attach_warnings, ToolWarning};
@@ -8440,6 +8440,8 @@ impl PluginToolProvider {
                         "sightings_enriched": r.sightings_enriched,
                         "snapshots_task_linked": r.snapshots_task_linked,
                         "stress_runs_task_linked": r.stress_runs_task_linked,
+                        "stress_runs_claimed": r.stress_runs_claimed,
+                        "stress_runs_order_linked": r.stress_runs_order_linked,
                     }));
                 }
                 Ok(_) => {}
