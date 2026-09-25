@@ -6344,7 +6344,8 @@ impl PluginToolProvider {
         let mut task_created = false;
         let mut unlinked_reason: Option<String> = None;
         if created.task_ref.is_none() {
-            match (&order, &service_number) {
+            let numbered_order = order.as_ref().filter(|o| o.service_number.is_some());
+            match (numbered_order, &service_number) {
                 (Some(order), _) => {
                     let machine = staff_computer.is_none();
                     let request = database::schema::ServiceTaskRequest {
@@ -6368,10 +6369,10 @@ impl PluginToolProvider {
                         adopt_thread_order(&cs, sn, order).await;
                     }
                 }
-                (None, Some(sn)) => {
+                (None, Some(sn)) if order.is_none() => {
                     unlinked_reason = Some(format!("Mastertech has no service_order row for #{sn} yet"));
                 }
-                (None, None) => match created.resolve_open_service_task().await {
+                _ => match created.resolve_open_service_task().await {
                     Ok(Some((task, so))) => {
                         match database::schema::DiagnosticSession::link_to_task(
                             &id,
