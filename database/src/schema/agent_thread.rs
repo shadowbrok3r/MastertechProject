@@ -20,12 +20,90 @@ pub const AGENT_THREAD_OPEN_STATUSES: [&str; 5] =
 const SIGNED_IN_TECH_THREADS: &str =
     "$auth != NONE AND (assignee = $auth.id OR requested_by = $auth.email)";
 
+/// Longest title a rename stores, in characters.
+const TITLE_MAX_CHARS: usize = 80;
+
 /// A token count in thousands, or millions past a million.
-fn compact_tokens(n: i64) -> String {
+pub fn compact_tokens(n: i64) -> String {
     match n {
         n if n >= 1_000_000 => format!("{:.1}M", n as f64 / 1_000_000.0),
         n if n >= 1_000 => format!("{}k", n / 1_000),
         n => n.to_string(),
+    }
+}
+
+/// `raw` as one trimmed line of at most [`TITLE_MAX_CHARS`] characters; `None` when blank.
+pub fn clean_title(raw: &str) -> Option<String> {
+    let line = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!line.is_empty()).then(|| line.chars().take(TITLE_MAX_CHARS).collect())
+}
+
+/// What a thread's agent is doing, as the broker last recorded it in `agent_thread.activity`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum AgentActivity {
+    #[default]
+    Idle,
+    Starting,
+    Thinking,
+    Writing,
+    Tool(String),
+    Command,
+    Compacting,
+    Approval(String),
+    Retrying,
+}
+
+impl AgentActivity {
+    /// The stored form: `idle`, `thinking`, `tool:<name>`, `approval:<name>` and so on.
+    pub fn to_db(&self) -> String {
+        match self {
+            Self::Idle => "idle".into(),
+            Self::Starting => "starting".into(),
+            Self::Thinking => "thinking".into(),
+            Self::Writing => "writing".into(),
+            Self::Tool(name) => format!("tool:{name}"),
+            Self::Command => "command".into(),
+            Self::Compacting => "compacting".into(),
+            Self::Approval(name) => format!("approval:{name}"),
+            Self::Retrying => "retrying".into(),
+        }
+    }
+
+    /// Reads the stored form; anything unrecognised reads as idle.
+    pub fn parse(raw: &str) -> Self {
+        let raw = raw.trim();
+        if let Some(name) = raw.strip_prefix("tool:") {
+            return Self::Tool(name.to_string());
+        }
+        if let Some(name) = raw.strip_prefix("approval:") {
+            return Self::Approval(name.to_string());
+        }
+        match raw {
+            "starting" => Self::Starting,
+            "thinking" => Self::Thinking,
+            "writing" => Self::Writing,
+            "command" => Self::Command,
+            "compacting" => Self::Compacting,
+            "retrying" => Self::Retrying,
+            _ => Self::Idle,
+        }
+    }
+
+    /// Words for a status line.
+    pub fn label(&self) -> String {
+        match self {
+            Self::Idle => "Idle".into(),
+            Self::Starting => "Starting".into(),
+            Self::Thinking => "Thinking".into(),
+            Self::Writing => "Writing".into(),
+            Self::Tool(name) if name.is_empty() => "Running a tool".into(),
+            Self::Tool(name) => format!("Running {name}"),
+            Self::Command => "Running a command".into(),
+            Self::Compacting => "Compacting".into(),
+            Self::Approval(name) if name.is_empty() => "Needs approval".into(),
+            Self::Approval(name) => format!("Needs approval: {name}"),
+            Self::Retrying => "Retrying".into(),
+        }
     }
 }
 
@@ -104,6 +182,10 @@ pub struct AgentThread {
     #[serde(default)]
     #[surreal(default)]
     pub last_seq: Option<i64>,
+    /// Stored [`AgentActivity`]; read it with [`AgentThread::activity`].
+    #[serde(default)]
+    #[surreal(default)]
+    pub activity: Option<String>,
     #[serde(default)]
     #[surreal(default)]
     pub created_at: Option<Datetime>,
@@ -147,6 +229,7 @@ pub struct AgentThreadState {
     pub last_seq: Option<i64>,
     pub tokens_used: Option<i64>,
     pub tokens_window: Option<i64>,
+    pub activity: Option<String>,
 }
 
 impl AgentThreadState {
@@ -194,6 +277,44 @@ impl AgentThread {
             compact_tokens(used),
             compact_tokens(window)
         ))
+    }
+
+    /// Used and window token counts, once both are known.
+    pub fn context_tokens(&self) -> Option<(i64, i64)> {
+        let used = self.tokens_used.filter(|u| *u >= 0)?;
+        let window = self.tokens_window.filter(|w| *w > 0)?;
+        Some((used, window))
+    }
+
+    /// Share of the context window in use, from 0 up; above 1 when the count overran the window.
+    pub fn context_fraction(&self) -> Option<f32> {
+        self.context_tokens().map(|(used, window)| used as f32 / window as f32)
+    }
+
+    /// True while a turn runs, waits on a decision, or the session is starting its first one.
+    pub fn is_busy(&self) -> bool {
+        matches!(self.status.as_str(), "starting" | "running" | "waiting_approval")
+    }
+
+    /// The recorded activity; idle while no turn runs.
+    pub fn activity(&self) -> AgentActivity {
+        match self.status.as_str() {
+            "running" | "waiting_approval" => {
+                self.activity.as_deref().map(AgentActivity::parse).unwrap_or(AgentActivity::Thinking)
+            }
+            "starting" => AgentActivity::Starting,
+            _ => AgentActivity::Idle,
+        }
+    }
+
+    /// Stores a new title; the broker is the only writer of `agent_thread`.
+    pub async fn set_title(id: &RecordId, title: &str) -> anyhow::Result<()> {
+        db().query("UPDATE $id SET title = $title, updated_at = time::now()")
+            .bind(("id", id.clone()))
+            .bind(("title", title.to_string()))
+            .await?
+            .check()?;
+        Ok(())
     }
 
     /// Inserts a `starting` row; the assignee is the user whose email matches the requester.
@@ -262,7 +383,7 @@ impl AgentThread {
              last_seq = IF $seq != NONE THEN math::max([last_seq ?? 0, $seq]) ELSE last_seq END, \
              last_event_at = IF $seq != NONE THEN time::now() ELSE last_event_at END, \
              tokens_used = $used ?? tokens_used, tokens_window = $window ?? tokens_window, \
-             updated_at = time::now()",
+             activity = $activity ?? activity, updated_at = time::now()",
         )
         .bind(("id", id.clone()))
         .bind(("status", state.status.clone()))
@@ -272,6 +393,7 @@ impl AgentThread {
         .bind(("seq", state.last_seq))
         .bind(("used", state.tokens_used))
         .bind(("window", state.tokens_window))
+        .bind(("activity", state.activity.clone()))
         .await?
         .check()?;
         Ok(())
@@ -404,11 +526,73 @@ mod tests {
             tokens_used: used,
             tokens_window: window,
             last_seq: None,
+            activity: None,
             created_at: None,
             updated_at: None,
             last_event_at: None,
             closed_at: None,
         }
+    }
+
+    #[test]
+    fn a_row_written_before_activity_existed_still_loads() {
+        use surrealdb::types::Value;
+        let mut row = thread(Some(1), Some(2));
+        row.activity = Some("thinking".into());
+        let mut v = row.into_value();
+        if let Value::Object(obj) = &mut v {
+            obj.remove("activity");
+        }
+        let back = AgentThread::from_value(v).expect("a row without activity must deserialize");
+        assert_eq!(back.activity, None);
+        assert_eq!(back.activity(), AgentActivity::Idle, "an idle row reads idle");
+    }
+
+    #[test]
+    fn activities_round_trip_through_their_stored_form() {
+        for a in [
+            AgentActivity::Idle,
+            AgentActivity::Starting,
+            AgentActivity::Thinking,
+            AgentActivity::Writing,
+            AgentActivity::Tool("get_client_info".into()),
+            AgentActivity::Command,
+            AgentActivity::Compacting,
+            AgentActivity::Approval("remote_exec_start".into()),
+            AgentActivity::Retrying,
+        ] {
+            assert_eq!(AgentActivity::parse(&a.to_db()), a);
+        }
+        assert_eq!(AgentActivity::parse("something new"), AgentActivity::Idle);
+        assert_eq!(AgentActivity::Tool("x".into()).label(), "Running x");
+    }
+
+    #[test]
+    fn a_running_row_reads_its_activity_and_an_idle_one_does_not() {
+        let mut row = thread(None, None);
+        row.status = "running".into();
+        row.activity = Some("tool:scripts_list".into());
+        assert_eq!(row.activity(), AgentActivity::Tool("scripts_list".into()));
+        row.activity = None;
+        assert_eq!(row.activity(), AgentActivity::Thinking);
+        row.status = "idle".into();
+        row.activity = Some("writing".into());
+        assert_eq!(row.activity(), AgentActivity::Idle);
+        assert!(!row.is_busy());
+    }
+
+    #[test]
+    fn the_context_fraction_needs_both_counts() {
+        assert_eq!(thread(Some(50), Some(200)).context_fraction(), Some(0.25));
+        assert_eq!(thread(None, Some(200)).context_fraction(), None);
+        assert_eq!(thread(Some(50), Some(0)).context_fraction(), None);
+    }
+
+    #[test]
+    fn titles_are_one_trimmed_line_of_bounded_length() {
+        assert_eq!(clean_title("  Disk\n check  "), Some("Disk check".into()));
+        assert_eq!(clean_title(" \n "), None);
+        assert_eq!(clean_title(&"x".repeat(200)).map(|t| t.chars().count()), Some(TITLE_MAX_CHARS));
     }
 
     #[test]
