@@ -21,14 +21,14 @@ const HEADING_SCALE: [f32; 6] = [1.4, 1.25, 1.12, 1.05, 1.0, 1.0];
 
 /// How a list item is numbered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Marker<'a> {
+pub enum Marker<'a> {
     Bullet,
     Number(&'a str),
 }
 
 /// One block of a message body.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Block<'a> {
+pub enum Block<'a> {
     Heading {
         level: usize,
         text: &'a str,
@@ -55,7 +55,7 @@ pub(crate) enum Block<'a> {
 
 /// How an inline run is styled.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SpanKind<'a> {
+pub enum SpanKind<'a> {
     Plain,
     Bold,
     Italic,
@@ -65,7 +65,7 @@ pub(crate) enum SpanKind<'a> {
 
 /// One styled run within a line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Span<'a> {
+pub struct Span<'a> {
     pub text: &'a str,
     pub kind: SpanKind<'a>,
 }
@@ -82,7 +82,7 @@ fn lines(text: &str) -> impl Iterator<Item = (&str, usize, usize)> {
 }
 
 /// Splits a message body into blocks; an unclosed fence runs to the end of the text.
-pub(crate) fn blocks(text: &str) -> Vec<Block<'_>> {
+pub fn blocks(text: &str) -> Vec<Block<'_>> {
     let mut out = Vec::new();
     let mut iter = lines(text);
     while let Some((line, _, after)) = iter.next() {
@@ -185,7 +185,7 @@ fn list_item(body: &str) -> Option<(Marker<'_>, &str)> {
 }
 
 /// Splits a line into code, bold, italic and link runs; unpaired markers stay literal.
-pub(crate) fn inline_spans(line: &str) -> Vec<Span<'_>> {
+pub fn inline_spans(line: &str) -> Vec<Span<'_>> {
     let mut out = Vec::new();
     let mut plain = 0;
     let mut i = 0;
@@ -307,7 +307,7 @@ fn next_is_word(line: &str, i: usize) -> bool {
 }
 
 /// Parses text that is nothing but JSON, allowing several values back to back.
-pub(crate) fn as_json(text: &str) -> Option<Vec<Value>> {
+pub fn as_json(text: &str) -> Option<Vec<Value>> {
     let t = text.trim();
     if !(t.starts_with('{') || t.starts_with('[')) {
         return None;
@@ -324,7 +324,7 @@ pub(crate) fn as_json(text: &str) -> Option<Vec<Value>> {
 }
 
 /// True when `text` ends in the `…` a recorder appends to text it cut short.
-pub(crate) fn ends_cut(text: &str) -> bool {
+pub fn ends_cut(text: &str) -> bool {
     text.trim_end().ends_with('\u{2026}')
 }
 
@@ -374,7 +374,7 @@ fn repair_cut_json(text: &str) -> Option<Value> {
 }
 
 /// The prose in front of a trailing JSON value, and the values themselves.
-pub(crate) fn split_json(text: &str) -> Option<(&str, Vec<Value>)> {
+pub fn split_json(text: &str) -> Option<(&str, Vec<Value>)> {
     let start = text.find(['{', '['])?;
     let (head, rest) = text.split_at(start);
     Some((head.trim_end(), as_json(rest)?))

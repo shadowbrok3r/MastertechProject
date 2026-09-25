@@ -24,7 +24,7 @@ use crate::{PlatformSpawner, Spawner};
 
 pub use crate::ui_tools::agent_chat::status_chip;
 pub(crate) use transcript::chat_line;
-pub use transcript::transcript_ui;
+pub use transcript::{ToolCall, transcript_ui};
 
 /// Snapshot polls behind the live streams.
 const THREADS_POLL: Duration = Duration::from_secs(30);
