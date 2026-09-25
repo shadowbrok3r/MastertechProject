@@ -308,7 +308,7 @@ impl AgentThread {
         }
     }
 
-    /// Stores a new title; the broker is the only writer of `agent_thread`.
+    /// Stores a new title.
     pub async fn set_title(id: &RecordId, title: &str) -> anyhow::Result<()> {
         db().query("UPDATE $id SET title = $title, updated_at = time::now()")
             .bind(("id", id.clone()))
