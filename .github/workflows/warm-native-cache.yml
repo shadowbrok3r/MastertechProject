@@ -1,6 +1,6 @@
 name: Warm native build cache
 
-# Builds the Linux release binary on main and saves the cache release.yml's tag runs restore.
+# Builds the release binaries on main: Linux saves the cache release.yml's tag runs restore, Windows warms the self-hosted target dir.
 on:
   workflow_dispatch:
   schedule:
@@ -30,7 +30,24 @@ jobs:
             os: ubuntu-latest
             bin: MasterTech
             artifact: Mastertech-linux
-            runs_on: ubuntu-latest
+            runs_on: '"ubuntu-latest"'
+          # Windows builds run on the self-hosted runner, whose toolchain and target dir persist under E:\gh-runner.
+          - target: x86_64-pc-windows-msvc
+            os: windows
+            bin: MasterTech
+            artifact: Mastertech.exe
+            runs_on: '["self-hosted", "Windows", "X64", "work"]'
+            self_hosted: true
+            # The shipped exe carries the egui_skia software renderer, so the
+            # GPU -> software -> terminal fallback ladder has its middle rung on
+            # customer machines. Without it `--cpu` drops straight to terminal mode.
+            features: skia-render
+          - target: x86_64-pc-windows-msvc
+            os: windows
+            bin: qc_app
+            artifact: qc_app.exe
+            runs_on: '["self-hosted", "Windows", "X64", "work"]'
+            self_hosted: true
     env:
       # .cargo/config.toml points the msvc linker at a local LLVM install; the
       # runner image is not guaranteed to ship lld-link at that path, so keep CI
@@ -63,9 +80,36 @@ jobs:
       # `ORCHESTRATOR_URL` (prod) and `ORCHESTRATOR_URL_DEV` (dev) to enable.
       ORCHESTRATOR_URL: ${{ secrets.ORCHESTRATOR_URL }}
       ORCHESTRATOR_URL_DEV: ${{ secrets.ORCHESTRATOR_URL_DEV }}
-    runs-on: ${{ matrix.runs_on }}
+    runs-on: ${{ fromJSON(matrix.runs_on) }}
     steps:
       - uses: actions/checkout@v4
+
+      # Installs rustup and ninja under E:\gh-runner once, and points cargo's home and target dir there.
+      - name: Prepare the self-hosted toolchain
+        if: matrix.self_hosted
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          $root = 'E:\gh-runner'
+          New-Item -ItemType Directory -Force "$root\bin" | Out-Null
+          $env:CARGO_HOME = "$root\cargo"
+          $env:RUSTUP_HOME = "$root\rustup"
+          if (-not (Test-Path "$env:CARGO_HOME\bin\rustup.exe")) {
+            Invoke-WebRequest -UseBasicParsing https://win.rustup.rs/x86_64 -OutFile "$root\rustup-init.exe"
+            & "$root\rustup-init.exe" -y --no-modify-path --profile minimal --default-toolchain stable
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          if (-not (Test-Path "$root\bin\ninja.exe")) {
+            Invoke-WebRequest -UseBasicParsing https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-win.zip -OutFile "$root\ninja-win.zip"
+            Expand-Archive "$root\ninja-win.zip" -DestinationPath "$root\bin" -Force
+          }
+          Add-Content -Path $env:GITHUB_ENV -Value "CARGO_HOME=$env:CARGO_HOME"
+          Add-Content -Path $env:GITHUB_ENV -Value "RUSTUP_HOME=$env:RUSTUP_HOME"
+          Add-Content -Path $env:GITHUB_ENV -Value "CARGO_TARGET_DIR=E:/gh-runner/target"
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:CARGO_HOME\bin"
+          Add-Content -Path $env:GITHUB_PATH -Value "$root\bin"
+          Add-Content -Path $env:GITHUB_PATH -Value "C:\Program Files\Git\bin"
 
       - name: Install PipeWire deps (Linux only)
         if: matrix.target == 'x86_64-unknown-linux-gnu'
@@ -81,13 +125,15 @@ jobs:
       # skia-bindings has no prebuilt binary for this feature set, so it compiles
       # Skia from source via gn/ninja. ninja ships with neither Rust nor MSVC.
       - name: Install ninja for skia-bindings
-        if: matrix.features == 'skia-render'
+        if: matrix.features == 'skia-render' && !matrix.self_hosted
         shell: pwsh
         run: choco install ninja -y --no-progress
 
       # Cache must come BEFORE the build step that consumes it, otherwise it
       # never speeds anything up.
+      # Saves the Linux cache release.yml's tag runs restore.
       - uses: Swatinem/rust-cache@v2
+        if: ${{ !matrix.self_hosted }}
         with:
           prefix-key: "v1-mastertech"
           shared-key: "native-${{ matrix.target }}${{ matrix.features && format('-{0}', matrix.features) || '' }}"
