@@ -50,15 +50,9 @@ client-sessions = ["dep:displays"]
 [workspace.dependencies]
 database = { path = "../database" }
 displays = { path = "../displays" }
-surrealdb = { version = "3.2.0", features = ["protocol-ws"] }
+surrealdb = { version = "3.3.0", features = ["protocol-ws"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["now"] }
 anyhow = "1"
 log = "0.4"
-
-# `displays` depends on `egui-phosphor = "0.12"` which only compiles against
-# egui 0.36 via this fork. Mirrors the root workspace's patch so the shared
-# `displays` code resolves identically from this workspace.
-[patch.crates-io]
-egui-phosphor = { git = "https://github.com/shadowbrok3r/egui-phosphor", branch = "egui-036" }

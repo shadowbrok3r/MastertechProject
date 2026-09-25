@@ -9,12 +9,11 @@ plus remote-client session control. Styled with the **AMOLED Crimson** theme
 
 This crate is intentionally **excluded** from the root `MastertechProject`
 workspace (its Dioxus dependency tree is kept out of `cargo build --workspace`
-and CI). It is its own workspace root — see `[workspace]`,
-`[workspace.dependencies]`, and the `[patch.crates-io]` egui-phosphor pin in
-`Cargo.toml`. Path deps (`database`, `displays`) still belong to the root
+and CI). It is its own workspace root — see `[workspace]` and
+`[workspace.dependencies]` in `Cargo.toml`. Path deps (`database`, `displays`) still belong to the root
 workspace and resolve their own `workspace = true` deps there.
 
-`surrealdb` is pinned to the workspace-root version (`3.2.0-beta.2`,
+`surrealdb` is pinned to the workspace-root version (`3.3.0`,
 `protocol-ws`).
 
 ## Features
