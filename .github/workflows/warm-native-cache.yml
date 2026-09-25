@@ -1,6 +1,6 @@
 name: Warm native build cache
 
-# Builds the release binaries on main and saves the cache release.yml's tag runs restore.
+# Builds the Linux release binary on main and saves the cache release.yml's tag runs restore.
 on:
   workflow_dispatch:
   schedule:
@@ -31,20 +31,6 @@ jobs:
             bin: MasterTech
             artifact: Mastertech-linux
             runs_on: ubuntu-latest
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            bin: MasterTech
-            artifact: Mastertech.exe
-            runs_on: windows-latest
-            # The shipped exe carries the egui_skia software renderer, so the
-            # GPU -> software -> terminal fallback ladder has its middle rung on
-            # customer machines. Without it `--cpu` drops straight to terminal mode.
-            features: skia-render
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            bin: qc_app
-            artifact: qc_app.exe
-            runs_on: windows-latest
     env:
       # .cargo/config.toml points the msvc linker at a local LLVM install; the
       # runner image is not guaranteed to ship lld-link at that path, so keep CI
