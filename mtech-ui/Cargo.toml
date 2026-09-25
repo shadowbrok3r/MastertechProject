@@ -16,7 +16,7 @@ stress-ui = ["dep:stress-runner"]
 
 [dependencies]
 egui_dock.workspace = true
-egui-phosphor = { version = "0.12.0", default-features = false, features = ["regular"] }
+egui-phosphor.workspace = true
 stress-runner = { workspace = true, optional = true }
 regex.workspace = true
 # egui_logger uses chrono::Local, which the workspace default-features=false pin omits.

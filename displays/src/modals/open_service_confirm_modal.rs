@@ -257,6 +257,7 @@ impl OpenServiceConfirmModal {
 
         let mut open = true;
         Window::new(title_text)
+            .title_frame(Frame::window(&ctx.global_style()))
             .frame(
                 Frame::default()
                     .inner_margin(Margin::symmetric(16, 16))

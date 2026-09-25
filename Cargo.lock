@@ -3105,7 +3105,6 @@ dependencies = [
  "dump-triage",
  "eframe",
  "egui-data-table",
- "egui-phosphor",
  "egui-snarl",
  "egui_dock",
  "egui_extras",
@@ -3445,22 +3444,27 @@ dependencies = [
 
 [[package]]
 name = "egui-phosphor"
-version = "0.12.0"
-source = "git+https://github.com/shadowbrok3r/egui-phosphor?branch=egui-036#c2ed27384e2c30671d41bbc95b9fcf719017b020"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f4299551488dddaa8f757727e1eb4ffdaf277ffe6e30b413403468f5ecf4634"
 dependencies = [
  "egui",
 ]
 
 [[package]]
 name = "egui-scale"
-version = "0.5.0"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16194efd2800275df80448afa0ee11d3e23ce0220f6754e1af53fec8e9b7467a"
 dependencies = [
  "egui",
 ]
 
 [[package]]
 name = "egui-snarl"
-version = "0.11.0"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "247c36a1f3b71fb25597f16f9396687641fec220a8116d5093941138fae59e61"
 dependencies = [
  "ahash",
  "egui",
@@ -3575,8 +3579,9 @@ dependencies = [
 
 [[package]]
 name = "egui_json_tree"
-version = "0.16.0"
-source = "git+https://github.com/shadowbrok3r/egui_json_tree#495cd44f03070a296aeb0311dd9166aad3f1f550"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45c5c4705b5e300dbd522156775893a91282a1bcbf56e5a2f43506bbf7dbf652"
 dependencies = [
  "egui",
  "serde_json",
@@ -4237,9 +4242,9 @@ dependencies = [
 
 [[package]]
 name = "fastnum"
-version = "0.7.4"
+version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4089ab2dfd45d8ddc92febb5ca80644389d5ebb954f40231274a3f18341762e2"
+checksum = "020d1b59a944bc239d79903fbac2eda2365138b44890c27979562f6592059dcd"
 dependencies = [
  "bnum",
  "num-integer",
