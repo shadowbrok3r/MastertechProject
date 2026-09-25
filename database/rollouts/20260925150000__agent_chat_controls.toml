@@ -6,7 +6,7 @@
 # row needs a backfill and every existing row stays writable.
 id = "20260925150000__agent_chat_controls"
 name = "agent_chat_controls"
-state = "planned"
+state = "completed"
 source_schema_hash = "4b8bbfd52b77ad3b7c2325166a25891311501ba4f07f6e1479578a0d13ed9f47"
 target_schema_hash = "c487577c5f5bc1b54d1a806b6175ecac10994ecdbfd789ea69f546a1b71b4d13"
 compatibility = "phased"
