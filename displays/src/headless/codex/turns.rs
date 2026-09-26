@@ -4,7 +4,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use database::live_data::Action;
-use database::schema::{clean_title, AgentThread, AgentTurn, RecordIdExt};
+use database::schema::agent_thread::AgentThreadState;
+use database::schema::agent_turn::APPROVALS_PROMPT;
+use database::schema::{clean_title, AgentEvent, AgentThread, AgentTurn, RecordIdExt};
 use serde_json::json;
 use zc_codex_client::Client;
 
@@ -33,6 +35,10 @@ async fn route(cfg: Arc<Config>, turn: AgentTurn) {
             return;
         }
     }
+    if turn.kind == "approvals" {
+        approvals_without_runner(&turn).await;
+        return;
+    }
     // No runner holds this thread (broker restarted, or the thread was queued): bring one up.
     let thread = match AgentThread::get(&turn.thread).await {
         Ok(Some(t)) if t.is_open() || t.status == "queued" => t,
@@ -52,6 +58,47 @@ async fn route(cfg: Arc<Config>, turn: AgentTurn) {
     let tx = runner::spawn(cfg, thread, None);
     if tx.send(RunnerCmd::Turn(turn.clone())).await.is_err() {
         let _ = AgentTurn::mark_failed(&turn.id, "runner did not accept the turn").await;
+    }
+}
+
+/// Turns approve-all off on the thread row, then hands the turn to a runner that came up meanwhile.
+async fn approvals_without_runner(turn: &AgentTurn) {
+    if turn.text.trim() != APPROVALS_PROMPT {
+        let _ = AgentTurn::mark_failed(&turn.id, "unknown approvals setting").await;
+        return;
+    }
+    let thread = match AgentThread::get(&turn.thread).await {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            let _ = AgentTurn::mark_failed(&turn.id, "thread not found").await;
+            return;
+        }
+        Err(e) => {
+            let _ = AgentTurn::mark_failed(&turn.id, &e.to_string()).await;
+            return;
+        }
+    };
+    if let Err(e) = AgentThread::set_approve_all(&turn.thread, false).await {
+        log::warn!("codex: could not turn approve-all off on {}: {e}", turn.thread.key_string());
+        let _ = AgentTurn::mark_failed(&turn.id, &e.to_string()).await;
+        return;
+    }
+    if let Some(tx) = runner_for(&turn.thread.key_string()) {
+        let _ = tx.send(RunnerCmd::Turn(turn.clone())).await;
+        return;
+    }
+    if !thread.approves_all() {
+        return;
+    }
+    let recorded = database::agent_chat::last_seq(&turn.thread).await.unwrap_or(0);
+    let seq = recorded.max(thread.last_seq.unwrap_or(0)) + 1;
+    if let Err(e) = AgentEvent::marker(&turn.thread, seq, None, "approval", runner::PROMPTS_ON, None).await {
+        log::warn!("codex: approvals marker write failed: {e}");
+        return;
+    }
+    let state = AgentThreadState { last_seq: Some(seq), ..Default::default() };
+    if let Err(e) = AgentThread::save_state(&turn.thread, &state).await {
+        log::warn!("codex: thread write failed: {e}");
     }
 }
 
