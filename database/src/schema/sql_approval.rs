@@ -1,6 +1,6 @@
 //! Root-gated approval queue for SurrealQL mutations submitted over MCP.
 //!
-//! `query_surrealdb` stays read-only. Anything that writes goes through this
+//! `query_surrealdb` accepts one read-only statement (see [`super::check_read_only`]). Anything that writes goes through this
 //! table: the requester creates a `pending` row carrying the statement, why
 //! it is being run, and a best-effort row-count preview; a Root operator
 //! approves or denies it from the admin console; the requester executes only
@@ -20,6 +20,16 @@ use super::{random_record_id, RecordId, RecordIdExt, SurrealValue, SQL_APPROVAL_
 
 /// How long a request stays actionable before it is treated as expired.
 pub const APPROVAL_TTL_SECS: i64 = 900;
+
+/// Records an active Root `$auth`'s decision on a pending, unexpired request.
+pub const SQL_DECIDE_SQL: &str = "UPDATE $id SET status = $status, decided_by = $auth.id, deny_reason = $why \
+     WHERE status = 'pending' AND (expires_at = NONE OR expires_at > time::now()) \
+     AND $auth.authorization = 'Root' AND $auth.active = true RETURN AFTER";
+
+/// Moves an approved request to `executing` when it still holds `$statement` and an active Root approved it.
+pub const SQL_CLAIM_SQL: &str = "UPDATE $id SET status = 'executing' WHERE status = 'approved' \
+     AND statement = $statement AND decided_by != NONE AND decided_by.authorization = 'Root' \
+     AND decided_by.active = true RETURN AFTER";
 
 /// Statement classes this gate accepts, plus the DDL/unknown rejections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,6 +155,8 @@ pub enum DecideOutcome {
     },
     /// Row no longer exists.
     Missing,
+    /// Still pending, but the signed-in user is not an active Root.
+    NotPermitted,
 }
 
 /// Display name behind a `decided_by` link, for the stale-click message.
@@ -269,20 +281,18 @@ impl SqlApproval {
     /// operator sees and the deadline the poller enforces both read the same
     /// clock as `time::now()` in [`Self::expire_stale`].
     pub async fn submit(&self) -> anyhow::Result<RecordId> {
-        db()
-            .query("CREATE $id CONTENT $row")
+        let created: Vec<RecordId> = db()
+            .query(format!(
+                "CREATE $id CONTENT object::extend($row, {{ expires_at: time::now() + {APPROVAL_TTL_SECS}s }}) RETURN VALUE id"
+            ))
             .bind(("id", self.id.clone()))
             .bind(("row", self.clone()))
             .await?
-            .check()?;
-
-        db()
-            .query(format!(
-                "UPDATE $id SET expires_at = time::now() + {APPROVAL_TTL_SECS}s"
-            ))
-            .bind(("id", self.id.clone()))
-            .await?
-            .check()?;
+            .check()?
+            .take(0)?;
+        if created.is_empty() {
+            anyhow::bail!("the approval request was not filed: this session may not request writes");
+        }
 
         log::info!(
             "sql_approval {} submitted ({}): {}",
@@ -303,32 +313,22 @@ impl SqlApproval {
         Ok(row)
     }
 
-    /// Root decision. `approved = false` records a denial with an optional note.
+    /// Root decision stamped with the signed-in user. `approved = false` records a denial with an optional note.
     ///
     /// The write is conditional on the row still being pending and unexpired,
     /// so a console rendering a stale queue cannot overwrite a decision another
     /// console already recorded. The loser is told what the row actually holds
     /// instead of reporting a success it did not cause.
-    pub async fn decide(
-        id: &RecordId,
-        approved: bool,
-        decided_by: Option<RecordId>,
-        deny_reason: Option<String>,
-    ) -> anyhow::Result<DecideOutcome> {
+    pub async fn decide(id: &RecordId, approved: bool, deny_reason: Option<String>) -> anyhow::Result<DecideOutcome> {
         let status = if approved {
             ApprovalStatus::Approved
         } else {
             ApprovalStatus::Denied
         };
         let won: Option<Self> = db()
-            .query(
-                "UPDATE $id SET status = $status, decided_by = $by, deny_reason = $why \
-                 WHERE status = 'pending' AND (expires_at = NONE OR expires_at > time::now()) \
-                 RETURN AFTER",
-            )
+            .query(SQL_DECIDE_SQL)
             .bind(("id", id.clone()))
             .bind(("status", status.as_str().to_string()))
-            .bind(("by", decided_by))
             .bind(("why", deny_reason))
             .await?
             .check()?
@@ -340,8 +340,10 @@ impl SqlApproval {
         let Some(row) = Self::fetch(id).await? else {
             return Ok(DecideOutcome::Missing);
         };
-        // A row still reading `pending` here was rejected by the expiry clause.
         let held = match row.status_enum() {
+            ApprovalStatus::Pending if row.expires_at.is_none() || row.secs_remaining() > 0 => {
+                return Ok(DecideOutcome::NotPermitted);
+            }
             ApprovalStatus::Pending => ApprovalStatus::Expired,
             other => other,
         };
@@ -349,6 +351,18 @@ impl SqlApproval {
             status: held,
             decided_by: decider_name(row.decided_by.as_ref()).await,
         })
+    }
+
+    /// Claims an approved request for `statement`; `None` when it is not approved by an active Root or holds another statement.
+    pub async fn claim(id: &RecordId, statement: &str) -> anyhow::Result<Option<Self>> {
+        let claimed: Option<Self> = db()
+            .query(SQL_CLAIM_SQL)
+            .bind(("id", id.clone()))
+            .bind(("statement", statement.to_string()))
+            .await?
+            .check()?
+            .take(0)?;
+        Ok(claimed)
     }
 
     /// Records the outcome after the requester ran an approved statement.

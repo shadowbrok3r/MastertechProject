@@ -91,6 +91,41 @@ enum Flow {
     Release,
 }
 
+/// What the broker does with an approval row it read back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Verdict {
+    /// Act on the row as it stands.
+    Accept,
+    /// Keep polling.
+    Wait,
+    /// A decision from someone not allowed to make it; return the row to pending.
+    Reopen,
+    /// Give up and treat the request as unanswered.
+    Expire,
+}
+
+/// The verdict on `row`; `allowed` is the decider check, `None` when it could not be made.
+fn verdict(row: &AgentApproval, allowed: Option<bool>, at_deadline: bool) -> Verdict {
+    if row.is_pending() {
+        return if at_deadline { Verdict::Expire } else { Verdict::Wait };
+    }
+    if !row.is_human_decision() {
+        return Verdict::Accept;
+    }
+    match allowed {
+        Some(true) => Verdict::Accept,
+        _ if at_deadline => Verdict::Expire,
+        Some(false) => Verdict::Reopen,
+        None => Verdict::Wait,
+    }
+}
+
+/// Where a verified poll leaves `wait_for_decision`.
+enum Step {
+    Done(Option<AgentApproval>),
+    Wait,
+}
+
 /// A `wait` call answered by its own task.
 struct PendingWait {
     request_id: Value,
@@ -1264,16 +1299,67 @@ impl Runner {
                 return None;
             }
             self.flush_due().await;
+            let at_deadline = tokio::time::Instant::now() >= deadline;
+            if at_deadline {
+                let _ = AgentApproval::expire_stale().await;
+            }
             match AgentApproval::fetch(approval_id).await {
-                Ok(Some(row)) if !row.is_pending() => return Some(row),
-                Ok(Some(_)) => {}
+                Ok(Some(row)) => match self.verified(row, at_deadline).await {
+                    Step::Done(row) => return row,
+                    Step::Wait => {}
+                },
                 // A vanished row is a refusal, never a permission.
                 Ok(None) => return None,
+                Err(e) if at_deadline => {
+                    log::warn!("codex: approval poll failed at the deadline: {e}");
+                    return None;
+                }
                 Err(e) => log::warn!("codex: approval poll failed: {e}"),
             }
-            if tokio::time::Instant::now() >= deadline {
-                let _ = AgentApproval::expire_stale().await;
-                return AgentApproval::fetch(approval_id).await.ok().flatten();
+        }
+    }
+
+    /// Checks who decided `row`; a decision by anyone but the thread's assignee or an active Root never runs.
+    async fn verified(&mut self, row: AgentApproval, at_deadline: bool) -> Step {
+        let allowed = if row.is_human_decision() {
+            match AgentApproval::decider_allowed(row.decided_by.as_ref(), self.thread.assignee.as_ref()).await {
+                Ok(allowed) => Some(allowed),
+                Err(e) => {
+                    log::warn!("codex: decider check failed for {}: {e}", row.id.key_string());
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        match verdict(&row, allowed, at_deadline) {
+            Verdict::Accept => Step::Done(Some(row)),
+            Verdict::Expire => Step::Done(None),
+            Verdict::Wait => Step::Wait,
+            Verdict::Reopen => {
+                log::warn!(
+                    "codex: {} was {} by {:?}, who is neither the assignee nor an active Root; reopening",
+                    row.id.key_string(),
+                    row.status,
+                    row.decided_by.as_ref().map(RecordIdExt::key_string)
+                );
+                match AgentApproval::reopen(&row.id, &row.status, row.decided_by.as_ref()).await {
+                    Ok(reopened) => {
+                        if reopened {
+                            self.marker(
+                                "approval",
+                                "Ignored a decision from someone who is not this session's technician or a Root user.",
+                                None,
+                            )
+                            .await;
+                        }
+                        Step::Wait
+                    }
+                    Err(e) => {
+                        log::warn!("codex: could not reopen {}: {e}", row.id.key_string());
+                        Step::Done(None)
+                    }
+                }
             }
         }
     }
@@ -1799,6 +1885,69 @@ fn find_record_key(text: &str, table: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn decided(status: &str) -> AgentApproval {
+        AgentApproval {
+            id: RecordId::new("agent_approval", "a"),
+            thread: RecordId::new("agent_thread", "t"),
+            kind: "tool_call".into(),
+            method: String::new(),
+            codex_request_id: String::new(),
+            summary: String::new(),
+            server: None,
+            tool: Some("remote_exec_start".into()),
+            arguments: None,
+            params: None,
+            questions: None,
+            answers: None,
+            response_sent: None,
+            status: status.into(),
+            assignee: Some(RecordId::new("user", "tech")),
+            connection_string: None,
+            store: None,
+            requested_at: None,
+            expires_at: None,
+            decided_at: None,
+            sent_to_codex_at: None,
+            decided_by: None,
+            deny_note: None,
+        }
+    }
+
+    #[test]
+    fn a_verified_decision_is_acted_on_before_and_at_the_deadline() {
+        for status in ["accepted", "accepted_for_session", "declined", "cancelled", "answered"] {
+            assert_eq!(verdict(&decided(status), Some(true), false), Verdict::Accept, "{status}");
+            assert_eq!(verdict(&decided(status), Some(true), true), Verdict::Accept, "{status}");
+        }
+    }
+
+    #[test]
+    fn a_decision_by_someone_else_is_reopened_and_never_run() {
+        assert_eq!(verdict(&decided("accepted"), Some(false), false), Verdict::Reopen);
+        assert_eq!(verdict(&decided("answered"), Some(false), false), Verdict::Reopen);
+    }
+
+    #[test]
+    fn at_the_deadline_an_unverified_decision_expires() {
+        assert_eq!(verdict(&decided("accepted"), Some(false), true), Verdict::Expire);
+        assert_eq!(verdict(&decided("accepted_for_session"), None, true), Verdict::Expire);
+        assert_eq!(verdict(&decided("pending"), None, true), Verdict::Expire);
+    }
+
+    #[test]
+    fn a_failed_check_waits_instead_of_running() {
+        assert_eq!(verdict(&decided("accepted"), None, false), Verdict::Wait);
+        assert_eq!(verdict(&decided("pending"), None, false), Verdict::Wait);
+    }
+
+    #[test]
+    fn broker_statuses_pass_without_a_check() {
+        for status in ["expired", "failed", "auto_declined", "auto_accepted", "resolved_elsewhere"] {
+            assert_eq!(verdict(&decided(status), None, false), Verdict::Accept, "{status}");
+            assert_eq!(verdict(&decided(status), None, true), Verdict::Accept, "{status}");
+        }
+    }
 
     #[test]
     fn answers_take_strings_arrays_and_passthrough() {

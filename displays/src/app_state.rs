@@ -737,6 +737,10 @@ impl SharedContext {
                 .custom_contents(
                     crate::ui_data::agent_session_notify::AGENT_TOAST_KIND,
                     crate::ui_data::agent_session_notify::toast_contents,
+                )
+                .custom_contents(
+                    crate::modals::approval_toast::APPROVAL_TOAST_KIND,
+                    crate::modals::approval_toast::toast_contents,
                 ),
             undo_toasts_shown: HashSet::new(),
             db_tx, db_rx,

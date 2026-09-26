@@ -67,12 +67,16 @@ pub struct AssistRequest {
     #[serde(default)]
     #[surreal(default)]
     pub fresh: bool,
+    /// Access method of the filing session, stamped by the database; `system` for a system user.
+    #[serde(default)]
+    #[surreal(default)]
+    pub filed_access: Option<String>,
 }
 
 /// Files a bench-confirmed request under a caller-chosen id; it always opens a new session.
 pub const CREATE_CONFIRMED_SQL: &str = "CREATE $id CONTENT { \
      connection_string: $cs, hostname: $host, service_number: $sn, \
-     computer: $computer, requested_by: $by, store: $store, \
+     computer: $computer, requested_by: $by ?? $auth.email, store: $store, \
      trigger_source: 'tur_sheet', machine_confirmed: true, fresh: true, status: 'pending' }";
 
 /// Declines a request no dispatcher has claimed, returning its id when it did.
@@ -92,6 +96,11 @@ pub struct ConfirmedRequest {
 }
 
 impl AssistRequest {
+    /// Whether `requested_by` is vouched for: filed by a record user, a system user, or before the stamp existed.
+    pub fn requester_is_verified(&self) -> bool {
+        matches!(self.filed_access.as_deref(), None | Some("user") | Some("system"))
+    }
+
     /// Files a bench confirmation under the caller's `id`.
     pub async fn create_confirmed(id: &RecordId, request: ConfirmedRequest) -> anyhow::Result<()> {
         db().query(CREATE_CONFIRMED_SQL)
@@ -136,7 +145,7 @@ impl AssistRequest {
         let mut res = db()
             .query(
                 "CREATE assist_request CONTENT { connection_string: $cs, hostname: $host, \
-                 requested_by: $by, store: $store, service_number: $sn, trigger_source: 'chat', \
+                 requested_by: $by ?? $auth.email, store: $store, service_number: $sn, trigger_source: 'chat', \
                  machine_confirmed: false, status: 'pending', tech_note: $note, fresh: $fresh } \
                  RETURN VALUE id",
             )
@@ -162,7 +171,7 @@ impl AssistRequest {
         let mut res = db()
             .query(
                 "CREATE assist_request CONTENT { connection_string: $cs, hostname: $host, \
-                 requested_by: $by, trigger_source: 'auto', machine_confirmed: false, \
+                 requested_by: $by ?? $auth.email, trigger_source: 'auto', machine_confirmed: false, \
                  status: 'pending', tech_note: $note } RETURN VALUE id",
             )
             .bind(("cs", connection_string.to_string()))

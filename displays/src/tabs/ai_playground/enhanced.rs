@@ -12,7 +12,7 @@ use crate::{
 use std::collections::HashMap;
 use chrono::{DateTime, Local, Utc};
 use crossbeam::channel::{Receiver, Sender};
-use database::schema::{AgentThread, AgentTurn, QueuedTurn, RecordId, RecordIdExt, TurnImage};
+use database::schema::{AgentThread, AgentTurn, ApprovalViewer, QueuedTurn, RecordId, RecordIdExt, TurnImage};
 use serde::Serialize;
 
 /// Smallest outer height of the prompt box.
@@ -32,6 +32,7 @@ const FOLLOW_POLL: std::time::Duration = std::time::Duration::from_secs(2);
 const FOLLOW_LOCK: std::time::Duration = std::time::Duration::from_secs(90);
 /// How long a followed request is read before its chat gives up on it.
 const FOLLOW_LIMIT: std::time::Duration = std::time::Duration::from_secs(600);
+const NOT_YOURS: &str = "Only this session's technician or a Root user can message it; start a new chat for your own session.";
 
 /// What a followed assist request reports to the chat waiting on it.
 #[derive(Debug, Clone, PartialEq)]
@@ -411,7 +412,7 @@ impl EnhancedAiPlayground {
                 .frame(Frame::default().inner_margin(Margin::symmetric(8, 1)))
                 .show_separator_line(false)
                 .show(ui, |ui| {
-                    if agent_chat::context_bar(ui, &row) {
+                    if agent_chat::context_bar(ui, &row, may_steer(&row)) {
                         self.ask_agent(&row.id, "compact", String::new(), Vec::new());
                     }
                 });
@@ -706,8 +707,12 @@ impl EnhancedAiPlayground {
             return INPUT_MIN_HEIGHT;
         }
         let top = ui.cursor().top();
-        if let Some(action) = agent_chat::queue_strip(ui, &self.waiting) {
+        let steerable = self.open_row.as_ref().filter(|r| r.id.key_string() == tid).is_none_or(may_steer);
+        if steerable && let Some(action) = agent_chat::queue_strip(ui, &self.waiting) {
             self.apply_queue_action(&tid, action);
+        }
+        if !steerable {
+            ui.label(RichText::new(NOT_YOURS).weak().small());
         }
         let busy = self
             .open_row
@@ -735,7 +740,7 @@ impl EnhancedAiPlayground {
                 images,
                 staged,
             }) => self.send_chat_message(kind, text, images, staged),
-            Some(ComposerAction::Stop) if self.agent_threads.contains(&tid) => self.ask_agent(
+            Some(ComposerAction::Stop) if steerable && self.agent_threads.contains(&tid) => self.ask_agent(
                 &RecordId::new("agent_thread", tid.as_str()),
                 "interrupt",
                 String::new(),
@@ -746,10 +751,10 @@ impl EnhancedAiPlayground {
         ui.min_rect().bottom() - top
     }
 
-    /// Whether the composer of `tid` takes input: its session is open and it is not waiting for one.
+    /// Whether the composer of `tid` takes input: its session is open and the viewer's to steer, and it is not waiting for one.
     fn composer_enabled(&self, tid: &str) -> bool {
         let row = self.open_row.as_ref().filter(|r| r.id.key_string() == tid);
-        row.is_none_or(AgentThread::is_open) && !self.following.contains(tid)
+        row.is_none_or(|r| r.is_open() && may_steer(r)) && !self.following.contains(tid)
     }
 
     fn show_chat_content(&mut self, ui: &mut Ui) {
@@ -1143,6 +1148,18 @@ impl EnhancedAiPlayground {
         }
         let target = connection_string.or_else(|| self.focused_client.clone());
         let user = crate::get_current_user_from_auth();
+        let viewer = user.as_ref().and_then(ApprovalViewer::of);
+        let known = self.agent_index.iter().chain(&self.open_row).find(|t| t.id.key_string() == thread_id);
+        if session && known.is_some_and(|t| !viewer.as_ref().is_some_and(|v| v.may_steer(t.assignee.as_ref()))) {
+            let _ = self.response_tx.try_send(ChatMessage {
+                id: uuid::Uuid::new_v4().to_string(),
+                thread_id: thread_id.clone(),
+                ts: crate::tabs::ai_playground::now_ts(),
+                from: SentFrom::Assistant,
+                content: ChatMessageType::Error(NOT_YOURS.into()),
+            });
+            return;
+        }
         let tech = user.as_ref().map(|u| u.get_email().to_string());
         let store = user
             .as_ref()
@@ -1197,10 +1214,10 @@ impl EnhancedAiPlayground {
                     return;
                 }
             }
-            // A fresh chat always files a request; otherwise a live session takes the message as a turn.
+            // A fresh chat always files a request; otherwise a live session the viewer may steer takes the message as a turn.
             let live = if fresh { Ok(None) } else { AgentThread::active_for_connection(&cs).await };
             match live {
-                Ok(Some(thread)) => {
+                Ok(Some(thread)) if viewer.as_ref().is_some_and(|v| v.may_steer(thread.assignee.as_ref())) => {
                     let kind = if thread.is_busy() && kind == "start" {
                         "queue"
                     } else {
@@ -1613,6 +1630,11 @@ impl EnhancedAiPlayground {
 /// The composer id of a chat thread.
 fn composer_id(thread: &str) -> Id {
     Id::new(("enhanced_ai_composer", thread))
+}
+
+/// Whether the signed-in user is `row`'s technician or an active Root.
+fn may_steer(row: &AgentThread) -> bool {
+    ApprovalViewer::signed_in().flatten().is_some_and(|v| v.may_steer(row.assignee.as_ref()))
 }
 
 fn short_title(s: &str) -> String {

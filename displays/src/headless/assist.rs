@@ -47,7 +47,7 @@ async fn dispatch(req: AssistRequest) {
     // An unconfigured host leaves the row pending rather than stranding it as dispatched.
     if !super::codex::enabled() {
         log::warn!(
-            "assist: MTECH_CODEXD_URL unset; leaving {} pending",
+            "assist: codex broker disabled (MTECH_CODEXD_URL unset or no system-user session); leaving {} pending",
             req.id.key_string()
         );
         return;

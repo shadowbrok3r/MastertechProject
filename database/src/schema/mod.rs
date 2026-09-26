@@ -47,6 +47,7 @@ pub mod crash_intel;
 pub mod driver_intel;
 pub mod ai_task;
 pub mod sql_approval;
+pub mod read_only_query;
 pub mod service_metrics;
 pub mod assist_message;
 pub mod order_intake;
@@ -96,10 +97,14 @@ pub use provenance::{Harness, Provenance, UNKNOWN_ACTOR};
 pub use business_calendar::{business_seconds, open_days_between, OPEN_SECS_PER_DAY};
 pub use roi::{DataGaps, RoiSummary, ShelfCandidate, TurnaroundStats, TECH_RATE_HIGH, TECH_RATE_LOW};
 pub use assist::{AssistRequest, ConfirmedRequest, ASSIST_REQUEST_TABLE};
-pub use agent_thread::{clean_title, general_connection, is_general, AgentActivity, AgentThread, NewAgentThread, AGENT_THREAD_OPEN_STATUSES, AGENT_THREAD_TABLE};
+pub use agent_thread::{clean_title, general_connection, is_general, AgentActivity, AgentThread, NewAgentThread, AGENT_THREAD_OPEN_STATUSES, AGENT_THREAD_TABLE, CREATE_THREAD_SQL, MAY_STEER_SQL};
 pub use agent_event::{event_key, AgentEvent, AGENT_EVENT_TABLE};
-pub use agent_turn::{upload_name, AgentTurn, QueuedTurn, TurnImage, AGENT_TURN_TABLE, DEFAULT_UPLOAD_DIR};
-pub use agent_approval::{AgentApproval, AgentDecideOutcome, NewAgentApproval, AGENT_APPROVAL_TABLE, NEVER_REMEMBER_TOOLS};
+pub use agent_turn::{upload_name, AgentTurn, QueuedTurn, TurnImage, TurnRefused, AGENT_TURN_TABLE, DEFAULT_UPLOAD_DIR};
+pub use agent_approval::{
+    approval_audience, AgentApproval, AgentDecideOutcome, ApprovalAudience, ApprovalViewer, NewAgentApproval,
+    AGENT_APPROVAL_TABLE, DECIDER_ALLOWED_SQL, DECIDE_SQL, HUMAN_DECISIONS, LIST_PENDING_MINE_SQL,
+    NEVER_REMEMBER_TOOLS, REOPEN_SQL,
+};
 pub use waiting_services::WaitingService;
 pub use service_match::*;
 pub use entity_link::*;
@@ -111,6 +116,7 @@ pub use crash_intel::*;
 pub use driver_intel::*;
 pub use ai_task::*;
 pub use sql_approval::*;
+pub use read_only_query::check_read_only;
 
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";

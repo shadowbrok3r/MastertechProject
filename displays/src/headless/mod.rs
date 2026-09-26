@@ -276,6 +276,7 @@ pub async fn run(mcp_http: bool) -> anyhow::Result<()> {
     };
 
     tokio::spawn(run_session_engine());
+    codex::require_system_session().await;
     spawn_codex_broker(manager.clone());
     spawn_assist_dispatcher();
     spawn_shelf_notifier();

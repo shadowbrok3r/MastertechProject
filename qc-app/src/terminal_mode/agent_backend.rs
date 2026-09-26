@@ -2,7 +2,7 @@
 
 use crossbeam::channel::Sender;
 use database::agent_chat;
-use database::schema::{general_connection, AgentEvent, AgentThread, ConnectedClient, RecordId};
+use database::schema::{general_connection, AgentEvent, AgentThread, ConnectedClient, RecordId, TurnRefused};
 use rmcp::model::CallToolRequestParams;
 
 /// qc-app's own MCP server (raw TCP rmcp), spawned on the first app tick.
@@ -64,6 +64,13 @@ pub async fn send(tech_email: Option<String>, text: String, first: bool, tx: Sen
     match agent_chat::send(&target, tech_email.as_deref(), None, None, &body).await {
         Ok(sent) => {
             let _ = tx.send(BackendMsg::Opened { thread: sent.thread, after_seq: sent.after_seq, target });
+        }
+        Err(e) if e.downcast_ref::<TurnRefused>().is_some() => {
+            let _ = tx.send(BackendMsg::Error(
+                "qc-app is not signed in as a technician, so it can open an agent session but cannot message one \
+                 that is already open; continue the conversation in Mastertech."
+                    .into(),
+            ));
         }
         Err(e) => {
             let _ = tx.send(BackendMsg::Error(format!("could not reach the agent: {e:#}")));

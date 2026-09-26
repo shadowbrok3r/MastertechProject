@@ -6,11 +6,11 @@ use std::time::Duration;
 
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use database::live_data::{listen_data_filtered, Action};
-use database::schema::user::UserAuthorization;
-use database::schema::{AgentEvent, AgentThread, Datetime, RecordId, RecordIdExt, User};
+use database::schema::{
+    approval_audience, AgentEvent, AgentThread, ApprovalAudience, ApprovalViewer, Datetime, RecordId, RecordIdExt, User,
+};
 use eframe::egui::{self, Align, Context, Frame, Layout, Margin, Response, RichText, Sense, Ui, Vec2};
 use futures::future::AbortHandle;
-use serde_json::Value;
 use web_time::Instant;
 
 use crate::ui_tools::toasts::{Toast, ToastKind, ToastOptions, Toasts};
@@ -113,30 +113,17 @@ impl Tracker {
     }
 }
 
-/// The signed-in technician, as far as the notifier needs them.
-#[derive(Debug, Clone)]
-struct Viewer {
-    id: RecordId,
-    root: bool,
-    store: Option<String>,
+/// Whether the approval queue surfaces this thread's decisions to the viewer, as a modal or a Root toast.
+fn sees_approvals_of(viewer: &ApprovalViewer, thread: &AgentThread) -> bool {
+    approval_audience(thread.assignee.as_ref(), Some(viewer)) != ApprovalAudience::Hidden
 }
 
-impl Viewer {
-    fn of(user: &User) -> Self {
-        Self {
-            id: user.get_id(),
-            root: user.get_authorization() == UserAuthorization::Root,
-            store: serde_json::to_value(user)
-                .ok()
-                .and_then(|v| v.get("store").and_then(Value::as_str).map(str::to_string)),
-        }
-    }
-
-    /// Whether the approval modal lists this thread's decisions for the viewer.
-    fn sees_approvals_of(&self, thread: &AgentThread) -> bool {
-        self.root
-            || thread.assignee.as_ref() == Some(&self.id)
-            || (self.store.is_some() && thread.store == self.store)
+/// What the waiting toast tells a viewer who cannot decide the thread's approvals.
+fn waiting_detail(thread: &AgentThread) -> &'static str {
+    if thread.assignee.is_none() {
+        "No technician owns this session, so a Root user has to decide."
+    } else {
+        "It is waiting for the session technician or a Root user to decide."
     }
 }
 
@@ -277,7 +264,7 @@ enum Msg {
 
 /// Follows the signed-in technician's agent sessions and toasts their replies, failures and waits.
 pub struct AgentSessionNotifier {
-    viewer: Option<Viewer>,
+    viewer: Option<ApprovalViewer>,
     tracker: Tracker,
     /// Bumped on every sign-in change; results of an earlier viewer are dropped.
     viewer_gen: u64,
@@ -318,8 +305,11 @@ impl Default for AgentSessionNotifier {
 impl AgentSessionNotifier {
     /// Follows the signed-in user's sessions and queues toasts; reads nothing while `live_epoch` is `None`.
     pub fn tick(&mut self, ctx: &Context, user: Option<&User>, live_epoch: Option<u64>, toasts: &mut Toasts) {
-        if user.map(User::get_id).as_ref() != self.viewer.as_ref().map(|v| &v.id) {
-            self.reset(user.map(Viewer::of));
+        let next = user.and_then(ApprovalViewer::of);
+        if next.as_ref().map(|v| &v.id) != self.viewer.as_ref().map(|v| &v.id) {
+            self.reset(next);
+        } else if next != self.viewer {
+            self.viewer = next;
         }
         let Some(viewer) = self.viewer.clone() else { return };
 
@@ -368,7 +358,7 @@ impl AgentSessionNotifier {
         }
     }
 
-    fn reset(&mut self, viewer: Option<Viewer>) {
+    fn reset(&mut self, viewer: Option<ApprovalViewer>) {
         self.stop_stream();
         self.tracker = Tracker::default();
         self.viewer = viewer;
@@ -426,15 +416,15 @@ impl AgentSessionNotifier {
         });
     }
 
-    fn observe(&mut self, ctx: &Context, viewer: &Viewer, row: &AgentThread, toasts: &mut Toasts) {
+    fn observe(&mut self, ctx: &Context, viewer: &ApprovalViewer, row: &AgentThread, toasts: &mut Toasts) {
         let Some(nudge) = self.tracker.observe(row) else { return };
         if in_view(ctx, &row.id.key_string()) {
             return;
         }
         match nudge {
-            Nudge::NeedsYou if viewer.sees_approvals_of(row) => self.attention(ctx),
+            Nudge::NeedsYou if sees_approvals_of(viewer, row) => self.attention(ctx),
             Nudge::NeedsYou => {
-                let detail = Some("It is waiting for a technician's decision.".to_string());
+                let detail = Some(waiting_detail(row).to_string());
                 self.show(ctx, Notice::new(nudge, row, detail), toasts);
             }
             Nudge::Failed => {
@@ -638,19 +628,25 @@ mod tests {
         assert_eq!(tracker.observe(&thread("idle", None, 1)), None);
     }
 
+    fn viewer(id: &str, root: bool) -> ApprovalViewer {
+        ApprovalViewer { id: RecordId::new("user", id), root }
+    }
+
     #[test]
-    fn the_approval_modal_covers_the_assignee_their_store_and_root() {
+    fn approvals_reach_the_assignee_and_active_root_only() {
         let row = thread("waiting_approval", None, 0);
-        let viewer = |id: &str, store: Option<&str>, root: bool| Viewer {
-            id: RecordId::new("user", id),
-            root,
-            store: store.map(str::to_string),
-        };
-        assert!(viewer("tech", None, false).sees_approvals_of(&row));
-        assert!(viewer("other", Some("MUR"), false).sees_approvals_of(&row));
-        assert!(viewer("other", None, true).sees_approvals_of(&row));
-        assert!(!viewer("other", Some("RIV"), false).sees_approvals_of(&row));
-        assert!(!viewer("other", None, false).sees_approvals_of(&row));
+        assert!(sees_approvals_of(&viewer("tech", false), &row));
+        assert!(sees_approvals_of(&viewer("boss", true), &row));
+        assert!(!sees_approvals_of(&viewer("mate", false), &row), "a store-mate is not covered");
+    }
+
+    #[test]
+    fn a_requester_of_an_unowned_thread_is_covered_only_as_root() {
+        let mut row = thread("waiting_approval", None, 0);
+        row.assignee = None;
+        assert!(sees_approvals_of(&viewer("tech", true), &row));
+        assert!(!sees_approvals_of(&viewer("tech", false), &row));
+        assert!(waiting_detail(&row).contains("Root user has to decide"));
     }
 
     #[test]

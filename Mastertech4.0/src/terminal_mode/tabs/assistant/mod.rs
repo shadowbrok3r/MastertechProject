@@ -8,7 +8,8 @@ use std::time::{Duration, Instant};
 
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use database::schema::{
-    AgentApproval, AgentDecideOutcome, AgentEvent, AgentThread, AgentTurn, AssistRequest, RecordId, RecordIdExt,
+    AgentApproval, AgentDecideOutcome, AgentEvent, AgentThread, AgentTurn, ApprovalAudience, ApprovalViewer,
+    AssistRequest, RecordId, RecordIdExt,
 };
 use displays::{PlatformSpawner, Spawner};
 use ratatui::{
@@ -47,6 +48,10 @@ const CONFIRM_WINDOW: Duration = Duration::from_secs(3);
 /// How long a status note stays in the footer.
 const NOTE_SHOWN: Duration = Duration::from_secs(10);
 const START_HINT: &str = "Type a message and press Enter to start a new session";
+const NOT_PERMITTED: &str = "only this session's technician or a Root user can decide";
+const NOT_YOURS: &str = "this session belongs to another technician; type a message to start your own";
+const REMOTE_REFUSED: &str = "a remote viewer cannot decide, send, stop or close here";
+const OTHERS_SESSION_TITLE: &str = "Start your own session (this one is another technician's)";
 
 enum Msg {
     Thread(Result<Option<AgentThread>, String>),
@@ -113,6 +118,11 @@ pub struct AssistantTab<'a> {
     approvals: Vec<AgentApproval>,
     snoozed: HashMap<RecordId, Instant>,
     in_flight: HashSet<RecordId>,
+    /// Who decides from this panel; kept while the user lock is busy.
+    viewer: Option<ApprovalViewer>,
+    last_viewer_read: Option<Instant>,
+    /// The key being handled came from a remote viewer.
+    remote_input: bool,
     show_reasoning: bool,
     /// Unfolds every tool, shell, file-change and approval row.
     expand: bool,
@@ -168,6 +178,9 @@ impl<'a> AssistantTab<'a> {
             approvals: Vec::new(),
             snoozed: HashMap::new(),
             in_flight: HashSet::new(),
+            viewer: None,
+            last_viewer_read: None,
+            remote_input: false,
             show_reasoning: false,
             expand: false,
             transcript: transcript::Transcript::default(),
@@ -219,9 +232,28 @@ impl<'a> AssistantTab<'a> {
         self.replacing() && self.open_thread().is_some()
     }
 
+    /// True when the viewer is the open session's technician or an active Root.
+    fn may_steer(&self) -> bool {
+        self.open_thread()
+            .is_some_and(|t| self.viewer.as_ref().is_some_and(|v| v.may_steer(t.assignee.as_ref())))
+    }
+
+    /// True while an open session is showing that the viewer may not steer.
+    fn watching_others(&self) -> bool {
+        self.open_thread().is_some() && !self.replacing() && !self.may_steer()
+    }
+
     /// True when the next message starts a new session.
     fn starts_session(&self) -> bool {
-        self.open_thread().is_none() || self.replacing()
+        self.open_thread().is_none() || self.replacing() || !self.may_steer()
+    }
+
+    /// Handles a key, refusing decisions and session actions when it came from a remote viewer.
+    pub fn handle_key_from(&mut self, key: KeyEvent, remote: bool) -> bool {
+        self.remote_input = remote;
+        let consumed = self.handle_key_event(key);
+        self.remote_input = false;
+        consumed
     }
 
     fn set_note(&mut self, note: impl Into<String>) {
@@ -229,7 +261,7 @@ impl<'a> AssistantTab<'a> {
         self.note_at = Some(Instant::now());
     }
 
-    /// The decision shown right now: the oldest pending one that is neither snoozed nor lapsed.
+    /// The decision shown right now: the oldest pending one the viewer may decide that is neither snoozed nor lapsed.
     fn active_approval(&self) -> Option<AgentApproval> {
         if self.replacing() {
             return None;
@@ -237,7 +269,11 @@ impl<'a> AssistantTab<'a> {
         let now = Instant::now();
         self.approvals
             .iter()
-            .find(|r| r.secs_remaining() > 0 && !self.snoozed.get(&r.id).is_some_and(|until| *until > now))
+            .find(|r| {
+                r.secs_remaining() > 0
+                    && r.audience_for(self.viewer.as_ref()) != ApprovalAudience::Hidden
+                    && !self.snoozed.get(&r.id).is_some_and(|until| *until > now)
+            })
             .cloned()
     }
 
@@ -271,6 +307,9 @@ impl<'a> AssistantTab<'a> {
     }
 
     fn poll_approvals(&mut self) {
+        if self.viewer.is_none() {
+            return;
+        }
         let Some(thread) = self.open_thread().map(|t| t.id.clone()) else { return };
         if self.loading_approvals {
             return;
@@ -373,7 +412,10 @@ impl<'a> AssistantTab<'a> {
                     self.set_note(match outcome {
                         Ok(AgentDecideOutcome::Recorded) => "decision recorded".into(),
                         Ok(AgentDecideOutcome::AlreadyResolved(held)) => format!("already {held} elsewhere"),
-                        Ok(AgentDecideOutcome::Missing) => "that request was withdrawn".into(),
+                        Ok(AgentDecideOutcome::Missing) => {
+                            "that request was withdrawn, or you are not permitted to decide it".into()
+                        }
+                        Ok(AgentDecideOutcome::NotPermitted) => NOT_PERMITTED.into(),
                         Err(e) => format!("decision failed: {e}"),
                     });
                     self.last_approval_poll = None;
@@ -386,6 +428,12 @@ impl<'a> AssistantTab<'a> {
     fn tick(&mut self) {
         self.drain();
         self.frame.set(self.frame.get().wrapping_add(1));
+        if self.last_viewer_read.is_none_or(|t| t.elapsed() >= APPROVAL_POLL)
+            && let Some(viewer) = ApprovalViewer::signed_in()
+        {
+            self.viewer = viewer;
+            self.last_viewer_read = Some(Instant::now());
+        }
         if self.closing() && self.fresh.as_ref().is_some_and(|f| f.at.elapsed() >= REQUEST_WAIT) {
             self.fresh = None;
             self.set_note("the session did not close; check that admin-agent is running");
@@ -411,8 +459,9 @@ impl<'a> AssistantTab<'a> {
         });
     }
 
-    /// Files an assist request for this machine; the broker opens the session.
+    /// Files an assist request for this machine; the broker opens the session, a new one when another technician's is open.
     fn request_session(&mut self, text: String) {
+        let fresh = self.open_thread().is_some();
         let cs = self.connection_string.clone();
         let user = displays::get_current_user_from_auth();
         let tech = user.as_ref().map(|u| u.get_email().to_string());
@@ -425,7 +474,7 @@ impl<'a> AssistantTab<'a> {
         self.set_note("asking for the agent\u{2026}");
         let tx = self.tx.clone();
         PlatformSpawner::spawn(async move {
-            let r = AssistRequest::create_from_chat(&cs, tech.as_deref(), store.as_deref(), None, &text, false)
+            let r = AssistRequest::create_from_chat(&cs, tech.as_deref(), store.as_deref(), None, &text, fresh)
                 .await
                 .map(|_| ())
                 .map_err(|e| e.to_string());
@@ -434,13 +483,21 @@ impl<'a> AssistantTab<'a> {
     }
 
     fn decide(&mut self, id: RecordId, status: &'static str, note: Option<String>, answers: Option<Value>) {
+        let permitted = self
+            .approvals
+            .iter()
+            .find(|r| r.id == id)
+            .is_some_and(|r| r.audience_for(self.viewer.as_ref()) != ApprovalAudience::Hidden);
+        if !permitted {
+            self.set_note(NOT_PERMITTED);
+            return;
+        }
         if !self.in_flight.insert(id.clone()) {
             return;
         }
-        let by = displays::get_current_user_from_auth().map(|u| u.get_id());
         let tx = self.tx.clone();
         PlatformSpawner::spawn(async move {
-            let r = AgentApproval::decide(&id, status, by, note, answers).await.map_err(|e| e.to_string());
+            let r = AgentApproval::decide(&id, status, note, answers).await.map_err(|e| e.to_string());
             let _ = tx.send(Msg::Decided(id, r));
         });
     }
@@ -465,14 +522,14 @@ impl<'a> AssistantTab<'a> {
             return;
         }
         match self.open_thread().map(|t| (t.id.clone(), t.status.clone())) {
-            Some((id, status)) => {
+            Some((id, status)) if self.may_steer() => {
                 // A message during a turn steers it; otherwise it starts the next one.
                 let kind = if matches!(status.as_str(), "running" | "waiting_approval") { "steer" } else { "start" };
                 self.input.set_text("");
                 self.scroll_back.set(0);
                 self.turn(id, kind, text);
             }
-            None => {
+            _ => {
                 if self.requested_at.is_some_and(|t| t.elapsed() < REQUEST_WAIT) {
                     self.set_note("still waiting for the host to open the session");
                     return;
@@ -486,6 +543,10 @@ impl<'a> AssistantTab<'a> {
 
     /// Ctrl+L: closes the open session on a second press within [`CONFIRM_WINDOW`], then clears the view for a new one.
     fn new_session(&mut self) {
+        if self.watching_others() {
+            self.set_note(NOT_YOURS);
+            return;
+        }
         let requesting = self.requested_at.is_some_and(|t| t.elapsed() < REQUEST_WAIT);
         let armed = self.armed_at.is_some_and(|t| t.elapsed() < CONFIRM_WINDOW);
         let open = self.open_thread().map(|t| t.id.clone());
@@ -685,13 +746,15 @@ impl<'a> AssistantTab<'a> {
         if !starts {
             hints.push(("Enter", "send"));
         }
-        if running && !self.replacing() {
+        if running && !self.replacing() && self.may_steer() {
             hints.push(("Esc", "stop"));
         }
         hints.push(("Ctrl+O", if self.expand { "collapse tools" } else { "expand tools" }));
         hints.push(("Ctrl+T", if self.show_reasoning { "hide thinking" } else { "show thinking" }));
-        hints.push(("Ctrl+L", "new session"));
-        if self.open_thread().is_some() && !self.replacing() {
+        if !self.watching_others() {
+            hints.push(("Ctrl+L", "new session"));
+        }
+        if self.open_thread().is_some() && !self.replacing() && self.may_steer() {
             hints.push(("Ctrl+X", "close session"));
         }
         hints.push(("PgUp/PgDn", "scroll"));
@@ -855,6 +918,8 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
 
         let input_title = if approval.as_ref().is_some_and(|r| r.kind == "question") {
             "Answer the agent"
+        } else if self.watching_others() {
+            OTHERS_SESSION_TITLE
         } else if self.starts_session() {
             "Start a new session"
         } else if running {
@@ -892,10 +957,21 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
     fn handle_key_event(&mut self, key: KeyEvent) -> bool {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
-        if let Some(req) = self.active_approval() {
-            if self.approval_hotkey(&req, &key) {
-                return true;
-            }
+        if !self.remote_input
+            && let Some(req) = self.active_approval()
+            && self.approval_hotkey(&req, &key)
+        {
+            return true;
+        }
+        let session_key = match key.code {
+            KeyCode::Enter => !alt,
+            KeyCode::Esc => true,
+            KeyCode::Char('x' | 'l' | 'n') => ctrl,
+            _ => false,
+        };
+        if self.remote_input && session_key {
+            self.set_note(REMOTE_REFUSED);
+            return true;
         }
         match key.code {
             KeyCode::Enter if alt => {
@@ -912,7 +988,7 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
             KeyCode::Esc => {
                 if let Some(req) = self.active_approval() {
                     self.snoozed.insert(req.id, Instant::now() + SNOOZE);
-                } else if self.running() {
+                } else if self.running() && self.may_steer() {
                     if let Some(id) = self.thread.as_ref().map(|t| t.id.clone()) {
                         self.turn(id, "interrupt", String::new());
                     }
@@ -938,7 +1014,9 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
                 true
             }
             KeyCode::Char('x') if ctrl => {
-                if let Some(id) = self.open_thread().map(|t| t.id.clone()) {
+                if self.watching_others() {
+                    self.set_note(NOT_YOURS);
+                } else if let Some(id) = self.open_thread().map(|t| t.id.clone()) {
                     self.turn(id, "close", String::new());
                 }
                 true
@@ -996,7 +1074,7 @@ mod tests {
             service_number: None,
             store: None,
             requested_by: None,
-            assignee: None,
+            assignee: Some(RecordId::new("user", "tech")),
             assist_request: None,
             service_order: None,
             computer: None,
@@ -1044,6 +1122,7 @@ mod tests {
             tab.events.push(event(t));
         }
         tab.thread = thread;
+        tab.viewer = viewer("tech", false);
         tab
     }
 
@@ -1124,6 +1203,127 @@ mod tests {
         tab.thread = Some(thread("t1", "closed"));
         assert!(tab.replacing() && !tab.closing());
         assert_eq!(text(&tab.tail_lines(80, "*")), START_HINT);
+    }
+
+    fn approval(thread: &AgentThread, owner: Option<&str>) -> AgentApproval {
+        AgentApproval {
+            id: RecordId::new("agent_approval", "a1"),
+            thread: thread.id.clone(),
+            kind: "tool_call".into(),
+            method: String::new(),
+            codex_request_id: String::new(),
+            summary: "run desktop_click on PC-1".into(),
+            server: None,
+            tool: Some("desktop_click".into()),
+            arguments: None,
+            params: None,
+            questions: None,
+            answers: None,
+            response_sent: None,
+            status: "pending".into(),
+            assignee: owner.map(|k| RecordId::new("user", k)),
+            connection_string: Some("PC-1:abc".into()),
+            store: Some("MUR".into()),
+            requested_at: None,
+            expires_at: database::schema::Datetime::from_timestamp(database::schema::Datetime::now().timestamp() + 600, 0),
+            decided_at: None,
+            sent_to_codex_at: None,
+            decided_by: None,
+            deny_note: None,
+        }
+    }
+
+    fn viewer(key: &str, root: bool) -> Option<ApprovalViewer> {
+        Some(ApprovalViewer { id: RecordId::new("user", key), root })
+    }
+
+    #[test]
+    fn only_the_owner_or_an_active_root_gets_the_decision_panel() {
+        let t = thread("t1", "waiting_approval");
+        let mut tab = tab(Some(t.clone()));
+        tab.approvals.push(approval(&t, Some("tech")));
+        tab.viewer = None;
+        assert!(tab.active_approval().is_none(), "nobody signed in");
+        tab.viewer = viewer("mate", false);
+        assert!(tab.active_approval().is_none(), "another technician");
+        tab.viewer = viewer("gone", false);
+        assert!(tab.active_approval().is_none(), "an inactive Root reads as root = false");
+        tab.viewer = viewer("tech", false);
+        assert!(tab.active_approval().is_some(), "the owner");
+        tab.viewer = viewer("boss", true);
+        assert!(tab.active_approval().is_some(), "an active Root");
+    }
+
+    #[test]
+    fn a_non_owner_cannot_decide_by_hotkey() {
+        let t = thread("t1", "waiting_approval");
+        let mut tab = tab(Some(t.clone()));
+        let req = approval(&t, Some("tech"));
+        tab.approvals.push(req.clone());
+        tab.viewer = viewer("mate", false);
+        tab.decide(req.id.clone(), "accepted", None, None);
+        assert!(tab.in_flight.is_empty());
+        assert_eq!(tab.note, NOT_PERMITTED);
+    }
+
+    #[test]
+    fn a_remote_key_never_decides_sends_or_closes() {
+        let t = thread("t1", "waiting_approval");
+        let mut tab = tab(Some(t.clone()));
+        tab.approvals.push(approval(&t, Some("tech")));
+        for key in [KeyCode::Char('y'), KeyCode::Char('s')] {
+            tab.handle_key_from(KeyEvent::new(key, KeyModifiers::NONE), true);
+        }
+        assert!(tab.in_flight.is_empty(), "no decision went out");
+        tab.input.set_text("");
+        tab.input.set_text("run it");
+        for (code, mods) in [
+            (KeyCode::Enter, KeyModifiers::NONE),
+            (KeyCode::Esc, KeyModifiers::NONE),
+            (KeyCode::Char('x'), KeyModifiers::CONTROL),
+            (KeyCode::Char('l'), KeyModifiers::CONTROL),
+            (KeyCode::Char('n'), KeyModifiers::CONTROL),
+        ] {
+            tab.note.clear();
+            assert!(tab.handle_key_from(KeyEvent::new(code, mods), true));
+            assert_eq!(tab.note, REMOTE_REFUSED, "{code:?}");
+        }
+        assert_eq!(tab.input.get_raw_text(), "run it", "the message stays unsent");
+        assert!(tab.snoozed.is_empty() && tab.fresh.is_none() && tab.armed_at.is_none());
+        assert!(!tab.remote_input, "the flag covers one key only");
+    }
+
+    #[test]
+    fn another_technicians_session_is_watched_not_steered() {
+        let mut tab = tab(Some(thread("t1", "running")));
+        tab.viewer = viewer("mate", false);
+        assert!(!tab.may_steer() && tab.watching_others() && tab.starts_session());
+        let keys = footer(&tab);
+        assert!(keys.starts_with(START_HINT), "{keys}");
+        for hidden in ["Esc stop", "Ctrl+X", "Ctrl+L", "Enter send"] {
+            assert!(!keys.contains(hidden), "{keys}");
+        }
+        tab.handle_key_event(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL));
+        assert_eq!(tab.note, NOT_YOURS);
+        tab.note.clear();
+        tab.handle_key_event(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+        assert_eq!(tab.note, NOT_YOURS);
+        assert!(tab.fresh.is_none());
+
+        tab.viewer = viewer("boss", true);
+        assert!(tab.may_steer() && !tab.starts_session());
+        assert!(footer(&tab).contains("Ctrl+X close session"));
+    }
+
+    #[test]
+    fn an_unowned_request_reaches_root_only() {
+        let t = thread("t1", "waiting_approval");
+        let mut tab = tab(Some(t.clone()));
+        tab.approvals.push(approval(&t, None));
+        tab.viewer = viewer("tech", false);
+        assert!(tab.active_approval().is_none());
+        tab.viewer = viewer("boss", true);
+        assert!(tab.active_approval().is_some());
     }
 
     #[test]

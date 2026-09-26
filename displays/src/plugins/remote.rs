@@ -479,6 +479,17 @@ impl From<egui::Modifiers> for EguiModifiers {
 /// (3) plus one `Text` (1) = 4 events per field.
 const MAX_REMOTE_EGUI_EVENTS_PER_FRAME: usize = 4;
 
+/// When a remote viewer's click, key or text last reached this app's egui input.
+static REMOTE_INPUT_AT: Mutex<Option<web_time::Instant>> = Mutex::new(None);
+
+/// How long after injected remote input a click still counts as the remote viewer's.
+const REMOTE_INPUT_WINDOW: std::time::Duration = std::time::Duration::from_millis(750);
+
+/// True shortly after a remote viewer's click, key or text was applied to this app's egui input.
+pub fn remote_input_recent() -> bool {
+    REMOTE_INPUT_AT.lock().ok().and_then(|at| *at).is_some_and(|at| at.elapsed() < REMOTE_INPUT_WINDOW)
+}
+
 /// Captures egui output each frame, tessellates to meshes, serializes + compresses,
 /// and sends via a channel. The transport layer (WebSocket) consumes `frame_rx`.
 pub struct EguiFrameCapture {
@@ -553,6 +564,7 @@ impl MastertechPlugin for EguiFrameCapture {
         if !self.enabled {
             return;
         }
+        let first_injected = input.events.len();
         let mut drained = 0u32;
         let mut backlog = false;
         for _ in 0..MAX_REMOTE_EGUI_EVENTS_PER_FRAME {
@@ -685,6 +697,12 @@ impl MastertechPlugin for EguiFrameCapture {
             if let Some(ctx) = &self.ctx {
                 ctx.request_repaint();
             }
+        }
+        let acted = input.events[first_injected..].iter().any(|e| {
+            matches!(e, egui::Event::PointerButton { .. } | egui::Event::Key { .. } | egui::Event::Text(_))
+        });
+        if acted && let Ok(mut at) = REMOTE_INPUT_AT.lock() {
+            *at = Some(web_time::Instant::now());
         }
         if let Some(p) = self.remote_pointer_pos {
             log::debug!(

@@ -49,10 +49,11 @@ impl EmbeddedTerminal {
         // emits key events while its grid holds focus, so nothing is gated here.
         while let Ok(event) = self.event_rx.try_recv() {
             let local = LocalTermEvent(event);
+            let remote = displays::plugins::remote::remote_input_recent();
             if let Ok(mouse) = MouseEvent::try_from(local.clone()) {
-                self.app.handle_events(Some(mouse), None);
+                self.app.handle_events(Some(mouse), None, remote);
             } else if let Ok(key) = KeyEvent::try_from(local) {
-                self.app.handle_events(None, Some(key));
+                self.app.handle_events(None, Some(key), remote);
             }
         }
 

@@ -1,0 +1,180 @@
+# Only the session's active owner or an active Root decides agent approvals and
+# steers agent sessions; only an active Root approves SurrealQL writes; clients
+# can no longer rewrite who owns either, or the state the broker acts on.
+#
+# agent_approval: select/update for the active assignee or an active Root,
+# create and delete for nobody; identity fields frozen for record users;
+# decided_by must be the deciding user.
+# agent_thread: create and delete for nobody, update for record users only;
+# every field but service_order, customer, service_number and updated_at is
+# frozen for record users (allow_box_shell stays writable by an active Root).
+# agent_turn: create and update only when the thread's assignee is the active
+# user or the user is an active Root; delete for nobody; thread frozen.
+# assist_request: update for record users only, delete for nobody; a record
+# user files only in their own name; filed_access stamps the filing session's
+# access method so the broker ignores a guest's requested_by.
+# sql_approval: create for record users in their own name, select/update for
+# the requester or an active Root, delete for nobody; the request is frozen
+# once filed; only an active Root sets approved or denied; decided_by must be
+# the deciding user.
+# Active Root = `$auth.authorization = 'Root' AND $auth.active = true`.
+#
+# The admin-agent broker signs in as a database system user, which bypasses
+# table and field permissions, so every broker write is unaffected. Denied
+# selects, creates and updates return no rows rather than errors; a forged
+# decided_by, requested_by or status fails its ASSERT.
+# Apply after 20260925200000__user_table_permissions, after the clients and
+# admin-agent that stamp decided_by from $auth are deployed, and only once the
+# admin-agent log shows "signed in as database user" (a guest broker can no
+# longer create threads or approvals).
+id = "20260926000000__agent_table_permissions"
+name = "agent_table_permissions"
+state = "planned"
+source_schema_hash = "389d38c90d6dd97f39971723f1950de272289a412191ae4125286a4bd0d31b25"
+target_schema_hash = "9e2abc2643f2b57e5f9a26dd087b4325b13c1acb7262573c2054f8a555c55c35"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "tighten_agent_permissions"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE agent_approval TYPE ANY SCHEMALESS PERMISSIONS FOR select, update WHERE $access = 'user' AND $auth.active = true AND (($auth.id != NONE AND assignee = $auth.id) OR $auth.authorization = 'Root'), FOR create, delete NONE;
+DEFINE FIELD OVERWRITE arguments ON agent_approval TYPE none | object PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE assignee ON agent_approval TYPE none | record<user> PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE codex_request_id ON agent_approval TYPE string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE connection_string ON agent_approval TYPE none | string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE decided_by ON agent_approval TYPE none | record<user> ASSERT $access != 'user' OR $value = $before OR $value = NONE OR $value = $auth.id PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE expires_at ON agent_approval TYPE none | datetime PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE kind ON agent_approval TYPE string ASSERT $value IN ['tool_call', 'command', 'file_change', 'permissions', 'question', 'elicitation'] PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE method ON agent_approval TYPE string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE params ON agent_approval TYPE none | object PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE questions ON agent_approval TYPE none | array PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE requested_at ON agent_approval TYPE datetime DEFAULT time::now() PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE response_sent ON agent_approval TYPE none | object PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE sent_to_codex_at ON agent_approval TYPE none | datetime PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE server ON agent_approval TYPE none | string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE status ON agent_approval TYPE string DEFAULT 'pending' ASSERT $value IN ['pending', 'accepted', 'accepted_for_session', 'accepted_all_for_session', 'declined', 'cancelled', 'answered', 'expired', 'auto_declined', 'auto_accepted', 'resolved_elsewhere', 'failed'] PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE store ON agent_approval TYPE none | string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE summary ON agent_approval TYPE string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE thread ON agent_approval TYPE record<agent_thread> PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE tool ON agent_approval TYPE none | string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE TABLE OVERWRITE agent_thread TYPE ANY SCHEMALESS PERMISSIONS FOR select FULL, FOR update WHERE $access = 'user', FOR create, delete NONE;
+DEFINE FIELD OVERWRITE assist_request ON agent_thread TYPE none | record<assist_request> PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE activity ON agent_thread TYPE none | string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE assignee ON agent_thread TYPE none | record<user> PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE allow_box_shell ON agent_thread TYPE bool DEFAULT false PERMISSIONS FOR select, create FULL, FOR update WHERE $auth.authorization = 'Root' AND $auth.active = true;
+DEFINE FIELD OVERWRITE broker_node ON agent_thread TYPE none | string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE closed_at ON agent_thread TYPE none | datetime PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE codex_thread_id ON agent_thread TYPE none | string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE computer ON agent_thread TYPE none | record<computer> PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE connection_string ON agent_thread TYPE string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE created_at ON agent_thread TYPE datetime DEFAULT time::now() PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE diagnostic_session ON agent_thread TYPE none | record<diagnostic_session> PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE driven_by ON agent_thread TYPE none | string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE error ON agent_thread TYPE none | string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE hostname ON agent_thread TYPE none | string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE last_event_at ON agent_thread TYPE none | datetime PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE last_seq ON agent_thread TYPE none | int PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE model ON agent_thread TYPE none | string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE provider ON agent_thread TYPE none | string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE requested_by ON agent_thread TYPE none | string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE status ON agent_thread TYPE string DEFAULT 'queued' ASSERT $value IN ['queued', 'starting', 'idle', 'running', 'waiting_approval', 'closed', 'failed'] PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE store ON agent_thread TYPE none | string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE title ON agent_thread TYPE none | string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE tokens_used ON agent_thread TYPE none | int PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE tokens_window ON agent_thread TYPE none | int PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE tool_path ON agent_thread TYPE none | string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE TABLE OVERWRITE agent_turn TYPE ANY SCHEMALESS PERMISSIONS FOR select FULL, FOR create, update WHERE $access = 'user' AND $auth.id != NONE AND $auth.active = true AND (thread.assignee = $auth.id OR $auth.authorization = 'Root'), FOR delete NONE;
+DEFINE FIELD OVERWRITE thread ON agent_turn TYPE record<agent_thread> PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE TABLE OVERWRITE assist_request TYPE ANY SCHEMALESS PERMISSIONS FOR select, create FULL, FOR update WHERE $access = 'user', FOR delete NONE;
+DEFINE FIELD OVERWRITE filed_access ON assist_request TYPE none | string VALUE $before ?? $access ?? 'system' PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE requested_by ON assist_request TYPE none | string DEFAULT $auth.email ASSERT $access != 'user' OR $value = $auth.email PERMISSIONS FULL;
+DEFINE TABLE OVERWRITE sql_approval TYPE ANY SCHEMALESS CHANGEFEED 2d PERMISSIONS FOR select, update WHERE $access = 'user' AND $auth.active = true AND (requested_by = $auth.id OR $auth.authorization = 'Root'), FOR create WHERE $access = 'user' AND requested_by = $auth.id, FOR delete NONE;
+DEFINE FIELD OVERWRITE statement ON sql_approval TYPE string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE reason ON sql_approval TYPE string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE statement_kind ON sql_approval TYPE string DEFAULT 'unknown' PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE target_table ON sql_approval TYPE none | string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE impact_rows ON sql_approval TYPE none | int PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE impact_note ON sql_approval TYPE none | string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE requested_by ON sql_approval TYPE none | record<user> ASSERT $access != 'user' OR $value = $before OR $value = $auth.id PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE requested_label ON sql_approval TYPE string DEFAULT '' PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE origin_host ON sql_approval TYPE string DEFAULT '' PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE status ON sql_approval TYPE string DEFAULT 'pending' ASSERT $access != 'user' OR $value = $before OR $value NOT IN ['approved', 'denied'] OR ($auth.authorization = 'Root' AND $auth.active = true) PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE decided_by ON sql_approval TYPE none | record<user> ASSERT $access != 'user' OR $value = $before OR $value = NONE OR $value = $auth.id PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE created_at ON sql_approval TYPE none | datetime DEFAULT time::now() PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE expires_at ON sql_approval TYPE none | datetime PERMISSIONS FOR select, create FULL, FOR update NONE;
+"""
+
+# Restores the definitions 20260916190000__agent_threads, assist_request.surql and sql_approval.surql left in place.
+[[steps]]
+id = "restore_full_agent_permissions"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE agent_approval TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE arguments ON agent_approval TYPE none | object PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE assignee ON agent_approval TYPE none | record<user> PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE codex_request_id ON agent_approval TYPE string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE connection_string ON agent_approval TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE decided_by ON agent_approval TYPE none | record<user> PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE expires_at ON agent_approval TYPE none | datetime PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE kind ON agent_approval TYPE string ASSERT $value IN ['tool_call', 'command', 'file_change', 'permissions', 'question', 'elicitation'] PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE method ON agent_approval TYPE string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE params ON agent_approval TYPE none | object PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE questions ON agent_approval TYPE none | array PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE requested_at ON agent_approval TYPE datetime DEFAULT time::now() PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE response_sent ON agent_approval TYPE none | object PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE sent_to_codex_at ON agent_approval TYPE none | datetime PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE server ON agent_approval TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE store ON agent_approval TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE summary ON agent_approval TYPE string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE thread ON agent_approval TYPE record<agent_thread> PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE tool ON agent_approval TYPE none | string PERMISSIONS FULL;
+DEFINE TABLE OVERWRITE agent_thread TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE assist_request ON agent_thread TYPE none | record<assist_request> PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE activity ON agent_thread TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE assignee ON agent_thread TYPE none | record<user> PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE allow_box_shell ON agent_thread TYPE bool DEFAULT false PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE broker_node ON agent_thread TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE closed_at ON agent_thread TYPE none | datetime PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE codex_thread_id ON agent_thread TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE computer ON agent_thread TYPE none | record<computer> PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE connection_string ON agent_thread TYPE string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE created_at ON agent_thread TYPE datetime DEFAULT time::now() PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE diagnostic_session ON agent_thread TYPE none | record<diagnostic_session> PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE driven_by ON agent_thread TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE error ON agent_thread TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE hostname ON agent_thread TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE last_event_at ON agent_thread TYPE none | datetime PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE last_seq ON agent_thread TYPE none | int PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE model ON agent_thread TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE provider ON agent_thread TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE requested_by ON agent_thread TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE status ON agent_thread TYPE string DEFAULT 'queued' ASSERT $value IN ['queued', 'starting', 'idle', 'running', 'waiting_approval', 'closed', 'failed'] PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE store ON agent_thread TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE title ON agent_thread TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE tokens_used ON agent_thread TYPE none | int PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE tokens_window ON agent_thread TYPE none | int PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE tool_path ON agent_thread TYPE none | string PERMISSIONS FULL;
+DEFINE TABLE OVERWRITE agent_turn TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE thread ON agent_turn TYPE record<agent_thread> PERMISSIONS FULL;
+DEFINE TABLE OVERWRITE assist_request TYPE ANY SCHEMALESS PERMISSIONS FULL;
+REMOVE FIELD IF EXISTS filed_access ON assist_request;
+DEFINE FIELD OVERWRITE requested_by ON assist_request TYPE none | string DEFAULT $auth.email PERMISSIONS FULL;
+DEFINE TABLE OVERWRITE sql_approval TYPE ANY SCHEMALESS CHANGEFEED 2d PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE statement ON sql_approval TYPE string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE reason ON sql_approval TYPE string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE statement_kind ON sql_approval TYPE string DEFAULT 'unknown' PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE target_table ON sql_approval TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE impact_rows ON sql_approval TYPE none | int PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE impact_note ON sql_approval TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE requested_by ON sql_approval TYPE none | record<user> PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE requested_label ON sql_approval TYPE string DEFAULT '' PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE origin_host ON sql_approval TYPE string DEFAULT '' PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE status ON sql_approval TYPE string DEFAULT 'pending' PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE decided_by ON sql_approval TYPE none | record<user> PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE created_at ON sql_approval TYPE none | datetime DEFAULT time::now() PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE expires_at ON sql_approval TYPE none | datetime PERMISSIONS FULL;
+"""

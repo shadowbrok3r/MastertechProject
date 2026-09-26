@@ -189,12 +189,12 @@ pub struct ClientLinkHealth {
     pub staff_machine: bool,
 }
 
-/// True only when the signed-in user's authorization is exactly `Root`.
+/// True only when the signed-in user is an active `Root`.
 /// Gates connecting to clients outside the live query's user/store scope.
 pub fn current_user_is_root() -> bool {
     crate::get_current_user_from_auth()
         .map(|u| {
-            u.get_authorization() == database::schema::user::UserAuthorization::Root
+            u.get_authorization() == database::schema::user::UserAuthorization::Root && u.is_active()
         })
         .unwrap_or(false)
 }

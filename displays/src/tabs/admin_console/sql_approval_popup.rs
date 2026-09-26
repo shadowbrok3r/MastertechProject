@@ -1,30 +1,38 @@
-//! Root-only approval modal for SurrealQL mutations submitted over MCP.
-//!
-//! `query_surrealdb` stays read-only; anything that writes lands in the
-//! `sql_approval` table as a pending row and blocks there until a Root
-//! operator decides here. The requesting process polls the row and runs the
-//! statement itself once the status reads `approved`.
-//!
-//! Gating lives in two places on purpose. This module refuses to render for
-//! a non-Root user, and the live stream that feeds it is only spawned for
-//! Root (see `ui_data::mod::load_data`), so a non-Root console never even
-//! subscribes to the queue. Requests raised by other users still reach Root
-//! through the table's CREATE event, which mints an `Approval` notification
-//! for every Root account — the same path the company-wide `Admin`
-//! notification uses.
-//!
-//! A decision is single-writer: the write is conditional on the row still
-//! being pending, so whichever console clicks first owns it and the others
-//! close on the live-query event (backed by a periodic resync in case that
-//! stream is down). A click that lost the race writes nothing and toasts what
-//! the row actually holds, so a stray Deny is never read as a real one.
+//! SurrealQL write approvals: the Root requester gets the modal, other active Roots a toast that opens it.
 
+use std::collections::HashSet;
+
+use crate::modals::approval_toast::{self, ApprovalNotice, NoticeKind};
+use crate::ui_tools::toasts::Toasts;
 use crate::ui_tools::{icons, theme};
 use crate::{PlatformSpawner, Spawner};
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use database::schema::sql_approval::{ApprovalStatus, DecideOutcome, SqlApproval};
-use database::schema::{RecordId, RecordIdExt};
+use database::schema::{
+    approval_audience, ApprovalAudience, ApprovalViewer, RecordId, RecordIdExt, User, SQL_APPROVAL_TABLE,
+};
 use eframe::egui::{self, Align, Grid, Id, Layout, Modal, RichText, ScrollArea, TextEdit};
+
+/// Modal for the Root who requested it, a toast for every other active Root, nothing for anyone else.
+fn sql_audience(req: &SqlApproval, viewer: Option<&ApprovalViewer>) -> ApprovalAudience {
+    match viewer {
+        Some(v) if v.root => approval_audience(req.requested_by.as_ref(), Some(v)),
+        _ => ApprovalAudience::Hidden,
+    }
+}
+
+/// The toast content for a request another user raised.
+fn notice_for(req: &SqlApproval) -> ApprovalNotice {
+    let target = req.target_table.as_deref().map(|t| format!(" on {t}")).unwrap_or_default();
+    let who = if req.requested_label.is_empty() { "an unknown requester" } else { req.requested_label.as_str() };
+    ApprovalNotice {
+        id: req.id.clone(),
+        kind: NoticeKind::Sql,
+        summary: format!("{}{target}, requested by {who}", req.statement_kind.to_uppercase()),
+        machine: (!req.origin_host.is_empty()).then(|| req.origin_host.clone()),
+        unowned: false,
+    }
+}
 
 /// Outcome of a decision write, surfaced back on the UI thread.
 pub enum DecisionResult {
@@ -49,6 +57,15 @@ pub struct SqlApprovalQueue {
     tx: Sender<DecisionResult>,
     rx: Receiver<DecisionResult>,
     last_error: Option<String>,
+    viewer: Option<ApprovalViewer>,
+    /// The last signed-in user, kept through sign-in gaps.
+    last_user: Option<RecordId>,
+    /// Toast requests with a toast posted.
+    toasted: HashSet<RecordId>,
+    /// Toast requests the viewer dismissed.
+    dismissed: HashSet<RecordId>,
+    /// The toast request the viewer opened with Review.
+    summoned: Option<RecordId>,
 }
 
 impl Default for SqlApprovalQueue {
@@ -63,6 +80,11 @@ impl Default for SqlApprovalQueue {
             tx,
             rx,
             last_error: None,
+            viewer: None,
+            last_user: None,
+            toasted: HashSet::new(),
+            dismissed: HashSet::new(),
+            summoned: None,
         }
     }
 }
@@ -109,11 +131,17 @@ impl SqlApprovalQueue {
     }
 
     fn remove(&mut self, id: &RecordId) {
-        if self.pending.first().map(|r| &r.id) == Some(id) {
+        if self.pending.first().map(|r| &r.id) == Some(id) || self.summoned.as_ref() == Some(id) {
             self.deny_reason.clear();
         }
         self.pending.retain(|r| &r.id != id);
         self.in_flight.retain(|p| p != id);
+        if self.toasted.remove(id) {
+            approval_toast::retire(id);
+        }
+        if self.summoned.as_ref() == Some(id) {
+            self.summoned = None;
+        }
         if !self.resolved.contains(id) {
             self.resolved.push(id.clone());
             // Only has to outlive a snapshot in flight; a longer tail is waste.
@@ -169,14 +197,79 @@ impl SqlApprovalQueue {
         }
     }
 
+    /// Follows sign-in changes; dismissals survive a gap but not a different user.
+    fn set_viewer(&mut self, next: Option<ApprovalViewer>) {
+        if next == self.viewer {
+            return;
+        }
+        for id in self.toasted.drain() {
+            approval_toast::retire(&id);
+        }
+        self.summoned = None;
+        if let Some(v) = &next
+            && self.last_user.as_ref() != Some(&v.id)
+        {
+            self.dismissed.clear();
+            approval_toast::reset(SQL_APPROVAL_TABLE);
+            self.last_user = Some(v.id.clone());
+        }
+        self.viewer = next;
+    }
+
+    /// Takes toast clicks, retires toasts of decided or lapsed requests and posts toasts for new ones.
+    fn sync_toasts(&mut self, toasts: &mut Toasts) {
+        for id in approval_toast::take_dismissed(SQL_APPROVAL_TABLE) {
+            self.toasted.remove(&id);
+            self.dismissed.insert(id);
+        }
+        if let Some(id) = approval_toast::take_review(SQL_APPROVAL_TABLE) {
+            self.toasted.remove(&id);
+            self.summoned = Some(id);
+        }
+        let viewer = self.viewer.as_ref();
+        let live: HashSet<RecordId> = self
+            .pending
+            .iter()
+            .filter(|r| sql_audience(r, viewer) == ApprovalAudience::Toast)
+            .map(|r| r.id.clone())
+            .collect();
+        if self.summoned.as_ref().is_some_and(|id| !live.contains(id)) {
+            self.summoned = None;
+        }
+        for id in self.toasted.iter().filter(|id| !live.contains(*id)) {
+            approval_toast::retire(id);
+        }
+        self.toasted.retain(|id| live.contains(id));
+        self.dismissed.retain(|id| live.contains(id));
+        for req in &self.pending {
+            let skip = !live.contains(&req.id)
+                || self.toasted.contains(&req.id)
+                || self.dismissed.contains(&req.id)
+                || self.summoned.as_ref() == Some(&req.id);
+            if !skip && approval_toast::post(toasts, notice_for(req)) {
+                self.toasted.insert(req.id.clone());
+            }
+        }
+    }
+
+    /// The request to draw and whether it came from a toast: a summoned one first, else the oldest the viewer requested.
+    fn front(&self) -> Option<(SqlApproval, bool)> {
+        if let Some(req) = self.summoned.as_ref().and_then(|id| self.pending.iter().find(|r| &r.id == id)) {
+            return Some((req.clone(), true));
+        }
+        self.pending
+            .iter()
+            .find(|r| sql_audience(r, self.viewer.as_ref()) == ApprovalAudience::Modal)
+            .map(|r| (r.clone(), false))
+    }
+
     fn decide(&mut self, id: RecordId, approved: bool, deny_reason: Option<String>) {
         self.in_flight.push(id.clone());
         self.last_error = None;
         let tx = self.tx.clone();
-        let decided_by = crate::get_current_user_from_auth().map(|u| u.get_id());
         let verb = if approved { "Approve" } else { "Deny" };
         PlatformSpawner::spawn(async move {
-            let outcome = SqlApproval::decide(&id, approved, decided_by, deny_reason).await;
+            let outcome = SqlApproval::decide(&id, approved, deny_reason).await;
             let msg = match outcome {
                 Ok(DecideOutcome::Recorded) => DecisionResult::Done(id),
                 Ok(DecideOutcome::AlreadyResolved { status, decided_by }) => {
@@ -189,22 +282,20 @@ impl SqlApprovalQueue {
                 Ok(DecideOutcome::Missing) => {
                     DecisionResult::Stale(id, format!("gone — your {verb} did nothing"))
                 }
+                Ok(DecideOutcome::NotPermitted) => {
+                    DecisionResult::Failed(id, "only an active Root user can decide SurrealQL requests".into())
+                }
                 Err(e) => DecisionResult::Failed(id, e.to_string()),
             };
             let _ = tx.try_send(msg);
         });
     }
 
-    /// Renders the front request. No-op for a non-Root user or an empty queue.
-    pub fn ui(&mut self, ctx: &egui::Context) {
-        if self.pending.is_empty() || !super::current_user_is_root() {
-            return;
-        }
+    /// Retires lapsed requests, posts Root toasts and draws the front request for an active Root.
+    pub fn ui(&mut self, ctx: &egui::Context, user: Option<&User>, toasts: &mut Toasts) {
+        self.set_viewer(user.and_then(ApprovalViewer::of));
 
-        self.maybe_resync(ctx.input(|i| i.time));
-
-        // Expiry is enforced on read as well as by the sweeper, so a modal
-        // left open overnight cannot be approved into a stale write.
+        // Expired requests leave the queue before anything is drawn.
         let expired: Vec<RecordId> = self
             .pending
             .iter()
@@ -214,15 +305,27 @@ impl SqlApprovalQueue {
         for id in expired {
             self.remove(&id);
         }
-        let Some(req) = self.pending.first().cloned() else {
+        self.sync_toasts(toasts);
+        if !self.toasted.is_empty() {
+            ctx.request_repaint_after(std::time::Duration::from_secs(1));
+        }
+        let root = self.viewer.as_ref().is_some_and(|v| v.root);
+        if self.pending.is_empty() || !root {
+            return;
+        }
+
+        self.maybe_resync(ctx.input(|i| i.time));
+        let Some((req, summoned)) = self.front() else {
             return;
         };
 
-        let queued = self.pending.len();
+        let viewer = self.viewer.as_ref();
+        let queued = self.pending.iter().filter(|r| sql_audience(r, viewer) == ApprovalAudience::Modal).count();
         let busy = self.in_flight.contains(&req.id);
         let destructive = req.kind_is_destructive();
         let mut approve = false;
         let mut deny = false;
+        let mut later = false;
 
         Modal::new(Id::new("sql_approval_modal")).show(ctx, |ui| {
             ui.set_width(680.0);
@@ -404,6 +507,10 @@ impl SqlApprovalQueue {
                     {
                         approve = true;
                     }
+                    if summoned {
+                        ui.add_space(6.);
+                        later = ui.button("Later").clicked();
+                    }
                 });
                 if busy {
                     ui.add_space(8.);
@@ -419,7 +526,13 @@ impl SqlApprovalQueue {
             });
         });
 
-        if approve {
+        if later {
+            self.summoned = None;
+            self.dismissed.remove(&req.id);
+            self.deny_reason.clear();
+        } else if (approve || deny) && crate::plugins::remote::remote_input_recent() {
+            self.last_error = Some("Decisions from a remote viewer are ignored; decide on your own Mastertech.".into());
+        } else if approve {
             self.decide(req.id.clone(), true, None);
         } else if deny {
             let note = if self.deny_reason.trim().is_empty() {
@@ -500,6 +613,44 @@ mod tests {
             .try_recv()
             .expect("stale click must toast");
         assert!(matches!(toast, crate::ToastMessage::Warning(t) if t.contains("did nothing")));
+    }
+
+    fn requested_by(user: Option<&str>) -> SqlApproval {
+        SqlApproval { requested_by: user.map(|k| RecordId::new("user", k)), ..row(ApprovalStatus::Pending) }
+    }
+
+    fn viewer(key: &str, root: bool) -> ApprovalViewer {
+        ApprovalViewer { id: RecordId::new("user", key), root }
+    }
+
+    #[test]
+    fn the_root_requester_gets_the_modal_and_other_roots_a_toast() {
+        let req = requested_by(Some("boss"));
+        assert_eq!(sql_audience(&req, Some(&viewer("boss", true))), ApprovalAudience::Modal);
+        assert_eq!(sql_audience(&req, Some(&viewer("other", true))), ApprovalAudience::Toast);
+        assert_eq!(sql_audience(&req, Some(&viewer("tech", false))), ApprovalAudience::Hidden);
+    }
+
+    #[test]
+    fn a_request_without_a_requester_or_from_a_non_root_is_a_toast_for_every_root() {
+        for req in [requested_by(None), requested_by(Some("tech"))] {
+            assert_eq!(sql_audience(&req, Some(&viewer("boss", true))), ApprovalAudience::Toast);
+            assert_eq!(sql_audience(&req, Some(&viewer("tech", false))), ApprovalAudience::Hidden);
+            assert_eq!(sql_audience(&req, None), ApprovalAudience::Hidden);
+        }
+    }
+
+    #[test]
+    fn a_toast_request_reaches_the_modal_only_when_summoned() {
+        let mut q = SqlApprovalQueue::default();
+        q.set_viewer(Some(viewer("boss", true)));
+        let theirs = requested_by(None);
+        q.set_pending(vec![theirs.clone()]);
+        assert!(q.front().is_none());
+        q.summoned = Some(theirs.id.clone());
+        assert_eq!(q.front().map(|(r, s)| (r.id, s)), Some((theirs.id.clone(), true)));
+        q.remove(&theirs.id);
+        assert!(q.summoned.is_none() && q.front().is_none());
     }
 
     #[test]
