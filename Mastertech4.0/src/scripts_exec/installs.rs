@@ -17,6 +17,7 @@ use displays::scripts::executor::{
 use displays::scripts::id::ScriptId;
 
 use super::env;
+use crate::utilities::no_window::NoWindow;
 
 const LIBREOFFICE_URL: &str = "https://ninite.com/libreoffice/ninite.exe";
 
@@ -352,7 +353,7 @@ async fn kill_sas_processes(ctx: &ScriptContext, def: &ScriptDef) {
                     &name,
                     format!("Killing SAS process (PID: {})", process.id),
                 );
-                let _ = std::process::Command::new("taskkill")
+                let _ = std::process::Command::new("taskkill").no_window()
                     .args(["/PID", &format!("{}", process.id), "/F"])
                     .output();
             }

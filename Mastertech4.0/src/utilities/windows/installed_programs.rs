@@ -23,6 +23,7 @@
 //! strategy ladder.
 
 use displays::InstalledProgram;
+use crate::utilities::no_window::NoWindow;
 
 /// Walks HKLM, HKLM\WOW6432Node, and HKCU's `Uninstall` subtrees
 /// and returns one [`InstalledProgram`] per registry row that has
@@ -72,7 +73,7 @@ $results = foreach ($entry in $paths) {
 $results | ConvertTo-Json -Compress -Depth 3
 "#;
 
-    let output = tokio::process::Command::new("powershell")
+    let output = tokio::process::Command::new("powershell").no_window()
         .args(["-NoProfile", "-Command", ps_cmd])
         .output()
         .await;
@@ -203,7 +204,7 @@ pub async fn run_uninstall(program: &InstalledProgram, prefer_silent: bool) -> (
     // Shell out via `cmd /C` so quoting in the registered
     // uninstall command is parsed by the same rules the publisher
     // assumed when they wrote it.
-    let output = tokio::process::Command::new("cmd")
+    let output = tokio::process::Command::new("cmd").no_window()
         .args(["/C", &cmd])
         .output()
         .await;

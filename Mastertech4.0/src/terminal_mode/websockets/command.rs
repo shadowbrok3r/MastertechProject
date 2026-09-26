@@ -1,5 +1,6 @@
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use std::process::Stdio;
+use crate::utilities::no_window::NoWindow;
 
 pub struct PersistentShell {
     process: Option<tokio::process::Child>,
@@ -23,7 +24,7 @@ impl PersistentShell {
 
     pub async fn start(&mut self) -> anyhow::Result<()> {
         let mut process = if cfg!(target_os = "windows") {
-            tokio::process::Command::new("powershell")
+            tokio::process::Command::new("powershell").no_window()
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -188,7 +189,7 @@ pub async fn _handle_windows_cmd(
 
     let start = Instant::now();
     log::info!("websockets -> Executing command: {}", command_payload);
-    let mut process: Child = tokio::process::Command::new("cmd")
+    let mut process: Child = tokio::process::Command::new("cmd").no_window()
         .arg("/C")
         .arg(&command_payload)
         .stdin(Stdio::piped())
@@ -239,7 +240,7 @@ pub async fn handle_windows_cmd_interactive(
 ) 
     ->  anyhow::Result<(), anyhow::Error> 
 {
-    let mut process: tokio::process::Child = tokio::process::Command::new("cmd")
+    let mut process: tokio::process::Child = tokio::process::Command::new("cmd").no_window()
         .arg("/C")
         .arg(&command_payload)
         .stdin(Stdio::piped())

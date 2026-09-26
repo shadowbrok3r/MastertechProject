@@ -274,9 +274,13 @@ impl WasmPlugin {
                     log::info!("[WASM {}] host_run_command: {}", caller.data().plugin_id, cmd_str);
 
                     #[cfg(target_os = "windows")]
-                    let output = std::process::Command::new("powershell")
-                        .args(["-NoProfile", "-NonInteractive", "-Command", &cmd_str])
-                        .output();
+                    let output = {
+                        use std::os::windows::process::CommandExt;
+                        std::process::Command::new("powershell")
+                            .creation_flags(0x0800_0000)
+                            .args(["-NoProfile", "-NonInteractive", "-Command", &cmd_str])
+                            .output()
+                    };
                     #[cfg(not(target_os = "windows"))]
                     let output = std::process::Command::new("sh")
                         .args(["-c", &cmd_str])
