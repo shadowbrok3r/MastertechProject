@@ -12,3 +12,5 @@ pub const QUEUE: &str = p::QUEUE;
 pub const COMPACT: &str = p::ARROWS_IN_LINE_VERTICAL;
 pub const SEND: &str = p::PAPER_PLANE_RIGHT;
 pub const SEND_NOW: &str = p::LIGHTNING;
+pub const APPROVE_ALL: &str = p::CHECKS;
+pub const UNLOCKED: &str = p::LOCK_OPEN;
