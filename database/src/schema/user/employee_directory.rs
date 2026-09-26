@@ -11,6 +11,9 @@ use crate::schema::{
 /// PrestaShop employee fields the directory requests.
 const EMPLOYEE_DISPLAY: &str = "[id,firstname,lastname,email,active,id_store]";
 
+/// Shop that employee list queries run under; it holds retail and warehouse staff.
+const EMPLOYEE_SHOP_ID: &str = "4";
+
 /// One employee as the directory reports it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmployeeRecord {
@@ -99,11 +102,13 @@ impl PrestashopDirectory {
         let mut api = Prestashop::default();
         api.display = EMPLOYEE_DISPLAY;
         let bracketed = format!("[{value}]");
-        let mut query: HashMap<&str, &str> = HashMap::new();
-        query.insert(filter, bracketed.as_str());
-        query.insert("output_format", "JSON");
-        api.request_resources_checked("employees", query).await
+        api.request_resources_checked("employees", list_params(filter, &bracketed)).await
     }
+}
+
+/// Query parameters for an employee list filtered on `filter`.
+fn list_params<'a>(filter: &'a str, bracketed: &'a str) -> HashMap<&'a str, &'a str> {
+    HashMap::from([(filter, bracketed), ("id_shop", EMPLOYEE_SHOP_ID), ("output_format", "JSON")])
 }
 
 impl EmployeeDirectory for PrestashopDirectory {
@@ -144,6 +149,14 @@ pub fn pick_employee(rows: Vec<Employee>, email: &str) -> anyhow::Result<Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn list_queries_run_under_the_employee_shop() {
+        let params = list_params("filter[email]", "[bob@pclaptops.com]");
+        assert_eq!(params.get("id_shop"), Some(&"4"));
+        assert_eq!(params.get("filter[email]"), Some(&"[bob@pclaptops.com]"));
+        assert_eq!(params.get("output_format"), Some(&"JSON"));
+    }
 
     fn employee(id: &str, email: &str, active: &str, id_store: &str) -> Employee {
         Employee {
