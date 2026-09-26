@@ -165,8 +165,7 @@ impl Person {
 
 /// A store from its code (`RIV`, `ltn`, ...).
 pub fn store_from_code(code: &str) -> Option<super::Store> {
-    let code = code.trim();
-    super::Store::VALUES.into_iter().find(|s| s.as_str().eq_ignore_ascii_case(code))
+    super::Store::from_code(code)
 }
 
 fn same_store(a: &str, b: &str) -> bool {
@@ -211,8 +210,10 @@ pub fn match_person(query: &str, actor: &Person, people: &[Person]) -> Result<Pe
         return Ok(actor.clone());
     }
     let active: Vec<&Person> = people.iter().filter(|p| p.active).collect();
-    let email = if q.contains('@') { q.clone() } else { format!("{q}@pclaptops.com") };
-    if let Some(p) = active.iter().find(|p| p.email.eq_ignore_ascii_case(&email)) {
+    let by_email = super::email_candidates(&q)
+        .into_iter()
+        .find_map(|email| active.iter().find(|p| p.email.eq_ignore_ascii_case(&email)));
+    if let Some(p) = by_email {
         return Ok((*p).clone());
     }
     if let Some(p) = active.iter().find(|p| normalize(&p.name) == q) {

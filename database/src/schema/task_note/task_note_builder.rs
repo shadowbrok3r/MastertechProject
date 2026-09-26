@@ -7,7 +7,6 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
-use regex::Regex;
 use anyhow::Result;
 
 
@@ -182,15 +181,8 @@ impl TaskNoteBuilder {
 
     /// Creates a notification for tagged users.
     async fn handle_tagged_users(&self, note: &TaskNote) -> Result<()> {
-        let re = Regex::new(r"@\b[a-zA-Z]+(\.[a-zA-Z]+)?\b")?;
-        let users: Vec<&str> = re.find_iter(&note.note).map(|m| m.as_str()).collect();
-
-        for user_tag in users {
-            let name = &user_tag[1..];
-            let email = format!("{}@pclaptops.com", name);
-            let mut employee = Employee::default();
-            employee.email = email;
-            if let Some(tagged_user) = employee.find_user().await? {
+        for name in super::mention_tags(&note.note)? {
+            if let Some(tagged_user) = User::find_by_email_candidates(name).await? {
                 let task_name: Option<String> = db()
                     .query("SELECT VALUE task_name FROM task WHERE id == $task_id")
                     .bind(("task_id", note.task_id.clone()))

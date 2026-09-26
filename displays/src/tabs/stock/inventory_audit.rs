@@ -603,9 +603,11 @@ pub async fn save_audit(
     rows: Vec<AuditSerialRow>,
     tx: Sender<(InventoryAuditMeta, Vec<AuditSerialRow>)>,
 ) -> Result<()> {
+    let store_id = store
+        .into_odoo_store_id()
+        .ok_or_else(|| anyhow!("{} has no Odoo location", store.as_str()))?;
     let id = random_record_id(INVENTORY_AUDIT_TABLE);
     let store_tag = store.as_str().to_string();
-    let store_id = store.into_odoo_store_id();
     let now = chrono::Utc::now();
     let label = now.format("%Y-%m-%d %H:%M").to_string();
     let serial_count = rows.len();

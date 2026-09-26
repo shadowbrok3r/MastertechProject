@@ -128,10 +128,10 @@ impl SharedContext {
                                 .filter_by_assignee(user)
                                 .filter_by_completion(page == "CompletedTasks")
                                 .filter_by_store(user, &store_selection);
-                            log::trace!("receive_store_users: {} user={:?}, tasks_found={}", page, user.get_initials(), filtered.len());
+                            log::trace!("receive_store_users: {} user={:?}, tasks_found={}", page, user.get_username(), filtered.len());
                             if !filtered.is_empty() {
                                 new_task_map
-                                    .entry(user.get_initials().to_string())
+                                    .entry(user.get_username().to_string())
                                     .or_insert(filtered);
                             }
                         }
