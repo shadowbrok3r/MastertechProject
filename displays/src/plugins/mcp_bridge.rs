@@ -3752,6 +3752,12 @@ const STATE_CHANGING_CMDLETS: &[(&str, &str)] = &[
 const STATE_CHANGING_VERB_PREFIXES: &[&str] =
     &["disable-", "enable-", "uninstall-", "install-", "clear-"];
 
+/// Verb-prefixed cmdlets that change nothing on the machine.
+const HARMLESS_PREFIXED: &[&str] = &["clear-host", "clear-variable"];
+
+/// File cmdlets a read-tier probe may aim at its scratch paths.
+const SCRATCH_FILE_CMDLETS: &[&str] = &["new-item", "remove-item", "move-item", "rename-item"];
+
 /// Splits a shell line into whitespace/operator-delimited tokens.
 fn tokenize_shell(s: &str) -> Vec<String> {
     s.split(|c: char| {
@@ -3796,10 +3802,15 @@ pub fn state_changing_commands(script: &str) -> Vec<String> {
 
         for (i, tok) in tokens.iter().enumerate() {
             let tok = tok.as_str();
+            let scratch_file_op = SCRATCH_FILE_CMDLETS.contains(&tok) && is_scratch_write_path(&lower);
             if let Some((_, display)) = STATE_CHANGING_CMDLETS.iter().find(|(k, _)| *k == tok) {
-                hits.insert((*display).to_string());
+                if !scratch_file_op {
+                    hits.insert((*display).to_string());
+                }
             }
-            if STATE_CHANGING_VERB_PREFIXES.iter().any(|p| tok.starts_with(*p) && tok.len() > p.len()) {
+            if !HARMLESS_PREFIXED.contains(&tok)
+                && STATE_CHANGING_VERB_PREFIXES.iter().any(|p| tok.starts_with(*p) && tok.len() > p.len())
+            {
                 hits.insert(tok.to_string());
             }
             if tok == "copy-item" && has_force && touches_system {
@@ -13312,6 +13323,11 @@ mod remote_exec_tests {
         // reg query / schtasks /query / icacls without a grant switch are read-only.
         assert!(state_changing_commands("reg query HKLM\\SOFTWARE").is_empty());
         assert!(state_changing_commands("schtasks /query /v").is_empty());
+        assert!(state_changing_commands("New-Item -ItemType Directory -Force C:\\ProgramData\\MTech | Out-Null").is_empty());
+        assert!(state_changing_commands("Remove-Item $env:TEMP\\probe.txt -Force").is_empty());
+        assert!(state_changing_commands("Clear-Host; Get-Process").is_empty());
+        assert!(state_changing_commands("Remove-Item C:\\Users\\Owner\\OneDrive\\x -Recurse")
+            .contains(&"Remove-Item".to_string()));
         assert!(state_changing_commands("icacls C:\\Users\\Public").is_empty());
         // Whole-word: a Remove-ItemProperty token is distinct from Remove-Item.
         assert!(state_changing_commands("Get-ItemProperty HKLM:\\x").is_empty());
