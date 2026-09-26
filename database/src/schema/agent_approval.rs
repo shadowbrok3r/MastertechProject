@@ -15,6 +15,9 @@ pub const AGENT_APPROVAL_TABLE: &str = "agent_approval";
 /// Tools whose approval never carries over to the rest of the session.
 pub const NEVER_REMEMBER_TOOLS: &[&str] = &["remote_reboot_client", "remote_exec_start"];
 
+/// Decision that runs this call and every later tool call of the session without asking.
+pub const ACCEPTED_ALL_FOR_SESSION: &str = "accepted_all_for_session";
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
 pub struct AgentApproval {
     pub id: RecordId,
@@ -120,6 +123,11 @@ impl AgentApproval {
     /// Whether "approve for this session" applies: a tool call outside [`NEVER_REMEMBER_TOOLS`].
     pub fn may_approve_for_session(&self) -> bool {
         self.kind != "question" && !self.tool.as_deref().is_some_and(|t| NEVER_REMEMBER_TOOLS.contains(&t))
+    }
+
+    /// Whether "approve all for this session" applies: a tool call, never a question.
+    pub fn may_approve_all(&self) -> bool {
+        self.kind == "tool_call"
     }
 
     /// Seconds left before this request expires; 0 once it has lapsed or has no deadline.
@@ -321,5 +329,13 @@ mod tests {
     #[test]
     fn questions_offer_no_session_approval() {
         assert!(!approval("question", Some("request_user_input")).may_approve_for_session());
+    }
+
+    #[test]
+    fn every_tool_call_offers_approve_all_and_questions_do_not() {
+        for tool in NEVER_REMEMBER_TOOLS.iter().chain(&["desktop_click"]) {
+            assert!(approval("tool_call", Some(tool)).may_approve_all(), "{tool}");
+        }
+        assert!(!approval("question", Some("request_user_input")).may_approve_all());
     }
 }

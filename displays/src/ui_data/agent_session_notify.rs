@@ -556,6 +556,7 @@ mod tests {
             error: error.map(str::to_string),
             broker_node: None,
             allow_box_shell: false,
+            approve_all: None,
             tokens_used: None,
             tokens_window: None,
             last_seq: None,

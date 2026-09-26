@@ -179,6 +179,7 @@ mod tests {
             error: None,
             broker_node: None,
             allow_box_shell: false,
+            approve_all: None,
             tokens_used: None,
             tokens_window: None,
             activity: None,

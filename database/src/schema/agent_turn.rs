@@ -10,6 +10,9 @@ use crate::db;
 
 pub const AGENT_TURN_TABLE: &str = "agent_turn";
 
+/// Text of an `approvals` turn that turns the thread's approve-all off.
+pub const APPROVALS_PROMPT: &str = "prompt";
+
 /// Staging directory zc-codexd reports when its hello names none.
 pub const DEFAULT_UPLOAD_DIR: &str = "/tmp/zc-codexd-uploads";
 
@@ -46,7 +49,7 @@ impl TurnImage {
 pub struct AgentTurn {
     pub id: RecordId,
     pub thread: RecordId,
-    /// `start`, `steer`, `interrupt`, `close`, `queue`, `compact` or `rename`.
+    /// `start`, `steer`, `interrupt`, `close`, `queue`, `compact`, `rename` or `approvals`.
     #[serde(default)]
     #[surreal(default)]
     pub kind: String,
@@ -107,6 +110,7 @@ pub fn refusal(kind: &str, text: &str, images: &[TurnImage]) -> Option<&'static 
     match kind {
         "start" | "steer" if empty => Some("empty message"),
         "rename" if text.trim().is_empty() => Some("empty title"),
+        "approvals" if text.trim() != APPROVALS_PROMPT => Some("unknown approvals setting"),
         _ => None,
     }
 }
@@ -387,6 +391,14 @@ mod tests {
             "an empty queue turn resumes the queue"
         );
         assert_eq!(refusal("interrupt", "", &[]), None);
+    }
+
+    #[test]
+    fn an_approvals_turn_only_turns_prompts_back_on() {
+        assert_eq!(refusal("approvals", APPROVALS_PROMPT, &[]), None);
+        assert_eq!(refusal("approvals", " prompt ", &[]), None);
+        assert_eq!(refusal("approvals", "all", &[]), Some("unknown approvals setting"));
+        assert_eq!(refusal("approvals", "", &[]), Some("unknown approvals setting"));
     }
 
     #[test]
