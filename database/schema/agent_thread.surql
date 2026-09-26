@@ -17,6 +17,9 @@ DEFINE FIELD assignee           ON agent_thread TYPE none | record<user>        
 -- Root toggle that lets the agent run shell on the broker host; off by default.
 DEFINE FIELD allow_box_shell    ON agent_thread TYPE bool DEFAULT false
     PERMISSIONS FOR select, create FULL, FOR update WHERE $auth.authorization = 'Root' AND $auth.active = true;
+-- True while every tool call runs without asking.
+DEFINE FIELD approve_all        ON agent_thread TYPE none | bool
+    PERMISSIONS FOR select FULL, FOR create, update NONE;
 DEFINE FIELD broker_node        ON agent_thread TYPE none | string                     PERMISSIONS FOR select, create FULL, FOR update NONE;
 DEFINE FIELD closed_at          ON agent_thread TYPE none | datetime                   PERMISSIONS FOR select, create FULL, FOR update NONE;
 -- Thread id inside the codex app-server; set once thread/start returns.

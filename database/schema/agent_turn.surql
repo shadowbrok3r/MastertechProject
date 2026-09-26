@@ -5,8 +5,9 @@
 -- A technician's instruction to a running agent_thread. Desktops write rows;
 -- the admin-agent broker claims them and turns them into codex turn/start,
 -- turn/steer, turn/interrupt, thread/compact/start, thread/name/set or a
--- thread close. A `queue` row waits as `queued` (or `held` after a stop or a
--- failed turn) until the running turn ends. `tech` defaults from $auth so the
+-- thread close; an `approvals` row with text `prompt` turns the thread's
+-- approve-all off. A `queue` row waits as `queued` (or `held` after a stop or
+-- a failed turn) until the running turn ends. `tech` defaults from $auth so the
 -- recorded sender is the signed-in technician.
 -- Only the thread's active assignee or an active Root may queue or change turns, and only the broker deletes them.
 
@@ -18,7 +19,7 @@ DEFINE FIELD error      ON agent_turn TYPE none | string                  PERMIS
 -- Pictures as {name, mime, data}; the broker drops `data` and adds `path` once it stages them.
 DEFINE FIELD images     ON agent_turn TYPE none | array<object>           PERMISSIONS FULL;
 DEFINE FIELD kind       ON agent_turn TYPE string DEFAULT 'start'
-    ASSERT $value IN ['start', 'steer', 'interrupt', 'close', 'queue', 'compact', 'rename'] PERMISSIONS FULL;
+    ASSERT $value IN ['start', 'steer', 'interrupt', 'close', 'queue', 'compact', 'rename', 'approvals'] PERMISSIONS FULL;
 DEFINE FIELD sent_at    ON agent_turn TYPE none | datetime                PERMISSIONS FULL;
 DEFINE FIELD status     ON agent_turn TYPE string DEFAULT 'pending'
     ASSERT $value IN ['pending', 'sent', 'failed', 'queued', 'held', 'cancelled'] PERMISSIONS FULL;
