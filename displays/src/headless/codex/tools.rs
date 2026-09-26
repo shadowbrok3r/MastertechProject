@@ -291,15 +291,26 @@ impl ToolHost {
                 (true, false) => "(image output)".into(),
             };
         }
-        if text.chars().count() > self.output_chars {
-            let kept: String = text.chars().take(self.output_chars).collect();
-            text = format!(
-                "{kept}\n\n[output truncated at {} characters; ask for a narrower query]",
-                self.output_chars
-            );
-        }
+        let text = fit_text(text, self.output_chars);
         ToolOutcome { success, text, images: fitted }
     }
+}
+
+/// `text` within `limit` characters: two-thirds from the start and the rest from the end, around a cut note.
+fn fit_text(text: String, limit: usize) -> String {
+    let total = text.chars().count();
+    if total <= limit {
+        return text;
+    }
+    let head_n = limit * 2 / 3;
+    let tail_n = limit - head_n;
+    let head: String = text.chars().take(head_n).collect();
+    let tail: String = text.chars().skip(total - tail_n).collect();
+    format!(
+        "{head}\n\n[{} of {total} characters cut from the middle; the start and end are shown. \
+         Ask for a narrower query, or have a script save its output to a file and read it in parts.]\n\n{tail}",
+        total - head_n - tail_n
+    )
 }
 
 /// Text blocks, and images as `(base64, mime)`, from a tool result's content.
@@ -492,6 +503,17 @@ mod tests {
         let mut other = json!({ "timeout_secs": 900 });
         cap_blocking_wait("scripts_run_remote", &mut other, budget);
         assert_eq!(other["timeout_secs"], 900);
+    }
+
+    #[test]
+    fn long_output_keeps_its_start_and_end() {
+        assert_eq!(fit_text("short".into(), 100), "short");
+        let text = format!("HEAD{}TAIL", "x".repeat(10_000));
+        let fitted = fit_text(text, 3_000);
+        assert!(fitted.starts_with("HEAD") && fitted.ends_with("TAIL"), "{}", &fitted[..40]);
+        assert!(fitted.contains("characters cut from the middle"));
+        let kept = fitted.chars().filter(|c| *c == 'x').count();
+        assert_eq!(kept, 3_000 - 8, "two-thirds head plus one-third tail fill the limit");
     }
 
     #[test]
