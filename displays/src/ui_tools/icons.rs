@@ -16,3 +16,4 @@ pub const APPROVE_ALL: &str = p::CHECKS;
 pub const UNLOCKED: &str = p::LOCK_OPEN;
 pub const PIN: &str = p::PUSH_PIN;
 pub const UNPIN: &str = p::PUSH_PIN_SLASH;
+pub const AUTOMATION: &str = p::CLOCK_CLOCKWISE;

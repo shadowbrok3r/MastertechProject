@@ -28,6 +28,8 @@ pub mod server_console;
 pub mod stress_lab;
 #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
 pub mod agent_sessions;
+#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+pub mod zeroclaw;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod plugins_tab;
 pub mod session_board;
@@ -137,6 +139,16 @@ impl egui_dock::TabViewer for SharedContext {
             TabId::ServerConsole => self.server_console.ui(ui),
             TabId::AgentAudit => self.agent_audit.ui(ui),
             TabId::AiAnalytics => self.ai_analytics.ui(ui),
+            #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+            TabId::ZeroClaw => {
+                if is_admin {
+                    self.zeroclaw.ui(ui);
+                }
+            }
+            #[cfg(not(all(not(target_arch = "wasm32"), feature = "tokio")))]
+            TabId::ZeroClaw => {
+                ui.label("ZeroClaw is available in the desktop app.");
+            }
             #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
             TabId::AgentSessions => self.agent_sessions.ui(ui),
             #[cfg(not(any(target_arch = "wasm32", feature = "tokio")))]

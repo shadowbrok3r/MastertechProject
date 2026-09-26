@@ -147,6 +147,11 @@ impl TabViewer for MastertechContext {
             TabId::ServerConsole => self.shared_ctx.server_console.ui(ui),
             TabId::AgentSessions => self.shared_ctx.agent_sessions.ui(ui),
             TabId::AgentAudit => self.shared_ctx.agent_audit.ui(ui),
+            TabId::ZeroClaw => {
+                if self.shared_ctx.current_user.as_ref().is_some_and(|u| u.is_admin()) {
+                    self.shared_ctx.zeroclaw.ui(ui);
+                }
+            }
             TabId::AiAnalytics => self.shared_ctx.ai_analytics.ui(ui),
             TabId::FleetDashboard => self.shared_ctx.fleet_dashboard(ui),
             TabId::StressLab => self.shared_ctx.stress_lab.ui(ui),

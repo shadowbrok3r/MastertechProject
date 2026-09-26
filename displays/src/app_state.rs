@@ -421,6 +421,10 @@ pub struct SharedContext {
     /// ZeroClaw webhook-audit tool-call trail; fetched only while drawn.
     #[serde(skip)]
     pub agent_audit: crate::tabs::agent_audit::AgentAudit,
+    /// Root-only ZeroClaw agent sessions and automations; fetched only while drawn.
+    #[serde(skip)]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+    pub zeroclaw: crate::tabs::zeroclaw::ZeroClawView,
     /// Decisions the Codex agent is waiting on, shown on every tab.
     #[serde(skip)]
     pub agent_approvals: crate::modals::agent_approval_modal::AgentApprovalQueue,
@@ -834,6 +838,8 @@ impl SharedContext {
             #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
             agent_sessions: Default::default(),
             agent_audit: Default::default(),
+            #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+            zeroclaw: Default::default(),
             agent_approvals: Default::default(),
             agent_notify: Default::default(),
             ai_analytics: Default::default(),

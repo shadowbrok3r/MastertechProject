@@ -38,6 +38,7 @@ pub enum TabId {
     AgentAudit,
     AiAnalytics,
     SessionBoard,
+    ZeroClaw,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,6 +124,7 @@ const MT_NATIVE: &[TabId] = &[
     TabId::AgentAudit,
     TabId::AiAnalytics,
     TabId::SessionBoard,
+    TabId::ZeroClaw,
 ];
 
 const WH_WASM: &[TabId] = &[
@@ -184,12 +186,13 @@ impl TabId {
             Self::AgentSessions => "agent_sessions",
             Self::AgentAudit => "agent_audit",
             Self::AiAnalytics => "ai_analytics",
+            Self::ZeroClaw => "zeroclaw",
         }
     }
 
     /// Tabs hidden from the View menu and refused at render for anyone but Root.
     pub fn requires_root(self) -> bool {
-        matches!(self, Self::ServerConsole)
+        matches!(self, Self::ServerConsole | Self::ZeroClaw)
     }
 
     pub fn title(self, ctx: TabContext) -> &'static str {
@@ -232,6 +235,7 @@ impl TabId {
             Self::AgentSessions => "Agent Sessions",
             Self::AgentAudit => "Agent Audit",
             Self::AiAnalytics => "AI Analytics",
+            Self::ZeroClaw => "ZeroClaw",
         }
     }
 
@@ -339,6 +343,7 @@ impl TabId {
             "agent_sessions" => Some(Self::AgentSessions),
             "agent_audit" => Some(Self::AgentAudit),
             "ai_analytics" => Some(Self::AiAnalytics),
+            "zeroclaw" => Some(Self::ZeroClaw),
             _ => None,
         }
     }
