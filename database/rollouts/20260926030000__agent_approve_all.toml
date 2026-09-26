@@ -1,16 +1,16 @@
-# Agent approve-all: agent_turn admits the `approvals` kind, agent_approval
-# admits the `accepted_all_for_session` status, and agent_thread gets an
-# optional `approve_all` bool that record users may read but not write (the
-# broker writes it as a system user).
+# Agent approve-all: agent_turn admits the `approvals` kind and agent_thread
+# gets an optional `approve_all` bool that record users may read but not write
+# (the broker writes it as a system user). The `accepted_all_for_session`
+# status comes with 20260926000000__agent_table_permissions.
 #
-# Widened ASSERTs and a new `none | bool` field with no DEFAULT, so no row
+# A widened ASSERT and a new `none | bool` field with no DEFAULT, so no row
 # needs a backfill and every existing row stays writable.
-# The same start-phase statements are in database/migrations/003_agent_approve_all.surql.
+# database/migrations/003_agent_approve_all.surql applied these statements to production on 2026-09-26.
 id = "20260926030000__agent_approve_all"
 name = "agent_approve_all"
 state = "planned"
-source_schema_hash = "389d38c90d6dd97f39971723f1950de272289a412191ae4125286a4bd0d31b25"
-target_schema_hash = "204624d23a0f85384f3bf641662ac1fab7f3c008181ff1ff8dd7ba55c93f40e0"
+source_schema_hash = "9e2abc2643f2b57e5f9a26dd087b4325b13c1acb7262573c2054f8a555c55c35"
+target_schema_hash = "1ed34b00e4d9b4d1fc31c958e2acd85dbb6d98a38ab44318cc0dce11c827b301"
 compatibility = "phased"
 renames = []
 
@@ -19,8 +19,6 @@ id = "widen_agent_approvals"
 phase = "start"
 kind = "run_sql"
 sql = """
-DEFINE FIELD OVERWRITE status ON agent_approval TYPE string DEFAULT 'pending'
-    ASSERT $value IN ['pending', 'accepted', 'accepted_for_session', 'accepted_all_for_session', 'declined', 'cancelled', 'answered', 'expired', 'auto_declined', 'auto_accepted', 'resolved_elsewhere', 'failed'] PERMISSIONS FULL;
 DEFINE FIELD OVERWRITE kind ON agent_turn TYPE string DEFAULT 'start'
     ASSERT $value IN ['start', 'steer', 'interrupt', 'close', 'queue', 'compact', 'rename', 'approvals'] PERMISSIONS FULL;
 DEFINE FIELD OVERWRITE approve_all ON agent_thread TYPE none | bool
@@ -35,6 +33,4 @@ sql = """
 REMOVE FIELD IF EXISTS approve_all ON agent_thread;
 DEFINE FIELD OVERWRITE kind ON agent_turn TYPE string DEFAULT 'start'
     ASSERT $value IN ['start', 'steer', 'interrupt', 'close', 'queue', 'compact', 'rename'] PERMISSIONS FULL;
-DEFINE FIELD OVERWRITE status ON agent_approval TYPE string DEFAULT 'pending'
-    ASSERT $value IN ['pending', 'accepted', 'accepted_for_session', 'declined', 'cancelled', 'answered', 'expired', 'auto_declined', 'auto_accepted', 'resolved_elsewhere', 'failed'] PERMISSIONS FULL;
 """

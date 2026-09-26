@@ -159,8 +159,8 @@ pub fn context_bar(ui: &mut Ui, thread: &AgentThread, compactable: bool) -> bool
     compact
 }
 
-/// A warning while every tool call runs without asking, with an Ask again button; true when pressed.
-pub fn approve_all_chip(ui: &mut Ui, thread: &AgentThread) -> bool {
+/// A warning while every tool call runs without asking, with an Ask again button when `steerable`; true when pressed.
+pub fn approve_all_chip(ui: &mut Ui, thread: &AgentThread, steerable: bool) -> bool {
     if !thread.is_open() || !thread.approves_all() {
         return false;
     }
@@ -173,10 +173,11 @@ pub fn approve_all_chip(ui: &mut Ui, thread: &AgentThread) -> bool {
                 .color(theme::warn(ui)),
         )
         .on_hover_text("Every tool call the agent makes on this machine runs without asking");
-        ask_again = ui
-            .small_button(format!("{} Ask again", icons::LOCK))
-            .on_hover_text("Ask the technician before each gated tool call again")
-            .clicked();
+        ask_again = steerable
+            && ui
+                .small_button(format!("{} Ask again", icons::LOCK))
+                .on_hover_text("Ask the technician before each gated tool call again")
+                .clicked();
     });
     ask_again
 }

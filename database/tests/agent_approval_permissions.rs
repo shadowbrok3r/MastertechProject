@@ -23,10 +23,16 @@ const SCHEMA: &[&str] = &[
 ];
 
 const ROLLOUT: &str = include_str!("../rollouts/20260926000000__agent_table_permissions.toml");
+const APPROVE_ALL_ROLLOUT: &str = include_str!("../rollouts/20260926030000__agent_approve_all.toml");
 
 /// The SQL of the rollout step named `id`.
 fn rollout_step(id: &str) -> &'static str {
-    let step = &ROLLOUT[ROLLOUT.find(&format!("id = \"{id}\"")).expect("the step")..];
+    step_in(ROLLOUT, id)
+}
+
+/// The SQL of the step named `id` in `manifest`.
+fn step_in(manifest: &'static str, id: &str) -> &'static str {
+    let step = &manifest[manifest.find(&format!("id = \"{id}\"")).expect("the step")..];
     let body = &step[step.find("sql = \"\"\"").expect("its sql") + 9..];
     &body[..body.find("\"\"\"").expect("the sql end")]
 }
@@ -1017,4 +1023,76 @@ async fn the_rollback_restores_every_table_it_tightened() {
     assert_eq!(sql_request(&guest(&db).await, "g", None).await.expect("guest request").len(), 1);
     let by_guest = file_request(&guest(&db).await, Some("owner@x.com"), Some("user")).await;
     assert_eq!(request_row(&db, &by_guest).await.filed_access.as_deref(), Some("user"), "the stamp is gone after rollback");
+}
+
+#[tokio::test]
+async fn approve_all_is_written_by_the_broker_only() {
+    let db = mem_db().await;
+    for email in ["owner@x.com", "root@x.com"] {
+        signed_in(&db, email)
+            .await
+            .query("UPDATE agent_thread:t1 SET approve_all = true")
+            .await
+            .expect("update")
+            .check()
+            .expect("a denied update is not an error");
+    }
+    assert_eq!(thread_row(&db, "t1").await.approve_all, None);
+    db.query("UPDATE agent_thread:t1 SET approve_all = true").await.expect("update").check().expect("broker update");
+    assert_eq!(thread_row(&db, "t1").await.approve_all, Some(true));
+}
+
+#[tokio::test]
+async fn an_approvals_turn_follows_the_steering_rule() {
+    let db = mem_db().await;
+    let ask_again = |session: Surreal<Db>| async move {
+        let ids: Vec<RecordId> = session
+            .query("CREATE agent_turn CONTENT { thread: agent_thread:t1, kind: 'approvals', text: 'prompt' } RETURN VALUE id")
+            .await
+            .expect("create turn")
+            .check()
+            .expect("a denied create is not an error")
+            .take(0)
+            .expect("ids");
+        ids.len()
+    };
+    assert_eq!(ask_again(signed_in(&db, "owner@x.com").await).await, 1);
+    assert_eq!(ask_again(signed_in(&db, "root@x.com").await).await, 1);
+    assert_eq!(ask_again(signed_in(&db, "mate@x.com").await).await, 0);
+}
+
+#[tokio::test]
+async fn the_owner_records_approve_all_as_a_decision() {
+    let db = mem_db().await;
+    let id = approval(&db, "a9", "t1", Some("owner"), 600).await;
+    let owner = signed_in(&db, "owner@x.com").await;
+    let rows = decide(&owner, &id, database::schema::agent_approval::ACCEPTED_ALL_FOR_SESSION).await;
+    assert_eq!(rows.len(), 1);
+    let row = read(&db, &id).await;
+    assert_eq!(row.status, "accepted_all_for_session");
+    assert!(row.is_human_decision());
+    assert_eq!(row.decided_by, Some(user("owner")));
+}
+
+#[tokio::test]
+async fn the_approve_all_rollout_applies_and_rolls_back_cleanly() {
+    let db = mem_db().await;
+    let rollback = step_in(APPROVE_ALL_ROLLOUT, "narrow_agent_approvals");
+    db.query(rollback).await.expect("rollback").check().expect("rollback statements");
+    let refused = db.query("CREATE agent_turn CONTENT { thread: agent_thread:t1, kind: 'approvals' }").await.expect("create");
+    assert!(refused.check().is_err(), "the narrowed kind list refuses an approvals turn");
+    db.query(step_in(APPROVE_ALL_ROLLOUT, "widen_agent_approvals")).await.expect("start").check().expect("start statements");
+    db.query("CREATE agent_turn CONTENT { thread: agent_thread:t1, kind: 'approvals', text: 'prompt' }")
+        .await
+        .expect("create")
+        .check()
+        .expect("the widened kind list admits an approvals turn");
+    signed_in(&db, "owner@x.com")
+        .await
+        .query("UPDATE agent_thread:t1 SET approve_all = true")
+        .await
+        .expect("update")
+        .check()
+        .expect("a denied update is not an error");
+    assert_eq!(thread_row(&db, "t1").await.approve_all, None);
 }

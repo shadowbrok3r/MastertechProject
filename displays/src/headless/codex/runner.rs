@@ -1072,8 +1072,8 @@ impl Runner {
             None => "expired".to_string(),
         };
         let note = row.as_ref().and_then(|r| r.deny_note.clone()).unwrap_or_default();
-        match verdict(&status) {
-            Verdict::Run { remember, approve_all } => {
+        match decision(&status) {
+            Decision::Run { remember, approve_all } => {
                 if remember && self.tools.policy.may_remember(&tool) {
                     self.remembered.insert(tool.clone());
                 }
@@ -1086,7 +1086,7 @@ impl Runner {
                 let _ = AgentApproval::resolve_by_broker(&approval_id, &status, Some(outcome.record())).await;
                 self.respond(&request_id, outcome.response()).await;
             }
-            Verdict::Cancelled => {
+            Decision::Cancelled => {
                 self.marker("approval", &format!("Stopped by the technician: {summary}"), None).await;
                 let outcome = ToolOutcome::failure("The technician stopped the agent; the call was not run.".into());
                 let _ = AgentApproval::resolve_by_broker(&approval_id, "cancelled", Some(outcome.record())).await;
@@ -1096,7 +1096,7 @@ impl Runner {
                     self.begin_stop(None);
                 }
             }
-            Verdict::Declined => {
+            Decision::Declined => {
                 let why = if note.trim().is_empty() { String::new() } else { format!(": {}", note.trim()) };
                 self.marker("approval", &format!("Declined by the technician{why}: {summary}"), None).await;
                 let outcome = ToolOutcome::failure(format!(
@@ -1105,7 +1105,7 @@ impl Runner {
                 let _ = AgentApproval::resolve_by_broker(&approval_id, "declined", Some(outcome.record())).await;
                 self.respond(&request_id, outcome.response()).await;
             }
-            Verdict::Expired => {
+            Decision::Expired => {
                 let mins = self.cfg.approval_ttl_secs / 60;
                 self.marker("approval", &format!("No technician answered within {mins} min: {summary}"), None).await;
                 let outcome = ToolOutcome::failure(format!(
@@ -1829,21 +1829,21 @@ impl Runner {
 
 /// What a decided tool-call approval lets the broker do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Verdict {
+enum Decision {
     Run { remember: bool, approve_all: bool },
     Cancelled,
     Declined,
     Expired,
 }
 
-fn verdict(status: &str) -> Verdict {
+fn decision(status: &str) -> Decision {
     match status {
-        "accepted" => Verdict::Run { remember: false, approve_all: false },
-        "accepted_for_session" => Verdict::Run { remember: true, approve_all: false },
-        ACCEPTED_ALL_FOR_SESSION => Verdict::Run { remember: false, approve_all: true },
-        "cancelled" => Verdict::Cancelled,
-        "declined" => Verdict::Declined,
-        _ => Verdict::Expired,
+        "accepted" => Decision::Run { remember: false, approve_all: false },
+        "accepted_for_session" => Decision::Run { remember: true, approve_all: false },
+        ACCEPTED_ALL_FOR_SESSION => Decision::Run { remember: false, approve_all: true },
+        "cancelled" => Decision::Cancelled,
+        "declined" => Decision::Declined,
+        _ => Decision::Expired,
     }
 }
 
@@ -2018,7 +2018,7 @@ mod tests {
 
     #[test]
     fn a_verified_decision_is_acted_on_before_and_at_the_deadline() {
-        for status in ["accepted", "accepted_for_session", "declined", "cancelled", "answered"] {
+        for status in ["accepted", "accepted_for_session", "accepted_all_for_session", "declined", "cancelled", "answered"] {
             assert_eq!(verdict(&decided(status), Some(true), false), Verdict::Accept, "{status}");
             assert_eq!(verdict(&decided(status), Some(true), true), Verdict::Accept, "{status}");
         }
@@ -2028,6 +2028,7 @@ mod tests {
     fn a_decision_by_someone_else_is_reopened_and_never_run() {
         assert_eq!(verdict(&decided("accepted"), Some(false), false), Verdict::Reopen);
         assert_eq!(verdict(&decided("answered"), Some(false), false), Verdict::Reopen);
+        assert_eq!(verdict(&decided("accepted_all_for_session"), Some(false), false), Verdict::Reopen);
     }
 
     #[test]
@@ -2053,13 +2054,13 @@ mod tests {
 
     #[test]
     fn decisions_map_to_what_the_broker_does() {
-        assert_eq!(verdict("accepted"), Verdict::Run { remember: false, approve_all: false });
-        assert_eq!(verdict("accepted_for_session"), Verdict::Run { remember: true, approve_all: false });
-        assert_eq!(verdict("accepted_all_for_session"), Verdict::Run { remember: false, approve_all: true });
-        assert_eq!(verdict("cancelled"), Verdict::Cancelled);
-        assert_eq!(verdict("declined"), Verdict::Declined);
+        assert_eq!(decision("accepted"), Decision::Run { remember: false, approve_all: false });
+        assert_eq!(decision("accepted_for_session"), Decision::Run { remember: true, approve_all: false });
+        assert_eq!(decision("accepted_all_for_session"), Decision::Run { remember: false, approve_all: true });
+        assert_eq!(decision("cancelled"), Decision::Cancelled);
+        assert_eq!(decision("declined"), Decision::Declined);
         for status in ["expired", "failed", "pending", "", "ACCEPTED"] {
-            assert_eq!(verdict(status), Verdict::Expired, "{status}");
+            assert_eq!(decision(status), Decision::Expired, "{status}");
         }
     }
 

@@ -412,10 +412,11 @@ impl EnhancedAiPlayground {
                 .frame(Frame::default().inner_margin(Margin::symmetric(8, 1)))
                 .show_separator_line(false)
                 .show(ui, |ui| {
-                    if agent_chat::context_bar(ui, &row, may_steer(&row)) {
+                    let steerable = may_steer(&row);
+                    if agent_chat::context_bar(ui, &row, steerable) {
                         self.ask_agent(&row.id, "compact", String::new(), Vec::new());
                     }
-                    if agent_chat::approve_all_chip(ui, &row) {
+                    if agent_chat::approve_all_chip(ui, &row, steerable) {
                         let prompt = database::schema::agent_turn::APPROVALS_PROMPT.to_string();
                         self.ask_agent(&row.id, "approvals", prompt, Vec::new());
                     }
