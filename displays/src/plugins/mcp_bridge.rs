@@ -3645,8 +3645,8 @@ fn take_job(value: serde_json::Value, job_id: &str) -> Result<serde_json::Value,
         .find(|j| j.get("job_id").and_then(|v| v.as_str()) == Some(job_id))
         .ok_or_else(|| {
             to_internal(format!(
-                "client is not retaining job {job_id}. Terminal jobs are dropped 10 minutes after \
-                 they finish, and a client restart marks everything Orphaned."
+                "client is not retaining job {job_id}. Terminal jobs are dropped 60 minutes after \
+                 they finish (10 on clients older than 4.8.4), and a client restart marks everything Orphaned."
             ))
         })
 }
@@ -4204,7 +4204,7 @@ impl PluginToolProvider {
     #[tool(
         name = "remote_exec_list",
         description = "List every job the client is retaining, plus the current consent-gate state (armed, by whom, time left, running count). \
-                       Output is omitted here — use remote_exec_tail for a specific job. Terminal jobs are dropped 10 minutes after they finish."
+                       Output is omitted here — use remote_exec_tail for a specific job. Terminal jobs are dropped 60 minutes after they finish (10 on clients older than 4.8.4)."
     )]
     async fn remote_exec_list(
         &self,

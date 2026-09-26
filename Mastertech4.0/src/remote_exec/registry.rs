@@ -15,7 +15,7 @@ pub const MAX_CONCURRENT_JOBS: u32 = 8;
 
 /// How long a terminal job stays readable, so a reconnecting admin can still
 /// collect its exit record.
-const RETAIN_TERMINAL_MS: u64 = 10 * 60 * 1000;
+const RETAIN_TERMINAL_MS: u64 = 60 * 60 * 1000;
 
 static JOBS: Mutex<Option<HashMap<String, JobHandle>>> = Mutex::new(None);
 
