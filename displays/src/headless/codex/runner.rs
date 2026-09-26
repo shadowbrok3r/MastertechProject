@@ -1076,13 +1076,21 @@ impl Runner {
         if query.is_empty() {
             return opening;
         }
+        let host = self.thread.hostname.clone().unwrap_or_default();
+        let service = self.thread.service_number.clone().unwrap_or_default();
+        let about = [host.as_str(), service.as_str(), self.thread.connection_string.as_str()];
         match tokio::time::timeout(Duration::from_secs(10), mem.recall(zeroclaw::MACHINE_AGENT, &query)).await {
-            Ok(Ok(entries)) if !entries.is_empty() => format!(
-                "ZEROCLAW MEMORY BRIEF (agent {}; verify against this machine before acting):\n{}\n\n{opening}",
-                zeroclaw::MACHINE_AGENT,
-                zeroclaw::render_entries(&entries)
-            ),
-            Ok(Ok(_)) => opening,
+            Ok(Ok(entries)) => {
+                let entries = zeroclaw::entries_about(entries, &about);
+                if entries.is_empty() {
+                    return opening;
+                }
+                format!(
+                    "ZEROCLAW MEMORY BRIEF (agent {}; verify against this machine before acting):\n{}\n\n{opening}",
+                    zeroclaw::MACHINE_AGENT,
+                    zeroclaw::render_entries(&entries)
+                )
+            }
             Ok(Err(e)) => {
                 log::warn!("codex: memory brief failed: {e}");
                 opening
