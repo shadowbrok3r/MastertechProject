@@ -1582,6 +1582,18 @@ impl SpoStatus {
     }
 }
 
+/// Scaffold location id for a store's special part orders.
+fn scaffold_location_id(store: Store) -> Option<&'static str> {
+    match store {
+        Store::RIV | Store::WAR => Some("1"),
+        Store::LTN => Some("2"),
+        Store::MUR => Some("4"),
+        Store::ORE => Some("8"),
+        Store::SAN => Some("6"),
+        Store::Unknown => None,
+    }
+}
+
 impl SpecialPartOrder {
     pub fn set_customer(
         &mut self,
@@ -1718,18 +1730,19 @@ impl SpecialPartOrder {
                                     ui.add_space(15.0);
 
                                     ui.horizontal_top(|ui| {
+                                        let Some(id_location) = scaffold_location_id(location) else {
+                                            ui.label(format!(
+                                                "Special part orders are not set up for {}",
+                                                location.as_str()
+                                            ));
+                                            return;
+                                        };
                                         if Button::new("Submit")
                                             .min_size(Vec2::new(50.0, 20.0))
                                             .ui(ui)
                                             .clicked()
                                         {
-                                            let location = match location {
-                                                Store::RIV => "1".to_string(),
-                                                Store::LTN => "2".to_string(),
-                                                Store::MUR => "4".to_string(),
-                                                Store::ORE => "8".to_string(),
-                                                Store::SAN => "6".to_string(),
-                                            };
+                                            let location = id_location.to_string();
 
                                             let spo = SpecialPartOrder {
                                                 customer_name: self.customer_name.clone(),
@@ -1840,3 +1853,17 @@ impl SpecialPartOrder {
  * 7 American Fork [AF]
  * 8 Orem [ORE]
 */
+
+#[cfg(test)]
+mod scaffold_location_tests {
+    use super::*;
+
+    #[test]
+    fn every_known_store_has_a_location_and_unknown_has_none() {
+        for store in Store::VALUES {
+            assert!(scaffold_location_id(store).is_some(), "{store:?}");
+        }
+        assert_eq!(scaffold_location_id(Store::WAR), scaffold_location_id(Store::RIV));
+        assert_eq!(scaffold_location_id(Store::Unknown), None);
+    }
+}

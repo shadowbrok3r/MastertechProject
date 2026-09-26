@@ -1,19 +1,24 @@
 use serde::{Deserialize, Serialize};
-use std::{collections::{HashMap, HashSet}, fmt::Display};
+use std::collections::HashSet;
 use serde_json::Value;
 use crate::db;
 
-use super::{prestashop_schema::{self, Prestashop}, random_record_id, Bytes, RecordId, Status, Store, SurrealValue, USER_TABLE};
+use super::{random_record_id, Bytes, RecordId, Status, Store, SurrealValue, USER_TABLE};
 
 pub mod chats;
+pub mod employee_directory;
+pub mod signup;
+pub mod staff_email;
 pub use chats::*;
+pub use employee_directory::*;
+pub use signup::*;
+pub use staff_email::*;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, SurrealValue)]
 pub struct User {
     pub id: RecordId,
     active: bool,
     name: String,
-    everest_initials: String,
     email: String,
     store: Store,
     // pub notifications: Option<Vec<NotificationId>>,
@@ -24,7 +29,6 @@ pub struct User {
     id_store: Option<String>,
     user_statuses: Option<Vec<Status>>,
     authorization: UserAuthorization,
-    version: String,
     sales: Option<Vec<RecordId>>,
     #[serde(default)]
     mcp_settings: Option<McpSettings>,
@@ -36,7 +40,6 @@ impl Default for User {
             id: random_record_id(USER_TABLE),
             active: false,
             name: String::new(),
-            everest_initials: String::new(),
             email: String::new(),
             store: Store::default(),
             minio_access_key: None,
@@ -46,7 +49,6 @@ impl Default for User {
             id_prestashop: None,
             user_statuses: Some(Status::VALUES.to_vec()),
             authorization: UserAuthorization::User,
-            version: String::new(),
             sales: None,
             mcp_settings: None,
         }
@@ -190,10 +192,6 @@ impl User {
         self.active.clone()
     }
 
-    pub fn get_version(&self) -> String {
-        self.version.clone()
-    }
-
     pub fn is_admin(&self) -> bool {
         match self.authorization {
             UserAuthorization::User      => false,
@@ -250,10 +248,6 @@ impl User {
 
     pub fn get_name(&self) -> &str {
         &self.name
-    }
-
-    pub fn get_initials(&self) -> &str {
-        &self.everest_initials
     }
 
     pub fn get_user_settings(&self) -> UserSettings {
@@ -412,24 +406,6 @@ impl User {
         }
     }
 
-    /// Finds and retrieves the associated Employee record based on the User information.
-    ///
-    /// # Returns
-    /// - `Ok(Employee)` on success, where `Employee` is a struct representing the employee record.
-    /// - `Err(Error)` if the employee cannot be found or an error occurs during the operation.
-    pub async fn find_employee_by_email(&mut self) -> anyhow::Result<prestashop_schema::Employee, anyhow::Error> {
-        let api_call = Prestashop::default();
-        let mut query: HashMap<&str, &str> = HashMap::new();
-
-        query.insert("filter[email]", &mut self.email);
-        query.insert("output_format", "JSON");
-
-        let employee: prestashop_schema::Employee = api_call
-            .find_resource_wasm("employees", query.clone())
-            .await?;
-        Ok(employee)
-    }
-
     /// Saves the user settings to the database or persistent storage.
     ///
     /// # Returns
@@ -458,19 +434,6 @@ impl User {
         {
             Ok(res) => log::debug!("helper_traits -> Result: {res:?}"),
             Err(e) => log::error!("helper_traits -> Error updating User Settings: {e:?}"),
-        }
-        Ok(())
-    }
-
-    pub async fn save_version(&mut self, version: impl Display + Serialize + 'static + SurrealValue) -> anyhow::Result<(), anyhow::Error> {
-        log::debug!("save_version -> {version}");
-        match db()
-            .query("UPDATE $auth.id SET version = $version")
-            .bind(("version", version))
-            .await
-        {
-            Ok(res) => log::debug!("helper_traits -> save_version -> Result: {res:?}"),
-            Err(e) => log::error!("helper_traits -> save_version -> Error updating User Settings: {e:?}"),
         }
         Ok(())
     }
@@ -516,39 +479,6 @@ impl User {
         Ok(())
     }
 
-    /// Retrieves the store number from the Odoo system.
-    ///
-    /// # Returns
-    /// - `Ok(u64)` containing the store number on success.
-    /// - `Err(Error)` if the store number cannot be retrieved or an error occurs.
-    pub fn get_odoo_store_number(&mut self) -> anyhow::Result<u64, anyhow::Error> {
-        let store = match self.store {
-            Store::RIV => 76,
-            Store::LTN => 73,
-            Store::MUR => 74,
-            Store::ORE => 75,
-            Store::SAN => 77,
-        };
-        Ok(store)
-    }
-
-    /// Retrieves the store details associated with a given Odoo ID.
-    ///
-    /// # Returns
-    /// - `Ok(Store)` containing the store information on success.
-    /// - `Err(Error)` if the store cannot be found or an error occurs.
-    pub fn get_store_from_odoo_id(&mut self) -> anyhow::Result<Store, anyhow::Error> {
-        let store = match self.get_odoo_store_number()? {
-            76 => Store::RIV,
-            73 => Store::LTN,
-            74 => Store::MUR,
-            75 => Store::ORE,
-            77 => Store::SAN,
-            _ => Store::RIV,
-        };
-        Ok(store)
-    }
-
     pub async fn get_current_user_from_auth() -> anyhow::Result<Option<Self>, anyhow::Error> {
         let user_record: Option<Self> = db()
             .query("SELECT * FROM user WHERE id == $auth.id")
@@ -567,8 +497,8 @@ impl User {
         Ok(user_records)
     }
 
-    /// Resolves an email to an existing `user` record. A `checkinshelf` or empty
-    /// email resolves to the authenticated user. Returns `Err` on a miss; never
+    /// Resolves an email or username to an existing `user` record. A `checkinshelf` or
+    /// empty email resolves to the authenticated user. Returns `Err` on a miss; never
     /// falls back to PrestaShop, so `get_id()` is always a real `user` reference
     /// safe to persist. For note authors who may lack an account, use
     /// [`User::query_user_or_employee_from_email`].
@@ -581,19 +511,23 @@ impl User {
             return user.ok_or_else(|| anyhow::anyhow!("No authenticated user"));
         }
 
-        let full_email = if email.ends_with("@pclaptops.com") {
-            email
-        } else {
-            format!("{email}@pclaptops.com")
-        };
+        Self::find_by_email_candidates(&email)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("No user record for {email}"))
+    }
 
-        let user: Option<Self> = db()
-            .query("SELECT * FROM user WHERE email == $email")
-            .bind(("email", full_email.clone()))
+    /// The `user` row for the first of [`email_candidates`] that has one.
+    pub async fn find_by_email_candidates(ident: &str) -> anyhow::Result<Option<Self>, anyhow::Error> {
+        let emails = email_candidates(ident);
+        if emails.is_empty() {
+            return Ok(None);
+        }
+        let users: Vec<Self> = db()
+            .query("SELECT * FROM user WHERE email IN $emails")
+            .bind(("emails", emails.clone()))
             .await?
             .take(0)?;
-
-        user.ok_or_else(|| anyhow::anyhow!("No user record for {full_email}"))
+        Ok(first_in_candidate_order(users, &emails))
     }
 
     /// Resolves a display name to a `user` record. Case- and
@@ -624,7 +558,7 @@ impl User {
     }
 
     /// Resolves an email to a `user` record, falling back to a synthesized,
-    /// non-persisted `User` built from the PrestaShop employee on a miss. The
+    /// non-persisted `User` built from the directory employee on a miss. The
     /// synthesized `id` is `user:<id_prestashop>` and does NOT exist in the
     /// `user` table: use it for display only (`get_username`/`get_name`) and
     /// never persist `get_id()` as a `user` reference. A real row is not
@@ -635,43 +569,37 @@ impl User {
             return Ok(user);
         }
 
-        let full_email = if email.ends_with("@pclaptops.com") {
-            email
-        } else {
-            format!("{email}@pclaptops.com")
-        };
-
-        let mut usr = Self::default();
-        usr.email = full_email;
-        let emp = usr.find_employee_by_email().await?;
-        Ok(Self {
-            id: RecordId::new(USER_TABLE, emp.id.clone()),
-            name: format!("{} {}", emp.firstname, emp.lastname),
-            everest_initials: emp.initials,
-            email: usr.email,
-            store: Store::from_presta_store_id(&emp.id_store),
-            id_prestashop: Some(emp.id.parse::<u64>()?),
-            id_store: Some(emp.id_store),
-            ..Default::default()
-        })
+        let directory = employee_directory();
+        for candidate in email_candidates(&email) {
+            if let Some(emp) = directory.by_email(&candidate).await? {
+                return Ok(Self {
+                    id: RecordId::new(USER_TABLE, emp.id.to_string()),
+                    name: emp.name(),
+                    email: candidate,
+                    store: Store::from_presta_store_id(&emp.id_store),
+                    id_prestashop: Some(emp.id),
+                    id_store: Some(emp.id_store),
+                    ..Default::default()
+                });
+            }
+        }
+        Err(anyhow::anyhow!("No user or employee record for {email}"))
     }
 
-    /// True if an active `user` record exists for this username's email; no
-    /// PrestaShop fallback.
+    /// True if an active `user` record exists for any of this username's candidate emails.
     pub async fn username_exists(username: String) -> anyhow::Result<bool, anyhow::Error> {
-        let full_email = if username.ends_with("@pclaptops.com") {
-            username
-        } else {
-            format!("{username}@pclaptops.com")
-        };
+        let emails = email_candidates(&username);
+        if emails.is_empty() {
+            return Ok(false);
+        }
 
-        let emails: Vec<String> = db()
-            .query("RETURN (SELECT VALUE email FROM user WHERE email == $email AND active == true)")
-            .bind(("email", full_email))
+        let found: Vec<String> = db()
+            .query("RETURN (SELECT VALUE email FROM user WHERE email IN $emails AND active == true)")
+            .bind(("emails", emails))
             .await?
             .take(0)?;
 
-        Ok(!emails.is_empty())
+        Ok(!found.is_empty())
     }
 
     pub async fn add_custom_status(status: &str) -> anyhow::Result<(), anyhow::Error> {
@@ -798,6 +726,47 @@ impl User {
         Ok(user_threads)
     }
 }
+/// The user whose email is earliest in `candidates`.
+fn first_in_candidate_order(users: Vec<User>, candidates: &[String]) -> Option<User> {
+    candidates.iter().find_map(|candidate| {
+        users
+            .iter()
+            .find(|user| user.email.eq_ignore_ascii_case(candidate))
+            .cloned()
+    })
+}
+
+#[cfg(test)]
+mod candidate_order_tests {
+    use super::*;
+
+    fn user(email: &str) -> User {
+        User { email: email.into(), ..Default::default() }
+    }
+
+    #[test]
+    fn pclaptops_wins_over_xidax() {
+        let candidates = email_candidates("john");
+        let users = vec![user("john@xidax.com"), user("john@pclaptops.com")];
+        let picked = first_in_candidate_order(users, &candidates).expect("a match");
+        assert_eq!(picked.get_email(), "john@pclaptops.com");
+    }
+
+    #[test]
+    fn a_lone_xidax_match_is_found() {
+        let candidates = email_candidates("john");
+        let picked = first_in_candidate_order(vec![user("john@xidax.com")], &candidates).expect("a match");
+        assert_eq!(picked.get_email(), "john@xidax.com");
+    }
+
+    #[test]
+    fn no_candidate_matching_is_none() {
+        let candidates = email_candidates("john");
+        assert_eq!(first_in_candidate_order(vec![user("jane@pclaptops.com")], &candidates), None);
+        assert_eq!(first_in_candidate_order(Vec::new(), &candidates), None);
+    }
+}
+
 #[cfg(test)]
 mod assignee_tests {
     use super::*;

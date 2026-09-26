@@ -466,9 +466,12 @@ pub enum Store {
     MUR,
     ORE,
     SAN,
+    WAR,
+    /// Any store code this build does not know; never offered or produced by a constructor.
+    #[serde(other)]
+    #[surreal(other)]
+    Unknown,
 }
-
-
 
 impl Store {
     pub fn as_str(&self) -> &str {
@@ -478,23 +481,16 @@ impl Store {
             Store::MUR => "MUR",
             Store::ORE => "ORE",
             Store::SAN => "SAN",
-        }
-    }
-    
-    pub fn store_email(&self) -> &'static str {
-        match *self {
-            Store::RIV => "pclriv@pclaptops.com",
-            Store::MUR => "pclmur@pclaptops.com",
-            Store::LTN => "pclltn@pclaptops.com",
-            Store::SAN => "pclsan@pclaptops.com",
-            Store::ORE => "pclore@pclaptops.com",
+            Store::WAR => "WAR",
+            Store::Unknown => "Unknown",
         }
     }
 
     /// Resolve a PrestaShop store id, or `None` if it is not one of ours.
-    /// Xidax and warehouse store ids are not mapped here yet, so they miss.
+    /// Xidax store ids are not mapped here yet, so they miss.
     pub fn try_from_presta_store_id(store_id: &str) -> Option<Self> {
         Some(match store_id {
+            "1" => Self::WAR,
             "7" => Self::RIV,
             "8" => Self::LTN,
             "10" => Self::MUR,
@@ -514,13 +510,16 @@ impl Store {
         })
     }
 
+    /// PrestaShop store id; `0` for [`Self::Unknown`].
     pub fn into_store_id(&self) -> i32 {
         match self {
+            Self::WAR => 1,
             Self::RIV => 7,
             Self::LTN => 8,
             Self::MUR => 10,
             Self::SAN => 12,
             Self::ORE => 14,
+            Self::Unknown => 0,
         }
     }
 
@@ -544,17 +543,19 @@ impl Store {
         })
     }
 
-    pub fn into_odoo_store_id(&self) -> i32 {
+    /// Odoo stock location id; `None` for stores without an Odoo location.
+    pub fn into_odoo_store_id(&self) -> Option<i32> {
         match self {
-            Self::RIV => 76,
-            Self::LTN => 73,
-            Self::MUR => 74,
-            Self::ORE => 75,
-            Self::SAN => 77,
+            Self::RIV => Some(76),
+            Self::LTN => Some(73),
+            Self::MUR => Some(74),
+            Self::ORE => Some(75),
+            Self::SAN => Some(77),
+            Self::WAR | Self::Unknown => None,
         }
     }
 
-    /// Resolve a store id that may be in either the PrestaShop (7, 8, 10, 12, 14)
+    /// Resolve a store id that may be in either the PrestaShop (1, 7, 8, 10, 12, 14)
     /// or Odoo (73-77) numbering scheme. Useful when a UI control reuses one
     /// `store_selection` field across views that bind to different schemes —
     /// callers can normalize via `Store::from_any_store_id(...).into_store_id()`
@@ -571,7 +572,26 @@ impl Store {
         })
     }
 
-    pub const VALUES: [Self; 5] = [
+    /// Resolve a store code such as `"war"` or `" RIV "`; never yields [`Self::Unknown`].
+    pub fn from_code(code: &str) -> Option<Self> {
+        let code = code.trim();
+        Self::VALUES
+            .into_iter()
+            .find(|store| store.as_str().eq_ignore_ascii_case(code))
+    }
+
+    /// Every known store, warehouse included.
+    pub const VALUES: [Self; 6] = [
+        Self::RIV,
+        Self::LTN,
+        Self::MUR,
+        Self::ORE,
+        Self::SAN,
+        Self::WAR,
+    ];
+
+    /// The retail storefronts.
+    pub const RETAIL: [Self; 5] = [
         Self::RIV,
         Self::LTN,
         Self::MUR,
@@ -683,6 +703,7 @@ impl TaskHistory {
 #[cfg(test)]
 mod store_tests {
     use super::Store;
+    use surrealdb::types::{SurrealValue, Value};
 
     #[test]
     fn known_presta_ids_round_trip() {
@@ -692,18 +713,38 @@ mod store_tests {
         }
     }
 
+    fn odoo_id(store: Store) -> String {
+        store
+            .into_odoo_store_id()
+            .unwrap_or_else(|| panic!("{} has no Odoo id", store.as_str()))
+            .to_string()
+    }
+
     #[test]
     fn known_odoo_ids_round_trip() {
-        for store in Store::VALUES {
-            let id = store.into_odoo_store_id().to_string();
-            assert_eq!(Store::try_from_odoo_store_id(&id), Some(store));
+        for store in Store::RETAIL {
+            assert_eq!(Store::try_from_odoo_store_id(&odoo_id(store)), Some(store));
         }
     }
 
     #[test]
+    fn war_and_unknown_have_no_odoo_id() {
+        assert_eq!(Store::WAR.into_odoo_store_id(), None);
+        assert_eq!(Store::Unknown.into_odoo_store_id(), None);
+    }
+
+    #[test]
+    fn war_maps_presta_id_1_both_ways() {
+        assert_eq!(Store::try_from_presta_store_id("1"), Some(Store::WAR));
+        assert_eq!(Store::try_from_any_store_id("1"), Some(Store::WAR));
+        assert_eq!(Store::WAR.into_store_id(), 1);
+        assert_eq!(Store::Unknown.into_store_id(), 0);
+    }
+
+    #[test]
     fn unmapped_store_id_misses_instead_of_filing_under_riverdale() {
-        // Xidax, warehouse, a new location, or a blank id_store.
-        for id in ["", "1", "15", "99", "not-a-number"] {
+        // Xidax, a new location, or a blank id_store.
+        for id in ["", "0", "15", "99", "not-a-number"] {
             assert_eq!(Store::try_from_presta_store_id(id), None, "id {id:?}");
             assert_eq!(Store::try_from_any_store_id(id), None, "id {id:?}");
             assert_eq!(Store::from_presta_store_id(id), Store::RIV, "id {id:?}");
@@ -712,8 +753,8 @@ mod store_tests {
 
     #[test]
     fn the_two_id_schemes_do_not_overlap() {
-        for store in Store::VALUES {
-            let odoo = store.into_odoo_store_id().to_string();
+        for store in Store::RETAIL {
+            let odoo = odoo_id(store);
             assert_eq!(Store::try_from_presta_store_id(&odoo), None, "{odoo} hit both tables");
         }
     }
@@ -725,10 +766,48 @@ mod store_tests {
                 Store::try_from_any_store_id(&store.into_store_id().to_string()),
                 Some(store)
             );
-            assert_eq!(
-                Store::try_from_any_store_id(&store.into_odoo_store_id().to_string()),
-                Some(store)
-            );
         }
+        for store in Store::RETAIL {
+            assert_eq!(Store::try_from_any_store_id(&odoo_id(store)), Some(store));
+        }
+    }
+
+    #[test]
+    fn from_code_round_trips_every_store_case_insensitively() {
+        for store in Store::VALUES {
+            assert_eq!(Store::from_code(store.as_str()), Some(store));
+            let padded = format!(" {} ", store.as_str().to_lowercase());
+            assert_eq!(Store::from_code(&padded), Some(store));
+        }
+        for code in ["Unknown", "unknown", "ZZTest", "", "RIVX"] {
+            assert_eq!(Store::from_code(code), None, "code {code:?}");
+        }
+    }
+
+    #[test]
+    fn retail_is_every_store_but_the_warehouse() {
+        assert!(!Store::RETAIL.contains(&Store::WAR));
+        assert!(!Store::VALUES.contains(&Store::Unknown));
+        assert_eq!(&Store::VALUES[..5], &Store::RETAIL[..]);
+    }
+
+    #[test]
+    fn unknown_code_decodes_to_unknown() {
+        let zz = Store::from_value(Value::String("ZZTest".into())).expect("an unknown code must decode");
+        assert_eq!(zz, Store::Unknown);
+        let war = Store::from_value(Value::String("WAR".into())).expect("WAR must decode");
+        assert_eq!(war, Store::WAR);
+    }
+
+    #[test]
+    fn unknown_code_deserializes_to_unknown_through_serde() {
+        let zz: Store = serde_json::from_str(r#""ZZTest""#).expect("an unknown code must deserialize");
+        assert_eq!(zz, Store::Unknown);
+    }
+
+    #[test]
+    fn war_serializes_as_plain_string() {
+        assert_eq!(Store::WAR.into_value(), Value::String("WAR".into()));
+        assert_eq!(serde_json::to_string(&Store::WAR).expect("serialize"), r#""WAR""#);
     }
 }

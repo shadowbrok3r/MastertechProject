@@ -2,10 +2,12 @@
 use anyhow::{Error, Result};
 use crossbeam::channel::Sender;
 use database::Database;
+use database::schema::{domain_suffix, normalize_email_with, COMPANY_EMAIL_DOMAINS};
 use serde::{Deserialize, Serialize};
 use crate::{PlatformSpawner, Spawner};
 use eframe::egui::{
-    Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Id, Key, KeyboardShortcut, Layout, Modifiers, Pos2, Spinner, TextEdit, Vec2, Widget
+    text::{CCursor, CCursorRange},
+    vec2, Align, Align2, Button, CentralPanel, Color32, ComboBox, Direction, FontId, Frame, Id, Key, KeyboardShortcut, Layout, Modifiers, Spinner, TextEdit, Ui, Vec2, Widget
 };
 use egui_extras::{Size, StripBuilder};
 use log::{error, info};
@@ -13,6 +15,8 @@ use log::{error, info};
 use crate::app_state::{AppState, MainPages, SharedContext};
 
 pub const HASH: &[u8; 31] = b"TheUltimagicalSecretestPassword";
+
+const LOGIN_FIELD_WIDTH: f32 = 260.0;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Login {
@@ -136,119 +140,9 @@ impl SharedContext {
 
                                             ui.label("Please Login");
                                             ui.add_space(20.0);
-                                            let mut refresh = self.refresh.clone();
+                                            let mut refresh = self.refresh;
                                             if let Some(login) = self.login_mut() {
-                                                let text_edit =
-                                                    TextEdit::singleline(&mut login.username)
-                                                        .font(font.clone())
-                                                        .desired_width(180.0);
-
-                                                let output = text_edit.show(ui);
-
-                                                let chars = login.username.chars().count() as f32;
-                                                let painter = ui.painter_at(output.response.rect);
-                                                let text_color = Color32::from_rgba_premultiplied(
-                                                    100, 100, 100, 100,
-                                                );
-
-                                                let galley = painter.layout(
-                                                    String::from("@pclaptops.com"),
-                                                    font,
-                                                    text_color,
-                                                    f32::INFINITY,
-                                                );
-
-                                                painter.galley(
-                                                    Pos2::new(
-                                                        output.galley_pos.x
-                                                            + (chars as f32 * 11.5) / 1.25,
-                                                        output.galley_pos.y,
-                                                    ),
-                                                    galley,
-                                                    text_color,
-                                                );
-                                                ui.add_space(4.0);
-
-                                                let enter =
-                                                    ui.input_mut(|i| i.key_pressed(Key::Enter));
-
-                                                if TextEdit::singleline(&mut login.password)
-                                                    .hint_text("Password")
-                                                    .desired_width(180.0)
-                                                    .password(true)
-                                                    .return_key(KeyboardShortcut::new(
-                                                        Modifiers::SHIFT,
-                                                        Key::Enter,
-                                                    ))
-                                                    .ui(ui)
-                                                    .has_focus()
-                                                {
-                                                    if enter
-                                                        && !login.password.is_empty()
-                                                        && !login.username.is_empty()
-                                                    {
-                                                        refresh = true;
-                                                        // info!("ENTER PRESSED");
-                                                        let user = login.username.clone();
-                                                        let pass = login.password.clone();
-                                                        let tx = db_tx.clone();
-                                                        let app_tx = appstate_tx.clone();
-                                                        PlatformSpawner::spawn(async move {
-                                                            let _ = Login::login(
-                                                                user,
-                                                                pass,
-                                                                tx,
-                                                                app_tx.clone(),
-                                                            )
-                                                            .await;
-                                                        });
-                                                    }
-                                                }
-
-                                                ui.add_space(30.0);
-
-                                                let button = Button::new("Create Account")
-                                                    .min_size(Vec2::new(140.0, 15.0))
-                                                    .ui(ui);
-
-                                                // ui.add_enabled(enabled, button);
-
-                                                if button.clicked() {
-                                                    Spinner::new()
-                                                        .size(30.0)
-                                                        .color(Color32::from_rgb(100, 10, 80))
-                                                        .ui(ui);
-                                                    let app_tx = appstate_tx.clone();
-                                                    match app_tx.try_send(AppState::CreateAccount) {
-                                                        Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
-                                                        Err(e) => error!("Error {e:?}"),
-                                                    }
-                                                }
-
-                                                ui.add_space(3.0);
-
-                                                if Button::new("Submit")
-                                                    .min_size(Vec2::new(140.0, 40.0))
-                                                    .ui(ui)
-                                                    .clicked()
-                                                    && !login.password.is_empty()
-                                                    && !login.username.is_empty()
-                                                {
-                                                    refresh = true;
-                                                    let user = login.username.clone();
-                                                    let pass = login.password.clone();
-                                                    let email = format!("{user}@pclaptops.com");
-                                                    PlatformSpawner::spawn(async move {
-                                                        let res = Login::login(
-                                                            email,
-                                                            pass,
-                                                            db_tx.clone(),
-                                                            appstate_tx.clone(),
-                                                        )
-                                                        .await;
-                                                        log::warn!("Result: {res:?}");
-                                                    });
-                                                }
+                                                refresh |= login_form(ui, login, &font, &db_tx, &appstate_tx);
 
                                                 if refresh {
                                                     ui.label("Logging in..");
@@ -263,5 +157,185 @@ impl SharedContext {
                         s.empty();
                     });
             });
+    }
+}
+
+/// Domain picker, username with ghost domain, password and buttons; true when a sign-in started.
+fn login_form(
+    ui: &mut Ui,
+    login: &mut Login,
+    font: &FontId,
+    db_tx: &Sender<anyhow::Result<Database, anyhow::Error>>,
+    appstate_tx: &Sender<AppState>,
+) -> bool {
+    let domain_id = Id::new("login_domain");
+    let username_id = Id::new("login_username");
+    let error_id = Id::new("login_error");
+
+    let stored_domain = ui
+        .ctx()
+        .data_mut(|d| d.get_persisted::<usize>(domain_id))
+        .filter(|idx| *idx < COMPANY_EMAIL_DOMAINS.len())
+        .unwrap_or(0);
+    let mut domain_idx = stored_domain;
+    ui.allocate_ui(Vec2::new(LOGIN_FIELD_WIDTH, ui.spacing().interact_size.y), |ui| {
+        ComboBox::new("login_domain_combo", "")
+            .width(LOGIN_FIELD_WIDTH)
+            .selected_text(format!("@{}", COMPANY_EMAIL_DOMAINS[domain_idx]))
+            .show_ui(ui, |ui| {
+                for (idx, domain) in COMPANY_EMAIL_DOMAINS.iter().enumerate() {
+                    ui.selectable_value(&mut domain_idx, idx, format!("@{domain}"));
+                }
+            })
+            .response
+            .on_hover_text("Domain added to a username typed without @");
+    });
+    if domain_idx != stored_domain {
+        ui.ctx().data_mut(|d| d.insert_persisted(domain_id, domain_idx));
+    }
+    let domain = COMPANY_EMAIL_DOMAINS[domain_idx];
+
+    ui.add_space(4.0);
+
+    let suffix = domain_suffix(&login.username, domain);
+    let completes = suffix.is_some() && login.username.contains('@');
+    let mut output = TextEdit::singleline(&mut login.username)
+        .id(username_id)
+        .font(font.clone())
+        .desired_width(LOGIN_FIELD_WIDTH)
+        .lock_focus(completes)
+        .show(ui);
+    if output.response.changed() {
+        ui.ctx().data_mut(|d| d.remove::<String>(error_id));
+    }
+    let accept_suffix = completes
+        && output.response.has_focus()
+        && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Tab));
+    match suffix {
+        Some(suffix) if accept_suffix => {
+            login.username.push_str(&suffix);
+            let end = CCursor::new(login.username.chars().count());
+            output.state.cursor.set_char_range(Some(CCursorRange::one(end)));
+            output.state.store(ui.ctx(), username_id);
+        }
+        Some(suffix) => {
+            let ghost_pos = output.galley_pos + vec2(output.galley.size().x, 0.0);
+            ui.painter_at(output.response.rect).text(
+                ghost_pos,
+                Align2::LEFT_TOP,
+                suffix,
+                font.clone(),
+                Color32::from_rgba_premultiplied(100, 100, 100, 100),
+            );
+        }
+        None => {}
+    }
+
+    ui.add_space(4.0);
+
+    let enter = ui.input_mut(|i| i.key_pressed(Key::Enter));
+    let password_focused = TextEdit::singleline(&mut login.password)
+        .hint_text("Password")
+        .desired_width(LOGIN_FIELD_WIDTH)
+        .password(true)
+        .return_key(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
+        .ui(ui)
+        .has_focus();
+
+    ui.add_space(30.0);
+
+    if Button::new("Create Account")
+        .min_size(Vec2::new(140.0, 15.0))
+        .ui(ui)
+        .clicked()
+    {
+        match appstate_tx.try_send(AppState::CreateAccount) {
+            Ok(_) => info!("Sent appstate"),
+            Err(e) => error!("Error {e:?}"),
+        }
+    }
+
+    ui.add_space(3.0);
+
+    let submit = Button::new("Submit")
+        .min_size(Vec2::new(140.0, 40.0))
+        .ui(ui)
+        .clicked();
+
+    let mut started = false;
+    if (submit || (enter && password_focused))
+        && !login.password.is_empty()
+        && !login.username.is_empty()
+    {
+        match normalize_email_with(&login.username, domain) {
+            Some(email) => {
+                ui.ctx().data_mut(|d| d.remove::<String>(error_id));
+                login.username = email.clone();
+                started = true;
+                let pass = login.password.clone();
+                let tx = db_tx.clone();
+                let app_tx = appstate_tx.clone();
+                PlatformSpawner::spawn(async move {
+                    let res = Login::login(email, pass, tx, app_tx).await;
+                    log::warn!("Result: {res:?}");
+                });
+            }
+            None => {
+                let text = format!("{:?} is not a valid email or username", login.username.trim());
+                ui.ctx().data_mut(|d| d.insert_temp(error_id, text));
+            }
+        }
+    }
+
+    if let Some(text) = ui.ctx().data(|d| d.get_temp::<String>(error_id)) {
+        ui.colored_label(ui.visuals().error_fg_color, text);
+    }
+    started
+}
+
+#[cfg(test)]
+mod login_form_tests {
+    use super::*;
+    use eframe::egui::{Context, Event, RawInput};
+
+    fn pass(ctx: &Context, login: &mut Login, events: Vec<Event>) {
+        let (db_tx, _db_rx) = crossbeam::channel::unbounded();
+        let (app_tx, _app_rx) = crossbeam::channel::unbounded();
+        let input = RawInput { events, ..Default::default() };
+        let mut output = ctx.run_ui(input, |ui| {
+            login_form(ui, login, &FontId::monospace(18.0), &db_tx, &app_tx);
+        });
+        output.textures_delta.clear();
+    }
+
+    fn tab() -> Event {
+        Event::Key { key: Key::Tab, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE }
+    }
+
+    /// Focuses the username field, then presses Tab.
+    fn focus_then_tab(username: &str) -> (Context, Login) {
+        let ctx = Context::default();
+        let mut login = Login { username: username.into(), password: String::new() };
+        pass(&ctx, &mut login, vec![]);
+        ctx.memory_mut(|m| m.request_focus(Id::new("login_username")));
+        pass(&ctx, &mut login, vec![]);
+        pass(&ctx, &mut login, vec![]);
+        pass(&ctx, &mut login, vec![tab()]);
+        pass(&ctx, &mut login, vec![]);
+        (ctx, login)
+    }
+
+    #[test]
+    fn tab_completes_a_partly_typed_company_domain() {
+        let (ctx, login) = focus_then_tab("bob@x");
+        assert_eq!(login.username, "bob@xidax.com");
+        assert!(ctx.memory(|m| m.has_focus(Id::new("login_username"))));
+    }
+
+    #[test]
+    fn tab_leaves_a_bare_username_and_moves_focus_on() {
+        let (ctx, login) = focus_then_tab("bob");
+        assert_eq!(login.username, "bob");
+        assert!(!ctx.memory(|m| m.has_focus(Id::new("login_username"))));
     }
 }

@@ -1764,7 +1764,7 @@ pub struct CreateDiagnosticSessionParams {
     pub tech: Option<String>,
     #[schemars(description = "Who asked for this diagnostic: the technician's email, or 'customer' for walk-in work.")]
     pub requested_by: Option<String>,
-    #[schemars(description = "PCL store code the machine belongs to (RIV, LTN, MUR, SAN, ORE).")]
+    #[schemars(description = "PCL store code the machine belongs to (RIV, LTN, MUR, SAN, ORE, or WAR for the warehouse).")]
     pub store: Option<String>,
     #[schemars(description = "Who drives this session, as <source>/<name>: 'mcp/desktop' for Claude Desktop, 'zeroclaw/<alias>' for a ZeroClaw agent, 'codex/<alias>' for a Codex agent. A colon is rewritten to a slash. Outcome reporting segments on it.")]
     pub driven_by: Option<String>,
@@ -2269,7 +2269,7 @@ pub struct RecordShelfCandidateParams {
     pub score: u32,
     #[schemars(description = "One or two sentences of evidence for the score, drawn from check-in notes and prior history")]
     pub reason: String,
-    #[schemars(description = "Store code (RIV, LTN, MUR, SAN, ORE)")]
+    #[schemars(description = "Store code (RIV, LTN, MUR, SAN, ORE, WAR)")]
     pub store: Option<String>,
     #[schemars(description = "Device description as shown on the order")]
     pub device: Option<String>,
@@ -2287,7 +2287,7 @@ pub struct EnsureOrderRecordsParams {
 pub struct ListWaitingServicesParams {
     #[schemars(description = "PrestaShop status to list: 'checkin_shelf' (default), 'in_repair', or 'done_shelf'")]
     pub status: Option<String>,
-    #[schemars(description = "Store code to scope to (RIV, LTN, MUR, SAN, ORE). Omit for all stores.")]
+    #[schemars(description = "Store code to scope to (RIV, LTN, MUR, SAN, ORE, or WAR for the warehouse). Omit for all stores.")]
     pub store: Option<String>,
     #[schemars(description = "Max services to enrich and return (default 15, max 100)")]
     pub limit: Option<u32>,
@@ -7170,7 +7170,8 @@ impl PluginToolProvider {
     /// Resolve a user record by email or exact (case-insensitive) name.
     async fn resolve_user_ident(ident: &str) -> Result<Option<database::schema::User>, ErrorData> {
         let users: Vec<database::schema::User> = database::db()
-            .query("SELECT * FROM user WHERE email = $ident OR string::lowercase(name) = string::lowercase($ident) LIMIT 1")
+            .query("SELECT * FROM user WHERE email = $email OR string::lowercase(name) = string::lowercase($ident) LIMIT 1")
+            .bind(("email", ident.trim().to_lowercase()))
             .bind(("ident", ident.to_string()))
             .await
             .map_err(to_internal)?
@@ -9559,17 +9560,18 @@ minutes count only minutes containing a recorded event — a floor, never inflat
             }
         };
         let store_id = match p.store.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            Some(code) => match code.to_uppercase().as_str() {
-                "RIV" => Some("7".to_string()),
-                "LTN" => Some("8".to_string()),
-                "MUR" => Some("10".to_string()),
-                "SAN" => Some("12".to_string()),
-                "ORE" => Some("14".to_string()),
-                _ => {
+            Some(code) => match database::schema::Store::from_code(code) {
+                Some(store) => Some(store.into_store_id().to_string()),
+                None => {
+                    let known = database::schema::Store::VALUES
+                        .iter()
+                        .map(database::schema::Store::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ");
                     return Err(ErrorData::invalid_params(
-                        format!("unknown store '{code}'; use RIV, LTN, MUR, SAN or ORE"),
+                        format!("unknown store '{code}'; use one of {known}"),
                         None,
-                    ))
+                    ));
                 }
             },
             None => None,
@@ -11710,7 +11712,7 @@ pub const INSTRUCTIONS: &str = r#"Mastertech Plugin System MCP (MasterTech deskt
 === Diagnostic Flow (crash/hardware engagements — follow this ORDER) ===
 Open the session BEFORE running analyzers so every record links to it (analyzers that run first are recorded unlinked and only get claimed retroactively).
   1. remote_channel_health — confirm the client responds.
-  2. create_diagnostic_session — FIRST. Auto-resolves the service task and claims any pre-session orphan records. Everything after inherits its session/task link. Pass requested_by (who asked for the work), store (RIV/LTN/MUR/SAN/ORE), and driven_by (schema requires <source>/<name>: 'mcp/desktop' when an operator drives you from Claude Desktop, 'zeroclaw/<alias>' for a zeroclaw agent, 'codex/<alias>' for a Codex agent; a colon is rejected) — outcome reporting segments on them. Pass connection_string and NOTHING else identifying: it resolves customer and computer itself. Never pass customer_id, customer_name or computer_id — requested_by and tech name the TECHNICIAN, not the customer, and reusing either as a customer_id fails link validation with CustomerNotFound. If it reports a link problem anyway, call validate_connection_links with the connection_string alone and report what it says. Pass service_number too when you know it: the session links to that order's task, and a task is created (assigned to requested_by) when the order has none.
+  2. create_diagnostic_session — FIRST. Auto-resolves the service task and claims any pre-session orphan records. Everything after inherits its session/task link. Pass requested_by (who asked for the work), store (RIV/LTN/MUR/SAN/ORE, or WAR for the warehouse), and driven_by (schema requires <source>/<name>: 'mcp/desktop' when an operator drives you from Claude Desktop, 'zeroclaw/<alias>' for a zeroclaw agent, 'codex/<alias>' for a Codex agent; a colon is rejected) — outcome reporting segments on them. Pass connection_string and NOTHING else identifying: it resolves customer and computer itself. Never pass customer_id, customer_name or computer_id — requested_by and tech name the TECHNICIAN, not the customer, and reusing either as a customer_id fails link validation with CustomerNotFound. If it reports a link problem anyway, call validate_connection_links with the connection_string alone and report what it says. Pass service_number too when you know it: the session links to that order's task, and a task is created (assigned to requested_by) when the order has none.
   2a. session_unlinked on create means your records would carry no task. As soon as the service number is known (the request, get_service_order, the technician), call ensure_service_task {service_number, connection_string, requested_by} BEFORE producing records. It returns the existing task or creates it, links the session and claims the records already made.
   3. driver_snapshot_take {label:'intake'} — baseline the driver inventory.
   4. minidump_analyze {connection_string} — triage all dumps; sightings auto-link to the open session. The result carries a fleet block (prior verdicts, known-bad hits) and warnings. Each dump carries already_recorded; a repeat pass acts only on the dumps marked false (new_dump_names).
