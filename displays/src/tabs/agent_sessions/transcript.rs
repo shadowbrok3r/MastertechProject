@@ -423,6 +423,12 @@ pub(crate) fn chat_line(ev: &AgentEvent) -> Option<String> {
             };
             Some(line("shell", head.trim(), &status, rest))
         }
+        "file_change" => {
+            let changes = ev.item.as_ref().and_then(|i| i.get("changes")).and_then(Value::as_array);
+            let paths: Vec<&str> = changes.into_iter().flatten().filter_map(|c| c.get("path").and_then(Value::as_str)).collect();
+            let diffs: Vec<&str> = changes.into_iter().flatten().filter_map(|c| c.get("diff").and_then(Value::as_str)).collect();
+            Some(line("edit", &paths.join(", "), "", &diffs.join("\n")))
+        }
         _ => None,
     }
 }
@@ -663,6 +669,13 @@ mod tests {
             chat_line(&cmd).as_deref(),
             Some("shell ($ ls) exit 2\nfile.txt")
         );
+        let edit = event(
+            "file_change",
+            "file changes",
+            true,
+            Some(json!({"changes": [{"path": "a.rs", "diff": "+x"}, {"path": "b.rs", "diff": "-y"}]})),
+        );
+        assert_eq!(chat_line(&edit).as_deref(), Some("edit (a.rs, b.rs)\n+x\n-y"));
         assert_eq!(chat_line(&event("agent", "hi", true, None)), None);
     }
 }

@@ -248,6 +248,12 @@ pub struct EnhancedAiPlayground {
     /// Whether the signed-in user was last seen as an active Root.
     #[serde(skip)]
     viewer_root: bool,
+    /// The signed-in user's record, as last seen.
+    #[serde(skip)]
+    viewer_id: Option<RecordId>,
+    /// Whether a technician's list includes other technicians' agent sessions.
+    #[serde(skip)]
+    show_everyone: bool,
     /// Session list search text.
     #[serde(skip)]
     list_filter: String,
@@ -315,6 +321,8 @@ impl Default for EnhancedAiPlayground {
             #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
             zeroclaw: Default::default(),
             viewer_root: false,
+            viewer_id: None,
+            show_everyone: false,
             list_filter: String::new(),
             show_closed: false,
         }
@@ -366,7 +374,19 @@ impl EnhancedAiPlayground {
     /// Caches whether the signed-in user is an active Root; keeps the last answer while the user lock is busy.
     fn refresh_viewer(&mut self) {
         if let Some(viewer) = ApprovalViewer::signed_in() {
-            self.viewer_root = viewer.is_some_and(|v| v.root);
+            self.viewer_root = viewer.as_ref().is_some_and(|v| v.root);
+            self.viewer_id = viewer.map(|v| v.id);
+        }
+    }
+
+    /// Who the open session's user rows are from: "You" in the viewer's own session, otherwise its requester.
+    fn user_label(&self) -> String {
+        let Some(row) = self.open_row.as_ref().filter(|r| r.id.key_string() == self.selected_thread) else {
+            return "You".to_string();
+        };
+        match (&row.assignee, &self.viewer_id) {
+            (Some(owner), Some(me)) if owner != me => row.requested_by.clone().unwrap_or_else(|| "Technician".to_string()),
+            _ => "You".to_string(),
         }
     }
 
@@ -521,6 +541,7 @@ impl EnhancedAiPlayground {
                         let prompt = database::schema::agent_turn::APPROVALS_PROMPT.to_string();
                         self.ask_agent(&row.id, "approvals", prompt, Vec::new());
                     }
+                    session_details(ui, &row);
                 });
         }
 
@@ -688,10 +709,11 @@ impl EnhancedAiPlayground {
         });
     }
 
-    /// The search box and closed-session toggle above the session list.
+    /// The search box above the session list, with the closed-session toggle and, for a technician, the everyone toggle.
     fn list_search(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            let toggle_w = ui.spacing().interact_size.y + ui.spacing().item_spacing.x;
+            let toggles = if self.viewer_root { 1.0 } else { 2.0 };
+            let toggle_w = toggles * (ui.spacing().interact_size.y + ui.spacing().item_spacing.x);
             ui.add(
                 TextEdit::singleline(&mut self.list_filter)
                     .hint_text(format!("{} Search", icons::SEARCH))
@@ -699,6 +721,12 @@ impl EnhancedAiPlayground {
             );
             let tip = if self.show_closed { "Hide closed sessions" } else { "Show closed sessions" };
             ui.toggle_value(&mut self.show_closed, icons::ARCHIVE).on_hover_text(tip);
+            if !self.viewer_root {
+                let tip = if self.show_everyone { "Show only your sessions" } else { "Show every technician's sessions" };
+                if ui.toggle_value(&mut self.show_everyone, icons::EVERYONE).on_hover_text(tip).changed() {
+                    self.last_index_poll = None;
+                }
+            }
         });
     }
 
@@ -773,6 +801,10 @@ impl EnhancedAiPlayground {
                             pick.rename = Some(key.clone());
                             ui.close();
                         }
+                        if t.is_open() && may_steer(t) && ui.button(format!("{} Close session", icons::CLOSE)).clicked() {
+                            pick.close = Some(key.clone());
+                            ui.close();
+                        }
                     });
                 }
                 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
@@ -795,6 +827,10 @@ impl EnhancedAiPlayground {
             self.renaming = None;
             self.zeroclaw.select(item);
             return;
+        }
+        if let Some(key) = pick.close {
+            self.ask_agent(&RecordId::new("agent_thread", key.as_str()), "close", String::new(), Vec::new());
+            self.last_index_poll = None;
         }
         let mut picked = pick.picked;
         if let Some(id) = pick.rename {
@@ -951,7 +987,7 @@ impl EnhancedAiPlayground {
             ui.vertical_centered(|ui| {
                 ui.add_space(120.);
                 ui.label(RichText::new(format!("{}", icons::CHAT)).size(40.).weak());
-                if self.self_diagnosis {
+                if self.self_diagnosis && cfg!(not(target_arch = "wasm32")) {
                     ui.heading(RichText::new("Diagnose this computer").strong());
                     ui.label(
                         RichText::new("Ask about the PC Mastertech is running on. The Codex agent inspects it with the Mastertech tools; anything that would run a command here waits for a technician's approval.")
@@ -968,10 +1004,11 @@ impl EnhancedAiPlayground {
         let style = ChatStyle::from_ui(ui);
         let scope = Id::new(("ai_chat_rows", self.selected_thread.as_str()));
         let now = Local::now();
+        let user = self.user_label();
         ScrollArea::vertical()
             .auto_shrink([false, false])
             .stick_to_bottom(true)
-            .show(ui, |ui| chat_rows(ui, &style, scope, &now, &messages));
+            .show(ui, |ui| chat_rows(ui, &style, scope, &now, &messages, &user));
     }
 
     /// Kicks off a one-time load of the user's persisted chat threads.
@@ -1603,31 +1640,46 @@ impl EnhancedAiPlayground {
         ui.ctx().request_repaint_after(EVERY);
 
         let tx = self.agent_index_tx.clone();
+        let everyone = self.show_everyone;
         PlatformSpawner::spawn(async move {
             use database::schema::{AgentThread, User, UserAuthorization};
-            // Scope is derived here, not passed in: a stale cached flag would
-            // widen what a technician can read.
+            // Root is derived here, not passed in: a stale cached flag would
+            // widen what a technician sees without their asking.
             let me = User::get_current_user_from_auth().await.ok().flatten();
             let root = me
                 .as_ref()
                 .is_some_and(|u| u.get_authorization() == UserAuthorization::Root);
-            let scope = if root { None } else { me.as_ref().map(|u| u.get_email().to_string()) };
-            // A signed-out client scopes to nobody rather than to everybody.
-            if !root && scope.is_none() {
+            // A signed-out client lists nobody's sessions rather than everybody's.
+            let Some(me) = me else {
                 let _ = tx.try_send(Vec::new());
                 return;
-            }
+            };
+            let scope = (!root && !everyone).then(|| (me.get_email().to_string(), me.get_id()));
             match AgentThread::list_recent(200, true).await {
                 Ok(threads) => {
                     let index: Vec<AgentThread> = threads
                         .into_iter()
-                        .filter(|t| scope.as_deref().is_none_or(|me| t.requested_by.as_deref() == Some(me)))
+                        .filter(|t| {
+                            scope.as_ref().is_none_or(|(email, id)| {
+                                t.requested_by.as_deref() == Some(email.as_str()) || t.assignee.as_ref() == Some(id)
+                            })
+                        })
                         .collect();
                     let _ = tx.try_send(index);
                 }
                 Err(e) => log::warn!("poll_agent_index: {e}"),
             }
         });
+    }
+
+    /// Opens the agent session `thread`, listing closed sessions when it is no longer open.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    pub fn open_session(&mut self, thread: &RecordId, is_open: bool) {
+        if !is_open {
+            self.show_closed = true;
+        }
+        self.last_index_poll = None;
+        self.open_agent_thread(thread.key_string());
     }
 
     /// Opens a conversation from the index, backfilling both sides on first view.
@@ -1695,7 +1747,10 @@ impl EnhancedAiPlayground {
                 let (from, content) = match row.kind.as_str() {
                     "agent" => (SentFrom::Assistant, ChatMessageType::Text(row.text.clone())),
                     "error" => (SentFrom::Assistant, ChatMessageType::Error(row.text.clone())),
-                    "tool_call" | "command" => (
+                    "reasoning" if !row.text.trim().is_empty() => {
+                        (SentFrom::Assistant, ChatMessageType::Reasoning(row.text.clone()))
+                    }
+                    "tool_call" | "command" | "file_change" => (
                         SentFrom::Assistant,
                         ChatMessageType::Text(format!(
                             "{TOOL_PREFIX}{}",
@@ -1811,6 +1866,19 @@ fn composer_id(thread: &str) -> Id {
     Id::new(("enhanced_ai_composer", thread))
 }
 
+/// The session's requester, machine and model on one line, and its last error when it has one.
+fn session_details(ui: &mut Ui, row: &AgentThread) {
+    let mut line = format!("{} \u{00b7} {}", row.requested_by.as_deref().unwrap_or("unattributed"), row.connection_string);
+    if let Some(model) = row.model.as_deref().filter(|m| !m.trim().is_empty()) {
+        line.push_str(&format!(" \u{00b7} {model}"));
+    }
+    ui.add(eframe::egui::Label::new(RichText::new(line).small().weak()).truncate());
+    if let Some(error) = row.error.as_deref().filter(|e| !e.trim().is_empty()) {
+        let text = RichText::new(format!("{} {error}", icons::STATUS_ERR)).small().color(crate::ui_tools::theme::error(ui));
+        ui.add(eframe::egui::Label::new(text).truncate()).on_hover_text(error);
+    }
+}
+
 /// Whether the signed-in user is `row`'s technician or an active Root.
 fn may_steer(row: &AgentThread) -> bool {
     ApprovalViewer::signed_in().flatten().is_some_and(|v| v.may_steer(row.assignee.as_ref()))
@@ -1821,6 +1889,8 @@ fn may_steer(row: &AgentThread) -> bool {
 struct ThreadPick {
     picked: Option<String>,
     rename: Option<String>,
+    /// An agent session to close.
+    close: Option<String>,
     #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
     zeroclaw: Option<crate::tabs::zeroclaw::ZeroClawPick>,
 }
@@ -1863,13 +1933,14 @@ fn picture_name(message: &ChatMessage) -> Option<&str> {
     }
 }
 
-/// Draws a thread's messages, folding tool-line runs into one row and trailing pictures into their message.
+/// Draws a thread's messages, folding tool-line runs into one row and trailing pictures into their message; `user` labels the user rows.
 fn chat_rows(
     ui: &mut Ui,
     style: &ChatStyle,
     scope: Id,
     now: &DateTime<Local>,
     messages: &[ChatMessage],
+    user: &str,
 ) {
     let mut i = 0;
     while i < messages.len() {
@@ -1889,7 +1960,7 @@ fn chat_rows(
                 .filter_map(picture_name)
                 .map(str::to_string)
                 .collect();
-            chat_message(ui, style, scope, now, &messages[i], &pictures);
+            chat_message(ui, style, scope, now, &messages[i], &pictures, user);
             i = end;
         }
     }
@@ -1908,6 +1979,7 @@ fn chat_message(
     now: &DateTime<Local>,
     message: &ChatMessage,
     pictures: &[String],
+    user: &str,
 ) {
     let time = message_time(message.ts, now);
     let key = message.id.as_str();
@@ -1958,7 +2030,7 @@ fn chat_message(
             }
             match message.from {
                 SentFrom::Me => {
-                    ChatRow::new(ChatKind::User, key, "You")
+                    ChatRow::new(ChatKind::User, key, user)
                         .time(time)
                         .copy(text)
                         .has_body(!text.trim().is_empty() || !pictures.is_empty())
@@ -2640,7 +2712,7 @@ mod tests {
             let mut size = vec2(0.0, 0.0);
             let mut out = ctx.run_ui(input, |ui| {
                 ScrollArea::vertical().show(ui, |ui| {
-                    chat_rows(ui, &ChatStyle::from_ui(ui), scope, &now, &messages);
+                    chat_rows(ui, &ChatStyle::from_ui(ui), scope, &now, &messages, "You");
                     size = ui.min_rect().size();
                 });
             });

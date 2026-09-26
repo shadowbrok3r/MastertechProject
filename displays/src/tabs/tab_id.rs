@@ -34,7 +34,6 @@ pub enum TabId {
     Terminal,
     ShopifyOrders,
     ServerConsole,
-    AgentSessions,
     AgentAudit,
     AiAnalytics,
     SessionBoard,
@@ -77,6 +76,7 @@ const MT_SERVER_WASM: &[TabId] = &[
     TabId::Inventory,
     TabId::TaskAudit,
     TabId::Threads,
+    TabId::Ai,
     TabId::BugReport,
     TabId::FileBrowser,
     TabId::Logs,
@@ -119,7 +119,6 @@ const MT_NATIVE: &[TabId] = &[
     TabId::StressTest,
     TabId::Terminal,
     TabId::ServerConsole,
-    TabId::AgentSessions,
     TabId::AgentAudit,
     TabId::AiAnalytics,
     TabId::SessionBoard,
@@ -181,7 +180,6 @@ impl TabId {
             Self::Terminal => "terminal",
             Self::ShopifyOrders => "shopify_orders",
             Self::ServerConsole => "server_console",
-            Self::AgentSessions => "agent_sessions",
             Self::AgentAudit => "agent_audit",
             Self::AiAnalytics => "ai_analytics",
         }
@@ -229,7 +227,6 @@ impl TabId {
             Self::Terminal => "Terminal",
             Self::ShopifyOrders => "Shopify Orders",
             Self::ServerConsole => "Server Console",
-            Self::AgentSessions => "Agent Sessions",
             Self::AgentAudit => "Agent Audit",
             Self::AiAnalytics => "AI Analytics",
         }
@@ -272,7 +269,7 @@ impl TabId {
             "My Tasks" => Some(Self::MyTasks),
             "Completed Tasks" => Some(Self::CompletedTasks),
             "Bug Tracker" | "Bug Report" | "BugReport" => Some(Self::BugReport),
-            "Websockets" | "Scene Editor" | "Web Console" | "ZeroClaw" => None,
+            "Websockets" | "Scene Editor" | "Web Console" | "ZeroClaw" | "Agent Sessions" => None,
             "Downloads" => Some(Self::Downloads),
             "Task Audit" | "TaskAudit" => Some(Self::TaskAudit),
             "Inventory" => Some(Self::Inventory),
@@ -293,7 +290,6 @@ impl TabId {
             "Terminal" => Some(Self::Terminal),
             "Shopify Orders" => Some(Self::ShopifyOrders),
             "Server Console" => Some(Self::ServerConsole),
-            "Agent Sessions" => Some(Self::AgentSessions),
             "Agent Audit" => Some(Self::AgentAudit),
             "AI Analytics" => Some(Self::AiAnalytics),
             _ => None,
@@ -302,7 +298,7 @@ impl TabId {
 
     fn from_slug(s: &str) -> Option<Self> {
         match s {
-            "websockets" | "scene_editor" | "web_console" | "zeroclaw" | "zero_claw" => None,
+            "websockets" | "scene_editor" | "web_console" | "zeroclaw" | "zero_claw" | "agent_sessions" => None,
             "tur_sheet" => Some(Self::TurSheet),
             "part_order" => Some(Self::PartOrder),
             "koth" => Some(Self::Koth),
@@ -336,7 +332,6 @@ impl TabId {
             "terminal" => Some(Self::Terminal),
             "shopify_orders" => Some(Self::ShopifyOrders),
             "server_console" => Some(Self::ServerConsole),
-            "agent_sessions" => Some(Self::AgentSessions),
             "agent_audit" => Some(Self::AgentAudit),
             "ai_analytics" => Some(Self::AiAnalytics),
             _ => None,
@@ -412,12 +407,14 @@ mod tab_id_tests {
         );
     }
 
-    /// The ZeroClaw tab moved into the Ai tab, so layouts that still name it drop the pane.
+    /// The ZeroClaw and Agent Sessions tabs moved into the Ai tab, so layouts that still name them drop the pane.
     #[test]
-    fn the_retired_zeroclaw_tab_is_dropped_from_old_layouts() {
-        for name in ["zeroclaw", "zero_claw", "ZeroClaw"] {
+    fn the_retired_agent_tabs_are_dropped_from_old_layouts() {
+        for name in ["zeroclaw", "zero_claw", "ZeroClaw", "agent_sessions", "Agent Sessions"] {
             assert_eq!(TabId::from_legacy_title(name), None, "{name}");
         }
-        assert!(!TabId::visible_for(TabContext::MastertechNative).iter().any(|t| t.slug() == "zeroclaw"));
+        for slug in ["zeroclaw", "agent_sessions"] {
+            assert!(!TabId::visible_for(TabContext::MastertechNative).iter().any(|t| t.slug() == slug), "{slug}");
+        }
     }
 }

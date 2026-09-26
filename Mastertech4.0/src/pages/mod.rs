@@ -45,9 +45,9 @@ impl MasterTechApp {
         }
 
         if let Some(request) = displays::ui_data::agent_session_notify::take_open_request() {
-            self.context.shared_ctx.agent_sessions.open(request.thread, request.is_open);
-            self.context.pending_tab_opens.push(TabId::AgentSessions);
-            self.context.pending_activate_tab = Some(TabId::AgentSessions);
+            self.context.shared_ctx.enhanced_ai_playground.open_session(&request.thread, request.is_open);
+            self.context.pending_tab_opens.push(TabId::Ai);
+            self.context.pending_activate_tab = Some(TabId::Ai);
         }
 
         for tab in std::mem::take(&mut self.context.pending_tab_opens) {

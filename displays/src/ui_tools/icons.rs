@@ -18,6 +18,7 @@ pub const PIN: &str = p::PUSH_PIN;
 pub const UNPIN: &str = p::PUSH_PIN_SLASH;
 pub const AUTOMATION: &str = p::CLOCK_CLOCKWISE;
 pub const SIDEBAR: &str = p::SIDEBAR_SIMPLE;
+pub const EVERYONE: &str = p::USERS;
 pub const SNOOZE: &str = p::ALARM;
 pub const MORNING_BRIEF: &str = p::SUN_HORIZON;
 pub const SCHEDULE: &str = p::CALENDAR_CHECK;

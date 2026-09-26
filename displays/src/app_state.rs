@@ -414,10 +414,6 @@ pub struct SharedContext {
     /// Root-only view of the axum orchestrator's recorded requests.
     #[serde(skip)]
     pub server_console: ServerConsole,
-    /// ZeroClaw agent turns rendered as transcripts.
-    #[serde(skip)]
-    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
-    pub agent_sessions: crate::tabs::agent_sessions::AgentSessions,
     /// ZeroClaw webhook-audit tool-call trail; fetched only while drawn.
     #[serde(skip)]
     pub agent_audit: crate::tabs::agent_audit::AgentAudit,
@@ -833,8 +829,6 @@ impl SharedContext {
             #[cfg(not(target_arch = "wasm32"))]
             session_board: Default::default(),
             server_console: ServerConsole::default(),
-            #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
-            agent_sessions: Default::default(),
             agent_audit: Default::default(),
             agent_approvals: Default::default(),
             agent_notify: Default::default(),
