@@ -222,7 +222,7 @@ impl AgentApprovalQueue {
 
             ui.add_space(10.0);
             ui.separator();
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.add_enabled_ui(!busy, |ui| {
                     if is_question {
                         if ui.button(RichText::new(format!("{} Answer", icons::CHECK)).color(theme::success(ui))).clicked() {
@@ -240,6 +240,19 @@ impl AgentApprovalQueue {
                             ui.add_space(4.0);
                             if ui.button(format!("{} Approve for this session", icons::CHECK)).clicked() {
                                 decision = Some(("accepted_for_session", None, None));
+                            }
+                        }
+                        if req.may_approve_all() {
+                            ui.add_space(4.0);
+                            let label = RichText::new(format!("{} Approve ALL for this session", icons::APPROVE_ALL))
+                                .color(theme::warn(ui))
+                                .strong();
+                            if ui
+                                .button(label)
+                                .on_hover_text("Run every tool call this agent makes on this machine without asking, until the session closes or you turn prompts back on")
+                                .clicked()
+                            {
+                                decision = Some((database::schema::agent_approval::ACCEPTED_ALL_FOR_SESSION, None, None));
                             }
                         }
                         ui.add_space(6.0);

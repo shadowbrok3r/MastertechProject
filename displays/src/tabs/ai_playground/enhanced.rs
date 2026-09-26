@@ -414,6 +414,10 @@ impl EnhancedAiPlayground {
                     if agent_chat::context_bar(ui, &row) {
                         self.ask_agent(&row.id, "compact", String::new(), Vec::new());
                     }
+                    if agent_chat::approve_all_chip(ui, &row) {
+                        let prompt = database::schema::agent_turn::APPROVALS_PROMPT.to_string();
+                        self.ask_agent(&row.id, "approvals", prompt, Vec::new());
+                    }
                 });
         }
 

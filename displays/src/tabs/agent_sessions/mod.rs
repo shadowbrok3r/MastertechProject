@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use crossbeam::channel::{Receiver, Sender};
 use database::live_data::{listen_data_filtered, Action};
+use database::schema::agent_turn::APPROVALS_PROMPT;
 use database::schema::{AgentEvent, AgentThread, AgentTurn, QueuedTurn, RecordId, RecordIdExt, TurnImage};
 use eframe::egui::{self, Align, Id, Layout, RichText, ScrollArea, TextEdit, Ui, vec2};
 use futures::future::AbortHandle;
@@ -627,6 +628,9 @@ impl AgentSessions {
         });
         if agent_chat::context_bar(ui, &thread) {
             self.send_turn("compact");
+        }
+        if agent_chat::approve_all_chip(ui, &thread) {
+            self.ask(thread.id.clone(), "approvals", APPROVALS_PROMPT.to_string(), Vec::new());
         }
         if let Some(err) = thread.error.as_deref().filter(|e| !e.is_empty()) {
             ui.label(RichText::new(format!("{} {err}", icons::STATUS_ERR)).color(theme::error(ui)).small());

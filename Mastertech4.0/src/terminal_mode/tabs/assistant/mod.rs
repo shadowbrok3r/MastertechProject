@@ -539,6 +539,10 @@ impl<'a> AssistantTab<'a> {
                 self.decide(req.id.clone(), "declined", (!typed.is_empty()).then_some(typed), None);
                 true
             }
+            KeyCode::Char('a') if ctrl && typed.is_empty() && req.may_approve_all() => {
+                self.decide(req.id.clone(), database::schema::agent_approval::ACCEPTED_ALL_FOR_SESSION, None, None);
+                true
+            }
             _ if ctrl || !typed.is_empty() => false,
             KeyCode::Char('y') => {
                 self.decide(req.id.clone(), "accepted", None, None);
@@ -593,6 +597,12 @@ impl<'a> AssistantTab<'a> {
                 wrap::clip(&format!("[y] approve{session}  [n] decline  [Ctrl+N] decline with the typed note  [x] stop agent  [Esc] later"), width),
                 warn,
             )));
+            if req.may_approve_all() {
+                keys.push(Line::from(Span::styled(
+                    wrap::clip("[Ctrl+A] approve ALL tool calls for this session, until it closes or prompts are turned back on", width),
+                    warn,
+                )));
+            }
             keys.push(Line::from(Span::styled(expires, muted)));
         }
         if busy {
