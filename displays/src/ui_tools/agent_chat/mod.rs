@@ -159,6 +159,28 @@ pub fn context_bar(ui: &mut Ui, thread: &AgentThread, compactable: bool) -> bool
     compact
 }
 
+/// A warning while every tool call runs without asking, with an Ask again button; true when pressed.
+pub fn approve_all_chip(ui: &mut Ui, thread: &AgentThread) -> bool {
+    if !thread.is_open() || !thread.approves_all() {
+        return false;
+    }
+    let mut ask_again = false;
+    ui.horizontal_wrapped(|ui| {
+        ui.label(
+            RichText::new(format!("{} Approving all tool calls", icons::UNLOCKED))
+                .small()
+                .strong()
+                .color(theme::warn(ui)),
+        )
+        .on_hover_text("Every tool call the agent makes on this machine runs without asking");
+        ask_again = ui
+            .small_button(format!("{} Ask again", icons::LOCK))
+            .on_hover_text("Ask the technician before each gated tool call again")
+            .clicked();
+    });
+    ask_again
+}
+
 /// What the technician did with the queue strip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueueAction {
