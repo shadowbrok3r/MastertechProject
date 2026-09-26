@@ -3312,8 +3312,8 @@ pub struct RemoteExecStartParams {
     pub reason: String,
     #[schemars(description = "Interpreter: 'powershell' (default), 'pwsh', or 'cmd'")]
     pub shell: Option<String>,
-    #[schemars(description = "Risk tier: 'read' (default, changes nothing), 'mutate' (reversible change), 'destructive' (removes data or changes boot/driver/security state)")]
-    pub risk: Option<String>,
+    #[schemars(description = "REQUIRED risk tier: 'read' (changes nothing — reads state only), 'mutate' (reversible change), or 'destructive' (removes data or changes boot/driver/security state). No default: declare it honestly, because it is recorded on the job. A 'read' job whose script contains a state-changing command is refused.")]
+    pub risk: String,
     #[schemars(description = "Working directory for the process")]
     pub cwd: Option<String>,
     #[schemars(description = "Extra environment variables as a JSON object, e.g. {\"KEY\":\"value\"}")]
@@ -3324,6 +3324,8 @@ pub struct RemoteExecStartParams {
     pub timeout_secs: Option<u64>,
     #[schemars(description = "Discard captured output instead of buffering it. Use when the script handles credentials.")]
     pub redact: Option<bool>,
+    #[schemars(description = "Who the script runs as: 'elevated' (default — the client's own admin token) or 'user' (the interactive signed-in user, non-elevated). Use 'user' to launch user-facing apps (OneDrive, Teams, browsers): those refuse to run elevated. The server wraps a 'user' job as a one-shot scheduled task on the client, so no client update is needed.")]
+    pub run_as: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
@@ -3621,6 +3623,241 @@ fn parse_risk(s: Option<&str>) -> Result<crate::remote_exec::RiskTier, ErrorData
             "unknown risk {other:?}; use 'read', 'mutate' or 'destructive'"
         ))),
     }
+}
+
+/// PowerShell that runs `payload` as the interactive signed-in user (non-elevated)
+/// via a one-shot scheduled task, captures its output and exit code, and cleans up.
+/// Parses under Windows PowerShell 5.1 (no PS7-only syntax); the RunLevel is
+/// `Limited`, PS 5.1's name for the non-elevated principal.
+fn user_run_wrapper(payload: &str, wait_secs: u64) -> String {
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(payload.as_bytes());
+    USER_RUN_WRAPPER_TEMPLATE
+        .replace("__PAYLOAD_B64__", &b64)
+        .replace("__WAIT_SECS__", &wait_secs.to_string())
+}
+
+const USER_RUN_WRAPPER_TEMPLATE: &str = r#"$ErrorActionPreference = 'Stop'
+$start0 = Get-Date
+$rand = [System.IO.Path]::GetRandomFileName().Replace('.','').Substring(0,8)
+$base = Join-Path $env:TEMP ('mtech_userrun_' + $rand)
+$payload = $base + '_payload.ps1'
+$runner = $base + '_runner.ps1'
+$outFile = $base + '_out.txt'
+$errFile = $base + '_err.txt'
+$codeFile = $base + '_code.txt'
+$taskName = 'MTech_UserRun_' + $rand
+
+$bytes = [Convert]::FromBase64String('__PAYLOAD_B64__')
+[System.IO.File]::WriteAllBytes($payload, $bytes)
+
+$user = $null
+try {
+    $ex = Get-CimInstance Win32_Process -Filter "Name = 'explorer.exe'" | Select-Object -First 1
+    if ($ex) {
+        $o = Invoke-CimMethod -InputObject $ex -MethodName GetOwner
+        if ($o.User) {
+            if ($o.Domain) { $user = ('' + $o.Domain + '\' + $o.User) } else { $user = $o.User }
+        }
+    }
+} catch { }
+if (-not $user) {
+    try { $cs = (Get-CimInstance Win32_ComputerSystem).UserName; if ($cs) { $user = $cs } } catch { }
+}
+if (-not $user) {
+    Write-Output 'run_as user: no interactive user is signed in; cannot launch as the signed-in user.'
+    Remove-Item $payload -Force -ErrorAction SilentlyContinue
+    exit 2
+}
+Write-Output ('run_as user: launching as ' + $user)
+
+$q = [char]34
+$nl = [System.Environment]::NewLine
+$inner = '& powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ' + $q + $payload + $q + ' > ' + $q + $outFile + $q + ' 2> ' + $q + $errFile + $q + $nl
+$inner = $inner + 'Set-Content -LiteralPath ' + $q + $codeFile + $q + ' -Value $LASTEXITCODE'
+Set-Content -LiteralPath $runner -Value $inner -Encoding ASCII
+
+foreach ($f in @($payload, $runner, $outFile, $errFile, $codeFile)) {
+    if (-not (Test-Path $f)) { Set-Content -LiteralPath $f -Value '' -Encoding ASCII }
+    & icacls $f /grant ($user + ':(M)') | Out-Null
+}
+
+$arg = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ' + $q + $runner + $q
+$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arg
+$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+try {
+    Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Force -ErrorAction Stop | Out-Null
+} catch {
+    Write-Output ('run_as user: failed to register the scheduled task: ' + $_.Exception.Message)
+    Remove-Item $payload, $runner, $outFile, $errFile, $codeFile -Force -ErrorAction SilentlyContinue
+    exit 3
+}
+
+$started = $false
+try { Start-ScheduledTask -TaskName $taskName -ErrorAction Stop; $started = $true }
+catch { Write-Output ('run_as user: failed to start the scheduled task: ' + $_.Exception.Message) }
+
+$deadline = (Get-Date).AddSeconds(__WAIT_SECS__)
+$done = $false
+$loops = 0
+while ($started -and ((Get-Date) -lt $deadline)) {
+    Start-Sleep -Milliseconds 500
+    $loops = $loops + 1
+    $state = 'Unknown'
+    try { $state = (Get-ScheduledTask -TaskName $taskName -ErrorAction Stop).State } catch { }
+    if (($state -eq 'Ready') -or ($state -eq 'Disabled')) { $done = $true; break }
+    if (($loops % 30) -eq 0) { Write-Output ('run_as user: waiting (' + [int]((Get-Date) - $start0).TotalSeconds + 's)') }
+}
+
+if (Test-Path $outFile) {
+    $out = Get-Content -LiteralPath $outFile -Raw -ErrorAction SilentlyContinue
+    if ($out) { Write-Output '----- stdout -----'; Write-Output $out }
+}
+if (Test-Path $errFile) {
+    $err = Get-Content -LiteralPath $errFile -Raw -ErrorAction SilentlyContinue
+    if ($err) { Write-Output '----- stderr -----'; Write-Output $err }
+}
+$code = ''
+if (Test-Path $codeFile) { $code = (Get-Content -LiteralPath $codeFile -Raw -ErrorAction SilentlyContinue) }
+if ($code) { $code = $code.Trim() }
+if (-not $done) { Write-Output 'run_as user: timed out waiting for the task to finish (it may still be running).' }
+Write-Output ('----- exit code: ' + $code + ' -----')
+
+try { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue } catch { }
+Remove-Item $payload, $runner, $outFile, $errFile, $codeFile -Force -ErrorAction SilentlyContinue
+"#;
+
+/// PowerShell cmdlets that change state, as (lowercase key, display name).
+const STATE_CHANGING_CMDLETS: &[(&str, &str)] = &[
+    ("remove-item", "Remove-Item"),
+    ("set-acl", "Set-Acl"),
+    ("set-itemproperty", "Set-ItemProperty"),
+    ("new-itemproperty", "New-ItemProperty"),
+    ("remove-itemproperty", "Remove-ItemProperty"),
+    ("new-item", "New-Item"),
+    ("move-item", "Move-Item"),
+    ("rename-item", "Rename-Item"),
+    ("stop-process", "Stop-Process"),
+    ("start-process", "Start-Process"),
+    ("restart-service", "Restart-Service"),
+    ("stop-service", "Stop-Service"),
+    ("start-service", "Start-Service"),
+    ("set-service", "Set-Service"),
+    ("register-scheduledtask", "Register-ScheduledTask"),
+    ("unregister-scheduledtask", "Unregister-ScheduledTask"),
+    ("set-executionpolicy", "Set-ExecutionPolicy"),
+];
+
+/// Verb prefixes whose every cmdlet changes state.
+const STATE_CHANGING_VERB_PREFIXES: &[&str] =
+    &["disable-", "enable-", "uninstall-", "install-", "clear-"];
+
+/// Splits a shell line into whitespace/operator-delimited tokens.
+fn tokenize_shell(s: &str) -> Vec<String> {
+    s.split(|c: char| {
+        c.is_whitespace() || matches!(c, ';' | '|' | '&' | '(' | ')' | ',' | '{' | '}' | '`' | '"' | '\'')
+    })
+    .filter(|t| !t.is_empty())
+    .map(|t| t.to_string())
+    .collect()
+}
+
+/// A path a read-tier probe may write scratch output to.
+fn is_scratch_write_path(statement_lower: &str) -> bool {
+    statement_lower.contains("$env:temp")
+        || statement_lower.contains("%temp%")
+        || statement_lower.contains("\\programdata\\mtech")
+        || statement_lower.contains("/programdata/mtech")
+}
+
+/// A path a `Copy-Item -Force` should not overwrite from a read-tier job.
+fn is_system_path(token_lower: &str) -> bool {
+    token_lower.contains("\\windows\\")
+        || token_lower.contains("system32")
+        || token_lower.contains("\\program files")
+        || token_lower.starts_with("c:\\windows")
+        || token_lower.starts_with("hklm")
+        || token_lower.starts_with("hkey_local_machine")
+}
+
+/// Names every state-changing command in `script`. Empty means the script only
+/// reads state, so it may run at risk 'read'. Case-insensitive; PowerShell
+/// cmdlets match as whole tokens; writes to `$env:TEMP` or `C:\ProgramData\MTech`
+/// are treated as read-side scratch. Exposed so the approvals path can reuse it.
+pub fn state_changing_commands(script: &str) -> Vec<String> {
+    use std::collections::BTreeSet;
+    let mut hits: BTreeSet<String> = BTreeSet::new();
+
+    for statement in script.split(['\n', '\r', ';']) {
+        let lower = statement.to_ascii_lowercase();
+        let tokens = tokenize_shell(&lower);
+        let has_force = tokens.iter().any(|t| t.starts_with("-force"));
+        let touches_system = tokens.iter().any(|t| is_system_path(t));
+
+        for (i, tok) in tokens.iter().enumerate() {
+            let tok = tok.as_str();
+            if let Some((_, display)) = STATE_CHANGING_CMDLETS.iter().find(|(k, _)| *k == tok) {
+                hits.insert((*display).to_string());
+            }
+            if STATE_CHANGING_VERB_PREFIXES.iter().any(|p| tok.starts_with(*p) && tok.len() > p.len()) {
+                hits.insert(tok.to_string());
+            }
+            if tok == "copy-item" && has_force && touches_system {
+                hits.insert("Copy-Item -Force (system path)".to_string());
+            }
+            let next = tokens.get(i + 1).map(String::as_str);
+            match tok {
+                "takeown" | "takeown.exe" => { hits.insert("takeown".to_string()); }
+                "bcdedit" | "bcdedit.exe" => { hits.insert("bcdedit".to_string()); }
+                "diskpart" | "diskpart.exe" => { hits.insert("diskpart".to_string()); }
+                "format" | "format.exe" | "format.com" => { hits.insert("format".to_string()); }
+                "reg" | "reg.exe" if matches!(next, Some("add" | "delete" | "import")) => {
+                    hits.insert(format!("reg {}", next.unwrap()));
+                }
+                "sc" | "sc.exe" if matches!(next, Some("config" | "stop" | "start" | "delete")) => {
+                    hits.insert(format!("sc {}", next.unwrap()));
+                }
+                "net" | "net.exe" if matches!(next, Some("stop" | "start" | "user")) => {
+                    hits.insert(format!("net {}", next.unwrap()));
+                }
+                "schtasks" | "schtasks.exe"
+                    if tokens.iter().any(|t| matches!(t.as_str(), "/create" | "/delete" | "/change" | "/run")) =>
+                {
+                    hits.insert("schtasks (create/delete/change/run)".to_string());
+                }
+                "vssadmin" | "vssadmin.exe" if tokens.iter().any(|t| t.as_str() == "delete") => {
+                    hits.insert("vssadmin delete".to_string());
+                }
+                "wmic" | "wmic.exe" if tokens.iter().any(|t| matches!(t.as_str(), "delete" | "call")) => {
+                    hits.insert("wmic (delete/call)".to_string());
+                }
+                "icacls" | "icacls.exe"
+                    if tokens.iter().any(|t| {
+                        t.starts_with("/grant")
+                            || t.starts_with("/deny")
+                            || t.starts_with("/remove")
+                            || t.as_str() == "/reset"
+                            || t.starts_with("/setowner")
+                    }) =>
+                {
+                    hits.insert("icacls (grant/deny/remove/reset/setowner)".to_string());
+                }
+                _ => {}
+            }
+        }
+
+        if !is_scratch_write_path(&lower) {
+            for (needle, display) in
+                [("out-file", "Out-File"), ("set-content", "Set-Content"), ("add-content", "Add-Content")]
+            {
+                if tokens.iter().any(|t| t.as_str() == needle) {
+                    hits.insert(display.to_string());
+                }
+            }
+        }
+    }
+
+    hits.into_iter().collect()
 }
 
 fn parse_signal(s: &str) -> Result<crate::remote_exec::JobSignal, ErrorData> {
@@ -3972,8 +4209,10 @@ impl PluginToolProvider {
         name = "remote_exec_start",
         description = "Submit a shell job to a connected client and return immediately with its job_id. The client owns the process: it keeps running \
                        if the admin disconnects, and its exit code is real (not a proxy's guess). Poll with remote_exec_tail or block with remote_exec_wait. \
-                       Requires remote_exec_arm first. Scripts run elevated — the client process is requireAdministrator — so state a real reason; \
-                       risk 'destructive' additionally requires a non-empty reason and is recorded in the client's on-disk journal."
+                       Requires remote_exec_arm first. Scripts run elevated by default — the client process is requireAdministrator — so state a real reason; \
+                       risk 'destructive' additionally requires a non-empty reason and is recorded in the client's on-disk journal. \
+                       NEVER launch a user-facing app (OneDrive, Teams, a browser) elevated — it either refuses to start or runs with the wrong profile. \
+                       Pass run_as:'user' for those: the server relaunches the script as the interactive signed-in user via a scheduled task."
     )]
     async fn remote_exec_start(
         &self,
@@ -3982,8 +4221,26 @@ impl PluginToolProvider {
         if p.script.trim().is_empty() {
             return Err(to_internal("script is empty"));
         }
-        let shell = parse_shell(p.shell.as_deref())?;
-        let risk = parse_risk(p.risk.as_deref())?;
+        let run_as_user = match p.run_as.as_deref().map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+            None | Some("") | Some("elevated") | Some("admin") | Some("administrator") => false,
+            Some("user") | Some("interactive") => true,
+            Some(other) => {
+                return Err(to_internal(format!(
+                    "unknown run_as {other:?}; use 'elevated' (default) or 'user'"
+                )))
+            }
+        };
+        let risk = parse_risk(Some(&p.risk))?;
+        if matches!(risk, crate::remote_exec::RiskTier::Read) {
+            let changing = state_changing_commands(&p.script);
+            if !changing.is_empty() {
+                return Err(to_internal(format!(
+                    "risk is 'read' but the script contains state-changing command(s): {}. \
+                     Resubmit with risk 'mutate' or 'destructive'.",
+                    changing.join(", ")
+                )));
+            }
+        }
 
         let env: Vec<(String, String)> = p
             .env
@@ -4002,9 +4259,20 @@ impl PluginToolProvider {
             })
             .unwrap_or_default();
 
+        // run_as:'user' wraps the payload as a scheduled task under the interactive
+        // user; the wrapper is PowerShell, so the interpreter is forced regardless
+        // of `shell`, and it needs headroom under the job's own wall-clock cap.
+        let (shell, script) = if run_as_user {
+            let job_timeout = p.timeout_secs.unwrap_or(600);
+            let wait_secs = job_timeout.saturating_sub(20).max(30);
+            (crate::remote_exec::ShellKind::PowerShell, user_run_wrapper(&p.script, wait_secs))
+        } else {
+            (parse_shell(p.shell.as_deref())?, p.script)
+        };
+
         let spec = crate::remote_exec::RemoteJobSpec::Shell {
             shell,
-            script: p.script,
+            script,
             cwd: p.cwd,
             env,
             timeout_secs: p.timeout_secs,
@@ -12985,6 +13253,96 @@ mod remote_exec_tests {
         assert!(parse_risk(Some("yolo")).is_err());
         assert!(parse_signal("Kill").is_ok());
         assert!(parse_signal("sigterm").is_err());
+    }
+
+    #[test]
+    fn read_only_probes_have_no_state_changing_commands() {
+        let probes = [
+            "Get-ChildItem 'HKLM:\\SOFTWARE' | Select-Object PSChildName",
+            "Test-Path 'C:\\Windows\\System32\\drivers'; Get-Acl 'C:\\Users'",
+            "reg query 'HKLM\\SOFTWARE\\Microsoft\\Windows' /s",
+            "schtasks /query /fo LIST; icacls 'C:\\Users\\Public'",
+            "Get-CimInstance Win32_Process -Filter \"Name = 'OneDrive.exe'\" | Out-File $env:TEMP\\od.txt",
+            "Get-Process OneDrive; Get-Content C:\\ProgramData\\MTech\\probe.log -Tail 20",
+            "$acl = Get-Acl 'C:\\'; $acl.Access | Where-Object { $_.AccessControlType -eq 'Deny' }",
+        ];
+        for probe in probes {
+            let found = state_changing_commands(probe);
+            assert!(found.is_empty(), "probe wrongly flagged {found:?}: {probe}");
+        }
+    }
+
+    #[test]
+    fn the_acl_fix_and_relaunch_are_caught() {
+        let acl_fix = "icacls 'C:\\Users\\jane\\OneDrive' /grant 'jane:(OI)(CI)F' /T";
+        assert_eq!(
+            state_changing_commands(acl_fix),
+            vec!["icacls (grant/deny/remove/reset/setowner)".to_string()]
+        );
+
+        let set_acl = "$a = Get-Acl $p; $a.SetAccessRule($rule); Set-Acl -Path $p -AclObject $a";
+        assert!(state_changing_commands(set_acl).contains(&"Set-Acl".to_string()));
+
+        let relaunch = "Start-Process 'C:\\Program Files\\Microsoft OneDrive\\OneDrive.exe'";
+        assert!(state_changing_commands(relaunch).contains(&"Start-Process".to_string()));
+    }
+
+    #[test]
+    fn native_and_verb_mutations_are_caught() {
+        assert!(state_changing_commands("reg add HKCU\\Software\\X /v Y /d 1 /f")
+            .contains(&"reg add".to_string()));
+        assert!(state_changing_commands("sc config wuauserv start= disabled")
+            .contains(&"sc config".to_string()));
+        assert!(state_changing_commands("net stop WSearch").contains(&"net stop".to_string()));
+        assert!(state_changing_commands("schtasks /create /tn T /tr foo /sc onlogon")
+            .iter()
+            .any(|s| s.starts_with("schtasks")));
+        assert!(state_changing_commands("Disable-ScheduledTask -TaskName T")
+            .contains(&"disable-scheduledtask".to_string()));
+        assert!(state_changing_commands("takeown /f C:\\Windows\\x /r")
+            .contains(&"takeown".to_string()));
+        assert!(state_changing_commands("Set-Content C:\\Windows\\hosts 'x'")
+            .contains(&"Set-Content".to_string()));
+    }
+
+    #[test]
+    fn scratch_writes_and_read_switches_do_not_trip_the_guard() {
+        // Out-File to TEMP is how probes save output; not a mutation.
+        assert!(state_changing_commands("Get-Acl C:\\ | Out-File $env:TEMP\\acl.txt").is_empty());
+        // reg query / schtasks /query / icacls without a grant switch are read-only.
+        assert!(state_changing_commands("reg query HKLM\\SOFTWARE").is_empty());
+        assert!(state_changing_commands("schtasks /query /v").is_empty());
+        assert!(state_changing_commands("icacls C:\\Users\\Public").is_empty());
+        // Whole-word: a Remove-ItemProperty token is distinct from Remove-Item.
+        assert!(state_changing_commands("Get-ItemProperty HKLM:\\x").is_empty());
+    }
+
+    #[test]
+    fn the_user_run_wrapper_is_ps51_safe_and_embeds_the_payload() {
+        let payload = "Start-Process 'C:\\Program Files\\Microsoft OneDrive\\OneDrive.exe'";
+        let wrapper = user_run_wrapper(payload, 300);
+
+        // PS 5.1 principal: interactive, non-elevated, and named 'Limited'.
+        assert!(wrapper.contains("New-ScheduledTaskPrincipal"));
+        assert!(wrapper.contains("-LogonType Interactive"));
+        assert!(wrapper.contains("-RunLevel Limited"));
+        assert!(wrapper.contains("Register-ScheduledTask"));
+        assert!(wrapper.contains("Start-ScheduledTask"));
+        assert!(wrapper.contains("Unregister-ScheduledTask"));
+        assert!(wrapper.contains("300"), "the wait deadline must be substituted");
+
+        // The payload rides as base64 and is decoded on the client.
+        let b64 = base64::engine::general_purpose::STANDARD.encode(payload.as_bytes());
+        assert!(wrapper.contains(&b64));
+        assert!(wrapper.contains("FromBase64String"));
+        assert!(!wrapper.contains("__PAYLOAD_B64__"));
+
+        // No PowerShell 7-only syntax and no wrong RunLevel name.
+        assert!(!wrapper.contains("LeastPrivilege"));
+        assert!(!wrapper.contains("??"));
+        assert!(!wrapper.contains("?."));
+        assert!(!wrapper.contains(" ? "));
+        assert!(wrapper.is_ascii(), "the wrapper must be pure ASCII for PS 5.1's Windows-1252 read");
     }
 }
 
