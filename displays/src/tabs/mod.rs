@@ -133,12 +133,6 @@ impl egui_dock::TabViewer for SharedContext {
             TabId::ServerConsole => self.server_console.ui(ui),
             TabId::AgentAudit => self.agent_audit.ui(ui),
             TabId::AiAnalytics => self.ai_analytics.ui(ui),
-            #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
-            TabId::AgentSessions => self.agent_sessions.ui(ui),
-            #[cfg(not(any(target_arch = "wasm32", feature = "tokio")))]
-            TabId::AgentSessions => {
-                ui.label("Agent Sessions is available in the native build.");
-            }
             TabId::Ai => {
                 // No client is focused here, so chat lands in the agent's records-only session.
                 self.enhanced_ai_playground.self_diagnosis = true;
