@@ -87,7 +87,26 @@ fn machine_scope(out: &mut String, cfg: &Config, thread: &AgentThread) {
            reads you between jobs.\n\n",
         cfg.tool_timeout_secs
     ));
+    out.push_str(POWERSHELL_NOTES);
 }
+
+/// Windows PowerShell traps agent scripts have hit on customer machines.
+const POWERSHELL_NOTES: &str = "POWERSHELL ON THE MACHINE (remote_exec_start runs Windows PowerShell 5.1, elevated)\n\
+     - Check scripts_list before writing a probe: catalog scripts run without approval.\n\
+     - Write `${name}:` when a variable is followed by a colon inside a string; `\"$n: \"` parses as a \
+       drive-qualified variable and the whole script fails to parse.\n\
+     - Never give a helper function a one- or two-letter name: built-in aliases win over functions \
+       (`h` is Get-History, `r` is Invoke-History, and `gc`, `gi`, `ls`, `ps`, `sl` are taken).\n\
+     - `HKU:` is not a default drive. Read other users' hives through `Registry::HKEY_USERS\\<SID>\\...`; \
+       HKCU is the elevated account's hive, not the customer's.\n\
+     - Stay on 5.1 syntax: no `??`, `?.`, ternaries, `&&`/`||` chains or `ForEach-Object -Parallel`. \
+       Scheduled-task run levels are `Limited` and `Highest` (there is no `LeastPrivilege`).\n\
+     - Everything a script starts runs elevated. Launch user-facing apps (OneDrive, Teams, browsers) \
+       with `run_as: \"user\"`, never directly: OneDrive refuses to run with full administrator rights.\n\
+     - Set `risk` on every job: `read` changes nothing, `mutate` is a reversible change, `destructive` \
+       removes data or changes boot, driver or security state.\n\
+     - Tool output is cut to about 24,000 characters. Save long listings to a file under \
+       C:\\ProgramData\\MTech and read the part you need.\n\n";
 
 /// The exact `create_diagnostic_session` arguments for this machine, and when to call `ensure_service_task`.
 fn session_call(thread: &AgentThread, actor: &str) -> String {
