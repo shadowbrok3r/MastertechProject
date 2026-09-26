@@ -425,7 +425,7 @@ impl<'a> AssistantTab<'a> {
         self.set_note("asking for the agent\u{2026}");
         let tx = self.tx.clone();
         PlatformSpawner::spawn(async move {
-            let r = AssistRequest::create_from_chat(&cs, tech.as_deref(), store.as_deref(), None, &text)
+            let r = AssistRequest::create_from_chat(&cs, tech.as_deref(), store.as_deref(), None, &text, false)
                 .await
                 .map(|_| ())
                 .map_err(|e| e.to_string());

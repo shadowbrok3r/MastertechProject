@@ -33,6 +33,8 @@ pub enum RunnerCmd {
         turn: Option<RecordId>,
         result: Result<(), String>,
     },
+    /// Frees the pool slot if the thread is idle; the thread stays open.
+    Release,
 }
 
 /// Reconnect attempts before a thread is marked failed.
@@ -600,12 +602,17 @@ impl Runner {
         }
     }
 
-    fn idle_expired(&self) -> bool {
+    /// Idle with no wait, stop or compaction outstanding.
+    fn releasable(&self) -> bool {
         self.waits.is_empty()
             && self.busy.is_idle()
             && !self.stopping
             && self.pending_compact.is_none()
-            && self.idle_since.is_some_and(|t| t.elapsed() >= IDLE_RELEASE)
+            && self.idle_since.is_some()
+    }
+
+    fn idle_expired(&self) -> bool {
+        self.releasable() && self.idle_since.is_some_and(|t| t.elapsed() >= IDLE_RELEASE)
     }
 
     /// Frees the pool slot; a turn that reached this runner first goes to a fresh runner.
@@ -618,7 +625,7 @@ impl Runner {
             .chain(std::iter::from_fn(|| rx.try_recv().ok()))
             .filter_map(|cmd| match cmd {
                 RunnerCmd::Turn(turn) => Some(turn),
-                RunnerCmd::Stopped { .. } => None,
+                RunnerCmd::Stopped { .. } | RunnerCmd::Release => None,
             })
             .collect();
         self.flush_all().await;
@@ -663,6 +670,8 @@ impl Runner {
                 self.stop_answered(turn.as_ref(), result).await;
                 Flow::Continue
             }
+            RunnerCmd::Release if self.releasable() => Flow::Release,
+            RunnerCmd::Release => Flow::Continue,
         }
     }
 

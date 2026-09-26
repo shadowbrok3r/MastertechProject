@@ -263,6 +263,16 @@ mod work_mode_tests {
     }
 
     #[test]
+    fn modes_with_the_tur_sheet_allow_the_ai_tab() {
+        for mode in WorkMode::ALL {
+            let has_tur = mode.curated_tabs().is_none_or(|tabs| tabs.contains(&TabId::TurSheet));
+            if has_tur {
+                assert!(mode.allows(TabId::Ai), "{} refuses the Ai tab its TUR sheet opens", mode.title());
+            }
+        }
+    }
+
+    #[test]
     fn full_mode_is_uncurated() {
         assert!(WorkMode::Full.curated_tabs().is_none());
         for tab in TabId::visible_for(TabContext::MastertechNative) {

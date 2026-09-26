@@ -116,10 +116,6 @@ pub struct MastertechContext {
 
     /// Armed by a PrestaShop pull; cleared by the tech's answer.
     pub pending_assist: Option<crate::tabs::tur_sheet::assist_prompt::PendingAssist>,
-    /// Live progress window for an accepted AI diagnostic. Present only while
-    /// the tech has one open.
-    pub assist_progress: Option<crate::tabs::tur_sheet::assist_progress::AssistProgress>,
-    pub show_assist_viewport: Arc<AtomicBool>,
     pub client_uuid: RecordId,
     pub disks: Value,
     pub disk_num: usize,
@@ -133,6 +129,8 @@ pub struct MastertechContext {
     pub pending_tab_removes: Vec<displays::tabs::TabId>,
     pub pending_activate_tab: Option<displays::tabs::TabId>,
     pub pending_tab_opens: Vec<displays::tabs::TabId>,
+    /// Whether the Ai tab was in the dock last frame.
+    pub ai_tab_open: bool,
     pub work_mode: WorkModeState,
     /// This machine's console session. `None` until the Resource Monitor tab is
     /// first rendered; never cleared, because dropping it tears down MCP tool-log
@@ -289,8 +287,6 @@ impl MasterTechApp {
 
         let mastertech_context = MastertechContext {
             pending_assist: None,
-            assist_progress: None,
-            show_assist_viewport: Arc::new(AtomicBool::new(false)),
             shared_ctx: SharedContext::new(cc),
             // terminal: Terminal::new(backend).unwrap(),
             // terminal_frontend: None,
@@ -371,6 +367,7 @@ impl MasterTechApp {
             pending_tab_removes: Vec::new(),
             pending_activate_tab: None,
             pending_tab_opens: Vec::new(),
+            ai_tab_open: false,
             work_mode: WorkModeState::default(),
             #[cfg(not(target_arch = "wasm32"))]
             local_machine: None,

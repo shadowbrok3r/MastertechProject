@@ -26,6 +26,91 @@ const NOTICE_PREFIX: &str = icons::INFO;
 const REQUEST_NOTE_MAX: usize = 500;
 /// First message of a session whose real first message goes in as a queued turn.
 const OPENER: &str = "Open this session. My request follows as the next message.";
+/// Interval between reads of a followed assist request.
+const FOLLOW_POLL: std::time::Duration = std::time::Duration::from_secs(2);
+/// How long a followed request keeps its chat's composer locked.
+const FOLLOW_LOCK: std::time::Duration = std::time::Duration::from_secs(90);
+/// How long a followed request is read before its chat gives up on it.
+const FOLLOW_LIMIT: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// What a followed assist request reports to the chat waiting on it.
+#[derive(Debug, Clone, PartialEq)]
+enum FollowEvent {
+    /// The composer lock ran out; the request is still followed.
+    Slow,
+    /// The broker linked this session; `echoed` when the chat already shows the tech's message.
+    Opened { key: String, echoed: bool },
+    /// The request failed or was never linked.
+    Failed(String),
+}
+
+/// A placeholder chat waiting for the agent session of one assist request.
+pub struct PendingSession {
+    local: String,
+    tx: Sender<(String, FollowEvent)>,
+}
+
+impl PendingSession {
+    /// Shows `message` in the waiting chat and stops waiting.
+    pub fn fail(&self, message: String) {
+        let _ = self.tx.send((self.local.clone(), FollowEvent::Failed(message)));
+    }
+
+    /// Follows `request` until the broker links its session, then opens it in the waiting chat.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    pub async fn follow(self, request: RecordId) {
+        let event = match await_session(&request, &self.local, &self.tx).await {
+            Ok(thread) => FollowEvent::Opened { key: thread.key_string(), echoed: false },
+            Err(message) => FollowEvent::Failed(message),
+        };
+        let _ = self.tx.send((self.local, event));
+    }
+}
+
+/// Reads `request` until the broker links its session, reporting `Slow` once `FOLLOW_LOCK` passes.
+#[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+async fn await_session(
+    request: &RecordId,
+    local: &str,
+    tx: &Sender<(String, FollowEvent)>,
+) -> Result<RecordId, String> {
+    use database::schema::AssistRequest;
+
+    let mut waited = std::time::Duration::ZERO;
+    let mut slow = false;
+    loop {
+        if let Ok(Some(req)) = AssistRequest::get(request).await {
+            if let Some(thread) = req.agent_thread {
+                return Ok(thread);
+            }
+            if req.status == "failed" {
+                return Err(format!(
+                    "the agent host could not open a session: {}",
+                    req.dispatch_error.unwrap_or_else(|| "unknown error".into())
+                ));
+            }
+        }
+        if waited >= FOLLOW_LIMIT {
+            // Withdraws the request; one already claimed opens if it is linked by now.
+            if let Ok(false) = AssistRequest::withdraw(request).await
+                && let Ok(Some(req)) = AssistRequest::get(request).await
+                && let Some(thread) = req.agent_thread
+            {
+                return Ok(thread);
+            }
+            return Err(format!(
+                "no agent session opened within {} minutes; is admin-agent running?",
+                FOLLOW_LIMIT.as_secs() / 60
+            ));
+        }
+        if !slow && waited >= FOLLOW_LOCK {
+            slow = true;
+            let _ = tx.send((local.to_string(), FollowEvent::Slow));
+        }
+        database::sleep_compat(FOLLOW_POLL).await;
+        waited += FOLLOW_POLL;
+    }
+}
 
 /// The open agent chat's session row and queue, read together.
 struct AgentState {
@@ -82,8 +167,7 @@ pub struct EnhancedAiPlayground {
     agent_index_rx: Receiver<Vec<database::schema::AgentThread>>,
     #[serde(skip)]
     last_index_poll: Option<web_time::Instant>,
-    /// Threads already backfilled from the database, so a thread opened from the
-    /// index renders both sides once without duplicating the author's own echo.
+    /// Threads showing a local echo of the tech's messages, whose user rows the poller skips.
     #[serde(skip)]
     hydrated: std::collections::HashSet<String>,
     /// Local threads re-keyed onto the agent session they turned out to be.
@@ -131,6 +215,26 @@ pub struct EnhancedAiPlayground {
     /// A chat title being edited in the top bar.
     #[serde(skip)]
     renaming: Option<Rename>,
+    /// When set, a new chat's first message opens its own agent session instead of joining the machine's live one.
+    #[serde(skip)]
+    pub fresh_sessions: bool,
+    /// Local chats whose composer is locked while their request opens a session.
+    #[serde(skip)]
+    following: std::collections::HashSet<String>,
+    /// Local chats still waiting for their request's session after the composer lock ran out.
+    #[serde(skip)]
+    lingering: std::collections::HashSet<String>,
+    /// Messages sent from a lingering chat, queued on its session once it opens.
+    #[serde(skip)]
+    held: HashMap<String, Vec<(String, Vec<TurnImage>)>>,
+    /// Progress of followed requests, by the local chat waiting on each.
+    #[serde(skip)]
+    follow_tx: Sender<(String, FollowEvent)>,
+    #[serde(skip)]
+    follow_rx: Receiver<(String, FollowEvent)>,
+    /// Local chats re-keyed onto an agent session, so late messages reach the session.
+    #[serde(skip)]
+    rekeyed: HashMap<String, String>,
 }
 
 impl Default for EnhancedAiPlayground {
@@ -143,6 +247,7 @@ impl Default for EnhancedAiPlayground {
         let (agent_switch_tx, agent_switch_rx) = crossbeam::channel::unbounded::<(String, String)>();
         let (state_tx, state_rx) = crossbeam::channel::unbounded::<AgentState>();
         let (taken_back_tx, taken_back_rx) = crossbeam::channel::unbounded::<(String, AgentTurn)>();
+        let (follow_tx, follow_rx) = crossbeam::channel::unbounded::<(String, FollowEvent)>();
         Self {
             selected_thread: String::new(),
             chat_title: HashMap::new(),
@@ -181,6 +286,13 @@ impl Default for EnhancedAiPlayground {
             taken_back_tx,
             taken_back_rx,
             renaming: None,
+            fresh_sessions: false,
+            following: std::collections::HashSet::new(),
+            lingering: std::collections::HashSet::new(),
+            held: HashMap::new(),
+            follow_tx,
+            follow_rx,
+            rekeyed: HashMap::new(),
         }
     }
 }
@@ -189,6 +301,59 @@ impl EnhancedAiPlayground {
     /// Returns and clears the "close panel" request raised by the top-bar ✕.
     pub fn take_close_request(&mut self) -> bool {
         std::mem::take(&mut self.close_requested)
+    }
+
+    /// Selects an empty local chat: the open one when blank, else another blank one, else a new one.
+    pub fn start_new_session(&mut self) {
+        if self.is_blank_chat(&self.selected_thread) {
+            return;
+        }
+        match self.threads.keys().find(|id| self.is_blank_chat(id)).cloned() {
+            Some(blank) => self.select_thread(blank),
+            None => self.create_new_chat_thread(),
+        }
+    }
+
+    /// True for a local chat with nothing typed, attached or sent, and no session behind it.
+    fn is_blank_chat(&self, id: &str) -> bool {
+        self.threads
+            .get(id)
+            .is_some_and(|t| t.messages.is_empty() && t.input.trim().is_empty())
+            && self.composers.get(id).is_none_or(|c| c.attachments.is_empty())
+            && !self.agent_threads.contains(id)
+            && !self.following.contains(id)
+            && !self.lingering.contains(id)
+    }
+
+    /// Selects a placeholder chat titled `label` that opens the session its assist request gets.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    pub fn follow_assist_request(&mut self, label: String) -> PendingSession {
+        let blanks: Vec<String> = self.threads.keys().filter(|id| self.is_blank_chat(id)).cloned().collect();
+        for blank in blanks {
+            self.threads.remove(&blank);
+            self.composers.remove(&blank);
+            self.chat_title.remove(&blank);
+            self.thread_engine.remove(&blank);
+        }
+        let local = uuid::Uuid::new_v4().to_string();
+        let notice = ChatMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            thread_id: local.clone(),
+            ts: crate::tabs::ai_playground::now_ts(),
+            from: SentFrom::Assistant,
+            content: ChatMessageType::Text(
+                "Asked the agent host to open a session for this computer\u{2026}".to_string(),
+            ),
+        };
+        self.threads.insert(
+            local.clone(),
+            ChatThread { id: local.clone(), messages: vec![notice], images: Vec::new(), input: String::new() },
+        );
+        self.chat_title.insert(local.clone(), label);
+        self.thread_engine.insert(local.clone(), "Codex agent".to_string());
+        self.following.insert(local.clone());
+        self.select_thread(local.clone());
+        PendingSession { local, tx: self.follow_tx.clone() }
     }
 
     /// Opens a fresh thread that asks the agent for a first look at the focused machine.
@@ -544,9 +709,12 @@ impl EnhancedAiPlayground {
         if let Some(action) = agent_chat::queue_strip(ui, &self.waiting) {
             self.apply_queue_action(&tid, action);
         }
-        let row = self.open_row.as_ref().filter(|r| r.id.key_string() == tid);
-        let busy = row.is_some_and(AgentThread::is_busy);
-        let open = row.is_none_or(AgentThread::is_open);
+        let busy = self
+            .open_row
+            .as_ref()
+            .filter(|r| r.id.key_string() == tid)
+            .is_some_and(AgentThread::is_busy);
+        let enabled = self.composer_enabled(&tid);
         let text_max = (max_height - 72.0).max(40.0);
         let composer = self.composers.entry(tid.clone()).or_default();
         let Some(thread) = self.threads.get_mut(&tid) else {
@@ -557,7 +725,7 @@ impl EnhancedAiPlayground {
             composer_id(&tid),
             &mut thread.input,
             busy,
-            open,
+            enabled,
             text_max,
         );
         match action {
@@ -576,6 +744,12 @@ impl EnhancedAiPlayground {
             Some(ComposerAction::Stop) | None => {}
         }
         ui.min_rect().bottom() - top
+    }
+
+    /// Whether the composer of `tid` takes input: its session is open and it is not waiting for one.
+    fn composer_enabled(&self, tid: &str) -> bool {
+        let row = self.open_row.as_ref().filter(|r| r.id.key_string() == tid);
+        row.is_none_or(AgentThread::is_open) && !self.following.contains(tid)
     }
 
     fn show_chat_content(&mut self, ui: &mut Ui) {
@@ -697,24 +871,28 @@ impl EnhancedAiPlayground {
         }
     }
 
+    /// Adds threads loaded from the database, selecting the newest when no known thread is selected.
+    fn merge_loaded(&mut self, loaded: Vec<LoadedThread>) {
+        let first = loaded.first().map(|l| l.id.clone());
+        for lt in loaded {
+            self.chat_title.insert(lt.id.clone(), lt.title);
+            self.threads.entry(lt.id.clone()).or_insert_with(|| ChatThread {
+                id: lt.id.clone(),
+                messages: lt.messages,
+                images: Vec::new(),
+                input: String::new(),
+            });
+        }
+        if !self.threads.contains_key(&self.selected_thread) {
+            if let Some(f) = first {
+                self.selected_thread = f;
+            }
+        }
+    }
+
     fn handle_enhanced_ai_events(&mut self, ui: &mut Ui) {
-        // Merge any threads loaded from the database.
         while let Ok(loaded) = self.load_rx.try_recv() {
-            let first = loaded.first().map(|l| l.id.clone());
-            for lt in loaded {
-                self.chat_title.insert(lt.id.clone(), lt.title);
-                self.threads.entry(lt.id.clone()).or_insert_with(|| ChatThread {
-                    id: lt.id.clone(),
-                    messages: lt.messages,
-                    images: Vec::new(),
-                    input: String::new(),
-                });
-            }
-            if !self.threads.contains_key(&self.selected_thread) {
-                if let Some(f) = first {
-                    self.selected_thread = f;
-                }
-            }
+            self.merge_loaded(loaded);
             ui.ctx().request_repaint();
         }
 
@@ -725,6 +903,13 @@ impl EnhancedAiPlayground {
         #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
         while let Ok((local, key)) = self.agent_switch_rx.try_recv() {
             self.adopt_agent_thread(&local, key);
+        }
+        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+        while let Ok((local, event)) = self.follow_rx.try_recv() {
+            self.apply_follow(&local, event);
+        }
+        if !self.following.is_empty() || !self.lingering.is_empty() {
+            ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
         }
         #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
         {
@@ -751,20 +936,149 @@ impl EnhancedAiPlayground {
 
         while let Ok(response) = self.response_rx.try_recv() {
             ui.ctx().request_repaint();
-            let id = response.id.clone();
-            let tid = response.thread_id.clone();
-            let ts = response.ts;
-            let from = response.from.clone();
-            match response.content {
-                ChatMessageType::Text(chunk) => self.upsert_stream(&tid, &id, ts, from, chunk, false),
-                ChatMessageType::Reasoning(chunk) => self.upsert_stream(&tid, &id, ts, from, chunk, true),
-                // Turn finished — persist the full thread.
-                ChatMessageType::Done => self.save_thread(&tid),
-                other => {
-                    self.thread_entry(&tid).messages.push(ChatMessage { id, thread_id: tid.clone(), ts, from, content: other });
+            self.apply_response(response);
+        }
+    }
+
+    /// Adds one delivered message to its thread, or to the session its local chat became.
+    fn apply_response(&mut self, response: ChatMessage) {
+        let id = response.id.clone();
+        let tid = self
+            .rekeyed
+            .get(&response.thread_id)
+            .cloned()
+            .unwrap_or_else(|| response.thread_id.clone());
+        let ts = response.ts;
+        let from = response.from.clone();
+        match response.content {
+            ChatMessageType::Text(chunk) => self.upsert_stream(&tid, &id, ts, from, chunk, false),
+            ChatMessageType::Reasoning(chunk) => self.upsert_stream(&tid, &id, ts, from, chunk, true),
+            // Turn finished — persist the full thread.
+            ChatMessageType::Done => self.save_thread(&tid),
+            other => {
+                self.thread_entry(&tid).messages.push(ChatMessage { id, thread_id: tid.clone(), ts, from, content: other });
+            }
+        }
+    }
+
+    /// Applies what a followed request reported to the chat waiting on it.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    fn apply_follow(&mut self, local: &str, event: FollowEvent) {
+        match event {
+            FollowEvent::Slow => {
+                if self.following.remove(local) {
+                    self.lingering.insert(local.to_string());
+                    self.notify(
+                        local,
+                        ChatMessageType::Text(
+                            "The agent host has not opened the session yet. It opens here when it does, \
+                             and messages you send meanwhile go to it."
+                                .into(),
+                        ),
+                    );
+                }
+            }
+            FollowEvent::Failed(message) => {
+                let held = self.held.remove(local).map_or(0, |h| h.len());
+                if self.stop_waiting(local) {
+                    self.notify(local, ChatMessageType::Error(message));
+                    let unsent = match held {
+                        0 => None,
+                        1 => Some("The message typed while waiting was not sent.".to_string()),
+                        n => Some(format!("The {n} messages typed while waiting were not sent.")),
+                    };
+                    if let Some(unsent) = unsent {
+                        self.notify(local, ChatMessageType::Error(unsent));
+                    }
+                }
+            }
+            FollowEvent::Opened { key, echoed } => {
+                let held = self.held.remove(local).unwrap_or_default();
+                if !self.stop_waiting(local) {
+                    return;
+                }
+                if echoed {
+                    self.adopt_agent_thread(local, key.clone());
+                } else {
+                    self.apply_opened(local, key.clone());
+                }
+                if !held.is_empty() {
+                    self.queue_held(&key, held);
                 }
             }
         }
+    }
+
+    /// Queues messages held for `key` while it opened, in the order they were sent.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    fn queue_held(&mut self, key: &str, held: Vec<(String, Vec<TurnImage>)>) {
+        self.last_state_poll = None;
+        let tx = self.response_tx.clone();
+        let thread = RecordId::new("agent_thread", key);
+        let tid = key.to_string();
+        PlatformSpawner::spawn(async move {
+            for (text, images) in held {
+                if let Err(e) = AgentTurn::ask_with(&thread, "queue", &text, &images).await {
+                    let _ = tx.try_send(ChatMessage {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        thread_id: tid.clone(),
+                        ts: crate::tabs::ai_playground::now_ts(),
+                        from: SentFrom::Assistant,
+                        content: ChatMessageType::Error(format!("could not queue the message: {e}")),
+                    });
+                }
+            }
+        });
+    }
+
+    /// Stops waiting on `local`; false when nothing was waiting on it.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    fn stop_waiting(&mut self, local: &str) -> bool {
+        let locked = self.following.remove(local);
+        let lingering = self.lingering.remove(local);
+        locked || lingering
+    }
+
+    /// Appends an assistant line to a chat that still exists.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    fn notify(&mut self, tid: &str, content: ChatMessageType) {
+        if let Some(thread) = self.threads.get_mut(tid) {
+            thread.messages.push(ChatMessage {
+                id: uuid::Uuid::new_v4().to_string(),
+                thread_id: tid.to_string(),
+                ts: crate::tabs::ai_playground::now_ts(),
+                from: SentFrom::Assistant,
+                content,
+            });
+        }
+    }
+
+    /// Moves a local chat's messages, title, engine, attachments and echo flag onto `key`.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    fn rekey(&mut self, local: &str, key: &str) {
+        if let Some(mut moved) = self.threads.remove(local) {
+            moved.id = key.to_string();
+            match self.threads.get_mut(key) {
+                Some(existing) => existing.messages.extend(moved.messages),
+                None => {
+                    self.threads.insert(key.to_string(), moved);
+                }
+            }
+        }
+        if let Some(engine) = self.thread_engine.remove(local) {
+            self.thread_engine.insert(key.to_string(), engine);
+        }
+        if let Some(title) = self.chat_title.remove(local) {
+            self.chat_title.entry(key.to_string()).or_insert(title);
+        }
+        if let Some(composer) = self.composers.remove(local) {
+            self.composers.insert(key.to_string(), composer);
+        }
+        if self.hydrated.remove(local) {
+            self.hydrated.insert(key.to_string());
+        }
+        self.agent_threads.remove(local);
+        self.rekeyed.insert(local.to_string(), key.to_string());
     }
 
     /// Re-keys a local thread onto the agent session it became, keeping what was typed.
@@ -773,25 +1087,7 @@ impl EnhancedAiPlayground {
         if local == key {
             return;
         }
-        if let Some(mut moved) = self.threads.remove(local) {
-            moved.id = key.clone();
-            match self.threads.get_mut(&key) {
-                Some(existing) => existing.messages.extend(moved.messages),
-                None => {
-                    self.threads.insert(key.clone(), moved);
-                }
-            }
-        }
-        if let Some(engine) = self.thread_engine.remove(local) {
-            self.thread_engine.insert(key.clone(), engine);
-        }
-        if let Some(title) = self.chat_title.remove(local) {
-            self.chat_title.insert(key.clone(), title);
-        }
-        if let Some(composer) = self.composers.remove(local) {
-            self.composers.insert(key.clone(), composer);
-        }
-        self.agent_threads.remove(local);
+        self.rekey(local, &key);
         self.agent_threads.insert(key.clone());
         self.hydrated.insert(key.clone());
         if self.selected_thread == local {
@@ -800,7 +1096,25 @@ impl EnhancedAiPlayground {
         self.last_agent_poll = None;
     }
 
-    /// Sends one message as a `start`, `queue` or `steer` turn, or files the request that opens its session.
+    /// Moves a placeholder chat onto the session its request opened, backfilling both sides.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    fn apply_opened(&mut self, local: &str, key: String) {
+        let selected = self.selected_thread == local;
+        self.rekey(local, &key);
+        self.threads.entry(key.clone()).or_insert_with(|| ChatThread {
+            id: key.clone(),
+            messages: Vec::new(),
+            images: Vec::new(),
+            input: String::new(),
+        });
+        self.agent_threads.insert(key.clone());
+        if selected {
+            self.select_thread(key);
+            self.last_agent_poll = None;
+        }
+    }
+
+    /// Sends one message as a `start`, `queue` or `steer` turn, files the request that opens its session, or holds it while its chat waits for one.
     #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
     fn send_to_agent(
         &mut self,
@@ -812,13 +1126,21 @@ impl EnhancedAiPlayground {
     ) {
         use database::schema::AssistRequest;
 
-        self.agent_threads.insert(thread_id.clone());
+        if self.lingering.contains(&thread_id) {
+            self.held.entry(thread_id).or_default().push((text, images));
+            return;
+        }
         self.last_state_poll = None;
-        let session = self
-            .agent_index
-            .iter()
-            .chain(&self.open_row)
-            .any(|t| t.id.key_string() == thread_id);
+        let session = self.agent_threads.contains(&thread_id)
+            || self
+                .agent_index
+                .iter()
+                .chain(&self.open_row)
+                .any(|t| t.id.key_string() == thread_id);
+        let fresh = self.fresh_sessions && !session;
+        if fresh {
+            self.following.insert(thread_id.clone());
+        }
         let target = connection_string.or_else(|| self.focused_client.clone());
         let user = crate::get_current_user_from_auth();
         let tech = user.as_ref().map(|u| u.get_email().to_string());
@@ -829,6 +1151,7 @@ impl EnhancedAiPlayground {
         let service_number = self.service_number.clone();
         let tx = self.response_tx.clone();
         let switch_tx = self.agent_switch_tx.clone();
+        let follow_tx = self.follow_tx.clone();
         let tid = thread_id.clone();
         PlatformSpawner::spawn(async move {
             let say = |content: ChatMessageType| ChatMessage {
@@ -837,6 +1160,14 @@ impl EnhancedAiPlayground {
                 ts: crate::tabs::ai_playground::now_ts(),
                 from: SentFrom::Assistant,
                 content,
+            };
+            // Reports a failure; a chat waiting on a fresh request also stops waiting.
+            let fail = |message: String| {
+                if fresh {
+                    let _ = follow_tx.send((tid.clone(), FollowEvent::Failed(message)));
+                } else {
+                    let _ = tx.try_send(say(ChatMessageType::Error(message)));
+                }
             };
             if session {
                 if let Err(e) = AgentTurn::ask_with(
@@ -856,19 +1187,19 @@ impl EnhancedAiPlayground {
             // No machine in scope: the technician's standing records-only session.
             let target = target.or_else(|| tech.as_deref().map(database::schema::general_connection));
             let Some(cs) = target else {
-                let _ = tx.try_send(say(ChatMessageType::Error("Sign in to chat with the agent.".into())));
+                fail("Sign in to chat with the agent.".into());
                 return;
             };
             let general = database::schema::is_general(&cs);
             if !general {
                 if let Some(block) = database::schema::ConnectedClient::diagnosis_block(&cs).await {
-                    let _ = tx.try_send(say(ChatMessageType::Error(format!("Not dispatched — {cs}: {block}."))));
+                    fail(format!("Not dispatched — {cs}: {block}."));
                     return;
                 }
             }
-            // A machine with a live session takes the message as a turn; otherwise a
-            // request opens one. Either way this thread becomes that session.
-            match AgentThread::active_for_connection(&cs).await {
+            // A fresh chat always files a request; otherwise a live session takes the message as a turn.
+            let live = if fresh { Ok(None) } else { AgentThread::active_for_connection(&cs).await };
+            match live {
                 Ok(Some(thread)) => {
                     let kind = if thread.is_busy() && kind == "start" {
                         "queue"
@@ -896,6 +1227,7 @@ impl EnhancedAiPlayground {
                         store.as_deref(),
                         service_number.as_deref(),
                         note,
+                        fresh,
                     )
                     .await
                     {
@@ -908,6 +1240,24 @@ impl EnhancedAiPlayground {
                             let _ = tx.try_send(say(ChatMessageType::Text(format!(
                                 "Asked the agent host to open {what}\u{2026}"
                             ))));
+                            if fresh {
+                                match await_session(&request, &tid, &follow_tx).await {
+                                    Ok(thread) => {
+                                        if !whole
+                                            && let Err(e) =
+                                                AgentTurn::ask_with(&thread, "queue", &text, &images).await
+                                        {
+                                            let _ = tx.try_send(say(ChatMessageType::Error(format!(
+                                                "could not queue the message: {e}"
+                                            ))));
+                                        }
+                                        let opened = FollowEvent::Opened { key: thread.key_string(), echoed: true };
+                                        let _ = follow_tx.send((tid.clone(), opened));
+                                    }
+                                    Err(message) => fail(message),
+                                }
+                                return;
+                            }
                             for _ in 0..45 {
                                 database::sleep_compat(std::time::Duration::from_secs(2)).await;
                                 if let Ok(Some(req)) = AssistRequest::get(&request).await {
@@ -940,11 +1290,7 @@ impl EnhancedAiPlayground {
                                 "no agent session opened within 90 seconds; is admin-agent running?".into(),
                             )));
                         }
-                        Err(e) => {
-                            let _ = tx.try_send(say(ChatMessageType::Error(format!(
-                                "could not request a diagnosis: {e}"
-                            ))));
-                        }
+                        Err(e) => fail(format!("could not request a diagnosis: {e}")),
                     }
                 }
             }
@@ -1103,6 +1449,20 @@ impl EnhancedAiPlayground {
         self.last_agent_poll = None;
     }
 
+    /// The open thread, the message ids it already shows, and whether its user rows are read.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    fn reply_poll_plan(&self) -> (String, std::collections::HashSet<String>, bool) {
+        let thread = self.selected_thread.clone();
+        let seen = self
+            .threads
+            .get(&thread)
+            .map(|t| t.messages.iter().map(|m| m.id.clone()).collect())
+            .unwrap_or_default();
+        // Threads with a local echo skip the tech's database rows.
+        let hydrate = !self.hydrated.contains(&thread);
+        (thread, seen, hydrate)
+    }
+
     /// Pulls agent replies for the open thread. Messages carry their row id, so
     /// the thread's own contents are the dedupe set and no extra state is kept.
     #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
@@ -1116,24 +1476,12 @@ impl EnhancedAiPlayground {
         self.last_agent_poll = Some(now);
         ui.ctx().request_repaint_after(Duration::from_secs(gap));
 
-        let thread = self.selected_thread.clone();
-        let seen: std::collections::HashSet<String> = self
-            .threads
-            .get(&thread)
-            .map(|t| t.messages.iter().map(|m| m.id.clone()).collect())
-            .unwrap_or_default();
+        let (thread, seen, hydrate) = self.reply_poll_plan();
         let tx = self.response_tx.clone();
         let flag_tx = self.agent_flag_tx.clone();
-        // A thread with nothing rendered yet is being read for the first time, so
-        // the tech's own side is backfilled too. Afterwards it is skipped, or the
-        // author's local echo would be duplicated by its database copy.
-        let hydrate = seen.is_empty() && !self.hydrated.contains(&thread);
-        if hydrate {
-            self.hydrated.insert(thread.clone());
-        }
         PlatformSpawner::spawn(async move {
             use database::schema::{AgentEvent, RecordId};
-            let rows = AgentEvent::history(&RecordId::new("agent_thread", thread.as_str()), 0, 300)
+            let rows = AgentEvent::recent(&RecordId::new("agent_thread", thread.as_str()), 300)
                 .await
                 .unwrap_or_default();
             if !rows.is_empty() {
@@ -1218,26 +1566,7 @@ impl EnhancedAiPlayground {
         images: Vec<TurnImage>,
         staged: Vec<String>,
     ) {
-        if !self.threads.contains_key(&self.selected_thread) {
-            self.create_new_chat_thread();
-        }
-        let thread_id = self.selected_thread.clone();
-        let ts = crate::tabs::ai_playground::now_ts();
-        let echo = |content: ChatMessageType| ChatMessage {
-            id: uuid::Uuid::new_v4().to_string(),
-            thread_id: thread_id.clone(),
-            ts,
-            from: SentFrom::Me,
-            content,
-        };
-        let _ = self
-            .response_tx
-            .try_send(echo(ChatMessageType::Text(text.clone())));
-        for name in staged {
-            let _ = self
-                .response_tx
-                .try_send(echo(ChatMessageType::Image((name, bytes::Bytes::new()))));
-        }
+        let thread_id = self.echo_message(&text, staged);
 
         // Every message goes to the agent: a session thread continues, a focused
         // machine gets its session, anything else the technician's records session.
@@ -1252,6 +1581,32 @@ impl EnhancedAiPlayground {
         {
             let _ = (text, images, kind, thread_id);
         }
+    }
+
+    /// Echoes a message and its pictures into the open thread, which then skips the tech's database rows.
+    fn echo_message(&mut self, text: &str, staged: Vec<String>) -> String {
+        if !self.threads.contains_key(&self.selected_thread) {
+            self.create_new_chat_thread();
+        }
+        let thread_id = self.selected_thread.clone();
+        let ts = crate::tabs::ai_playground::now_ts();
+        let echo = |content: ChatMessageType| ChatMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            thread_id: thread_id.clone(),
+            ts,
+            from: SentFrom::Me,
+            content,
+        };
+        let _ = self
+            .response_tx
+            .try_send(echo(ChatMessageType::Text(text.to_string())));
+        for name in staged {
+            let _ = self
+                .response_tx
+                .try_send(echo(ChatMessageType::Image((name, bytes::Bytes::new()))));
+        }
+        self.hydrated.insert(thread_id.clone());
+        thread_id
     }
 }
 
@@ -1621,6 +1976,308 @@ mod tests {
         }
         for ok in ["", "1.2 s", "exit 0", "ok"] {
             assert!(!status(ok).failed(), "{ok}");
+        }
+    }
+
+    fn note(thread: &str, text: &str) -> ChatMessage {
+        ChatMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            thread_id: thread.into(),
+            ts: 1_790_000_000,
+            from: SentFrom::Assistant,
+            content: ChatMessageType::Text(text.into()),
+        }
+    }
+
+    fn legacy(id: &str) -> LoadedThread {
+        LoadedThread { id: id.into(), title: "Old chat".into(), messages: vec![note(id, "old reply")] }
+    }
+
+    #[test]
+    fn start_new_session_reuses_an_empty_local_chat() {
+        let mut chat = EnhancedAiPlayground::default();
+        chat.start_new_session();
+        let first = chat.selected_thread.clone();
+        chat.start_new_session();
+        assert_eq!(chat.selected_thread, first);
+        assert_eq!(chat.threads.len(), 1);
+
+        chat.threads.get_mut(&first).expect("chat").messages.push(note(&first, "hi"));
+        chat.start_new_session();
+        let second = chat.selected_thread.clone();
+        assert_ne!(second, first);
+
+        chat.agent_threads.insert(second.clone());
+        chat.start_new_session();
+        assert_ne!(chat.selected_thread, second);
+        assert_eq!(chat.threads.len(), 3);
+    }
+
+    #[test]
+    fn merge_loaded_keeps_a_fresh_session_selected() {
+        let mut chat = EnhancedAiPlayground::default();
+        chat.start_new_session();
+        let fresh = chat.selected_thread.clone();
+        chat.merge_loaded(vec![legacy("legacy-1")]);
+        assert_eq!(chat.selected_thread, fresh);
+        assert!(chat.threads.contains_key("legacy-1"));
+    }
+
+    #[test]
+    fn merge_loaded_selects_the_newest_chat_when_nothing_is_selected() {
+        let mut chat = EnhancedAiPlayground::default();
+        chat.merge_loaded(vec![legacy("newest"), legacy("older")]);
+        assert_eq!(chat.selected_thread, "newest");
+    }
+
+    #[test]
+    fn a_blank_session_is_not_reused_while_it_waits_for_a_request() {
+        let mut chat = EnhancedAiPlayground::default();
+        chat.start_new_session();
+        let blank = chat.selected_thread.clone();
+        chat.following.insert(blank.clone());
+        assert!(!chat.composer_enabled(&blank));
+        chat.start_new_session();
+        assert_ne!(chat.selected_thread, blank);
+    }
+
+    #[test]
+    fn start_new_session_selects_a_blank_chat_left_behind() {
+        let mut chat = EnhancedAiPlayground::default();
+        chat.start_new_session();
+        let blank = chat.selected_thread.clone();
+        chat.threads.insert(
+            "old".into(),
+            ChatThread { id: "old".into(), messages: vec![note("old", "reply")], images: Vec::new(), input: String::new() },
+        );
+        chat.select_thread("old".into());
+
+        chat.start_new_session();
+        assert_eq!(chat.selected_thread, blank);
+        assert_eq!(chat.threads.len(), 2);
+    }
+
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    mod follow {
+        use super::*;
+
+        const LABEL: &str = "#2155467 PC-1";
+        const KEY: &str = "k7x2";
+
+        fn followed() -> (EnhancedAiPlayground, String) {
+            let mut chat = EnhancedAiPlayground::default();
+            let local = chat.follow_assist_request(LABEL.into()).local;
+            (chat, local)
+        }
+
+        fn opened(key: &str) -> FollowEvent {
+            FollowEvent::Opened { key: key.into(), echoed: false }
+        }
+
+        #[test]
+        fn a_followed_request_selects_a_locked_placeholder() {
+            let (chat, local) = followed();
+            assert_eq!(chat.selected_thread, local);
+            assert_eq!(chat.chat_title.get(&local).map(String::as_str), Some(LABEL));
+            assert!(chat.following.contains(&local));
+            assert!(!chat.composer_enabled(&local));
+            assert_eq!(chat.threads[&local].messages.len(), 1);
+            assert!(chat.response_rx.try_recv().is_err());
+        }
+
+        #[test]
+        fn a_followed_request_replaces_a_blank_chat_instead_of_stacking() {
+            let mut chat = EnhancedAiPlayground::default();
+            chat.start_new_session();
+            let blank = chat.selected_thread.clone();
+            let local = chat.follow_assist_request(LABEL.into()).local;
+            assert!(!chat.threads.contains_key(&blank));
+            assert_eq!(chat.threads.len(), 1);
+            assert_eq!(chat.selected_thread, local);
+        }
+
+        #[test]
+        fn opened_request_replaces_its_placeholder() {
+            let (mut chat, local) = followed();
+            chat.apply_follow(&local, opened(KEY));
+            assert_eq!(chat.selected_thread, KEY);
+            assert!(chat.agent_threads.contains(KEY));
+            assert!(!chat.hydrated.contains(KEY));
+            assert!(!chat.threads.contains_key(&local));
+            assert_eq!(chat.threads[KEY].messages.len(), 1, "the notice moves with the chat");
+            assert_eq!(chat.chat_title.get(KEY).map(String::as_str), Some(LABEL));
+            assert!(chat.following.is_empty());
+            assert!(chat.composer_enabled(KEY));
+        }
+
+        #[test]
+        fn opened_request_leaves_a_moved_selection_alone() {
+            let (mut chat, local) = followed();
+            chat.composers.entry(local.clone()).or_default();
+            chat.threads.insert(
+                KEY.into(),
+                ChatThread { id: KEY.into(), messages: vec![note(KEY, "earlier")], images: Vec::new(), input: String::new() },
+            );
+            chat.start_new_session();
+            let moved_to = chat.selected_thread.clone();
+            assert_ne!(moved_to, local);
+
+            chat.apply_follow(&local, opened(KEY));
+            assert_eq!(chat.selected_thread, moved_to);
+            assert!(chat.agent_threads.contains(KEY));
+            assert_eq!(chat.threads[KEY].messages.len(), 2, "the earlier transcript is kept");
+            assert!(chat.composers.contains_key(KEY));
+            assert!(!chat.composers.contains_key(&local));
+        }
+
+        #[test]
+        fn failed_request_stops_following() {
+            let (mut chat, local) = followed();
+            chat.apply_follow(&local, FollowEvent::Failed("admin-agent is down".into()));
+            assert!(chat.following.is_empty());
+            assert_eq!(chat.selected_thread, local);
+            assert!(chat.composer_enabled(&local));
+            let last = chat.threads[&local].messages.last().expect("error line");
+            assert_eq!(last.content, ChatMessageType::Error("admin-agent is down".into()));
+        }
+
+        #[test]
+        fn pending_session_failure_reaches_its_placeholder() {
+            let mut chat = EnhancedAiPlayground::default();
+            let pending = chat.follow_assist_request(LABEL.into());
+            let local = pending.local.clone();
+            pending.fail("could not file the request".into());
+            let (to, event) = chat.follow_rx.try_recv().expect("event");
+            assert_eq!(to, local);
+            chat.apply_follow(&to, event);
+            assert!(chat.composer_enabled(&local));
+        }
+
+        #[test]
+        fn a_slow_request_unlocks_the_composer_and_still_opens() {
+            let (mut chat, local) = followed();
+            chat.apply_follow(&local, FollowEvent::Slow);
+            assert!(chat.composer_enabled(&local));
+            assert!(chat.lingering.contains(&local));
+            assert_eq!(chat.threads[&local].messages.len(), 2);
+            chat.start_new_session();
+            assert_ne!(chat.selected_thread, local, "a waiting chat is never reused");
+
+            chat.apply_follow(&local, opened(KEY));
+            assert!(chat.lingering.is_empty());
+            assert!(chat.threads.contains_key(KEY));
+        }
+
+        #[test]
+        fn an_event_for_a_chat_that_stopped_waiting_is_ignored() {
+            let (mut chat, local) = followed();
+            chat.apply_follow(&local, FollowEvent::Failed("gone".into()));
+            chat.apply_follow(&local, opened(KEY));
+            assert!(chat.threads.contains_key(&local));
+            assert!(!chat.threads.contains_key(KEY));
+        }
+
+        #[test]
+        fn an_echoed_chat_is_adopted_with_its_own_rows_skipped() {
+            let mut chat = EnhancedAiPlayground::default();
+            chat.start_new_session();
+            let local = chat.selected_thread.clone();
+            chat.following.insert(local.clone());
+            chat.apply_follow(&local, FollowEvent::Opened { key: KEY.into(), echoed: true });
+            assert_eq!(chat.selected_thread, KEY);
+            assert!(chat.hydrated.contains(KEY));
+        }
+
+        #[test]
+        fn a_late_message_for_a_rekeyed_chat_reaches_its_session() {
+            let (mut chat, local) = followed();
+            chat.apply_follow(&local, opened(KEY));
+            chat.apply_response(ChatMessage {
+                content: ChatMessageType::Error("late".into()),
+                ..note(&local, "")
+            });
+            assert!(!chat.threads.contains_key(&local), "no phantom chat");
+            assert_eq!(chat.threads[KEY].messages.len(), 2);
+        }
+
+        #[test]
+        fn an_opened_session_keeps_reading_user_rows_until_the_tech_types() {
+            let (mut chat, local) = followed();
+            chat.apply_follow(&local, opened(KEY));
+            for _ in 0..2 {
+                let (thread, seen, hydrate) = chat.reply_poll_plan();
+                assert_eq!(thread, KEY);
+                assert!(!seen.is_empty());
+                assert!(hydrate, "an empty poll must not stop the opener from rendering");
+            }
+            chat.echo_message("what did you find?", Vec::new());
+            assert!(!chat.reply_poll_plan().2);
+        }
+
+        #[test]
+        fn a_followed_request_clears_every_blank_chat() {
+            let mut chat = EnhancedAiPlayground::default();
+            chat.start_new_session();
+            chat.threads.insert(
+                "old".into(),
+                ChatThread { id: "old".into(), messages: vec![note("old", "reply")], images: Vec::new(), input: String::new() },
+            );
+            chat.create_new_chat_thread();
+            assert_eq!(chat.threads.len(), 3);
+
+            let local = chat.follow_assist_request(LABEL.into()).local;
+            let mut kept: Vec<&str> = chat.threads.keys().map(String::as_str).collect();
+            kept.sort();
+            let mut want = vec!["old", local.as_str()];
+            want.sort();
+            assert_eq!(kept, want);
+        }
+
+        /// A followed chat whose composer lock ran out, with one message sent from it.
+        fn lingering_with_a_message() -> (EnhancedAiPlayground, String) {
+            let (mut chat, local) = followed();
+            chat.apply_follow(&local, FollowEvent::Slow);
+            chat.send_chat_message("start", "is the fan spinning?".into(), Vec::new(), Vec::new());
+            (chat, local)
+        }
+
+        #[test]
+        fn a_message_from_a_lingering_chat_is_held_for_its_own_session() {
+            let (chat, local) = lingering_with_a_message();
+            assert_eq!(chat.held[&local].len(), 1);
+            assert_eq!(chat.held[&local][0].0, "is the fan spinning?");
+            assert!(chat.lingering.contains(&local), "the chat still waits on its request");
+            assert!(!chat.following.contains(&local));
+            assert!(!chat.agent_threads.contains(&local));
+        }
+
+        #[cfg(feature = "tokio")]
+        #[tokio::test]
+        async fn held_messages_leave_when_the_session_opens_and_its_echo_is_kept() {
+            let (mut chat, local) = lingering_with_a_message();
+            chat.apply_follow(&local, opened(KEY));
+            assert!(chat.held.is_empty());
+            assert_eq!(chat.selected_thread, KEY);
+            assert!(chat.agent_threads.contains(KEY));
+            assert!(chat.hydrated.contains(KEY), "the local echo would be duplicated by its row");
+            assert!(!chat.hydrated.contains(&local));
+        }
+
+        #[test]
+        fn a_failed_request_reports_its_held_messages_as_unsent() {
+            let (mut chat, local) = lingering_with_a_message();
+            chat.apply_follow(&local, FollowEvent::Failed("admin-agent is down".into()));
+            assert!(chat.held.is_empty());
+            assert!(chat.lingering.is_empty());
+            let tail: Vec<&ChatMessageType> =
+                chat.threads[&local].messages.iter().rev().take(2).map(|m| &m.content).collect();
+            assert_eq!(
+                tail,
+                vec![
+                    &ChatMessageType::Error("The message typed while waiting was not sent.".into()),
+                    &ChatMessageType::Error("admin-agent is down".into()),
+                ]
+            );
         }
     }
 

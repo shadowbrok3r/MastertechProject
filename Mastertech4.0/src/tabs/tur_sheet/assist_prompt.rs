@@ -5,8 +5,9 @@
 //! links customer/computer/order so the machine-to-order match is recorded
 //! rather than inferred.
 
-use database::schema::Store;
+use database::schema::{random_record_id, AssistRequest, ConfirmedRequest, Store, ASSIST_REQUEST_TABLE};
 use displays::plugins::push_widget_anchor;
+use displays::tabs::TabId;
 use displays::ui_tools::icons;
 use displays::{get_toast_sender, ToastMessage};
 use eframe::egui::{Align2, Area, Context, Frame, Order, RichText};
@@ -223,51 +224,40 @@ impl MastertechContext {
         // The confirmation is the ground truth the auto-link event cannot infer.
         self.create_and_link_only();
 
-        // Give the tech something to watch: the first run took seven minutes
-        // to open its session, with nothing on screen in the meantime.
-        self.assist_progress = Some(
-            crate::tabs::tur_sheet::assist_progress::AssistProgress::new(
-                self.client_title.clone(),
-                pending.service_number.clone(),
-            ),
-        );
-        self.show_assist_viewport
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let request = random_record_id(ASSIST_REQUEST_TABLE);
+        let label = format!("#{} {}", pending.service_number, self.computer_data.hostname)
+            .trim()
+            .to_string();
+        let session = self.shared_ctx.enhanced_ai_playground.follow_assist_request(label);
+        self.pending_tab_opens.push(TabId::Ai);
+        self.pending_activate_tab = Some(TabId::Ai);
 
-        let connection_string = crate::filesystem::get_client_hash().connection_string;
-        let computer = crate::filesystem::local_computer_record();
-        let store = user.get_store();
-        let requested_by = user.get_email().to_string();
-        let hostname = self.computer_data.hostname.clone();
+        let confirmed = ConfirmedRequest {
+            connection_string: crate::filesystem::get_client_hash().connection_string,
+            hostname: self.computer_data.hostname.clone(),
+            service_number: pending.service_number.clone(),
+            computer: crate::filesystem::local_computer_record(),
+            requested_by: user.get_email().to_string(),
+            store: store_code(user.get_store()),
+        };
         let service_number = pending.service_number.clone();
         let toast_tx = get_toast_sender();
 
         spawn(async move {
-            let sql = "CREATE assist_request CONTENT { \
-                 connection_string: $cs, hostname: $host, service_number: $sn, \
-                 computer: $computer, requested_by: $by, store: $store, \
-                 trigger_source: 'tur_sheet', machine_confirmed: true, status: 'pending' }";
-            let res = database::db()
-                .query(sql)
-                .bind(("cs", connection_string))
-                .bind(("host", hostname))
-                .bind(("sn", service_number.clone()))
-                .bind(("computer", computer))
-                .bind(("by", requested_by))
-                .bind(("store", store_code(store)))
-                .await;
-            match res {
-                Ok(_) => {
+            match AssistRequest::create_confirmed(&request, confirmed).await {
+                Ok(()) => {
                     info!("assist_request queued for service #{service_number}");
                     let _ = toast_tx.try_send(ToastMessage::Success(
                         format!("AI assistance requested for #{service_number}"),
                     ));
+                    session.follow(request).await;
                 }
                 Err(e) => {
                     warn!("assist_request failed for #{service_number}: {e}");
                     let _ = toast_tx.try_send(ToastMessage::Error(
                         format!("Could not request AI assistance: {e}"),
                     ));
+                    session.fail(format!("Could not request AI assistance: {e}"));
                 }
             }
         });
