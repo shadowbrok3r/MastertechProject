@@ -43,6 +43,8 @@ const PORTED: &[&str] = &[
     "run-prechecks",
     "activate-webroot",
     "activate-superanti",
+    "onedrive-health",
+    "acl-deny-scan",
 ];
 
 /// A warning is a finding for these, which the remote code reported as FAIL.

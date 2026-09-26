@@ -125,3 +125,27 @@ surfaces = ["egui", "terminal", "remote", "mcp"]
 runs = ["is-windows-activated", "is-webroot-installed", "is-superantispyware-installed", "is-supereasybackup-installed", "network-status", "align-taskbar-to-left"]
 order = 110
 
+[[script]]
+id = "onedrive-health"
+name = "OneDrive Health"
+category = "informational"
+summary = "Per profile: signed-in account, sync-state timestamps, OneDrive.exe session and elevation, known-folder redirection, and the tail of the newest sync log"
+pass = "OneDrive.exe running non-elevated for the signed-in user"
+warn = "OneDrive not running, or no OneDrive profile found"
+fail = "OneDrive.exe running elevated"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 120
+
+[[script]]
+id = "acl-deny-scan"
+name = "ACL Deny Scan"
+category = "informational"
+summary = "Scan user profiles to depth 2, the OneDrive root and C:\\ for non-standard Deny ACEs and print the SDDL of each hit"
+pass = "No Deny ACE beyond the standard profile-junction ReadData denies"
+warn = "Could not read one or more paths"
+fail = "A non-standard Deny ACE was found"
+timeout_secs = 600
+surfaces = ["egui", "terminal", "remote", "mcp"]
+order = 130
+
