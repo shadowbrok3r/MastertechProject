@@ -106,6 +106,10 @@ impl MasterTechApp {
 
                         displays::ui_tools::do_not_disturb::toggle_button(ui);
                         ui.add_space(4.0);
+                        if displays::ui_tools::command_bar::open_button(ui) {
+                            self.context.shared_ctx.command_bar.request_open();
+                        }
+                        ui.add_space(4.0);
 
                         // Notification count badges
                         let unread_count = self.context.shared_ctx.notification_center.unread_count();

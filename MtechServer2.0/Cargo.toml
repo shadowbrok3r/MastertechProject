@@ -36,6 +36,7 @@ web-sys = { version = "0.3", features = [
 	"Document",
 	"Event",
 	"EventTarget",
+	"KeyboardEvent",
 	"VisibilityState"
 ] }
 wasm-cookies = { workspace = true }
